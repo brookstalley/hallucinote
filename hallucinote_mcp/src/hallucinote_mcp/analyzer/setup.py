@@ -158,6 +158,33 @@ class AnalyzerInstance:
 
 
 @dataclass(frozen=True)
+class StrippedAnalyzer:
+    """One HallucinoteAnalyzer removed by a strip sweep.
+
+    Records WHERE it was (surface address) and the 1-based ``device_index``
+    it occupied in the chain at removal time. The inverse of an
+    ``AnalyzerInstance``: ``ensure_analyzers_loaded`` records placements,
+    ``strip_analyzers`` records removals.
+    """
+
+    surface_kind: str  # 'track' | 'return' | 'master'
+    surface_index: int  # 1-based; 0 for master
+    surface_name: str
+    device_index: int  # 1-based position the analyzer occupied before removal
+
+
+@dataclass(frozen=True)
+class StripResult:
+    """Result of one strip_analyzers sweep."""
+
+    stripped: tuple[StrippedAnalyzer, ...]
+
+    @property
+    def stripped_count(self) -> int:
+        return len(self.stripped)
+
+
+@dataclass(frozen=True)
 class AnalyzerLayout:
     """Result of one ensure_analyzers_loaded sweep."""
 
@@ -245,6 +272,66 @@ def ensure_analyzers_loaded(
         time.sleep(_INTER_SURFACE_YIELD_S)
 
     return AnalyzerLayout(instances=tuple(instances))
+
+
+def strip_analyzers(context: LiveContext) -> StripResult:
+    """Idempotent bulk REMOVAL — delete the analyzer from every surface.
+
+    The inverse of ``ensure_analyzers_loaded``: that sweep guarantees one
+    analyzer on every audio track + return + master; this one guarantees
+    NONE. Used to get a clean device set after a render (so a deterministic
+    push or a clean save doesn't carry ~N+R+1 stray HallucinoteAnalyzer
+    instances). Re-running is a no-op once every surface is clear.
+
+    Walks the SAME ``_plan_surfaces`` snapshot ``ensure_analyzers_loaded``
+    uses, finds the analyzer per surface via ``_find_analyzer_index`` (the
+    shared finder), and deletes it via ``device_handlers.delete_handler``.
+    Returns a ``StripResult`` naming every surface a deletion fired on.
+
+    Worker-thread caller invariant. The registered action that invokes
+    this (``ableton_render(action='strip')``) runs ``runs_on_worker=True``.
+    Each per-surface find + delete bout marshals onto Live's main thread via
+    ``context.run_on_main``; between surfaces we sleep
+    ``_INTER_SURFACE_YIELD_S`` on the worker thread so Live's main thread can
+    flush the device-delete notification cascade — the same inter-surface
+    yield ``ensure_analyzers_loaded`` uses (a delete triggers a
+    device-removed cascade Live needs to drain before the next surface).
+    """
+    stripped: list[StrippedAnalyzer] = []
+    # Read the surface lists on the main thread — touching the track/return/
+    # master collections from the worker is unsafe in real Live. Snapshot the
+    # plan before iterating (same discipline as ensure_analyzers_loaded).
+    surface_plan = context.run_on_main(lambda: _plan_surfaces(context.song))
+
+    for plan in surface_plan:
+
+        def _find() -> int | None:
+            devices = _existing_devices_for(context, plan.track_address)
+            return _find_analyzer_index(devices)
+
+        idx = context.run_on_main(_find)
+        if _strip_action(idx) == "absent":
+            # No analyzer on this surface — nothing to remove. Skip the
+            # delete bout AND the yield: only surfaces we actually touch
+            # need Live's cascade to drain.
+            continue
+        context.run_on_main(lambda idx=idx, plan=plan: device_handlers.delete_handler(
+            context,
+            device_index=idx,
+            **plan.track_address,
+        ))
+        stripped.append(StrippedAnalyzer(
+            surface_kind=plan.surface_kind,
+            surface_index=plan.surface_index,
+            surface_name=plan.surface_name,
+            device_index=idx,
+        ))
+        # Yield between surfaces so Live's main thread can flush the
+        # device-removed notification cascade the delete triggered, before
+        # the next surface's delete enters Live's API.
+        time.sleep(_INTER_SURFACE_YIELD_S)
+
+    return StripResult(stripped=tuple(stripped))
 
 
 @dataclass(frozen=True)
@@ -613,6 +700,27 @@ def _reposition_action(analyzer_idx: int | None, chain_len: int) -> str:
     return "reposition"
 
 
+def _strip_action(analyzer_idx: int | None) -> str:
+    """Decide what the strip sweep must do on ONE surface (pure, Live-free,
+    unit-testable — the removal sibling of ``_reposition_action``).
+
+    Given the analyzer's 1-based index in the chain (``None`` if absent),
+    returns one of two actions:
+
+      - ``"absent"`` — no analyzer in the chain → NO-OP (already clean; the
+                       common case once a strip has run, so re-running is
+                       idempotent).
+      - ``"delete"`` — analyzer present → DELETE it (drop it from the chain).
+
+    Trivially a presence check, but kept as a named pure helper so the
+    per-surface decision is testable without a Live fake, exactly as
+    ``_reposition_action`` is for the inverse sweep.
+    """
+    if analyzer_idx is None:
+        return "absent"
+    return "delete"
+
+
 def _track_carries_audio(track: Any) -> bool:
     """Return True if the track produces audio that's worth capturing.
 
@@ -642,6 +750,9 @@ __all__ = [
     "AnalyzerInstance",
     "AnalyzerLayout",
     "DEFAULT_EMIT_PORT",
+    "StripResult",
+    "StrippedAnalyzer",
     "ensure_analyzers_loaded",
+    "strip_analyzers",
     "track_id_for_surface",
 ]

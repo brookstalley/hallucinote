@@ -42,7 +42,9 @@ from typing import Any, Callable
 from ..analyzer import (
     AnalyzerInstance,
     AnalyzerLayout,
+    StrippedAnalyzer,
     ensure_analyzers_loaded,
+    strip_analyzers,
 )
 from ..analyzer.osc import AnalyzerOSC
 from ..analyzer.sidecar import OSCSidecar, shared_sidecar
@@ -163,6 +165,36 @@ def _utc_timestamp() -> str:
     return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
+# The completion-heartbeat filename. The render writes this to <captures_dir>
+# at start ({"state": "running"}), refreshes it inside the capture wait loop,
+# and writes a terminal {"state": "done"} / {"state": "error"} at the end, so
+# an agent can poll a stable file for completion (BUG3). The MCP wrapper times
+# out at 60s with a red error long before a multi-minute render finishes;
+# manifest.json is the only completion signal today, forcing fragile
+# dir-watching. status.json is the robust signal — present-and-running the
+# whole render, terminal at the end whether the render succeeded or raised.
+STATUS_FILENAME = "status.json"
+
+
+def _write_status_json(captures_dir: Path, status: dict[str, Any]) -> None:
+    """Default disk status writer — atomically refresh <captures_dir>/status.json.
+
+    Best-effort observability, never render-affecting: a write failure here
+    must not break a render whose audio is otherwise fine, so the rare
+    filesystem error (a transient lock, a vanished dir) is swallowed. This is
+    NOT an error-hiding broad catch — there is no logic downstream of the
+    write, and the render's real result is the manifest + WAVs; a missed
+    heartbeat write only costs the poller one more poll.
+    """
+    try:
+        (captures_dir / STATUS_FILENAME).write_text(
+            json.dumps(status, indent=2, sort_keys=False),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
 def _wav_filename(inst: AnalyzerInstance) -> str:
     """Filename derived from the analyzer's surface address. Stable
     enough that two consecutive renders on the same song produce the
@@ -237,6 +269,7 @@ def _wait_for_capture(
     no_frame_checkpoint_beat: float,
     poll_interval_s: float = _POLL_INTERVAL_S,
     clock_source: Callable[[], float] | None = None,
+    status_writer: Callable[[dict[str, Any]], None] | None = None,
 ) -> str:
     """Poll transport + frame count; return the capture outcome.
 
@@ -252,6 +285,12 @@ def _wait_for_capture(
     The frame check is gated on transport progress (not wall-clock), so a long
     pre-roll at slow tempo can't false-trip it. ``clock_source`` is a test seam:
     when provided the loop reads the beat from it instead of from Live.
+
+    ``status_writer``, when provided, is called once per poll with the live
+    heartbeat (``state="running"`` + current beat / frame progress) so an agent
+    polling ``status.json`` sees the render advancing (BUG3). It is the test
+    seam too — a test passes a recording stand-in to assert the loop refreshes
+    the heartbeat.
     """
     deadline = time.monotonic() + max_wait_s
 
@@ -264,6 +303,13 @@ def _wait_for_capture(
 
     while time.monotonic() < deadline:
         current = now_fn()
+        if status_writer is not None:
+            status_writer({
+                "state": "running",
+                "current_beat": current,
+                "target_beat": target_beat,
+                "frames_received": frame_count() - frames_before,
+            })
         if current >= target_beat:
             return "crossed"
         if (
@@ -315,6 +361,28 @@ def ensure_loaded_handler(context: LiveContext) -> dict[str, Any]:
     }
 
 
+def strip_handler(context: LiveContext) -> dict[str, Any]:
+    """Bulk REMOVAL — delete the analyzer from every surface. No render.
+
+    The inverse of ``ensure_loaded``: that places an analyzer on every audio
+    track + return + master; this removes it from each. After a render the
+    HallucinoteAnalyzer sits on ~N+R+1 surfaces; this gives a clean device set
+    for a deterministic push or a clean save in one call instead of deleting
+    each analyzer by hand. Idempotent — re-running once every surface is clear
+    is a no-op (each surface short-circuits via the pure ``_strip_action``).
+
+    Returns ``{"stripped_count": <int>, "instances": [...]}`` where each
+    instance mirrors ``ensure_loaded``'s per-surface descriptor (surface_kind /
+    surface_index / surface_name) plus the ``device_index`` the removed
+    analyzer occupied.
+    """
+    result = strip_analyzers(context)
+    return {
+        "stripped_count": result.stripped_count,
+        "instances": [_stripped_to_dict(s) for s in result.stripped],
+    }
+
+
 def render_handler(
     context: LiveContext,
     *,
@@ -331,6 +399,7 @@ def render_handler(
     _clock_source: Callable[[], float] | None = None,
     _engine_check: Callable[[], bool] | None = None,
     _now_iso: Callable[[], str] | None = None,
+    _status_writer: Callable[[Path, dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """End-to-end render: ensure analyzers, deliver paths, play, capture.
 
@@ -396,253 +465,284 @@ def render_handler(
     captures_dir = Path(output_dir)
     captures_dir.mkdir(parents=True, exist_ok=True)
 
-    # Compute window. The default dry-stop is where the arrangement's CONTENT
-    # ends (max clip end_time), NOT `song.last_event_time` — the latter drifts
-    # past the real content as the transport plays into the ring-out region and
-    # compounds across renders, marching the ring-out into already-decayed
-    # dead-air (see _content_end_beats). An empty arrangement (content end == 0
-    # and no last_event_time fallback) is the caller's bug, not ours — surface
-    # it loud below.
-    end_beat = (
-        int(stop_at_beat) if stop_at_beat is not None
-        else int(_content_end_beats(context))
-    )
-    if end_beat <= start_at_beat:
-        raise ValueError(
-            f"render: stop_at_beat ({end_beat}) must be > "
-            f"start_at_beat ({start_at_beat}); the patch refuses to "
-            "arm with a non-positive window. If you're rendering an "
-            "empty arrangement, compose first or pass an explicit "
-            "stop_at_beat."
+    # Completion heartbeat (BUG3). Write status.json=running the instant the
+    # captures dir exists so a polling agent sees the render is alive long
+    # before manifest.json appears (the MCP wrapper red-times-out at 60s; a
+    # multi-minute render needs a robust mid-flight signal). The wait loop
+    # refreshes it with live progress; the terminal done/error write lands in
+    # the try/except below. ``_status_writer`` is the disk writer by default and
+    # the test seam when overridden (it takes the captures_dir so the same
+    # writer serves the running-write, the loop refresh, and the terminal
+    # write).
+    write_status = _status_writer if _status_writer is not None else _write_status_json
+    write_status(captures_dir, {"state": "running"})
+
+    try:
+        # Compute window. The default dry-stop is where the arrangement's CONTENT
+        # ends (max clip end_time), NOT `song.last_event_time` — the latter drifts
+        # past the real content as the transport plays into the ring-out region and
+        # compounds across renders, marching the ring-out into already-decayed
+        # dead-air (see _content_end_beats). An empty arrangement (content end == 0
+        # and no last_event_time fallback) is the caller's bug, not ours — surface
+        # it loud below.
+        end_beat = (
+            int(stop_at_beat) if stop_at_beat is not None
+            else int(_content_end_beats(context))
+        )
+        if end_beat <= start_at_beat:
+            raise ValueError(
+                f"render: stop_at_beat ({end_beat}) must be > "
+                f"start_at_beat ({start_at_beat}); the patch refuses to "
+                "arm with a non-positive window. If you're rendering an "
+                "empty arrangement, compose first or pass an explicit "
+                "stop_at_beat."
+            )
+
+        # Record past the content end so the reverb RING-OUT is captured: the dry
+        # input stops at end_beat (where the last clip ends), then transport runs
+        # into the empty post-content region for ring_out_beats while the returns
+        # decay into silence (AUD-6R2M / AUD-4S8T). The analyzer's sfrecord~ finalizes when
+        # transport crosses the stop-beat it is given, so we hand it this EXTENDED
+        # stop; the manifest still records end_beat as stop_at_beat (the input-stop
+        # boundary the read side measures the decay from) plus ring_out_beats.
+        record_stop_beat = end_beat + max(0, int(round(ring_out_beats)))
+
+        # Per-analyzer setup: deliver path, track_id, beat window via OSC.
+        # Per-instance arrival is independent — each udpreceive owns its own
+        # bound port and routes /path → prepend open → its sfrecord~ on
+        # arrival. No inter-instance pacing required (the prior 50ms yield
+        # was a misdirected timing hypothesis before the [value] global root
+        # cause was identified).
+        osc_factory = _osc_factory if _osc_factory is not None else (
+            lambda port: AnalyzerOSC(port=port)
+        )
+        per_instance_paths: dict[str, Path] = {}
+        for inst in layout.instances:
+            wav_path = (captures_dir / _wav_filename(inst)).resolve()
+            per_instance_paths[inst.track_id] = wav_path
+            client = osc_factory(inst.osc_port)
+            client.set_path(str(wav_path))
+            client.set_track_id(inst.track_id)
+            client.set_start_at_beat(start_at_beat)
+            client.set_stop_at_beat(record_stop_beat)
+
+        # Frame counts before this render — surfaces sidecar health in the
+        # manifest (deltas show whether we got any frames during the
+        # window).
+        frames_before = sidecar.frames_received
+
+        # Arm everyone. Each arm write is its own main-thread bout with a
+        # wall-clock yield between (see _set_arm_on_all). Live's beat
+        # observer (inside the patch) defines the recording boundary, not
+        # the arm-write timing, so per-arm latency is irrelevant — the
+        # iteration cost just buys notification-cascade safety.
+        _set_arm_on_all(context, layout, arm=True)
+
+        # Seek then play. SPLIT into two main-thread bouts with a worker-
+        # thread yield between: setting current_song_time triggers Live's
+        # transport-state notification cascade, and start_playing() called
+        # synchronously from inside that same scope can land while Live is
+        # still inside a listener callback — yielding Live's classic
+        # "Changes cannot be triggered by notifications" error. One bout
+        # per Live touch.
+        #
+        # The seek lands at start_at_beat - pre_roll_beats (clamped at 0)
+        # so the patch's transport-cross detector sees a clean less-than-
+        # then-at-or-above transition. See ``_DEFAULT_PRE_ROLL_BEATS`` for
+        # the empirical motivation — without the pre-roll, seeking AT the
+        # threshold lands the observer's first fire on the boundary and the
+        # detector misses the edge.
+        # Loop OFF for the capture: the ring-out needs transport to run into the
+        # empty post-arrangement region and decay, not loop back and re-trigger.
+        # Saved and restored after the capture stops (its own bout — like the
+        # seek/play split, a transport-property write triggers a notification
+        # cascade that must drain before the next Live touch).
+        original_loop: "bool | None" = None
+        def _loop_off_on_main() -> None:
+            nonlocal original_loop
+            original_loop = bool(context.song.loop)
+            context.song.loop = False
+        context.run_on_main(_loop_off_on_main)
+        time.sleep(_INTER_MUTATION_YIELD_S)
+
+        seek_to = max(0.0, float(start_at_beat) - float(pre_roll_beats))
+        def _seek_on_main() -> None:
+            context.song.current_song_time = seek_to
+        context.run_on_main(_seek_on_main)
+        time.sleep(_INTER_MUTATION_YIELD_S)
+        def _play_on_main() -> None:
+            context.song.start_playing()
+        context.run_on_main(_play_on_main)
+
+        # Engine pre-flight: the transport must advance now that we've pressed play.
+        # A frozen transport means Live's audio engine is off — fail fast (in ~probe_s)
+        # rather than blocking the full max_wait_s window for a capture that can't
+        # happen. A provided ``_clock_source`` is a transport SIMULATION (tests own the
+        # position), so trust it and skip the live probe; ``_engine_check`` is the
+        # direct seam for exercising this branch. See ``_TRANSPORT_PROBE_S``.
+        if _engine_check is not None:
+            transport_advancing = _engine_check()
+        elif _clock_source is None:
+            transport_advancing = _default_engine_preflight(
+                context, probe_s=_TRANSPORT_PROBE_S)
+        else:
+            transport_advancing = True
+        if not transport_advancing:
+            # Clean up Live's transport before raising (mirror the no_frames path).
+            def _stop_engine_off() -> None:
+                context.song.stop_playing()
+            context.run_on_main(_stop_engine_off)
+            time.sleep(_INTER_MUTATION_YIELD_S)
+            _set_arm_on_all(context, layout, arm=False)
+            _restore_loop(context, original_loop)
+            raise ValueError(
+                "render: transport did not advance after play — Live's audio engine is "
+                "OFF (or the transport stalled at the gate). Nothing was captured. This "
+                "usually means the audio output device went away (headphones unplugged / "
+                "a device switch); Live then shows 'the audio engine is off' and refuses "
+                "to play. Fix: re-select an output device (Preferences > Audio) or tick "
+                "Options > 'Audio Engine On', then retry. (Failing fast after "
+                f"~{_TRANSPORT_PROBE_S:.1f}s — the full render window would otherwise "
+                "block for minutes waiting for a transport that never moves.)"
+            )
+
+        # Wait for transport to cross the recording stop + post_roll — or fail fast
+        # if the recorder never starts capturing. The recording stop is the
+        # arrangement end PLUS the ring-out, so transport must run far enough for
+        # the analyzer to finalize the captured tail.
+        target_beat = float(record_stop_beat) + float(post_roll_beats)
+        max_wait_s = max(
+            _MIN_WAIT_S,
+            (target_beat - seek_to) * _MAX_WAIT_MULTIPLIER,
+        )
+        # Only arm the zero-frame check if the checkpoint lands inside the render
+        # window; a sub-checkpoint-length render completes before it would fire.
+        checkpoint = float(start_at_beat) + _NO_FRAME_CHECKPOINT_BEATS
+        no_frame_checkpoint = checkpoint if checkpoint < target_beat else float("inf")
+        outcome = _wait_for_capture(
+            context, target_beat,
+            max_wait_s=max_wait_s,
+            frame_count=lambda: sidecar.frames_received,
+            frames_before=frames_before,
+            no_frame_checkpoint_beat=no_frame_checkpoint,
+            clock_source=_clock_source,
+            # Refresh status.json=running with live progress each poll so a
+            # polling agent sees the render advancing (BUG3). Bind the
+            # captures_dir so the loop's writer only needs the status dict.
+            status_writer=lambda s: write_status(captures_dir, s),
         )
 
-    # Record past the content end so the reverb RING-OUT is captured: the dry
-    # input stops at end_beat (where the last clip ends), then transport runs
-    # into the empty post-content region for ring_out_beats while the returns
-    # decay into silence (AUD-6R2M / AUD-4S8T). The analyzer's sfrecord~ finalizes when
-    # transport crosses the stop-beat it is given, so we hand it this EXTENDED
-    # stop; the manifest still records end_beat as stop_at_beat (the input-stop
-    # boundary the read side measures the decay from) plus ring_out_beats.
-    record_stop_beat = end_beat + max(0, int(round(ring_out_beats)))
-
-    # Per-analyzer setup: deliver path, track_id, beat window via OSC.
-    # Per-instance arrival is independent — each udpreceive owns its own
-    # bound port and routes /path → prepend open → its sfrecord~ on
-    # arrival. No inter-instance pacing required (the prior 50ms yield
-    # was a misdirected timing hypothesis before the [value] global root
-    # cause was identified).
-    osc_factory = _osc_factory if _osc_factory is not None else (
-        lambda port: AnalyzerOSC(port=port)
-    )
-    per_instance_paths: dict[str, Path] = {}
-    for inst in layout.instances:
-        wav_path = (captures_dir / _wav_filename(inst)).resolve()
-        per_instance_paths[inst.track_id] = wav_path
-        client = osc_factory(inst.osc_port)
-        client.set_path(str(wav_path))
-        client.set_track_id(inst.track_id)
-        client.set_start_at_beat(start_at_beat)
-        client.set_stop_at_beat(record_stop_beat)
-
-    # Frame counts before this render — surfaces sidecar health in the
-    # manifest (deltas show whether we got any frames during the
-    # window).
-    frames_before = sidecar.frames_received
-
-    # Arm everyone. Each arm write is its own main-thread bout with a
-    # wall-clock yield between (see _set_arm_on_all). Live's beat
-    # observer (inside the patch) defines the recording boundary, not
-    # the arm-write timing, so per-arm latency is irrelevant — the
-    # iteration cost just buys notification-cascade safety.
-    _set_arm_on_all(context, layout, arm=True)
-
-    # Seek then play. SPLIT into two main-thread bouts with a worker-
-    # thread yield between: setting current_song_time triggers Live's
-    # transport-state notification cascade, and start_playing() called
-    # synchronously from inside that same scope can land while Live is
-    # still inside a listener callback — yielding Live's classic
-    # "Changes cannot be triggered by notifications" error. One bout
-    # per Live touch.
-    #
-    # The seek lands at start_at_beat - pre_roll_beats (clamped at 0)
-    # so the patch's transport-cross detector sees a clean less-than-
-    # then-at-or-above transition. See ``_DEFAULT_PRE_ROLL_BEATS`` for
-    # the empirical motivation — without the pre-roll, seeking AT the
-    # threshold lands the observer's first fire on the boundary and the
-    # detector misses the edge.
-    # Loop OFF for the capture: the ring-out needs transport to run into the
-    # empty post-arrangement region and decay, not loop back and re-trigger.
-    # Saved and restored after the capture stops (its own bout — like the
-    # seek/play split, a transport-property write triggers a notification
-    # cascade that must drain before the next Live touch).
-    original_loop: "bool | None" = None
-    def _loop_off_on_main() -> None:
-        nonlocal original_loop
-        original_loop = bool(context.song.loop)
-        context.song.loop = False
-    context.run_on_main(_loop_off_on_main)
-    time.sleep(_INTER_MUTATION_YIELD_S)
-
-    seek_to = max(0.0, float(start_at_beat) - float(pre_roll_beats))
-    def _seek_on_main() -> None:
-        context.song.current_song_time = seek_to
-    context.run_on_main(_seek_on_main)
-    time.sleep(_INTER_MUTATION_YIELD_S)
-    def _play_on_main() -> None:
-        context.song.start_playing()
-    context.run_on_main(_play_on_main)
-
-    # Engine pre-flight: the transport must advance now that we've pressed play.
-    # A frozen transport means Live's audio engine is off — fail fast (in ~probe_s)
-    # rather than blocking the full max_wait_s window for a capture that can't
-    # happen. A provided ``_clock_source`` is a transport SIMULATION (tests own the
-    # position), so trust it and skip the live probe; ``_engine_check`` is the
-    # direct seam for exercising this branch. See ``_TRANSPORT_PROBE_S``.
-    if _engine_check is not None:
-        transport_advancing = _engine_check()
-    elif _clock_source is None:
-        transport_advancing = _default_engine_preflight(
-            context, probe_s=_TRANSPORT_PROBE_S)
-    else:
-        transport_advancing = True
-    if not transport_advancing:
-        # Clean up Live's transport before raising (mirror the no_frames path).
-        def _stop_engine_off() -> None:
+        # Stop transport, then disarm. Same split as seek+play: stop_playing
+        # triggers its own notification cascade; the arm-writes that follow
+        # must each be their own bout. Always clean up Live's transport, even on
+        # the fail-fast path, before raising.
+        def _stop_on_main() -> None:
             context.song.stop_playing()
-        context.run_on_main(_stop_engine_off)
+        context.run_on_main(_stop_on_main)
         time.sleep(_INTER_MUTATION_YIELD_S)
         _set_arm_on_all(context, layout, arm=False)
         _restore_loop(context, original_loop)
-        raise ValueError(
-            "render: transport did not advance after play — Live's audio engine is "
-            "OFF (or the transport stalled at the gate). Nothing was captured. This "
-            "usually means the audio output device went away (headphones unplugged / "
-            "a device switch); Live then shows 'the audio engine is off' and refuses "
-            "to play. Fix: re-select an output device (Preferences > Audio) or tick "
-            "Options > 'Audio Engine On', then retry. (Failing fast after "
-            f"~{_TRANSPORT_PROBE_S:.1f}s — the full render window would otherwise "
-            "block for minutes waiting for a transport that never moves.)"
-        )
 
-    # Wait for transport to cross the recording stop + post_roll — or fail fast
-    # if the recorder never starts capturing. The recording stop is the
-    # arrangement end PLUS the ring-out, so transport must run far enough for
-    # the analyzer to finalize the captured tail.
-    target_beat = float(record_stop_beat) + float(post_roll_beats)
-    max_wait_s = max(
-        _MIN_WAIT_S,
-        (target_beat - seek_to) * _MAX_WAIT_MULTIPLIER,
-    )
-    # Only arm the zero-frame check if the checkpoint lands inside the render
-    # window; a sub-checkpoint-length render completes before it would fire.
-    checkpoint = float(start_at_beat) + _NO_FRAME_CHECKPOINT_BEATS
-    no_frame_checkpoint = checkpoint if checkpoint < target_beat else float("inf")
-    outcome = _wait_for_capture(
-        context, target_beat,
-        max_wait_s=max_wait_s,
-        frame_count=lambda: sidecar.frames_received,
-        frames_before=frames_before,
-        no_frame_checkpoint_beat=no_frame_checkpoint,
-        clock_source=_clock_source,
-    )
+        if outcome == "no_frames":
+            raise ValueError(
+                f"render: the HallucinoteAnalyzer received 0 frames after "
+                f"transport reached beat {checkpoint:.0f} — the recorder isn't "
+                f"capturing, so no WAVs will be written. This is almost always a "
+                f"stale Control-Surface/server subprocess or an open analyzer M4L "
+                f"device-editor window stealing udpreceive. Fix: (1) quit and "
+                f"reopen Live, (2) close any open HallucinoteAnalyzer editor "
+                f"window, (3) run /mcp to respawn the server, then retry. (Failing "
+                f"fast — the full render window would otherwise block up to "
+                f"{max_wait_s:.0f}s waiting for frames that never arrive.)"
+            )
 
-    # Stop transport, then disarm. Same split as seek+play: stop_playing
-    # triggers its own notification cascade; the arm-writes that follow
-    # must each be their own bout. Always clean up Live's transport, even on
-    # the fail-fast path, before raising.
-    def _stop_on_main() -> None:
-        context.song.stop_playing()
-    context.run_on_main(_stop_on_main)
-    time.sleep(_INTER_MUTATION_YIELD_S)
-    _set_arm_on_all(context, layout, arm=False)
-    _restore_loop(context, original_loop)
+        status = "ok" if outcome == "crossed" else "incomplete"
+        frames_after = sidecar.frames_received
 
-    if outcome == "no_frames":
-        raise ValueError(
-            f"render: the HallucinoteAnalyzer received 0 frames after "
-            f"transport reached beat {checkpoint:.0f} — the recorder isn't "
-            f"capturing, so no WAVs will be written. This is almost always a "
-            f"stale Control-Surface/server subprocess or an open analyzer M4L "
-            f"device-editor window stealing udpreceive. Fix: (1) quit and "
-            f"reopen Live, (2) close any open HallucinoteAnalyzer editor "
-            f"window, (3) run /mcp to respawn the server, then retry. (Failing "
-            f"fast — the full render window would otherwise block up to "
-            f"{max_wait_s:.0f}s waiting for frames that never arrive.)"
-        )
+        # SNP-8R4K Mechanism 2 (R9) — observability roll-up. Any surface whose
+        # analyzer could NOT be made strictly terminal (present + last) at render
+        # start is under-tapped: its WAV misses whatever device sits past the
+        # analyzer. Surface the offending surfaces' track_ids at the top of the
+        # manifest so a reading agent (ableton_analysis) never trusts an
+        # under-measured stem as if it were faithful — never measure-and-lie.
+        analyzer_not_terminal = [
+            inst.track_id for inst in layout.instances if not inst.terminal
+        ]
 
-    status = "ok" if outcome == "crossed" else "incomplete"
-    frames_after = sidecar.frames_received
-
-    # SNP-8R4K Mechanism 2 (R9) — observability roll-up. Any surface whose
-    # analyzer could NOT be made strictly terminal (present + last) at render
-    # start is under-tapped: its WAV misses whatever device sits past the
-    # analyzer. Surface the offending surfaces' track_ids at the top of the
-    # manifest so a reading agent (ableton_analysis) never trusts an
-    # under-measured stem as if it were faithful — never measure-and-lie.
-    analyzer_not_terminal = [
-        inst.track_id for inst in layout.instances if not inst.terminal
-    ]
-
-    now_iso = (_now_iso() if _now_iso is not None else _utc_timestamp())
-    manifest = {
-        "schema_version": "1",
-        "captured_at": now_iso,
-        "song_slug": song_slug,
-        "start_at_beat": start_at_beat,
-        "stop_at_beat": end_beat,
-        # Per-render terminal-tap health (SNP-8R4K). Empty list = every tapped
-        # surface had the analyzer strictly last (the healthy, common case).
-        "analyzer_not_terminal": analyzer_not_terminal,
-        # The ACTUAL ring-out recorded (record_stop_beat is integer-beat — the
-        # analyzer's stop is `/stop_at_beat <int>`), not the requested float.
-        # The read side trusts this to span [stop_at_beat, stop+ring_out] onto
-        # the captured samples; recording a fractional request would skew that
-        # beat↔sample map.
-        "ring_out_beats": record_stop_beat - end_beat,
-        "post_roll_beats": post_roll_beats,
-        "status": status,
-        "frames_received": frames_after - frames_before,
-        "analyzer_signature": "hallucinote-analyzer-v1",
-        # Audit-log seq the captured audio reflects (server-attached at
-        # forward time; None when provenance couldn't be read). The
-        # baseline-diff key for ableton_analysis compare_to (AUD-4W7K).
-        "db_seq": db_seq,
-        "tracks": [
-            _track_manifest_entry(inst, per_instance_paths[inst.track_id])
-            for inst in layout.instances if inst.surface_kind == "track"
-        ],
-        "returns": [
-            _track_manifest_entry(inst, per_instance_paths[inst.track_id])
-            for inst in layout.instances if inst.surface_kind == "return"
-        ],
-        "master": next(
-            (
+        now_iso = (_now_iso() if _now_iso is not None else _utc_timestamp())
+        manifest = {
+            "schema_version": "1",
+            "captured_at": now_iso,
+            "song_slug": song_slug,
+            "start_at_beat": start_at_beat,
+            "stop_at_beat": end_beat,
+            # Per-render terminal-tap health (SNP-8R4K). Empty list = every tapped
+            # surface had the analyzer strictly last (the healthy, common case).
+            "analyzer_not_terminal": analyzer_not_terminal,
+            # The ACTUAL ring-out recorded (record_stop_beat is integer-beat — the
+            # analyzer's stop is `/stop_at_beat <int>`), not the requested float.
+            # The read side trusts this to span [stop_at_beat, stop+ring_out] onto
+            # the captured samples; recording a fractional request would skew that
+            # beat↔sample map.
+            "ring_out_beats": record_stop_beat - end_beat,
+            "post_roll_beats": post_roll_beats,
+            "status": status,
+            "frames_received": frames_after - frames_before,
+            "analyzer_signature": "hallucinote-analyzer-v1",
+            # Audit-log seq the captured audio reflects (server-attached at
+            # forward time; None when provenance couldn't be read). The
+            # baseline-diff key for ableton_analysis compare_to (AUD-4W7K).
+            "db_seq": db_seq,
+            "tracks": [
                 _track_manifest_entry(inst, per_instance_paths[inst.track_id])
-                for inst in layout.instances if inst.surface_kind == "master"
+                for inst in layout.instances if inst.surface_kind == "track"
+            ],
+            "returns": [
+                _track_manifest_entry(inst, per_instance_paths[inst.track_id])
+                for inst in layout.instances if inst.surface_kind == "return"
+            ],
+            "master": next(
+                (
+                    _track_manifest_entry(inst, per_instance_paths[inst.track_id])
+                    for inst in layout.instances if inst.surface_kind == "master"
+                ),
+                None,
             ),
-            None,
-        ),
-    }
+        }
 
-    manifest_path = captures_dir / "manifest.json"
-    manifest_path.write_text(
-        json.dumps(manifest, indent=2, sort_keys=False),
-        encoding="utf-8",
-    )
-
-    if outcome != "crossed":
-        logger.warning(
-            "render: transport did not cross beat %.2f within %.1fs; "
-            "captures may be incomplete (status=incomplete in manifest)",
-            target_beat, max_wait_s,
+        manifest_path = captures_dir / "manifest.json"
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2, sort_keys=False),
+            encoding="utf-8",
         )
 
-    return {
-        "captures_dir": str(captures_dir),
-        "manifest_path": str(manifest_path),
-        "manifest": manifest,
-        "status": status,
-    }
+        # Terminal heartbeat (BUG3): the render finished (the manifest + WAVs are
+        # on disk). ``state="done"`` is the robust completion signal an agent
+        # polls for; ``render_status`` carries "ok"/"incomplete" so the poller
+        # also learns whether the transport reached the stop. A render that
+        # RAISED instead lands in the except below with ``state="error"``.
+        write_status(captures_dir, {
+            "state": "done",
+            "render_status": status,
+            "manifest_path": str(manifest_path),
+        })
+
+        if outcome != "crossed":
+            logger.warning(
+                "render: transport did not cross beat %.2f within %.1fs; "
+                "captures may be incomplete (status=incomplete in manifest)",
+                target_beat, max_wait_s,
+            )
+
+        return {
+            "captures_dir": str(captures_dir),
+            "manifest_path": str(manifest_path),
+            "manifest": manifest,
+            "status": status,
+        }
+    except Exception as e:  # prawduct:allow prawduct/broad-except -- top-level render supervisor: write status.json=error then re-raise so a poller sees a terminal state for a render that raised (BUG3); the exception is NOT swallowed (re-raised, so the dispatcher still surfaces it)
+        write_status(captures_dir, {"state": "error", "error": str(e)})
+        raise
 
 
 # --- internals -------------------------------------------------------
@@ -722,6 +822,19 @@ def _instance_to_dict(inst: AnalyzerInstance) -> dict[str, Any]:
     }
 
 
+def _stripped_to_dict(stripped: StrippedAnalyzer) -> dict[str, Any]:
+    """Per-surface descriptor for the strip response. Mirrors the surface
+    fields ``_instance_to_dict`` emits (so callers can match strip output
+    against an ensure_loaded layout) plus the ``device_index`` the removed
+    analyzer occupied."""
+    return {
+        "surface_kind": stripped.surface_kind,
+        "surface_index": stripped.surface_index,
+        "surface_name": stripped.surface_name,
+        "device_index": stripped.device_index,
+    }
+
+
 def _track_manifest_entry(
     inst: AnalyzerInstance,
     wav_path: Path,
@@ -746,4 +859,4 @@ def _track_manifest_entry(
     }
 
 
-__all__ = ["ensure_loaded_handler", "render_handler", "RenderResult"]
+__all__ = ["ensure_loaded_handler", "strip_handler", "render_handler", "RenderResult"]

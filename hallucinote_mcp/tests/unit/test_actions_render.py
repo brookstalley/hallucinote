@@ -369,6 +369,92 @@ def test_ensure_loaded_idempotent_across_action_dispatches(ctx_two_tracks_one_re
     assert counts == [1, 1, 1, 1]
 
 
+# --- strip action ----------------------------------------------------
+
+
+def test_strip_action_removes_all_analyzers_and_returns_shape(
+    ctx_two_tracks_one_return,
+):
+    """The strip action (inverse of ensure_loaded): first populate every
+    surface, then strip. Returns {stripped_count, instances:[surface descriptor
+    + device_index]} and leaves NO analyzer on any surface."""
+    # Populate every surface so there's something to strip on all of them.
+    dispatch(
+        Request(tool="ableton_render", action="ensure_loaded", params={}),
+        context=ctx_two_tracks_one_return,
+    )
+    resp = dispatch(
+        Request(tool="ableton_render", action="strip", params={}),
+        context=ctx_two_tracks_one_return,
+    )
+    assert resp.ok is True, resp.error
+    # 2 tracks + 1 return + master = 4 analyzers removed.
+    assert resp.result["stripped_count"] == 4
+    assert len(resp.result["instances"]) == 4
+    surfaces = {
+        (i["surface_kind"], i["surface_index"]) for i in resp.result["instances"]
+    }
+    assert surfaces == {
+        ("track", 1), ("track", 2), ("return", 1), ("master", 0),
+    }
+    # Each descriptor mirrors ensure_loaded's surface fields + the removed index.
+    for inst in resp.result["instances"]:
+        assert set(inst) >= {
+            "surface_kind", "surface_index", "surface_name", "device_index",
+        }
+        assert inst["device_index"] >= 1
+    # No analyzer survives on any surface.
+    song = ctx_two_tracks_one_return.song
+    for track in (
+        song.tracks[0], song.tracks[1], song.return_tracks[0], song.master_track,
+    ):
+        assert not any(d.name == "HallucinoteAnalyzer" for d in track.devices)
+
+
+def test_strip_action_fires_delete_per_analyzer_bearing_surface(
+    ctx_two_tracks_one_return,
+):
+    """The strip handler must call delete on EACH surface that carries an
+    analyzer. The shared fixture pre-places the analyzer only on the master, so
+    a bare strip (no ensure_loaded first) removes exactly that one — proving the
+    handler fires a delete only where an analyzer is actually present (skips the
+    bare track/return surfaces)."""
+    song = ctx_two_tracks_one_return.song
+    # Pre-condition: only the master carries the analyzer in this fixture.
+    assert any(d.name == "HallucinoteAnalyzer" for d in song.master_track.devices)
+    assert not any(d.name == "HallucinoteAnalyzer" for d in song.tracks[0].devices)
+
+    resp = dispatch(
+        Request(tool="ableton_render", action="strip", params={}),
+        context=ctx_two_tracks_one_return,
+    )
+    assert resp.ok is True, resp.error
+    # Only the master had an analyzer → exactly one delete fired.
+    assert resp.result["stripped_count"] == 1
+    assert resp.result["instances"][0]["surface_kind"] == "master"
+    assert song.master_track.devices == []
+
+
+def test_strip_action_idempotent_across_dispatches(ctx_two_tracks_one_return):
+    """Strip twice — the second pass is a no-op (every surface already clear)."""
+    dispatch(
+        Request(tool="ableton_render", action="ensure_loaded", params={}),
+        context=ctx_two_tracks_one_return,
+    )
+    first = dispatch(
+        Request(tool="ableton_render", action="strip", params={}),
+        context=ctx_two_tracks_one_return,
+    )
+    second = dispatch(
+        Request(tool="ableton_render", action="strip", params={}),
+        context=ctx_two_tracks_one_return,
+    )
+    assert first.ok and second.ok
+    assert first.result["stripped_count"] == 4
+    assert second.result["stripped_count"] == 0
+    assert second.result["instances"] == []
+
+
 # --- render handler (direct, with seams) -----------------------------
 
 
@@ -411,6 +497,92 @@ def test_render_writes_manifest_and_returns_status_ok(
     for entry in manifest["tracks"] + manifest["returns"]:
         assert entry["filename"].endswith(".wav")
         assert Path(entry["absolute_path"]).is_absolute()
+
+
+# --- BUG3: status.json completion heartbeat --------------------------
+
+
+def test_render_writes_status_json_done_after_success(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, osc_sink, stub_sidecar,
+):
+    """BUG3: a completed render leaves status.json={state: done} next to the
+    WAVs — the robust completion signal an agent polls (vs racing manifest.json
+    via fragile dir-watching). It also carries the render_status + manifest_path
+    so the poller knows the outcome and where the manifest is."""
+    output_dir = tmp_path / "captures"
+    result = render_handlers.render_handler(
+        ctx_two_tracks_one_return,
+        output_dir=str(output_dir),
+        song_slug="test-song",
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 999.0,
+    )
+    status_path = output_dir / "status.json"
+    assert status_path.exists()
+    status = json.loads(status_path.read_text())
+    assert status["state"] == "done"
+    assert status["render_status"] == result["status"] == "ok"
+    assert status["manifest_path"] == result["manifest_path"]
+
+
+def test_render_writes_status_json_error_on_failure(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, osc_sink, stub_sidecar,
+):
+    """BUG3: a render that RAISES (here an inverted beat window) still leaves a
+    terminal status.json={state: error} so a poller sees completion rather than
+    hanging on a manifest that never appears. The exception still propagates."""
+    output_dir = tmp_path / "captures"
+    with pytest.raises(ValueError, match="must be >"):
+        render_handlers.render_handler(
+            ctx_two_tracks_one_return,
+            output_dir=str(output_dir),
+            song_slug="test-song",
+            start_at_beat=64,
+            stop_at_beat=32,  # inverted → raises
+            _osc_factory=osc_factory,
+            _sidecar=stub_sidecar,
+            _clock_source=lambda: 999.0,
+        )
+    status_path = output_dir / "status.json"
+    assert status_path.exists()
+    status = json.loads(status_path.read_text())
+    assert status["state"] == "error"
+    assert "must be >" in status["error"]
+
+
+def test_render_status_writer_refreshes_running_during_wait(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, osc_sink, stub_sidecar,
+):
+    """The wait loop refreshes the heartbeat each poll (state=running + live
+    progress) via the _status_writer seam — so a long render shows progress, not
+    a stale 'running' frozen at start. The first write is the pre-wait running
+    heartbeat; the wait loop emits at least one more running frame."""
+    writes: list[tuple[str, dict]] = []
+
+    def _recording_writer(captures_dir, status):
+        writes.append((str(captures_dir), dict(status)))
+
+    render_handlers.render_handler(
+        ctx_two_tracks_one_return,
+        output_dir=str(tmp_path / "captures"),
+        song_slug="test-song",
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 999.0,
+        _status_writer=_recording_writer,
+    )
+    states = [s["state"] for _d, s in writes]
+    # The pre-wait running write, at least one in-loop running refresh, then done.
+    assert states[0] == "running"
+    assert states[-1] == "done"
+    running_writes = [s for _d, s in writes if s["state"] == "running"]
+    # More than just the initial one → the loop refreshed it.
+    assert len(running_writes) >= 2
+    # The loop refresh carries live progress fields.
+    loop_frame = running_writes[-1]
+    assert "current_beat" in loop_frame and "target_beat" in loop_frame
+    assert "frames_received" in loop_frame
 
 
 def test_render_captures_ring_out_past_arrangement_end(

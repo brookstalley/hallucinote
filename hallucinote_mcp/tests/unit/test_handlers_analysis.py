@@ -152,6 +152,53 @@ def test_analyze_handler_produces_mixreport_json(synthetic_song: Path):
     assert report["master"]["track_id"] == "master"
 
 
+def test_analyze_handler_writes_status_json_done(synthetic_song: Path):
+    """BUG3: a completed analyze leaves status.json={state: done} in the
+    analysis dir — the robust completion signal an agent polls (vs racing the
+    timestamped report JSON). It carries report_path so the poller can read the
+    report directly."""
+    captures_dir = _write_captures(
+        synthetic_song / "captures" / "20260528T140000Z",
+        song_slug="test-song",
+    )
+    result = analysis_handlers.analyze_handler(
+        None, song_slug="test-song", captures_dir=str(captures_dir),
+    )
+    status_path = synthetic_song / "analysis" / "status.json"
+    assert status_path.exists()
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    assert status["state"] == "done"
+    assert status["report_path"] == result["report_path"]
+
+
+def test_analyze_handler_writes_status_json_error_on_failure(
+    synthetic_song: Path, monkeypatch,
+):
+    """BUG3: an analyze whose analyze_mix raises still leaves a terminal
+    status.json={state: error} so a poller sees completion rather than hanging
+    on a report that never appears. The exception still propagates. The
+    running heartbeat must exist BEFORE analyze_mix runs, so a forced failure
+    there leaves the error status (not a missing file)."""
+    captures_dir = _write_captures(
+        synthetic_song / "captures" / "20260528T140000Z",
+        song_slug="test-song",
+    )
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("analyze blew up")
+
+    monkeypatch.setattr(analysis_handlers, "analyze_mix", _boom)
+    with pytest.raises(RuntimeError, match="analyze blew up"):
+        analysis_handlers.analyze_handler(
+            None, song_slug="test-song", captures_dir=str(captures_dir),
+        )
+    status_path = synthetic_song / "analysis" / "status.json"
+    assert status_path.exists()
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    assert status["state"] == "error"
+    assert "analyze blew up" in status["error"]
+
+
 def test_analyze_handler_surfaces_analysis_code_version(synthetic_song: Path):
     """The response carries the loaded analysis-pipeline signature + a stale
     flag so a stale MCP subprocess is obvious without reading the report."""

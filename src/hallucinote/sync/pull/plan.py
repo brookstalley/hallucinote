@@ -89,6 +89,11 @@ def apply_pull_results(
         for r in results:
             key = r.get("key", "")
             if not r.get("ok", False):
+                # PULL-DRIFT-DETECT: a failed probe is UNREADABLE state, not
+                # "no change". Count it so the caller can tell "couldn't read"
+                # from "in sync" (the dangerous-twin: version-skewed probes that
+                # silently degrade to mutations: 0).
+                out.unreadable += 1
                 out.warnings.append(
                     f"probe {key!r} failed: {r.get('error', 'no error message')}"
                 )
@@ -111,6 +116,8 @@ def apply_pull_results(
 
             result_payload = r.get("result")
             if result_payload is None:
+                # ok=True but no payload is also state we couldn't read.
+                out.unreadable += 1
                 out.warnings.append(f"probe {key!r} ok=True but missing 'result'")
                 continue
 

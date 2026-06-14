@@ -956,7 +956,18 @@ def _apply_device_parameters_for_device(
     db_rows = Q.get_device_parameters(conn, device_id)
     db_by_name = {r["name"]: r for r in db_rows}
 
-    for name, entry in live_by_name.items():
+    # Drift-detection scope (PULL-DRIFT-DETECT): diff only the params the DB
+    # already tracks — the author's DIALED set. A Live param NOT in the DB is a
+    # preset DEFAULT the DB deliberately doesn't store; capturing it would
+    # pollute the dialed set with the device's full (thousands-strong) parameter
+    # surface, and the pull can't tell a user-dial from a preset default without
+    # the device's defaults (which it doesn't have). Capturing a brand-new
+    # dialed param is the `/song-snapshot` full-recapture's job, not this
+    # lightweight drift bake. So Live-only params are SKIPPED, never added.
+    for name, existing in db_by_name.items():
+        entry = live_by_name.get(name)
+        if entry is None:
+            continue  # absent from Live -> handled by the removal loop below
         raw_value = entry.get("value")
         if not isinstance(raw_value, (int, float)) or isinstance(raw_value, bool):
             out.warnings.append(
@@ -973,31 +984,35 @@ def _apply_device_parameters_for_device(
         value_normalized = _normalize_param_value(
             float(raw_value), min_val, max_val, is_enum,
         )
-        # E1: capture value_items for enum params so the compose-time
-        # envelope helper can resolve enum-name breakpoints without the
-        # build.py author hand-listing the cardinality. detail='full'
-        # always supplies value_items for enum params (handlers/device.py
-        # set is_enum from value_items presence).
+        # E1: capture value_items for enum params so the compose-time envelope
+        # helper can resolve enum-name breakpoints without the build.py author
+        # hand-listing the cardinality.
         value_items: list[str] | None = None
         if is_enum:
             raw_items = entry.get("value_items")
             if isinstance(raw_items, (list, tuple)):
                 value_items = [str(item) for item in raw_items]
+        new_items_json = json.dumps(value_items) if value_items else None
+        items_same = existing["value_items_json"] == new_items_json
 
-        existing = db_by_name.get(name)
-        if existing is not None:
-            display_same = existing["value_display"] == value_display
-            norm_same = _normalized_values_match(
+        # Round-trip-aware comparison (PULL-DRIFT-DETECT): compare by the param's
+        # AUTHORITATIVE stored form, so an equal value never reads as a change.
+        #   * continuous (DB value_normalized set) -> compare normalized within
+        #     _FLOAT_EPS; the display string is a cosmetic render whose
+        #     formatting Live may vary, so it is NOT part of the equality test.
+        #   * display-only (DB value_normalized is NULL — no continuous form was
+        #     stored) -> compare the display string (its only stored form). The
+        #     old `display_same AND norm_same` forced a mismatch here because the
+        #     pull always computes a non-NULL normalized from Live's raw value.
+        if existing["value_normalized"] is not None:
+            value_same = _normalized_values_match(
                 value_normalized, existing["value_normalized"],
             )
-            existing_items_json = existing["value_items_json"]
-            new_items_json = (
-                json.dumps(value_items) if value_items else None
-            )
-            items_same = existing_items_json == new_items_json
-            if display_same and norm_same and items_same:
-                out.no_ops += 1
-                continue
+        else:
+            value_same = existing["value_display"] == value_display
+        if value_same and items_same:
+            out.no_ops += 1
+            continue
         M.set_device_parameter(
             conn,
             device_id=device_id,
@@ -1008,10 +1023,9 @@ def _apply_device_parameters_for_device(
             actor=actor, request_id=request_id, reason=reason,
         )
         out.mutations += 1
-        verb = "updated" if existing is not None else "added"
         out.details.append(
             f"device {device['kind']!r} param {name!r}: "
-            f"{verb} -> {value_display!r}"
+            f"updated -> {value_display!r}"
         )
 
     for db_row in db_rows:

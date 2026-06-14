@@ -44,15 +44,18 @@ python -m hallucinote.sync.pull_cli execute device-parameters <session_id> \
   --song <slug> --dry-run
 ```
 
-The output is a JSON object on stdout. Pluck three things from it for the human display:
+The output is a JSON object on stdout. Pluck four things from it for the human display:
 
 - `dry_run: true` — confirms preview-only.
-- `applied.mutations` — count of DB rows that would change.
+- `applied.mutations` — count of DB rows that would change. With PULL-DRIFT-DETECT this counts only DRIFT in the *tracked* (dialed) param set — preset defaults are no longer reported (the pull diffs only params the DB already holds; capturing brand-new dialed params is `/song-snapshot`'s job).
+- `applied.unreadable` — count of probes the pull COULD NOT read.
 - `applied.details` — per-row before/after surface (look for entries like `{"action": "update", "table": "device_parameters", "before": ..., "after": ...}`).
 
-If `applied.mutations == 0`: tell the user the DB already matches Live; nothing to bake. Stop.
+**FIRST check the exit code + `applied.unreadable`.** If the command exited NON-ZERO (e.g. exit 2) or `applied.unreadable > 0`, the pull could NOT determine drift — almost always a Live ↔ Remote-Script version mismatch (relaunch dev-mode + `/ableton-mcp-install`, then retry). Tell the user the bake could not run and STOP. Do NOT treat this as "0 changes / in sync" — that's the exact false-clear this guard exists to prevent.
 
-If `applied.mutations >= 1`: continue to Step 2.
+If exit 0 and `applied.unreadable == 0`:
+- `applied.mutations == 0`: tell the user the DB already matches Live; nothing to bake. Stop.
+- `applied.mutations >= 1`: continue to Step 2.
 
 ## Step 2 — Show the diff and confirm
 

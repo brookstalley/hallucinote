@@ -1,6 +1,6 @@
 # DEEP-RACK-ADDR — Holistic Design
 
-**Status:** DESIGN — awaiting build approval.
+**Status:** BUILDING (approved 2026-06-13) — Chunk 1 shipped; Chunks 2-4 in progress.
 **Source:** `incoming-bugs/2026-06-14-nested-nested-rack-params-unreachable-read-set-automate-snapshot.md` (Severity H).
 **Scope decision (user):** all four asks — depth-N read/set/enumerate, snapshot durability, nested automation, voices accessor.
 **Addressing decision (user):** positional `device_path` + name read-back.

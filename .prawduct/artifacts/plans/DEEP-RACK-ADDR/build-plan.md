@@ -81,7 +81,19 @@ Resolve before building: worktree-isolate this branch, or confirm the other sess
 song/Live-side. (Design + planning are collision-free; building is not.)
 
 ## Status
-- [ ] Chunk 1: canonical device_path primitive + shared resolver
+- [x] Chunk 1: canonical device_path primitive + shared resolver
 - [ ] Chunk 2: snapshot durability — capture + push depth-N
 - [ ] Chunk 3: nested-rack device_parameter automation
 - [ ] Chunk 4: voices accessor
+
+**Context (Chunk 1 done):** `_resolve_device_path` (handlers/device.py) is the
+one canonical descent — `device_index` + `[{chain_index, device_position}…]` to
+any depth, positional (never `is`), teaching error per failed step + depth cap
+16. `set_parameter` / `get_parameters` / `load` (with `chain_index`) gained
+optional `device_path`; `get_device_chains` now recurses the whole tree and
+reports `is_rack` + `device_path` per device. `set_parameter_in_rack` /
+`load_in_rack` RETIRED (zero production callers; tests migrated, docs +
+conventions/gaps guides updated). MCP suite green (1226). Re-vendor required
+(actions/ + handlers/ flip the fingerprint) — bundle with Chunk 3 at release.
+Next: Chunk 2 (capture + push depth-N) — push must emit `set_parameter` with
+`device_path`, NOT the retired in_rack triple (design §8 risk).

@@ -100,10 +100,14 @@ Works across native devices + third-party VST/AU/CLAP via capability-probing
 See `ableton_device(action='help')`.
 
 ### Nested racks
-One level deep is supported via `ableton_device(action='get_device_chains' /
-'load_in_rack' / 'set_parameter_in_rack')` for `InstrumentGroupDevice`,
-`AudioEffectGroupDevice`, `DrumGroupDevice`. Recursive nesting beyond
-`(chain_index, nested_device_position)` is not supported.
+Supported to ARBITRARY depth via the canonical `device_path` address — a list
+of `{chain_index, device_position}` steps (both 1-based) from the top-level
+`device_index` device. `ableton_device(action='get_device_chains')` recurses
+the whole tree and reports a `device_path` (+ `is_rack`) for every nested
+device; pass that path straight to `set_parameter` / `get_parameters` (read or
+write the nested param) or to `load` (with `chain_index`, to load a device into
+a nested chain). Applies to `InstrumentGroupDevice`, `AudioEffectGroupDevice`,
+`DrumGroupDevice`.
 
 ## Hallucinote-side compute (not MCP)
 

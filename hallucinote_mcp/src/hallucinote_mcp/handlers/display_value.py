@@ -284,7 +284,8 @@ def resolve_continuous_write(
     string->value inverse on ``DeviceParameter``, so the numeric inversion lives
     in :func:`solve_raw_for_display`.
 
-    Shared by the device ``set_parameter`` / ``set_parameter_in_rack`` handlers
+    Shared by the device ``set_parameter`` handler (at any rack depth via
+    ``device_path``)
     AND the track ``set_property`` mixer-volume path (``mixer_device.volume`` is a
     ``DeviceParameter`` like any other), so the continuous-write contract —
     exactly-one, range-check, display inversion, and the enum refusal — is

@@ -33,8 +33,8 @@ caller's job.
 
 Out-of-range writes raise a teaching error instead of silently clamping.
 
-**Display units (dB, ratios, ms).** Continuous `set_parameter` (and
-`set_parameter_in_rack`), plus `ableton_track(action='set_property',
+**Display units (dB, ratios, ms).** Continuous `set_parameter` (at any rack
+depth via `device_path`), plus `ableton_track(action='set_property',
 property='volume')`, accept `value_display` instead of `value` — a display
 string like `'-18 dB'`, `'3:1'`, `'20 ms'`, `'80 Hz'`. The handler inverts
 Live's display curve to the raw value for you, so you can hit a musical target

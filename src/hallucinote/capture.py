@@ -801,7 +801,7 @@ def migrate_snapshot(snapshot: dict[str, Any]) -> tuple[dict[str, Any], dict[str
     stripped so the rewrite is never silent::
 
         {
-          "stripped": [{"parent": <name>, "kind": "track"|"return",
+          "stripped": [{"parent": <name>, "kind": "track"|"return"|"master",
                         "removed": <count>}, ...],   # only parents with removals
           "total_removed": <int>,
           "version_before": <old version int or None>,

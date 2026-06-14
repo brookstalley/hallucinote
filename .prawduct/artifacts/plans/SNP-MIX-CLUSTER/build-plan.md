@@ -13,7 +13,7 @@ the `create_device_chain` mutator, mix-review SKILL).
 
 ---
 
-## Chunk A — AUD-3T6L: relative reverb RT60 tolerance (S, bugfix)
+### Chunk A: AUD-3T6L relative reverb RT60 tolerance (S, bugfix)
 
 - **Problem:** `REVERB_TOLERANCE_S = 0.15` is a fixed ABSOLUTE band. Live's Reverb RT60 is
   a nonlinear function of Decay Time + Room Size + diffusion, so realized RT60 legitimately
@@ -44,7 +44,7 @@ the `create_device_chain` mutator, mix-review SKILL).
      intent" (producer's note), aligning with the relative band.
   4. Full suite green.
 
-## Chunk B — SNP-4K7M: master-track device snapshot authorship (M, feature)
+### Chunk B: SNP-4K7M master-track device snapshot authorship (M, feature)
 
 - **Problem:** push side ships (DEV-6M2K loads master devices), but the snapshot models
   `song.master = {volume, panning}` with no `devices` array; `replay_capture` creates no
@@ -72,21 +72,21 @@ the `create_device_chain` mutator, mix-review SKILL).
      master devices; migrate strips a polluted master; full round-trip (declare → replay →
      master chain present). Live round-trip is operator-gated → user said treat as passed.
 
-## Chunk C — MIX-3S7P close-out (doc-only, no build)
+### Chunk C: MIX-3S7P close-out
 
 Already shipped (chunks 1+3 `[x]`; chunk 2 render-verification Live-gated → treated passed
 per user). Action: flip backlog `status=shipped` → Archive; no code.
 
 ## Status
-- [x] Chunk A — AUD-3T6L relative reverb tolerance (reverb.py `reverb_tolerance_s`
+- [x] Chunk A: AUD-3T6L relative reverb tolerance (reverb.py `reverb_tolerance_s`
       helper + floor/rel constants; `measure_return_rt60(tolerance_s=None)` defaults
       relative; tests renamed FLOOR + 2 regression tests; mix-review producer's-note
       framing). All audio tests green.
-- [x] Chunk B — SNP-4K7M master device snapshot authorship (replay master chain via
+- [x] Chunk B: SNP-4K7M master device snapshot authorship (replay master chain via
       `create_device_chain(parent_track_id=master_id)`; compile_snapshot + migrate +
       snapshot_needs_migration join the master to the analyzer strip; capture_plan
       master probe; snapshot-schema.md doc; 8 tests + updated probe-set contract test).
-- [ ] Chunk C — MIX-3S7P close-out (backlog, doc-only)
+- [ ] Chunk C: MIX-3S7P close-out
 
 ## Boundary investigation (Critic G5)
 - **ReverbVerification contract** (`within_tolerance`/`tolerance_s`) — consumers:

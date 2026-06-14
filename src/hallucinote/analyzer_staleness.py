@@ -91,8 +91,10 @@ def detect_stale_analyzer_surfaces(
     ``("track", 4)``, ``("return", 1)``, ``("master", None)``) with each value
     a chain's ordered device entries. This is the same shape
     ``probe_and_link`` receives as ``live_devices_by_parent`` (tracks +
-    returns today; the master path joins when SNP-4K7M lands master-device
-    capture — design Touchpoints / Critic NOTE).
+    returns today). SNP-4K7M shipped the *snapshot* master device path
+    (capture/replay/migrate); extending THIS push-preflight stale-set detector
+    to the master needs ``probe_and_link`` to also probe the master chain into
+    ``live_devices_by_parent`` — a separate, still-open piece.
 
     Returns a sorted list of human-readable surface labels that are stale,
     each naming the offending trailing devices, e.g.::

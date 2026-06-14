@@ -4,6 +4,47 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-14 — DEEP-RACK-ADDR (depth-N device addressing) + PULL-DRIFT-DETECT (usable drift detection)
+
+<!-- prawduct: type=feature | chunks=DEEP-RACK-ADDR-1,DEEP-RACK-ADDR-2,DEEP-RACK-ADDR-3,DEEP-RACK-ADDR-4,PULL-DRIFT-DETECT | scope=mcp-actions,mcp-handlers,capture,sync-push,sync-pull,db-queries,skills,docs -->
+
+**Re-vendor: REQUIRED** (DEEP-RACK-ADDR chunks 1 & 3 touch `actions/`+`handlers/`, flipping the
+MCP fingerprint — re-run `/ableton-mcp-install` + restart Live). PULL-DRIFT-DETECT and the
+capture/push/queries halves are engine-only (no flip, effective immediately). Live-side checks
+(read/set/automate at depth, durability round-trip, the "Voices" parameter-vs-property probe) are
+queued in `.prawduct/operator-verification.md` (DEEP-RACK-ADDR block).
+
+- **DEEP-RACK-ADDR — rack devices nested 2+ levels deep are now fully addressable** (resolves the
+  Severity-H bug: deep params were unreadable, unsettable, un-automatable, and — the killer —
+  NON-DURABLE, since capture stored them and push silently dropped them, so a `build.py` rebuild
+  reverted any deep fix). One canonical `device_path` (`[{chain_index, device_position}…]`, 1-based,
+  any depth) replaces six reinvented depth ceilings.
+  - **Chunk 1 (wire):** `_resolve_device_path` — the single positional descent every device surface
+    speaks; `set_parameter`/`get_parameters`/`load` (with `chain_index`) gained optional
+    `device_path`; `get_device_chains` recurses the whole tree reporting `is_rack` + `device_path`
+    per device. `set_parameter_in_rack`/`load_in_rack` RETIRED (zero production callers; folded in).
+  - **Chunk 2 (durability — the unblocker):** capture replay recurses to arbitrary depth (the
+    `_depth>0` raise deleted); `Q.get_device_nesting_path` (pure-DB positional path); push emits
+    `set_parameter` + `device_path` for nested dialed params (NOT loaded — they arrive with the rack
+    preset). Pinned by a capture→DB→push depth-2 round-trip (the swell guitar case).
+  - **Chunk 3 (automation):** nested `device_parameter` envelopes route to PERFORM (the gesture
+    surface rides nested params via `device_path`; the session-clip route can't — Live 12.4
+    `Clip.create_automation_envelope` is top-level only, an honest teaching skip).
+  - **Chunk 4 (Voices, ask #4):** the "Voices IS a DeviceParameter" branch is covered by Chunks 1-2;
+    the "is a LOM property" branch is probe-gated (operator-verification), not built speculatively.
+- **PULL-DRIFT-DETECT — `pull device-parameters` is a usable drift detector again** (resolved the
+  Severity-M bug: on an in-sync song the dry-run reported ~2530 false "mutations" — and a real apply
+  WROTE 2452 preset defaults into the DB — while a version-skewed probe silently reported 0).
+  - **Scope to the tracked set:** the apply diffs only DB-tracked (dialed) params; Live-only params
+    are preset defaults the pull can't distinguish from dials, so they're SKIPPED, not added
+    (capturing new dialed params is `/song-snapshot`'s full-recapture job).
+  - **Round-trip-aware comparison:** compare by the param's authoritative form (normalized within
+    `_FLOAT_EPS` for continuous, display string for display-only) — kills the false "updated" on
+    unchanged values.
+  - **Fail loud on unreadable probes:** `ApplyResult.unreadable` counts failed/empty probes;
+    `pull_cli execute`/`apply` exit non-zero when >0; `/snapshot-bake-recent-changes` +
+    `/ableton-pull` check it first so "couldn't read" never reads as "in sync".
+
 ## 2026-06-14 — swell-dogfood incoming-bug cluster (params authoring, analyzer-aware push, render/analyze poll)
 
 <!-- prawduct: type=feature | chunks=BUG4-params-dialed,BUG1A-analyzer-match,BUG3-timeout-doc,BUG1B-strip,BUG3-status-json | scope=capture,sync-push,snapshot,render,analysis,skills | status=merged -->

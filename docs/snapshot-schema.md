@@ -1,6 +1,6 @@
 # Snapshot schema — `captured_session.json`
 
-The snapshot is a JSON document describing the mix layout of an Ableton Live set. `hallucinote.capture.replay_capture` reads it and creates DB rows for tracks, returns, sends, master, devices, dialed parameters, and one level of nested rack chains.
+The snapshot is a JSON document describing the mix layout of an Ableton Live set. `hallucinote.capture.replay_capture` reads it and creates DB rows for tracks, returns, sends, master, devices, dialed parameters, and nested rack chains to any depth (DEEP-RACK-ADDR).
 
 **Two roles for snapshots:**
 1. **Captured** — `python -m hallucinote.tools.capture_cli` walks a running Live set via MCP and writes the result. Use this once you've staged the target Live shape.
@@ -143,7 +143,7 @@ The snapshot is a JSON document describing the mix layout of an Ableton Live set
   - **Trap — a bare numeric `value` with no `normalized`.** `{"value": 0.71}` (a JSON number) is stored as the display string `"0.71"` and pushed via the display path, mis-dialing a continuous param. To author a true 0..1 NORMALIZED value, set `normalized` explicitly: `{"value": "", "normalized": 0.71}`. `replay_capture` warns when it sees a bare numeric value with no `normalized`.
   - **Enum params (Filter Type = "Lowpass")** carry the display label as `value`, `"normalized": null` (no continuous form), and `"value_items": [...]` (Live's `value_items` order — the list index IS the numeric value Live stores), captured at pull time via `detail='full'` so `M.create_enum_envelope` can resolve enum-name breakpoints at compose time without build.py authors hand-listing cardinality.
 - `params_total` (optional) — informational; count of all params on the device.
-- `chains` (optional) — nested chains for rack devices (`Drum Rack`, `Instrument Rack`, `Audio Effect Rack` — browser display names). One level only — nested-nested racks raise on encounter (filed in backlog).
+- `chains` (optional) — nested chains for rack devices (`Drum Rack`, `Instrument Rack`, `Audio Effect Rack` — browser display names). Recurses to ANY depth (DEEP-RACK-ADDR): a nested device may itself be a rack carrying its own `chains`. Replay walks the whole tree; push materializes nested dialed params via the canonical `device_path`.
 
 ### Multi-device chains (sound is composition)
 

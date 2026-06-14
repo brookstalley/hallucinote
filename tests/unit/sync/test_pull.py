@@ -2418,6 +2418,22 @@ def test_apply_pull_results_failed_probe_counts_unreadable(conn, song, session):
     assert any("failed" in w for w in out.warnings)
 
 
+def test_apply_pull_results_ok_but_missing_result_counts_unreadable(
+    conn, song, session,
+):
+    """PULL-DRIFT-DETECT: ok=True with NO result payload is also unreadable
+    state — counted, not silently passed (twin of the ok=False branch)."""
+    out = pull.apply_pull_results(
+        conn,
+        [{"key": "device_parameters:whatever", "ok": True,
+          "tool": "ableton_device"}],
+        song_id=song, session_id=session,
+    )
+    assert out.unreadable == 1
+    assert out.mutations == 0
+    assert any("missing 'result'" in w for w in out.warnings)
+
+
 def test_apply_device_parameters_removes_db_params_absent_from_live(
     conn, song, session,
 ):

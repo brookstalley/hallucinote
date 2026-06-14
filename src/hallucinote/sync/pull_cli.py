@@ -225,6 +225,15 @@ def _cmd_apply(args: argparse.Namespace) -> int:
     M.close_request(conn, request_id=request_id, outcome="ok", actor="sync")
     json.dump(out.to_dict(), sys.stdout, indent=2)
     sys.stdout.write("\n")
+    # PULL-DRIFT-DETECT: same fail-loud guard as `execute` — unreadable probes
+    # mean drift could not be determined, so don't let exit 0 read as "in sync".
+    if out.unreadable > 0:
+        sys.stderr.write(
+            f"pull_cli apply: {out.unreadable} probe result(s) UNREADABLE "
+            "(ok=False or missing payload) — pulled state is incomplete; do NOT "
+            "treat this as fully in sync.\n"
+        )
+        return 2
     return 0
 
 

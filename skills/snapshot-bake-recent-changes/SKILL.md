@@ -49,7 +49,7 @@ The output is a JSON object on stdout. Pluck four things from it for the human d
 - `dry_run: true` — confirms preview-only.
 - `applied.mutations` — count of DB rows that would change. With PULL-DRIFT-DETECT this counts only DRIFT in the *tracked* (dialed) param set — preset defaults are no longer reported (the pull diffs only params the DB already holds; capturing brand-new dialed params is `/song-snapshot`'s job).
 - `applied.unreadable` — count of probes the pull COULD NOT read.
-- `applied.details` — per-row before/after surface (look for entries like `{"action": "update", "table": "device_parameters", "before": ..., "after": ...}`).
+- `applied.details` — a **list of human-readable strings**, one per changed param (e.g. `"device 'Compressor' param 'Threshold': updated -> '-6.0 dB'"`). Not structured dicts.
 
 **FIRST check the exit code + `applied.unreadable`.** If the command exited NON-ZERO (e.g. exit 2) or `applied.unreadable > 0`, the pull could NOT determine drift — almost always a Live ↔ Remote-Script version mismatch (relaunch dev-mode + `/ableton-mcp-install`, then retry). Tell the user the bake could not run and STOP. Do NOT treat this as "0 changes / in sync" — that's the exact false-clear this guard exists to prevent.
 
@@ -71,7 +71,7 @@ Branch:
 
 - **yes** → Step 3.
 - **no** → confirm "no changes written; Live's tweaks stay in memory only" and stop.
-- **show full diff** → emit the raw `applied.details` JSON and re-ask.
+- **show full diff** → emit the raw `applied.details` lines (the list of strings) and re-ask.
 
 ## Step 3 — Real apply (no `--dry-run`)
 

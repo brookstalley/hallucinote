@@ -670,6 +670,42 @@ def test_probe_and_link_binds_track_device(conn, song, session):
     assert result.matched_devices[0]["class_name"] == "Drum Rack"
 
 
+def test_probe_and_link_ignores_analyzer_at_authored_slot(conn, song, session):
+    """BUG1A: a render leaves a HallucinoteAnalyzer in the chain; a newly authored
+    DB device whose position lands on the analyzer's live slot must NOT be compared
+    against the analyzer — which produced a false 'device drift' note + skipped link,
+    forcing manual analyzer deletion before a re-push. The analyzer is excluded
+    before position-matching, so the already-present authored device still links and
+    the new one is left for push to load, with no false drift."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Bass", kind="midi")
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    eq_id = M.create_device(
+        conn, chain_id=chain_id, position=1, kind="EQ Eight", display_name="EQ Eight",
+    )
+    comp_id = M.create_device(
+        conn, chain_id=chain_id, position=2, kind="Compressor", display_name="Compressor",
+    )
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[{"track_index": 2, "name": "Bass", "kind": "midi"}],
+        live_returns=[],
+        live_devices_by_parent={
+            ("track", 2): [
+                {"device_index": 1, "name": "EQ Eight",
+                 "class_name": "Eq8", "class_display_name": "EQ Eight"},
+                # the analyzer sits where the newly-authored Compressor (DB pos 2) wants to be
+                {"device_index": 2, "name": "HallucinoteAnalyzer",
+                 "class_name": "MxDeviceAudioEffect",
+                 "class_display_name": "Max Audio Effect"},
+            ],
+        },
+    )
+    linked = {m["db_id"] for m in result.matched_devices}
+    assert linked == {eq_id}          # EQ links; Compressor left for push to load
+    assert comp_id not in linked
+    assert not [n for n in result.notes if "drift" in n.lower()]
+
+
 def test_probe_and_link_matches_via_class_display_name(conn, song, session):
     """Arc 4 / D4: DB stores `kind` as the post-rename display name
     (`EQ Eight`, `Compressor`, `Drum Rack`). The MCP probe surfaces BOTH

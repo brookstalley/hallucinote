@@ -219,6 +219,29 @@ def _replay_devices(
                 if isinstance(raw_items, (list, tuple))
                 else None
             )
+            # BUG4 (params_dialed authoring trap): a bare numeric `value` with no
+            # `normalized` is stored as the DISPLAY string str(value) and pushed via
+            # the display path (push devices.py branch 2 → the live setter's curve
+            # inversion), which mis-dials a continuous param. The two correct author
+            # forms are an explicit `normalized` (for a 0..1 value) or a display
+            # STRING like "180 Hz" (the live setter inverts the log curve, DPP-7H2K).
+            value = p["value"]
+            if (
+                normalized is None
+                and isinstance(value, (int, float))
+                and not isinstance(value, bool)
+            ):
+                warnings.warn(
+                    f"snapshot param {name!r} on device {d.get('name')!r}: a bare "
+                    f"numeric value {value!r} with no 'normalized' key is stored as "
+                    f"the display string {str(value)!r} and pushed as a display value "
+                    "(likely mis-dialing a continuous param). To author a NORMALIZED "
+                    f'0..1 value add "normalized": {value}; to author a display value '
+                    'use a string, e.g. "value": "180 Hz" (the push inverts it via the '
+                    "live setter). See docs/snapshot-schema.md 'params_dialed'.",
+                    UserWarning,
+                    stacklevel=2,
+                )
             M.set_device_parameter(
                 conn,
                 device_id=device_id,

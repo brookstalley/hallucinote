@@ -15,6 +15,7 @@ from dataclasses import dataclass, field, asdict
 from typing import Any
 
 from hallucinote.return_naming import strip_return_slot_prefix
+from hallucinote.analyzer_identity import is_analyzer_device
 from hallucinote.analyzer_staleness import detect_stale_analyzer_surfaces
 from hallucinote.db import mutations as M, queries as Q
 
@@ -659,8 +660,17 @@ def _match_devices_for_linked_parents(
                 continue
             db_devices = list(get_devices_fn(conn, parent["db_id"]))
             # Devices are 1-based by position in both spaces.
+            # BUG1A: the HallucinoteAnalyzer is measurement infrastructure (a
+            # render leaves it trailing the chain), not authored content — exclude
+            # it before position-matching. Otherwise an authored DB device whose
+            # position lands on the analyzer's slot compared against it, produced a
+            # false "device drift" note, and skipped its link (so a param re-push
+            # over an analyzer-laden set forced manual analyzer-deletion first). The
+            # render keeps the analyzer terminal, so dropping it preserves the
+            # authored devices' real `device_index` for the link.
+            authored_live = [d for d in live_devices if not is_analyzer_device(d)]
             live_by_pos = {
-                d["device_index"]: d for d in live_devices
+                d["device_index"]: d for d in authored_live
             }
             for db_dev in db_devices:
                 pos = db_dev["position"]

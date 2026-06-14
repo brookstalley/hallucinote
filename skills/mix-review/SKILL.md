@@ -304,6 +304,20 @@ when the song declares sections. (If `ableton_analysis` returns a report with no
 `masking`/`attribution` keys, the MCP server is running stale code — tell the
 user to run `/mcp` to respawn it.)
 
+**Expect a "timed out after 60 s" error on both — it is NOT a failure.** A render
+or analyze routinely runs several minutes, but the Claude Code MCP tool-call
+*wrapper* caps a single call at 60 s and returns a red timeout WHILE THE JOB
+CONTINUES server-side (the framework already sets an unbounded socket read; the
+60 s cap is the wrapper, a layer the server can't widen). Do not retry or report a
+failure — poll the filesystem for the completion artifact:
+- **render** — watch `<captures_dir>` for `manifest.json` (written as the render's
+  final act).
+- **analyze** — watch `songs/<slug>/analysis/` for a JSON newer than the newest one
+  from before the call (the MixReport).
+- once the server carries the status-write change, a sibling `status.json`
+  (`{state: running|done|error}`) makes the wait robust without a dir scan.
+Fire the call, ignore the 60 s error, poll for the artifact, then proceed.
+
 **Verifying a mix change (A/B):** after applying a fix, PUSH the change to
 Live before re-rendering (fixes land DB-first through mutators; `db_seq`
 asserts, not verifies, that Live matched the DB — a mutate→render without the

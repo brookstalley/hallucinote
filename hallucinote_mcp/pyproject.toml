@@ -39,5 +39,10 @@ hallucinote_mcp = [
 ]
 
 [tool.pytest.ini_options]
+# Front-insert the local checkout's source (this sub-pkg + the engine at ../src)
+# so a targeted `pytest hallucinote_mcp/tests/...` — whose nearest configfile is
+# THIS file — imports the worktree tree, not the editable-install `.pth` target
+# (the PRIMARY checkout). Mirrors the root pyproject's pythonpath; see its note.
+pythonpath = ["src", "../src"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]

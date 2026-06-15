@@ -73,6 +73,14 @@ where = ["src"]
 [tool.pytest.ini_options]
 # Songs now live in their own repo (hallucinote-songs) with their own pytest
 # config — the framework tests the ENGINE + MCP server only.
+# Front-insert THIS checkout's source dirs (relative to rootdir) so a bare
+# `pytest` always tests the local tree — critical in a git worktree, where the
+# editable-install `.pth` files resolve `hallucinote`/`hallucinote_mcp` to the
+# PRIMARY checkout. Without this, a worktree `pytest` (and every prawduct hook
+# that shells `python -m pytest`) silently imports primary-dir code and reports
+# green against the wrong tree. In the primary dir these are the same paths the
+# `.pth` already targets, so it's a no-op there.
+pythonpath = ["src", "hallucinote_mcp/src"]
 testpaths = ["tests", "hallucinote_mcp/tests"]
 python_files = ["test_*.py"]
 markers = [

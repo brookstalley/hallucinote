@@ -20,10 +20,12 @@ but no ``str_to_value``), so the optional ``value_display`` write path
 handler validates the raw value against [param.min, param.max] and writes via
 ``value`` (or resolves ``value_display`` first).
 
-Nested rack chains are deliberately out of scope for M-4 — the parent_chain
-walk stops at the top-level chain. Recursing into instrument-rack or
-drum-rack chains is tracked in the backlog (capture-side device chain
-extension).
+Nested rack chains are addressed to arbitrary depth: `_resolve_node` (NODE-ADDR;
+generalizing `_resolve_device_path`, DEEP-RACK-ADDR) descends a `NodeAddr`'s
+`path` steps and resolves any of the five terminals — track/return/master/device
+and, new, `chain` (a Chain/DrumChain destination). `validate_node_addr` is the
+single source of the wire's `node`-object grammar. The capture-side acquisition
+of nested params is tracked as NODE-ADDR Chunk B.
 """
 from __future__ import annotations
 

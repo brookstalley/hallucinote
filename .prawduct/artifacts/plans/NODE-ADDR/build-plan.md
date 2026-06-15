@@ -102,6 +102,15 @@ rebuild + push → it survives **without saving the .als.**
 **Re-vendor:** none if engine/sync only (the `get_parameters` default_value change is in A).
 **Verifiable signal:** the swell operator check passes; the acquisition round-trip test is green.
 
+**Approach (understand phase 2026-06-15 — code map; ready to build):**
+- **Reference impl already exists:** `pull_cli execute` (`src/hallucinote/sync/pull_cli.py:294 _cmd_execute`) = plan→probe→apply in one pass via `_execute_plan_via_mcp(plan, send_fn)` (lines 254–291), `send_fn` lazily resolved from `hallucinote_mcp.client.send` (`_resolve_send_fn`, ~250). `client.send(request: Request) -> Response(ok, result|error)` (`hallucinote_mcp/src/hallucinote_mcp/client.py:64`). Mirror this for `capture execute`.
+- **`capture execute`:** new subcommand in `src/hallucinote/tools/capture_cli.py` (siblings: plan/diff/merge/migrate). Walks the node tree in code — probe session/returns/tracks, then per rack device recurse `get_device_chains` depth-N (replaces `capture_plan`'s one-level W7-B walk at `capture.py:631–689`), probing `get_parameters(node=…)` at every depth. Assemble via `compile_snapshot` (`capture.py:692`). KEEP the diff/confirm gate (`capture_cli diff` + skill's `diff_snapshots`/`format_diff_summary`).
+- **Pull depth-N:** `plan_pull_nested_rack_chains` (`src/hallucinote/sync/pull/devices.py:163`) is FLAT + one-level → migrate to `NodeAddr` + recurse depth-N. `plan_pull_device_parameters` (`devices.py:227`) is ALREADY node-migrated (emits `node={parent,device_index}`) → scales once nested node-addresses are emitted.
+- **`default_value` filter (OQ5):** in capture/apply, store only `value != default_value`; when `get_parameters` OMITS `default_value` (the raises case — guarded omit at `handlers/device.py:310–335`), ALWAYS-capture. Uniform top-level + nested.
+- **Mutator:** `M.set_device_parameter` (`src/hallucinote/db/mutations/devices.py:478`) — upsert + emits an event. **TOMBSTONE CHECK** (learnings): if a `sync`/pull actor emits a device-param event on a build-owned row, register that kind in `build.py` `_LATEST_ACTOR_EVENTS` or the row is CASCADE-dropped on the next build sweep.
+- **§4 docstrings to delete:** `src/hallucinote/capture.py:626` + `src/hallucinote/tools/capture_cli.py:5` ("Python can't call MCP tools" — false; `client.send` bridge is live).
+- **Tests:** `tests/unit/capture/` (song-agnostic synthetic). Reuse the `send_fn` fake shape from `tests/unit/sync/test_pull.py` `_fake_pull_send_factory` (keys by tool/action/node). Acquisition round-trip (depth-2 nested tree → capture execute → DB → push → re-emitted); symmetry contract; `default_value` filter incl. raises-fallback.
+
 ## Chunk C — Per-drum DrumChain authorship (choke + out_note + chain mixer)  (`chain` terminal)  — first feature, origin case
 **RE-SCOPED 2026-06-15 (probe):** per-chain *audio output* routing does NOT exist on a DrumChain
 (`available_output_routing_types` raises) — that ambition is `UNSUPPORTED_IN_LIVE`, not a build item.

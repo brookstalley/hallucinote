@@ -60,9 +60,18 @@ by it; gates the PR until verified.** Critic note d: `device_path` was a shipped
 (DEEP-RACK-ADDR), so the migration must verify **every** migrated op against a real set via
 the new `node` address — not just the new path.
 
-**Bridge step first:** re-vendor from this worktree (re-vendor required — touches
-`actions/`+`handlers/`), point the dev-server at it, reopen Live, `/mcp` reconnect, confirm
-handshake-match. Then:
+**Bridge step first** (re-vendor required — touches `actions/`+`handlers/`; the fingerprint
+flips from develop's `e10695d17559` to Chunk A's **`0.1.0+b23b59ab5e34`**). Chunk A is merged
+to `develop`, so re-vendor from the primary repo (not a worktree) — this keeps the running
+server and the vendored Remote Script the *same* copy, so `/ableton-mcp-install`'s INS-3W8P
+match-against-running-server guard stays intact:
+1. In the primary repo (`~/source/hallucinote`, on `develop`): `git pull` → develop now carries Chunk A.
+2. `/mcp` reconnect (respawn the server on the pulled code) → `ableton://server/info` should now
+   report version `0.1.0+b23b59ab5e34`.
+3. (Live closed) `/ableton-mcp-install` → it reads server/info, re-vendors the Remote Script
+   with `--require-server-version 0.1.0+b23b59ab5e34` (guard confirms source==server).
+4. Reopen Live (it caches Control Surface modules at startup), `/mcp` reconnect, confirm the
+   handshake reports `b23b59ab5e34`. Then:
 
 1. **Nested set_parameter via `node`** — set a depth-2 nested device param through
    `ableton_device(action='set_parameter', node={parent, terminal:'device', device_index, path:[…]})`

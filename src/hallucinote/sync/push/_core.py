@@ -97,6 +97,49 @@ class PushPlan:
 # ---------------------------------------------------------------------------
 
 
+def build_node_addr(
+    parent_kv: dict[str, Any],
+    *,
+    device_index: int | None = None,
+    device_path: list[dict[str, int]] | None = None,
+    terminal: str = "device",
+    chain_index: int | None = None,
+) -> dict[str, Any]:
+    """Build the NODE-ADDR ``node`` wire object (the single addressing unit)
+    from the planner's flat ``parent_kv`` (``{"track_index": n}`` /
+    ``{"return_index": n}`` / ``{"master": True}``) + the device address.
+
+    The DB→wire translation point for the migrated actions (set_parameter /
+    load / set_sidechain / write_envelope+perform device_parameter). Songs'
+    build.py never sees this — they author the DB; push translates DB→wire here.
+    The shape matches ``handlers.device.validate_node_addr``: ``terminal``
+    defaults to ``"device"`` (and is then omitted from the wire); a
+    track/return/master terminal is a node-itself address (no device_index); a
+    ``chain`` terminal carries device_index + chain_index.
+    """
+    if parent_kv.get("master"):
+        parent: dict[str, Any] = {"kind": "master"}
+    elif "track_index" in parent_kv:
+        parent = {"kind": "track", "index": parent_kv["track_index"]}
+    elif "return_index" in parent_kv:
+        parent = {"kind": "return", "index": parent_kv["return_index"]}
+    else:
+        raise ValueError(
+            f"build_node_addr: parent_kv must carry master / track_index / "
+            f"return_index, got {parent_kv!r}"
+        )
+    node: dict[str, Any] = {"parent": parent}
+    if terminal != "device":
+        node["terminal"] = terminal
+    if terminal in ("device", "chain"):
+        node["device_index"] = device_index
+        if device_path:
+            node["path"] = device_path
+    if terminal == "chain":
+        node["chain_index"] = chain_index
+    return node
+
+
 def _notes_for_mcp(notes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """DB notes carry tags + extra fields; MCP wants the bare quartet."""
     return [

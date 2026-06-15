@@ -68,11 +68,16 @@ def state_dir(tmp_path):
     return d
 
 
+def _is_master_node(node) -> bool:
+    """True when a NODE-ADDR `node` dict addresses the master strip."""
+    return bool(node) and (node.get("parent") or {}).get("kind") == "master"
+
+
 def _master_loads(plan) -> list:
     """Every load ToolCall addressed at the master strip."""
     return [
         c for c in plan.calls
-        if c.args.get("action") == "load" and c.args.get("master") is True
+        if c.args.get("action") == "load" and _is_master_node(c.args.get("node"))
     ]
 
 
@@ -99,7 +104,9 @@ def test_unlinked_master_chain_emits_master_load(
     assert len(loads) == 1, [c.args for c in plan.calls]
     args = loads[0].args
     assert args["kind"] == "Limiter"
-    assert args.get("master") is True
+    # NODE-ADDR: a top-level master load is a node-itself address —
+    # parent kind "master", terminal "master", no flat track/return fields.
+    assert args["node"] == {"parent": {"kind": "master"}, "terminal": "master"}
     assert "track_index" not in args and "return_index" not in args
     # The load is keyed like every other device load so apply_push_results
     # links it on the same path.
@@ -179,7 +186,9 @@ def test_linked_master_device_emits_set_parameter_no_load(
     set_calls = [c for c in plan.calls if c.args.get("action") == "set_parameter"]
     assert len(set_calls) == 1
     args = set_calls[0].args
-    assert args.get("master") is True
+    # NODE-ADDR: the master set_parameter is addressed via a master-parent
+    # device node, not the retired flat `master=True`.
+    assert _is_master_node(args.get("node"))
     assert "track_index" not in args and "return_index" not in args
     assert args["parameter_name"] == "Ceiling"
 
@@ -223,7 +232,7 @@ def _master_load_dispatches(log) -> list:
         c for c in log
         if c["tool"] == "ableton_device"
         and c["action"] == "load"
-        and c["params"].get("master") is True
+        and _is_master_node(c["params"].get("node"))
     ]
 
 
@@ -288,7 +297,7 @@ def test_execute_unlinked_master_load_then_param_converges(
         c for c in send.log
         if c["tool"] == "ableton_device"
         and c["action"] == "set_parameter"
-        and c["params"].get("master") is True
+        and _is_master_node(c["params"].get("node"))
         and c["params"].get("parameter_name") == "Ceiling"
     ]
     assert len(master_param_calls) == 1, send.log
@@ -330,7 +339,7 @@ def test_execute_linked_master_param_writes_through(
         c for c in send.log
         if c["tool"] == "ableton_device"
         and c["action"] == "set_parameter"
-        and c["params"].get("master") is True
+        and _is_master_node(c["params"].get("node"))
     ]
     assert len(master_param_calls) == 1, send.log
 

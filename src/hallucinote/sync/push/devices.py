@@ -7,7 +7,7 @@ import sqlite3
 from hallucinote.analyzer_identity import is_analyzer_device
 from hallucinote.db import queries as Q
 
-from ._core import PushPlan, ToolCall
+from ._core import PushPlan, ToolCall, build_node_addr
 
 
 def plan_push_devices(
@@ -199,9 +199,12 @@ def _emit_device_calls(
         # If the DB chain order needs to be enforced, push devices in the
         # order they appear in the chain (position-asc) and Live's
         # tail-append will match.
+        # Top-level load: the destination is the parent's main device chain, a
+        # node-itself address (terminal == parent_kind). Push never loads NESTED
+        # devices — they arrive with the rack preset (DEEP-RACK-ADDR §3c).
         load_args = {
-            **parent_kv,
             "action": "load",
+            "node": build_node_addr(parent_kv, terminal=parent_kind),
             "kind": device["kind"],
         }
         # Arc 7-tail / E3 (W13-A v1.0): the captured browser path is a
@@ -347,13 +350,12 @@ def _emit_param_writes(
             continue
         args: dict[str, object] = {
             "action": "set_parameter",
-            **parent_kv,
-            "device_index": device_index,
+            "node": build_node_addr(
+                parent_kv, device_index=device_index, device_path=device_path,
+            ),
             "parameter_name": p["name"],
             **value_kv,
         }
-        if device_path:
-            args["device_path"] = device_path
         plan.add(ToolCall(
             tool="ableton_device",
             args=args,

@@ -228,17 +228,19 @@ def test_resolve_unknown_terminal():
 def test_facade_device_end_to_end():
     dev = _Dev("Synth")
     ctx = _Ctx(_Song(tracks=[_Track("T1"), _Track("T2", devices=[dev])]))
-    node, kind, idx, terminal = resolve_node_addr(
+    node, kind, idx, spec = resolve_node_addr(
         ctx, {"parent": {"kind": "track", "index": 2}, "device_index": 1})
-    assert node is dev and kind == "track" and idx == 2 and terminal == "device"
+    assert node is dev and kind == "track" and idx == 2
+    assert spec["terminal"] == "device" and spec["device_index"] == 1
 
 
 def test_facade_track_as_value():
     src = _Track("Kit")
     ctx = _Ctx(_Song(tracks=[src, _Track("Bass")]))
-    node, kind, idx, terminal = resolve_node_addr(
+    node, kind, idx, spec = resolve_node_addr(
         ctx, {"parent": {"kind": "track", "index": 1}, "terminal": "track"})
-    assert node is src and kind == "track" and idx == 1 and terminal == "track"
+    assert node is src and kind == "track" and idx == 1
+    assert spec["terminal"] == "track"
 
 
 def test_facade_return_and_master_terminals():
@@ -257,10 +259,10 @@ def test_facade_chain_end_to_end():
     chain = _Chain("Lead", devices=[_Dev("x")])
     rack = _Rack("R", chains=[chain])
     ctx = _Ctx(_Song(tracks=[_Track("T1", devices=[rack])]))
-    node, kind, idx, terminal = resolve_node_addr(
+    node, kind, idx, spec = resolve_node_addr(
         ctx, {"parent": {"kind": "track", "index": 1}, "device_index": 1,
               "terminal": "chain", "chain_index": 1})
-    assert node is chain and terminal == "chain"
+    assert node is chain and spec["terminal"] == "chain"
 
 
 def test_facade_parent_index_out_of_range():
@@ -308,7 +310,8 @@ def test_get_parameters_default_value_present_omitted_and_raises():
     quant = _P("Snap", value=1.0, raises=True)   # Live raises on default_value
     absent = _P("Mystery", value=0.0)            # no default_value attribute
     ctx = _Ctx(_Song(tracks=[_Track("T1", devices=[_DevP([cont, quant, absent])])]))
-    out = get_parameters_handler(ctx, device_index=1, track_index=1)
+    out = get_parameters_handler(
+        ctx, node={"parent": {"kind": "track", "index": 1}, "device_index": 1})
     by_name = {p["name"]: p for p in out["parameters"]}
     assert by_name["Cutoff"]["default_value"] == 0.5
     # raised / absent → OMITTED (the signal for capture to always-capture these)

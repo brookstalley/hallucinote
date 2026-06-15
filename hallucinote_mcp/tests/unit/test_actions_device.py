@@ -354,14 +354,14 @@ def test_get_parameters_summary_vs_full(loaded_actions):
     resp_s = dispatch(
         Request(
             tool="ableton_device", action="get_parameters",
-            params={"track_index": 1, "device_index": 1, "detail": "summary"},
+            params={"node": {"parent": {"kind": "track", "index": 1}, "device_index": 1}, "detail": "summary"},
         ),
         context=ctx,
     )
     resp_f = dispatch(
         Request(
             tool="ableton_device", action="get_parameters",
-            params={"track_index": 1, "device_index": 1, "detail": "full"},
+            params={"node": {"parent": {"kind": "track", "index": 1}, "device_index": 1}, "detail": "full"},
         ),
         context=ctx,
     )
@@ -386,7 +386,7 @@ def test_load_appends_to_chain(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"track_index": 1, "kind": "Compressor2"},
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Compressor2"},
         ),
         context=ctx,
     )
@@ -412,7 +412,7 @@ def test_load_response_carries_loaded_class_name(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"track_index": 1, "kind": "Compressor"},
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Compressor"},
         ),
         context=ctx,
     )
@@ -432,7 +432,7 @@ def test_load_on_return(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"return_index": 1, "kind": "Reverb"},
+            params={"node": {"parent": {"kind": "return", "index": 1}, "terminal": "return"}, "kind": "Reverb"},
         ),
         context=ctx,
     )
@@ -451,7 +451,7 @@ def test_load_appends_to_existing_chain(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"track_index": 1, "kind": "EQ8"},
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "EQ8"},
         ),
         context=ctx,
     )
@@ -475,7 +475,7 @@ def test_load_with_preset_uri_finds_by_uri_in_nested_folder(loaded_actions):
         Request(
             tool="ableton_device", action="load",
             params={
-                "track_index": 1, "kind": "DrumGroupDevice",
+                "node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "DrumGroupDevice",
                 "preset_uri": "query:Drums#FileId_5418",
             },
         ),
@@ -500,7 +500,7 @@ def test_load_preset_uri_searches_plugins_root(loaded_actions):
         Request(
             tool="ableton_device", action="load",
             params={
-                "track_index": 1, "kind": "Serum",
+                "node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Serum",
                 "preset_uri": "query:VST3#serum.vst3",
             },
         ),
@@ -522,7 +522,7 @@ def test_load_kind_matches_browser_display_directly(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"track_index": 1, "kind": "Compressor"},
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Compressor"},
         ),
         context=ctx,
     )
@@ -546,7 +546,7 @@ def test_load_internal_class_name_fails_under_new_convention(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"track_index": 1, "kind": "Compressor2"},
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Compressor2"},
         ),
         context=ctx,
     )
@@ -566,7 +566,7 @@ def test_load_rack_display_name_resolves_in_canonical_root(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"track_index": 1, "kind": "Drum Rack"},
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Drum Rack"},
         ),
         context=ctx,
     )
@@ -584,7 +584,7 @@ def test_load_passes_through_unmapped_class_name(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"track_index": 1, "kind": "Reverb"},
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Reverb"},
         ),
         context=ctx,
     )
@@ -602,7 +602,7 @@ def test_load_unknown_kind_error_names_the_kind(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"track_index": 1, "kind": "WhateverNew"},
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "WhateverNew"},
         ),
         context=ctx,
     )
@@ -616,7 +616,7 @@ def test_load_unknown_kind_errors_with_browser_hint(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"track_index": 1, "kind": "NoSuchDevice"},
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "NoSuchDevice"},
         ),
         context=ctx,
     )
@@ -634,7 +634,7 @@ def test_load_unknown_preset_uri_errors(loaded_actions):
         Request(
             tool="ableton_device", action="load",
             params={
-                "track_index": 1, "kind": "Compressor2",
+                "node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Compressor2",
                 "preset_uri": "query:Nonexistent",
             },
         ),
@@ -657,7 +657,7 @@ def test_load_skips_non_loadable_folder_with_same_name(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"track_index": 1, "kind": "Compressor2"},
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Compressor2"},
         ),
         context=ctx,
     )
@@ -684,7 +684,7 @@ def test_load_preset_uri_must_match_loadable_node(loaded_actions):
         Request(
             tool="ableton_device", action="load",
             params={
-                "track_index": 1, "kind": "Synth",
+                "node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Synth",
                 "preset_uri": "query:vendor",
             },
         ),
@@ -705,7 +705,7 @@ def test_load_position_param_is_unknown(loaded_actions):
         Request(
             tool="ableton_device", action="load",
             params={
-                "track_index": 1, "kind": "Compressor2", "position": 1,
+                "node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Compressor2", "position": 1,
             },
         ),
         context=ctx,
@@ -722,7 +722,7 @@ def test_load_without_application_errors(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"track_index": 1, "kind": "Compressor2"},
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Compressor2"},
         ),
         context=ctx,
     )
@@ -744,7 +744,7 @@ def test_load_no_chain_growth_is_runtime_error(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"track_index": 1, "kind": "Operator"},
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Operator"},
         ),
         context=ctx,
     )
@@ -771,7 +771,7 @@ def test_load_no_chain_growth_surfaces_existing_chain_class_names(loaded_actions
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"track_index": 1, "kind": "Operator"},
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Operator"},
         ),
         context=ctx,
     )
@@ -798,7 +798,7 @@ def test_load_no_chain_growth_on_return_keeps_instrument_hint(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"return_index": 1, "kind": "Operator"},
+            params={"node": {"parent": {"kind": "return", "index": 1}, "terminal": "return"}, "kind": "Operator"},
         ),
         context=ctx,
     )
@@ -817,7 +817,7 @@ def test_load_resolved_path_present_on_kind_only(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"track_index": 1, "kind": "Operator"},
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Operator"},
         ),
         context=ctx,
     )
@@ -841,7 +841,7 @@ def test_load_resolved_path_present_on_preset_uri(loaded_actions):
         Request(
             tool="ableton_device", action="load",
             params={
-                "track_index": 1, "kind": "Massive X",
+                "node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Massive X",
                 "preset_uri": "query:Plugin#FileId_9999",
             },
         ),
@@ -883,7 +883,7 @@ def test_load_browser_path_fallback_resolves_when_preset_uri_misses(loaded_actio
         Request(
             tool="ableton_device", action="load",
             params={
-                "track_index": 1, "kind": "Massive X",
+                "node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Massive X",
                 # The snapshot's URI is stale on this machine.
                 "preset_uri": "query:Plugin#STALE_FILE_ID",
                 "browser_path": [
@@ -913,7 +913,7 @@ def test_load_browser_path_fallback_refuses_on_zero_match(loaded_actions):
         Request(
             tool="ableton_device", action="load",
             params={
-                "track_index": 1, "kind": "Massive X",
+                "node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Massive X",
                 "preset_uri": "query:Plugin#STALE",
                 "browser_path": [
                     "plugins", "Native Instruments", "Massive X", "FatBass",
@@ -958,7 +958,7 @@ def test_load_browser_path_fallback_refuses_on_multi_match(loaded_actions):
         Request(
             tool="ableton_device", action="load",
             params={
-                "track_index": 1, "kind": "Massive X",
+                "node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Massive X",
                 "preset_uri": "query:Plugin#STALE",
                 "browser_path": [
                     "plugins", "Native Instruments", "Massive X", "FatBass",
@@ -982,7 +982,7 @@ def test_load_browser_path_requires_preset_uri(loaded_actions):
         Request(
             tool="ableton_device", action="load",
             params={
-                "track_index": 1, "kind": "Operator",
+                "node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Operator",
                 "browser_path": ["instruments", "Operator", "Bass", "Sub Bass"],
             },
         ),
@@ -1003,7 +1003,7 @@ def test_load_browser_path_rejects_bad_shape(loaded_actions):
         Request(
             tool="ableton_device", action="load",
             params={
-                "track_index": 1, "kind": "Operator",
+                "node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Operator",
                 "preset_uri": "query:Operator",
                 "browser_path": [],
             },
@@ -1029,7 +1029,7 @@ def test_load_browser_path_fallback_not_used_when_preset_uri_resolves(loaded_act
         Request(
             tool="ableton_device", action="load",
             params={
-                "track_index": 1, "kind": "Operator",
+                "node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Operator",
                 "preset_uri": "query:Operator#FileId_HERE",
                 # The browser_path is provided but the URI already resolves,
                 # so the response path should reflect the URI walk's result.
@@ -1074,7 +1074,7 @@ def test_load_replace_in_place_succeeds(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"track_index": 1, "kind": "Drum Rack"},
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Drum Rack"},
         ),
         context=ctx,
     )
@@ -1103,7 +1103,7 @@ def test_load_no_chain_growth_same_class_still_fails(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"track_index": 1, "kind": "Compressor"},
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Compressor"},
         ),
         context=ctx,
     )
@@ -1135,7 +1135,7 @@ def test_load_multi_position_change_raises(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"track_index": 1, "kind": "ClassZ"},
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "ClassZ"},
         ),
         context=ctx,
     )
@@ -1164,7 +1164,7 @@ def test_load_chain_shrink_raises(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"track_index": 1, "kind": "ClassZ"},
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "ClassZ"},
         ),
         context=ctx,
     )
@@ -1185,7 +1185,7 @@ def test_load_no_chain_growth_on_empty_track_shows_empty_chain(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"track_index": 1, "kind": "Operator"},
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Operator"},
         ),
         context=ctx,
     )
@@ -1209,7 +1209,7 @@ def test_load_analog_kind_matches_browser_directly_post_d4(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"track_index": 1, "kind": "Analog"},
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Analog"},
         ),
         context=ctx,
     )
@@ -1237,7 +1237,7 @@ def test_load_drum_rack_ignores_cross_category_namesake(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"track_index": 1, "kind": "Drum Rack"},
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Drum Rack"},
         ),
         context=ctx,
     )
@@ -1265,7 +1265,7 @@ def test_load_drum_rack_kind_restricted_to_drums_post_d4(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"track_index": 1, "kind": "Drum Rack"},
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Drum Rack"},
         ),
         context=ctx,
     )
@@ -1285,7 +1285,7 @@ def test_load_audio_effect_rack_restricted_to_audio_effects_root(loaded_actions)
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"track_index": 1, "kind": "Audio Effect Rack"},
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Audio Effect Rack"},
         ),
         context=ctx,
     )
@@ -1304,7 +1304,7 @@ def test_load_instrument_rack_finds_canonical_under_instruments(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"track_index": 1, "kind": "Instrument Rack"},
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Instrument Rack"},
         ),
         context=ctx,
     )
@@ -1322,7 +1322,7 @@ def test_load_instrument_rack_missing_node_teaches_workaround(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"track_index": 1, "kind": "Instrument Rack"},
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Instrument Rack"},
         ),
         context=ctx,
     )
@@ -1342,7 +1342,7 @@ def _load_with_query(ctx, **query_fields):
         Request(
             tool="ableton_device", action="load",
             params={
-                "track_index": 1, "kind": "DrumGroupDevice",
+                "node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "DrumGroupDevice",
                 "preset_query": query_fields,
             },
         ),
@@ -1508,7 +1508,7 @@ def test_load_rack_kind_class_mismatch_emits_warning(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"track_index": 1, "kind": "Drum Rack"},
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Drum Rack"},
         ),
         context=ctx,
     )
@@ -1530,7 +1530,7 @@ def test_load_rack_kind_class_match_has_no_warning(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"track_index": 1, "kind": "Drum Rack"},
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Drum Rack"},
         ),
         context=ctx,
     )
@@ -1557,7 +1557,7 @@ def test_load_non_rack_kind_class_difference_does_not_warn(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"track_index": 1, "kind": "Sub Bass"},
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Sub Bass"},
         ),
         context=ctx,
     )
@@ -1571,7 +1571,7 @@ def test_load_preset_query_and_preset_uri_mutually_exclusive(loaded_actions):
         Request(
             tool="ableton_device", action="load",
             params={
-                "track_index": 1, "kind": "DrumGroupDevice",
+                "node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "DrumGroupDevice",
                 "preset_uri": "query:Drums#1",
                 "preset_query": {"root": "drums", "pattern": "x"},
             },
@@ -1695,7 +1695,7 @@ def test_set_parameter_continuous_writes_value(loaded_actions):
         Request(
             tool="ableton_device", action="set_parameter",
             params={
-                "track_index": 1, "device_index": 1,
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1},
                 "parameter_name": "Threshold", "value": "-24.0",
             },
         ),
@@ -1727,7 +1727,7 @@ def test_set_parameter_non_monotonic_unit_display_resolves_and_echoes_value_real
         Request(
             tool="ableton_device", action="set_parameter",
             params={
-                "track_index": 1, "device_index": 1,
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1},
                 "parameter_name": "Freq", "value_display": "2 kHz",
             },
         ),
@@ -1752,7 +1752,7 @@ def test_set_parameter_raw_value_omits_value_real(loaded_actions):
         Request(
             tool="ableton_device", action="set_parameter",
             params={
-                "track_index": 1, "device_index": 1,
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1},
                 "parameter_name": "Threshold", "value": "-24.0",
             },
         ),
@@ -1771,7 +1771,7 @@ def test_set_parameter_continuous_out_of_range(loaded_actions):
         Request(
             tool="ableton_device", action="set_parameter",
             params={
-                "track_index": 1, "device_index": 1,
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1},
                 "parameter_name": "Threshold", "value": "10.0",
             },
         ),
@@ -1790,7 +1790,7 @@ def test_set_parameter_enum_resolves_to_index(loaded_actions):
         Request(
             tool="ableton_device", action="set_parameter",
             params={
-                "track_index": 1, "device_index": 1,
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1},
                 "parameter_name": "Filter Type", "value": "Bandpass",
                 "value_type": "enum",
             },
@@ -1810,7 +1810,7 @@ def test_set_parameter_enum_unknown_value_errors(loaded_actions):
         Request(
             tool="ableton_device", action="set_parameter",
             params={
-                "track_index": 1, "device_index": 1,
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1},
                 "parameter_name": "Filter Type", "value": "Notch",
                 "value_type": "enum",
             },
@@ -1832,7 +1832,7 @@ def test_set_parameter_enum_on_non_enum_errors(loaded_actions):
         Request(
             tool="ableton_device", action="set_parameter",
             params={
-                "track_index": 1, "device_index": 1,
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1},
                 "parameter_name": "Threshold", "value": "Lowpass",
                 "value_type": "enum",
             },
@@ -1861,7 +1861,7 @@ def test_set_parameter_value_display_resolves_to_raw(loaded_actions):
         Request(
             tool="ableton_device", action="set_parameter",
             params={
-                "track_index": 1, "device_index": 1,
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1},
                 "parameter_name": "Threshold", "value_display": "-18 dB",
             },
         ),
@@ -1881,7 +1881,7 @@ def test_set_parameter_value_and_display_mutually_exclusive(loaded_actions):
         Request(
             tool="ableton_device", action="set_parameter",
             params={
-                "track_index": 1, "device_index": 1,
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1},
                 "parameter_name": "Threshold",
                 "value": "0.5", "value_display": "-18 dB",
             },
@@ -1899,7 +1899,7 @@ def test_set_parameter_continuous_requires_value_or_display(loaded_actions):
         Request(
             tool="ableton_device", action="set_parameter",
             params={
-                "track_index": 1, "device_index": 1,
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1},
                 "parameter_name": "Threshold",
             },
         ),
@@ -1918,7 +1918,7 @@ def test_set_parameter_value_display_rejected_on_enum(loaded_actions):
         Request(
             tool="ableton_device", action="set_parameter",
             params={
-                "track_index": 1, "device_index": 1,
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1},
                 "parameter_name": "Filter Type", "value_display": "Highpass",
             },
         ),
@@ -1941,8 +1941,7 @@ def test_set_parameter_device_path_value_display_parity(loaded_actions):
         Request(
             tool="ableton_device", action="set_parameter",
             params={
-                "track_index": 1, "device_index": 1,
-                "device_path": [{"chain_index": 1, "device_position": 1}],
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1, "path": [{"chain_index": 1, "device_position": 1}]},
                 "parameter_name": "Threshold", "value_display": "-18 dB",
             },
         ),
@@ -1969,8 +1968,7 @@ def test_set_parameter_device_path_unit_display_attaches_value_real(loaded_actio
         Request(
             tool="ableton_device", action="set_parameter",
             params={
-                "track_index": 1, "device_index": 1,
-                "device_path": [{"chain_index": 1, "device_position": 1}],
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1, "path": [{"chain_index": 1, "device_position": 1}]},
                 "parameter_name": "Freq", "value_display": "2 kHz",
             },
         ),
@@ -1989,7 +1987,7 @@ def test_set_parameter_unknown_name(loaded_actions):
         Request(
             tool="ableton_device", action="set_parameter",
             params={
-                "track_index": 1, "device_index": 1,
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1},
                 "parameter_name": "Bogus", "value": "0.5",
             },
         ),
@@ -2250,13 +2248,16 @@ def test_set_sidechain_enables_via_canonical_param(loaded_actions):
     naming hints). gain_db is covered by separate dB-native /
     normalized-refuse tests below."""
     comp = _compressor_with_routing()
-    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[comp])]))
+    ctx = FakeCtx(FakeSong(tracks=[
+        FakeTrack("T1", devices=[comp]), FakeTrack("1-Drums"),
+    ]))
     resp = dispatch(
         Request(
             tool="ableton_device", action="set_sidechain",
             params={
-                "track_index": 1, "device_index": 1, "enabled": True,
-                "source_display_name": "1-Drums",
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1},
+                "enabled": True,
+                "source": {"parent": {"kind": "track", "index": 2}, "terminal": "track"},
             },
         ),
         context=ctx,
@@ -2298,13 +2299,17 @@ def test_set_sidechain_gain_db_succeeds_on_db_native_param(loaded_actions):
     writes through directly — preserving the convenience wrapper for
     plugins that expose a true dB-native gain."""
     comp = _compressor_with_db_native_gain()
-    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[comp])]))
+    ctx = FakeCtx(FakeSong(tracks=[
+        FakeTrack("T1", devices=[comp]), FakeTrack("1-Drums"),
+    ]))
     resp = dispatch(
         Request(
             tool="ableton_device", action="set_sidechain",
             params={
-                "track_index": 1, "device_index": 1, "enabled": True,
-                "source_display_name": "1-Drums", "gain_db": 3.0,
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1},
+                "enabled": True,
+                "source": {"parent": {"kind": "track", "index": 2}, "terminal": "track"},
+                "gain_db": 3.0,
             },
         ),
         context=ctx,
@@ -2321,13 +2326,17 @@ def test_set_sidechain_gain_db_refuses_on_normalized_param(loaded_actions):
     directly trips Live's range check. Handler refuses with a teaching
     error pointing at set_parameter."""
     comp = _compressor_with_routing()
-    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[comp])]))
+    ctx = FakeCtx(FakeSong(tracks=[
+        FakeTrack("T1", devices=[comp]), FakeTrack("1-Drums"),
+    ]))
     resp = dispatch(
         Request(
             tool="ableton_device", action="set_sidechain",
             params={
-                "track_index": 1, "device_index": 1, "enabled": True,
-                "source_display_name": "1-Drums", "gain_db": 3.0,
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1},
+                "enabled": True,
+                "source": {"parent": {"kind": "track", "index": 2}, "terminal": "track"},
+                "gain_db": 3.0,
             },
         ),
         context=ctx,
@@ -2346,13 +2355,17 @@ def test_set_sidechain_normalized_gain_refusal_does_not_touch_state(loaded_actio
     comp = _compressor_with_routing()
     sc_on_before = next(p for p in comp.parameters if p.name == "S/C On").value
     routing_before = comp.input_routing_type.display_name
-    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[comp])]))
+    ctx = FakeCtx(FakeSong(tracks=[
+        FakeTrack("T1", devices=[comp]), FakeTrack("1-Drums"),
+    ]))
     resp = dispatch(
         Request(
             tool="ableton_device", action="set_sidechain",
             params={
-                "track_index": 1, "device_index": 1, "enabled": True,
-                "source_display_name": "1-Drums", "gain_db": 3.0,
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1},
+                "enabled": True,
+                "source": {"parent": {"kind": "track", "index": 2}, "terminal": "track"},
+                "gain_db": 3.0,
             },
         ),
         context=ctx,
@@ -2373,7 +2386,7 @@ def test_set_sidechain_works_on_glue_for_enable_only(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_device", action="set_sidechain",
-            params={"track_index": 1, "device_index": 1, "enabled": True},
+            params={"node": {"parent": {"kind": "track", "index": 1}, "device_index": 1}, "enabled": True},
         ),
         context=ctx,
     )
@@ -2389,13 +2402,16 @@ def test_set_sidechain_glue_with_source_falls_through_to_routing_error(loaded_ac
     point). Documented behavior: the agent gets a precise error
     location, not a silent no-op."""
     glue = _glue_compressor_without_routing()
-    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[glue])]))
+    ctx = FakeCtx(FakeSong(tracks=[
+        FakeTrack("T1", devices=[glue]), FakeTrack("1-Drums"),
+    ]))
     resp = dispatch(
         Request(
             tool="ableton_device", action="set_sidechain",
             params={
-                "track_index": 1, "device_index": 1, "enabled": True,
-                "source_display_name": "1-Drums",
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1},
+                "enabled": True,
+                "source": {"parent": {"kind": "track", "index": 2}, "terminal": "track"},
             },
         ),
         context=ctx,
@@ -2415,7 +2431,7 @@ def test_set_sidechain_disable_via_canonical_param(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_device", action="set_sidechain",
-            params={"track_index": 1, "device_index": 1, "enabled": False},
+            params={"node": {"parent": {"kind": "track", "index": 1}, "device_index": 1}, "enabled": False},
         ),
         context=ctx,
     )
@@ -2433,7 +2449,7 @@ def test_set_sidechain_no_canonical_enable_param_raises(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_device", action="set_sidechain",
-            params={"track_index": 1, "device_index": 1, "enabled": True},
+            params={"node": {"parent": {"kind": "track", "index": 1}, "device_index": 1}, "enabled": True},
         ),
         context=ctx,
     )
@@ -2612,8 +2628,7 @@ def test_set_parameter_device_path_writes_continuous_value(loaded_actions):
         Request(
             tool="ableton_device", action="set_parameter",
             params={
-                "track_index": 1, "device_index": 1,
-                "device_path": [{"chain_index": 1, "device_position": 1}],
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1, "path": [{"chain_index": 1, "device_position": 1}]},
                 "parameter_name": "Threshold", "value": "0.75",
             },
         ),
@@ -2635,8 +2650,7 @@ def test_set_parameter_device_path_writes_enum_value(loaded_actions):
         Request(
             tool="ableton_device", action="set_parameter",
             params={
-                "track_index": 1, "device_index": 1,
-                "device_path": [{"chain_index": 1, "device_position": 1}],
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1, "path": [{"chain_index": 1, "device_position": 1}]},
                 "parameter_name": "Filter Type", "value": "Highpass",
                 "value_type": "enum",
             },
@@ -2659,8 +2673,7 @@ def test_set_parameter_device_path_invalid_chain_raises(loaded_actions):
         Request(
             tool="ableton_device", action="set_parameter",
             params={
-                "track_index": 1, "device_index": 1,
-                "device_path": [{"chain_index": 99, "device_position": 1}],
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1, "path": [{"chain_index": 99, "device_position": 1}]},
                 "parameter_name": "Y", "value": "0.5",
             },
         ),
@@ -2756,7 +2769,7 @@ def test_load_into_chain_selects_chain_and_loads(loaded_actions):
         Request(
             tool="ableton_device", action="load",
             params={
-                "track_index": 1, "device_index": 1, "chain_index": 1,
+                "node": {"parent": {"kind": "track", "index": 1}, "terminal": "chain", "device_index": 1, "chain_index": 1},
                 "kind": "Compressor2",
             },
         ),
@@ -2825,7 +2838,7 @@ def test_load_into_chain_replace_in_place_returns_changed_position(loaded_action
         Request(
             tool="ableton_device", action="load",
             params={
-                "track_index": 1, "device_index": 1, "chain_index": 1,
+                "node": {"parent": {"kind": "track", "index": 1}, "terminal": "chain", "device_index": 1, "chain_index": 1},
                 "kind": "Compressor2",
             },
         ),
@@ -2854,7 +2867,7 @@ def test_load_into_chain_silent_noop_raises_with_existing_chain(loaded_actions):
         Request(
             tool="ableton_device", action="load",
             params={
-                "track_index": 1, "device_index": 1, "chain_index": 1,
+                "node": {"parent": {"kind": "track", "index": 1}, "terminal": "chain", "device_index": 1, "chain_index": 1},
                 "kind": "Compressor2",
             },
         ),
@@ -2965,8 +2978,7 @@ def test_get_parameters_at_depth3_via_device_path(loaded_actions):
         Request(
             tool="ableton_device", action="get_parameters",
             params={
-                "track_index": 1, "device_index": 1,
-                "device_path": [_STEP, _STEP, _STEP], "detail": "full",
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1, "path": [_STEP, _STEP, _STEP]}, "detail": "full",
             },
         ),
         context=ctx,
@@ -2982,8 +2994,7 @@ def test_set_parameter_at_depth3_via_device_path(loaded_actions):
         Request(
             tool="ableton_device", action="set_parameter",
             params={
-                "track_index": 1, "device_index": 1,
-                "device_path": [_STEP, _STEP, _STEP],
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1, "path": [_STEP, _STEP, _STEP]},
                 "parameter_name": "Macro", "value": "0.8",
             },
         ),
@@ -3042,8 +3053,7 @@ def test_device_path_from_get_device_chains_feeds_set_parameter(loaded_actions):
         Request(
             tool="ableton_device", action="set_parameter",
             params={
-                "track_index": 1, "device_index": 1,
-                "device_path": leaf["device_path"],
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1, "path": leaf["device_path"]},
                 "parameter_name": "Macro", "value": "0.9",
             },
         ),
@@ -3098,8 +3108,7 @@ def test_load_into_nested_chain_via_device_path(loaded_actions):
         Request(
             tool="ableton_device", action="load",
             params={
-                "track_index": 1, "device_index": 1,
-                "device_path": [_STEP], "chain_index": 1,
+                "node": {"parent": {"kind": "track", "index": 1}, "terminal": "chain", "device_index": 1, "path": [_STEP], "chain_index": 1},
                 "kind": "Compressor2",
             },
         ),
@@ -3116,7 +3125,7 @@ def test_load_chain_index_without_device_index_is_teaching_error(loaded_actions)
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"track_index": 1, "chain_index": 1, "kind": "Compressor2"},
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "chain", "chain_index": 1}, "kind": "Compressor2"},
         ),
         context=ctx,
     )
@@ -3130,7 +3139,7 @@ def test_load_device_path_without_chain_index_is_teaching_error(loaded_actions):
         Request(
             tool="ableton_device", action="load",
             params={
-                "track_index": 1, "device_index": 1, "device_path": [_STEP],
+                "node": {"parent": {"kind": "track", "index": 1}, "terminal": "chain", "device_index": 1, "path": [_STEP]},
                 "kind": "Compressor2",
             },
         ),
@@ -3166,7 +3175,7 @@ def test_voices_param_on_nested_multisampler_is_covered(loaded_actions):
         Request(
             tool="ableton_device", action="get_parameters",
             params={
-                "track_index": 1, "device_index": 1, "device_path": path,
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1, "path": path},
                 "detail": "full",
             },
         ),
@@ -3178,7 +3187,7 @@ def test_voices_param_on_nested_multisampler_is_covered(loaded_actions):
         Request(
             tool="ableton_device", action="set_parameter",
             params={
-                "track_index": 1, "device_index": 1, "device_path": path,
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1, "path": path},
                 "parameter_name": "Voices", "value": "8",
             },
         ),
@@ -3300,7 +3309,7 @@ def test_get_parameters_on_master(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_device", action="get_parameters",
-            params={"master": True, "device_index": 1, "detail": "summary"},
+            params={"node": {"parent": {"kind": "master"}, "device_index": 1}, "detail": "summary"},
         ),
         context=ctx,
     )
@@ -3315,7 +3324,7 @@ def test_set_parameter_on_master(loaded_actions):
         Request(
             tool="ableton_device", action="set_parameter",
             params={
-                "master": True, "device_index": 1,
+                "node": {"parent": {"kind": "master"}, "device_index": 1},
                 "parameter_name": "Ceiling", "value": "-1.0",
                 "value_type": "continuous",
             },
@@ -3341,7 +3350,7 @@ def test_load_on_master_appends_to_master_chain(loaded_actions):
     resp = dispatch(
         Request(
             tool="ableton_device", action="load",
-            params={"master": True, "kind": "EQ Eight"},
+            params={"node": {"parent": {"kind": "master"}, "terminal": "master"}, "kind": "EQ Eight"},
         ),
         context=ctx,
     )

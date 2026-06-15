@@ -526,21 +526,22 @@ def _ensure_on_surface(
     # shape, but we set it explicitly to make per-instance overrides
     # straightforward in future. Both writes are idempotent — Live's
     # set_parameter on an already-equal value is a no-op event.
+    port_node = device_handlers.build_node_addr(
+        track_address, device_index=device_index,
+    )
     context.run_on_main(lambda: device_handlers.set_parameter_handler(
         context,
-        device_index=device_index,
+        node=port_node,
         parameter_name="Port",
         value=str(float(osc_port)),
         value_type="continuous",
-        **track_address,
     ))
     context.run_on_main(lambda: device_handlers.set_parameter_handler(
         context,
-        device_index=device_index,
+        node=port_node,
         parameter_name="EmitPort",
         value=str(float(osc_emit_port)),
         value_type="continuous",
-        **track_address,
     ))
 
     return AnalyzerInstance(
@@ -583,8 +584,12 @@ def _load_analyzer(
     ``_resolve_preset_query`` raises a teaching error ("preset_query found no
     loadable matches"). The browser load APPENDS, so the analyzer lands last.
     """
+    # Top-level load onto the surface's main chain → a node-itself terminal
+    # (surface_kind is track/return/master).
+    load_node = device_handlers.build_node_addr(track_address, terminal=surface_kind)
     result = context.run_on_main(lambda: device_handlers.load_handler(
         context,
+        node=load_node,
         kind=ANALYZER_DEVICE_NAME,  # required by signature; preset_query takes precedence
         preset_query={
             "root": "user_library",
@@ -592,7 +597,6 @@ def _load_analyzer(
             "path_prefix": list(ANALYZER_BROWSER_PATH_PREFIX),
             "mode": "substring",
         },
-        **track_address,
     ))
     device_index = int(result.get("device_index", 0))
     if device_index < 1:

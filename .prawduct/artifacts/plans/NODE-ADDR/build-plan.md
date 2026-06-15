@@ -158,11 +158,28 @@ fresh `pytest` before any Chunk-A code review (current `prawduct-hook test-statu
     one facade `resolve_node_addr` — all in `handlers/device.py`. `get_parameters` returns `default_value`
     (guarded; omits on the Live raise → always-capture signal for Chunk B). Purely **additive** so far
     (existing wire untouched; suite stays green).
-  - [ ] **Wire migration (the big atomic step — do fresh):** `_node_addr_spec()` ParamSpec; migrate
-    node-addressed actions (get_parameters/set_parameter/load/write_envelope device-param/perform
-    device-param/sidechain/clear device-param) from flat `track_index/device_index/device_path` → `node`
-    object; dispatcher validation; **retire flat addressing** (no dual surface). Migrate push-translation
-    (`push/devices.py`, `push/perform.py`) + `skills/mix-sidechain` + ALL flat-param tests. Re-vendor.
+  - [x] **Wire migration (the big atomic step):** COMPLETE + GREEN 2026-06-15 (full suite 3783 passed,
+    2 skipped — exact baseline; 25 files, +876/−421). `node_addr_spec()`
+    in `schema.py`; migrated actions+handlers `get_parameters/set_parameter/load/set_sidechain` (device) +
+    `write_envelope/clear/perform_batch` device_parameter (automation) from flat → `node`; **flat addressing
+    retired** on those (no dual surface). Push-translation via new `_core.build_node_addr` (devices/perform/
+    envelopes; `push_execute` forwards `node` transparently; sidechain push uses unmigrated `set_input_routing`
+    so stays flat). `skills/mix-sidechain` + `conventions.md`/`gaps.md` updated. `resolve_node_addr` now returns
+    `(node, kind, idx, spec)`. **Decisions (persisted; flag for Critic):**
+    - **D1 responses unchanged** — only the *input* address is frozen to `node`; handlers still echo flat
+      `device_index`/`parent_kind`/`device_path` (built from the resolved spec). Keeps push/pull response-
+      consumers untouched (lowest blast radius; the "no dual surface" rule is about input addressing).
+    - **D2 as-value source SHIPPED** — `set_sidechain.source` is now a track/return/master-terminal node
+      (replaces `source_display_name`); exercises the design's central single-object justification. Special
+      non-node sources (`Main`/`No Input`) route via `set_input_routing` directly (flagged gap).
+    - **D3 load via node** — track/return/master terminal = top-level load; `chain` terminal = nested load
+      (subsumes the old `chain_index` param); `device` terminal = teaching error.
+    - **SCOPE ASYMMETRY (flag):** plan's explicit list migrated; **read-side + shallow nav kept flat** —
+      `read_envelope`/`get_envelope` (device_index), `list`/`info`/`get_routing`/`navigate_preset`/`pad_info`,
+      `set_input_routing`. Rationale: plan-faithful (not in the migrated list) + they're shallow/read surfaces,
+      not the device-addressing combo. RECOMMEND a follow-up to migrate the envelope read pair for full
+      device_parameter uniformity. Not silently dropped — surfaced here + to the user.
+    - [ ] **Tests:** migrate ALL flat-param test sites to `node` (in progress).
   - [ ] Single-source tri-state capability table (typed) + generic stub + `ableton://reference/node-feature-matrix` resource + cross-consumer consistency test.
   - [ ] `get_node_path` (generalize `get_device_nesting_path`) + `render_node_addr` (engine-side).
   - [ ] Operator-verify every migrated op in Live (Critic note d) — needs dev-server pointed at the worktree.

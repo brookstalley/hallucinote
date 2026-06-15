@@ -16,6 +16,7 @@ import pytest
 from hallucinote.db import init_db, mutations as M, queries as Q
 from hallucinote.db import events as E
 from hallucinote.sync import push
+from hallucinote.sync.push._core import build_node_addr
 
 
 @pytest.fixture
@@ -308,9 +309,8 @@ def test_phase_addresses_master_chain_device_sweep(
     _, arcs = _batch_arcs(_plan(conn, song, session))
     arc = arcs[0]
     assert arc["target_kind"] == "device_parameter"
-    assert arc["master"] is True
+    assert arc["node"] == build_node_addr({"master": True}, device_index=2)
     assert "track_index" not in arc and "return_index" not in arc
-    assert arc["device_index"] == 2
     assert arc["parameter_name"] == "Frequency"
 
 
@@ -332,8 +332,7 @@ def test_phase_addresses_return_device_sweep(
     _two_point_ramp(conn, eid)
     _, arcs = _batch_arcs(_plan(conn, song, session))
     arc = arcs[0]
-    assert arc["return_index"] == 1
-    assert arc["device_index"] == 1
+    assert arc["node"] == build_node_addr({"return_index": 1}, device_index=1)
     assert arc["parameter_name"] == "Decay Time"
     assert "master" not in arc and "track_index" not in arc
 
@@ -370,10 +369,12 @@ def test_phase_addresses_nested_device_via_device_path(conn, song, session):
     _, arcs = _batch_arcs(_plan(conn, song, session))
     arc = arcs[0]
     assert arc["target_kind"] == "device_parameter"
-    assert arc["track_index"] == 4
-    # The TOP-LEVEL rack's Live index, not the (unlinked) nested device.
-    assert arc["device_index"] == 2
-    assert arc["device_path"] == [{"chain_index": 1, "device_position": 1}]
+    # The TOP-LEVEL rack's Live index (track 4 / device 2), not the (unlinked)
+    # nested device — addressed via the node's path.
+    assert arc["node"] == build_node_addr(
+        {"track_index": 4}, device_index=2,
+        device_path=[{"chain_index": 1, "device_position": 1}],
+    )
     assert arc["parameter_name"] == "Volume"
 
 

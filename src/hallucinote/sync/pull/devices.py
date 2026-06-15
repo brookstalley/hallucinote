@@ -264,13 +264,17 @@ def plan_pull_device_parameters(
         ),
     ):
         any_emitted = True
-        index_kwarg = "track_index" if parent_kind == "track" else "return_index"
+        # NODE-ADDR: get_parameters takes a `node` device address. This pull is
+        # top-level track/return only (master skipped, nesting gated by #17b —
+        # Chunk B extends it depth-N), so the node is a flat device terminal.
         plan.add(PullCall(
             tool="ableton_device",
             args={
                 "action": "get_parameters",
-                index_kwarg: parent_at,
-                "device_index": d["position"],
+                "node": {
+                    "parent": {"kind": parent_kind, "index": parent_at},
+                    "device_index": d["position"],
+                },
                 "detail": "full",
             },
             key=f"device_parameters:{d['id']}",

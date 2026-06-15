@@ -6,6 +6,7 @@ import pytest
 from hallucinote.capture import SNAPSHOT_SCHEMA_VERSION, replay_capture
 from hallucinote.db import init_db, mutations as M, queries as Q
 from hallucinote.sync import push
+from hallucinote.sync.push._core import build_node_addr
 
 
 @pytest.fixture
@@ -128,7 +129,7 @@ def test_plan_push_devices_emits_load_for_unlinked_device(
     assert "load" in by_action
     load = by_action["load"][0]
     assert load.tool == "ableton_device"
-    assert load.args["track_index"] == 5
+    assert load.args["node"] == build_node_addr({"track_index": 5}, terminal="track")
     # Live 12.4 has no public reorder API — planner does NOT emit position.
     assert "position" not in load.args
     assert load.args["kind"] == "Drum Rack"
@@ -330,8 +331,9 @@ def test_plan_push_devices_emits_params_for_linked_device(
     by_param = {c.args["parameter_name"]: c for c in calls}
     freq = by_param["Freq"]
     assert freq.tool == "ableton_device"
-    assert freq.args["track_index"] == 5
-    assert freq.args["device_index"] == 2
+    assert freq.args["node"] == build_node_addr(
+        {"track_index": 5}, device_index=2,
+    )
     assert freq.args["parameter_name"] == "Freq"
     # SYN-9F2L: the display value is the preferred wire form — the handler
     # inverts the param's own display curve, which is exact for center-zero
@@ -379,9 +381,11 @@ def test_plan_push_devices_emits_nested_params_with_device_path(
     calls = by_action["set_parameter"]
     assert len(calls) == 1  # only the nested Volume (the rack itself has no params)
     c = calls[0]
-    assert c.args["track_index"] == 5
-    assert c.args["device_index"] == 2  # the TOP-LEVEL rack's Live index
-    assert c.args["device_path"] == [{"chain_index": 1, "device_position": 1}]
+    # the TOP-LEVEL rack's Live index (5/2) + the nested device's path.
+    assert c.args["node"] == build_node_addr(
+        {"track_index": 5}, device_index=2,
+        device_path=[{"chain_index": 1, "device_position": 1}],
+    )
     assert c.args["parameter_name"] == "Volume"
     assert c.args["value_display"] == "-6 dB"
     assert c.key == f"device_parameter:{nested}:Volume"
@@ -453,12 +457,13 @@ def test_capture_replay_push_roundtrip_depth2_nested_param(conn):
     sets = [c for c in plan.calls if c.args.get("action") == "set_parameter"]
     assert len(sets) == 1  # only the deep Operator's Volume
     c = sets[0]
-    assert c.args["track_index"] == 3
-    assert c.args["device_index"] == 1
-    assert c.args["device_path"] == [
-        {"chain_index": 1, "device_position": 1},
-        {"chain_index": 1, "device_position": 1},
-    ]
+    assert c.args["node"] == build_node_addr(
+        {"track_index": 3}, device_index=1,
+        device_path=[
+            {"chain_index": 1, "device_position": 1},
+            {"chain_index": 1, "device_position": 1},
+        ],
+    )
     assert c.args["parameter_name"] == "Volume"
     assert c.args["value_display"] == "-4 dB"
 
@@ -566,7 +571,9 @@ def test_plan_push_devices_emits_return_specific_tools(
     assert "load" in by_action
     load = by_action["load"][0]
     assert load.tool == "ableton_device"
-    assert load.args["return_index"] == 1
+    assert load.args["node"] == build_node_addr(
+        {"return_index": 1}, terminal="return",
+    )
     # No position emission — Live 12.4 cannot reorder, planner relies on
     # chain-order push to match DB position.
     assert "position" not in load.args
@@ -585,8 +592,9 @@ def test_plan_push_devices_emits_return_specific_tools(
     assert "set_parameter" in by_action
     param_call = by_action["set_parameter"][0]
     assert param_call.tool == "ableton_device"
-    assert param_call.args["return_index"] == 1
-    assert param_call.args["device_index"] == 2
+    assert param_call.args["node"] == build_node_addr(
+        {"return_index": 1}, device_index=2,
+    )
     assert param_call.args["parameter_name"] == "Decay"
     # SYN-9F2L: display form preferred on the wire.
     assert param_call.args["value_display"] == "2.5 s"
@@ -667,7 +675,7 @@ def test_plan_push_devices_handles_mixed_linked_unlinked(
     loads = by_action.get("load", [])
     assert len(loads) == 2  # one for track-side Comp, one for return-side Reverb
     by_target = {
-        ("track" if "track_index" in c.args else "return"): c for c in loads
+        c.args["node"]["parent"]["kind"]: c for c in loads
     }
     assert by_target["track"].args["kind"] == "Compressor"
     assert by_target["return"].args["kind"] == "Reverb"
@@ -706,7 +714,7 @@ def test_plan_push_devices_walks_master_chain(
     loads = [c for c in plan.calls if c.args.get("action") == "load"]
     assert len(loads) == 1, f"unlinked master device must emit one load, got {loads}"
     args = loads[0].args
-    assert args.get("master") is True
+    assert args["node"] == build_node_addr({"master": True}, terminal="master")
     assert "track_index" not in args and "return_index" not in args
     assert args["kind"] == "Limiter"
     # Standard device-level "not linked yet" note (the generic path), NOT the
@@ -759,7 +767,7 @@ def test_plan_push_devices_master_set_parameter_uses_master_kv(
     set_calls = [c for c in plan.calls if c.args.get("action") == "set_parameter"]
     assert len(set_calls) == 1
     args = set_calls[0].args
-    assert args.get("master") is True
+    assert args["node"] == build_node_addr({"master": True}, device_index=1)
     assert "track_index" not in args
     assert "return_index" not in args
     assert args["parameter_name"] == "Ceiling"

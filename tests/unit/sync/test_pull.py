@@ -2136,8 +2136,9 @@ def test_plan_pull_device_parameters_emits_per_linked_track_device(
     call = plan.calls[0]
     assert call.tool == "ableton_device"
     assert call.args == {
-        "action": "get_parameters", "track_index": 5,
-        "device_index": 1, "detail": "full",
+        "action": "get_parameters",
+        "node": {"parent": {"kind": "track", "index": 5}, "device_index": 1},
+        "detail": "full",
     }
     assert call.key == f"device_parameters:{did}"
 
@@ -2158,8 +2159,9 @@ def test_plan_pull_device_parameters_emits_per_linked_return_device(
     assert len(plan.calls) == 1
     call = plan.calls[0]
     assert call.args == {
-        "action": "get_parameters", "return_index": 1,
-        "device_index": 1, "detail": "full",
+        "action": "get_parameters",
+        "node": {"parent": {"kind": "return", "index": 1}, "device_index": 1},
+        "detail": "full",
     }
     assert call.key == f"device_parameters:{did}"
 
@@ -4678,11 +4680,27 @@ def _fake_pull_send_factory(routes):
 
     def _send(req):
         params = req.params or {}
+        # NODE-ADDR: migrated actions (e.g. get_parameters) carry the address
+        # inside a `node` object; unmigrated ones (session/return) stay flat.
+        # Project either form back to the logical (track, return, device) tuple
+        # the route table is keyed by — the route keys are the logical address,
+        # unchanged by the encoding.
+        node = params.get("node")
+        if node is not None:
+            parent = node.get("parent") or {}
+            parent_kind = parent.get("kind")
+            track_index = parent.get("index") if parent_kind == "track" else None
+            return_index = parent.get("index") if parent_kind == "return" else None
+            device_index = node.get("device_index")
+        else:
+            track_index = params.get("track_index")
+            return_index = params.get("return_index")
+            device_index = params.get("device_index")
         key = (
             req.tool, req.action,
-            params.get("track_index"),
-            params.get("return_index"),
-            params.get("device_index"),
+            track_index,
+            return_index,
+            device_index,
         )
         if key not in routes:
             raise AssertionError(

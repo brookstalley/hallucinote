@@ -38,6 +38,7 @@ from ._core import (
     PushPlan,
     ToolCall,
     _breakpoints_for_mcp,
+    build_node_addr,
 )
 
 
@@ -718,10 +719,13 @@ def _emit_device_parameter_envelope(
         args={
             "action": "write_envelope",
             "target_kind": "device_parameter",
-            "track_index": parent_at,
+            # NODE-ADDR: the device address is a `node` (top-level — nested
+            # device_parameter envelopes are routed to perform by classify, so
+            # this path is always a top-level track-hosted device). The clip is
+            # on the same track (node.parent).
+            "node": build_node_addr({"track_index": parent_at}, device_index=device_at),
             "location": "session",
             "clip_index": clip_at,
-            "device_index": device_at,
             "parameter_name": envelope["parameter_path"],
             "breakpoints": local_bps,
         },

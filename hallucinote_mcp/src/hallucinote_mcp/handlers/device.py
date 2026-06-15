@@ -377,10 +377,15 @@ def validate_node_addr(node: Any) -> dict[str, Any]:
     return out
 
 
-def resolve_node_addr(context: LiveContext, node: Any) -> tuple[Any, str, int, str]:
+def resolve_node_addr(
+    context: LiveContext, node: Any
+) -> tuple[Any, str, int, dict[str, Any]]:
     """Validate a wire ``node`` object, resolve its parent, and descend to the
     addressed Live node — the single handler-facing entry for NODE-ADDR
-    addressing. Returns ``(resolved_node, parent_kind, parent_index, terminal)``.
+    addressing. Returns ``(resolved_node, parent_kind, parent_index, spec)``
+    where ``spec`` is the normalized NodeAddr (``terminal`` / ``device_index`` /
+    ``path`` / ``chain_index``) — so a handler can both act on the resolved node
+    and echo the address back without re-validating.
     """
     spec = validate_node_addr(node)
     pkind = spec["parent"]["kind"]
@@ -399,7 +404,90 @@ def resolve_node_addr(context: LiveContext, node: Any) -> tuple[Any, str, int, s
         terminal=spec["terminal"],
         chain_index=spec.get("chain_index"),
     )
-    return resolved, kind, idx, spec["terminal"]
+    return resolved, kind, idx, spec
+
+
+def _resolve_device_node(
+    context: LiveContext, node: Any, *, action: str,
+) -> tuple[Any, str, int, dict[str, Any]]:
+    """Resolve a ``node`` that MUST address a device (``terminal='device'``) —
+    the shared entry for the device-parameter handlers (get_parameters /
+    set_parameter / set_sidechain). Teaching-errors if the terminal names a
+    track/return/master/chain instead, so the agent fixes the address rather
+    than acting on the wrong node. Returns ``(device, parent_kind,
+    parent_index, spec)``.
+    """
+    resolved, kind, idx, spec = resolve_node_addr(context, node)
+    if spec["terminal"] != "device":
+        raise ValueError(
+            f"{action} addresses a device — node.terminal must be 'device' "
+            f"(got {spec['terminal']!r}); a {spec['terminal']!r} terminal "
+            "names a track/return/master/chain, not a device. Use "
+            "device_index (+ path for a nested rack)."
+        )
+    return resolved, kind, idx, spec
+
+
+def build_node_addr(
+    parent_kv: dict[str, Any],
+    *,
+    device_index: int | None = None,
+    path: list[dict[str, int]] | None = None,
+    terminal: str = "device",
+    chain_index: int | None = None,
+) -> dict[str, Any]:
+    """Construct a NODE-ADDR ``node`` wire object from a flat parent map
+    (``{"track_index": n}`` / ``{"return_index": n}`` / ``{"master": True}``) —
+    the inverse of :func:`validate_node_addr`, for in-process callers that build
+    a node from known flat parts (the analyzer setup + render handlers, which
+    drive the migrated device handlers directly rather than over the wire).
+
+    Mirrors the engine-side ``sync.push._core.build_node_addr`` (the two packages
+    are import-isolated, so the wire shape is the shared contract, not the code).
+    """
+    if parent_kv.get("master"):
+        parent: dict[str, Any] = {"kind": "master"}
+    elif "track_index" in parent_kv:
+        parent = {"kind": "track", "index": parent_kv["track_index"]}
+    elif "return_index" in parent_kv:
+        parent = {"kind": "return", "index": parent_kv["return_index"]}
+    else:
+        raise ValueError(
+            f"build_node_addr: parent_kv must carry master / track_index / "
+            f"return_index, got {parent_kv!r}"
+        )
+    node: dict[str, Any] = {"parent": parent}
+    if terminal != "device":
+        node["terminal"] = terminal
+    if terminal in ("device", "chain"):
+        node["device_index"] = device_index
+        if path:
+            node["path"] = path
+    if terminal == "chain":
+        node["chain_index"] = chain_index
+    return node
+
+
+def _resolve_node_name(context: LiveContext, node: Any, *, field: str) -> str:
+    """Resolve a NodeAddr-as-VALUE to the name of the addressed track/return/
+    master — the as-value shape (e.g. a sidechain ``source``). Constrained to
+    the node-itself terminals (a device/chain isn't a routing source); teaching-
+    errors otherwise. The name is what Live's routing menu lists (the bare
+    track name / letter-prefixed return name / "Main").
+    """
+    resolved, kind, idx, spec = resolve_node_addr(context, node)
+    if spec["terminal"] not in _NODE_TERMINALS:
+        raise ValueError(
+            f"{field} must be a track/return/master node (the as-value shape) "
+            f"— got terminal {spec['terminal']!r}. A device/chain isn't a "
+            "routing source."
+        )
+    name = getattr(resolved, "name", None)
+    if not name:
+        raise ValueError(
+            f"{field} node resolved to a {kind} with no name to route from"
+        )
+    return str(name)
 
 
 def _parent_address(kind: str, index: int) -> dict[str, Any]:
@@ -491,11 +579,7 @@ def info_handler(
 def get_parameters_handler(
     context: LiveContext,
     *,
-    device_index: int,
-    track_index: int | None = None,
-    return_index: int | None = None,
-    master: bool | None = None,
-    device_path: list[dict[str, int]] | None = None,
+    node: dict[str, Any],
     detail: str = "summary",
 ) -> dict[str, Any]:
     """Return device parameters with current values.
@@ -504,18 +588,16 @@ def get_parameters_handler(
     ``detail='full'`` adds min/max + is_enum + value_items (more expensive
     on devices with many enum params).
 
-    ``device_path`` (optional) addresses a device nested inside a rack at
-    arbitrary depth — a list of ``{chain_index, device_position}`` steps from
-    the top-level ``device_index`` device. Omit it for a top-level device.
+    ``node`` is a NODE-ADDR device address (``terminal='device'``); its
+    optional ``path`` reaches a device nested inside a rack at arbitrary depth.
     """
     if detail not in ("summary", "full"):
         raise ValueError(
             f"detail must be 'summary' or 'full', got {detail!r}"
         )
-    parent, kind, idx = _resolve_parent(
-        context, track_index=track_index, return_index=return_index, master=master,
+    dev, kind, idx, spec = _resolve_device_node(
+        context, node, action="get_parameters"
     )
-    dev = _resolve_device_path(parent, device_index, device_path)
     params_out: list[dict[str, Any]] = []
     for p in getattr(dev, "parameters", ()):
         entry: dict[str, Any] = {
@@ -549,12 +631,12 @@ def get_parameters_handler(
                 entry["is_enum"] = False
         params_out.append(entry)
     result: dict[str, Any] = {
-        "device_index": device_index,
+        "device_index": spec["device_index"],
         "parent_kind": kind,
         "parameters": params_out,
     }
-    if device_path:
-        result["device_path"] = _validate_device_path(device_path)
+    if spec.get("path"):
+        result["device_path"] = spec["path"]
     result.update(_parent_address(kind, idx))
     return result
 
@@ -901,25 +983,23 @@ def _raise_silent_noop(
 def load_handler(
     context: LiveContext,
     *,
+    node: dict[str, Any],
     kind: str,
     preset_uri: str | None = None,
     preset_query: dict[str, Any] | None = None,
     browser_path: list[str] | None = None,
-    track_index: int | None = None,
-    return_index: int | None = None,
-    master: bool | None = None,
-    device_index: int | None = None,
-    device_path: list[dict[str, int]] | None = None,
-    chain_index: int | None = None,
 ) -> dict[str, Any]:
     """Load a device onto a track or return chain.
 
-    **Loading into a nested rack chain** (the unified replacement for the
-    retired ``load_in_rack``): pass ``chain_index`` — the 1-based destination
-    chain INSIDE a rack — together with ``device_index`` (the top-level rack)
-    and optional ``device_path`` (``{chain_index, device_position}`` steps to
-    a deeper rack). The new device appends to that chain. Omit all three for a
-    top-level load onto the parent's main chain (the default below).
+    ``node`` is the load DESTINATION (NODE-ADDR). A ``track``/``return``/
+    ``master`` terminal loads onto that node's main device chain (the common
+    case). A ``chain`` terminal loads INTO a nested rack chain — the unified
+    replacement for the retired ``load_in_rack`` — its ``chain_index`` is the
+    1-based destination chain INSIDE the rack at ``device_index`` and optional
+    ``path`` (``{chain_index, device_position}`` steps to
+    a deeper rack). The new device appends to that chain. Use a track/return/
+    master terminal for a top-level load onto the parent's main chain (the
+    default below).
 
     ``kind`` is the device's BROWSER DISPLAY NAME (e.g. ``'Compressor'``,
     ``'Operator'``, ``'Drum Rack'``, ``'Phaser-Flanger'``) — what shows up
@@ -973,9 +1053,31 @@ def load_handler(
     both shapes (append and replace-in-place); ``device_index`` in the
     response identifies whichever position the new device occupies.
     """
+    # NODE-ADDR: `node` is the load destination. A track/return/master terminal
+    # loads onto that node's main chain; a 'chain' terminal loads into a nested
+    # rack chain. A 'device' terminal isn't a load destination. validate_node_addr
+    # enforces the field unit (chain ⇒ device_index + chain_index; node-itself ⇒
+    # none), so the partial/ambiguous-combination checks are no longer needed here.
+    spec = validate_node_addr(node)
+    terminal = spec["terminal"]
+    if terminal == "device":
+        raise ValueError(
+            "load addresses a load DESTINATION, not a device — use a "
+            "track/return/master terminal for a top-level load onto that "
+            "node's main chain, or a 'chain' terminal (device_index + "
+            "chain_index, + optional path) to load into a nested rack chain."
+        )
+    pkind = spec["parent"]["kind"]
+    pindex = spec["parent"].get("index")
     parent, parent_kind, parent_idx = _resolve_parent(
-        context, track_index=track_index, return_index=return_index, master=master,
+        context,
+        track_index=pindex if pkind == "track" else None,
+        return_index=pindex if pkind == "return" else None,
+        master=True if pkind == "master" else None,
     )
+    device_index = spec.get("device_index")
+    device_path = spec.get("path")
+    chain_index = spec.get("chain_index")
     # DEV-6M2K: master loads go through the SAME path as track/return loads.
     # The earlier DEV-2M9K refusal here was built on a premise refuted on Live
     # 12.4.2 — `song.view.selected_track = song.master_track` STICKS (read-back
@@ -987,23 +1089,6 @@ def load_handler(
     # raise the silent-noop guard rather than corrupt a regular track).
     if not isinstance(kind, str) or not kind:
         raise ValueError("kind must be a non-empty Live device class name")
-    # Nested-load addressing: chain_index names the destination chain inside a
-    # rack; device_index (+ optional device_path) locate that rack. The three
-    # are a unit — reject partial/ambiguous combinations with a teaching error.
-    if chain_index is None:
-        if device_index is not None or device_path:
-            raise ValueError(
-                "device_index / device_path on `load` apply only when loading "
-                "INTO a rack chain — pass chain_index too (the 1-based "
-                "destination chain inside the rack). Omit all three for a "
-                "top-level load onto the parent's main chain."
-            )
-    elif device_index is None:
-        raise ValueError(
-            "chain_index requires device_index — it names the destination "
-            "chain inside the rack at device_index (+ optional device_path "
-            "for a deeper rack)."
-        )
     if preset_query is not None and preset_uri is not None:
         raise ValueError(
             "preset_query and preset_uri are mutually exclusive — pass "
@@ -1394,22 +1479,17 @@ _VALUE_TYPES = ("continuous", "enum")
 def set_parameter_handler(
     context: LiveContext,
     *,
-    device_index: int,
+    node: dict[str, Any],
     parameter_name: str,
     value: Any = None,
     value_display: str | None = None,
     value_type: str = "continuous",
-    track_index: int | None = None,
-    return_index: int | None = None,
-    master: bool | None = None,
-    device_path: list[dict[str, int]] | None = None,
 ) -> dict[str, Any]:
     """Write one device parameter.
 
-    ``device_path`` (optional) addresses a parameter on a device nested inside
-    a rack at arbitrary depth — a list of ``{chain_index, device_position}``
-    steps from the top-level ``device_index`` device. Omit it for a top-level
-    device. This is the unified replacement for the retired
+    ``node`` is a NODE-ADDR device address (``terminal='device'``); its optional
+    ``path`` addresses a parameter on a device nested inside a rack at arbitrary
+    depth. This is the unified replacement for the retired
     ``set_parameter_in_rack`` (whose depth-2 triple is just ``device_index`` +
     a single path step).
 
@@ -1440,10 +1520,10 @@ def set_parameter_handler(
         raise ValueError(
             f"value_type must be one of {list(_VALUE_TYPES)}, got {value_type!r}"
         )
-    parent, kind, idx = _resolve_parent(
-        context, track_index=track_index, return_index=return_index, master=master,
+    dev, kind, idx, spec = _resolve_device_node(
+        context, node, action="set_parameter"
     )
-    dev = _resolve_device_path(parent, device_index, device_path)
+    device_index = spec["device_index"]
     target_param = None
     for p in getattr(dev, "parameters", ()):
         if p.name == parameter_name:
@@ -1501,8 +1581,8 @@ def set_parameter_handler(
         "value_type": value_type,
         "parent_kind": kind,
     }
-    if device_path:
-        result["device_path"] = _validate_device_path(device_path)
+    if spec.get("path"):
+        result["device_path"] = spec["path"]
     _attach_achieved_display(result, target_param)
     _attach_real_unit_echo(result, value_display)
     result.update(_parent_address(kind, idx))
@@ -1713,12 +1793,9 @@ def capabilities_handler(
 def set_sidechain_handler(
     context: LiveContext,
     *,
-    device_index: int,
+    node: dict[str, Any],
     enabled: bool,
-    track_index: int | None = None,
-    return_index: int | None = None,
-    master: bool | None = None,
-    source_display_name: str | None = None,
+    source: dict[str, Any] | None = None,
     gain_db: float | None = None,
 ) -> dict[str, Any]:
     """Configure sidechain on any device that exposes the standard
@@ -1726,9 +1803,15 @@ def set_sidechain_handler(
     Compressor, Gate, Multiband Dynamics) AND third-party plugins that
     use the same naming pattern.
 
+    ``node`` addresses the sidechained device (``terminal='device'``,
+    top-level). ``source`` is the routing source AS A NODE (the NODE-ADDR
+    as-value shape): a track/return/master-terminal node whose name is the
+    routing source. The handler resolves it to that name and delegates to the
+    set_input_routing primitive.
+
     Convenience wrapper that delegates to the primitives:
-      - source routing via set_input_routing (when source_display_name
-        given AND the device exposes input_routing_*)
+      - source routing via set_input_routing (when ``source`` given AND the
+        device exposes input_routing_*)
       - sidechain enable / gain via set_parameter on the discovered
         ``S/C On`` / ``S/C Gain`` (or substring variants)
 
@@ -1737,10 +1820,22 @@ def set_sidechain_handler(
     with non-canonical naming should configure via
     set_parameter directly after discovery via get_parameters.
     """
-    parent, kind, idx = _resolve_parent(
-        context, track_index=track_index, return_index=return_index, master=master,
+    dev, kind, idx, spec = _resolve_device_node(
+        context, node, action="set_sidechain"
     )
-    dev = _resolve_device(parent, device_index)
+    if spec.get("path"):
+        raise ValueError(
+            "set_sidechain addresses a top-level device — source routing on a "
+            "nested device isn't supported (the input-routing primitive can't "
+            "address inside a rack). Set the sidechain manually in Live's "
+            "device view, or toggle the nested S/C param via set_parameter."
+        )
+    device_index = spec["device_index"]
+    source_display_name = (
+        _resolve_node_name(context, source, field="source")
+        if source is not None
+        else None
+    )
 
     # Find sidechain enable + gain params by substring match. Native Live
     # devices: 'S/C On' / 'S/C Gain'. Naming variants captured by the
@@ -1818,13 +1913,15 @@ def set_sidechain_handler(
     routing_result: dict[str, Any] | None = None
     if enabled and source_display_name is not None:
         # Delegate source routing to the primitive; bubbles its teaching
-        # error if the device lacks input_routing_*.
+        # error if the device lacks input_routing_*. The target's resolved
+        # parent (kind, idx) flows back to set_input_routing's flat addressing
+        # via _parent_address (which yields track_index= / return_index= /
+        # master= kwargs).
         routing_result = set_input_routing_handler(
             context,
             device_index=device_index,
-            track_index=track_index,
-            return_index=return_index,
             type_display_name=source_display_name,
+            **_parent_address(kind, idx),
         )
 
     if gain_db is not None:

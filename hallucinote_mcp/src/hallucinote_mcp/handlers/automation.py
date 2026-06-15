@@ -62,7 +62,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from ..dispatcher import LiveContext
-from .device import _resolve_device_path
+from .device import _resolve_device_path, validate_node_addr
 
 
 logger = logging.getLogger(__name__)
@@ -571,6 +571,56 @@ def _resolve_track(context: LiveContext, track_index: int) -> Any:
     return song.tracks[track_index - 1]
 
 
+def _node_to_flat_device_param(
+    node: Any, *, action: str, allow_nested: bool, allow_master: bool,
+) -> dict[str, Any]:
+    """Translate a ``device_parameter`` NODE-ADDR (the wire address) to the flat
+    ``{master, track_index, return_index, device_index, device_path}`` the
+    internal envelope/perform resolvers already speak — so only the wire
+    boundary changes, not the resolution path.
+
+    ``allow_nested`` / ``allow_master`` capture the per-surface limits Live
+    imposes: the session-clip route (write_envelope / clear) reaches only
+    TOP-LEVEL device params on a track/return (``Clip.create_automation_envelope``
+    can't address a nested-rack param, and the master strip hosts no session
+    clip); the perform/gesture surface rides the Parameter object directly, so
+    it permits both. Teaching-errors when the node violates the surface's limit.
+    """
+    if not isinstance(node, dict):
+        raise ValueError(
+            f"{action} target_kind='device_parameter' requires a `node` device "
+            f"address (terminal 'device'), got {type(node).__name__}"
+        )
+    spec = validate_node_addr(node)
+    if spec["terminal"] != "device":
+        raise ValueError(
+            f"{action} target_kind='device_parameter' addresses a device — "
+            f"node.terminal must be 'device' (got {spec['terminal']!r})"
+        )
+    pk = spec["parent"]["kind"]
+    if pk == "master" and not allow_master:
+        raise NotImplementedError(
+            f"{action} can't automate a master-strip device parameter on the "
+            "session-clip route — the master holds no session clip. Use "
+            "action='perform_batch' (gesture-recorded arrangement automation)."
+        )
+    if spec.get("path") and not allow_nested:
+        raise NotImplementedError(
+            f"{action} can't automate a NESTED-rack device parameter: Live "
+            "12.4's Clip.create_automation_envelope addresses only top-level "
+            "device params. Use ableton_automation(action='perform_batch') — "
+            "it rides nested params at any depth (gesture-recorded arrangement "
+            "automation)."
+        )
+    return {
+        "master": pk == "master",
+        "track_index": spec["parent"]["index"] if pk == "track" else None,
+        "return_index": spec["parent"]["index"] if pk == "return" else None,
+        "device_index": spec["device_index"],
+        "device_path": spec.get("path"),
+    }
+
+
 def _resolve_clip(track: Any, location: str, clip_index: int) -> Any:
     if location == "session":
         slots = track.clip_slots
@@ -853,9 +903,8 @@ def write_envelope_handler(
     return_index: int | None = None,
     clip_index: int | None = None,
     location: str | None = None,
-    device_index: int | None = None,
+    node: dict[str, Any] | None = None,
     parameter_name: str | None = None,
-    device_path: list[dict[str, int]] | None = None,
     cc_number: int | None = None,
     note_pitch: int | None = None,
     note_start_beats: float | None = None,
@@ -890,6 +939,25 @@ def write_envelope_handler(
         raise ValueError(
             f"value_type must be one of {list(_VALUE_TYPES)}, "
             f"got {value_type!r}"
+        )
+    # NODE-ADDR: device_parameter's device address arrives as a `node` object;
+    # translate it to the flat (track_index, return_index, device_index) the
+    # session-clip resolution path already speaks. Nested/master are refused
+    # (Live's session-clip route can't reach them — see the helper). device_path
+    # stays None here (top-level only); the branch below no longer needs it.
+    device_index: int | None = None
+    if target_kind == "device_parameter":
+        flat = _node_to_flat_device_param(
+            node, action="write_envelope", allow_nested=False, allow_master=False,
+        )
+        track_index = flat["track_index"]
+        return_index = flat["return_index"]
+        device_index = flat["device_index"]
+    elif node is not None:
+        raise ValueError(
+            "node is only valid for target_kind='device_parameter'; mixer / "
+            "pan / send / clip kinds address a track/return/master directly "
+            "via track_index / return_index / master"
         )
     if value_type == "enum":
         breakpoints, _items = _resolve_enum_breakpoint_values(
@@ -996,26 +1064,12 @@ def write_envelope_handler(
                 "broader LOM gap."
             )
         if target_kind == "device_parameter":
-            if device_index is None or parameter_name is None:
+            # node → (track_index, return_index, device_index) translated above;
+            # parameter_name is the only remaining required device-param field.
+            # Nested/master already refused by _node_to_flat_device_param.
+            if parameter_name is None:
                 raise ValueError(
-                    "target_kind='device_parameter' requires device_index "
-                    "and parameter_name"
-                )
-            if device_path:
-                # DEEP-RACK-ADDR honest gap: the session-clip route writes via
-                # Clip.create_automation_envelope, which on Live 12.4 can't
-                # address a parameter on a nested-rack device. Nested device
-                # automation rides the continuous PERFORM surface instead
-                # (ableton_automation(action='perform_batch') addresses nested
-                # params via device_path). Refuse here rather than silently
-                # writing to the wrong (top-level) parameter.
-                raise NotImplementedError(
-                    "write_envelope can't automate a NESTED-rack device "
-                    "parameter (device_path given): Live 12.4's "
-                    "Clip.create_automation_envelope addresses only top-level "
-                    "device parameters. Use ableton_automation(action="
-                    "'perform_batch') — it rides nested params via device_path "
-                    "(gesture-recorded arrangement automation)."
+                    "target_kind='device_parameter' requires parameter_name"
                 )
             parent = _require_parent(
                 context, track_index=track_index, return_index=return_index,
@@ -1090,7 +1144,7 @@ def clear_handler(
     return_index: int | None = None,
     clip_index: int | None = None,
     location: str | None = None,
-    device_index: int | None = None,
+    node: dict[str, Any] | None = None,
     parameter_name: str | None = None,
     cc_number: int | None = None,
     note_pitch: int | None = None,
@@ -1112,6 +1166,22 @@ def clear_handler(
     if target_kind not in TARGET_KINDS:
         raise ValueError(
             f"target_kind {target_kind!r} not in {list(TARGET_KINDS)}"
+        )
+    # NODE-ADDR: device_parameter's device address arrives as `node`; translate
+    # to flat (track_index, return_index, device_index) — same surface limits as
+    # write_envelope (top-level track/return only on the session-clip route).
+    device_index: int | None = None
+    if target_kind == "device_parameter":
+        flat = _node_to_flat_device_param(
+            node, action="clear", allow_nested=False, allow_master=False,
+        )
+        track_index = flat["track_index"]
+        return_index = flat["return_index"]
+        device_index = flat["device_index"]
+    elif node is not None:
+        raise ValueError(
+            "node is only valid for target_kind='device_parameter'; mixer / "
+            "pan / send / clip kinds address a track/return/master directly"
         )
     if target_kind == "clip_cc":
         if cc_number is None:
@@ -1183,10 +1253,12 @@ def clear_handler(
             "action='clear_all' on the clip-owning track."
         )
     if target_kind == "device_parameter":
-        if device_index is None or parameter_name is None:
+        # node → flat translated above; parameter_name is the only remaining
+        # required device-param field.
+        if parameter_name is None:
             raise ValueError(
                 "clear with target_kind='device_parameter' requires "
-                "device_index and parameter_name (matches write_envelope)"
+                "parameter_name (matches write_envelope)"
             )
         parent = _require_parent(
             context, track_index=track_index, return_index=return_index,
@@ -1813,15 +1885,37 @@ def perform_batch_handler(
                 f"({span_start}..{span_end}) — a single-point arc is a static "
                 "value, not an automation ride; dial the parameter instead"
             )
+        # NODE-ADDR: a device_parameter arc carries its device address as a
+        # `node` object; translate to the flat addressing _PreparedArc /
+        # _resolve_perform_target already speak. The perform surface rides the
+        # Parameter object directly, so nesting AND master are allowed here
+        # (unlike write_envelope's session-clip route). mixer / send arcs keep
+        # their flat master / track_index / return_index.
+        if target_kind == "device_parameter":
+            flat = _node_to_flat_device_param(
+                arc.get("node"), action=f"perform_batch arcs[{i}]",
+                allow_nested=True, allow_master=True,
+            )
+            arc_master = flat["master"]
+            arc_track_index = flat["track_index"]
+            arc_return_index = flat["return_index"]
+            arc_device_index = flat["device_index"]
+            arc_device_path = flat["device_path"]
+        else:
+            arc_master = bool(arc.get("master", False))
+            arc_track_index = arc.get("track_index")
+            arc_return_index = arc.get("return_index")
+            arc_device_index = None
+            arc_device_path = None
         prepared.append(_PreparedArc(
             arc_id=arc.get("arc_id"),
             target_kind=target_kind,
-            master=bool(arc.get("master", False)),
-            track_index=arc.get("track_index"),
-            return_index=arc.get("return_index"),
-            device_index=arc.get("device_index"),
+            master=arc_master,
+            track_index=arc_track_index,
+            return_index=arc_return_index,
+            device_index=arc_device_index,
             parameter_name=arc.get("parameter_name"),
-            device_path=arc.get("device_path"),
+            device_path=arc_device_path,
             cleaned=cleaned,
             span_start=span_start,
             span_end=span_end,

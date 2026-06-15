@@ -29,6 +29,7 @@ from ._core import (
     PushPlan,
     ToolCall,
     _breakpoints_for_mcp,
+    build_node_addr,
 )
 from .envelopes import classify_envelope_route
 
@@ -205,13 +206,10 @@ def _arc_addressing(
                 "has no chain row; arc pending"
             )
             return None
-        args = {
-            "target_kind": "device_parameter",
-            "device_index": device_at,
-            "parameter_name": envelope["parameter_path"],
-        }
-        if device_path:
-            args["device_path"] = device_path
+        # NODE-ADDR: device_parameter rides a single `node` (the perform surface
+        # addresses the Parameter object directly, so nested params are reachable
+        # — device_path becomes the node's `path`). Collect the parent surface
+        # into parent_kv, then build the node.
         if chain_row["parent_return_id"] is not None:
             return_at = Q.get_ableton_link(
                 conn, session_id=session_id, db_kind="return",
@@ -223,12 +221,12 @@ def _arc_addressing(
                     f"{chain_row['parent_return_id']} not linked; arc pending"
                 )
                 return None
-            args["return_index"] = return_at
+            parent_kv: dict[str, Any] = {"return_index": return_at}
             label = f"return {return_at} device {device_at} {envelope['parameter_path']}"
         else:
             track_row = Q.get_track(conn, chain_row["parent_track_id"])
             if track_row is not None and track_row["kind"] == "master":
-                args["master"] = True
+                parent_kv = {"master": True}
                 label = f"master device {device_at} {envelope['parameter_path']}"
             else:
                 track_at = Q.get_ableton_link(
@@ -242,11 +240,18 @@ def _arc_addressing(
                         "arc pending"
                     )
                     return None
-                args["track_index"] = track_at
+                parent_kv = {"track_index": track_at}
                 label = (
                     f"{track_row['name'] if track_row else track_at} device "
                     f"{device_at} {envelope['parameter_path']}"
                 )
+        args = {
+            "target_kind": "device_parameter",
+            "node": build_node_addr(
+                parent_kv, device_index=device_at, device_path=device_path,
+            ),
+            "parameter_name": envelope["parameter_path"],
+        }
         return args, label
 
     # classify said 'perform' for a kind this resolver doesn't know —
@@ -270,14 +275,34 @@ def perform_target_key(args: dict[str, Any]) -> tuple:
     different nested devices share a top-level ``device_index`` but differ by
     path, so the path (as a hashable tuple of steps) must be in the key or they
     would falsely collide.
+
+    NODE-ADDR: device_parameter arcs carry a ``node`` object; the handler
+    translates it back to flat fields on ``_PreparedArc`` before keying, so this
+    side extracts the same flat fields from the node to keep the keys identical.
+    mixer / send arcs keep their flat master / track_index / return_index.
     """
+    node = args.get("node")
+    if node is not None:
+        parent = node.get("parent", {})
+        pkind = parent.get("kind")
+        master = pkind == "master"
+        track_index = parent.get("index") if pkind == "track" else None
+        return_index = parent.get("index") if pkind == "return" else None
+        device_index = node.get("device_index")
+        device_path = node.get("path")
+    else:
+        master = bool(args.get("master"))
+        track_index = args.get("track_index")
+        return_index = args.get("return_index")
+        device_index = args.get("device_index")
+        device_path = args.get("device_path")
     return (
-        args.get("target_kind"), bool(args.get("master")),
-        args.get("track_index"), args.get("return_index"),
-        args.get("device_index"), args.get("parameter_name"),
+        args.get("target_kind"), master,
+        track_index, return_index,
+        device_index, args.get("parameter_name"),
         tuple(
             (int(s["chain_index"]), int(s["device_position"]))
-            for s in (args.get("device_path") or ())
+            for s in (device_path or ())
         ),
     )
 

@@ -58,11 +58,17 @@ shows `current_phase` advance). Not gating — the logic is fully unit-covered.
 primary-repo re-vendor; handshake confirmed). The addressing spine is proven end-to-end on a
 real set (808 Core Kit drum rack + 808 Selector Rack with a genuine depth-2 nested Saturator).
 The 6th check (chain-terminal *load*, 3b) FAILED → root-caused a **pre-existing, NOT-a-Chunk-A**
-defect (`browser.load_item` follows the *appointed device*, not `rack.view.selected_chain`) in
-the wire-flip-unchanged `_load_into_rack_chain` → **FIXED this session** (`select_device`
-appointment + corrected the false-confidence fakes; the prior fake modeled the wrong mechanism).
-⏳ **One pending re-test:** the fix flips the fingerprint again — re-vendor, then re-run check 3b
-(load into a non-empty nested chain → device appends *in-chain*, not top-level).
+defect in the wire-flip-unchanged `_load_into_rack_chain`: `browser.load_item` ONLY targets the
+track's MAIN chain (probed inert against `rack.view.selected_chain` AND `song.view.select_device`
+— two wrong fixes, the device landed top-level both times, leaving a stray). **The right API is
+`Chain.insert_device(name)`** — found by probing the `Chain` LOM object's methods, then
+**verified live via probe** (inserted Reverb at the "808" chain tail; "EQ Eight" at depth-2 in the
+nested "Punch" chain — accepts the browser display name `kind` carries, works empty/non-empty/any
+depth). **FIXED this session:** `_load_into_rack_chain` now calls `Chain.insert_device(kind)`
+(presets refused — name-only; empty-chain special-case gone); false-confidence fakes corrected to
+model insert_device. ⏳ **One pending re-test:** the fix flips the fingerprint again — re-vendor,
+then confirm the *integrated handler* `ableton_device(load, node={…chain…})` appends in-chain
+(the raw Live op is already probe-proven; this just confirms the handler wiring).
 
 Earlier: CODE-COMPLETE 2026-06-15 (worktree `feature/node-addr`), full suite green (baseline +
 38 new tests). Critic note d: `device_path` was a shipped contract (DEEP-RACK-ADDR), so the
@@ -109,11 +115,13 @@ match-against-running-server guard stays intact:
    (fails loud, no silent corruption) but left a stray top-level device (cleaned up by hand).
    **Pre-existing** (the `_load_into_rack_chain` mechanism was byte-identical develop↔HEAD; the wire
    flip only changed the node→chain_index *entry*, and the `chain` terminal *resolved* correctly).
-   **FIXED this session:** `load_item` inserts relative to the **appointed device**
-   (`song.view.select_device`) — the handler now appoints a device living in the target chain;
-   empty chains (no device to appoint) refuse with a teaching error instead of mis-loading. The
-   unit fake that asserted `selected_chain` (the wrong mechanism — the source of the false green)
-   was corrected to model appointed-device insertion. **⏳ Live re-test pending** (re-vendor first).
+   Two wrong fixes (`selected_chain`, then `song.view.select_device` appointment) both probed inert
+   — `browser.load_item` ONLY reaches the track MAIN chain. **The right API is
+   `Chain.insert_device(name)`** (found by `ableton_probe describe`-ing the `Chain` object), **probe-
+   verified live**: Reverb → "808" chain tail; "EQ Eight" → depth-2 "Punch" chain. **FIXED:**
+   `_load_into_rack_chain` now calls `Chain.insert_device(kind)` (presets refused — name-only; the
+   empty-chain case just works); the false-green fakes were rewritten to model insert_device. **⏳
+   Integrated-handler Live re-test pending** (re-vendor; the raw op is already probe-proven).
 4. ✅ **automation** — `perform_batch` on the depth-2 Saturator `Dry/Wet` recorded with
    `automation_state:1`, `device_path` echoed nested. `write_envelope` verified at top-level (its
    nested route is a documented Live-12.4 impossibility → `perform_batch` is the nested path).

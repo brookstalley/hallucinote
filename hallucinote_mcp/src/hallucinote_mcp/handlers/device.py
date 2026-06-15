@@ -1081,6 +1081,22 @@ def load_handler(
     device_index = spec.get("device_index")
     device_path = spec.get("path")
     chain_index = spec.get("chain_index")
+    if chain_index is not None and (
+        preset_uri is not None
+        or preset_query is not None
+        or browser_path is not None
+    ):
+        # Chain loads go through Chain.insert_device(name), which is built-in-
+        # name-only — it can't carry a preset/plugin selector. Refuse early with
+        # a teaching error instead of silently inserting the base device.
+        raise ValueError(
+            "loading a specific preset/plugin INTO a nested chain isn't "
+            "supported on Live 12.4.2 — the chain-insert API "
+            "(Chain.insert_device) takes a built-in device's browser display "
+            "name only. Load the device by `kind` (e.g. 'Compressor', "
+            "'Reverb', 'EQ Eight') into the chain, or load the preset/plugin at "
+            "the track top level and move it in Live."
+        )
     # DEV-6M2K: master loads go through the SAME path as track/return loads.
     # The earlier DEV-2M9K refusal here was built on a premise refuted on Live
     # 12.4.2 — `song.view.selected_track = song.master_track` STICKS (read-back
@@ -1190,11 +1206,8 @@ def load_handler(
             parent=parent,
             parent_kind=parent_kind,
             parent_idx=parent_idx,
-            browser=browser,
-            item=item,
             resolved_path=resolved_path,
             kind=kind,
-            preset_uri=preset_uri,
             device_index=device_index,
             device_path=device_path,
             chain_index=chain_index,
@@ -2276,80 +2289,42 @@ def _load_into_rack_chain(
     parent: Any,
     parent_kind: str,
     parent_idx: int,
-    browser: Any,
-    item: Any,
     resolved_path: list[str] | None,
     kind: str,
-    preset_uri: str | None,
     device_index: int,
     device_path: list[dict[str, int]] | None,
     chain_index: int,
 ) -> dict[str, Any]:
-    """Load an already-resolved browser ``item`` into a nested rack chain.
+    """Load a built-in device ``kind`` into a nested rack chain.
 
     The destination rack is resolved via the canonical ``device_path`` descent
-    (so the rack may be nested to any depth), then the device appends to the
-    rack's ``chain_index`` chain. Selects the destination via
-    ``rack.view.selected_chain`` + ``song.view.selected_track``, then mirrors
-    the top-level loader's three-shape post-condition (append /
-    replace-in-place / silent no-op). The browser item is resolved by the
-    caller (``load_handler``) so this path shares the same selector precedence
-    (preset_query / preset_uri / kind / browser_path fallback).
+    (so the rack may be nested to any depth), then the device is appended to the
+    rack's ``chain_index`` chain via ``Chain.insert_device(kind)`` — Live's
+    direct chain-insertion API. (``browser.load_item`` only ever targets the
+    track's MAIN chain, so it cannot reach a nested chain; ``load_handler``
+    refuses preset/plugin selectors for chain loads because ``insert_device`` is
+    built-in-name-only.) Mirrors the top-level loader's three-shape
+    post-condition (append / replace-in-place / silent no-op) as a backstop.
     """
     rack = _resolve_device_path(parent, device_index, device_path)
     chains = _resolve_rack_chains(rack)
     chain = _resolve_chain_by_index(chains, chain_index)
 
-    view = getattr(context.song, "view", None)
-    if view is None:
-        raise NotImplementedError(
-            "song.view not exposed — cannot select destination chain for "
-            "browser.load_item"
-        )
-    # Live's chain-selection API: `selected_chain` exists on the view of
-    # rack devices (`rack.view.selected_chain`) in Live 10+. Drum racks
-    # also expose `selected_drum_pad`.
-    rack_view = getattr(rack, "view", None)
-    if rack_view is None or not hasattr(rack_view, "selected_chain"):
-        raise NotImplementedError(
-            f"rack device {getattr(rack, 'class_name', '?')!r} doesn't "
-            "expose view.selected_chain — Live's nested-chain load path "
-            "is gated on this surface. Drum-rack pads can be selected via "
-            "view.selected_drum_pad; instrument/effect racks expose "
-            "view.selected_chain. If your Live version differs, file an "
-            "issue with the empirical probe (capabilities action + "
-            "introspect on the rack device)."
-        )
+    # Live 12.4.2: load a device INTO a chain via Chain.insert_device(name) — the
+    # DIRECT chain-insertion API. browser.load_item ONLY ever targets the track's
+    # MAIN chain; neither rack.view.selected_chain nor song.view.select_device
+    # redirects it (both probed inert on a real set 2026-06-15 — the device landed
+    # at the track top level, leaving a stray, on two attempts). insert_device
+    # takes the browser display name (the same `kind`), works at any depth on
+    # empty OR non-empty chains, and returns the new Device. Presets/plugins are
+    # refused upstream in load_handler (insert_device is name-only). See
+    # learnings.md "Load a device INTO a rack chain with Chain.insert_device".
     chain_before_classes = [_canonical_class_name(d) for d in chain.devices]
-    # Live 12.4.2: `browser.load_item` inserts relative to the APPOINTED device
-    # (`song.view.select_device`), NOT `rack.view.selected_chain`. Setting only
-    # `selected_chain` (+ `selected_track`) leaves the appointed device at the
-    # track's top level, so the new device silently lands on the track's MAIN
-    # chain — confirmed on a real set during the NODE-ADDR Chunk-A Live pass
-    # (2026-06-15): the nested load no-op'd and a stray device appeared at the
-    # top level. Fix: appoint a device that already lives in the target chain so
-    # `load_item` appends into THAT chain. `selected_chain` +
-    # `is_showing_chain_devices` keep the rack's own UI consistent.
-    view.selected_track = parent
-    rack_view.selected_chain = chain
-    if hasattr(rack_view, "is_showing_chain_devices"):
-        rack_view.is_showing_chain_devices = True
-    if not chain.devices:
-        # Empty target chain → no in-chain device to appoint, and 12.4.2 exposes
-        # no API to set the insertion point inside an empty nested chain
-        # (`load_item` would follow the appointed device, of which there is
-        # none, and dump onto the track top level). Refuse with a teaching error
-        # rather than silently mis-load + leave a stray top-level device.
-        raise NotImplementedError(
-            f"load into chain {chain_index} of rack {device_index}: the target "
-            "chain is empty, and Live 12.4.2 has no API to set the insertion "
-            "point inside an empty nested chain (browser.load_item follows the "
-            "appointed device — `song.view.select_device` — of which an empty "
-            "chain has none). Load the first device into this chain via Live's "
-            "UI (then later loads target it), or load into a non-empty chain."
-        )
-    view.select_device(chain.devices[-1])
-    browser.load_item(item)
+    # UI nicety (not required by the insert): show the chain we load into.
+    rack_view = getattr(rack, "view", None)
+    if rack_view is not None and hasattr(rack_view, "selected_chain"):
+        rack_view.selected_chain = chain
+    chain.insert_device(kind)
 
     # Re-resolve the destination chain from a fresh parent — Live re-wraps API
     # objects on every access, and the descent is positional (never `is`).
@@ -2362,59 +2337,22 @@ def _load_into_rack_chain(
     chain_after = list(fresh_chain.devices)
     chain_after_classes = [_canonical_class_name(d) for d in chain_after]
     where = f"chain {chain_index} of rack {device_index}"
-    # Mirror E2's three-shape post-condition from load_handler: append
-    # (chain grew), replace-in-place (same length, one position changed
-    # class), silent no-op (same length, no changes — raise teaching error).
-    if len(chain_after) > len(chain_before_classes):
-        nested_position = len(chain_after)
-        new_device = chain_after[-1]
-    elif len(chain_after) == len(chain_before_classes):
-        changed = [
-            i
-            for i, (b, a) in enumerate(
-                zip(chain_before_classes, chain_after_classes)
-            )
-            if a != b
-        ]
-        if len(changed) == 1:
-            nested_position = changed[0] + 1
-            new_device = chain_after[changed[0]]
-        elif not changed:
-            existing = [
-                f"{i + 1}:{cls or '?'}"
-                for i, cls in enumerate(chain_after_classes)
-            ]
-            existing_str = ", ".join(existing) if existing else "(empty)"
-            raise RuntimeError(
-                f"load (into {where}): Live did not append a device after "
-                f"browser.load_item. Existing chain: [{existing_str}]. "
-                "Most common cause: a device with matching class is "
-                "already present at the expected position (Live silently "
-                "no-ops the load); the item may not be loadable on this "
-                "rack type, or the chain-selection step didn't take effect."
-            )
-        else:
-            existing = [
-                f"{i + 1}:{cls or '?'}"
-                for i, cls in enumerate(chain_after_classes)
-            ]
-            raise RuntimeError(
-                f"load (into {where}): Live changed multiple devices after "
-                f"browser.load_item — unexpected shape ({len(changed)} "
-                f"positions changed). Post-load chain: "
-                f"[{', '.join(existing)}]."
-            )
-    else:
+    # insert_device always APPENDS exactly one device (it neither replaces nor
+    # no-ops). Verify the chain grew by one as a fail-loud backstop — if Live
+    # somehow didn't add it, raise rather than report a phantom load.
+    if len(chain_after) != len(chain_before_classes) + 1:
         existing = [
             f"{i + 1}:{cls or '?'}"
             for i, cls in enumerate(chain_after_classes)
         ]
         existing_str = ", ".join(existing) if existing else "(empty)"
         raise RuntimeError(
-            f"load (into {where}): chain shrank after browser.load_item "
-            f"(pre={len(chain_before_classes)}, post={len(chain_after)}). "
-            f"Post-load chain: [{existing_str}]."
+            f"load (into {where}): Chain.insert_device({kind!r}) did not add "
+            f"exactly one device (chain length {len(chain_before_classes)} → "
+            f"{len(chain_after)}). Post-insert chain: [{existing_str}]."
         )
+    nested_position = len(chain_after)
+    new_device = chain_after[-1]
     result: dict[str, Any] = {
         "device_index": device_index,
         "chain_index": chain_index,
@@ -2426,8 +2364,6 @@ def _load_into_rack_chain(
     }
     if device_path:
         result["device_path"] = _validate_device_path(device_path)
-    if preset_uri is not None:
-        result["preset_uri"] = preset_uri
     result.update(_parent_address(parent_kind, parent_idx))
     return result
 

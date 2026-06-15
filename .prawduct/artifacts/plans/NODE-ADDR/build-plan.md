@@ -179,10 +179,22 @@ fresh `pytest` before any Chunk-A code review (current `prawduct-hook test-statu
       `set_input_routing`. Rationale: plan-faithful (not in the migrated list) + they're shallow/read surfaces,
       not the device-addressing combo. RECOMMEND a follow-up to migrate the envelope read pair for full
       device_parameter uniformity. Not silently dropped — surfaced here + to the user.
-    - [ ] **Tests:** migrate ALL flat-param test sites to `node` (in progress).
-  - [ ] Single-source tri-state capability table (typed) + generic stub + `ableton://reference/node-feature-matrix` resource + cross-consumer consistency test.
-  - [ ] `get_node_path` (generalize `get_device_nesting_path`) + `render_node_addr` (engine-side).
-  - [ ] Operator-verify every migrated op in Live (Critic note d) — needs dev-server pointed at the worktree.
+    - [x] **Tests:** ALL flat-param test sites migrated to `node` (full suite green at baseline).
+  - [x] Single-source tri-state capability table (typed `hallucinote_mcp/node_features.py`: `FeatureStatus` +
+    `Feature`/`Cell` + `MATRIX`, 15 features LOM-confirmed) + generic stub responder (`cell_response`) +
+    teaching-error generator (`teaching_error`) + published resource `ableton://reference/node-feature-matrix`
+    (13th resource — PRIMER/README/conventions-guide/test counts updated) + **cross-consumer consistency test**
+    (resource ≡ stub ≡ teaching-error, all from one `Cell`). 24 tests `tests/unit/test_node_features.py`.
+    DONE 2026-06-15.
+  - [x] `get_node_path(conn, device_id)` (generalize `get_device_nesting_path` → full NodeAddr; DB-native
+    parent index) + `render_node_addr(conn, device_id)` (named string, generated never parsed) — one shared
+    up-walk `_walk_node_with_rows`; legacy `get_device_nesting_path`/`get_top_level_device` refactored onto it
+    (no behavior change). 14 tests `tests/unit/db/test_node_path.py`. DONE 2026-06-15.
+  - [ ] **Operator-verify every migrated op in Live (Critic note d)** — needs re-vendor + dev-server pointed
+    at the worktree. Enqueued in `.prawduct/operator-verification.md`. THE remaining Chunk-A gate; code is
+    complete + full suite green.
+    Note (flagged, NOT dropped): `read_envelope`/`get_envelope` + shallow-nav surfaces kept flat per the plan
+    (reads, outside the migrated set) — recommended fast-follow, not a Chunk-A gate.
 - [ ] Chunk B: params read-side durability (capture execute + pull depth-N + default_value filter) [vertical slice]
 - [ ] Chunk C: per-drum DrumChain authorship — choke + out_note + chain mixer (`chain` terminal; re-scoped)
 - [ ] Chunk D: macro values/names/variations (DEV-3W9R; mapping target UNSUPPORTED_IN_LIVE)

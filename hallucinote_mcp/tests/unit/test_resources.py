@@ -29,6 +29,7 @@ _EXPECTED_URIS = {
     "ableton://plugins/installed",
     "ableton://reference/scales",
     "ableton://reference/device-params",
+    "ableton://reference/node-feature-matrix",
     "ableton://guides/getting-started",
     "ableton://guides/conventions",
     "ableton://guides/error-recovery",
@@ -38,8 +39,8 @@ _EXPECTED_URIS = {
 
 
 def test_resource_uri_list_matches_design():
-    """Lock the surface: exactly these 12 URIs (11 M-6 + INS-3W8P server/info),
-    no more, no less.
+    """Lock the surface: exactly these 13 URIs (11 M-6 + INS-3W8P server/info
+    + NODE-ADDR node-feature-matrix), no more, no less.
 
     Carry-forward principle #3 (lock-the-surface negative test for
     deliberate omissions). A future PR that adds an unlisted resource

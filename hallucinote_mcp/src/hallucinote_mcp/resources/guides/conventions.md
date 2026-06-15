@@ -75,6 +75,14 @@ node = {
 
 Get `path` / `chain_index` from `ableton_device(action='get_device_chains')`.
 
+**Which features work on which node kind:** addressing is uniform (one `node`
+reaches every kind) but *operations are not* — Live's matrix is sparse. Read
+`ableton://reference/node-feature-matrix` BEFORE authoring a node feature
+(routing on a return, macros, chain zones, choke groups, …). Each cell is
+`SUPPORTED` / `NOT_IMPLEMENTED` (Live can; not built — wait/file a request) /
+`UNSUPPORTED_IN_LIVE` (a hard wall — route around it), with the LOM evidence and
+a workaround, so you never burn a turn attempting an impossible op blind.
+
 The **shallow navigation surfaces** keep flat `track_index` / `return_index` /
 `master`: `ableton_device` `list` / `info` / `get_routing` / `navigate_preset` /
 `pad_info` / `set_input_routing`, the `ableton_automation` read surfaces

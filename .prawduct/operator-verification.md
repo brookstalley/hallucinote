@@ -52,6 +52,38 @@ shows `current_phase` advance). Not gating — the logic is fully unit-covered.
 
 ---
 
+## NODE-ADDR Chunk A — wire flip + addressing spine (re-vendor + migrated-op Live verify)
+
+**Status:** CODE-COMPLETE 2026-06-15 (worktree `feature/node-addr`), full suite green
+(baseline + 38 new tests). **Added after the 2026-06-14 blanket acceptance → not covered
+by it; gates the PR until verified.** Critic note d: `device_path` was a shipped contract
+(DEEP-RACK-ADDR), so the migration must verify **every** migrated op against a real set via
+the new `node` address — not just the new path.
+
+**Bridge step first:** re-vendor from this worktree (re-vendor required — touches
+`actions/`+`handlers/`), point the dev-server at it, reopen Live, `/mcp` reconnect, confirm
+handshake-match. Then:
+
+1. **Nested set_parameter via `node`** — set a depth-2 nested device param through
+   `ableton_device(action='set_parameter', node={parent, terminal:'device', device_index, path:[…]})`
+   → it lands on the right nested device (not the top-level rack).
+2. **Nested get_parameters via `node`** — read the same nested device; confirm values + the
+   new `default_value` field present (guarded — omitted only on the params that raise).
+3. **load via `node`** — a track/return/master-terminal load (top-level) AND a `chain`-terminal
+   load INTO a nested chain both place the device correctly.
+4. **write_envelope + a performed arc via `node`** — author a `device_parameter` envelope on a
+   nested device and run a performed automation pass → both route to the right nested param.
+5. **`chain` terminal resolves** — a DrumChain reached via a `chain`-terminal `node`;
+   `choke_group`/`out_note` are reachable on it (the Chunk-C surface), proving the new terminal.
+6. **Capability matrix end-to-end** — read `ableton://reference/node-feature-matrix`; confirm an
+   unbuilt feature reports `NOT_IMPLEMENTED` and a structural-impossible op (send pre/post,
+   macro-mapping-target, per-chain audio out) reports `UNSUPPORTED_IN_LIVE`, each with the
+   documented evidence + workaround.
+
+Visual change: no (wire/behavior, not UI). Operator-attended Live session required.
+
+---
+
 ## ENV-8K2R + ENV-2T9K — perform-handler hardening + tempo-reduction fidelity (Live smoke)
 
 **Status:** PENDING — needs a `/mcp` reconnect (respawn the server on the new handler code,

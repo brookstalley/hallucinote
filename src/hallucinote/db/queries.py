@@ -431,6 +431,65 @@ def get_device_chains_for_rack_device(
     ).fetchall()
 
 
+def _walk_node_with_rows(
+    conn: sqlite3.Connection, device_id: str,
+) -> tuple[sqlite3.Row | None, list[sqlite3.Row], list[dict[str, int]]]:
+    """Walk UP the nested-rack hierarchy from ``device_id`` to its track/return/
+    master root — the one walk every NODE-ADDR DB-side address function shares.
+
+    Returns ``(root_chain, devices_top_to_target, steps)``:
+      - ``root_chain`` — the top-level device's chain row (carries the polymorphic
+        ``parent_track_id`` / ``parent_return_id`` used to classify the parent).
+        ``None`` when the device is gone OR a chain link is broken mid-walk (a
+        corrupt DB) — the conservative "no resolvable parent" signal.
+      - ``devices_top_to_target`` — the device rows from the top-level ancestor
+        (``[0]``) down to ``device_id`` (``[-1]``); ``[]`` only when the device is
+        gone.
+      - ``steps`` — the ``{chain_index, device_position}`` path from the top-level
+        device down to the target (empty for a top-level device).
+
+    ``device_chains.position`` is the 1-based chain index within its parent rack
+    (matching the LOM chain order push reloads); ``devices.position`` is the
+    1-based device position within its chain — so a path matches the reloaded
+    rack preset's structure (design §5).
+    """
+    dev = get_device(conn, device_id)
+    if dev is None:
+        return None, [], []
+    devices: list[sqlite3.Row] = [dev]
+    steps: list[dict[str, int]] = []
+    # Live racks can't nest cyclically; the bound guards a corrupt DB from
+    # spinning forever rather than imposing a real depth limit.
+    for _ in range(64):
+        chain = get_device_chain(conn, dev["chain_id"])
+        if chain is None:
+            # Broken chain link — treat the highest device reached as the top,
+            # but signal "no resolvable parent" (root_chain None) so the
+            # addressing functions decline rather than invent a parent.
+            devices.reverse()
+            steps.reverse()
+            return None, devices, steps
+        if chain["parent_rack_device_id"] is None:
+            devices.reverse()
+            steps.reverse()
+            return chain, devices, steps
+        steps.append({
+            "chain_index": int(chain["position"]),
+            "device_position": int(dev["position"]),
+        })
+        parent = get_device(conn, chain["parent_rack_device_id"])
+        if parent is None:
+            devices.reverse()
+            steps.reverse()
+            return None, devices, steps
+        devices.append(parent)
+        dev = parent
+    raise ValueError(
+        f"device {device_id!r} nesting path exceeds depth 64 — "
+        "cyclic device_chains?"
+    )
+
+
 def _walk_to_top_level_device(
     conn: sqlite3.Connection, device_id: str,
 ) -> tuple[sqlite3.Row | None, list[dict[str, int]]]:
@@ -444,36 +503,11 @@ def _walk_to_top_level_device(
     ``(None, [])`` when the device is gone. Shared by
     :func:`get_device_nesting_path` and :func:`get_top_level_device` so the two
     can never disagree on the same hierarchy.
-
-    ``device_chains.position`` is the 1-based chain index within its parent rack
-    (matching the LOM chain order push reloads); ``devices.position`` is the
-    1-based device position within its chain — so a path matches the reloaded
-    rack preset's structure (design §5).
     """
-    steps: list[dict[str, int]] = []
-    dev = get_device(conn, device_id)
-    if dev is None:
+    _root_chain, devices, steps = _walk_node_with_rows(conn, device_id)
+    if not devices:
         return None, []
-    # Live racks can't nest cyclically; the bound guards a corrupt DB from
-    # spinning forever rather than imposing a real depth limit.
-    for _ in range(64):
-        chain = get_device_chain(conn, dev["chain_id"])
-        if chain is None or chain["parent_rack_device_id"] is None:
-            steps.reverse()
-            return dev, steps
-        steps.append({
-            "chain_index": int(chain["position"]),
-            "device_position": int(dev["position"]),
-        })
-        parent = get_device(conn, chain["parent_rack_device_id"])
-        if parent is None:
-            steps.reverse()
-            return dev, steps
-        dev = parent
-    raise ValueError(
-        f"device {device_id!r} nesting path exceeds depth 64 — "
-        "cyclic device_chains?"
-    )
+    return devices[0], steps
 
 
 def get_device_nesting_path(
@@ -503,6 +537,98 @@ def get_top_level_device(
     top-level ancestor's Live index plus :func:`get_device_nesting_path`.
     """
     return _walk_to_top_level_device(conn, device_id)[0]
+
+
+# ---------------------------------------------------------------------------
+# NODE-ADDR (design §1a): the DB-side inverse of the handler resolver. Given a
+# DB device id, build its positional NodeAddr (`get_node_path`) and a stable
+# human rendering (`render_node_addr`). Both walk UP via `_walk_node_with_rows`
+# — no Live round-trips.
+# ---------------------------------------------------------------------------
+
+
+def _parent_addr_for_chain(
+    conn: sqlite3.Connection, root_chain: sqlite3.Row,
+) -> dict[str, object]:
+    """Classify a top-level device's chain into a NodeAddr ``parent`` block
+    (``{kind[, index]}``). ``master`` is a singleton (no index); track/return
+    carry their 1-based DB index (``track_index`` / return ``position``)."""
+    if root_chain["parent_track_id"] is not None:
+        track = get_track(conn, root_chain["parent_track_id"])
+        if track is None:
+            raise ValueError(
+                f"device_chain {root_chain['id']!r} references a missing track"
+            )
+        if track["kind"] == "master":
+            return {"kind": "master"}
+        return {"kind": "track", "index": int(track["track_index"])}
+    if root_chain["parent_return_id"] is not None:
+        ret = get_return(conn, root_chain["parent_return_id"])
+        if ret is None:
+            raise ValueError(
+                f"device_chain {root_chain['id']!r} references a missing return"
+            )
+        return {"kind": "return", "index": int(ret["position"])}
+    raise ValueError(
+        f"device_chain {root_chain['id']!r} is not a top-level chain "
+        "(no parent track/return) — cannot build a node path"
+    )
+
+
+def get_node_path(
+    conn: sqlite3.Connection, device_id: str,
+) -> dict[str, object] | None:
+    """The full ``NodeAddr`` for a DB device — the inverse of the handler's
+    ``_resolve_node``, computed from the DB hierarchy alone (no Live round-trips).
+    Generalizes :func:`get_device_nesting_path`: returns not just the nested
+    ``path`` steps but the complete addressable shape ``{parent, terminal,
+    device_index, path?}`` the node-addressed wire surfaces accept.
+
+    The ``parent`` index is the **DB-native** 1-based index (``track_index`` /
+    return ``position``). A *Live* session index — what push sends to the Remote
+    Script — is resolved separately via the ableton-link table, because a live
+    set's track order can differ from the DB. So this address is for identity /
+    rendering / round-trip reasoning, not for direct dispatch to a live set.
+
+    Returns ``None`` if the device is gone (or its chain link is broken).
+    """
+    root_chain, devices, steps = _walk_node_with_rows(conn, device_id)
+    if root_chain is None:
+        return None
+    addr: dict[str, object] = {
+        "parent": _parent_addr_for_chain(conn, root_chain),
+        "terminal": "device",
+        "device_index": int(devices[0]["position"]),
+    }
+    if steps:
+        addr["path"] = steps
+    return addr
+
+
+_NODE_RENDER_SEP = " ▸ "  # " ▸ " — visual separator for rendered paths
+
+
+def render_node_addr(
+    conn: sqlite3.Connection, device_id: str,
+) -> str | None:
+    """A stable human-readable rendering of a DB device's address (design §1a) —
+    e.g. ``track 3 ▸ "Guitar-Dual Amped Heavy" ▸ "EQ Eight"``. Generated for
+    decisions / annotations / logs; **never parsed back** (the ``NodeAddr`` from
+    :func:`get_node_path` is the machine key). Retires the opaque
+    ``[{1,1},{1,1}]`` path rendering.
+
+    Renders from the DB device id — the identity a decision/log holds — walking UP
+    the same hierarchy as :func:`get_node_path` and naming each device by its
+    ``display_name``. The parent is shown as ``<kind> <index>`` (``master`` has no
+    index). Returns ``None`` if the device is gone (or its chain link is broken).
+    """
+    root_chain, devices, _steps = _walk_node_with_rows(conn, device_id)
+    if root_chain is None:
+        return None
+    parent = _parent_addr_for_chain(conn, root_chain)
+    head = "master" if parent["kind"] == "master" else f"{parent['kind']} {parent['index']}"
+    named = ['"{}"'.format(d["display_name"]) for d in devices]
+    return _NODE_RENDER_SEP.join([head, *named])
 
 
 def get_devices_for_chain(

@@ -207,7 +207,40 @@ fresh `pytest` before any Chunk-A code review (current `prawduct-hook test-statu
     learnings.md rule. NOT a wire-flip regression.
     Note (flagged, NOT dropped): `read_envelope`/`get_envelope` + shallow-nav surfaces kept flat per the plan
     (reads, outside the migrated set) — recommended fast-follow, not a Chunk-A gate.
-- [ ] Chunk B: params read-side durability (capture execute + pull depth-N + default_value filter) [vertical slice]
+- [x] Chunk B: params read-side durability — ✅ CODE DONE + GREEN 2026-06-15 (full suite green; Live operator-verify pending):
+  - [x] **Deterministic `capture execute`** — `capture.assemble_snapshot_via_probes(probe, old_snapshot=)`
+    walks the live set IN CODE (session/master/returns/tracks + full recursive rack tree), probing
+    `get_parameters` at EVERY depth via NodeAddr `path`; assembles via `compile_snapshot` +
+    `preserve_browser_paths`. Engine stays free of `hallucinote_mcp` (transport injected as a high-level
+    `probe(tool, action, **params)`); `tools/capture_cli.py` `execute` subcommand builds the real probe over
+    `client.send` (+ `_resolve_send_fn`/`_make_probe` mirroring pull_cli) and writes the side-by-side
+    `.refresh.json`. `/song-snapshot` skill retired the by-hand probe+compile prose for `capture execute`
+    (`capture_plan` kept as the hand/first-capture doc). **No re-vendor** (engine/sync/skill only).
+  - [x] **`default_value` capture filter (OQ5)** — `_snapshot_param_entry`: stores only `value != default_value`
+    (within ε); when Live OMITS `default_value` (the quantized raise — handler guard from Chunk A) ALWAYS
+    captures (the always-capture minority). Single-source `normalize_param_value` moved DOWN to `capture.py`
+    (pull `_core` had it; pull already imports capture → no cycle), so a captured-then-replayed param lands
+    the same DB row a pull writes.
+  - [x] **Pull depth-N** — `plan_pull_device_parameters` now walks top-level + nested devices
+    (`_iter_linked_device_params` / `_walk_nested_device_params`), emitting `get_parameters(node)` with the
+    nested `path` (top-level keeps the flat no-path shape — existing tests unchanged). `_apply_nested_rack_chains_for_device`
+    recurses the full `get_device_chains` tree (`_diff_nested_chains`), lifting the W7-B one-level cap (#17b
+    closed — addressing was the gate; Chunk A froze it). No wire change.
+  - [x] **§4 corrections** — deleted the false "Python can't call MCP tools" claims (`capture.py` module +
+    capture-plan section, `capture_cli.py` module); corrected the bug-record framing
+    (`incoming-bugs/archives/2026-06-14-nested-nested-rack-…md`: addressing shipped, acquisition was the gap)
+    + DEEP-RACK-ADDR build-plan Chunk-2 status ("capture" → "*replay* + push; acquisition deferred here").
+  - [x] **Tombstone** — `device_parameter`/`device_parameter_set` already registered in `build.py`
+    `_LATEST_ACTOR_EVENTS` (no new kind; capture replays as `actor='sync'`, pull as `actor='sync'` — both
+    protected). Verified, no new registration needed.
+  - [x] **Tests (16 new, full suite green)** — `tests/unit/capture/test_capture_execute.py` (12): acquisition
+    round-trip (fake-Live probe → capture → replay → DB → push re-emit @ depth-2 — the loop the prior
+    replay-only test never closed); symmetry contract (every depth probed); default_value filter incl.
+    raises-fallback, enum, const-range, at-default. `tests/unit/sync/test_pull.py` (4): depth-N param node
+    `path` (depth-1 + depth-2); nested-rack-chains rack-in-rack apply recursion + idempotency.
+  - [ ] **Operator (Live) — pending** (enqueued in operator-verification.md): swell `21 Voice Lead`
+    `LFO 1 Sync` depth-2 survives `/song-snapshot` + rebuild without saving .als; + the bloat-measurement
+    gate (Critic note b: non-default count per device + snapshot growth).
 - [ ] Chunk C: per-drum DrumChain authorship — choke + out_note + chain mixer (`chain` terminal; re-scoped)
 - [ ] Chunk D: macro values/names/variations (DEV-3W9R; mapping target UNSUPPORTED_IN_LIVE)
 - [ ] Chunk E: zones

@@ -5401,3 +5401,152 @@ def test_apply_device_sidechain_source_idempotent_round_trip(conn, song, session
     assert second.no_ops == 1
     events = Q.get_events_for_song(conn, song)
     assert sum(1 for e in events if e["kind"] == "device_sidechain_set") == 1
+
+
+# ---------------------------------------------------------------------------
+# NODE-ADDR Chunk B: depth-N pull (device params + nested-rack-chains)
+# ---------------------------------------------------------------------------
+
+
+def test_plan_pull_device_parameters_emits_nested_node_with_path(
+    conn, song, session
+):
+    """The #17b closure: a device nested inside a top-level rack gets a
+    get_parameters probe addressed by a NodeAddr `path` (top-level rack's Live
+    index + the {chain_index, device_position} steps), not just the top-level
+    chain. The top-level rack still gets a flat (no-path) node — the wire shape
+    for shallow devices is unchanged."""
+    _, _, rack_id = _build_track_with_rack(conn, song, session)  # track @5, rack @pos1
+    nested_chain = M.create_device_chain(
+        conn, parent_rack_device_id=rack_id, position=1,
+    )
+    M.create_device(
+        conn, chain_id=nested_chain, position=1,
+        kind="Operator", display_name="Op",
+    )
+    plan = pull.plan_pull_device_parameters(
+        conn, song_id=song, session_id=session,
+    )
+    nodes = [c.args["node"] for c in plan.calls]
+    assert {"parent": {"kind": "track", "index": 5}, "device_index": 1} in nodes
+    assert {
+        "parent": {"kind": "track", "index": 5},
+        "device_index": 1,
+        "path": [{"chain_index": 1, "device_position": 1}],
+    } in nodes
+    # detail='full' rides every probe (the filter + normalize need min/max).
+    assert all(c.args["detail"] == "full" for c in plan.calls)
+
+
+def test_plan_pull_device_parameters_emits_depth2_path(conn, song, session):
+    """Rack-in-rack: the param probe's `path` has a step per nesting level."""
+    _, _, rack_id = _build_track_with_rack(conn, song, session)
+    inner_chain = M.create_device_chain(
+        conn, parent_rack_device_id=rack_id, position=1,
+    )
+    inner_rack = M.create_device(
+        conn, chain_id=inner_chain, position=1,
+        kind="Instrument Rack", display_name="Inner",
+    )
+    deep_chain = M.create_device_chain(
+        conn, parent_rack_device_id=inner_rack, position=1,
+    )
+    M.create_device(
+        conn, chain_id=deep_chain, position=1,
+        kind="Operator", display_name="Deep",
+    )
+    plan = pull.plan_pull_device_parameters(
+        conn, song_id=song, session_id=session,
+    )
+    nodes = [c.args["node"] for c in plan.calls]
+    assert {
+        "parent": {"kind": "track", "index": 5},
+        "device_index": 1,
+        "path": [
+            {"chain_index": 1, "device_position": 1},
+            {"chain_index": 1, "device_position": 1},
+        ],
+    } in nodes
+
+
+def test_apply_nested_rack_chains_recurses_rack_in_rack(conn, song, session):
+    """Depth-N apply: a nested device that is itself a rack carries its own
+    `chains` in the probe tree — apply recurses and creates the deep structure
+    (W7-B's one-level cap is lifted; one top-level probe maps the whole tree)."""
+    _, _, rack_id = _build_track_with_rack(conn, song, session)
+    payload = {
+        "device_index": 1,
+        "chains": [{
+            "chain_index": 1, "name": "Outer", "device_count": 1,
+            "devices": [{
+                "position": 1, "name": "Inner Rack",
+                "class_name": "InstrumentGroupDevice",
+                "class_display_name": "Instrument Rack",
+                "parameter_count": 0, "is_active": True, "is_rack": True,
+                "device_path": [{"chain_index": 1, "device_position": 1}],
+                "chains": [{
+                    "chain_index": 1, "name": "InnerC", "device_count": 1,
+                    "devices": [{
+                        "position": 1, "name": "Operator",
+                        "class_name": "Operator",
+                        "class_display_name": "Operator",
+                        "parameter_count": 0, "is_active": True,
+                    }],
+                    "is_muted": False, "is_soloed": False,
+                }],
+            }],
+            "is_muted": False, "is_soloed": False,
+        }],
+        "parent_kind": "track", "track_index": 5,
+    }
+    out = pull.apply_pull_results(
+        conn,
+        [_result(f"nested_rack_chains:{rack_id}", payload)],
+        song_id=song, session_id=session,
+    )
+    # outer chain + inner rack device + inner chain + deep Operator = 4 creates.
+    assert out.mutations == 4
+    outer_chains = Q.get_device_chains_for_rack_device(conn, rack_id)
+    assert len(outer_chains) == 1
+    inner_rack = Q.get_devices_for_chain(conn, outer_chains[0]["id"])[0]
+    assert inner_rack["kind"] == "Instrument Rack"
+    inner_chains = Q.get_device_chains_for_rack_device(conn, inner_rack["id"])
+    assert len(inner_chains) == 1
+    deep = Q.get_devices_for_chain(conn, inner_chains[0]["id"])[0]
+    assert deep["kind"] == "Operator" and deep["display_name"] == "Operator"
+
+
+def test_apply_nested_rack_chains_recurse_is_idempotent(conn, song, session):
+    """Re-applying the SAME deep tree is a no-op (no event churn at depth)."""
+    _, _, rack_id = _build_track_with_rack(conn, song, session)
+    payload = {
+        "device_index": 1,
+        "chains": [{
+            "chain_index": 1, "name": "Outer", "device_count": 1,
+            "devices": [{
+                "position": 1, "name": "Inner Rack",
+                "class_name": "InstrumentGroupDevice",
+                "class_display_name": "Instrument Rack",
+                "parameter_count": 0, "is_active": True, "is_rack": True,
+                "device_path": [{"chain_index": 1, "device_position": 1}],
+                "chains": [{
+                    "chain_index": 1, "name": "InnerC", "device_count": 1,
+                    "devices": [{
+                        "position": 1, "name": "Operator",
+                        "class_name": "Operator",
+                        "class_display_name": "Operator",
+                        "parameter_count": 0, "is_active": True,
+                    }],
+                    "is_muted": False, "is_soloed": False,
+                }],
+            }],
+            "is_muted": False, "is_soloed": False,
+        }],
+        "parent_kind": "track", "track_index": 5,
+    }
+    results = [_result(f"nested_rack_chains:{rack_id}", payload)]
+    pull.apply_pull_results(conn, results, song_id=song, session_id=session)
+    second = pull.apply_pull_results(
+        conn, results, song_id=song, session_id=session,
+    )
+    assert second.mutations == 0

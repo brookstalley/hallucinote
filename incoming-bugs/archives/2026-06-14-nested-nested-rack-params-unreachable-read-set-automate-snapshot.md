@@ -1,5 +1,16 @@
 # Nested-nested rack device params are unreachable (read / set / automate / snapshot) — blocks deep-rack sound design
 
+> **RESOLVED — framing corrected (NODE-ADDR / DEV-9K7N, 2026-06-15).** This
+> report frames the gap as "(1) Depth-N device *addressing*" + "(2) snapshot
+> capture". That framing was imprecise: depth-N *addressing* (`device_path` /
+> `NodeAddr.path`) for read/set/automate SHIPPED via DEEP-RACK-ADDR (2026-06-14)
+> + NODE-ADDR Chunk A (2026-06-15) — items (1) and (3) are done. The real
+> residual was the **read-side ACQUISITION**: there was no in-code Live→snapshot
+> capture, so a probe-set deep value couldn't be persisted (item 2's "killer").
+> NODE-ADDR Chunk B closes it with `capture execute` (in-code capture that probes
+> `get_parameters` at every depth) + depth-N pull. Item (4) Voices is a separate
+> probe-gated follow-up (DEEP-RACK-ADDR Chunk 4).
+
 **Severity:** H (capability gap) — a parameter that lives **two or more rack
 levels deep** (rack → chain → rack → chain → device) cannot be **read**, **set**,
 **automated**, *or* **captured into the snapshot** through the device API. The

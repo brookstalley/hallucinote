@@ -637,3 +637,31 @@ What units can't cover (needs real Live):
      caveat up front: the `device_parameters` table doesn't hold non-parameter
      properties, so a property accessor needs its own persistence story or it
      won't survive a rebuild — scope that before building.
+
+## NODE-ADDR (DEV-9K7N) Chunk B — capture execute + depth-N durability
+
+Visual change: no (data/round-trip). Needs a running Live + the swell set.
+Code shipped + full suite green 2026-06-15; these are the Live-side proofs the
+build plan names as the verifiable signal + bloat gate (Critic note b).
+
+1. **Acquisition durability (THE signal)** — set swell's `21 Voice Lead`
+   `LFO 1 Sync` (a depth-2 nested param) in Live via its `device_path`, then
+   `python -m hallucinote.tools.capture_cli execute --song swell` →
+   `capture_cli diff` (the change shows) → merge/overwrite →
+   `build.py --reset` + `push_cli execute` → confirm the depth-2 value SURVIVES
+   the rebuild **without saving the .als** (the capture wrote it to source).
+
+2. **Full-set fidelity** — `capture execute` on swell produces a snapshot whose
+   `diff` against the committed one is empty (or only the intended edits) — i.e.
+   the in-code walk captures the same surface the by-hand recipe did (tracks,
+   returns, master, sends, top-level + nested devices), no dropped state.
+
+3. **Bloat-measurement gate (Critic note b — DECIDES a follow-up):** after a
+   clean `capture execute` on swell, measure per-device captured non-default
+   param count + total snapshot growth vs the prior snapshot.
+   - Within ~25 params/preset and snapshot ≤ ~2× the by-ear delta → the
+     intrinsic-default filter stands; close the gate.
+   - A single preset over-captures (>~25) or snapshot > ~2× → schedule the
+     bounded preset-default cache (the filter is keeping too much; defaults the
+     filter can't see need a per-preset reference). File it with the measured
+     numbers.

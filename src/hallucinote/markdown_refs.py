@@ -362,10 +362,12 @@ def write_markdown_ref(
     request_id: str | None = None,
     reason: str | None = None,
 ) -> MarkdownDoc:
-    """Write a new decision/annotation file and emit the audit event.
+    """Write a new corpus markdown file (decision / annotation / structural-fact
+    / attempt) and emit the audit event.
 
-    This is the LLM-facing one-call surface for "I made a deliberate choice
-    and want to record it." It:
+    This is the LLM-facing one-call surface for "I want to record this" — a
+    deliberate choice (`decision`), a scoped intent (`annotation`), or a tried
+    move and how it turned out, incl. a reverted dead end (`attempt`). It:
 
       1. Serializes `frontmatter` into the file's YAML-subset header.
       2. Writes `path` to disk (parents created as needed; UTF-8).
@@ -374,7 +376,7 @@ def write_markdown_ref(
       4. Upserts the `markdown_refs` row + refreshes FTS5 in one transaction.
       5. Emits `MARKDOWN_REF_RECORDED` via `M.record_markdown_ref`, threaded
          to the active `request_id` so cross-reference queries link this
-         decision back to the compose session that produced it.
+         record back to the compose session that produced it.
 
     Returns the parsed `MarkdownDoc`. Reindex of pre-existing files (via
     `reindex_corpus`) is a separate path that does NOT emit this event —

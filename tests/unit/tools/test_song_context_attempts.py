@@ -85,3 +85,19 @@ def test_outcome_filter_narrows_to_failed(repo_with_corpus):
     assert "1 match" in out
     assert "notch.md" in out and "gate.md" not in out
     assert "outcome: failed" in out
+
+
+def test_fulltext_path_still_renders_outcome_and_resolution(repo_with_corpus):
+    # The fulltext branch is a different SELECT (m.*, snippet(...)); confirm
+    # outcome/resolution still flow through _format_row on that path, not just
+    # the --kind branch.
+    conn, db_path, root = repo_with_corpus
+    _seed_two_attempts(conn, root)
+
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = song_context_main(["--db", str(db_path), "bagpipes"])
+    assert rc == 0
+    out = buf.getvalue()
+    assert "outcome: failed" in out and "resolution: reverted" in out
+    assert "outcome: worked" in out and "resolution: kept" in out

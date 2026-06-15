@@ -72,6 +72,45 @@ NodeAddr = {
   addresses (a sidechain points at a source track; a macro maps to a param on a nested device). The
   wire + schema must let an address appear as an argument value, not just the addressed target.
 
+### 1c. Frozen wire shape (Chunk A) — a single structured `node` object (DECIDED 2026-06-15, user)
+
+**Decision (user, 2026-06-15):** the wire carries the `NodeAddr` as **one structured `node` object** — the
+frozen unit — *not* flat fields. The flat-superset alternative was rejected: a `NodeAddr` must also be
+usable as an operation **value** (sidechain source), and flat fields can't express that, so the superset
+would force **two wire encodings** (flat target + object value) — the exact dual surface this work kills —
+plus a load-bearing implicit `terminal` default smeared across every action. One object = one encoding
+(target *and* value), one validator. Cost: slightly more verbose for the top-level case; softened by an
+in-object `terminal` default and one validation home. Blast radius is bounded — the 3 songs author
+DB→`push`, and `push` translates DB→wire in one place (`push/devices.py`), so **no song `build.py`
+changes**; the tax is push-translation + skills + handler signatures + tests, cheapest paid now.
+
+```
+node = {                                              # the frozen unit, on the wire
+  parent:       { kind: "track" | "return" | "master", index?: int },   # index omitted for master
+  device_index?: int,                                  # 1-based top-level device on the parent's main chain
+  path?:         [ { chain_index: int, device_position: int }, … ],     # deeper descent (the former device_path)
+  terminal?:    "track" | "return" | "master" | "device" | "chain",     # DEFAULT "device" (in-object)
+  chain_index?: int,                                   # terminal="chain" ONLY: the chain on the (device_index,path) device
+}
+```
+
+Validation (`validate_node_addr` — the single source) by terminal:
+- `track`/`return`/`master` → `device_index`/`path`/`chain_index` absent; resolves to the parent node; this
+  is the **as-value** shape (e.g. a sidechain `source` is a track-terminal `node`).
+- `device` (default) → `device_index` required; `path` optional (deeper); `chain_index` forbidden.
+  Semantically identical to the retired `device_path` (so the old behavior is `terminal:"device"`).
+- `chain` → `device_index` required (the rack); `path` optional (nested rack); `chain_index` required.
+  Resolves to a `Chain`/`DrumChain` — the new destination primitive per-drum + chain-mixer features need.
+
+**Retired (no dual surface):** the device-addressing combo `track_index|return_index|master + device_index
++ device_path` on the **node-addressed actions** (get_parameters / set_parameter / load / write_envelope
+device-param / perform device-param / sidechain / clear device-param) → replaced by `node`. **Boundary:**
+the *direct* mixer surfaces (`ableton_track`/`ableton_return` volume/pan/mute/sends, master) keep their own
+flat `track_index`/`return_index` — they address a track/return *directly* (no device descent), a separate
+simple surface, not the device-addressing patchwork. `node`'s track/return/master terminals serve
+as-value + future return/master device addressing + the chain terminal. The named-string renderer
+(`render_node_addr`) is generated from `node`; never parsed back.
+
 ### 1a. One resolver, one DB path-builder, one renderer
 - **Resolver** (`handlers/`): generalize `_resolve_device_path` → `_resolve_node(parent, path, terminal)`.
   Walk parent → steps → terminal; teaching-error at each failed step (out-of-range, non-rack descent,

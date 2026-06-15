@@ -42,9 +42,12 @@ deterministic code on the bridge that already exists.
   monitor state = `UNSUPPORTED_IN_LIVE`. (OQ4 input pre-classification corrected.)
 
 **Deliverables:**
-- `NodeAddr` wire shape on `actions/` (terminals: **track/return/master/device/chain** — no `drum_pad`;
-  `path` steps; a track-terminal NodeAddr usable as a value), validated by the dispatcher.
-- One resolver `_resolve_node(parent, path, terminal)` (generalize `_resolve_device_path`); one DB
+- **Single structured `node` object** on the wire (design §1c, DECIDED 2026-06-15) — `{parent, device_index?,
+  path?, terminal? (default "device"), chain_index?}`, terminals **track/return/master/device/chain** (no
+  `drum_pad`). One validator `validate_node_addr` (the single source); one facade `resolve_node_addr`.
+  The same object is the **as-value** shape (sidechain `source`). Boundary: direct mixer surfaces
+  (`ableton_track`/`ableton_return`) keep flat addressing — not device addressing.
+- One resolver `_resolve_node(parent, …, terminal, …)` (generalize `_resolve_device_path` — DONE); one DB
   path-builder `get_node_path` (generalize `get_device_nesting_path`); one `render_node_addr` (named
   string, generated, never parsed).
 - **Single-source tri-state capability table** (typed data structure — Critic note a) + generic stub
@@ -53,9 +56,12 @@ deterministic code on the bridge that already exists.
   (static-first, then probe for device-specific). Minors (macro-variations, crossfade, send-pre/post)
   land here as documented stubs.
 - `get_parameters` returns `default_value` (rides this flip; consumed by B).
-- **Migrate** all existing device-addressing callers (`device_path`: get_parameters/set_parameter/load/
-  write_envelope/perform) to `NodeAddr`; **no dual surface.**
-- Retire `device_path` from the wire grammar in favor of `NodeAddr` (the old shape is a strict subset).
+- **Migrate** all node-addressed actions (get_parameters/set_parameter/load/write_envelope device-param/
+  perform device-param/sidechain/clear device-param) + **push-translation** (`push/devices.py`,
+  `push/perform.py` build the wire args) + `skills/mix-sidechain` + tests onto the `node` object;
+  **no dual surface**, and **songs' build.py is untouched** (it authors DB→push).
+- Retire the flat device-addressing combo (`track_index|return_index|master + device_index + device_path`)
+  on those actions in favor of `node` (semantically `terminal:"device"` is the old behavior).
 
 **Tests:** resolver × every terminal (track/return/master/device/chain) × depths 0–3 (out-of-range,
 non-rack descent, terminal mismatch, depth cap); path-builder per terminal; renderer round-trips names;
@@ -146,9 +152,22 @@ fresh `pytest` before any Chunk-A code review (current `prawduct-hook test-statu
 
 ## Status
 - [x] Probes (Chunk A predecessors): drum_pad, addresses-as-value, send-pre/post, return/master routing — DONE 2026-06-15 (`./probe-findings.md`; design §1.5). Wire-freeze decided: terminal enum `track|return|master|device|chain` (no drum_pad).
-- [ ] Chunk A: addressing foundation (wire + resolver + path-builder + renderer + tri-state stub table) [FLIP]
+- [~] Chunk A: addressing foundation [FLIP] — IN PROGRESS (worktree `feature/node-addr`):
+  - [x] **Spine landed + green (31 tests, full suite 3782+):** one resolver `_resolve_node` (all 5
+    terminals), one validator `validate_node_addr` (the single grammar, in-object `terminal` default),
+    one facade `resolve_node_addr` — all in `handlers/device.py`. `get_parameters` returns `default_value`
+    (guarded; omits on the Live raise → always-capture signal for Chunk B). Purely **additive** so far
+    (existing wire untouched; suite stays green).
+  - [ ] **Wire migration (the big atomic step — do fresh):** `_node_addr_spec()` ParamSpec; migrate
+    node-addressed actions (get_parameters/set_parameter/load/write_envelope device-param/perform
+    device-param/sidechain/clear device-param) from flat `track_index/device_index/device_path` → `node`
+    object; dispatcher validation; **retire flat addressing** (no dual surface). Migrate push-translation
+    (`push/devices.py`, `push/perform.py`) + `skills/mix-sidechain` + ALL flat-param tests. Re-vendor.
+  - [ ] Single-source tri-state capability table (typed) + generic stub + `ableton://reference/node-feature-matrix` resource + cross-consumer consistency test.
+  - [ ] `get_node_path` (generalize `get_device_nesting_path`) + `render_node_addr` (engine-side).
+  - [ ] Operator-verify every migrated op in Live (Critic note d) — needs dev-server pointed at the worktree.
 - [ ] Chunk B: params read-side durability (capture execute + pull depth-N + default_value filter) [vertical slice]
-- [ ] Chunk C: per-drum routing + choke (drum_pad)
-- [ ] Chunk D: macro mappings (DEV-3W9R)
+- [ ] Chunk C: per-drum DrumChain authorship — choke + out_note + chain mixer (`chain` terminal; re-scoped)
+- [ ] Chunk D: macro values/names/variations (DEV-3W9R; mapping target UNSUPPORTED_IN_LIVE)
 - [ ] Chunk E: zones
 - [ ] Chunk F: chain mixer-state

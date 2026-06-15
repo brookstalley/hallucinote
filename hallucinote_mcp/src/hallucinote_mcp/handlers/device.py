@@ -201,6 +201,205 @@ def _resolve_device_path(
     return dev
 
 
+# NODE-ADDR terminal kinds — the frozen address grammar (design §1c). `drum_pad`
+# was probed out (its features live on the DrumChain → `chain`); see
+# probe-findings.md.
+_TERMINAL_KINDS: tuple[str, ...] = ("track", "return", "master", "device", "chain")
+_NODE_TERMINALS: tuple[str, ...] = ("track", "return", "master")
+
+
+def _resolve_node(
+    parent: Any,
+    *,
+    parent_kind: str | None = None,
+    device_index: int | None = None,
+    path: Any = None,
+    terminal: str = "device",
+    chain_index: int | None = None,
+) -> Any:
+    """Resolve a ``NodeAddr`` to exactly one Live node — the single canonical
+    descent every node-addressed surface speaks (NODE-ADDR; generalizes
+    :func:`_resolve_device_path` to all terminals).
+
+    The terminal says what the address ends ON (design §1/§1c):
+
+    - ``track`` / ``return`` / ``master`` → the parent node itself. ``parent_kind``
+      (when given) must equal the terminal; ``device_index`` / ``path`` /
+      ``chain_index`` must all be absent. This is also the **as-value** shape
+      (e.g. a sidechain source is a track-terminal ``NodeAddr``).
+    - ``device`` → ``device_index`` required, ``path`` optional (deeper rack
+      descent), ``chain_index`` forbidden. Identical to the shipped
+      ``device_path`` (the old wire is exactly this terminal).
+    - ``chain`` → ``device_index`` required (the rack holding the chain), ``path``
+      optional (to reach a *nested* rack), ``chain_index`` required (which chain
+      on the resolved rack). Resolves to a ``Chain`` / ``DrumChain`` — the new
+      destination primitive per-drum + chain-mixer features need.
+
+    Teaching error at each failed step (out-of-range index, non-rack descent,
+    terminal/parent-kind mismatch). Resolution is positional, never by object
+    identity — Live re-wraps API objects on every access.
+    """
+    if terminal in _NODE_TERMINALS:
+        if device_index is not None or path or chain_index is not None:
+            raise ValueError(
+                f"terminal {terminal!r} addresses the {terminal} node itself — "
+                "device_index, path, and chain_index must be absent"
+            )
+        if parent_kind is not None and parent_kind != terminal:
+            raise ValueError(
+                f"terminal {terminal!r} does not match the addressed parent "
+                f"({parent_kind!r}) — for a node-itself address the terminal "
+                "kind must equal the parent kind"
+            )
+        return parent
+    if terminal == "device":
+        if device_index is None:
+            raise ValueError("terminal 'device' requires device_index")
+        if chain_index is not None:
+            raise ValueError(
+                "chain_index is only valid for terminal 'chain', not 'device'"
+            )
+        return _resolve_device_path(parent, device_index, path)
+    if terminal == "chain":
+        if device_index is None:
+            raise ValueError(
+                "terminal 'chain' requires device_index (the rack holding the chain)"
+            )
+        if chain_index is None:
+            raise ValueError(
+                "terminal 'chain' requires chain_index (which chain on the "
+                "resolved rack)"
+            )
+        dev = _resolve_device_path(parent, device_index, path)
+        try:
+            chains = _resolve_rack_chains(dev)
+        except NotImplementedError as exc:
+            raise ValueError(
+                f"terminal 'chain' can't select chain {chain_index}: the device "
+                f"at this level ({getattr(dev, 'class_name', '?')!r}) is not a "
+                f"rack. {exc}"
+            ) from None
+        return _resolve_chain_by_index(chains, chain_index)
+    raise ValueError(
+        f"unknown terminal {terminal!r} — expected one of {_TERMINAL_KINDS}"
+    )
+
+
+def _require_pos_int(value: Any, field: str, why: str) -> int:
+    """Validate a 1-based positional index from the wire (rejects bool — a
+    JSON ``true`` is not a position)."""
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise ValueError(f"{field} requires a 1-based integer ({why}), got {value!r}")
+    return value
+
+
+def validate_node_addr(node: Any) -> dict[str, Any]:
+    """Validate + normalize a wire ``node`` object (a ``NodeAddr``) — the single
+    source of the address grammar (NODE-ADDR design §1c). Returns a normalized
+    ``{parent:{kind[,index]}, terminal[, device_index][, path][, chain_index]}``.
+
+    ``terminal`` defaults to ``"device"``. The same grammar is used whether the
+    ``node`` is an operation *target* or an operation *value* (a sidechain
+    source is a ``track``-terminal ``node``). Teaching ``ValueError`` on any
+    malformed shape — every branch names the field and the fix.
+    """
+    if not isinstance(node, dict):
+        raise ValueError(
+            "node must be an object {parent:{kind[,index]}, terminal?, "
+            f"device_index?, path?, chain_index?}}, got {type(node).__name__}"
+        )
+    parent = node.get("parent")
+    if not isinstance(parent, dict):
+        raise ValueError("node.parent must be an object {kind[, index]}")
+    kind = parent.get("kind")
+    if kind not in _PARENT_KINDS:
+        raise ValueError(
+            f"node.parent.kind must be one of {_PARENT_KINDS}, got {kind!r}"
+        )
+    index = parent.get("index")
+    if kind == "master":
+        if index is not None:
+            raise ValueError(
+                "node.parent.kind 'master' is a singleton — it takes no index"
+            )
+    else:
+        index = _require_pos_int(index, "node.parent.index", f"1-based {kind}")
+    terminal = node.get("terminal", "device")
+    if terminal not in _TERMINAL_KINDS:
+        raise ValueError(
+            f"node.terminal must be one of {_TERMINAL_KINDS}, got {terminal!r}"
+        )
+    device_index = node.get("device_index")
+    path = node.get("path")
+    chain_index = node.get("chain_index")
+    if terminal in _NODE_TERMINALS:
+        if terminal != kind:
+            raise ValueError(
+                f"node.terminal {terminal!r} must match node.parent.kind "
+                f"{kind!r} for a node-itself address"
+            )
+        for fname, fval in (
+            ("device_index", device_index), ("path", path),
+            ("chain_index", chain_index),
+        ):
+            if fval:
+                raise ValueError(
+                    f"node.terminal {terminal!r} addresses the {terminal} itself "
+                    f"— {fname} must be absent"
+                )
+    elif terminal == "device":
+        device_index = _require_pos_int(
+            device_index, "node.device_index", "the top-level device"
+        )
+        if chain_index is not None:
+            raise ValueError(
+                "node.chain_index is only valid for terminal 'chain', not 'device'"
+            )
+    else:  # terminal == "chain"
+        device_index = _require_pos_int(
+            device_index, "node.device_index", "the rack holding the chain"
+        )
+        chain_index = _require_pos_int(
+            chain_index, "node.chain_index", "which chain on the resolved rack"
+        )
+    norm_path = _validate_device_path(path)  # reused — one path grammar
+    out: dict[str, Any] = {"parent": {"kind": kind}, "terminal": terminal}
+    if kind != "master":
+        out["parent"]["index"] = index
+    if device_index is not None:
+        out["device_index"] = device_index
+    if norm_path:
+        out["path"] = norm_path
+    if chain_index is not None:
+        out["chain_index"] = chain_index
+    return out
+
+
+def resolve_node_addr(context: LiveContext, node: Any) -> tuple[Any, str, int, str]:
+    """Validate a wire ``node`` object, resolve its parent, and descend to the
+    addressed Live node — the single handler-facing entry for NODE-ADDR
+    addressing. Returns ``(resolved_node, parent_kind, parent_index, terminal)``.
+    """
+    spec = validate_node_addr(node)
+    pkind = spec["parent"]["kind"]
+    pindex = spec["parent"].get("index")
+    parent, kind, idx = _resolve_parent(
+        context,
+        track_index=pindex if pkind == "track" else None,
+        return_index=pindex if pkind == "return" else None,
+        master=True if pkind == "master" else None,
+    )
+    resolved = _resolve_node(
+        parent,
+        parent_kind=kind,
+        device_index=spec.get("device_index"),
+        path=spec.get("path"),
+        terminal=spec["terminal"],
+        chain_index=spec.get("chain_index"),
+    )
+    return resolved, kind, idx, spec["terminal"]
+
+
 def _parent_address(kind: str, index: int) -> dict[str, Any]:
     """Build the (kind-specific) key for return values.
 
@@ -323,6 +522,16 @@ def get_parameters_handler(
             "value_display": str(getattr(p, "str_for_value", lambda v: "")(p.value))
                 if hasattr(p, "str_for_value") else "",
         }
+        # NODE-ADDR / OQ5: the intrinsic default rides the one read per device
+        # so the Chunk-B capture filter can store only non-default params (zero
+        # extra reads, no read-before-write at push). Live raises "no default
+        # value available for this type of parameter" on some quantized/enum
+        # params (probed: Simpler "Snap") — guard and OMIT, which is the signal
+        # for capture to always-capture that minority (design §1b fallback).
+        try:
+            entry["default_value"] = float(p.default_value)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            pass
         if detail == "full":
             entry["min"] = float(getattr(p, "min", 0.0))
             entry["max"] = float(getattr(p, "max", 1.0))

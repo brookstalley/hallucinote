@@ -54,21 +54,19 @@ shows `current_phase` advance). Not gating — the logic is fully unit-covered.
 
 ## NODE-ADDR Chunk A — wire flip + addressing spine (re-vendor + migrated-op Live verify)
 
-**Status:** ✅ **LIVE-VERIFIED 5/6 2026-06-15** (Live 12.4.2, served `0.1.0+b23b59ab5e34` via the
-primary-repo re-vendor; handshake confirmed). The addressing spine is proven end-to-end on a
-real set (808 Core Kit drum rack + 808 Selector Rack with a genuine depth-2 nested Saturator).
-The 6th check (chain-terminal *load*, 3b) FAILED → root-caused a **pre-existing, NOT-a-Chunk-A**
-defect in the wire-flip-unchanged `_load_into_rack_chain`: `browser.load_item` ONLY targets the
-track's MAIN chain (probed inert against `rack.view.selected_chain` AND `song.view.select_device`
-— two wrong fixes, the device landed top-level both times, leaving a stray). **The right API is
-`Chain.insert_device(name)`** — found by probing the `Chain` LOM object's methods, then
-**verified live via probe** (inserted Reverb at the "808" chain tail; "EQ Eight" at depth-2 in the
-nested "Punch" chain — accepts the browser display name `kind` carries, works empty/non-empty/any
-depth). **FIXED this session:** `_load_into_rack_chain` now calls `Chain.insert_device(kind)`
-(presets refused — name-only; empty-chain special-case gone); false-confidence fakes corrected to
-model insert_device. ⏳ **One pending re-test:** the fix flips the fingerprint again — re-vendor,
-then confirm the *integrated handler* `ableton_device(load, node={…chain…})` appends in-chain
-(the raw Live op is already probe-proven; this just confirms the handler wiring).
+**Status:** ✅ **FULLY LIVE-VERIFIED 6/6 2026-06-15** (Live 12.4.2; final served fingerprint
+`0.1.0+c487d2b32ba7` after three re-vendor cycles as the chain-load fix iterated). The addressing
+spine is proven end-to-end on a real set (808 Core Kit drum rack + 808 Selector Rack with a genuine
+depth-2 nested Saturator). Checks 1, 2, 3a, 4, 5, 6 passed on the first pass. Check **3b
+(chain-terminal load) FAILED first**, was root-caused to a **pre-existing, NOT-a-Chunk-A** defect
+in the wire-flip-unchanged `_load_into_rack_chain` (`browser.load_item` ONLY targets the track's
+MAIN chain — probed inert against `rack.view.selected_chain` AND `song.view.select_device`, two
+wrong fixes that left strays top-level), and **FIXED via `Chain.insert_device(name)`** (found by
+probing the `Chain` LOM object). The integrated handler is now **confirmed live**: `ableton_device
+load` with a `chain` terminal put Reverb at the depth-1 "808" chain (pos 8) and Compressor at the
+depth-2 "Punch" chain (pos 7), **with no stray top-level devices**. Presets are refused for chain
+loads (insert_device is name-only); the false-green fakes were rewritten to model insert_device.
+No remaining Chunk-A gates.
 
 Earlier: CODE-COMPLETE 2026-06-15 (worktree `feature/node-addr`), full suite green (baseline +
 38 new tests). Critic note d: `device_path` was a shipped contract (DEEP-RACK-ADDR), so the
@@ -109,19 +107,16 @@ match-against-running-server guard stays intact:
    "parameter is disabled" — the resolver reached the device; the param was just non-settable.)
 2. ✅ **get_parameters @ depth-2 + `default_value`** — 19 params; `default_value` present on
    continuous params, **correctly omitted on enums** (the guarded raises-fallback).
-3. ⚠️→🔧 **load** — top-level (track-terminal) load ✅ (both racks). **Chain-terminal load INTO a
-   nested chain ❌ on the first pass** — `browser.load_item` ignored `rack_view.selected_chain` on
-   12.4.2 and appended to the track top-level; the post-condition correctly raised "did not append"
-   (fails loud, no silent corruption) but left a stray top-level device (cleaned up by hand).
-   **Pre-existing** (the `_load_into_rack_chain` mechanism was byte-identical develop↔HEAD; the wire
-   flip only changed the node→chain_index *entry*, and the `chain` terminal *resolved* correctly).
-   Two wrong fixes (`selected_chain`, then `song.view.select_device` appointment) both probed inert
-   — `browser.load_item` ONLY reaches the track MAIN chain. **The right API is
-   `Chain.insert_device(name)`** (found by `ableton_probe describe`-ing the `Chain` object), **probe-
-   verified live**: Reverb → "808" chain tail; "EQ Eight" → depth-2 "Punch" chain. **FIXED:**
-   `_load_into_rack_chain` now calls `Chain.insert_device(kind)` (presets refused — name-only; the
-   empty-chain case just works); the false-green fakes were rewritten to model insert_device. **⏳
-   Integrated-handler Live re-test pending** (re-vendor; the raw op is already probe-proven).
+3. ✅ **load** — top-level (track-terminal) load ✅ (both racks). **Chain-terminal load INTO a nested
+   chain** ❌ on the first pass (`browser.load_item` appended to the track top-level — it ONLY reaches
+   the MAIN chain; the fail-loud post-condition caught it but left a stray, cleaned up). Two wrong
+   fixes (`rack.view.selected_chain`, then `song.view.select_device`) both probed inert. **Pre-existing**
+   (the `_load_into_rack_chain` mechanism was byte-identical develop↔HEAD; the wire flip only changed
+   the node→chain_index *entry*). **The right API is `Chain.insert_device(name)`** (found by
+   `ableton_probe describe`-ing the `Chain` object). **FIXED + confirmed live via the integrated
+   handler:** `ableton_device(load, node={…chain…})` put Reverb at the depth-1 "808" chain (pos 8) and
+   Compressor at the depth-2 "Punch" chain (pos 7), **no stray top-level device**. Presets refused for
+   chain loads (insert_device is name-only); the false-green fakes were rewritten to model insert_device.
 4. ✅ **automation** — `perform_batch` on the depth-2 Saturator `Dry/Wet` recorded with
    `automation_state:1`, `device_path` echoed nested. `write_envelope` verified at top-level (its
    nested route is a documented Live-12.4 impossibility → `perform_batch` is the nested path).

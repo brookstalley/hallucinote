@@ -152,7 +152,7 @@ fresh `pytest` before any Chunk-A code review (current `prawduct-hook test-statu
 
 ## Status
 - [x] Probes (Chunk A predecessors): drum_pad, addresses-as-value, send-pre/post, return/master routing — DONE 2026-06-15 (`./probe-findings.md`; design §1.5). Wire-freeze decided: terminal enum `track|return|master|device|chain` (no drum_pad).
-- [~] Chunk A: addressing foundation [FLIP] — IN PROGRESS (worktree `feature/node-addr`):
+- [x] Chunk A: addressing foundation [FLIP] — ✅ DONE + LIVE-VERIFIED 6/6 2026-06-15 (merged to develop):
   - [x] **Spine landed + green (31 tests, full suite 3782+):** one resolver `_resolve_node` (all 5
     terminals), one validator `validate_node_addr` (the single grammar, in-object `terminal` default),
     one facade `resolve_node_addr` — all in `handlers/device.py`. `get_parameters` returns `default_value`
@@ -190,9 +190,12 @@ fresh `pytest` before any Chunk-A code review (current `prawduct-hook test-statu
     parent index) + `render_node_addr(conn, device_id)` (named string, generated never parsed) — one shared
     up-walk `_walk_node_with_rows`; legacy `get_device_nesting_path`/`get_top_level_device` refactored onto it
     (no behavior change). 14 tests `tests/unit/db/test_node_path.py`. DONE 2026-06-15.
-  - [ ] **Operator-verify every migrated op in Live (Critic note d)** — needs re-vendor + dev-server pointed
-    at the worktree. Enqueued in `.prawduct/operator-verification.md`. THE remaining Chunk-A gate; code is
-    complete + full suite green.
+  - [x] **Operator-verify every migrated op in Live (Critic note d)** — ✅ DONE 2026-06-15 (Live 12.4.2,
+    fingerprint `c487d2b32ba7`). All 6 checks pass (set/get @ depth-2 + `default_value`, top-level load,
+    perform @ depth-2 + write_envelope, `chain` terminal resolves a DrumChain, capability matrix). Surfaced
+    + FIXED a **pre-existing** chain-load bug (`browser.load_item` is main-chain-only → use
+    `Chain.insert_device`; also corrected the false-green fake) — see `operator-verification.md` + the
+    learnings.md rule. NOT a wire-flip regression.
     Note (flagged, NOT dropped): `read_envelope`/`get_envelope` + shallow-nav surfaces kept flat per the plan
     (reads, outside the migrated set) — recommended fast-follow, not a Chunk-A gate.
 - [ ] Chunk B: params read-side durability (capture execute + pull depth-N + default_value filter) [vertical slice]

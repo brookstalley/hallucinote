@@ -439,10 +439,11 @@ def replay_capture(
     threading still distinguishes pulled state from build-owned state for
     tombstone-time semantics.
 
-    Notes/clips/devices in the snapshot are NOT replayed via this function
-    — chunk 3 covers only the mix layout. Score-half (tempo/time-signature/
-    sections/cue points) is also not populated by replay; build.py authors
-    those alongside the captured mix.
+    The mix layout IS replayed: tracks/returns/sends/mixer AND the full device
+    tree — top-level devices, nested rack chains (`_replay_rack_chains`, depth-N),
+    device parameters, and per-DrumChain props (choke_group/out_note). Notes/clips
+    and the score-half (tempo/time-signature/sections/cue points) are NOT populated
+    by replay — build.py authors those alongside the captured mix.
 
     SNP-8R4K chunk 2 — build-time migration trigger: if the snapshot predates
     the clean-at-rest contract (unstamped/old version, or still carrying

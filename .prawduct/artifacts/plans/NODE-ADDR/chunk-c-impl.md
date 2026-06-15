@@ -43,11 +43,15 @@ Stub → handler conversion + the feature half (schema/capture/push/pull).
    `in_note` (getattr→None; add to entry only when present — plain chains
    unchanged). Outside the `detail=='full'` gate (summary capture needs them).
 6. **handlers/device.py** new `set_chain_property_handler(context, *, node,
-   property, value)`: resolve via `resolve_node_addr` (require `terminal=='chain'`),
-   capability-probe (`hasattr`), set `chain.choke_group`/`chain.out_note`, echo
-   the resolved address. Export in `__all__`.
+   choke_group=None, out_note=None)`: resolve via `resolve_node_addr` (require
+   `terminal=='chain'`), capability-probe (`hasattr`), set the provided
+   `chain.choke_group`/`chain.out_note`, echo the resolved address. Export in
+   `__all__`. (SHIPPED with dedicated `choke_group`/`out_note` int params rather
+   than a `property`/`value` pair — avoids colliding with the tool's
+   string-typed `value` param and reads cleaner on the wire; pass ≥1.)
 7. **actions/device.py**: `register(Action(name='set_chain_property', ...))` —
-   `node_addr_spec()` + `property` (enum choke_group|out_note) + `value` (int).
+   `node_addr_spec()` + `choke_group` (int, optional, min 0) + `out_note` (int,
+   optional, 0..127).
 8. **sync/push/devices.py**: in `_emit_nested_param_writes`, after recursing a
    rack's chains, emit `set_chain_property` ToolCalls for each chain with a
    stored non-NULL choke_group/out_note, addressed by

@@ -491,7 +491,7 @@ build_state:
 # RELIABILITY-CLUSTER (on this branch) are shipped/Critic-clean. Prior plans
 # RTE-1K9T (PR #163), ENV-9P4T (#161), ENV-8K2R/ENV-2T9K and the deleted
 # PSH-CLUSTER are shipped/stale; their plan dirs may be deleted.
-active_build_plan: artifacts/plans/INCOMING-2026-06-14/build-plan.md
+active_build_plan: artifacts/plans/ATL-7K3M/build-plan.md
 
 # =============================================================================
 # CHANGE LOG

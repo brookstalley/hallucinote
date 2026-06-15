@@ -103,10 +103,23 @@ def _rebuild_disposable_tables(conn: sqlite3.Connection) -> None:
       false-skipped every arc. Rebuilt as UNIQUE(envelope_id, session_id);
       dropped fingerprints just mean the next push re-performs each arc
       (slower, never wrong).
+    - ``markdown_refs`` pre-attempt-ledger (ATL-7K3M): the ``kind`` CHECK
+      gained ``'attempt'`` and two columns (``outcome``/``resolution``) — a
+      CHECK-domain change ALTER can't express, so an existing DB would reject
+      every ``kind='attempt'`` row. markdown_refs is a rebuildable projection
+      of the on-disk markdown corpus (reindex_corpus repopulates it on the next
+      recall-on-read), so dropping it loses no authored content — only the
+      cached projection, which is re-derived from disk. Staleness signal: the
+      table exists but lacks the ``outcome`` column. Drop the paired FTS5 index
+      too; both are recreated by schema.sql's CREATE ... IF NOT EXISTS.
     """
     rows = conn.execute("PRAGMA table_info(performed_automation)").fetchall()
     if rows and "session_id" not in {r["name"] for r in rows}:
         conn.execute("DROP TABLE performed_automation")
+    md_rows = conn.execute("PRAGMA table_info(markdown_refs)").fetchall()
+    if md_rows and "outcome" not in {r["name"] for r in md_rows}:
+        conn.execute("DROP TABLE markdown_refs")
+        conn.execute("DROP TABLE IF EXISTS markdown_refs_fts")
 
 
 # Column additions that post-date the original schema CREATE statements.

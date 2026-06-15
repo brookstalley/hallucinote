@@ -32,7 +32,8 @@ hand-authored notes if that's what the art needs.
 1. **Frame the intent** — `/song-new` scaffolds the song; `/song-context`
    recalls prior intent. At an elementary fork the user hasn't directed (key, the
    central tension, what the chorus does), *propose and read their reaction* —
-   don't auto-decide.
+   don't auto-decide. Before re-touching a part you've worked before, `/song-attempts`
+   recalls what was already tried (and reverted) so you don't re-propose a dead end.
 2. **Pick instrument chains** — `/song-pick-instruments`. The chain (instrument +
    FX + sends) is authorship that ships in the snapshot — sound design *is*
    composition, not a mix-time todo.
@@ -48,7 +49,10 @@ hand-authored notes if that's what the art needs.
 7. ⭐ **Read the mix** — **`/mix-review`**. Interpret the MixReport against
    intent — masking, loudness, feel, energy per section.
 8. **Snapshot + iterate** — `/song-snapshot`, `/snapshot-bake-recent-changes`,
-   `/ableton-pull`. Then loop back to compose or mix.
+   `/ableton-pull`. Then loop back to compose or mix. As you iterate, log what you
+   *tried* and how it turned out — especially reverted dead ends — to the **attempt
+   ledger** (the two review checkpoints propose the entries; recall via `/song-attempts`),
+   so each loop starts smarter instead of re-running a move that already failed.
 
 ## The two checkpoints agents miss
 

@@ -161,9 +161,10 @@ def test_scaffold_writes_expected_files(tmp_path):
     assert "captured_session.json" in names
     assert "punk-fate.md" in names
     assert "test_punk_fate_build.py" in names  # slug → snake_case in test name
-    # gitkeeps for the convention dirs
+    # gitkeeps for the convention dirs (decisions / annotations / attempts)
     assert (result.song_dir / "decisions" / ".gitkeep").is_file()
     assert (result.song_dir / "annotations" / ".gitkeep").is_file()
+    assert (result.song_dir / "attempts" / ".gitkeep").is_file()  # ATL-7K3M
 
 
 def test_scaffold_refuses_existing_dir(tmp_path):

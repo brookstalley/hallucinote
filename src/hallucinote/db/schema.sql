@@ -663,7 +663,9 @@ CREATE INDEX IF NOT EXISTS idx_requests_song ON requests(song_id);
 -- Song metadata layer: markdown_refs + FTS5 index
 -- =============================================================================
 -- Composer intent + decision rationale live in atomic markdown files under
--- `songs/<name>/decisions/` and `songs/<name>/annotations/`. Markdown is the
+-- `songs/<name>/decisions/`, `songs/<name>/annotations/`, and the attempt
+-- ledger `songs/<name>/attempts/` (kind: attempt — try → outcome → correction,
+-- incl. reverted dead ends; ATL-7K3M). Markdown is the
 -- source of truth (git-tracked, LLM-native to read); this table is a
 -- rebuildable projection that makes the corpus queryable from SQL, with FTS5
 -- for prose + tag search. Body text is owned by FTS5; this table carries the
@@ -684,7 +686,7 @@ CREATE INDEX IF NOT EXISTS idx_requests_song ON requests(song_id);
 CREATE TABLE IF NOT EXISTS markdown_refs (
     path                TEXT PRIMARY KEY,
     kind                TEXT NOT NULL
-                            CHECK (kind IN ('decision', 'annotation', 'structural-fact')),
+                            CHECK (kind IN ('decision', 'annotation', 'structural-fact', 'attempt')),
     scope               TEXT NOT NULL
                             CHECK (scope IN ('song', 'time', 'track', 'track-time')),
     song_id             TEXT REFERENCES songs(id) ON DELETE SET NULL,
@@ -692,6 +694,11 @@ CREATE TABLE IF NOT EXISTS markdown_refs (
     bars_json           TEXT,           -- '[start, end]' or '[start]' when scope ∈ {time, track-time}
     tags_json           TEXT,           -- '[str, ...]'
     related_json        TEXT,           -- '[path, ...]'  cross-links to other refs
+    -- Attempt-ledger fields (kind: attempt only; NULL on every other kind).
+    -- `outcome` = did the move achieve its goal; `resolution` = what we did with
+    -- it (superseded pairs with a related_json link to the successor attempt).
+    outcome             TEXT CHECK (outcome IS NULL OR outcome IN ('worked', 'partial', 'failed')),
+    resolution          TEXT CHECK (resolution IS NULL OR resolution IN ('kept', 'reverted', 'superseded')),
     frontmatter_date    TEXT,           -- ISO 'YYYY-MM-DD' (required for decisions)
     content_hash        TEXT NOT NULL,  -- SHA-256 hex digest of file content (change detection)
     indexed_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),

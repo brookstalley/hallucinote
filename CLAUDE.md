@@ -53,3 +53,7 @@ For audio products, device chains (saturation, drum bus, room reverb sends) ship
 ### Microtiming feel is authorship
 
 Per-part `feel` (push/pull, swing, drag) is part of how a part is written — bake it into the pattern at generation time via the per-helper `feel` parameter, coordinated across instruments where the genre calls for it. Not a post-hoc humanize pass; not a song-level or section-level shared groove instance. Punk drums + lazy bluegrass guitar in the same section is a valid intent.
+
+### The attempt ledger is per-song memory
+
+Before re-touching a part you've worked before, recall what was already tried via `/song-attempts` — don't re-propose a move the ledger shows failed. When a move resolves (kept / reverted / superseded), log it as a `kind: attempt` entry in `songs/<slug>/attempts/` (the `/compose-review` + `/mix-review` checkpoints propose these; propose-and-react, never a verdict); chain a correction with `related:` → what worked. It records the *path* incl. reverted dead ends — distinct from `annotations/` (revealed intent) and `decisions/` (what you kept and why). Musical-craft only: a *tool* failure (push glitch, stale server) is an `incoming-bugs/` report, not an attempt.

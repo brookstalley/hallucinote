@@ -35,7 +35,10 @@ songs/<slug>/
   tests/test_<slug>_build.py     # shape + converger tests (UNIQUE basename across songs)
   decisions/                     # ADR-shaped dated rationale
   annotations/                   # timeless scoped intent
+  attempts/                      # attempt ledger: tried move + outcome (incl. dead ends)
 ```
+
+The `attempts/` ledger (`kind: attempt`) records what you *tried* and how it turned out — query it via `/song-attempts` before re-touching a part you've worked before, so you don't re-try a known dead end. Schema + worked example: [`.prawduct/artifacts/song-conventions.md`](../.prawduct/artifacts/song-conventions.md) "The attempt ledger".
 
 The DB lives at `songs/<slug>/<slug>-<branch>.db` (per-branch convention; outside a repo or on detached HEAD, falls back to `<slug>.db`). Both forms are gitignored.
 

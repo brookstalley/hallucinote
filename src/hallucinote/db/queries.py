@@ -995,6 +995,7 @@ def find_markdown_refs(
     scope: str | None = None,
     track_id: str | None = None,
     tags: list[str] | None = None,
+    outcome: str | None = None,
     fulltext: str | None = None,
     bars: tuple[float, float] | None = None,
     include_tombstoned: bool = False,
@@ -1025,6 +1026,9 @@ def find_markdown_refs(
     if kind:
         where.append("m.kind = ?")
         args.append(kind)
+    if outcome:
+        where.append("m.outcome = ?")
+        args.append(outcome)
     if scope:
         where.append("m.scope = ?")
         args.append(scope)

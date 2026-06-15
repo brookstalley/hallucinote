@@ -4,6 +4,31 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-14 — Per-song attempt ledger (ATL-7K3M): `kind: attempt` + `/song-attempts`
+
+<!-- prawduct: type=feat | chunks=ATL-7K3M-ch1,ATL-7K3M-ch2 | scope=db-schema,markdown-refs,song-context,skills,docs,claude-md -->
+
+**No re-vendor** — no `_FINGERPRINT_PATHS` touched (no MCP handler reads `markdown_refs`).
+A per-song ledger of *what was tried and how it turned out*, incl. reverted dead ends —
+augments `decisions/` (kept rationale) + `annotations/` (intent) with the experiment trail
+so a later pass doesn't re-try a known dead end. Pull-only, musical-craft only.
+
+- **ch1 (code):** new `kind: attempt` on the `markdown_refs` corpus with `outcome`
+  (worked|partial|failed) + `resolution` (kept|reverted|superseded); the
+  try→outcome→correction chain rides the existing `related` links. `markdown_refs` joins the
+  disposable-projection rebuild (the new kind CHECK is a domain change ALTER can't express;
+  reindex rebuilds rows from disk → no authored data lost; schema canary stays green).
+  `find_markdown_refs` gains an `outcome` filter; `song_context` gains `--kind attempt` +
+  `--outcome`; `song-new` scaffolds `attempts/`. 16 new tests.
+- **ch2 (doc):** new `/song-attempts` pull skill; a LOG-ATTEMPTS capture step in
+  `/compose-review` + `/mix-review` (distinct from the intent learn-back); discoverability
+  spine (`/song-workflow` + `docs/song-workflow.md`, `song-conventions.md` schema + worked
+  example, `docs/song-authoring-conventions.md`, CLAUDE.md norm).
+
+Full suite 3752 passed / 2 skipped. Cumulative Critic 0 blocking / 0 warning (5 notes, 2
+acted on); verify-resolutions chain clean. Requirements:
+`.prawduct/artifacts/song-attempt-ledger.md`; plan: `.prawduct/artifacts/plans/ATL-7K3M/build-plan.md`.
+
 ## 2026-06-14 — Song-workflow discoverability: `/song-workflow` spine + review-checkpoint wiring
 
 <!-- prawduct: type=docs | chunks=song-workflow-spine,discoverability-wiring | scope=skills,docs,mcp-primer,claude-md | status=shipped | release=v0.9.8 -->

@@ -116,7 +116,8 @@ def test_probed_walls_are_unsupported_in_live(feature, node_kind):
         ("input_routing", "master"),
         ("output_routing", "return"),
         ("output_routing", "master"),
-        ("choke_out_note", "chain"),
+        # choke_out_note/chain flipped SUPPORTED in NODE-ADDR Chunk C — see
+        # test_shipped_features_are_supported below.
         ("zones", "chain"),
         ("mixer_state", "chain"),
     ],
@@ -135,6 +136,8 @@ def test_probed_buildables_are_not_implemented(feature, node_kind):
         ("send_levels", "return"),
         ("output_routing", "track"),
         ("monitor_state", "track"),
+        # NODE-ADDR Chunk C: per-DrumChain choke_group / out_note authoring.
+        ("choke_out_note", "chain"),
     ],
 )
 def test_shipped_features_are_supported(feature, node_kind):

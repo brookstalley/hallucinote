@@ -397,8 +397,24 @@ def _emit_nested_param_writes(
     DB hierarchy (`get_device_nesting_path`), so it matches the reloaded
     preset's structure. ``top_device_index`` is the Live index of the top-level
     rack — every nested device addresses from there.
+
+    NODE-ADDR Chunk C: each chain may also carry authored per-drum properties
+    (choke_group / out_note). Those are re-asserted on the DrumChain via the
+    `chain` terminal after the rack loads — like nested params, they survive a
+    rebuild only if pushed. ``rack_path`` is this rack's own device_path from the
+    top-level rack ([] when ``rack_device_id`` IS the top-level rack).
     """
+    rack_path = Q.get_device_nesting_path(conn, rack_device_id)
     for chain in Q.get_device_chains_for_rack_device(conn, rack_device_id):
+        _emit_chain_property_calls(
+            plan,
+            chain=chain,
+            parent_kv=parent_kv,
+            top_device_index=top_device_index,
+            rack_path=rack_path,
+            parent_kind=parent_kind,
+            parent_name=parent_name,
+        )
         for nested in Q.get_devices_for_chain(conn, chain["id"]):
             # Defensive: a clean DB never nests a placeholder or the analyzer,
             # but a legacy-polluted one might — skip both (mirrors the
@@ -424,6 +440,52 @@ def _emit_nested_param_writes(
                 parent_kind=parent_kind,
                 parent_name=parent_name,
             )
+
+
+def _emit_chain_property_calls(
+    plan: PushPlan,
+    *,
+    chain: sqlite3.Row,
+    parent_kv: dict[str, object],
+    top_device_index: int,
+    rack_path: list[dict[str, int]],
+    parent_kind: str,
+    parent_name: str,
+) -> None:
+    """Emit a `set_chain_property` call for a chain's stored per-drum properties
+    (NODE-ADDR Chunk C). The DB stores only non-defaults (choke != 0, out_note !=
+    in_note), so a default-only chain emits nothing. Addressed by the `chain`
+    terminal: device_index = the top-level rack, path = this rack's own path
+    (empty for the top-level rack), chain_index = the chain's DB position."""
+    keys = chain.keys()
+    choke = chain["choke_group"] if "choke_group" in keys else None
+    out_note = chain["out_note"] if "out_note" in keys else None
+    if choke is None and out_note is None:
+        return
+    node = build_node_addr(
+        parent_kv,
+        device_index=top_device_index,
+        device_path=rack_path or None,
+        terminal="chain",
+        chain_index=int(chain["position"]),
+    )
+    args: dict[str, object] = {"action": "set_chain_property", "node": node}
+    set_desc: list[str] = []
+    if choke is not None:
+        args["choke_group"] = int(choke)
+        set_desc.append(f"choke_group={int(choke)}")
+    if out_note is not None:
+        args["out_note"] = int(out_note)
+        set_desc.append(f"out_note={int(out_note)}")
+    plan.add(ToolCall(
+        tool="ableton_device",
+        args=args,
+        key=f"device_chain_props:{chain['id']}",
+        purpose=(
+            f"{parent_name} / drum chain {chain['position']}: "
+            f"{', '.join(set_desc)}"
+        ),
+    ))
 
 
 def plan_push_device_sidechain(

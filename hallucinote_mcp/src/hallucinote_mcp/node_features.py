@@ -381,22 +381,22 @@ MATRIX: tuple[Feature, ...] = (
     ),
     Feature(
         key="choke_out_note",
-        title="Choke group / out_note / chain mute-solo (drum chains)",
+        title="Choke group / out_note (drum chains)",
         description=(
-            "Per-DrumChain choke group, MIDI out_note (transpose) remap, and "
-            "mute/solo."
+            "Per-DrumChain choke group and MIDI out_note (transpose) remap, "
+            "authored via the `chain` terminal. (Chain mute/solo WRITE is "
+            "mixer-state — see the 'mixer_state' chain cell.)"
         ),
         cells=(
             Cell(
                 "chain",
-                FeatureStatus.NOT_IMPLEMENTED,
-                reason="Per-drum DrumChain authoring isn't built.",
+                FeatureStatus.SUPPORTED,
                 live_evidence=(
-                    "choke_group / out_note / mute / solo live on the DrumChain "
-                    "(probe 2026-06-15 — NOT on the DrumPad)."
+                    "choke_group / out_note live on a DrumChain (probe "
+                    "2026-06-15 — NOT on the DrumPad, NOT on a plain "
+                    "instrument-rack Chain). NODE-ADDR Chunk C; the handler "
+                    "re-probes, so a non-DrumChain gets a teaching error."
                 ),
-                workaround=_SNAPSHOT_WORKAROUND,
-                request_tag="NODE-ADDR Chunk C",
                 determination="probe",
             ),
         ),

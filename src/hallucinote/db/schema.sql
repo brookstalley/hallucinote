@@ -306,12 +306,20 @@ CREATE INDEX IF NOT EXISTS idx_sends_return ON sends(to_return_id);
 -- would have required mutator-level cascade discipline and broken the
 -- chunk-1 invariant that deleting a track cascades to everything it owns.
 
+-- NODE-ADDR Chunk C: per-DrumChain authorship. `choke_group` (0 = none) and
+-- `out_note` (MIDI transpose target) live on a DrumChain only (a plain
+-- instrument-rack Chain has neither). Both nullable: NULL on every non-drum
+-- chain and on drum chains whose value is the Live default (choke 0 /
+-- out_note == in_note) — capture stores only non-defaults, push emits only
+-- stored (mirrors the Chunk B param filter). Authored via the `chain` terminal.
 CREATE TABLE IF NOT EXISTS device_chains (
     id                      TEXT PRIMARY KEY,
     parent_track_id         TEXT REFERENCES tracks(id) ON DELETE CASCADE,
     parent_return_id        TEXT REFERENCES returns(id) ON DELETE CASCADE,
     parent_rack_device_id   TEXT REFERENCES devices(id) ON DELETE CASCADE,
     position                INTEGER NOT NULL DEFAULT 0,
+    choke_group             INTEGER,
+    out_note                INTEGER,
     CHECK (
         (parent_track_id IS NOT NULL)
       + (parent_return_id IS NOT NULL)

@@ -8,7 +8,11 @@ import sqlite3
 from typing import Any
 
 from hallucinote.analyzer_identity import is_analyzer_device
-from hallucinote.capture import RACK_CLASS_NAMES, normalize_param_value
+from hallucinote.capture import (
+    RACK_CLASS_NAMES,
+    chain_authored_props,
+    normalize_param_value,
+)
 
 from hallucinote.db import mutations as M, queries as Q
 
@@ -927,6 +931,28 @@ def _diff_nested_chains(
             )
         else:
             chain_id = existing_chain["id"]
+
+        # NODE-ADDR Chunk C: diff the chain's authored per-drum properties
+        # (choke_group / out_note) against the DB. chain_authored_props applies
+        # the non-default filter (None = Live default), so a now-default value
+        # clears the DB's stale one — symmetric with the set_track_routing /
+        # set_chain_properties clear-on-None contract. set_chain_properties is
+        # idempotent (no event when nothing changed), so a steady chain is a
+        # no-op even though we always pass both fields.
+        props = chain_authored_props(chain_entry)
+        result = M.set_chain_properties(
+            conn,
+            chain_id=chain_id,
+            choke_group=props["choke_group"],
+            out_note=props["out_note"],
+            actor=actor, request_id=request_id, reason=reason,
+        )
+        if result.kind == "updated":
+            out.mutations += 1
+            out.details.append(
+                f"nested chain {ci} on rack {rack_kind}: per-drum props "
+                f"{props}"
+            )
 
         # Normalize wire-shape `position` to `device_index` so `_diff_chain_devices`
         # can be shared with the top-level apply path. The MCP `get_device_chains`

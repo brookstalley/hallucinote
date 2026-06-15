@@ -372,6 +372,19 @@ def _replay_rack_chains(
             request_id=request_id,
             reason=reason,
         )
+        # NODE-ADDR Chunk C: apply the chain's authored per-drum properties.
+        # Passed explicitly (None when the snapshot omitted them) so a re-replay
+        # of a snapshot that DROPPED a prop clears the stale DB value — replay is
+        # idempotent and the snapshot is the source of truth.
+        M.set_chain_properties(
+            conn,
+            chain_id=nested_chain_id,
+            choke_group=chain.get("choke_group"),
+            out_note=chain.get("out_note"),
+            actor=actor,
+            request_id=request_id,
+            reason=reason,
+        )
         _replay_devices(
             conn,
             chain_id=nested_chain_id,
@@ -929,6 +942,36 @@ def _parent_flat_args(parent_kind: str, parent_index: int | None) -> dict[str, A
     return {"master": True}
 
 
+def chain_authored_props(chain_entry: dict[str, Any]) -> dict[str, int | None]:
+    """Normalize a ``get_device_chains`` chain entry's per-drum properties to
+    their AUTHORED form (NODE-ADDR Chunk C) — the single non-default filter
+    shared by the snapshot-assemble (capture) and pull-diff paths.
+
+    ``choke_group`` / ``out_note`` exist on a ``DrumChain`` only; a plain
+    instrument-rack ``Chain`` has neither (both come back ``None``). The Live
+    defaults are filtered to ``None`` so the DB stores only meaningful per-drum
+    settings (mirrors the Chunk B param default-filter): ``choke_group`` 0 ("no
+    choke group") and an ``out_note`` equal to ``in_note`` (no transpose) are the
+    defaults. Returns ``{"choke_group": int|None, "out_note": int|None}`` — both
+    keys always present so a pull diff can clear a value back to ``None``.
+    """
+    choke = chain_entry.get("choke_group")
+    out_note = chain_entry.get("out_note")
+    in_note = chain_entry.get("in_note")
+    choke_val = (
+        int(choke)
+        if isinstance(choke, int) and not isinstance(choke, bool) and choke != 0
+        else None
+    )
+    out_val = (
+        int(out_note)
+        if isinstance(out_note, int) and not isinstance(out_note, bool)
+        and out_note != in_note
+        else None
+    )
+    return {"choke_group": choke_val, "out_note": out_val}
+
+
 def _capture_nested_chains(
     probe, *, parent_kind: str, parent_index: int | None,
     top_device_index: int, chains_tree: list[dict[str, Any]],
@@ -969,11 +1012,17 @@ def _capture_nested_chains(
                     top_device_index=top_device_index, chains_tree=nd["chains"],
                 )
             devices_out.append(entry)
-        out.append({
+        chain_out: dict[str, Any] = {
             "chain_index": ci,
             "name": chain.get("name", ""),
             "devices": devices_out,
-        })
+        }
+        # NODE-ADDR Chunk C: a DrumChain's authored per-drum properties, stored
+        # non-default-filtered (absent on plain chains and at the Live default).
+        for prop, val in chain_authored_props(chain).items():
+            if val is not None:
+                chain_out[prop] = val
+        out.append(chain_out)
     return out
 
 

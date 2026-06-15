@@ -36,6 +36,11 @@ SEND_INTENT_SET = "send_intent_set"
 # Mix: device chains, devices, parameters
 DEVICE_CHAIN_CREATED = "device_chain_created"
 DEVICE_CHAIN_DELETED = "device_chain_deleted"
+# NODE-ADDR Chunk C: a DrumChain's authored per-drum properties (choke_group /
+# out_note transpose). Separate from CREATED because device_chains rows are
+# created identity-only (parent + position); the per-drum values are set after,
+# symmetric with how track routing rides TRACK_ROUTING_SET, not track create.
+DEVICE_CHAIN_PROPS_SET = "device_chain_props_set"
 DEVICE_CREATED = "device_created"
 DEVICE_DELETED = "device_deleted"
 DEVICE_PARAMETER_SET = "device_parameter_set"

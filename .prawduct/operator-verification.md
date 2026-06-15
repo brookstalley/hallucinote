@@ -665,3 +665,35 @@ build plan names as the verifiable signal + bloat gate (Critic note b).
      bounded preset-default cache (the filter is keeping too much; defaults the
      filter can't see need a per-preset reference). File it with the measured
      numbers.
+
+## NODE-ADDR (DEV-9K7N) Chunk C — per-DrumChain choke_group / out_note
+
+Visual change: no (LOM state / round-trip). **Re-vendor REQUIRED** — Chunk C adds
+the `set_chain_property` wire action (fingerprint flips). Needs a loaded **Drum
+Rack**: the scratch verification set has only an *Instrument* Rack ("808 Selector
+Rack"), whose chains are plain `Chain`s with no choke_group/out_note (live-probed
+2026-06-15 — that IS the negative case below). Code shipped + full suite green;
+these are the build-plan signal Live can't fake with unit fakes.
+
+Sequence: relaunch dev-mode (`/mcp` respawn so running==disk) → `/ableton-mcp-install`
+(Live restart — Control Surface modules cache at startup). Then:
+
+1. **Positive — choke + out_note on a real DrumChain (THE signal).** Load a Drum
+   Rack (any kit) on a MIDI track; `ableton_device(action='get_device_chains', …)`
+   to find a pad's `chain_index`. `ableton_device(action='set_chain_property',
+   node={parent, terminal:'chain', device_index:<rack>, chain_index:<pad>},
+   choke_group=1, out_note=60)` → confirm via `ableton_probe` (or by ear) the
+   DrumChain's `choke_group`/`out_note` changed.
+
+2. **Durability.** `/song-snapshot` the set → `build.py --reset` + `push_cli
+   execute` → confirm the choke group + transpose SURVIVE the rebuild **without
+   saving the .als** (push re-asserts them via the `chain` terminal).
+
+3. **Negative — plain Chain teaches, never crashes.** Call `set_chain_property`
+   on the 808 Selector Rack's chain[0] (a plain instrument-rack Chain):
+   `node={parent:{kind track,index 2}, terminal:'chain', device_index:1,
+   chain_index:1}, choke_group=1` → expect the teaching `NotImplementedError`
+   ("DrumChain only … see ableton://reference/node-feature-matrix"), NOT a crash.
+
+4. **Matrix.** `ableton://reference/node-feature-matrix` shows `choke_out_note`
+   chain cell = SUPPORTED (determination probe).

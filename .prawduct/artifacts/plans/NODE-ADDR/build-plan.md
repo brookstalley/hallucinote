@@ -241,7 +241,33 @@ fresh `pytest` before any Chunk-A code review (current `prawduct-hook test-statu
   - [ ] **Operator (Live) — pending** (enqueued in operator-verification.md): swell `21 Voice Lead`
     `LFO 1 Sync` depth-2 survives `/song-snapshot` + rebuild without saving .als; + the bloat-measurement
     gate (Critic note b: non-default count per device + snapshot growth).
-- [ ] Chunk C: per-drum DrumChain authorship — choke + out_note + chain mixer (`chain` terminal; re-scoped)
+- [x] Chunk C: per-DrumChain authorship — choke_group + out_note (`chain` terminal) — ✅ CODE DONE + GREEN
+  2026-06-15 (impl map `./chunk-c-impl.md`; full suite green; Live operator-verify pending). **Scope: choke +
+  out_note only; chain mute/solo WRITE deferred to Chunk F** (mixer-state — the matrix `mixer_state` chain
+  cell owns it; the `choke_out_note` feature was narrowed to drop the mute-solo mention). The 9 touchpoints:
+  - [x] **Schema** — `device_chains.choke_group` / `out_note` (nullable INT) in `schema.sql` + `_ADDED_COLUMNS`
+    (canary-paired); `DEVICE_CHAIN_PROPS_SET` event; `build.py` actor-map gains `device_chain_props_set`.
+  - [x] **Mutator** — `set_chain_properties` (partial, idempotent, clear-on-None; mirrors `set_track_routing`).
+    `create_device_chain` stays identity-only (per-drum props ride the new mutator, not create).
+  - [x] **Capture** — `chain_authored_props` (single non-default filter: choke 0 / out_note==in_note → None,
+    mirrors Chunk B); `_capture_nested_chains` attaches; `_replay_rack_chains` applies (clears on re-replay).
+    `_describe_chain` surfaces choke_group/out_note/in_note (drum chains only; plain chains unchanged).
+  - [x] **Handler + action** — `set_chain_property_handler` (resolves `chain` terminal; capability-probes via
+    `hasattr` — a plain Chain gets a teaching error, never crashes; validates + probes before any write) +
+    `ableton_device(action='set_chain_property', node, choke_group?, out_note?)`.
+  - [x] **Push** — `_emit_chain_property_calls` in `_emit_nested_param_writes`: each chain with a stored
+    non-default prop emits a `chain`-terminal `set_chain_property` (path = the rack's own path, [] top-level).
+  - [x] **Pull** — `_diff_nested_chains` diffs `chain_authored_props` vs DB → `set_chain_properties` (clears
+    a now-default value; idempotent steady state — the round-trip fixed point).
+  - [x] **Matrix** — `choke_out_note` chain cell flipped NOT_IMPLEMENTED → SUPPORTED (determination probe).
+  - [x] **Tests (49 new, full suite green)** — mutator (`test_chain_properties.py`), capture filter + replay
+    round-trip (`test_chunk_c_chains.py`), handler pos/neg/validation/atomicity (`test_set_chain_property.py`),
+    push emit + nested-rack path (`test_push_devices.py`), pull diff/clear/idempotent (`test_pull.py`).
+    Updated contract tests: node-features supported-list, `_EXPECTED_DEVICE_ACTIONS`.
+  - [x] **Live-probe gate** — re-confirmed on the scratch 808 *Instrument* Rack: a plain `Chain` has NO
+    choke_group/out_note (the negative capability case), validating the `hasattr` re-probe.
+  - [ ] **Operator (Live) — pending** (enqueued): positive choke+out_note round-trip on a real DrumChain +
+    durability + the plain-Chain teaching error. Needs re-vendor + a loaded Drum Rack (scratch set lacks one).
 - [ ] Chunk D: macro values/names/variations (DEV-3W9R; mapping target UNSUPPORTED_IN_LIVE)
 - [ ] Chunk E: zones
 - [ ] Chunk F: chain mixer-state

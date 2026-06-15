@@ -2227,6 +2227,16 @@ def _describe_chain(
         "is_muted": bool(getattr(chain, "mute", False)),
         "is_soloed": bool(getattr(chain, "solo", False)),
     }
+    # NODE-ADDR Chunk C: a DrumChain carries choke_group / out_note (MIDI
+    # transpose) + in_note (its trigger note); a plain instrument-rack Chain has
+    # none of them. Surfaced for every chain (not gated on detail='full') so a
+    # summary capture reads them; absent keys mark a non-drum chain. in_note is
+    # read-only context (positional) the capture filter uses to decide whether an
+    # out_note is a real transpose vs. the identity default.
+    for prop in ("choke_group", "out_note", "in_note"):
+        val = getattr(chain, prop, None)
+        if isinstance(val, int) and not isinstance(val, bool):
+            chain_entry[prop] = val
     if detail == "full":
         mixer = _mixer_state(chain)
         if mixer is not None:
@@ -2278,6 +2288,75 @@ def get_device_chains_handler(
         "chain_count": len(chains_out),
         "chains": chains_out,
         "parent_kind": kind,
+    }
+    result.update(_parent_address(kind, idx))
+    return result
+
+
+def set_chain_property_handler(
+    context: LiveContext,
+    *,
+    node: dict[str, Any],
+    choke_group: int | None = None,
+    out_note: int | None = None,
+) -> dict[str, Any]:
+    """Set a DrumChain's authored per-drum properties — ``choke_group`` and/or
+    ``out_note`` (MIDI transpose) — on the chain a ``chain``-terminal NodeAddr
+    resolves to (NODE-ADDR Chunk C). Pass at least one; both may be set at once.
+
+    Capability-probed, never whitelisted: these live on a ``DrumChain`` only (a
+    drum-rack pad's chain). A plain instrument/audio-rack ``Chain`` lacks them
+    and gets a teaching error naming the chain class and pointing at the matrix —
+    the matrix cell is SUPPORTED with ``determination='probe'`` ("is this chain a
+    DrumChain?"); this runtime ``hasattr`` re-probe IS that decision. Validation
+    + the probe run before any write, so a refusal never half-applies.
+
+    ``choke_group`` 0 is Live's "no choke group" (the way to clear one);
+    ``out_note`` equal to the pad's ``in_note`` is the no-transpose identity.
+    """
+    requested: dict[str, int] = {}
+    if choke_group is not None:
+        if not isinstance(choke_group, int) or isinstance(choke_group, bool) \
+                or choke_group < 0:
+            raise ValueError(
+                f"choke_group must be a non-negative int, got {choke_group!r}"
+            )
+        requested["choke_group"] = choke_group
+    if out_note is not None:
+        if not isinstance(out_note, int) or isinstance(out_note, bool) \
+                or not (0 <= out_note <= 127):
+            raise ValueError(
+                f"out_note must be a MIDI note 0..127, got {out_note!r}"
+            )
+        requested["out_note"] = out_note
+    if not requested:
+        raise ValueError(
+            "set_chain_property: pass at least one of choke_group / out_note"
+        )
+    chain, kind, idx, spec = resolve_node_addr(context, node)
+    if spec["terminal"] != "chain":
+        raise ValueError(
+            "set_chain_property addresses a chain — node.terminal must be "
+            f"'chain' (got {spec['terminal']!r}); a {spec['terminal']!r} "
+            "terminal names a track/return/master/device, not a chain. Use "
+            "device_index (the rack) + chain_index (which chain on it)."
+        )
+    missing = [p for p in requested if not hasattr(chain, p)]
+    if missing:
+        class_name = type(chain).__name__
+        raise NotImplementedError(
+            f"set_chain_property: chain {getattr(chain, 'name', '?')!r} is a "
+            f"{class_name}, which has no {', '.join(missing)} — choke_group / "
+            "out_note exist on a DrumChain only (a drum-rack pad's chain), not a "
+            "plain instrument/audio-rack chain. See "
+            "ableton://reference/node-feature-matrix."
+        )
+    for prop, value in requested.items():
+        setattr(chain, prop, value)
+    result: dict[str, Any] = {
+        "set": requested,
+        "chain_name": getattr(chain, "name", ""),
+        "node": spec,
     }
     result.update(_parent_address(kind, idx))
     return result
@@ -2385,4 +2464,5 @@ __all__ = [
     "navigate_preset_handler",
     "pad_info_handler",
     "get_device_chains_handler",
+    "set_chain_property_handler",
 ]

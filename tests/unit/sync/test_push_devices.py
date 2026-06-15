@@ -884,3 +884,96 @@ def test_plan_push_devices_analyzer_skip_does_not_block_authored_devices(
     assert loaded_kinds == ["Operator", "EQ Eight"]
     assert all(k != "Max Audio Effect" for k in loaded_kinds)
     assert any("HallucinoteAnalyzer" in n for n in plan.notes)
+
+
+# ---------------------------------------------------------------------------
+# NODE-ADDR Chunk C — per-DrumChain choke_group / out_note push
+# ---------------------------------------------------------------------------
+
+
+def _linked_drum_rack(conn, session, track, *, track_at=5, rack_at=1):
+    """A linked track with a linked Drum Rack on its top-level chain. Returns
+    the rack's DB id so the test can hang nested (drum) chains off it."""
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track,
+        ableton_index=track_at,
+    )
+    top_chain = M.create_device_chain(conn, parent_track_id=track, position=0)
+    rack = M.create_device(
+        conn, chain_id=top_chain, position=1,
+        kind="Drum Rack", display_name="Drum Rack",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=rack,
+        ableton_index=rack_at,
+    )
+    return rack
+
+
+def test_push_emits_set_chain_property_for_authored_drum_chain(
+    conn, song, session, track
+):
+    rack = _linked_drum_rack(conn, session, track)
+    nested = M.create_device_chain(conn, parent_rack_device_id=rack, position=1)
+    M.set_chain_properties(conn, chain_id=nested, choke_group=1, out_note=60)
+
+    plan = push.plan_push_devices(conn, song_id=song, session_id=session)
+    calls = _calls_by_action(plan)["set_chain_property"]
+    assert len(calls) == 1
+    c = calls[0]
+    assert c.args["choke_group"] == 1 and c.args["out_note"] == 60
+    assert c.args["node"] == build_node_addr(
+        {"track_index": 5}, device_index=1, terminal="chain", chain_index=1,
+    )
+    assert c.key == f"device_chain_props:{nested}"
+
+
+def test_push_emits_only_the_authored_field(conn, song, session, track):
+    rack = _linked_drum_rack(conn, session, track)
+    nested = M.create_device_chain(conn, parent_rack_device_id=rack, position=2)
+    M.set_chain_properties(conn, chain_id=nested, choke_group=3)  # out_note default
+
+    calls = _calls_by_action(
+        push.plan_push_devices(conn, song_id=song, session_id=session)
+    )["set_chain_property"]
+    assert len(calls) == 1
+    assert calls[0].args["choke_group"] == 3
+    assert "out_note" not in calls[0].args
+    assert calls[0].args["node"]["chain_index"] == 2
+
+
+def test_push_skips_default_only_drum_chain(conn, song, session, track):
+    rack = _linked_drum_rack(conn, session, track)
+    # A chain row with no authored props (the common case — most pads).
+    M.create_device_chain(conn, parent_rack_device_id=rack, position=1)
+    plan = push.plan_push_devices(conn, song_id=song, session_id=session)
+    assert "set_chain_property" not in _calls_by_action(plan)
+
+
+def test_push_addresses_a_nested_rack_chain_with_a_path(
+    conn, song, session, track
+):
+    """A drum rack nested INSIDE another rack: the chain-terminal node carries
+    the path to the inner rack, device_index stays the top-level rack."""
+    rack = _linked_drum_rack(conn, session, track)
+    inner_chain = M.create_device_chain(conn, parent_rack_device_id=rack, position=1)
+    inner_rack = M.create_device(
+        conn, chain_id=inner_chain, position=1,
+        kind="Drum Rack", display_name="Inner Kit",
+    )
+    drum_chain = M.create_device_chain(
+        conn, parent_rack_device_id=inner_rack, position=2,
+    )
+    M.set_chain_properties(conn, chain_id=drum_chain, choke_group=4)
+
+    calls = _calls_by_action(
+        push.plan_push_devices(conn, song_id=song, session_id=session)
+    )["set_chain_property"]
+    assert len(calls) == 1
+    assert calls[0].args["node"] == build_node_addr(
+        {"track_index": 5},
+        device_index=1,
+        device_path=[{"chain_index": 1, "device_position": 1}],
+        terminal="chain",
+        chain_index=2,
+    )

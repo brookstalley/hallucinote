@@ -5550,3 +5550,109 @@ def test_apply_nested_rack_chains_recurse_is_idempotent(conn, song, session):
         conn, results, song_id=song, session_id=session,
     )
     assert second.mutations == 0
+
+
+# ---------------------------------------------------------------------------
+# NODE-ADDR Chunk C — per-DrumChain choke_group / out_note pull (diff -> DB)
+# ---------------------------------------------------------------------------
+
+
+def _drum_chain_entry(ci, name, *, choke_group=0, out_note=36, in_note=36,
+                      devices=()):
+    """A get_device_chains entry for a DrumChain, carrying the per-drum props
+    `_describe_chain` surfaces (Chunk C). Defaults are the no-op state."""
+    return {
+        "chain_index": ci, "name": name, "device_count": len(devices),
+        "devices": list(devices), "is_muted": False, "is_soloed": False,
+        "choke_group": choke_group, "out_note": out_note, "in_note": in_note,
+    }
+
+
+def _nested_payload_with_chains(rack_position, *chain_entries):
+    return {
+        "device_index": rack_position, "class_name": "Drum Rack",
+        "chain_count": len(chain_entries), "chains": list(chain_entries),
+        "parent_kind": "track", "track_index": 5,
+    }
+
+
+def test_pull_writes_authored_choke_and_out_note(conn, song, session):
+    _, _, rack_id = _build_track_with_rack(conn, song, session)
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"nested_rack_chains:{rack_id}",
+            _nested_payload_with_chains(
+                1,
+                _drum_chain_entry(1, "OH", choke_group=1),
+                _drum_chain_entry(2, "Tom", out_note=67, in_note=45),
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations >= 2  # two chains created + their props
+    chains = {
+        c["position"]: c
+        for c in Q.get_device_chains_for_rack_device(conn, rack_id)
+    }
+    assert chains[1]["choke_group"] == 1 and chains[1]["out_note"] is None
+    assert chains[2]["out_note"] == 67 and chains[2]["choke_group"] is None
+
+
+def test_pull_default_props_are_a_no_op(conn, song, session):
+    _, _, rack_id = _build_track_with_rack(conn, song, session)
+    M.create_device_chain(conn, parent_rack_device_id=rack_id, position=1)
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"nested_rack_chains:{rack_id}",
+            _nested_payload_with_chains(1, _drum_chain_entry(1, "Kick")),
+        )],
+        song_id=song, session_id=session,
+    )
+    # Chain already exists, props at default -> nothing to write.
+    assert out.mutations == 0
+    chain = Q.get_device_chains_for_rack_device(conn, rack_id)[0]
+    assert chain["choke_group"] is None and chain["out_note"] is None
+
+
+def test_pull_clears_a_prop_when_live_returns_to_default(conn, song, session):
+    """Live cleared the choke -> the diff lands the DB back to NULL."""
+    _, _, rack_id = _build_track_with_rack(conn, song, session)
+    nested = M.create_device_chain(conn, parent_rack_device_id=rack_id, position=1)
+    M.set_chain_properties(conn, chain_id=nested, choke_group=2)
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"nested_rack_chains:{rack_id}",
+            _nested_payload_with_chains(
+                1, _drum_chain_entry(1, "OH", choke_group=0),  # cleared in Live
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 1
+    chain = Q.get_device_chains_for_rack_device(conn, rack_id)[0]
+    assert chain["choke_group"] is None
+
+
+def test_pull_idempotent_after_steady_state(conn, song, session):
+    """DB already matches Live -> a second pull writes nothing (round-trip
+    closure: author -> push -> Live -> pull is a fixed point)."""
+    _, _, rack_id = _build_track_with_rack(conn, song, session)
+    nested = M.create_device_chain(conn, parent_rack_device_id=rack_id, position=1)
+    M.set_chain_properties(conn, chain_id=nested, choke_group=1, out_note=60)
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"nested_rack_chains:{rack_id}",
+            _nested_payload_with_chains(
+                1, _drum_chain_entry(1, "OH", choke_group=1, out_note=60,
+                                     in_note=36),
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0

@@ -264,6 +264,13 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
         "TEXT CHECK (monitoring_state IS NULL OR "
         "monitoring_state IN ('In','Auto','Off'))",
     ),
+    # NODE-ADDR Chunk C: per-DrumChain authorship. Both nullable — NULL on every
+    # non-drum chain (a plain Chain has neither attribute) and on drum chains at
+    # the Live default (choke 0 / out_note == in_note). Existing rows get NULL.
+    # `choke_group` = Live's choke-group id (0 = none); `out_note` = the MIDI
+    # transpose target. Set via the set_chain_properties mutator at capture/pull.
+    ("device_chains", "choke_group", "INTEGER"),
+    ("device_chains", "out_note", "INTEGER"),
 )
 
 

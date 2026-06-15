@@ -71,8 +71,10 @@ def create_device_chain(
         (parent_track_id, parent_return_id, parent_rack_device_id, position),
     ).fetchone()
     if existing is not None:
-        # device_chains has no non-identity fields — existing match means
-        # unchanged by definition.
+        # Identity is (parent, position) — an existing match is the same chain.
+        # Its per-drum properties (choke_group / out_note) are NOT touched here;
+        # they ride `set_chain_properties` (NODE-ADDR Chunk C), symmetric with
+        # how a track's routing rides set_track_routing, not create_track.
         chain_id = existing["id"]
         _record_touch_if_session("device_chain", chain_id)
         return MutatorResult(chain_id, "unchanged")
@@ -148,6 +150,95 @@ def _resolve_chain_song(
             parent_rack_device_id=row["parent_rack_device_id"],
         )
     return None
+
+
+# NODE-ADDR Chunk C: per-DrumChain authored properties. Sentinel distinguishes
+# "field not passed" from "field passed as None" (None = clear to the Live
+# default — a meaningful value, exactly like set_track_routing's clear-a-route).
+_UNSET: Any = object()
+_CHAIN_PROP_FIELDS: tuple[str, ...] = ("choke_group", "out_note")
+
+
+def set_chain_properties(
+    conn: sqlite3.Connection,
+    *,
+    chain_id: str,
+    choke_group: Any = _UNSET,
+    out_note: Any = _UNSET,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> MutatorResult:
+    """Partial update of a chain's authored per-drum properties (NODE-ADDR
+    Chunk C). Only fields actually passed are touched; pass a field as ``None``
+    to clear it to the Live default (choke 0 / no transpose) — symmetric with
+    ``set_track_routing``'s clear-a-route. Idempotent: per-field diff against the
+    current row, emits ``DEVICE_CHAIN_PROPS_SET`` only when something changes.
+
+    ``choke_group`` / ``out_note`` exist on a ``DrumChain`` only; the capture /
+    pull paths store them non-default-filtered (choke != 0, out_note != in_note)
+    so a plain instrument-rack chain never carries them. The mutator itself is
+    storage-only — it does not re-probe Live; the handler / capability matrix
+    own the "is this a DrumChain?" decision.
+    """
+    changes: dict[str, Any] = {}
+    if choke_group is not _UNSET:
+        changes["choke_group"] = choke_group
+    if out_note is not _UNSET:
+        changes["out_note"] = out_note
+    if not changes:
+        return MutatorResult(chain_id, "unchanged")
+    if changes.get("choke_group") is not None:
+        cg = changes["choke_group"]
+        if not isinstance(cg, int) or isinstance(cg, bool) or cg < 0:
+            raise ValueError(
+                f"choke_group must be a non-negative int or None, got {cg!r}"
+            )
+    if changes.get("out_note") is not None:
+        on = changes["out_note"]
+        if not isinstance(on, int) or isinstance(on, bool) or not (0 <= on <= 127):
+            raise ValueError(
+                f"out_note must be a MIDI note 0..127 or None, got {on!r}"
+            )
+    actor, request_id = _resolve_actor_and_request(actor, request_id)
+    row = conn.execute(
+        """SELECT parent_track_id, parent_return_id, parent_rack_device_id,
+                  choke_group, out_note
+           FROM device_chains WHERE id = ?""",
+        (chain_id,),
+    ).fetchone()
+    if row is None:
+        raise ValueError(
+            f"set_chain_properties: no device_chains row {chain_id!r}"
+        )
+    actual = {k: v for k, v in changes.items() if row[k] != v}
+    if not actual:
+        _record_touch_if_session("device_chain", chain_id)
+        return MutatorResult(chain_id, "unchanged")
+    sets = ", ".join(f"{k} = ?" for k in actual)
+    conn.execute(
+        f"UPDATE device_chains SET {sets} WHERE id = ?",
+        [*actual.values(), chain_id],
+    )
+    song_id = _resolve_chain_song(
+        conn,
+        parent_track_id=row["parent_track_id"],
+        parent_return_id=row["parent_return_id"],
+        parent_rack_device_id=row["parent_rack_device_id"],
+    )
+    _emit(
+        conn,
+        E.DEVICE_CHAIN_PROPS_SET,
+        {"chain_id": chain_id, "changes": actual},
+        song_id=song_id,
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+    if song_id:
+        _touch_song(conn, song_id)
+    _record_touch_if_session("device_chain", chain_id)
+    return MutatorResult(chain_id, "updated")
 
 
 def delete_device_chain(

@@ -75,6 +75,12 @@ node = {
 
 Get `path` / `chain_index` from `ableton_device(action='get_device_chains')`.
 
+A `chain`-terminal node is also the authoring address for per-DrumChain
+properties: `ableton_device(action='set_chain_property', node={…terminal:'chain'…},
+choke_group=N, out_note=M)` sets a drum pad's choke group / MIDI transpose. It is
+capability-probed — a plain instrument/audio-rack chain (no `choke_group`) gets a
+teaching error pointing at the feature matrix.
+
 **Which features work on which node kind:** addressing is uniform (one `node`
 reaches every kind) but *operations are not* — Live's matrix is sparse. Read
 `ableton://reference/node-feature-matrix` BEFORE authoring a node feature

@@ -366,16 +366,24 @@ MATRIX: tuple[Feature, ...] = (
         cells=(
             Cell(
                 "chain",
-                FeatureStatus.NOT_IMPLEMENTED,
-                reason="Chain zone authoring isn't built.",
-                live_evidence=(
-                    "Selector/zone-capable rack chains expose key/velocity/"
-                    "chain-select ranges; the exact surface is probed in "
-                    "NODE-ADDR Chunk E."
+                FeatureStatus.UNSUPPORTED_IN_LIVE,
+                reason=(
+                    "Live's LOM exposes no per-chain key / velocity / "
+                    "chain-select zone surface — the rack Zone editor is "
+                    "UI-only, so zones can be neither read nor authored via "
+                    "the API."
                 ),
-                workaround=_SNAPSHOT_WORKAROUND,
-                request_tag="NODE-ADDR Chunk E",
-                determination="probe",
+                live_evidence=(
+                    "A Chain — including on a chain-select/selector rack — has "
+                    "no key_range / velocity_range / chain_select_range "
+                    "attribute; each raises AttributeError (NODE-ADDR Chunk E "
+                    "probe 2026-06-15, Live 12.4)."
+                ),
+                workaround=(
+                    "Bake zones into the rack preset / set them in Live's UI; "
+                    "they persist in the .als but stay invisible to the API "
+                    "(so /song-snapshot cannot capture them either)."
+                ),
             ),
         ),
     ),

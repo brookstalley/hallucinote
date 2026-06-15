@@ -99,6 +99,10 @@ def test_not_implemented_cells_point_somewhere_actionable():
         ("output_routing", "chain"),
         ("monitor_state", "return"),
         ("monitor_state", "master"),
+        # NODE-ADDR Chunk E: the zone probe (2026-06-15) found NO key/velocity/
+        # chain-select surface on a Chain — not even on a selector rack — so
+        # zones are a hard LOM wall, re-scoped from NOT_IMPLEMENTED.
+        ("zones", "chain"),
     ],
 )
 def test_probed_walls_are_unsupported_in_live(feature, node_kind):
@@ -118,7 +122,8 @@ def test_probed_walls_are_unsupported_in_live(feature, node_kind):
         ("output_routing", "master"),
         # choke_out_note/chain flipped SUPPORTED in NODE-ADDR Chunk C — see
         # test_shipped_features_are_supported below.
-        ("zones", "chain"),
+        # zones/chain re-scoped to UNSUPPORTED_IN_LIVE in Chunk E (see
+        # test_probed_walls_are_unsupported_in_live).
         ("mixer_state", "chain"),
     ],
 )

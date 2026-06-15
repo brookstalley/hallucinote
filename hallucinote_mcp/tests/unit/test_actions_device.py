@@ -187,6 +187,7 @@ class FakeSongView:
     def __init__(self, song: "FakeSong") -> None:
         self._song = song
         self._selected: Any = None
+        self._appointed: Any = None
 
     @property
     def selected_track(self) -> Any:
@@ -195,6 +196,15 @@ class FakeSongView:
     @selected_track.setter
     def selected_track(self, track: Any) -> None:
         self._selected = track
+
+    def select_device(self, device: Any, should_appoint: bool = True) -> None:
+        # Live 12.4.2: appoints `device` as the insertion point for the next
+        # browser.load_item (which inserts into the appointed device's chain).
+        self._appointed = device
+
+    @property
+    def selected_device(self) -> Any:
+        return self._appointed
 
 
 class FakeSong:
@@ -2550,6 +2560,7 @@ class _FakeChain:
 class _FakeRackView:
     def __init__(self):
         self.selected_chain = None
+        self.is_showing_chain_devices = False
 
 
 class _FakeRackDevice(FakeDevice):
@@ -2684,10 +2695,15 @@ def test_set_parameter_device_path_invalid_chain_raises(loaded_actions):
 
 
 # load into a rack chain (load + device_index + chain_index, the DEEP-RACK-ADDR
-# replacement for load_in_rack) — focuses on the chain-selection wire-through;
-# full browser-load integration is deferred to W6-K real-Live smoke.
-def test_load_into_chain_selects_chain_and_loads(loaded_actions):
-    chain = _FakeChain("Lead", devices=[])
+# replacement for load_in_rack). Models Live 12.4.2: browser.load_item inserts
+# into the APPOINTED device's chain (song.view.select_device), so the handler
+# must appoint a device that already lives in the target chain. (An earlier fake
+# asserted rack.view.selected_chain instead — a mechanism real Live ignores;
+# the NODE-ADDR Chunk-A Live pass on 2026-06-15 caught the device landing at the
+# track top level, which this corrected fake now reproduces.)
+def test_load_into_chain_appoints_in_chain_device_and_loads(loaded_actions):
+    seed = FakeDevice("Seed", class_name="Operator")
+    chain = _FakeChain("Lead", devices=[seed])
     rack = _FakeRackDevice("Rack", chains=[chain])
     track = FakeTrack("T1", devices=[rack])
     song = FakeSong(tracks=[track])
@@ -2755,9 +2771,16 @@ def test_load_into_chain_selects_chain_and_loads(loaded_actions):
                 f"({item!r}) — callsite likely forgot to unpack "
                 "_find_browser_item's (item, path) tuple"
             )
+            # Live 12.4.2: load_item inserts into the APPOINTED device's chain.
+            # The handler must have appointed a device that lives in the target
+            # chain (not merely set rack.view.selected_chain, which Live ignores).
+            assert song.view.selected_device in chain.devices, (
+                "handler should appoint an in-chain device via "
+                "song.view.select_device so load_item targets the nested chain"
+            )
             assert rack.view.selected_chain is chain, (
-                "handler should have set rack.view.selected_chain before "
-                "browser.load_item"
+                "handler should also set rack.view.selected_chain for UI "
+                "consistency"
             )
             chain.devices.append(FakeDevice("Compressor", class_name="Compressor2"))
 
@@ -2776,8 +2799,8 @@ def test_load_into_chain_selects_chain_and_loads(loaded_actions):
         context=ctx,
     )
     assert resp.ok is True, resp.error
-    assert len(chain.devices) == 1
-    assert resp.result["nested_device_position"] == 1
+    assert len(chain.devices) == 2  # seed + loaded
+    assert resp.result["nested_device_position"] == 2
     assert resp.result["chain_index"] == 1
 
 
@@ -2878,6 +2901,38 @@ def test_load_into_chain_silent_noop_raises_with_existing_chain(loaded_actions):
     assert "did not append" in err
     assert "1:Compressor2" in err
     assert "silently no-ops" in err
+
+
+def test_load_into_empty_chain_raises_teaching_error(loaded_actions):
+    """An empty nested chain has no in-chain device to appoint, and Live 12.4.2
+    exposes no API to set the insertion point inside an empty chain. The handler
+    must refuse with a teaching error BEFORE calling browser.load_item — which
+    would otherwise follow the (top-level) appointed device, dump the device on
+    the track's main chain, and leave a stray (the NODE-ADDR Chunk-A Live pass
+    saw exactly that on 2026-06-15).
+    """
+    chain = _FakeChain("Empty", devices=[])
+    loaded = {"called": False}
+
+    def _should_not_load(_c):
+        loaded["called"] = True
+
+    ctx = _build_rack_load_ctx(chain, _should_not_load)
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={
+                "node": {"parent": {"kind": "track", "index": 1}, "terminal": "chain", "device_index": 1, "chain_index": 1},
+                "kind": "Compressor2",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "empty" in err.lower()
+    assert "select_device" in err
+    assert loaded["called"] is False, "must refuse before browser.load_item"
 
 
 # ---------- DEEP-RACK-ADDR: canonical device_path at arbitrary depth ----------
@@ -3067,7 +3122,8 @@ def test_load_into_nested_chain_via_device_path(loaded_actions):
     """load with device_path + chain_index appends into a chain of a DEEPLY
     nested rack (depth-2 destination). Proves the nested-load path threads the
     canonical device_path, not just the depth-1 case the migrated tests cover."""
-    inner_chain = _FakeChain("Inner", devices=[])
+    inner_seed = FakeDevice("Inner Seed", class_name="Operator")
+    inner_chain = _FakeChain("Inner", devices=[inner_seed])
     inner_rack = _FakeRackDevice("Inner Rack", chains=[inner_chain])
     outer_rack = _FakeRackDevice(
         "Outer Rack", chains=[_FakeChain("Outer", devices=[inner_rack])],
@@ -3096,8 +3152,10 @@ def test_load_into_nested_chain_via_device_path(loaded_actions):
                 setattr(self, root, node)
 
         def load_item(self, item):
-            # The handler must have selected the INNER chain on the inner
-            # rack's view before loading (depth-2 destination).
+            # Live 12.4.2: load_item inserts into the APPOINTED device's chain.
+            # The handler must appoint a device living in the INNER chain (the
+            # depth-2 destination), not merely set selected_chain.
+            assert ctx.song.view.selected_device in inner_chain.devices
             assert inner_rack.view.selected_chain is inner_chain
             inner_chain.devices.append(
                 FakeDevice("Compressor", class_name="Compressor2")
@@ -3115,9 +3173,9 @@ def test_load_into_nested_chain_via_device_path(loaded_actions):
         context=ctx,
     )
     assert resp.ok is True, resp.error
-    assert resp.result["nested_device_position"] == 1
+    assert resp.result["nested_device_position"] == 2
     assert resp.result["device_path"] == [_STEP]
-    assert len(inner_chain.devices) == 1
+    assert len(inner_chain.devices) == 2  # inner seed + loaded
 
 
 def test_load_chain_index_without_device_index_is_teaching_error(loaded_actions):

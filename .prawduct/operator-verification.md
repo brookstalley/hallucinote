@@ -54,11 +54,19 @@ shows `current_phase` advance). Not gating — the logic is fully unit-covered.
 
 ## NODE-ADDR Chunk A — wire flip + addressing spine (re-vendor + migrated-op Live verify)
 
-**Status:** CODE-COMPLETE 2026-06-15 (worktree `feature/node-addr`), full suite green
-(baseline + 38 new tests). **Added after the 2026-06-14 blanket acceptance → not covered
-by it; gates the PR until verified.** Critic note d: `device_path` was a shipped contract
-(DEEP-RACK-ADDR), so the migration must verify **every** migrated op against a real set via
-the new `node` address — not just the new path.
+**Status:** ✅ **LIVE-VERIFIED 5/6 2026-06-15** (Live 12.4.2, served `0.1.0+b23b59ab5e34` via the
+primary-repo re-vendor; handshake confirmed). The addressing spine is proven end-to-end on a
+real set (808 Core Kit drum rack + 808 Selector Rack with a genuine depth-2 nested Saturator).
+The 6th check (chain-terminal *load*, 3b) FAILED → root-caused a **pre-existing, NOT-a-Chunk-A**
+defect (`browser.load_item` follows the *appointed device*, not `rack.view.selected_chain`) in
+the wire-flip-unchanged `_load_into_rack_chain` → **FIXED this session** (`select_device`
+appointment + corrected the false-confidence fakes; the prior fake modeled the wrong mechanism).
+⏳ **One pending re-test:** the fix flips the fingerprint again — re-vendor, then re-run check 3b
+(load into a non-empty nested chain → device appends *in-chain*, not top-level).
+
+Earlier: CODE-COMPLETE 2026-06-15 (worktree `feature/node-addr`), full suite green (baseline +
+38 new tests). Critic note d: `device_path` was a shipped contract (DEEP-RACK-ADDR), so the
+migration verified **every** migrated op against a real set via the new `node` address.
 
 **Bridge step first** (re-vendor required — touches `actions/`+`handlers/`; the fingerprint
 flips from develop's `e10695d17559` to Chunk A's **`0.1.0+b23b59ab5e34`**). Chunk A is merged
@@ -88,6 +96,31 @@ match-against-running-server guard stays intact:
    unbuilt feature reports `NOT_IMPLEMENTED` and a structural-impossible op (send pre/post,
    macro-mapping-target, per-chain audio out) reports `UNSUPPORTED_IN_LIVE`, each with the
    documented evidence + workaround.
+
+**Results (2026-06-15, Live 12.4.2):**
+1. ✅ **set_parameter @ depth-2** — Saturator `Dry/Wet`→0.5 at `path:[{2,1},{1,2}]`; `device_path`
+   echoed the nested address (not the top rack). (Note: a first attempt on `Drive` returned Live's
+   "parameter is disabled" — the resolver reached the device; the param was just non-settable.)
+2. ✅ **get_parameters @ depth-2 + `default_value`** — 19 params; `default_value` present on
+   continuous params, **correctly omitted on enums** (the guarded raises-fallback).
+3. ⚠️→🔧 **load** — top-level (track-terminal) load ✅ (both racks). **Chain-terminal load INTO a
+   nested chain ❌ on the first pass** — `browser.load_item` ignored `rack_view.selected_chain` on
+   12.4.2 and appended to the track top-level; the post-condition correctly raised "did not append"
+   (fails loud, no silent corruption) but left a stray top-level device (cleaned up by hand).
+   **Pre-existing** (the `_load_into_rack_chain` mechanism was byte-identical develop↔HEAD; the wire
+   flip only changed the node→chain_index *entry*, and the `chain` terminal *resolved* correctly).
+   **FIXED this session:** `load_item` inserts relative to the **appointed device**
+   (`song.view.select_device`) — the handler now appoints a device living in the target chain;
+   empty chains (no device to appoint) refuse with a teaching error instead of mis-loading. The
+   unit fake that asserted `selected_chain` (the wrong mechanism — the source of the false green)
+   was corrected to model appointed-device insertion. **⏳ Live re-test pending** (re-vendor first).
+4. ✅ **automation** — `perform_batch` on the depth-2 Saturator `Dry/Wet` recorded with
+   `automation_state:1`, `device_path` echoed nested. `write_envelope` verified at top-level (its
+   nested route is a documented Live-12.4 impossibility → `perform_batch` is the nested path).
+5. ✅ **`chain` terminal** — `ableton_probe` confirmed `choke_group` (int 0) reachable on the Bass
+   Drum DrumChain behind a `chain`-terminal address (the Chunk-C surface), proving the new terminal.
+6. ✅ **capability matrix** — `ableton://reference/node-feature-matrix` tri-state matches
+   `probe-findings.md` (SUPPORTED / NOT_IMPLEMENTED+request_tag / UNSUPPORTED_IN_LIVE+live_evidence).
 
 Visual change: no (wire/behavior, not UI). Operator-attended Live session required.
 

@@ -2321,11 +2321,34 @@ def _load_into_rack_chain(
             "introspect on the rack device)."
         )
     chain_before_classes = [_canonical_class_name(d) for d in chain.devices]
-    rack_view.selected_chain = chain
-    # Also select the parent track so the browser-load fires in the right
-    # context — Live's browser.load_item routes through the highlighted
-    # surface chain.
+    # Live 12.4.2: `browser.load_item` inserts relative to the APPOINTED device
+    # (`song.view.select_device`), NOT `rack.view.selected_chain`. Setting only
+    # `selected_chain` (+ `selected_track`) leaves the appointed device at the
+    # track's top level, so the new device silently lands on the track's MAIN
+    # chain — confirmed on a real set during the NODE-ADDR Chunk-A Live pass
+    # (2026-06-15): the nested load no-op'd and a stray device appeared at the
+    # top level. Fix: appoint a device that already lives in the target chain so
+    # `load_item` appends into THAT chain. `selected_chain` +
+    # `is_showing_chain_devices` keep the rack's own UI consistent.
     view.selected_track = parent
+    rack_view.selected_chain = chain
+    if hasattr(rack_view, "is_showing_chain_devices"):
+        rack_view.is_showing_chain_devices = True
+    if not chain.devices:
+        # Empty target chain → no in-chain device to appoint, and 12.4.2 exposes
+        # no API to set the insertion point inside an empty nested chain
+        # (`load_item` would follow the appointed device, of which there is
+        # none, and dump onto the track top level). Refuse with a teaching error
+        # rather than silently mis-load + leave a stray top-level device.
+        raise NotImplementedError(
+            f"load into chain {chain_index} of rack {device_index}: the target "
+            "chain is empty, and Live 12.4.2 has no API to set the insertion "
+            "point inside an empty nested chain (browser.load_item follows the "
+            "appointed device — `song.view.select_device` — of which an empty "
+            "chain has none). Load the first device into this chain via Live's "
+            "UI (then later loads target it), or load into a non-empty chain."
+        )
+    view.select_device(chain.devices[-1])
     browser.load_item(item)
 
     # Re-resolve the destination chain from a fresh parent — Live re-wraps API

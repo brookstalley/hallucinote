@@ -1,12 +1,15 @@
 """Imperative handlers for ``ableton_device`` actions.
 
-Devices live on either a track or a return track. The Live Object Model
-exposes both via the same per-chain ``devices`` collection — the only
-difference is the navigation root. Handlers address devices via exactly
-one of ``track_index`` / ``return_index`` (validated by
-``_resolve_parent``) so the agent's mental model stays close to Live's UI
-(devices belong to tracks or returns) without forcing a separate
-``parent_kind`` param.
+Devices live on a track, a return, or the master. The Live Object Model
+exposes all three via the same per-chain ``devices`` collection — the only
+difference is the navigation root. Device-addressing operations take a single
+structured ``node`` object (a ``NodeAddr``): its ``parent`` names exactly one of
+track / return / master (validated by ``_resolve_parent``), and its ``path`` +
+``terminal`` descend into nested rack chains to arbitrary depth (see the nested-
+rack paragraph below). A few shallow, top-level-only ops (``list`` / ``info`` /
+``delete``) still take the flat ``track_index`` / ``return_index`` / ``master``
+root directly — they never address into a chain, so a structured ``node`` would
+be ceremony.
 
 set_parameter handles both continuous and enum values via ``value_type``.
 Live's DeviceParameter has ``value`` (always a float — for enum params it
@@ -2109,10 +2112,11 @@ def pad_info_handler(
 # (`_resolve_device_path`): a list of {chain_index, device_position} steps
 # descends one rack level each, to ARBITRARY depth. `get_device_chains`
 # recurses the whole tree and reports each device's `device_path`; the agent
-# passes that path straight back to `set_parameter` / `get_parameters`. The
-# retired `load_in_rack` / `set_parameter_in_rack` actions (one-level-deep,
-# bespoke triples) folded into `load` (device_path + chain_index) and
-# `set_parameter` (device_path) respectively.
+# carries those same steps back in as the `node` object's `path` (NODE-ADDR —
+# `device_path` is now the internal primitive + response field, not the wire
+# shape). The retired `load_in_rack` / `set_parameter_in_rack` actions
+# (one-level-deep, bespoke triples) folded into `load` and `set_parameter`,
+# both now addressed via `node`.
 # ---------------------------------------------------------------------------
 
 

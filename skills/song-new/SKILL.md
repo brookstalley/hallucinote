@@ -1,6 +1,6 @@
 ---
 name: song-new
-description: Scaffold a new Hallucinote song from templates. Creates songs/<slug>/ with build.py, captured_session.json, tests/, decisions/, annotations/, and a song.md overview. Use when starting a new song from a prompt — replaces the "copy from falling-walking" pattern that Wave 0 surfaced as a major onboarding friction.
+description: Scaffold a new Hallucinote song from templates. Creates songs/<slug>/ with build.py, captured_session.json, tests/, decisions/, annotations/, attempts/ (the try→outcome ledger), and a song.md overview. Use when starting a new song from a prompt — replaces the "copy from falling-walking" pattern that Wave 0 surfaced as a major onboarding friction.
 user-invocable: true
 disable-model-invocation: false
 allowed-tools: Read, Write, Bash(python3 -m hallucinote.tools.scaffold_song *), Bash(python3 songs/* --reset), Bash(pytest songs/*)

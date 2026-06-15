@@ -63,12 +63,14 @@ optional polish — they are how the framework's ear gets applied to your work.*
 
 ### 1 — Frame the intent
 `/song-new` scaffolds `songs/<slug>/` (build.py, captured_session.json, tests,
-decisions/, annotations/, song.md). Before that, and throughout, the song's
+decisions/, annotations/, attempts/, song.md). Before that, and throughout, the song's
 *intent* — key, the central tension, what the chorus does, the energy arc — is
 the thing everything else serves. Don't auto-decide it: at an elementary musical
 fork the user hasn't directed, **propose and read their reaction** (the third
-register). Recall prior intent with `/song-context`; the audit trail of
-compose-time decisions is `/decisions`.
+register). Three recall surfaces, one per question: prior *intent* → `/song-context`;
+the audit trail of compose-time decisions → `/decisions`; **what you already tried on a
+part and how it turned out** (incl. reverted dead ends) → `/song-attempts`, before you
+re-touch a part you've worked before.
 
 ### 2 — Pick the instrument chains (sound design *is* composition)
 `/song-pick-instruments` picks a *chain* per track — instrument **plus**
@@ -134,6 +136,16 @@ they never re-flag a choice you've confirmed.
 `/snapshot-bake-recent-changes` bakes mid-session knob tweaks back to the DB
 before a re-push overwrites them; `/ableton-pull` ingests manual Live edits
 through the mutator path. Then loop back to compose or mix.
+
+As you loop, keep the **attempt ledger** (`songs/<slug>/attempts/`, `kind: attempt`)
+current — log each move you *tried* and how it turned out (`outcome` worked/partial/failed,
+`resolution` kept/reverted/superseded), **especially the reverted dead ends**, chaining a
+correction with `related:` → the move that worked. The two review checkpoints propose these
+entries; `/song-attempts` recalls them. This is the per-song memory that stops the next loop
+from re-running a move that already failed — distinct from `annotations/` (revealed intent)
+and `decisions/` (what you kept and why). Schema + worked example:
+[`.prawduct/artifacts/song-conventions.md`](../.prawduct/artifacts/song-conventions.md)
+"The attempt ledger".
 
 ---
 

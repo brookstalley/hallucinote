@@ -119,7 +119,12 @@ chunk's review. All edits are prose/markdown (skills + docs + CLAUDE.md); no exe
       `songs/<slug>/<slug>.db` layout: `--kind attempt` renders the chain, `--outcome
       failed` isolates dead ends, fulltext surfaces prose; recall-on-read auto-indexed
       hand-authored `attempts/*.md`. No fingerprint flip (no MCP handler reads markdown_refs).
-- [ ] Chunk 2: skill + capture wiring + discoverability spine (doc-only, cumulative-final)
+- [x] Chunk 2: skill + capture wiring + discoverability spine (doc-only, cumulative-final).
+      8 surfaces: new /song-attempts skill; compose-review + mix-review capture wiring;
+      song-workflow SKILL + docs/song-workflow.md; song-conventions.md schema + worked
+      example; docs/song-authoring-conventions.md layout; CLAUDE.md norm; song-new desc.
+      active_build_plan repointed → ATL-7K3M. Skills auto-discovered (no manifest edit).
+      Full suite 3751 passed/2 skipped (doc-only — no code changed).
 
 ## Context
 Chunk 1 landed: `kind: attempt` is a first-class markdown corpus kind with `outcome`

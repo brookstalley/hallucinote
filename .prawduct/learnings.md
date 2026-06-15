@@ -66,6 +66,10 @@ put any narrative there.
 
 **When you refactor "ask the user X" into "detect X programmatically," the detector must enumerate every state the user would have known to mention — including the ones that look the same from outside.**
 
+## Freezing a shared interface? Census every consumer against authoritative sources first
+
+**Before freezing a shared interface (wire shape, address grammar, schema key, protocol), enumerate ALL its consumers/features against authoritative sources — the code and the platform API — not from memory or an assumed count. The census's job is to find any consumer needing a capability the frozen interface can't express. This session a design assumed "5 node features"; a two-front audit (codebase coverage + LOM surface) found ~3 already-shipped were missed (the routing family was collapsed; device-sidechain-source omitted) AND surfaced two findings that changed the frozen wire (a `drum_pad` terminal; addresses-as-values). Freezing on an incomplete census bakes in a gap that forces a re-flip later — when the user asks "is there a 6th/7th hiding?", that IS the census, do it. Reinforces *Validate Before Propagating* + *Structural Awareness*.**
+
 ## Never use `is` for Live API object identity
 
 **When a handler creates a Live API object and then needs to find its index or reference, NEVER scan for `obj is new_obj` against `song.X` / `track.X` — Live re-wraps API objects on every property access. The scan returns False even for the same underlying Live object, and the handler silently fails or returns a result missing a field.**
@@ -78,9 +82,13 @@ put any narrative there.
 
 **Test fakes for Live's Remote Script API must simulate the real API's quirks — not the API's documented or assumed shape. Without an integration smoke test against a real Live process, the unit suite gives a green light to handlers that crash empirically.**
 
-## A shipped "can't" is a dated snapshot — re-probe a challenged capability verdict before defending it
+## A recorded "can't" is a dated claim — re-verify (platform OR code) before designing around it
 
-**When a user (or your own reasoning) challenges a capability the project recorded as impossible — especially a platform/LOM "X is not supported / forever-manual" — and the platform is reachable, RE-PROBE it directly before defending from the artifact. Capability verdicts are VERSION-SENSITIVE: a finding empirically true on an older build can be silently fixed by a platform update, and the stale "can't" then propagates into code, skills, and workarounds as a false premise.**
+**When a user (or your own reasoning) challenges a recorded limitation, VERIFY it against the live system before defending from the artifact. Two flavors of the same trap:**
+- **External platform/LOM verdict** ("X is not supported / forever-manual") — RE-PROBE the platform directly; capability verdicts are VERSION-SENSITIVE (a finding true on an older build can be silently fixed by an update), and the stale "can't" propagates into code, skills, and workarounds as a false premise.
+- **Internal stale comment/docstring** asserting a limitation of OUR OWN code — verify against the actual code path, because code outgrows its comments. This session: "Python can't call MCP tools directly" (a docstring in `capture.py`/`capture_cli.py`) was FALSE — the engine already calls Live via `hallucinote_mcp.client.send` (`push_cli`/`pull_cli execute` drive it with no agent), and the false belief had shaped an entire agent-orchestrated capture design (nearly led to building a "new bridge" that already existed).
+
+**Corollary:** treat probe-confirmable platform/API facts as must-verify, not recall. We live-probed `DeviceParameter.default_value` and found it exists but *raises* on some quantized params — a nuance pure reasoning would have missed. (Reinforces *Verify, don't guess*.)
 
 ## Link, don't summarize
 

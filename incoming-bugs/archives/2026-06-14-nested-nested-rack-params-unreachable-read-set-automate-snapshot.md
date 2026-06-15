@@ -35,6 +35,30 @@ below the addressable depth:
 - the end-of-chain **Limiter** (`devices[0].chains[0].devices[5]`) — heavy amp
   distortion into a limiter is a strong "chord → one fat mono tone" suspect.
 
+## Second concrete case (swell Voice Lead LFO tempo-sync, 2026-06-15)
+
+Same depth, a DIFFERENT song surface — confirms this recurs, not a one-off. The
+Voice Lead's vibrato is the **Wavetable's `LFO 1 Sync`** param, two rack levels
+deep:
+
+```
+track 21 "21 Voice Lead"
+└─ device 1 "Synth Vox Ai"   (Instrument Rack)
+   └─ chain 1
+      └─ device 1 …          (nested rack)
+         └─ chain 1
+            └─ Wavetable      ← LFO 1 Sync (Free→Tempo) + synced rate (1/2 note)
+```
+(probe path `[{1,1},{1,1}]` from the top-level device.)
+
+decisions/22 #8 switched `LFO 1 Sync` Free→Tempo to stop the vibrato drifting
+against 126 BPM. It works — but set via raw `ableton_probe`, and **the snapshot
+doesn't carry it**, so it's live-only: a rebuild + push reloads the rack from its
+preset default and the wobble goes back out of time. Every session since has had
+to remember "SAVE the .als or lose the LFO sync." Exactly the `params_dialed`
+top-level-only gap in (5) below, now in a SECOND surface — a stock vocal-synth
+rack, not just the guitar pack. (Added from swell's 2026-06-15 timpani/voice pass.)
+
 ## What's blocked, by surface
 
 1. **`ableton_device(action='get_device_chains')`** — its own help: *"does NOT

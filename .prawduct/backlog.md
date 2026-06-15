@@ -38,6 +38,17 @@ sections only via explicit `/backlog update` calls.
 
 ## Open
 
+- **[DEV-9K7N]** NODE-ADDR — Uniform node-path addressing + open tri-state feature matrix for Ableton nodes
+  `effort: L · impact: H · area: device · source: user · added: 2026-06-15 · status: open · stage: requirements · closes: DEV-7K4H · related: DEV-3W9R, DEV-4X2N · refs: .prawduct/artifacts/plans/NODE-ADDR/design.md`
+
+  **Design done, build plan next.** Design artifact `.prawduct/artifacts/plans/NODE-ADDR/design.md` is at status DESIGN/REVIEWED — Critic passed 2026-06-15 (2 warnings + 4 notes reconciled, no blocking). Subsumes the narrow DEV-7K4H (recursive nested rack chains): that item *is* this work, scoped down to one feature; DEV-7K4H is now SUBSUMED (`closes:` above).
+
+  **Scope.** Freeze a uniform structured *positional* address — `NodeAddr`: `parent`{track/return/master} + `path[{chain_index, device_position}]` + `terminal`{track/return/master/device/chain/drum_pad} — with a generated *named* string rendering. One resolver + one DB path-builder + one renderer (single source for all node addressing). A single-source **tri-state capability table** (`SUPPORTED` / `NOT_IMPLEMENTED` / `UNSUPPORTED_IN_LIVE`) with a lightweight documented stub. Deterministic **read-side acquisition** (capture `execute` on the existing `client.send` bridge) closing the nested-param durability gap (#17b). A `default_value`-based capture filter.
+
+  **Build shape.** One release, chunked: **Chunk A** addressing + wire + stub → **Chunk B** params-durability vertical slice → **Chunks C…N** per feature (each tri-state feature is its own chunk). DEV-3W9R (macro mappings) becomes a feature chunk in this release; DEV-4X2N (extract flatten-on-nested-rack-pull) is a downstream consumer unblocked by Chunk A.
+
+  **Verifiable signal:** `NodeAddr` resolver + DB path-builder + named-string renderer exist as a single source; the tri-state capability table is the one place feature support is declared; a nested (2+ levels deep) device parameter round-trips DB→push→capture→DB durably (closing #17b). (user, NODE-ADDR design review 2026-06-15)
+
 - **[BAK-3M9T]** UMBRELLA: the live→source "bake" should be ONE turnkey command, not an expert-only multi-trap operation
   `effort: L · impact: L · area: snapshot/sync · source: dogfood · added: 2026-06-13 · status: open · stage: requirements · related: SDC-7K3M, SYN-9F2L, SNP-4K7M, AUD-2N6K, SNP-8R4K, DPP-7H2K · refs: incoming-bugs/archives/2026-06-13-live-to-source-bake-should-be-turnkey.md`
 
@@ -269,13 +280,15 @@ sections only via explicit `/backlog update` calls.
   **Deferral confirmed (2026-06-14, Critic-debt refactor batch).** Considered alongside SYN-6T2W + ENV-5R2J but NOT built: the plugin-discriminator duplication is CROSS-PACKAGE — `_is_plugin_class` in src/hallucinote/sync/compat.py vs the inline discriminator in hallucinote_mcp/.../handlers/device.py. A single shared module would either (a) pull the heavy engine into the MCP server's stdlib-only-at-startup hot path (the get_device_full wire path, not an analysis path — violates the lazy-engine-import architecture) or (b) need the W11-A hallucinote-core shared package that doesn't exist yet. The existing lock-test (test_plugin_classes_lock_matches_mcp_side) already pins the two copies in sync, so there is no live drift risk today. Stays open, gated on W11-A — build once when the shared package lands, not twice.
 
 - **[DEV-4X2N]** `ableton_analysis(action='extract')` — coverage gap CLOSED; only the flatten-on-nested-rack-pull extension remains
-  `effort: S · impact: S · area: device · source: critic · added: 2026-06-01 · status: open · related: DEV-7K4H · stage: ready · reviewed: 2026-06-13`
+  `effort: S · impact: S · area: device · source: critic · added: 2026-06-01 · status: open · related: DEV-9K7N · stage: ready · reviewed: 2026-06-15`
+
+  **UNBLOCKED-BY DEV-9K7N (NODE-ADDR) Chunk A (2026-06-15).** Re-pointed from DEV-7K4H (subsumed) to NODE-ADDR. This is a *downstream consumer*, not part of NODE-ADDR's core release: once NODE-ADDR's Chunk A lands uniform deep addressing + recursive chain data, the extract can flatten nested chains. Likely a **fast-follow** after Chunk A rather than an in-release chunk. Gating below now reads against NODE-ADDR Chunk A's recursive chain data instead of DEV-7K4H.
 
   The structural-dump handler (`hallucinote_mcp/.../handlers/analysis.py:_extract_song_structure`) collects devices via `get_devices_for_track` / `get_devices_for_return`, which by design don't recurse into nested rack chains (one-level via `get_device_chains_for_rack_device`; recursive racks unmodeled — see DEV-7K4H). The caveat is documented in the handler docstring + action tips.
 
   **Regression-test half SHIPPED (2026-06-13).** `test_extract_flattens_top_level_chain_only_excludes_nested_rack` in `hallucinote_mcp/tests/unit/test_handlers_analysis.py` now pins the documented top-level-only exclusion: it seeds a nested Audio Effect Rack and asserts the inner device is excluded from the extract. The coverage gap (a regression that started dropping rack containers would go uncaught) is now closed.
 
-  **REMAINING (open scope) — flatten-on-nested-rack-pull extension, gated on DEV-7K4H.** When nested-rack pull lands (gated on `hallucinote-mcp` `get_device_chains`), extend the extract to flatten nested chains. **Verifiable signal:** the extract surfaces nested-rack devices once DEV-7K4H provides recursive chain data. (Critic note, extract-action 2026-06-01; regression lock added 2026-06-13)
+  **REMAINING (open scope) — flatten-on-nested-rack-pull extension, unblocked by DEV-9K7N (NODE-ADDR) Chunk A.** When recursive nested-rack pull lands via NODE-ADDR's uniform deep addressing (the former DEV-7K4H scope, now subsumed; gated on `hallucinote-mcp` `get_device_chains`), extend the extract to flatten nested chains. **Verifiable signal:** the extract surfaces nested-rack devices once NODE-ADDR Chunk A provides recursive chain data. (Critic note, extract-action 2026-06-01; regression lock added 2026-06-13; re-pointed to NODE-ADDR 2026-06-15)
 
 - **[SNG-7H4M]** Future sibling skill: `/song-import` — ingest an existing Ableton Live set into a new Hallucinote song dir
   `effort: L · impact: M · area: song-tooling · source: builder · added: 2026-05-20 · status: open · stage: requirements · reviewed: 2026-06-09`
@@ -361,10 +374,12 @@ sections only via explicit `/backlog update` calls.
 
   W7-A (2026-05-19) ships `plan_pull_envelopes` in DB-mirrored mode. It does NOT discover envelopes the user authored *only* in Live — that would explode the read surface (~10s-100s of probes per pull). A future "envelope discovery" pass could batch-probe likely surfaces (clips/devices/tracks mutated recently per `events` log). Not blocking V1. (W7-A 2026-05-19)
 
-- **[DEV-7K4H]** Recursive nested-nested rack chain support
-  `effort: L · impact: S · area: device · source: builder · added: 2026-05-19 · status: open · stage: idea · reviewed: 2026-06-09`
+- **[DEV-7K4H]** Recursive nested-nested rack chain support — SUBSUMED by DEV-9K7N (NODE-ADDR)
+  `effort: L · impact: S · area: device · source: builder · added: 2026-05-19 · status: open · stage: idea · related: DEV-9K7N · reviewed: 2026-06-15`
 
-  W6-I/J ship one-level-deep nested-rack support. Live allows racks-inside-racks-inside-racks; addressing beyond one level requires a path-style API (e.g., `chain_path=[2, 1, 3]`). Not exercised by today's songs. (W6-I/J 2026-05-19)
+  **SUBSUMED (2026-06-15) by DEV-9K7N (NODE-ADDR).** This item *is* the NODE-ADDR work, scoped narrowly to one feature: recursive nested rack addressing falls out of NODE-ADDR's uniform positional `NodeAddr` (`path[{chain_index, device_position}]` is arbitrarily deep) + its read-side durability slice. NODE-ADDR's `closes: DEV-7K4H` records the supersession. Carry the two real swell witnesses below into NODE-ADDR Chunk B's params-durability slice (they are the #17b durability gap). Kept open as the linked narrow witness; will close when NODE-ADDR ships.
+
+  W6-I/J ship one-level-deep nested-rack support. Live allows racks-inside-racks-inside-racks; addressing beyond one level requires a path-style API (e.g., `chain_path=[2, 1, 3]`). ~~Not exercised by today's songs.~~ **Now exercised by TWO real swell tasks** (both 2-levels-deep params the snapshot can't persist → revert on rebuild): `04 Gtr Power` mono-on-chords (the sampler voices + chain Limiter), and the `21 Voice Lead` LFO tempo-sync (`Synth Vox Ai` → Wavetable `LFO 1 Sync`, live-only, "SAVE the .als or lose it" every session). The durable-snapshot half (capture+push of nested params) is the actual unblocker — see incoming-bugs/archives/2026-06-14-nested-nested-rack-params-unreachable-read-set-automate-snapshot.md. Reconsider impact (S→?) given two recurring real cases. (W6-I/J 2026-05-19; 2nd case + snapshot-durability emphasis added 2026-06-15)
 
 - **[ENV-4M2T]** Return-side device_parameter envelopes need a return-track session-clip model
   `effort: L · impact: S · area: envelope · source: builder · added: 2026-05-18 · status: open · stage: requirements · related: AUD-1M4V, ENV-7G4K · refs: .prawduct/artifacts/plans/AUD-1M4V/discovery.md · reviewed: 2026-06-11`
@@ -450,7 +465,9 @@ sections only via explicit `/backlog update` calls.
   **From the 2026-06-09 repo-wide review.** Effort S = a day of listening, not code; user-owned (the locks are creative lock-ins that need the user's ears, not agent guesses). MEL-1A7K's appetite→fraction thresholds, sun-zone-done's by-ear locks (incl. MIX-3S7P's user-owned DubDelay lock), and Live verification of the arrangement-model song are all consciously deferred. Every analyzer added before validating the existing ones compounds the risk that coaching is confidently miscalibrated. Cheapest quality ROI on the board; also the empirical test of the "structure unlocks competence" bet. **Verifiable signal:** the `# PENDING by-ear calibration` placeholder constants in `melody/lens.py` carry ear-validated values, and MIX-3S7P's render-level by-ear pendings are resolved or consciously re-locked. (repo-wide review 2026-06-09)
 
 - **[DEV-3W9R]** Rack macros are unmodeled — DB representation + push/pull for macro mappings
-  `effort: M · impact: H · area: device · source: review · added: 2026-06-09 · status: open · stage: requirements · related: DEV-7K4H · refs: incoming-bugs/2026-06-14-device-param-automation-can-silence-a-part-with-no-warning.md · reviewed: 2026-06-14`
+  `effort: M · impact: H · area: device · source: review · added: 2026-06-09 · status: open · stage: requirements · related: DEV-7K4H, DEV-9K7N · refs: incoming-bugs/2026-06-14-device-param-automation-can-silence-a-part-with-no-warning.md · reviewed: 2026-06-15`
+
+  **BECOMES A FEATURE CHUNK IN DEV-9K7N (NODE-ADDR) (2026-06-15).** Macro mappings are one of NODE-ADDR's tri-state features (drum_pad/macro/chain terminals are first-class in `NodeAddr`). This item's schema + push/pull is a Chunk C…N feature build under NODE-ADDR's single release rather than a standalone item — it depends on NODE-ADDR's addressing + capture-durability spine (Chunks A/B). Keep this item as the macro-feature requirement record (incl. the silent-part witness below); it ships as a NODE-ADDR chunk.
 
   **From the 2026-06-09 repo-wide review.** One macro modulating cutoff + send is a basic sound-design idiom with zero DB representation today. Under "sound design is composition" (`feedback_sound_is_composition`), macro mappings are authorship and belong in the snapshot. Distinct from DEV-7K4H (nested chains). Needs a LOM capability probe for macro-mapping read/write before schema design. **Verifiable signal:** a macro mapping (one macro → ≥2 parameter targets) round-trips DB→push→pull; OR a probe-backed decision-record states the LOM can't express it. (repo-wide review 2026-06-09)
 

@@ -66,7 +66,7 @@ When it finishes you have a finished session — named tracks, clips, device cha
 Early — approaching 1.0, and honest about the rough edges:
 
 - Works today on **Ableton Live 12**, **macOS and Windows**.
-- **Live edition:** the authoring loop — compose, push, pull, play, and the symbolic `compose-review` — runs on **any Live 12 edition, Standard included**. The audio-analysis features (render → `mix-review` by measurement) need **Max for Live**, so they're **Suite-only**; `/hallucinote:ableton-mcp-install` detects this and lets Standard users skip the analyzer.
+- **Live edition:** the authoring loop — compose, push, pull, play, and the symbolic `compose-review` — runs on **any Live 12 edition, Standard included**. The audio-analysis features (render → `mix-review` by measurement) need **Max for Live**, so they're **Suite-only**; `/hallucinote:ableton-mcp-install` asks whether you have Suite and lets Standard users skip the analyzer.
 - Audio recording is a boundary, not a feature yet: Claude authors MIDI and the mix; a human vocal take or a hand-ridden fader automation lane can't be read back through the bridge today. Known limitations live at the bottom of [`CHANGELOG.md`](CHANGELOG.md#known-limitations).
 
 ## Install

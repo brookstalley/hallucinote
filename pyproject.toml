@@ -59,8 +59,10 @@ live = [
 # contract, memory project_mcp_server_stdlib_only, is preserved). The source
 # mapping resolves the `[live]` extra's `hallucinote-mcp` to the workspace member
 # instead of PyPI (where it isn't published), so `uv lock` succeeds. pip ignores
-# [tool.uv], so the editable dev install + song-side `pip install hallucinote[live]`
-# are unchanged.
+# [tool.uv], so the editable dev install is unchanged. (PLUGIN-SELF-CONTAINED:
+# there is no song-side `pip install` anymore — skills run the engine via the
+# server's own interpreter from this one env; the `[live]` extra above is now
+# vestigial. See technical_decisions: "Self-contained plugin".)
 [tool.uv.workspace]
 members = ["hallucinote_mcp"]
 

@@ -5,17 +5,27 @@ Addressing is uniform (one ``NodeAddr`` reaches every node); **operations are
 not**. Live's feature × node-kind matrix is sparse and ragged, so every feature
 operation must capability-probe the resolved node and answer honestly. This
 module is that matrix, expressed as a **typed data structure** (Critic note a)
-so the three consumers below all derive from one place and cannot drift:
+so everything that speaks about a cell derives from one ``Cell``, never a
+re-typed copy:
 
   1. the published resource ``ableton://reference/node-feature-matrix``
      (:func:`matrix_payload`) — read ahead, at no turn cost, so the agent never
-     attempts an impossible op blind;
-  2. the generic stub responder (:func:`cell_response`) — a deferred feature is
-     *one table row*, not a handler; attempting one returns a typed response;
-  3. teaching errors (:func:`teaching_error`) — every capability rejection names
-     the node kind, the feature, and points back at the matrix.
+     attempts an impossible op blind. **This is the live consumer today**, and it
+     renders each row via (2).
+  2. the generic stub responder (:func:`cell_response`) — the typed body for one
+     cell (a deferred feature is *one table row*, not a handler). The resource is
+     built from it, and it is ready for a future runtime stub to return directly.
+  3. teaching errors (:func:`teaching_error`) — single-source rejection text that
+     names the node kind, the feature, and the verdict and points back at the
+     matrix. Provided + tested for when a deferred feature grows a runtime handler.
 
-A ``cross-consumer consistency test`` asserts all three resolve from the same
+What (3) does **not** cover: a rejection from a *runtime probe of a SUPPORTED
+cell* — e.g. ``set_chain_property`` resolving a plain Chain where
+``choke_out_note`` needs a DrumChain — is not a matrix-cell verdict (the cell is
+``SUPPORTED``), so that handler writes its own message and links the matrix URI
+(:data:`MATRIX_RESOURCE_URI`, single-sourced) directly.
+
+A ``cross-consumer consistency test`` asserts (1)–(3) resolve from the same
 ``Cell`` — "can't drift" is enforced by a test, not asserted in prose.
 
 **Tri-state, because a binary "supported / not" is a lie** (§2b). Every

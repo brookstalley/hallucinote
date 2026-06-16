@@ -41,11 +41,15 @@ def _make_uv_stub(bin_dir: pathlib.Path, calls_log: pathlib.Path, *, succeed: bo
     rc = 0 if succeed else 1
     # On a simulated successful `uv sync`, materialise the target venv dir so the
     # script's "already warm" fast-path can see it next run (UV_PROJECT_ENVIRONMENT).
+    # Bind the shell snippet outside the f-string: a backslash inside an f-string
+    # expression part is a SyntaxError before Python 3.12 (PEP 701), and our floor
+    # is 3.10 — so the test must parse there too.
+    mkdir_line = 'mkdir -p "$UV_PROJECT_ENVIRONMENT"' if succeed else ":"
     stub.write_text(
         "#!/bin/bash\n"
         f'echo "$@" >> "{calls_log}"\n'
         'if [ "${1:-}" = "sync" ] && [ -n "${UV_PROJECT_ENVIRONMENT:-}" ]; then\n'
-        f"  {'mkdir -p \"$UV_PROJECT_ENVIRONMENT\"' if succeed else ':'}\n"
+        f"  {mkdir_line}\n"
         "fi\n"
         f"exit {rc}\n",
         encoding="utf-8",

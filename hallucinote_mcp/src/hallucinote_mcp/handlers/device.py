@@ -36,6 +36,7 @@ from typing import Any, NoReturn
 
 from .. import device_names
 from ..dispatcher import LiveContext
+from ..node_features import MATRIX_RESOURCE_URI
 from ._routing import resolve_routing_write, routing_surface_fields
 from .display_value import canonical_unit_echo, resolve_continuous_write
 
@@ -2413,15 +2414,14 @@ def set_chain_property_handler(
             f"set_chain_property: chain {getattr(chain, 'name', '?')!r} is a "
             f"{class_name}, which has no {', '.join(missing)} — choke_group / "
             "out_note exist on a DrumChain only (a drum-rack pad's chain), not a "
-            "plain instrument/audio-rack chain. See "
-            "ableton://reference/node-feature-matrix."
+            f"plain instrument/audio-rack chain. See {MATRIX_RESOURCE_URI}."
         )
     missing_bools = [p for p in direct_bools if not hasattr(chain, p)]
     if missing_bools:
         raise NotImplementedError(
             f"set_chain_property: chain {getattr(chain, 'name', '?')!r} "
-            f"({type(chain).__name__}) has no {', '.join(missing_bools)}. See "
-            "ableton://reference/node-feature-matrix."
+            f"({type(chain).__name__}) has no {', '.join(missing_bools)}. "
+            f"See {MATRIX_RESOURCE_URI}."
         )
     mixer = getattr(chain, "mixer_device", None)
     if mixer_floats:
@@ -2434,7 +2434,7 @@ def set_chain_property_handler(
                 f"set_chain_property: chain {getattr(chain, 'name', '?')!r} "
                 f"({type(chain).__name__}) has no mixer "
                 f"{', '.join(missing_mixer)} param — volume / pan are "
-                "unavailable. See ableton://reference/node-feature-matrix."
+                f"unavailable. See {MATRIX_RESOURCE_URI}."
             )
     # Apply: chain-direct attrs, then the mixer-device param values.
     for prop, ival in direct_ints.items():

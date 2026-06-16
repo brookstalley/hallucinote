@@ -6,6 +6,10 @@ narrative, it lives in [learnings-detail.md](learnings-detail.md) under the **sa
 in the same order (a rule with no narrative has no detail counterpart). Add new rules here;
 put any narrative there.
 
+## Newly enabling a capability doesn't update the guards that predated it — grep for stale exclusions
+
+**When a change makes a previously-impossible thing possible (DEV-6M2K made master device chains pushable; the earlier premise that Live can't load onto the master was refuted), the exclusions/guards/skips written under the old invariant don't auto-update — they silently become bugs. The push probe's master-exclusion ("master has no pushable devices, reached via ableton_session not a track index") was a correct invariant that became the analyzer-aware-reconciliation gap once master devices were real. After enabling a capability, grep for every guard keyed on the old "can't" (skips, `if kind != 'master'`, detect-only carve-outs, "still-open piece" comments) and audit whether it's now stale.**
+
 ## Threading a new param means making the test doubles faithful — not weakening tests
 
 **When you add a parameter to a function that tests stub out (a `send_fn`, a monkeypatched planner, any injected callable), the stubs break with `TypeError: unexpected keyword argument`. The fix is to EXTEND each double to mirror the real signature (`def send(req, *, read_timeout=None)`, `**kwargs`) — that makes the double MORE faithful to the thing it imitates, the opposite of test corruption. Reach for it before reaching for a conditional that skips the new arg.**

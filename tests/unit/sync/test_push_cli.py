@@ -860,6 +860,73 @@ def test_probe_and_link_skips_devices_on_unlinked_parent(conn, song, session):
 
 
 # ---------------------------------------------------------------------------
+# ANALYZER-INDEX: master device-chain reconciliation (analyzer-aware)
+# ---------------------------------------------------------------------------
+
+
+def test_probe_and_link_reconciles_master_device_after_analyzer_shift(
+    conn, song, session,
+):
+    """The reported bug: a master device link froze at first-load and was never
+    re-bound, so once a render's analyzer shifted the master chain, a param
+    re-push targeted the stale index (the master Limiter's Ceiling hit the
+    analyzer) and hard-halted the devices phase.
+
+    With the master in device reconciliation: the analyzer is excluded, the
+    Limiter is re-matched to its real authored slot, and the stale link is
+    corrected — so the next param re-push addresses the Limiter, not the
+    analyzer."""
+    mid = M.create_track(conn, song_id=song, track_index=0, name="Master", kind="master")
+    limiter_id = _make_chain_with_device(
+        conn, parent_track_id=mid, position=1, kind="Limiter",
+    )
+    # The frozen first-load index: it points at slot 2 — where the analyzer now
+    # sits after the render repositioned it terminal.
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=limiter_id,
+        ableton_index=2, actor="sync", reason="stale first-load master index",
+    )
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[], live_returns=[],
+        live_devices_by_parent={
+            ("master", 0): [
+                {"device_index": 1, "name": "Limiter", "class_name": "Limiter"},
+                {"device_index": 2, "name": "HallucinoteAnalyzer",
+                 "class_name": "MxDeviceAudioEffect"},
+            ],
+        },
+    )
+    # Stale 2 (the analyzer slot) reconciled to 1 (the Limiter's real slot).
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="device", db_id=limiter_id,
+    ) == 1
+    master_matches = [m for m in result.matched_devices if m["parent_kind"] == "master"]
+    assert len(master_matches) == 1
+    assert master_matches[0]["db_id"] == limiter_id
+    assert master_matches[0]["position"] == 1
+    # No false drift note for the analyzer-occupied slot.
+    assert not [n for n in result.notes if "drift" in n.lower()]
+
+
+def test_probe_and_link_master_reconcile_is_noop_when_master_not_probed(
+    conn, song, session,
+):
+    """Graceful when the master chain wasn't probed (e.g. a transient master
+    probe failure dropped the ("master", 0) key): no master matched_devices,
+    no crash — the rest of the reconciliation is unaffected."""
+    mid = M.create_track(conn, song_id=song, track_index=0, name="Master", kind="master")
+    _make_chain_with_device(conn, parent_track_id=mid, position=1, kind="Limiter")
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[], live_returns=[],
+        # master key absent; a non-master entry keeps live_devices_by_parent truthy
+        live_devices_by_parent={("track", 1): []},
+    )
+    assert [m for m in result.matched_devices if m["parent_kind"] == "master"] == []
+
+
+# ---------------------------------------------------------------------------
 # SNP-8R4K chunk 4: stale-set detection through the probe-and-link seam
 # ---------------------------------------------------------------------------
 #
@@ -902,6 +969,33 @@ def test_probe_and_link_flags_stale_set_with_device_after_analyzer(
     assert "track #4" in note
     assert "Saturator" in note
     assert "rebuild the set from source".upper() in note.upper()
+
+
+def test_probe_and_link_flags_stale_set_on_master_chain(conn, song, session):
+    """ANALYZER-INDEX: probing the master chain into live_devices_by_parent also
+    feeds the stale-set detector, so a master surface with an authored device
+    after the analyzer now surfaces the rebuild guidance too (previously the
+    master was never probed, so master staleness went undetected)."""
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[], live_returns=[],
+        live_devices_by_parent={
+            ("master", 0): [
+                {"device_index": 1, "name": "Glue Compressor",
+                 "class_name": "GlueCompressor"},
+                {**_ANALYZER_PROBE, "device_index": 2},
+                {"device_index": 3, "name": "Limiter", "class_name": "Limiter"},
+            ],
+        },
+    )
+    stale_notes = [n for n in result.notes if "STALE SET (SNP-8R4K)" in n]
+    assert len(stale_notes) == 1, result.notes
+    # Singleton label: "master", never "master #0".
+    assert "master: Limiter after the analyzer" in stale_notes[0]
+    assert "master #" not in stale_notes[0]
+    # No master DB track here, so the reconciliation half is a graceful no-op
+    # (probed key present, no DB master row) — stale-set detection still fires.
+    assert [m for m in result.matched_devices if m["parent_kind"] == "master"] == []
 
 
 def test_probe_and_link_silent_on_clean_set_analyzer_last(conn, song, session):
@@ -1765,6 +1859,43 @@ def test_probe_live_devices_via_mcp_tolerates_per_parent_failure():
     )
     assert ("track", 1) in by_parent
     assert ("track", 2) not in by_parent
+
+
+def test_probe_live_devices_via_mcp_probes_master_chain():
+    """ANALYZER-INDEX: the master chain is probed via master=True and keyed
+    ("master", 0), so probe-and-link can reconcile master device links against
+    analyzer drift."""
+    master_devices = [
+        {"device_index": 1, "name": "Limiter", "class_name": "Limiter"},
+        {"device_index": 2, "name": "HallucinoteAnalyzer",
+         "class_name": "MxDeviceAudioEffect"},
+    ]
+
+    def send(req):
+        assert req.tool == "ableton_device" and req.action == "list"
+        if req.params.get("master"):
+            return _FakeResp(ok=True, result={"devices": master_devices})
+        return _FakeResp(ok=True, result={"devices": []})
+    by_parent = push_cli._probe_live_devices_via_mcp(
+        live_tracks=[], live_returns=[], send_fn=send,
+    )
+    assert by_parent[("master", 0)] == master_devices
+
+
+def test_probe_live_devices_via_mcp_tolerates_master_probe_failure():
+    """A transient master probe failure drops the ("master", 0) key without
+    aborting the whole probe — same per-parent tolerance as track/return."""
+    def send(req):
+        if req.params.get("master"):
+            return _FakeResp(ok=False, error="transient")
+        return _FakeResp(ok=True, result={"devices": []})
+    by_parent = push_cli._probe_live_devices_via_mcp(
+        live_tracks=[{"track_index": 1, "name": "Drums"}],
+        live_returns=[],
+        send_fn=send,
+    )
+    assert ("master", 0) not in by_parent
+    assert ("track", 1) in by_parent
 
 
 # ---------------------------------------------------------------------------

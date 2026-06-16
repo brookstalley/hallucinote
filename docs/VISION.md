@@ -2,7 +2,7 @@
 
 Hallucinote is an LLM-native music composition and production environment. Ableton Live is the rendering engine.
 
-The DB is the source of truth. Notes, durations, chords, automation values, effect timings, arrangement — everything lives in version-controlled rows with an append-only event log. Ableton is the speaker, not the score. Every change is bidirectional: edits in Ableton (live MIDI capture, automation drawn by hand, audio recorded against a click) flow back. The DB and Ableton agree, always.
+The song is structured data, not a binary `.als` — and that data is the source of truth: notes, durations, chords, automation values, effect timings, arrangement. The git-tracked `build.py` and captured-session snapshot are what you commit and fork; they build into a SQLite database (with an append-only event log) that is the working state Ableton renders from. Ableton is the speaker, not the score. Every change is bidirectional: edits in Ableton (live MIDI capture, automation drawn by hand, audio recorded against a click) flow back through the same path. The DB and Ableton agree, always.
 
 The LLM has full access via MCP — read every note, write every parameter, generate new sections, restructure arrangements, run bulk operations. That is what makes this different from AI features bolted onto a DAW: the model sees structure, not pixels.
 
@@ -32,7 +32,7 @@ Two bets, both unproven, both load-bearing:
 
 ## What
 
-- **DB-backed source of truth.** Schema in `src/hallucinote/db/schema.sql`. Mutators in `db/mutations.py` paired with an append-only event log. Every write a row, every write an event.
+- **DB-backed materialized state.** Schema in `src/hallucinote/db/schema.sql`. Mutators in `db/mutations.py` paired with an append-only event log. Every write a row, every write an event.
 
 - **Pure generators.** `generators/*` produce note arrays with semantic tags. No DB or MCP coupling. The library a human-or-LLM composes against.
 

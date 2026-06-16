@@ -4,6 +4,46 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-16 — Analyzer-infra robustness: master device-param re-push + captures-dir recency (sun-zone-done mix pass)
+
+<!-- prawduct: type=fix | chunks=master-device-analyzer-aware,captures-dir-recency | scope=mcp-handlers,sync-push,analysis,tests -->
+
+**Re-vendor REQUIRED by the current fingerprint** — `handlers/analysis.py` is in
+`_FINGERPRINT_PATHS`, so the version handshake flags drift and prompts
+`/ableton-mcp-install`. But the analysis change is SERVER-INTERNAL (captures-dir
+selection; the wire contract is unchanged), so this re-vendor is an over-trigger —
+exactly the case MCP-7F2K now tracks. To pick up the fix in a running dev server:
+relaunch dev-mode / `/mcp`, then re-vendor to clear the handshake. The master-side
+fix lives in the engine (`src/hallucinote/`), outside the fingerprint.
+
+Two framework bugs surfaced dogfooding the sun-zone-done mix pass:
+
+- **Master device-param re-push wasn't analyzer-aware** (`sync/push`). Re-pushing a
+  master device parameter (e.g. the master Limiter's Ceiling) targeted the
+  auto-loaded HallucinoteAnalyzer and hard-halted the devices phase. The push probe
+  re-binds track/return device links every push (filtering the analyzer before
+  position-matching, BUG1A), but the master was excluded entirely and never even
+  probed into `live_devices_by_parent` — so a master device link froze at first-load
+  and mis-targeted once a render's analyzer load/reposition shifted the chain.
+  DEV-6M2K newly made master device chains pushable; the probe's master-exclusion
+  was a pre-DEV-6M2K assumption that was never updated. Fix:
+  `_probe_live_devices_via_mcp` now probes the master chain (`master=True`, keyed
+  `("master", 0)`) and `_match_devices_for_linked_parents` reconciles the master with
+  the same analyzer-filtered position match — the link self-heals against analyzer
+  drift. Side-benefit: the push-preflight stale-set detector now covers the master
+  surface too (closes the "still-open piece" in `analyzer_staleness.py`).
+- **Captures-dir picked by dir NAME, not capture time** (`handlers/analysis`).
+  `_latest_captures_dir` used `max()` over dir names assuming ISO-8601 naming, so a
+  hand-named focused-capture dir (`v4-…`, lexically above `2026…`) shadowed the
+  newest render → analysis read the wrong (tiny, single-section) audio. Now keys on
+  the manifest's recorded `captured_at`.
+
+Full suite 3971 passed / 2 skipped @ HEAD. Cumulative Critic 0 blocking (base
+develop); 1 warning (master stale-set label `master #0` → `master:`) resolved via
+verify-resolutions chain. Resolved bug report archived under
+`incoming-bugs/archives/2026-06-16-master-device-param-repush-not-analyzer-aware-stale-link-halts-push.md`.
+Filed MCP-7F2K (fingerprint over-triggers re-vendor for server-internal changes).
+
 ## 2026-06-16 — Uniform node addressing (NODE-ADDR / DEV-9K7N) + release-prep: self-contained plugin, onboarding, M4L handling
 
 <!-- prawduct: type=feat | chunks=NODE-ADDR-B,NODE-ADDR-C,NODE-ADDR-D,NODE-ADDR-E,NODE-ADDR-F,PLUGIN-SELF-CONTAINED,ONBOARD-M4L | scope=node-features,mcp-handlers,capture,sync-pull,db-mutations,skills,docs,readme,pyproject,cli,hooks,project-state | status=merged -->

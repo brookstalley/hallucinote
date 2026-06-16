@@ -12,6 +12,9 @@ from __future__ import annotations
 SONG_CREATED = "song_created"
 SONG_UPDATED = "song_updated"
 SONG_TIMING_MODE_SET = "song_timing_mode_set"
+# MICROTUNE (TUN-4Q7W): alternate-tuning bolt-on. Set when a song is bound to a
+# pulled non-12-TET tuning — records the cached .ascl ref + the derived blob.
+SONG_TUNING_SET = "song_tuning_set"
 TRACK_CREATED = "track_created"
 TRACK_UPDATED = "track_updated"
 TRACK_DELETED = "track_deleted"

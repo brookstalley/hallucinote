@@ -21,6 +21,19 @@ def get_song(conn: sqlite3.Connection, song_id: str) -> sqlite3.Row | None:
     return conn.execute("SELECT * FROM songs WHERE id = ?", (song_id,)).fetchone()
 
 
+def get_song_tuning(conn: sqlite3.Connection, song_id: str) -> sqlite3.Row | None:
+    """The song's alternate-tuning columns (MICROTUNE / TUN-4Q7W), or None if the
+    song doesn't exist. Both columns are NULL for a 12-TET song (the 99.99%).
+
+    Returns the raw `(tuning_ref, tuning_data)` strings — this read-side helper
+    stays tuning-agnostic so the core query layer imports nothing from
+    `hallucinote.tuning`; that package's `load_song_tuning` deserializes the
+    blob into `TuningData`."""
+    return conn.execute(
+        "SELECT tuning_ref, tuning_data FROM songs WHERE id = ?", (song_id,)
+    ).fetchone()
+
+
 def get_tracks_for_song(conn: sqlite3.Connection, song_id: str) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT * FROM tracks WHERE song_id = ? ORDER BY track_index",

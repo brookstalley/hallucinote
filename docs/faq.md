@@ -31,7 +31,9 @@ Hallucinote authors the mix as part of composing — instrument **chains**, devi
 settings, sends, and per-part feel ship with the song (sound design is
 authorship, not a post-hoc to-do). You then push to Live and do hands-on mixing
 there; pull your tweaks back with `/hallucinote:ableton-pull` to keep them. Detailed mix
-*review* (masking, loudness, reverb, timing) is available via `/hallucinote:mix-review`.
+*review* (masking, loudness, reverb, timing) is available via `/hallucinote:mix-review`,
+which uses Max for Live (Live Suite, or the M4L add-on); `/hallucinote:compose-review`
+reviews the composition against intent on any edition.
 
 ## A push overwrote my manual Live tweaks. How do I keep them?
 

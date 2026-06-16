@@ -5,8 +5,7 @@
 All indices are 1-based on the wire: `track_index=1` is the first track,
 `clip_index=1` is the first session slot or arrangement clip, `device_index=1`
 is the first device in a chain, `scene_index=1` is the first scene. Index 0
-is never valid. Dotted parameter targets inside automation (e.g.
-`device.<device_index>.parameter.<param_index>`) follow the same rule.
+is never valid.
 
 ## Time positions: beats, not bars
 

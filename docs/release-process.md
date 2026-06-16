@@ -233,12 +233,12 @@ install vendors the *server's* copy, not the invoking interpreter's).
 
 ### Song-authoring environments (the Python engine)
 
-`songs/*/build.py` import the `hallucinote` **engine**, installed editable
-(`pip install -e .`). A release does **not** touch a consumer's engine install unless
-`pyproject.toml`'s engine version moved (rare) — and even then the consumer re-pulls and
-re-installs deliberately. Engine↔plugin alignment is **by convention** today (install
-both from the same checkout), not enforced; the pin and how to check it are in
-[`docs/engine-pin.md` §"Checking alignment"](engine-pin.md#checking-alignment).
+`songs/*/build.py` import the `hallucinote` **engine**, which now ships **inside the
+plugin's uv env** — there is no separate consumer engine install. A release ships the
+new engine source *in the plugin*; the consumer gets it when they update the plugin
+(uv rebuilds the env). Skills run the engine via the plugin's own interpreter
+(`ableton://server/info` → `python`), so engine↔bridge alignment is automatic: one
+env, one source. See [`docs/engine-pin.md`](engine-pin.md).
 
 ## Worked example — v0.9.7
 

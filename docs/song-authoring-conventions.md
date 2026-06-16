@@ -313,6 +313,19 @@ kit.assert_has("kick", "snare", "ride", "crash", strict=True)
 
 ---
 
+## Per-chain authorship (choke groups, chain mixer)
+
+A rack's *chains* carry authorable state of their own, separate from the rack's device parameters. Two families (NODE-ADDR):
+
+- **`choke_group` / `out_note` — DrumChain only.** A choke group makes one pad cut another off — the canonical open/closed hi-hat: put both on the same group and the closed hat silences the open hat's ring. `out_note` transposes a pad's MIDI output (re-pitch a sample without moving the trigger note). `choke_group=0` = no choke; `out_note` defaults to the pad's `in_note`.
+- **`mute` / `solo` / `volume` / `pan` — every chain** (plain or drum). The per-chain mixer balance *inside* a rack — tuck a drum rack's clap back, pan a layered-synth chain off-center.
+
+These are **materialized-state authorship**, exactly like `params_dialed` — the snapshot's authoring leg, not a `build.py` generator (the medium model: [`authorship-model.md`](../.prawduct/artifacts/authorship-model.md)). Author them the two ways the rest of the mix layer is authored: write the fields straight into the chain's `captured_session.json` entry (`docs/snapshot-schema.md` "Per-chain authored properties"), or set them in Live — by hand or via `ableton_device(action='set_chain_property', node={…terminal:'chain'…}, choke_group=…, out_note=…, mute=…, solo=…, volume=…, pan=…)` — and capture (`/hallucinote:song-snapshot` or `capture_cli execute`). Push re-asserts them on the reloaded rack via the `chain` terminal, so a by-ear tweak survives a `build.py --reset` rebuild **without saving the `.als`**. Capture filters to non-defaults, so a clean rack stays out of the snapshot.
+
+> **Before authoring any node feature, read `ableton://reference/node-feature-matrix`** — the tri-state (`SUPPORTED` / `NOT_IMPLEMENTED` / `UNSUPPORTED_IN_LIVE`) capability table for every feature × node kind, with the LOM evidence and a workaround per cell. It tells you up front whether a thing is reachable at all: per-chain audio-out routing, macro *names*, and chain *zones* are hard Live walls (`UNSUPPORTED_IN_LIVE`); macro *values* are just ordinary device parameters; chain *sends* aren't built yet (`NOT_IMPLEMENTED`). Consult it so you never burn a turn attempting an impossible op blind.
+
+---
+
 ## Repeated sections (verse twice, chorus three times)
 
 A song with two verses or three choruses has two valid models, and the natural convention isn't obvious from the data alone.
@@ -492,5 +505,6 @@ Both print the new session_id; use it for the rest of the push cycle and reuse i
 - [`.prawduct/artifacts/plans/RTE-1K9T/design.md`](../.prawduct/artifacts/plans/RTE-1K9T/design.md) — the routing model + the **automation-fidelity caveat** behind the PRE-MAIN submaster bus
 - [`.prawduct/artifacts/song-conventions.md`](../.prawduct/artifacts/song-conventions.md) — the **WHY** corpus: decisions/annotations, the frontmatter schema + controlled mix/groove **tag vocabulary** (the markdown companion to the `feel`-dict *WHAT* here)
 - `docs/snapshot-schema.md` — `captured_session.json` shape
-- `songs/falling-walking/` — historical worked example (~860 LoC, full song)
+- `ableton://reference/node-feature-matrix` (MCP resource) — which features (routing, macros, chain mixer, choke groups, zones) are reachable on which node kind, tri-state with LOM evidence; read before authoring a node feature
+- `falling-walking` — a full worked song; it lives in the songs workspace repo (the private `hallucinote-songs`), not here
 - `tools/templates/song/` — the scaffold templates `/hallucinote:song-new` writes from

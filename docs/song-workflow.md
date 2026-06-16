@@ -55,7 +55,7 @@ and mix many times. But the arc has a natural order, and two of its phases are
 | 4 | **Read the composition** ⭐ | **`/compose-review`** | melody + recurrence lenses vs declared intent |
 | 5 | Materialize in Live | `/ableton-push` | [push-execute-design.md](../.prawduct/artifacts/push-execute-design.md) |
 | 6 | Capture + analyze | `ableton_render` → `ableton_analysis` | [masking-analyzer-goals.md](../.prawduct/artifacts/masking-analyzer-goals.md) |
-| 7 | **Read the mix** ⭐ | **`/mix-review`** | masking · loudness · feel · energy vs intent |
+| 7 | **Read the mix** ⭐ | **`/mix-review`** | masking · loudness · feel · energy vs intent — *needs Max for Live* |
 | 8 | Snapshot + iterate | `/song-snapshot`, `/snapshot-bake-recent-changes`, `/ableton-pull` | — |
 
 The two ⭐ checkpoints are the ones agents forget exist. **They are not
@@ -120,7 +120,9 @@ attribution, reverb verification, per-part timing/feel, masking, energy
 realization). This is the expensive real-time step — it feeds the next checkpoint.
 
 ### 7 — Read the mix ⭐ `/mix-review`
-The single read-side surface over all audio analyses. `/mix-review` recalls the
+The single read-side surface over all audio analyses. It reads rendered audio, so
+it **needs Max for Live** (Live Suite, or the M4L add-on); `/compose-review` is the
+any-edition symbolic read. `/mix-review` recalls the
 song's intent, reads the whole MixReport per section, and interprets the
 measurements *against* intent — surfacing only the collisions that hurt the
 element meant to *win* each section, framed as a producer's question. Masking is
@@ -171,6 +173,11 @@ want to understand *why*, or to author at a depth the helpers don't reach.
    learn-back loop, and where intent lives (WHAT in build.py / WHY in markdown).
    → [intent-collaboration-model.md](../.prawduct/artifacts/intent-collaboration-model.md),
    [intent-architecture.md](../.prawduct/artifacts/intent-architecture.md)
+
+Orthogonal to these five is **where a song's authorship lives** — generative code
+(`build.py`) vs materialized state (`captured_session.json`) vs recorded assets —
+and why, plus the LOM read/write walls that bound it.
+→ [authorship-model.md](../.prawduct/artifacts/authorship-model.md)
 
 The scope boundaries — what is *deliberately not modeled* (texture-mass music,
 unmetered rubato, process-based pieces) and the graceful degradation path to the

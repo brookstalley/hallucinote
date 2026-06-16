@@ -7,10 +7,10 @@ Completed plans and pre-v1 design history. Preserved for audit, not maintained.
 | Archived | What replaced it |
 |---|---|
 | `mcp-requirements.md` | `hallucinote_mcp/.../resources/guides/gaps.md` (live API gap reference) |
-| `mcp-tool-design.md` | The shipped 12-tool MCP surface itself + the PRIMER in `hallucinote_mcp/.../server.py` |
+| `mcp-tool-design.md` | The shipped unified MCP tool surface itself + the PRIMER in `hallucinote_mcp/.../server.py` |
 | `pre-v1-walkthrough.md` | All FINDINGS shipped; current behavior is documented in active docs |
 | `v11-requirements.md` | Arc 1 + Arc 2 shipped (see `change-log.md`) |
-| `canary-songs/` | The songs themselves under `songs/<slug>/`; their `build.py` is the source of truth |
+| `canary-songs/` | Obsolete reference runbooks; the real songs migrated to the private `hallucinote-songs` repo, where their `build.py` is the source of truth |
 
 ## When you'd read these
 

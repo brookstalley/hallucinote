@@ -4,6 +4,46 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-16 — Uniform node addressing (NODE-ADDR / DEV-9K7N) + release-prep: self-contained plugin, onboarding, M4L handling
+
+<!-- prawduct: type=feat | chunks=NODE-ADDR-B,NODE-ADDR-C,NODE-ADDR-D,NODE-ADDR-E,NODE-ADDR-F,PLUGIN-SELF-CONTAINED,ONBOARD-M4L | scope=node-features,mcp-handlers,capture,sync-pull,db-mutations,skills,docs,readme,pyproject,cli,hooks,project-state -->
+
+**Re-vendor REQUIRED** — the wire shape changed (`_FINGERPRINT_PATHS` touched): uniform
+`node` addressing, the new `chain` terminal, and `set_chain_property`. Operator-verified
+live on 2026-06-15 (user re-vendored; no-clone install path verified end to end).
+
+Three threads land together as the pre-1.0 release-prep bundle:
+
+- **NODE-ADDR (DEV-9K7N) — uniform node addressing.** One `NodeAddr` (terminals
+  track|return|master|device|chain) reaches every node; operations stay honest via the
+  tri-state node-feature matrix (`SUPPORTED` / `NOT_IMPLEMENTED` / `UNSUPPORTED_IN_LIVE`,
+  published as `ableton://reference/node-feature-matrix`). Chunk B: read-side acquisition
+  (capture execute + depth-N pull + `default_value` capture filter). Chunk C: per-DrumChain
+  authorship (`choke_group` / `out_note` via the `chain` terminal). Chunk D: macro authorship
+  honesty (value-via-params; macro-names/variations re-scoped). Chunk E: zones →
+  `UNSUPPORTED_IN_LIVE`. Chunk F: per-chain mixer state (mute/solo/volume/pan).
+- **PLUGIN-SELF-CONTAINED.** The engine ships INSIDE the plugin's uv env (uv workspace +
+  `uv sync --all-packages`); no PyPI, no separate clone. New unified `hallucinote` console-CLI
+  (`src/hallucinote/cli.py`) so skills sequence one command; skills run it via the server's
+  own interpreter (`"$PY" -m hallucinote.cli`, $PY = `ableton://server/info`'s `python`) — the
+  same env the bridge runs in, on a read-only plugin root. Bash hooks ported to Python
+  (`uv run --no-project python`) for Windows. Decision recorded in project-state
+  (supersedes INS-7V2D's PyPI-out assumption).
+- **ONBOARD-M4L.** `/getting-started` orientation skill; render teaches when the Max-for-Live
+  analyzer is absent (`AnalyzerNotInstalledError`); compose/push/pull/compose-review qualified
+  as edition-agnostic vs. the Suite-only audio-analysis path; install ASKS the edition (D1 —
+  edition isn't reliably detectable).
+
+Plus a README rewrite (no-clone install, breadth examples), the three-leg authorship model
+(`.prawduct/artifacts/authorship-model.md`), and doc coherence cleanup.
+
+Full suite 3965 passed / 2 skipped @ HEAD. Cumulative Critic 0 blocking (base develop); 2
+warnings + 2 notes resolved in HEAD + a real py3.10/3.11 f-string defect the green-on-3.12
+suite had masked. Plans: `.prawduct/artifacts/plans/{NODE-ADDR,PLUGIN-SELF-CONTAINED,ONBOARD-M4L}/`.
+**Follow-ups before develop→main/marketplace:** install-skill `python -m hallucinote_mcp.cli`
+→ server-python migration; Windows-hook + read-only-root operator-verify; deferred
+`[live]`/PyPI extra scrub.
+
 ## 2026-06-14 — Per-song attempt ledger (ATL-7K3M): `kind: attempt` + `/song-attempts`
 
 <!-- prawduct: type=feat | chunks=ATL-7K3M-ch1,ATL-7K3M-ch2 | scope=db-schema,markdown-refs,song-context,skills,docs,claude-md | status=merged -->

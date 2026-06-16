@@ -8,6 +8,8 @@ disable-model-invocation: false
 
 # /song-pick-instruments
 
+> **Running engine commands.** The engine ships in the plugin's uv env. Resolve `$PY` once from `ableton://server/info`'s `python`; run `hallucinote inventory …` — and the inline `compile_snapshot` Python in the capture step — through it: `"$PY" -m hallucinote.cli …`, and run the inline `compile_snapshot` Python with the same interpreter (`"$PY" - <<'EOF' … EOF`). See [`docs/running-the-engine.md`](../../docs/running-the-engine.md).
+
 You translate a track list (names alone — `Drums,Bass,Lead,Pads` — or name + role — `Drums (kit), Bass (sub), Lead (mono saw), Pads (warm)`) into concrete instrument **chains** — instrument + post-instrument processing + appropriate sends — then load them onto the song's tracks. Portability mode controls the catalogue.
 
 $ARGUMENTS
@@ -18,7 +20,7 @@ A finished song has the sound it's supposed to have. Pick a **chain** per track:
 
 ## Portability modes
 
-- **strict** (default) — stock Live devices only. Read `ableton://browser/instruments` and `ableton://browser/effects`; do NOT read `ableton://plugins/installed`. Guarantees the song opens on any Live install of the same edition. Suite-only instruments: Operator, Analog, Electric, Tension, Collision, Drift, Meld. Standard ships: Wavetable, Simpler, Sampler, Drum Rack, Impulse.
+- **strict** (default) — built-in Live devices only: read `ableton://browser/instruments` and `ableton://browser/effects`, not `ableton://plugins/installed`. Pick from whatever the user's Live actually exposes — their edition and installed Packs included. **The browser is the source of truth; never assume an edition or hardcode which devices "ship" with which edition** (it varies by version and Packs — probe, don't whitelist). This keeps the song free of third-party plugins, the big cross-machine portability risk. Portability is verified where it counts: at push the consumer's own browser resolves each `preset_query` and refuses loudly on a miss, and `compat check` surfaces gaps ahead of time.
 - **relaxed** — stock + common third-party. Read both browser catalogues AND `ableton://plugins/installed`. Prefer well-known names (Serum, Massive X, Diva, Spire, Omnisphere, Kontakt). `compat check` flags missing ones on consumer machines.
 - **unrestricted** — anything installed. Pick the best musical fit; tell the user explicitly this song is not strict-portable.
 
@@ -30,19 +32,19 @@ Reject unknown modes with a teaching error listing the valid choices.
    - **Live connected** — open the resources for the chosen mode. Each node has `{name, uri, is_loadable, is_folder?, children?}` — `name` is Live's browser display name (`Operator`, `Drum Rack`, `Meld`, `EQ Eight`); `uri` is the `query:...` or `plugins:...` string for `ableton_device(action='load', preset_uri=...)`. Filter to `is_loadable=true`. Read `ableton://browser/effects` too — that's where post-instrument processing comes from. Do NOT read a `class_name` field; it doesn't exist on browser nodes. **Then warm the offline cache** (see below) so future offline picks work.
    - **Offline** — read the machine inventory cache instead and author `preset_query` selectors. See "Live vs offline".
 
-2. **Propose a chain per track.** Build ONE chain per track with rationale:
+2. **Propose a chain per track — grounded in the song's intent.** First recall everything the song has declared: run `/song-context <slug>` (the brief, `decisions/`, annotations) and read `song.md`; if any parts are already composed, read each part's role / register / density from `build.py` + the arrangement. The palette serves *this* song's intent — its era, energy arc, and the job each part does — not a generic genre default. Then build ONE chain per track with rationale:
    - **`track`** — track name.
    - **`devices`** — ordered list `[{name, preset_uri, role}]` from instrument first to final-FX last. `role` is a short tag (`instrument`, `saturation`, `eq`, `compression`, `bus-glue`, `chorus`, `delay`, `reverb`).
    - **`sends`** — initial send levels `{return_name: level_0_to_1}` (skip 0.0-level sends).
    - **`rationale`** — one sentence per chain explaining sonic intent (why this combination).
 
-   Drum tracks anchor on Drum Rack or Impulse — single-pitch synths don't make sense for a kit. Use the style hint and the song's `decisions/` files (especially `02-tempo.md`, `07-energy-aesthetic.md`) to steer character.
+   Drum tracks anchor on Drum Rack or Impulse — single-pitch synths don't make sense for a kit. Every pick traces to something the song declared — the energy arc, the era/character, the part's role — matched against what the browser actually offers (and the style hint, if one was given).
 
-3. **Confirm.** Present chains as a compact table — track / chain (instrument → FX1 → FX2) / sends / rationale. Wait for OK or substitutions. The user may steer individual picks ("use Wavetable instead of Analog") or the whole chain shape ("don't compress the bass"). Honour and re-confirm.
+3. **Decide it together (propose-and-react).** Present the chains as a compact table — track / chain (instrument → FX1 → FX2) / sends / rationale — then surface the genuine choices for the user to own. Where two instruments both fit the intent but pull the character differently — a warm analog lead vs a bright digital one, an acoustic kit vs an 808 — name the fork and ask which way they hear it, rather than silently picking. The user may steer individual picks ("use Wavetable instead of Analog") or the whole chain shape ("don't compress the bass"). Honour and re-confirm. The instrument palette is a creative lock-in — collaborate on it, don't rubber-stamp a list.
 
 4. **Load.** For each confirmed chain, load every device in order:
-   - **First device** — use `/track-new-with-instrument` (creates track + loads instrument), OR if track exists: `ableton_device(action='load', track_index=<i>, kind=<name>, preset_uri=<uri>)`.
-   - **Subsequent devices** — `ableton_device(action='load', track_index=<i>, kind=<name>, preset_uri=<uri>)` once per device, in order. Each lands at the end of the chain.
+   - **First device** — use `/track-new-with-instrument` (creates track + loads instrument), OR if track exists: `ableton_device(action='load', node={'parent': {'kind': 'track', 'index': <i>}, 'terminal': 'track'}, kind=<name>, preset_uri=<uri>)`.
+   - **Subsequent devices** — `ableton_device(action='load', node={'parent': {'kind': 'track', 'index': <i>}, 'terminal': 'track'}, kind=<name>, preset_uri=<uri>)` once per device, in order. A `track` terminal appends to the track's main chain; each lands at the end.
    - **`kind` is REQUIRED** — pass the browser node's `name` directly (browser display name; see `ableton://guides/conventions`).
    - **Capture `resolved_path` after each load.** Every load response carries `resolved_path` (browser-path segments). Keep a running list:
      ```python
@@ -89,7 +91,7 @@ states — handle each, never silently guess:
 1. **Live connected.** Use the live browser resources (Step 1). After loading,
    **warm the cache** so the offline path stays usable:
    ```bash
-   python -m hallucinote.inventory refresh
+   "$PY" -m hallucinote.cli inventory refresh
    ```
    Run this whenever you have Live up — it's cheap insurance for the next
    offline session. (It walks the installed library one root at a time;
@@ -117,7 +119,7 @@ states — handle each, never silently guess:
 
 4. **Live not running, no cache** (`read_cache()` returns `None`). You cannot
    pick built-in content by name offline yet. Tell the user to open Live once
-   and run `python -m hallucinote.inventory refresh`, or proceed live now. Do
+   and run `"$PY" -m hallucinote.cli inventory refresh`, or proceed live now. Do
    not invent `preset_query` patterns blind — an unverified guess becomes a
    push-time failure.
 
@@ -128,6 +130,10 @@ When a query targets a root the cache marks `roots_partial` or `roots_excluded`
 ## Style hint
 
 If the user supplied a style hint, let it steer tonal choice — `warm vintage analog` → Operator FM bells, Analog subtractive; `aggressive modern EDM` → Wavetable saws, Serum-style sounds in relaxed/unrestricted.
+
+## Audition by ear (the right direction; not here yet)
+
+Today you pick by name + rationale, not by sound — the skill can't yet play a candidate so the user can hear it before committing. That's a real limit: the strongest instrument choice is often made by ear. Auditioning — load a candidate, play a short phrase, listen, keep or swap — is where this is headed (tracked in the backlog). Until it lands, lean on the rationale and the user's ear; when a pick is genuinely uncertain, invite them to audition it in Live and react.
 
 ## Snapshot integration
 

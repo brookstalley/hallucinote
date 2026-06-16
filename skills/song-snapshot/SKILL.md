@@ -5,6 +5,8 @@ description: Refresh a song's `captured_session.json` against the currently open
 
 # /song-snapshot
 
+> **Running engine commands.** The engine ships in the plugin's uv env. Resolve `$PY` once from `ableton://server/info`'s `python`; the `hallucinote …` commands below run as `"$PY" -m hallucinote.cli …`. See [`docs/running-the-engine.md`](../../docs/running-the-engine.md).
+
 You refresh `songs/<slug>/captured_session.json` from the currently open Ableton set, with a diff confirmation before overwrite. The snapshot is the seed for `build.py`'s `replay_capture(...)` — it captures the **mix layout** (tracks, returns, sends, device chains, dialed instrument parameters, and nested rack chains to any depth). Everything else (clips, notes, envelopes, arrangement, cues) is owned by `build.py` and is intentionally NOT touched.
 
 ## When to run this
@@ -31,7 +33,7 @@ ls songs/<slug>/captured_session.json
 If the file doesn't exist, this is an initial capture, not a refresh — there's nothing to diff against. Capture straight to the canonical file (no `.refresh` / diff step), then use this skill for subsequent refreshes:
 
 ```bash
-python -m hallucinote.tools.capture_cli execute --song <slug> \
+"$PY" -m hallucinote.cli capture execute --song <slug> \
   --output songs/<slug>/captured_session.json
 ```
 
@@ -46,7 +48,7 @@ On connection errors: see `ableton://guides/error-recovery`.
 Run the capture in one command — it walks the live set over the MCP bridge, reaching device parameters at **every nesting depth** (NodeAddr `path`), and writes the fresh snapshot to `songs/<slug>/captured_session.refresh.json` (NOT the canonical name — overwriting before the user has seen the diff is the bug this skill exists to prevent). It carries `browser_path` forward from the existing snapshot (capture probes don't surface it) and prints the refresh path to stdout:
 
 ```bash
-python -m hallucinote.tools.capture_cli execute --song <slug>
+"$PY" -m hallucinote.cli capture execute --song <slug>
 ```
 
 This replaces the old by-hand "run each probe + assemble the dict" recipe — `assemble_snapshot_via_probes` (`src/hallucinote/capture.py`) does it deterministically: session globals, master chain, returns (+ mixer + devices), tracks (+ mixer + sends + devices), and the full recursive rack tree with dialed params filtered to non-defaults. A tool-side failure aborts loudly rather than writing a partial snapshot.
@@ -58,7 +60,7 @@ This replaces the old by-hand "run each probe + assemble the dict" recipe — `a
 Run the diff CLI. It prints the structured diff as JSON to stdout and a one-screen human summary to stderr. Exit code is `0` when nothing changed and `1` when there are changes — branch on it.
 
 ```bash
-python -m hallucinote.tools.capture_cli diff \
+"$PY" -m hallucinote.cli capture diff \
   songs/<slug>/captured_session.json \
   songs/<slug>/captured_session.refresh.json
 ```
@@ -71,7 +73,7 @@ Then ask explicitly: *"overwrite `captured_session.json` with this refresh? (yes
 
 - **yes** → merge first, then move. The merge preserves sticky device fields (`browser_path` — captured at load time, not surfaced by list-time probes) so a refresh doesn't wipe the cross-machine fallback identity:
   ```bash
-  python -m hallucinote.tools.capture_cli merge \
+  "$PY" -m hallucinote.cli capture merge \
     songs/<slug>/captured_session.json \
     songs/<slug>/captured_session.refresh.json \
     -o songs/<slug>/captured_session.json

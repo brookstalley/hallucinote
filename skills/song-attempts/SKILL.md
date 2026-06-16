@@ -12,6 +12,8 @@ You are retrieving a song's **attempt ledger** — the chronological record of m
 point is to **read before you re-try**: don't re-propose a move the ledger already shows
 failed. This keeps the caller's context clean by returning only matching attempt rows.
 
+> **Running engine commands.** The engine ships in the plugin's uv env. Resolve `$PY` once from `ableton://server/info`'s `python`; the `hallucinote context …` commands below run as `"$PY" -m hallucinote.cli …`. See [`docs/running-the-engine.md`](../../docs/running-the-engine.md).
+
 ## When to invoke
 
 **Before re-touching a part you (or a prior session) have worked before** — especially in
@@ -54,16 +56,16 @@ matches the prose and tags regardless.
 
 ```bash
 # What have we tried on the bagpipes, and how did it go?
-python3 -m hallucinote.tools.song_context --db songs/highland/highland.db --kind attempt "bagpipes"
+"$PY" -m hallucinote.cli context --db songs/highland/highland.db --kind attempt "bagpipes"
 
 # Just the dead ends (read-before-you-retry)
-python3 -m hallucinote.tools.song_context --db songs/highland/highland.db --kind attempt --outcome failed
+"$PY" -m hallucinote.cli context --db songs/highland/highland.db --kind attempt --outcome failed
 
 # The whole ledger, most-recent first
-python3 -m hallucinote.tools.song_context --db songs/highland/highland.db --kind attempt
+"$PY" -m hallucinote.cli context --db songs/highland/highland.db --kind attempt
 
 # Scoped to a section's bars
-python3 -m hallucinote.tools.song_context --db songs/highland/highland.db --kind attempt --bars 33:40
+"$PY" -m hallucinote.cli context --db songs/highland/highland.db --kind attempt --bars 33:40
 ```
 
 **Step 3 — Display + follow the chain.** Show the markdown output as-is. When a `failed` /
@@ -83,4 +85,4 @@ forward link is *what worked instead*.
 - If the query returns nothing, say so — there may simply be no recorded attempts yet on
   this part. Suggest a broader query (drop `--outcome`, widen to the whole ledger).
 - If the DB has no `markdown_refs` rows yet, run
-  `python3 -m hallucinote.tools.reindex_markdown <db>` first.
+  `"$PY" -m hallucinote.cli reindex <db>` first.

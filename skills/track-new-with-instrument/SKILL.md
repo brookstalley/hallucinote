@@ -16,7 +16,7 @@ $ARGUMENTS
 
 1. **Create the track.** Call `ableton_track(action='create', kind='midi', name=<name>)`. If the user supplied an `index`, pass `index=<N>`. Capture the returned `track_index`.
 
-2. **Load the instrument.** Call `ableton_device(action='load', track_index=<from step 1>, kind=<browser display name>, preset_uri=<instrument-uri>)`. `kind` is REQUIRED — pass the browser display name (`Operator`, `Wavetable`, `Drum Rack`, etc.; see `ableton://guides/conventions`).
+2. **Load the instrument.** Call `ableton_device(action='load', node={'parent': {'kind': 'track', 'index': <from step 1>}, 'terminal': 'track'}, kind=<browser display name>, preset_uri=<instrument-uri>)` (a `track` terminal loads onto the track's main chain). `kind` is REQUIRED — pass the browser display name (`Operator`, `Wavetable`, `Drum Rack`, etc.; see `ableton://guides/conventions`).
 
 3. **Set initial volume** (only if supplied). `ableton_track(action='set_property', track_index=<from step 1>, property='volume', value=<initial-volume>)`.
 

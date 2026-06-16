@@ -9,6 +9,8 @@ disable-model-invocation: false
 
 # /compose-review — help the user *hear* the composition against what they wanted
 
+> **Running engine commands.** The symbolic lenses ship in the plugin's uv env. Resolve `$PY` once from `ableton://server/info`'s `python`; the `hallucinote melody …` / `recurrence …` commands below run as `"$PY" -m hallucinote.cli …`. See [`docs/running-the-engine.md`](../../docs/running-the-engine.md).
+
 The deepest novice gap is that they can **generate but can't yet evaluate**.
 This is the compose-stage answer: not "is the mix clean?" (`/mix-review` owns
 that, after this), but **"does the *composition* do what the song is trying to
@@ -98,8 +100,8 @@ score; the *melodic line itself* — its shape and harmonic fit — you cannot e
 Run the symbolic melody lens:
 
 ```
-python3 -m hallucinote.tools.melody_lens <song-slug>          # whole song
-python3 -m hallucinote.tools.melody_lens <song-slug> --section <name>
+"$PY" -m hallucinote.cli melody <song-slug>          # whole song
+"$PY" -m hallucinote.cli melody <song-slug> --section <name>
 ```
 
 Per monophonic line, per section, it reports: **contour** shape + apex,
@@ -141,8 +143,8 @@ variation** (an `exact` quote, or a recovered `transpose` / `augment` / `diminis
 `diminish∘fragment`). Run it:
 
 ```
-python3 -m hallucinote.tools.recurrence_lens <song-slug>          # whole song
-python3 -m hallucinote.tools.recurrence_lens <song-slug> --section <name>
+"$PY" -m hallucinote.cli recurrence <song-slug>          # whole song
+"$PY" -m hallucinote.cli recurrence <song-slug> --section <name>
 ```
 
 It reports each recall (motif → section → layer → variation) plus a **motivic-economy
@@ -275,6 +277,11 @@ incoming-bug, not an attempt; revealed *intent* is an annotation, not an attempt
 the *notes and arrangement* serve the song. `/mix-review` asks whether the *mix*
 lets the right element win. A flat chorus is usually a composition problem
 (nothing was held back) long before it's a mix problem — fix it here first.
+
+`/compose-review` is symbolic (it reads `build.py` + the arrangement), so it runs
+on **any Live edition**. `/mix-review` reads rendered audio and **needs Max for
+Live** (Suite, or the M4L add-on) — so without Max for Live, this is the intent
+read you have.
 
 ## Honest confidence — caveats you MUST carry
 

@@ -46,8 +46,9 @@ hand-authored notes if that's what the art needs.
 5. **Materialize in Live** — `/ableton-push` (the 14-phase push).
 6. **Capture + analyze** — `ableton_render` → `ableton_analysis` builds the
    MixReport (the expensive real-time step).
-7. ⭐ **Read the mix** — **`/mix-review`**. Interpret the MixReport against
-   intent — masking, loudness, feel, energy per section.
+7. ⭐ **Read the mix** — **`/mix-review`** (needs Max for Live — Suite or the
+   M4L add-on; `/compose-review` is the any-edition alternative). Interpret the
+   MixReport against intent — masking, loudness, feel, energy per section.
 8. **Snapshot + iterate** — `/song-snapshot`, `/snapshot-bake-recent-changes`,
    `/ableton-pull`. Then loop back to compose or mix. As you iterate, log what you
    *tried* and how it turned out — especially reverted dead ends — to the **attempt

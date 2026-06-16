@@ -2,13 +2,15 @@
 description: Push the Hallucinote DB into Ableton Live. Drives fourteen ordered phases (tempo → meter → tracks → returns → scenes → clips → mix → devices → routing → device-sidechain → envelopes → performed automation → arrangement → cues) against a fresh or partially-built Live set. Use when you want to materialize a song from the DB.
 user-invocable: true
 disable-model-invocation: false
-allowed-tools: Read, Write, Bash(python3 -m hallucinote.sync.push_cli *), Bash(python3 -m hallucinote.sync.compat *), mcp__hallucinote-mcp__ableton_session, mcp__hallucinote-mcp__ableton_track, mcp__hallucinote-mcp__ableton_return, mcp__hallucinote-mcp__ableton_browser, mcp__hallucinote-mcp__ableton_arrangement, mcp__hallucinote-mcp__ableton_device, mcp__hallucinote-mcp__ableton_clip, mcp__hallucinote-mcp__ableton_automation
+allowed-tools: Read, Write, Bash, mcp__hallucinote-mcp__ableton_session, mcp__hallucinote-mcp__ableton_track, mcp__hallucinote-mcp__ableton_return, mcp__hallucinote-mcp__ableton_browser, mcp__hallucinote-mcp__ableton_arrangement, mcp__hallucinote-mcp__ableton_device, mcp__hallucinote-mcp__ableton_clip, mcp__hallucinote-mcp__ableton_automation
 argument-hint: <song-slug> [<session_id> | --new-session]
 ---
 
 You are the Ableton push orchestrator. Take the DB state for a song, materialize it in Live by driving fourteen ordered phases through MCP, and report what was created.
 
 $ARGUMENTS
+
+> **Running engine commands.** The engine ships in the plugin's uv env — there is no separate install. Resolve `$PY` once from `ableton://server/info`'s `python`; the command blocks below run as `"$PY" -m hallucinote.cli …`. See [`docs/running-the-engine.md`](../../docs/running-the-engine.md).
 
 ## Required arguments
 
@@ -27,7 +29,7 @@ If slug is missing, ask. For session, omit it unless the user signaled "first pu
 
 ```
 0a. Probe Live for plugins                   → /tmp/ableton-push-plugins.json
-0b. python -m hallucinote.sync.compat check  → refuse-and-confirm gate
+0b. hallucinote compat check                 → refuse-and-confirm gate
 1.  push_cli probe-and-link --probe          → mints session, upserts matches,
                                                reconciles stale links
 2.  push_cli execute --probe                 → coherence check + dispatch all
@@ -47,7 +49,7 @@ If the probe fails or returns nothing, omit `--installed-plugins` in 0b. The com
 ### Step 0b — Compat check (portability gate)
 
 ```
-python3 -m hallucinote.sync.compat check <slug> \
+"$PY" -m hallucinote.cli compat check <slug> \
     --installed-plugins /tmp/ableton-push-plugins.json \
     --probe
 ```
@@ -65,7 +67,7 @@ Proceed only on explicit `yes`. If `no`, point at `songs/<slug>/REQUIREMENTS.md`
 ### Step 1 — Probe-and-link
 
 ```
-python3 -m hallucinote.sync.push_cli probe-and-link <session_id> --song <slug> --probe
+"$PY" -m hallucinote.cli push probe-and-link <session_id> --song <slug> --probe
 ```
 
 (First-push bootstrap: replace `<session_id>` with `--auto-session`.)
@@ -95,7 +97,7 @@ Proceed only on explicit `yes`.
 ### Step 2 — Execute
 
 ```
-python3 -m hallucinote.sync.push_cli execute <session_id> --song <slug> --probe
+"$PY" -m hallucinote.cli push execute <session_id> --song <slug> --probe
 ```
 
 `--probe` runs a coherence check on a freshly-probed Live snapshot before dispatching. Walks all fourteen phases in order, dispatching every MCP call directly over TCP.
@@ -129,7 +131,7 @@ Mutual exclusion: `--only` cannot combine with `--start-at`/`--stop-after`/`--re
 Run only when Step 1 returned a non-empty `default_scaffold_unmatched_tracks` list AND the user accepted AND Step 2 exited 0.
 
 ```
-python3 -m hallucinote.sync.push_cli cleanup-default-scaffold <session_id> --song <slug>
+"$PY" -m hallucinote.cli push cleanup-default-scaffold <session_id> --song <slug>
 ```
 
 Probes Live, validates every unmatched parent is a canonical default (refuses-and-teaches on non-canonical names), checks deletes won't leave Live with zero tracks, dispatches `ableton_track(action='delete')` in descending index order, re-runs probe-and-link.
@@ -190,7 +192,7 @@ For single-element edits (tweak one clip's notes, nudge one parameter), drive th
 ## Next: read the mix
 
 After a full-song push, capture + analyze (`ableton_render` → `ableton_analysis`
-build the MixReport), then run **`/mix-review`** to interpret it against intent —
-masking, loudness, feel, energy per section. That's the checkpoint after the mix
+build the MixReport), then run **`/mix-review`** (needs Max for Live) to interpret
+it against intent — masking, loudness, feel, energy per section. That's the checkpoint after the mix
 materializes (the counterpart to `/compose-review` before it). The full lifecycle
 is `/song-workflow`.

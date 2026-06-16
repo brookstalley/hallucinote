@@ -9,6 +9,8 @@ allowed-tools: Bash, Read
 
 You are retrieving relevant composer intent + decision rationale for a song. This keeps the caller's context clean by returning only matching refs.
 
+> **Running engine commands.** The engine ships in the plugin's uv env. Resolve `$PY` once from `ableton://server/info`'s `python`; the `hallucinote context …` / `reindex …` commands below run as `"$PY" -m hallucinote.cli …`. See [`docs/running-the-engine.md`](../../docs/running-the-engine.md).
+
 ## When to invoke
 
 **Run `/song-context` proactively before any non-trivial composition or arrangement work on a song.** Composition examples that warrant a pre-task retrieval:
@@ -41,22 +43,22 @@ $ARGUMENTS
 
 ```bash
 # Fulltext search
-python3 -m hallucinote.tools.song_context --db songs/falling-walking/falling-walking.db "dim7 bridge"
+"$PY" -m hallucinote.cli context --db songs/falling-walking/falling-walking.db "dim7 bridge"
 
 # Filter by kind
-python3 -m hallucinote.tools.song_context --db songs/falling-walking/falling-walking.db --kind decision
+"$PY" -m hallucinote.cli context --db songs/falling-walking/falling-walking.db --kind decision
 
 # Filter by tags + bars
-python3 -m hallucinote.tools.song_context --db songs/falling-walking/falling-walking.db --tags chorus --bars 33:40
+"$PY" -m hallucinote.cli context --db songs/falling-walking/falling-walking.db --tags chorus --bars 33:40
 
 # Combined
-python3 -m hallucinote.tools.song_context --db songs/falling-walking/falling-walking.db --kind decision --tags pad
+"$PY" -m hallucinote.cli context --db songs/falling-walking/falling-walking.db --kind decision --tags pad
 
 # Defensive mode — surface contradiction signals before composing
-python3 -m hallucinote.tools.song_context --db songs/falling-walking/falling-walking.db --defensive "sidechain"
+"$PY" -m hallucinote.cli context --db songs/falling-walking/falling-walking.db --defensive "sidechain"
 
 # Generative mode — also surface related-by-tag rows the caller hasn't asked for
-python3 -m hallucinote.tools.song_context --db songs/falling-walking/falling-walking.db --generative "chorus"
+"$PY" -m hallucinote.cli context --db songs/falling-walking/falling-walking.db --generative "chorus"
 ```
 
 Translate the caller's topic + any natural-language filters into the appropriate flag combination:
@@ -77,5 +79,5 @@ These flags are orthogonal — combine them when both apply.
 
 - This is a **read-only lookup**. Do not modify any files.
 - If the query returns nothing, say so and suggest a broader query (e.g., drop tag filter, widen bar range).
-- If the song's DB doesn't have `markdown_refs` populated yet, run `python3 -m hallucinote.tools.reindex_markdown <db>` first.
+- If the song's DB doesn't have `markdown_refs` populated yet, run `"$PY" -m hallucinote.cli reindex <db>` first.
 - The retrieval surface filters; the LLM does the synthesis. Don't try to summarize matches across files — return the matches, optionally Read the ones that matter, and let the caller integrate them.

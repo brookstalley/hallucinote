@@ -9,6 +9,8 @@ allowed-tools: Bash, Read
 
 You are retrieving prior compose-time decisions from a song's audit log. This keeps the caller's context clean by returning only matching rows.
 
+> **Running engine commands.** The engine ships in the plugin's uv env. Resolve `$PY` once from `ableton://server/info`'s `python`; the `hallucinote decisions …` commands below run as `"$PY" -m hallucinote.cli …`. See [`docs/running-the-engine.md`](../../docs/running-the-engine.md).
+
 ## When to invoke
 
 Run `/decisions` proactively before any non-trivial composition or arrangement work, in addition to `/song-context`. The two are complementary:
@@ -45,16 +47,16 @@ $ARGUMENTS
 
 ```bash
 # Single keyword
-python3 -m hallucinote.tools.decisions_cli --db songs/falling-walking/falling-walking.db "bridge"
+"$PY" -m hallucinote.cli decisions --db songs/falling-walking/falling-walking.db "bridge"
 
 # Multi-keyword (positional, space-separated — AND semantics)
-python3 -m hallucinote.tools.decisions_cli --db songs/falling-walking/falling-walking.db "bridge counter-melody"
+"$PY" -m hallucinote.cli decisions --db songs/falling-walking/falling-walking.db "bridge counter-melody"
 
 # Multi-keyword (explicit list)
-python3 -m hallucinote.tools.decisions_cli --db songs/falling-walking/falling-walking.db --keywords "bridge,dim7"
+"$PY" -m hallucinote.cli decisions --db songs/falling-walking/falling-walking.db --keywords "bridge,dim7"
 
 # Cap the result count
-python3 -m hallucinote.tools.decisions_cli --db songs/falling-walking/falling-walking.db "sidechain" --limit 5
+"$PY" -m hallucinote.cli decisions --db songs/falling-walking/falling-walking.db "sidechain" --limit 5
 ```
 
 **Step 3 — Display the result.** The script outputs markdown — show it to the caller as-is. If a result looks load-bearing for the caller's current task, treat it as constraint context (the previous decision's rationale is part of the song's intent), not a checklist.

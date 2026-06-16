@@ -50,11 +50,11 @@ When it finishes you have a finished session — named tracks, clips, device cha
 
 ## What you can do
 
-- **Compose from a prompt — any genre, any shape.** `/hallucinote:song-new <slug>` scaffolds the song; Claude writes the `build.py` and pushes it into Live. The brief is yours — a genre, a key, a harmonic idea, a mood, a length:
-  - *"a stereotypical metal ballad in E minor using I–V–IV with a thunderous drum solo break"*
-  - *"a 10-minute ambient soundscape in E major with arp chords in deep reverb"*
-  - *"a bossa nova with brushed drums and a walking bass, but with jazz harmonic sensibility"*
-  - *"a trip-hop beat that drags lazily behind the click"*
+- **Compose from a prompt — any genre, any shape.** `/hallucinote:song-new <slug>` scaffolds the song; Claude writes the `build.py` and pushes it into Live. Pitch the brief however you think about music — it can be:
+  - **conceptual** — *"a song about overcoming loss"*
+  - **musical** — *"a Bach-style Baroque prelude in G minor built from a single broken-chord figuration"*
+  - **stylistic** — *"a pure-electronica ska tune that keeps the traditional structure but goes wild with the harmony"*
+  - **derivative** — *"the song Duran Duran would have written if they dropped acid with Black Sabbath"*
 - **Iterate by talking.** *"Raise the verse ghost snares,"* *"swap the chorus walk for a fill at bar 12,"* *"route the drums through a sub-bus and glue-compress it"* — Claude edits the code and re-pushes.
 - **Treat sound design as authorship.** Device chains, dialed parameters, and sends ship in the snapshot, not in a vague post-push mix pass. A finished song has the sound it's supposed to have.
 - **Pull manual edits back.** Move faders, mutes, or notes in Live, then `/hallucinote:ableton-pull` to fold them into the DB.

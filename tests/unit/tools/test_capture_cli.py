@@ -239,9 +239,13 @@ def test_cmd_execute_writes_refresh_json_and_forwards_old(
         argparse.Namespace(output=str(out), old=str(old), song=None)
     )
     assert rc == 0
-    # Writes the side-by-side refresh file (never the canonical name).
+    # Writes the side-by-side refresh file, NOT the canonical name — the canonical
+    # snapshot is left untouched (overwriting it before the user sees the diff is
+    # the bug /song-snapshot exists to prevent).
     assert json.loads(out.read_text()) == {"snapshot_version": 1, "tracks": []}
-    assert not (tmp_path / "captured_session.json").read_text() == out.read_text()
+    assert json.loads(old.read_text()) == {
+        "snapshot_version": 1, "browser_path": {"a": "b"},
+    }
     # The old snapshot is loaded + forwarded so browser_path is preserved.
     assert captured["old"] == {"snapshot_version": 1, "browser_path": {"a": "b"}}
 

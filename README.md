@@ -6,7 +6,7 @@
      a prompt typed into Claude Code on the left, an Ableton Live set filling in on the right. -->
 ![A prompt, and the Ableton Live set it built](docs/assets/hero.svg)
 
-You describe a song in plain language. Claude writes it — the composition, the sound design, the mix — as a Python `build.py` plus a captured-session snapshot, materializes that into a SQLite source of truth, and pushes the whole thing into a running Ableton Live set. Tweak a fader in Live and pull the change back through the same path. The song is a directory you commit to git — reproducible and forkable, not a binary `.als` you hope to find again.
+You describe a song in plain language. Claude writes it — the composition, the sound design, the mix — as a Python `build.py` plus a captured-session snapshot, builds that into a SQLite working state, and pushes the whole thing into a running Ableton Live set. Tweak a fader in Live and pull the change back through the same path. The song is a directory you commit to git — reproducible and forkable, not a binary `.als` you hope to find again.
 
 It's early (see [Status](#status)), it runs today on Ableton Live 12, and the rest of this page gets you from zero to a playing song.
 
@@ -32,11 +32,11 @@ When it finishes you have a finished session — named tracks, clips, device cha
    you (plain language)
         │
         ▼
-     Claude ── writes ──▶  build.py  +  captured_session.json     ← the song, as code (git-tracked)
+     Claude ── writes ──▶  build.py  +  captured_session.json     ← the source of truth (git-tracked)
         │                              │
         │                            build
         │                              ▼
-        │                         SQLite DB     ← the source of truth
+        │                         SQLite DB     ← materialized state (rebuilt from those files)
         │                          │     ▲
         │                    push  │     │  pull
         │                          ▼     │
@@ -44,7 +44,7 @@ When it finishes you have a finished session — named tracks, clips, device cha
 ```
 
 - **You talk; Claude authors code.** Composition (notes, arrangement, automation) is Python in `build.py`. The mix layer (instruments, device chains, dialed parameters, sends, routing) is a declarative `captured_session.json` snapshot. Both are git-tracked source — see the [authorship model](.prawduct/artifacts/authorship-model.md) for where each kind of thing lives and why.
-- **The DB is the source of truth.** Every change goes through a mutator and emits an event, so the history is real and the future event-store migration is cheap.
+- **The DB is materialized state, not the source.** `build.py` and the snapshot are the git-tracked source of truth; they build into one SQLite database (gitignored, rebuildable) that every change converges on through a mutator and an event — so the history is real and the future event-store migration is cheap.
 - **Push materializes; pull ingests.** Push drives the DB into a fresh-or-existing Live set through the fourteen phases above. Pull diffs Live against the DB and folds manual edits back through the same mutators.
 - **The agent listens.** Claude can render the set to audio and review the mix against your stated intent — masking, loudness, reverb, the groove — and tell you the one thing holding the chorus back, as a producer's question, not a score.
 

@@ -110,7 +110,7 @@ MCP prompts — so the agent can invoke them directly. For ANY song
 work, read /song-workflow first — it is the lifecycle map. The arc:
   /song-new -> /song-pick-instruments -> /compose-part ->
   /compose-review (READ the composition) -> /ableton-push ->
-  ableton_render + ableton_analysis -> /mix-review (READ the mix) ->
+  ableton_render + ableton_analysis -> /mix-review (READ the mix; needs Max for Live) ->
   /song-snapshot, then loop. Building blocks: /track-new-with-instrument,
   /return-new, /mix-sidechain, /clip-humanize, /ableton-pull, /song-context.
   The two review checkpoints (/compose-review, /mix-review) are easy to

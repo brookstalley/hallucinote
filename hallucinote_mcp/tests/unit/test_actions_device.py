@@ -269,6 +269,9 @@ _EXPECTED_DEVICE_ACTIONS = {
     # load_in_rack / set_parameter_in_rack — folded into load (device_path +
     # chain_index) and set_parameter (device_path).
     "get_device_chains",
+    # NODE-ADDR Chunk C: per-DrumChain choke_group / out_note via the `chain`
+    # terminal.
+    "set_chain_property",
 }
 
 

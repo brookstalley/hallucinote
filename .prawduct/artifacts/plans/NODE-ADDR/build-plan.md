@@ -161,7 +161,7 @@ fresh `pytest` before any Chunk-A code review (current `prawduct-hook test-statu
 
 ## Status
 - [x] Probes (Chunk A predecessors): drum_pad, addresses-as-value, send-pre/post, return/master routing — DONE 2026-06-15 (`./probe-findings.md`; design §1.5). Wire-freeze decided: terminal enum `track|return|master|device|chain` (no drum_pad).
-- [x] Chunk A: addressing foundation [FLIP] — ✅ DONE + LIVE-VERIFIED 6/6 2026-06-15 (merged to develop):
+- [ ] Chunk A: addressing foundation [FLIP] — ✅ DONE + LIVE-VERIFIED 6/6 2026-06-15 (merged to develop):
   - [x] **Spine landed + green (31 tests, full suite 3782+):** one resolver `_resolve_node` (all 5
     terminals), one validator `validate_node_addr` (the single grammar, in-object `terminal` default),
     one facade `resolve_node_addr` — all in `handlers/device.py`. `get_parameters` returns `default_value`
@@ -207,8 +207,110 @@ fresh `pytest` before any Chunk-A code review (current `prawduct-hook test-statu
     learnings.md rule. NOT a wire-flip regression.
     Note (flagged, NOT dropped): `read_envelope`/`get_envelope` + shallow-nav surfaces kept flat per the plan
     (reads, outside the migrated set) — recommended fast-follow, not a Chunk-A gate.
-- [ ] Chunk B: params read-side durability (capture execute + pull depth-N + default_value filter) [vertical slice]
-- [ ] Chunk C: per-drum DrumChain authorship — choke + out_note + chain mixer (`chain` terminal; re-scoped)
-- [ ] Chunk D: macro values/names/variations (DEV-3W9R; mapping target UNSUPPORTED_IN_LIVE)
-- [ ] Chunk E: zones
-- [ ] Chunk F: chain mixer-state
+- [ ] Chunk B: params read-side durability — ✅ CODE DONE + GREEN 2026-06-15 (full suite green; Live operator-verify pending):
+  - [x] **Deterministic `capture execute`** — `capture.assemble_snapshot_via_probes(probe, old_snapshot=)`
+    walks the live set IN CODE (session/master/returns/tracks + full recursive rack tree), probing
+    `get_parameters` at EVERY depth via NodeAddr `path`; assembles via `compile_snapshot` +
+    `preserve_browser_paths`. Engine stays free of `hallucinote_mcp` (transport injected as a high-level
+    `probe(tool, action, **params)`); `tools/capture_cli.py` `execute` subcommand builds the real probe over
+    `client.send` (+ `_resolve_send_fn`/`_make_probe` mirroring pull_cli) and writes the side-by-side
+    `.refresh.json`. `/song-snapshot` skill retired the by-hand probe+compile prose for `capture execute`
+    (`capture_plan` kept as the hand/first-capture doc). **No re-vendor** (engine/sync/skill only).
+  - [x] **`default_value` capture filter (OQ5)** — `_snapshot_param_entry`: stores only `value != default_value`
+    (within ε); when Live OMITS `default_value` (the quantized raise — handler guard from Chunk A) ALWAYS
+    captures (the always-capture minority). Single-source `normalize_param_value` moved DOWN to `capture.py`
+    (pull `_core` had it; pull already imports capture → no cycle), so a captured-then-replayed param lands
+    the same DB row a pull writes.
+  - [x] **Pull depth-N** — `plan_pull_device_parameters` now walks top-level + nested devices
+    (`_iter_linked_device_params` / `_walk_nested_device_params`), emitting `get_parameters(node)` with the
+    nested `path` (top-level keeps the flat no-path shape — existing tests unchanged). `_apply_nested_rack_chains_for_device`
+    recurses the full `get_device_chains` tree (`_diff_nested_chains`), lifting the W7-B one-level cap (#17b
+    closed — addressing was the gate; Chunk A froze it). No wire change.
+  - [x] **§4 corrections** — deleted the false "Python can't call MCP tools" claims (`capture.py` module +
+    capture-plan section, `capture_cli.py` module); corrected the bug-record framing
+    (`incoming-bugs/archives/2026-06-14-nested-nested-rack-…md`: addressing shipped, acquisition was the gap)
+    + DEEP-RACK-ADDR build-plan Chunk-2 status ("capture" → "*replay* + push; acquisition deferred here").
+  - [x] **Tombstone** — `device_parameter`/`device_parameter_set` already registered in `build.py`
+    `_LATEST_ACTOR_EVENTS` (no new kind; capture replays as `actor='sync'`, pull as `actor='sync'` — both
+    protected). Verified, no new registration needed.
+  - [x] **Tests (16 new, full suite green)** — `tests/unit/capture/test_capture_execute.py` (12): acquisition
+    round-trip (fake-Live probe → capture → replay → DB → push re-emit @ depth-2 — the loop the prior
+    replay-only test never closed); symmetry contract (every depth probed); default_value filter incl.
+    raises-fallback, enum, const-range, at-default. `tests/unit/sync/test_pull.py` (4): depth-N param node
+    `path` (depth-1 + depth-2); nested-rack-chains rack-in-rack apply recursion + idempotency.
+  - [ ] **Operator (Live) — pending** (enqueued in operator-verification.md): swell `21 Voice Lead`
+    `LFO 1 Sync` depth-2 survives `/song-snapshot` + rebuild without saving .als; + the bloat-measurement
+    gate (Critic note b: non-default count per device + snapshot growth).
+- [ ] Chunk C: per-DrumChain authorship — choke_group + out_note (`chain` terminal) — ✅ CODE DONE + GREEN
+  2026-06-15 (impl map `./chunk-c-impl.md`; full suite green; Live operator-verify pending). **Scope: choke +
+  out_note only; chain mute/solo WRITE deferred to Chunk F** (mixer-state — the matrix `mixer_state` chain
+  cell owns it; the `choke_out_note` feature was narrowed to drop the mute-solo mention). The 9 touchpoints:
+  - [x] **Schema** — `device_chains.choke_group` / `out_note` (nullable INT) in `schema.sql` + `_ADDED_COLUMNS`
+    (canary-paired); `DEVICE_CHAIN_PROPS_SET` event; `build.py` actor-map gains `device_chain_props_set`.
+  - [x] **Mutator** — `set_chain_properties` (partial, idempotent, clear-on-None; mirrors `set_track_routing`).
+    `create_device_chain` stays identity-only (per-drum props ride the new mutator, not create).
+  - [x] **Capture** — `chain_authored_props` (single non-default filter: choke 0 / out_note==in_note → None,
+    mirrors Chunk B); `_capture_nested_chains` attaches; `_replay_rack_chains` applies (clears on re-replay).
+    `_describe_chain` surfaces choke_group/out_note/in_note (drum chains only; plain chains unchanged).
+  - [x] **Handler + action** — `set_chain_property_handler` (resolves `chain` terminal; capability-probes via
+    `hasattr` — a plain Chain gets a teaching error, never crashes; validates + probes before any write) +
+    `ableton_device(action='set_chain_property', node, choke_group?, out_note?)`.
+  - [x] **Push** — `_emit_chain_property_calls` in `_emit_nested_param_writes`: each chain with a stored
+    non-default prop emits a `chain`-terminal `set_chain_property` (path = the rack's own path, [] top-level).
+  - [x] **Pull** — `_diff_nested_chains` diffs `chain_authored_props` vs DB → `set_chain_properties` (clears
+    a now-default value; idempotent steady state — the round-trip fixed point).
+  - [x] **Matrix** — `choke_out_note` chain cell flipped NOT_IMPLEMENTED → SUPPORTED (determination probe).
+  - [x] **Tests (49 new, full suite green)** — mutator (`test_chain_properties.py`), capture filter + replay
+    round-trip (`test_chunk_c_chains.py`), handler pos/neg/validation/atomicity (`test_set_chain_property.py`),
+    push emit + nested-rack path (`test_push_devices.py`), pull diff/clear/idempotent (`test_pull.py`).
+    Updated contract tests: node-features supported-list, `_EXPECTED_DEVICE_ACTIONS`.
+  - [x] **Live-probe gate** — re-confirmed on the scratch 808 *Instrument* Rack: a plain `Chain` has NO
+    choke_group/out_note (the negative capability case), validating the `hasattr` re-probe.
+  - [ ] **Operator (Live) — pending** (enqueued): positive choke+out_note round-trip on a real DrumChain +
+    durability + the plain-Chain teaching error. Needs re-vendor + a loaded Drum Rack (scratch set lacks one).
+- [ ] Chunk E: zones — ✅ DONE 2026-06-15 (commit `584bca7`). **PROBE RE-SCOPE: zones are a hard LOM
+  wall, not buildable.** The Chunk-E LOM probe (Live 12.4, scratch "808 Selector Rack") found a `Chain`
+  exposes NO key_range/velocity_range/chain_select_range — not even on a chain-select selector rack (all
+  raise AttributeError). The rack Zone editor is UI-only; `/song-snapshot` can't capture zones either. So
+  `zones`/chain flips NOT_IMPLEMENTED → `UNSUPPORTED_IN_LIVE` (static, version-scoped 12.4), + teaching
+  error/workaround. **No handler/schema** (a wall ships no code); node_features.py is outside
+  `_FINGERPRINT_PATHS` → no re-vendor. Tests: moved `zones`/chain to the walls guard. No operator-verify
+  (the probe IS the live confirmation).
+- [ ] Chunk F: chain mixer-state — ✅ CODE DONE + GREEN 2026-06-15 (commit `66e1f58`; full suite 3947/2
+  skipped; Live operator-verify pending). Extends the Chunk C `set_chain_property` surface; `mixer_state`/
+  chain flips NOT_IMPLEMENTED → SUPPORTED. **Scope: mute/solo/volume/pan** (probe-confirmed: Chain.mute set
+  test passed; ChainMixerDevice exposes volume/panning DeviceParameters). Unlike choke/out_note these are on
+  EVERY chain (plain + drum). 9 touchpoints mirror C: schema+`_ADDED_COLUMNS` (mute/solo INTEGER, volume/pan
+  REAL, nullable); mutator `set_chain_properties` (+4 fields, bool→0/1 coercion, range validation); capture
+  (`chain_authored_props` → 6 keys; volume/pan filtered vs the chain's intrinsic `default_value` via Chunk
+  B's `_CAPTURE_DEFAULT_EPS`, no-default ⇒ not captured; `_describe_chain` surfaces volume/pan+defaults
+  un-gated; `_replay_rack_chains` applies); handler (+mute/solo chain bools, +volume/pan mixer params,
+  per-property capability probe, atomic); action (+bool/float ParamSpecs); push (`_emit_chain_property_calls`
+  emits all six); pull (`_diff_nested_chains`). **Chain SENDS deferred** (into a rack's own return chains —
+  rarely populated) → documented `send_levels`/chain NOT_IMPLEMENTED cell (flagged, not dropped). Tests
+  +~40. **Re-vendor at Live-verify time** (touches handlers/+actions/).
+  - [ ] **Operator (Live) — pending** (enqueued): mute/solo/volume/pan round-trip DB→push→Live→pull on a
+    real chain + durability; plain-Chain accepts mixer state (no teaching error). Needs re-vendor.
+- [ ] Chunk D: macro authorship — ✅ DONE 2026-06-15 (commit `b2371ca`; matrix honesty + value test, NO new
+  handler). **PROBE RE-SCOPE — the planned "flip stub → handler" for macro values/names + variation recall
+  collapses to matrix corrections** (flagged, not dropped):
+  - Macro **values** → SUPPORTED, but they ARE DeviceParameters (parameters[1..8]) authored by the EXISTING
+    `device_parameters` feature — no separate path. Cell flipped + a test proves a renamed-macro param rides
+    `params_dialed` keyed by name.
+  - Macro **names** → `UNSUPPORTED_IN_LIVE` (NEW `macro_names` cell). PROBE: setting a macro
+    `DeviceParameter.name` raises "property … has no setter" — read-only; the custom name rides the preset.
+  - Macro **variations** → kept NOT_IMPLEMENTED (deferred). `selected_variation_index` IS settable
+    (0..count-1, rejects -1) + `recall_selected_variation` exists, but a recalled variation's macro values
+    are already durable as device params and a stored index+recall would conflict with that captured-value
+    truth on push (+ design §3 designated variations a documented stub). Not wired.
+  - Macro **mapping target** → stays `UNSUPPORTED_IN_LIVE` (LOM exposes no target).
+  - **DEVIATIONS from this plan's Chunk D (surfaced for the user to veto):** macro custom-NAME authoring
+    NOT built (LOM-impossible); macro variation recall NOT built (deferred). No schema/handler/re-vendor.
+    No operator-verify (the probes ARE the live confirmation; macro values ride existing device_parameters
+    verification).
+
+**RELEASE GATE STATUS:** the full in-scope set (A–F) is now built + tested. Remaining before release:
+cumulative Critic over D-E-F, the enqueued Live operator-verifications (B swell-depth-2, C drum-chain
+round-trip, F chain-mixer round-trip — all need a re-vendor + appropriate loaded devices), and a single
+re-vendor at release. The §3 build set's "macros + zones" items resolved to LOM walls (names/zones
+UNSUPPORTED, variations deferred) rather than handlers — the matrix records the probed truth.

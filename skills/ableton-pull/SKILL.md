@@ -2,13 +2,15 @@
 description: Pull Ableton state into the Hallucinote DB. Diffs Ableton against the DB and writes mutations through the standard mutator path so events fall out naturally. Use for ingesting manual edits made in Ableton (fader moves, mute toggles, send tweaks).
 user-invocable: true
 disable-model-invocation: false
-allowed-tools: Read, Write, Bash(python3 -m hallucinote.sync.pull_cli *), mcp__hallucinote-mcp__ableton_session, mcp__hallucinote-mcp__ableton_track, mcp__hallucinote-mcp__ableton_return, mcp__hallucinote-mcp__ableton_arrangement, mcp__hallucinote-mcp__ableton_device, mcp__hallucinote-mcp__ableton_clip, mcp__hallucinote-mcp__ableton_note
+allowed-tools: Read, Write, Bash, mcp__hallucinote-mcp__ableton_session, mcp__hallucinote-mcp__ableton_track, mcp__hallucinote-mcp__ableton_return, mcp__hallucinote-mcp__ableton_arrangement, mcp__hallucinote-mcp__ableton_device, mcp__hallucinote-mcp__ableton_clip, mcp__hallucinote-mcp__ableton_note
 argument-hint: <song-slug> <session_id> <domain | natural-language request>
 ---
 
 You are the Ableton pull orchestrator. Read what the user wants pulled, run the right MCP probes, hand the results to the DB layer, and report what changed.
 
 $ARGUMENTS
+
+> **Running engine commands.** The engine ships in the plugin's uv env — no separate install. Resolve `$PY` once from `ableton://server/info`'s `python`; the `pull` commands below run as `"$PY" -m hallucinote.cli pull …`. See [`docs/running-the-engine.md`](../../docs/running-the-engine.md).
 
 ## Conflict policy
 
@@ -68,7 +70,7 @@ For each resolved domain, do the steps in order. Run `mix-state` end-to-end befo
 ### Step 1 — Plan
 
 ```
-python3 -m hallucinote.sync.pull_cli plan <domain> <session_id> --song <slug>
+"$PY" -m hallucinote.cli pull plan <domain> <session_id> --song <slug>
 ```
 
 Writes JSON to stdout: `{calls: [{tool, args, key, purpose}, ...], notes: [...]}`. Save to `/tmp/ableton-pull-plan.json` via Write. Display non-empty `notes` before proceeding — they often surface unlinked tracks.
@@ -94,7 +96,7 @@ Write the results array to `/tmp/ableton-pull-results.json`.
 ### Step 3 — Apply
 
 ```
-python3 -m hallucinote.sync.pull_cli apply <session_id> --song <slug> \
+"$PY" -m hallucinote.cli pull apply <session_id> --song <slug> \
   --plan /tmp/ableton-pull-plan.json \
   --results /tmp/ableton-pull-results.json
 ```

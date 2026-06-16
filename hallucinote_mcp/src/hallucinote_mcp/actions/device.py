@@ -721,4 +721,94 @@ register(
 )
 
 
+register(
+    Action(
+        tool="ableton_device",
+        name="set_chain_property",
+        description=(
+            "Set a chain's authored properties, addressed by a `chain`-terminal "
+            "NodeAddr (device_index = the rack, chain_index = which chain). Pass "
+            "at least one; any combination may be set at once. Two families, each "
+            "capability-probed (a teaching error points at "
+            "ableton://reference/node-feature-matrix): "
+            "(1) PER-DRUM, DrumChain only — choke_group (0 = no choke group; "
+            "non-zero groups cut each other off, e.g. open/closed hats) and "
+            "out_note (MIDI transpose; equal to the pad's in_note = no "
+            "transpose). (2) PER-CHAIN MIXER, every chain — mute / solo (bools) "
+            "and volume (0..1) / pan (-1..1). Get the chain_index from "
+            "ableton_device(action='get_device_chains')."
+        ),
+        params=(
+            node_addr_spec(
+                description=(
+                    "The chain (terminal 'chain'): device_index = the rack, "
+                    "chain_index = which chain on it."
+                )
+            ),
+            ParamSpec(
+                name="choke_group",
+                type="int",
+                required=False,
+                minimum=0,
+                description=(
+                    "DrumChain only. Live choke-group id (0 = no choke group). "
+                    "Pads sharing a non-zero group cut each other off."
+                ),
+            ),
+            ParamSpec(
+                name="out_note",
+                type="int",
+                required=False,
+                minimum=0,
+                maximum=127,
+                description=(
+                    "DrumChain only. MIDI note the chain emits (transpose "
+                    "target). Equal to the pad's in_note means no transpose."
+                ),
+            ),
+            ParamSpec(
+                name="mute",
+                type="bool",
+                required=False,
+                description="Mute this chain (every chain; default unmuted).",
+            ),
+            ParamSpec(
+                name="solo",
+                type="bool",
+                required=False,
+                description="Solo this chain (every chain; default unsoloed).",
+            ),
+            ParamSpec(
+                name="volume",
+                type="float",
+                required=False,
+                minimum=0.0,
+                maximum=1.0,
+                description=(
+                    "Chain mixer volume, 0.0..1.0 normalized (the "
+                    "ChainMixerDevice volume param; ~0.85 = unity)."
+                ),
+            ),
+            ParamSpec(
+                name="pan",
+                type="float",
+                required=False,
+                minimum=-1.0,
+                maximum=1.0,
+                description=(
+                    "Chain mixer pan, -1.0 (hard left) .. 1.0 (hard right); "
+                    "0.0 = centre."
+                ),
+            ),
+        ),
+        handler=device_handlers.set_chain_property_handler,
+        example=(
+            "ableton_device(action='set_chain_property', "
+            "node={'parent': {'kind': 'track', 'index': 2}, 'terminal': 'chain', "
+            "'device_index': 1, 'chain_index': 1}, mute=True, volume=0.7)"
+        ),
+    )
+)
+
+
 __all__: list[str] = []  # registry side-effects only

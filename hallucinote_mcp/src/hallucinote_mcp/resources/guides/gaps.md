@@ -103,13 +103,12 @@ See `ableton_device(action='help')`.
 Supported to ARBITRARY depth via the `node` object's `path` (NODE-ADDR) — a list
 of `{chain_index, device_position}` steps (both 1-based) descending from the
 top-level `device_index` device. `ableton_device(action='get_device_chains')`
-recurses the whole tree and reports a `device_path` (+ `is_rack`) for every
-nested device; put that path in the node's `path` for `set_parameter` /
-`get_parameters` (read or write the nested param). To load a device INTO a nested
-chain, address the destination with a `chain` terminal node (`device_index` +
-`chain_index`, + `path` for a deeper rack). Applies to `InstrumentGroupDevice`,
-`AudioEffectGroupDevice`, `DrumGroupDevice`. (`get_device_chains` reports
-`device_path` as a convenience; drop it into `node.path`.)
+recurses the whole tree and reports a `device_path` (+ `is_rack`) per nested
+device as a convenience — drop its steps into the node's `path` for
+`set_parameter` / `get_parameters` (read or write the nested param). To load a
+device INTO a nested chain, address the destination with a `chain` terminal node
+(`device_index` + `chain_index`, + `path` for a deeper rack). Applies to
+`InstrumentGroupDevice`, `AudioEffectGroupDevice`, `DrumGroupDevice`.
 
 ## Hallucinote-side compute (not MCP)
 

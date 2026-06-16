@@ -3,7 +3,7 @@ name: song-new
 description: Scaffold a new Hallucinote song from templates. Creates songs/<slug>/ with build.py, captured_session.json, tests/, decisions/, annotations/, attempts/ (the try→outcome ledger), and a song.md overview. Use when starting a new song from a prompt — replaces the "copy from falling-walking" pattern that Wave 0 surfaced as a major onboarding friction.
 user-invocable: true
 disable-model-invocation: false
-allowed-tools: Read, Write, Bash(python3 -m hallucinote.tools.scaffold_song *), Bash(python3 songs/* --reset), Bash(pytest songs/*)
+allowed-tools: Read, Write, Bash, Bash(pytest songs/*)
 argument-hint: >-
   <slug> "<title>" <tempo> <signature> <sections-csv> [optional: <key>] [optional: <intent>]
 ---
@@ -13,6 +13,8 @@ argument-hint: >-
 You scaffold a new Hallucinote song from templates AND run the pre-composition elicitation pass so the first composition decisions are defensible, not guessed.
 
 $ARGUMENTS
+
+> **Running engine commands.** The engine ships in the plugin's uv env — no separate install. Resolve `$PY` once from `ableton://server/info`'s `python`; scaffold + build run as `"$PY" -m hallucinote.cli …` (shown in full below). See [`docs/running-the-engine.md`](../../docs/running-the-engine.md).
 
 ## Read the request, not the requester (do this first)
 
@@ -67,8 +69,8 @@ For each non-trivial decision (especially must-haves), **write a markdown file u
 Given the resolved slug + title + tempo + signature + sections (and optional key + intent from Phase 1), you:
 
 1. Validate the inputs (slug shape, signature shape, non-empty section list).
-2. Run `python3 -m hallucinote.tools.scaffold_song <slug> --title "..." --tempo X --signature N/D --sections ...` to produce `songs/<slug>/`.
-3. Run `python3 songs/<slug>/build.py --reset` to populate the song's DB from the synthetic snapshot.
+2. Run `"$PY" -m hallucinote.cli scaffold <slug> --title "..." --tempo X --signature N/D --sections ...` to produce `songs/<slug>/`.
+3. Run `"$PY" songs/<slug>/build.py --reset` to populate the song's DB from the synthetic snapshot.
 4. Run `pytest songs/<slug>/tests/ -v` to confirm the shape tests pass.
 5. **Write Phase 1's decisions** to `songs/<slug>/decisions/NN-<topic>.md` — one file per decision. Number prefix (`01-intent.md`, `02-genre.md`, ...) for ordering.
 6. **Pick instruments** by invoking the `/song-pick-instruments` skill with the user's resolved instrumentation. Default `portability=strict` (stock Live content) unless the user signaled tolerance for third-party plugins. The picks land in `captured_session.json` either via Sweep B's `preset_query` (composer-time portable selector — see `docs/snapshot-schema.md`) or via load-then-recapture once Live is staged.
@@ -111,7 +113,7 @@ songs/<slug>/
 
 Two important defaults the scaffold uses:
 - **Synthetic snapshot.** `captured_session.json` is generic (2 returns + 4 MIDI tracks + master) so the build runs immediately against a brand-new DB. The user should replace it by capturing a real Live snapshot once they've staged the target Live shape. Capture today is manual via `hallucinote.tools.capture_cli`.
-- **State-converger build.py.** Re-running `python songs/<slug>/build.py` (no `--reset`) is a no-op when nothing changed — the converger guarantees zero net events. `--reset` is for "wipe the DB and start fresh" only.
+- **State-converger build.py.** Re-running the build (no `--reset`) is a no-op when nothing changed — the converger guarantees zero net events. `--reset` is for "wipe the DB and start fresh" only.
 
 ## Final report to user
 
@@ -140,9 +142,9 @@ Stop after the scaffold + decisions + picks land, so the user can review and dri
 
 ```
 1. Validate inputs (slug, signature, sections).
-2. python3 -m hallucinote.tools.scaffold_song <slug> --title "..." --tempo N \
+2. "$PY" -m hallucinote.cli scaffold <slug> --title "..." --tempo N \
        --signature N/D --sections a,b,c [--key K] [--intent "..."]
-3. python3 songs/<slug>/build.py --reset
+3. "$PY" songs/<slug>/build.py --reset
 4. pytest songs/<slug>/tests/ -v
 5. Report.
 ```

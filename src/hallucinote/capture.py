@@ -57,12 +57,17 @@ master added by SNP-4K7M), devices
 `params_dialed: {...}` map). `clips: [...]` on tracks is still ignored —
 populated by build.py hand-authored sections.
 
-Live capture (Ableton -> snapshot.json) is agent-orchestrated: the agent runs
-MCP probes against the v1 unified-action-dispatch surface
-(`ableton_session(action='info')`, `ableton_return(action='list')`,
-`ableton_track(action='info'|'get_sends')`,
-`ableton_device(action='get_parameters'|'get_device_chains')`) and assembles
-the dict via `compile_snapshot`. See `tools/capture_cli.py` for the probe sequence.
+Live capture (Ableton -> snapshot.json) runs IN CODE over the bridge push/pull
+already use: `assemble_snapshot_via_probes` walks the live set, issuing the v1
+unified-action probes (`ableton_session(action='info')`,
+`ableton_return(action='list'|'info')`, `ableton_track(action='info'|'get_sends')`,
+`ableton_device(action='list'|'get_parameters'|'get_device_chains'|'pad_info')`)
+and assembling the dict via `compile_snapshot` — reaching device parameters at
+EVERY nesting depth via NodeAddr `path` (NODE-ADDR Chunk B). `tools/capture_cli.py`
+exposes it as `capture execute`. `capture_plan` still lists the probe sequence
+for hand/first captures, but the deterministic in-code path is the default.
+(The earlier "Python can't call MCP tools" framing was wrong — the
+`hallucinote_mcp.client.send` bridge has always been callable from Python.)
 """
 from __future__ import annotations
 
@@ -131,6 +136,33 @@ def _norm_bool(value: Any) -> int | None:
     if value is None:
         return None
     return 1 if value else 0
+
+
+def normalize_param_value(
+    value: float, min_val: float, max_val: float, is_enum: bool,
+) -> float | None:
+    """Map Live's raw ``DeviceParameter.value`` into the DB's [0, 1] form.
+
+    Returns ``None`` for enum/quantized params (schema CHECK allows NULL —
+    there's no continuous form) and for constant-range params (``min == max``;
+    the normalized form is undefined). Otherwise returns
+    ``(value - min) / (max - min)`` clamped into [0, 1] — Live's reported value
+    can be marginally outside the documented range due to float, but the schema
+    CHECK is strict on [0, 1] so we clamp at the boundary.
+
+    Single source for the raw→normalized conversion shared by the capture path
+    (snapshot ``params_dialed`` normalized values) and the pull apply path (DB
+    ``device_parameters.value_normalized``). Lives here — the lowest layer that
+    both depend on (``sync.pull`` already imports ``capture``) — so there is one
+    definition, not a per-consumer copy.
+    """
+    if is_enum:
+        return None
+    rng = max_val - min_val
+    if abs(rng) < 1e-9:
+        return None
+    norm = (value - min_val) / rng
+    return max(0.0, min(1.0, norm))
 
 
 def _replay_devices(
@@ -340,6 +372,24 @@ def _replay_rack_chains(
             request_id=request_id,
             reason=reason,
         )
+        # NODE-ADDR Chunk C + F: apply the chain's authored properties (per-drum
+        # choke/out_note + per-chain mixer mute/solo/volume/pan). Passed
+        # explicitly (None when the snapshot omitted them) so a re-replay of a
+        # snapshot that DROPPED a prop clears the stale DB value — replay is
+        # idempotent and the snapshot is the source of truth.
+        M.set_chain_properties(
+            conn,
+            chain_id=nested_chain_id,
+            choke_group=chain.get("choke_group"),
+            out_note=chain.get("out_note"),
+            mute=chain.get("mute"),
+            solo=chain.get("solo"),
+            volume=chain.get("volume"),
+            pan=chain.get("pan"),
+            actor=actor,
+            request_id=request_id,
+            reason=reason,
+        )
         _replay_devices(
             conn,
             chain_id=nested_chain_id,
@@ -394,10 +444,11 @@ def replay_capture(
     threading still distinguishes pulled state from build-owned state for
     tombstone-time semantics.
 
-    Notes/clips/devices in the snapshot are NOT replayed via this function
-    — chunk 3 covers only the mix layout. Score-half (tempo/time-signature/
-    sections/cue points) is also not populated by replay; build.py authors
-    those alongside the captured mix.
+    The mix layout IS replayed: tracks/returns/sends/mixer AND the full device
+    tree — top-level devices, nested rack chains (`_replay_rack_chains`, depth-N),
+    device parameters, and per-DrumChain props (choke_group/out_note). Notes/clips
+    and the score-half (tempo/time-signature/sections/cue points) are NOT populated
+    by replay — build.py authors those alongside the captured mix.
 
     SNP-8R4K chunk 2 — build-time migration trigger: if the snapshot predates
     the clean-at-rest contract (unstamped/old version, or still carrying
@@ -623,9 +674,10 @@ def replay_capture(
 # ---------------------------------------------------------------------------
 # Capture-plan (Ableton -> snapshot dict)
 # ---------------------------------------------------------------------------
-# The actual live capture is agent-orchestrated — Python can't call MCP tools
-# directly. `compile_snapshot` assembles the JSON dict from MCP probe results
-# the agent has gathered; `capture_plan` documents the probe sequence.
+# `assemble_snapshot_via_probes` (above) is the deterministic in-code capture;
+# `capture_plan` documents the same probe sequence for a hand-driven / first
+# capture. `compile_snapshot` assembles the JSON dict from already-gathered MCP
+# probe results (used by both the in-code walker and any manual assembly).
 
 
 def capture_plan() -> list[dict[str, str]]:
@@ -662,8 +714,8 @@ def capture_plan() -> list[dict[str, str]]:
          "purpose": "per-device: dialed parameter map "
                     "(name -> {value, normalized}) — loop over each device"},
         {"tool": "ableton_device(action='get_device_chains')",
-         "purpose": "per-rack-device: one level of nested chains + their "
-                    "devices (W7-B). Emit for every device whose probed "
+         "purpose": "per-rack-device: the FULL nested chain tree + their "
+                    "devices. Emit for every device whose probed "
                     f"`class_display_name` is in {sorted(RACK_CLASS_NAMES)} "
                     "(Arc 4 / D4 — was `class_name` in {DrumGroupDevice, "
                     "InstrumentGroupDevice, AudioEffectGroupDevice} pre-D4; "
@@ -672,9 +724,12 @@ def capture_plan() -> list[dict[str, str]]:
                     "the result as the device's `chains` field on the "
                     "snapshot. DO NOT emit a `_note` placeholder ('Rack — "
                     "internal chain instruments not captured', etc.) on "
-                    "rack devices any more — the capture path now walks "
-                    "one level. Recursively nested racks (rack-in-rack) "
-                    "remain out of scope; replay raises on encounter."},
+                    "rack devices any more — `get_device_chains` returns the "
+                    "whole nested tree in ONE call (depth-N) and replay "
+                    "RECURSES into rack-in-rack (NODE-ADDR Chunk B lifted the "
+                    "former W7-B one-level cap; replay no longer raises). For "
+                    "nested racks prefer the deterministic `capture execute`, "
+                    "which walks the tree in code."},
         {"tool": "ableton_device(action='pad_info')",
          "purpose": "per-Drum-Rack: pad layout (midi_note + chain_name per "
                     "non-empty pad). M1-C. Emit ONLY for devices whose "
@@ -770,6 +825,413 @@ def _exclude_analyzer_from_parent(parent: dict[str, Any]) -> dict[str, Any]:
         for rank, d in enumerate(survivors, start=1)
     ]
     return {**parent, "devices": renumbered}
+
+
+# ---------------------------------------------------------------------------
+# Deterministic capture (Live -> snapshot dict, in code) — NODE-ADDR Chunk B
+# ---------------------------------------------------------------------------
+# `assemble_snapshot_via_probes` walks the live set IN CODE over the bridge that
+# push/pull already use, replacing the agent-orchestrated `capture_plan` recipe
+# (the agent ran the probes by hand and assembled the dict). It is the read-side
+# acquisition the params-durability gap was missing: top-level AND nested device
+# parameters are probed at every depth via NodeAddr `path` (Chunk A froze the
+# address; this consumes it), so a depth-2 dialed param survives `/song-snapshot`
+# without saving the .als. The transport is injected as a high-level `probe`
+# callable so this engine module stays free of any `hallucinote_mcp` import
+# (dependency direction is MCP→engine; see analyzer_identity) and so tests drive
+# it with a fake — `tools/capture_cli.py` builds the real `probe` from
+# `client.send`.
+
+# OQ5 default-filter tolerance: a param within this of its intrinsic
+# `default_value` is treated as "at default" and dropped from `params_dialed`
+# (it is not dialed). Mirrors the pull diff's _FLOAT_EPS (~0.1% of full scale).
+_CAPTURE_DEFAULT_EPS = 1e-3
+
+
+def _format_signature(sig: Any) -> str | None:
+    """Render the probe's ``{numerator, denominator}`` signature as the
+    snapshot's ``"n/d"`` string (informational field; the score chunk's
+    time_signature_map owns the authoritative meter). Returns None when the
+    probe didn't carry a usable signature."""
+    if isinstance(sig, str):
+        return sig
+    if isinstance(sig, dict):
+        num = sig.get("numerator")
+        den = sig.get("denominator")
+        if num is not None and den is not None:
+            return f"{int(num)}/{int(den)}"
+    return None
+
+
+def _snapshot_param_entry(p: dict[str, Any]) -> dict[str, Any] | None:
+    """Translate one ``get_parameters`` probe entry into a ``params_dialed``
+    entry, applying the OQ5 default-value filter. Returns ``None`` for a param
+    sitting at its intrinsic default (it is not *dialed* — don't store it).
+
+    The default filter is what lets capture record the live set wholesale yet
+    persist only the authored deltas:
+      * ``value`` within ``_CAPTURE_DEFAULT_EPS`` of ``default_value`` -> drop.
+      * ``default_value`` ABSENT (Live raises on some quantized params — the
+        handler omits it, design §1b fallback) -> ALWAYS capture (can't prove
+        it's at default, so keep it; the always-capture minority).
+
+    Shape matches what `_replay_devices` consumes: ``value`` is the DISPLAY
+    string (replay stores ``value_display = str(value)``) and ``normalized`` is
+    the [0, 1] form (omitted for enum/constant-range params, where there is no
+    continuous form — replay then stores ``value_normalized = NULL``). Computed
+    via the single-source `normalize_param_value`, so a captured-then-replayed
+    param lands the same DB row a pull would write.
+    """
+    raw = p.get("value")
+    if not isinstance(raw, (int, float)) or isinstance(raw, bool):
+        return None  # non-numeric / missing value — nothing dialable to store
+    default = p.get("default_value")
+    if isinstance(default, (int, float)) and not isinstance(default, bool):
+        if abs(float(raw) - float(default)) <= _CAPTURE_DEFAULT_EPS:
+            return None  # at intrinsic default — not dialed
+    is_enum = bool(p.get("is_enum", False))
+    min_val = float(p.get("min", 0.0))
+    max_val = float(p.get("max", 1.0))
+    normalized = normalize_param_value(float(raw), min_val, max_val, is_enum)
+    value_display = p.get("value_display")
+    if not isinstance(value_display, str):
+        # Probe omitted a display string (rare — a param with no str_for_value).
+        # Store EMPTY, never str(raw): a bare number pushed as a *display* value
+        # mis-dials a continuous param (its curve is inverted by the live
+        # setter). Empty display makes push fall through to the normalized value
+        # instead — exactly what the pull apply path does, so capture and pull
+        # land the same DB row.
+        value_display = ""
+    entry: dict[str, Any] = {"value": value_display}
+    if normalized is not None:
+        entry["normalized"] = normalized
+    if is_enum:
+        items = p.get("value_items")
+        if isinstance(items, (list, tuple)):
+            entry["value_items"] = [str(i) for i in items]
+    return entry
+
+
+def _params_dialed_via_probe(
+    probe, *, node: dict[str, Any],
+) -> dict[str, Any]:
+    """Probe one device's parameters (``detail='full'`` — the filter + the
+    normalized math need min/max/is_enum) and assemble the filtered
+    ``params_dialed`` map keyed by parameter name."""
+    result = probe("ableton_device", "get_parameters", node=node, detail="full")
+    out: dict[str, Any] = {}
+    for p in result.get("parameters") or []:
+        if not isinstance(p, dict):
+            continue
+        name = p.get("name")
+        if not isinstance(name, str) or not name:
+            continue
+        entry = _snapshot_param_entry(p)
+        if entry is not None:
+            out[name] = entry
+    return out
+
+
+def _parent_node(parent_kind: str, parent_index: int | None) -> dict[str, Any]:
+    """The NodeAddr ``parent`` block for a capture target (master is a
+    singleton — no index)."""
+    parent: dict[str, Any] = {"kind": parent_kind}
+    if parent_kind != "master":
+        parent["index"] = int(parent_index)
+    return parent
+
+
+def _parent_flat_args(parent_kind: str, parent_index: int | None) -> dict[str, Any]:
+    """Flat addressing args for the not-yet-node-migrated probes
+    (``ableton_device(action='list'|'get_device_chains'|'pad_info')``)."""
+    if parent_kind == "track":
+        return {"track_index": int(parent_index)}
+    if parent_kind == "return":
+        return {"return_index": int(parent_index)}
+    return {"master": True}
+
+
+def _chain_mixer_nondefault(
+    chain_entry: dict[str, Any], key: str,
+) -> float | None:
+    """Non-default filter for a chain mixer float (volume / pan) — NODE-ADDR
+    Chunk F. Returns the value only when it differs from the chain's intrinsic
+    ``<key>_default`` (within ``_CAPTURE_DEFAULT_EPS``, the same tolerance the
+    Chunk B param filter uses), else ``None``. With no default available (the
+    rare param that raises on ``default_value``) it returns ``None`` — mixer
+    state must not over-capture (a stored unity-volume on every chain is bloat),
+    so "can't prove non-default" errs toward NOT capturing here, the opposite of
+    the always-capture param fallback."""
+    val = chain_entry.get(key)
+    if not isinstance(val, (int, float)) or isinstance(val, bool):
+        return None
+    default = chain_entry.get(f"{key}_default")
+    if not isinstance(default, (int, float)) or isinstance(default, bool):
+        return None
+    if abs(float(val) - float(default)) <= _CAPTURE_DEFAULT_EPS:
+        return None
+    return float(val)
+
+
+def chain_authored_props(
+    chain_entry: dict[str, Any],
+) -> dict[str, int | float | None]:
+    """Normalize a ``get_device_chains`` chain entry's authored properties to
+    their AUTHORED form (NODE-ADDR Chunk C + F) — the single non-default filter
+    shared by the snapshot-assemble (capture) and pull-diff paths.
+
+    Chunk C — ``choke_group`` / ``out_note`` exist on a ``DrumChain`` only; a
+    plain instrument-rack ``Chain`` has neither (both come back ``None``).
+    Defaults filtered to ``None``: ``choke_group`` 0 ("no choke group") and an
+    ``out_note`` equal to ``in_note`` (no transpose).
+
+    Chunk F — per-chain mixer state on EVERY chain: ``mute`` / ``solo`` (stored
+    1 only when set; unmuted/unsoloed is the default → ``None``) and ``volume`` /
+    ``pan`` (stored only when off the chain's intrinsic param default, via
+    :func:`_chain_mixer_nondefault`).
+
+    Returns all six keys always present so a pull diff can clear any one back to
+    its default. Mirrors the Chunk B param default-filter throughout.
+    """
+    choke = chain_entry.get("choke_group")
+    out_note = chain_entry.get("out_note")
+    in_note = chain_entry.get("in_note")
+    choke_val = (
+        int(choke)
+        if isinstance(choke, int) and not isinstance(choke, bool) and choke != 0
+        else None
+    )
+    out_val = (
+        int(out_note)
+        if isinstance(out_note, int) and not isinstance(out_note, bool)
+        and out_note != in_note
+        else None
+    )
+    return {
+        "choke_group": choke_val,
+        "out_note": out_val,
+        "mute": 1 if chain_entry.get("is_muted") else None,
+        "solo": 1 if chain_entry.get("is_soloed") else None,
+        "volume": _chain_mixer_nondefault(chain_entry, "volume"),
+        "pan": _chain_mixer_nondefault(chain_entry, "pan"),
+    }
+
+
+def _capture_nested_chains(
+    probe, *, parent_kind: str, parent_index: int | None,
+    top_device_index: int, chains_tree: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Walk a `get_device_chains` recursive tree (identity-only) and assemble
+    the snapshot's ``chains`` array, probing ``get_parameters`` for every nested
+    device at its NodeAddr ``path`` (the tree's ``device_path``, relative to the
+    top-level rack). A nested device that is itself a rack carries its own
+    ``chains`` in the tree — recurse, attaching its params too.
+    """
+    out: list[dict[str, Any]] = []
+    for chain in chains_tree or []:
+        ci = chain.get("chain_index")
+        if not isinstance(ci, int) or ci < 1:
+            continue
+        devices_out: list[dict[str, Any]] = []
+        for nd in chain.get("devices") or []:
+            if is_analyzer_device(nd):
+                continue
+            entry = {
+                "index": nd.get("position"),
+                "class": nd.get("class_display_name") or nd.get("class_name"),
+                "class_name": nd.get("class_name"),
+                "name": nd.get("name", ""),
+            }
+            node = {
+                "parent": _parent_node(parent_kind, parent_index),
+                "terminal": "device",
+                "device_index": top_device_index,
+                "path": nd.get("device_path") or [],
+            }
+            params = _params_dialed_via_probe(probe, node=node)
+            if params:
+                entry["params_dialed"] = params
+            if nd.get("is_rack") and nd.get("chains"):
+                entry["chains"] = _capture_nested_chains(
+                    probe, parent_kind=parent_kind, parent_index=parent_index,
+                    top_device_index=top_device_index, chains_tree=nd["chains"],
+                )
+            devices_out.append(entry)
+        chain_out: dict[str, Any] = {
+            "chain_index": ci,
+            "name": chain.get("name", ""),
+            "devices": devices_out,
+        }
+        # NODE-ADDR Chunk C: a DrumChain's authored per-drum properties, stored
+        # non-default-filtered (absent on plain chains and at the Live default).
+        for prop, val in chain_authored_props(chain).items():
+            if val is not None:
+                chain_out[prop] = val
+        out.append(chain_out)
+    return out
+
+
+def _capture_devices_for_parent(
+    probe, *, parent_kind: str, parent_index: int | None = None,
+) -> list[dict[str, Any]]:
+    """Capture the full device chain (top-level + nested, to any depth) for one
+    parent (track / return / master), in the snapshot ``devices`` shape.
+
+    The analyzer is skipped here so it is never probed; `compile_snapshot`
+    strips it again defensively (R3) and densifies positions.
+    """
+    listing = probe("ableton_device", "list", **_parent_flat_args(parent_kind, parent_index))
+    out: list[dict[str, Any]] = []
+    for d in listing.get("devices") or []:
+        if is_analyzer_device(d):
+            continue
+        di = d.get("device_index")
+        cls_display = d.get("class_display_name") or d.get("class_name")
+        entry: dict[str, Any] = {
+            "index": di,
+            "class": cls_display,
+            "class_name": d.get("class_name"),
+            "name": d.get("name", ""),
+        }
+        node = {
+            "parent": _parent_node(parent_kind, parent_index),
+            "terminal": "device",
+            "device_index": di,
+        }
+        params = _params_dialed_via_probe(probe, node=node)
+        if params:
+            entry["params_dialed"] = params
+        if cls_display in RACK_CLASS_NAMES:
+            chains_resp = probe(
+                "ableton_device", "get_device_chains",
+                detail="full", device_index=di,
+                **_parent_flat_args(parent_kind, parent_index),
+            )
+            entry["chains"] = _capture_nested_chains(
+                probe, parent_kind=parent_kind, parent_index=parent_index,
+                top_device_index=di, chains_tree=chains_resp.get("chains") or [],
+            )
+        if cls_display == "Drum Rack":
+            pads_resp = probe(
+                "ableton_device", "pad_info",
+                device_index=di, **_parent_flat_args(parent_kind, parent_index),
+            )
+            pads = [
+                {"chain_name": str(p.get("chain_name") or p.get("name") or ""),
+                 "midi_note": int(p["note"] if "note" in p else p["midi_note"])}
+                for p in (pads_resp.get("pads") or [])
+                if (p.get("note") is not None or p.get("midi_note") is not None)
+            ]
+            if pads:
+                entry["drum_pads"] = pads
+        out.append(entry)
+    return out
+
+
+def _capture_sends(probe, *, track_index: int) -> dict[str, Any]:
+    """Probe a track's sends and reshape the probe's ``[{return_name, value}]``
+    list into the snapshot's ``{return_name: level}`` map (replay strips the
+    ``<letter>-`` slot prefix on lookup, so we store the name as Live reports it).
+    Sends whose return name doesn't resolve are skipped (can't be keyed)."""
+    resp = probe("ableton_track", "get_sends", track_index=track_index)
+    sends: dict[str, Any] = {}
+    for s in resp.get("sends") or []:
+        name = s.get("return_name")
+        if not isinstance(name, str) or not name:
+            continue
+        sends[name] = s.get("value")
+    return sends
+
+
+def assemble_snapshot_via_probes(
+    probe, *, old_snapshot: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Deterministically build a full ``captured_session.json`` snapshot by
+    walking the live set in code — the in-code successor to the
+    agent-orchestrated `capture_plan` recipe (NODE-ADDR Chunk B).
+
+    ``probe(tool, action, **params) -> result_dict`` is the injected transport:
+    it issues one MCP call and returns the handler's result dict, raising on a
+    tool-side failure (a partial snapshot would silently drop authored state, so
+    capture aborts loudly rather than compiling half a set). `tools/capture_cli`
+    builds the real `probe` over `hallucinote_mcp.client.send`; tests pass a fake.
+
+    Captures the same surface `capture_plan` documented — session globals, the
+    master chain, returns (+ mixer + devices), tracks (+ mixer + sends +
+    devices) — but reaches device parameters at EVERY depth via NodeAddr `path`,
+    closing the read-side acquisition gap. `old_snapshot`, when given, carries
+    `browser_path` forward for devices whose identity still matches (capture
+    probes don't surface it), exactly as `/song-snapshot` did by hand.
+    """
+    info = probe("ableton_session", "info")
+    master_mixer = info.get("master")
+    master_block: dict[str, Any] | None = None
+    if master_mixer:
+        master_block = {
+            "volume": master_mixer.get("volume"),
+            "panning": master_mixer.get("panning"),
+        }
+        master_devices = _capture_devices_for_parent(probe, parent_kind="master")
+        if master_devices:
+            master_block["devices"] = master_devices
+
+    session_info = {
+        "tempo": info.get("tempo"),
+        "signature": _format_signature(info.get("signature")),
+        "master": master_block,
+    }
+
+    returns_out: list[dict[str, Any]] = []
+    listing = probe("ableton_return", "list")
+    for r in listing.get("returns") or []:
+        ri = r.get("return_index")
+        rinfo = probe("ableton_return", "info", return_index=ri)
+        entry: dict[str, Any] = {
+            "index": ri,
+            "name": rinfo.get("name", r.get("name")),
+            "volume": rinfo.get("volume"),
+            "panning": rinfo.get("panning"),
+            "color": rinfo.get("color", r.get("color")),
+        }
+        devices = _capture_devices_for_parent(
+            probe, parent_kind="return", parent_index=ri,
+        )
+        if devices:
+            entry["devices"] = devices
+        returns_out.append(entry)
+
+    tracks_out: list[dict[str, Any]] = []
+    track_count = int(info.get("track_count") or 0)
+    for ti in range(1, track_count + 1):
+        tinfo = probe("ableton_track", "info", track_index=ti)
+        entry = {
+            "index": ti,
+            "name": tinfo.get("name"),
+            "type": tinfo.get("kind", "midi"),
+            "volume": tinfo.get("volume"),
+            "panning": tinfo.get("panning"),
+        }
+        for flag in ("mute", "solo", "arm"):
+            if flag in tinfo:
+                entry[flag] = tinfo[flag]
+        if tinfo.get("color") is not None:
+            entry["color"] = tinfo["color"]
+        sends = _capture_sends(probe, track_index=ti)
+        if sends:
+            entry["sends"] = sends
+        devices = _capture_devices_for_parent(
+            probe, parent_kind="track", parent_index=ti,
+        )
+        if devices:
+            entry["devices"] = devices
+        tracks_out.append(entry)
+
+    snapshot = compile_snapshot(
+        session_info=session_info, returns=returns_out, tracks=tracks_out,
+    )
+    if old_snapshot is not None:
+        preserve_browser_paths(old_snapshot, snapshot)
+    return snapshot
 
 
 # ---------------------------------------------------------------------------

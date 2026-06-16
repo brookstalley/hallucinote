@@ -29,17 +29,16 @@ What you're **not** sharing: the `<slug> Project/` directory (Ableton's actual `
 
 ## The round-trip, step by step
 
-### 1. Clone the songs repo + install Hallucinote
+### 1. Clone the songs repo + install the plugin
 
 The composer commits and pushes their **songs repo**. The collaborator clones it
-and installs the engine + plugin:
+and installs the plugin — which brings the skills, the bridge, **and** the engine
+(no separate engine install):
 
 ```bash
-# prerequisite: install uv — the plugin launches the bundled MCP server with it
-#               (see README "Requirements")
+# prerequisite: install uv — the plugin launches its bundled environment with it
+#               (see README "Install")
 git clone <songs-repo-url> && cd <songs-repo>
-# install the engine (editable from a framework checkout — see README
-# "Clone and install"; not on PyPI yet)
 # then in Claude Code:  /plugin marketplace add brookstalley/hallucinote
 #                       /plugin install hallucinote@hallucinote
 ```

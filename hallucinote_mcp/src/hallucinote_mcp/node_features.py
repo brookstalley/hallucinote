@@ -5,17 +5,27 @@ Addressing is uniform (one ``NodeAddr`` reaches every node); **operations are
 not**. Live's feature × node-kind matrix is sparse and ragged, so every feature
 operation must capability-probe the resolved node and answer honestly. This
 module is that matrix, expressed as a **typed data structure** (Critic note a)
-so the three consumers below all derive from one place and cannot drift:
+so everything that speaks about a cell derives from one ``Cell``, never a
+re-typed copy:
 
   1. the published resource ``ableton://reference/node-feature-matrix``
      (:func:`matrix_payload`) — read ahead, at no turn cost, so the agent never
-     attempts an impossible op blind;
-  2. the generic stub responder (:func:`cell_response`) — a deferred feature is
-     *one table row*, not a handler; attempting one returns a typed response;
-  3. teaching errors (:func:`teaching_error`) — every capability rejection names
-     the node kind, the feature, and points back at the matrix.
+     attempts an impossible op blind. **This is the live consumer today**, and it
+     renders each row via (2).
+  2. the generic stub responder (:func:`cell_response`) — the typed body for one
+     cell (a deferred feature is *one table row*, not a handler). The resource is
+     built from it, and it is ready for a future runtime stub to return directly.
+  3. teaching errors (:func:`teaching_error`) — single-source rejection text that
+     names the node kind, the feature, and the verdict and points back at the
+     matrix. Provided + tested for when a deferred feature grows a runtime handler.
 
-A ``cross-consumer consistency test`` asserts all three resolve from the same
+What (3) does **not** cover: a rejection from a *runtime probe of a SUPPORTED
+cell* — e.g. ``set_chain_property`` resolving a plain Chain where
+``choke_out_note`` needs a DrumChain — is not a matrix-cell verdict (the cell is
+``SUPPORTED``), so that handler writes its own message and links the matrix URI
+(:data:`MATRIX_RESOURCE_URI`, single-sourced) directly.
+
+A ``cross-consumer consistency test`` asserts (1)–(3) resolve from the same
 ``Cell`` — "can't drift" is enforced by a test, not asserted in prose.
 
 **Tri-state, because a binary "supported / not" is a lie** (§2b). Every
@@ -148,17 +158,16 @@ MATRIX: tuple[Feature, ...] = (
             Cell("master", FeatureStatus.SUPPORTED),
             Cell(
                 "chain",
-                FeatureStatus.NOT_IMPLEMENTED,
-                reason=(
-                    "Chain mixer-state authoring isn't built — chain "
-                    "volume/pan/sends/mute/solo are read-only today."
-                ),
+                FeatureStatus.SUPPORTED,
                 live_evidence=(
-                    "A chain exposes a ChainMixerDevice (volume/panning/sends) "
-                    "and settable mute/solo (probe 2026-06-15)."
+                    "Chain mute/solo are settable bools and the "
+                    "ChainMixerDevice exposes volume/panning DeviceParameters "
+                    "(probe 2026-06-15). NODE-ADDR Chunk F authors "
+                    "volume/pan/mute/solo via the `chain` terminal; the handler "
+                    "re-probes mixer_device. Chain SENDS are a separate cell "
+                    "(`send_levels`/chain) — not part of mixer state."
                 ),
-                workaround=_SNAPSHOT_WORKAROUND,
-                request_tag="NODE-ADDR Chunk F",
+                determination="probe",
             ),
         ),
     ),
@@ -169,6 +178,22 @@ MATRIX: tuple[Feature, ...] = (
         cells=(
             Cell("track", FeatureStatus.SUPPORTED),
             Cell("return", FeatureStatus.SUPPORTED),
+            Cell(
+                "chain",
+                FeatureStatus.NOT_IMPLEMENTED,
+                reason=(
+                    "Per-chain sends (into a rack's own return chains) aren't "
+                    "built — Chunk F authors chain volume/pan/mute/solo but not "
+                    "sends."
+                ),
+                live_evidence=(
+                    "ChainMixerDevice.sends is a DeviceParameter vector, empty "
+                    "unless the rack has its own return chains — uncommon "
+                    "(probe 2026-06-15)."
+                ),
+                workaround=_SNAPSHOT_WORKAROUND,
+                request_tag="NODE-ADDR (chain sends, deferred)",
+            ),
         ),
     ),
     Feature(
@@ -302,20 +327,50 @@ MATRIX: tuple[Feature, ...] = (
     ),
     Feature(
         key="macro_values",
-        title="Macro values + names",
-        description="The 8 rack macro values and their custom names.",
+        title="Macro values",
+        description=(
+            "The rack macro knob values — authored as ordinary device "
+            "parameters (a macro IS a DeviceParameter)."
+        ),
         cells=(
             Cell(
                 "device",
-                FeatureStatus.NOT_IMPLEMENTED,
-                reason="Macro value/name authoring isn't built.",
+                FeatureStatus.SUPPORTED,
                 live_evidence=(
-                    "A rack exposes 8 macro DeviceParameters plus name / "
-                    "original_name (probe 2026-06-15)."
+                    "A rack's macros are its first DeviceParameters "
+                    "(parameters[1..8]); set + captured via the "
+                    "`device_parameters` feature — no separate macro-value path "
+                    "(NODE-ADDR Chunk D probe 2026-06-15). Capture keys params "
+                    "by name, so a by-ear macro RENAME (itself unauthorable — "
+                    "see `macro_names`) can decouple a stored value from its "
+                    "knob on rebuild."
                 ),
-                workaround=_SNAPSHOT_WORKAROUND,
-                request_tag="NODE-ADDR Chunk D",
                 determination="probe",
+            ),
+        ),
+    ),
+    Feature(
+        key="macro_names",
+        title="Macro custom names",
+        description="A macro knob's custom (renamed) label.",
+        cells=(
+            Cell(
+                "device",
+                FeatureStatus.UNSUPPORTED_IN_LIVE,
+                reason=(
+                    "A macro's custom name cannot be authored — "
+                    "DeviceParameter.name is read-only in Live's LOM."
+                ),
+                live_evidence=(
+                    "Setting a macro DeviceParameter.name raises AttributeError "
+                    "'property of DeviceParameter object has no setter' "
+                    "(NODE-ADDR Chunk D probe 2026-06-15, Live 12.4). A custom "
+                    "name rides the rack preset, not the API."
+                ),
+                workaround=(
+                    "Rename the macro in the rack preset / Live's UI; the name "
+                    "travels with the preset, not the DB."
+                ),
             ),
         ),
     ),
@@ -347,14 +402,21 @@ MATRIX: tuple[Feature, ...] = (
             Cell(
                 "device",
                 FeatureStatus.NOT_IMPLEMENTED,
-                reason="Macro variation authoring isn't built.",
+                reason=(
+                    "Macro variation authoring is deferred (NODE-ADDR Chunk D): "
+                    "a recalled variation's macro values are already durable as "
+                    "device parameters, and a stored selected_variation_index + "
+                    "recall on push would conflict with that captured-value "
+                    "truth — so the API exists but isn't wired."
+                ),
                 live_evidence=(
                     "variation_count / store_variation / "
-                    "recall_selected_variation / selected_variation_index are "
-                    "present on racks (probe 2026-06-15)."
+                    "recall_selected_variation are present, and "
+                    "selected_variation_index is settable to 0..count-1 "
+                    "(rejects -1) (probe 2026-06-15)."
                 ),
                 workaround="Store/recall variations in Live's UI.",
-                request_tag="NODE-ADDR Chunk D",
+                request_tag="NODE-ADDR (macro variations, deferred)",
                 determination="probe",
             ),
         ),
@@ -366,37 +428,45 @@ MATRIX: tuple[Feature, ...] = (
         cells=(
             Cell(
                 "chain",
-                FeatureStatus.NOT_IMPLEMENTED,
-                reason="Chain zone authoring isn't built.",
-                live_evidence=(
-                    "Selector/zone-capable rack chains expose key/velocity/"
-                    "chain-select ranges; the exact surface is probed in "
-                    "NODE-ADDR Chunk E."
+                FeatureStatus.UNSUPPORTED_IN_LIVE,
+                reason=(
+                    "Live's LOM exposes no per-chain key / velocity / "
+                    "chain-select zone surface — the rack Zone editor is "
+                    "UI-only, so zones can be neither read nor authored via "
+                    "the API."
                 ),
-                workaround=_SNAPSHOT_WORKAROUND,
-                request_tag="NODE-ADDR Chunk E",
-                determination="probe",
+                live_evidence=(
+                    "A Chain — including on a chain-select/selector rack — has "
+                    "no key_range / velocity_range / chain_select_range "
+                    "attribute; each raises AttributeError (NODE-ADDR Chunk E "
+                    "probe 2026-06-15, Live 12.4)."
+                ),
+                workaround=(
+                    "Bake zones into the rack preset / set them in Live's UI; "
+                    "they persist in the .als but stay invisible to the API "
+                    "(so /song-snapshot cannot capture them either)."
+                ),
             ),
         ),
     ),
     Feature(
         key="choke_out_note",
-        title="Choke group / out_note / chain mute-solo (drum chains)",
+        title="Choke group / out_note (drum chains)",
         description=(
-            "Per-DrumChain choke group, MIDI out_note (transpose) remap, and "
-            "mute/solo."
+            "Per-DrumChain choke group and MIDI out_note (transpose) remap, "
+            "authored via the `chain` terminal. (Chain mute/solo WRITE is "
+            "mixer-state — see the 'mixer_state' chain cell.)"
         ),
         cells=(
             Cell(
                 "chain",
-                FeatureStatus.NOT_IMPLEMENTED,
-                reason="Per-drum DrumChain authoring isn't built.",
+                FeatureStatus.SUPPORTED,
                 live_evidence=(
-                    "choke_group / out_note / mute / solo live on the DrumChain "
-                    "(probe 2026-06-15 — NOT on the DrumPad)."
+                    "choke_group / out_note live on a DrumChain (probe "
+                    "2026-06-15 — NOT on the DrumPad, NOT on a plain "
+                    "instrument-rack Chain). NODE-ADDR Chunk C; the handler "
+                    "re-probes, so a non-DrumChain gets a teaching error."
                 ),
-                workaround=_SNAPSHOT_WORKAROUND,
-                request_tag="NODE-ADDR Chunk C",
                 determination="probe",
             ),
         ),

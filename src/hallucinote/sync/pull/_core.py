@@ -123,28 +123,6 @@ def _floats_differ(new: Any, existing: Any) -> bool:
     return abs(float(new) - float(existing)) > _FLOAT_EPS
 
 
-def _normalize_param_value(
-    value: float, min_val: float, max_val: float, is_enum: bool,
-) -> float | None:
-    """Map Live's raw ``value`` into the DB's [0, 1] form.
-
-    Returns ``None`` for enum/quantized params (schema CHECK allows
-    NULL there — there's no continuous form). Also returns ``None``
-    when ``min == max`` (constant-range params; the normalized form
-    is undefined). Otherwise returns ``(value - min) / (max - min)``
-    clamped into [0, 1] — Live's reported value can be marginally
-    outside the documented range due to float, but the schema CHECK
-    is strict on [0, 1] so we clamp at the boundary.
-    """
-    if is_enum:
-        return None
-    rng = max_val - min_val
-    if abs(rng) < 1e-9:
-        return None
-    norm = (value - min_val) / rng
-    return max(0.0, min(1.0, norm))
-
-
 def _normalized_values_match(
     new: float | None, existing: Any,
 ) -> bool:
@@ -202,7 +180,6 @@ __all__ = [
     "PullPlan",
     "ApplyResult",
     "_floats_differ",
-    "_normalize_param_value",
     "_normalized_values_match",
     "_bool_db",
     "_ints_differ",

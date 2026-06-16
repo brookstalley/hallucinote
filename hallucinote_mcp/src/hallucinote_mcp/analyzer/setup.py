@@ -60,6 +60,29 @@ from ..dispatcher import LiveContext
 from ..handlers import device as device_handlers
 
 
+class AnalyzerNotInstalledError(RuntimeError):
+    """The HallucinoteAnalyzer can't be loaded because it isn't installed.
+
+    Raised at the analyzer-load boundary so render / mix analysis fail with a
+    teaching message naming the Max for Live requirement and what still works,
+    instead of the generic ``preset_query found no loadable matches`` error
+    (ONBOARD-M4L B1). Keyed on the missing device, not on Live-edition
+    inference (decision D1: ask, don't infer)."""
+
+
+# The teaching message for a missing analyzer. Names the Max for Live / Suite
+# requirement, what render+/mix-review need it for, what works without it, and
+# the install path — without inferring the user's Live edition (D1).
+ANALYZER_MISSING_MESSAGE = (
+    "The HallucinoteAnalyzer isn't installed, so rendering and mix analysis "
+    "(which /mix-review uses) can't run. It's a Max for Live device, so it "
+    "needs Ableton Live Suite — or Live Standard/Intro with the Max for Live "
+    "add-on. If you have Max for Live, run /hallucinote:ableton-mcp-install to "
+    "install the analyzer, then fully quit and reopen Live. Everything else "
+    "works without it: compose, push, pull, and /compose-review."
+)
+
+
 ANALYZER_DEVICE_NAME = "HallucinoteAnalyzer"
 """The M4L device file (without extension). Live surfaces this as
 ``device.name`` for freshly-loaded M4L devices; detection pairs it
@@ -587,17 +610,24 @@ def _load_analyzer(
     # Top-level load onto the surface's main chain → a node-itself terminal
     # (surface_kind is track/return/master).
     load_node = device_handlers.build_node_addr(track_address, terminal=surface_kind)
-    result = context.run_on_main(lambda: device_handlers.load_handler(
-        context,
-        node=load_node,
-        kind=ANALYZER_DEVICE_NAME,  # required by signature; preset_query takes precedence
-        preset_query={
-            "root": "user_library",
-            "pattern": ANALYZER_DEVICE_NAME,
-            "path_prefix": list(ANALYZER_BROWSER_PATH_PREFIX),
-            "mode": "substring",
-        },
-    ))
+    try:
+        result = context.run_on_main(lambda: device_handlers.load_handler(
+            context,
+            node=load_node,
+            kind=ANALYZER_DEVICE_NAME,  # required by signature; preset_query takes precedence
+            preset_query={
+                "root": "user_library",
+                "pattern": ANALYZER_DEVICE_NAME,
+                "path_prefix": list(ANALYZER_BROWSER_PATH_PREFIX),
+                "mode": "substring",
+            },
+        ))
+    except device_handlers.PresetQueryNoMatchError as exc:
+        # The .amxd isn't in the User Library — either no Max for Live, or a
+        # Suite user who skipped /ableton-mcp-install. Either way the generic
+        # preset error is unhelpful; teach instead (ONBOARD-M4L B1). Keyed on
+        # the missing device, not on edition inference (D1).
+        raise AnalyzerNotInstalledError(ANALYZER_MISSING_MESSAGE) from exc
     device_index = int(result.get("device_index", 0))
     if device_index < 1:
         raise RuntimeError(

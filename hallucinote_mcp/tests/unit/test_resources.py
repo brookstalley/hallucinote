@@ -285,6 +285,19 @@ def test_server_info_reports_running_server_identity():
     assert root.is_dir()
     assert (root / "__init__.py").is_file()
     assert root.name == "hallucinote_mcp"
+    # python: THIS server's interpreter — the agent runs the engine as
+    # `"<python>" -m hallucinote.cli …` so it executes in the SAME prewarmed env
+    # (PLUGIN-SELF-CONTAINED). Must be a real executable path.
+    assert "python" in payload
+    assert payload["python"]
+    assert Path(payload["python"]).name.lower().startswith("python")
+    # project_root: the uv project dir (holds uv.lock); identity only. Present
+    # whenever a uv.lock ancestor exists (the dev repo + a plugin install both have
+    # one); None only on a plain editable install with no lock.
+    assert "project_root" in payload
+    if payload["project_root"] is not None:
+        proj = Path(payload["project_root"])
+        assert (proj / "uv.lock").is_file()
 
 
 def test_primer_resource_count_matches_actual_registry():

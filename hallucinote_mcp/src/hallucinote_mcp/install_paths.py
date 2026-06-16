@@ -59,6 +59,24 @@ def package_root() -> pathlib.Path:
     return init_path.parent
 
 
+def project_root() -> pathlib.Path | None:
+    """The uv **project root** — the nearest ancestor of the package that holds a
+    ``uv.lock`` (the dir the agent passes to ``uv run --project <X>``).
+
+    In a plugin install this is ``${CLAUDE_PLUGIN_ROOT}`` (the bundled repo). The
+    engine and the bridge share that one uv env (workspace ``--all-packages``), so
+    the agent runs the engine as ``uv run --project <project_root> --frozen
+    hallucinote …`` — no separate clone or PyPI install (PLUGIN-SELF-CONTAINED).
+    Returns ``None`` when no ``uv.lock`` ancestor exists (e.g. a plain editable dev
+    install), in which case the caller falls back to the ambient interpreter.
+    """
+    root = package_root()
+    for parent in (root, *root.parents):
+        if (parent / "uv.lock").is_file():
+            return parent
+    return None
+
+
 def remote_script_stub_text() -> str:
     """The tiny ``__init__.py`` Live loads as the Control Surface entry point.
 
@@ -660,6 +678,7 @@ __all__ = [
     "mcp_config_global_path",
     "mcp_config_local_path",
     "package_root",
+    "project_root",
     "remote_script_install_dir",
     "remote_script_stub_text",
     "uv_runtime",

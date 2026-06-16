@@ -36,6 +36,7 @@ from typing import Any, NoReturn
 
 from .. import device_names
 from ..dispatcher import LiveContext
+from ..node_features import MATRIX_RESOURCE_URI
 from ._routing import resolve_routing_write, routing_surface_fields
 from .display_value import canonical_unit_echo, resolve_continuous_write
 
@@ -714,6 +715,16 @@ def _walk_for_name(
     return None, None
 
 
+class PresetQueryNoMatchError(ValueError):
+    """A ``preset_query`` matched no loadable browser item.
+
+    A ``ValueError`` subclass so existing callers that catch ``ValueError``
+    — and ``inventory.find``, which keys on the message phrase — are
+    unaffected. The typed seam lets the analyzer-load path distinguish
+    "device not installed" from other load failures and raise a teaching
+    error (ONBOARD-M4L B1)."""
+
+
 def _resolve_preset_query(
     browser: Any, query: dict[str, Any],
 ) -> tuple[Any, list[str]]:
@@ -807,7 +818,7 @@ def _resolve_preset_query(
     _walk(scope_node, scope_path, _BROWSER_WALK_DEPTH)
 
     if not found_items:
-        raise ValueError(
+        raise PresetQueryNoMatchError(
             f"preset_query found no loadable matches for "
             f"pattern={pattern!r} mode={mode!r} root={root!r} "
             f"path_prefix={path_prefix!r}. Tighten the scope or "
@@ -2227,6 +2238,37 @@ def _describe_chain(
         "is_muted": bool(getattr(chain, "mute", False)),
         "is_soloed": bool(getattr(chain, "solo", False)),
     }
+    # NODE-ADDR Chunk C: a DrumChain carries choke_group / out_note (MIDI
+    # transpose) + in_note (its trigger note); a plain instrument-rack Chain has
+    # none of them. Surfaced for every chain (not gated on detail='full') so a
+    # summary capture reads them; absent keys mark a non-drum chain. in_note is
+    # read-only context (positional) the capture filter uses to decide whether an
+    # out_note is a real transpose vs. the identity default.
+    for prop in ("choke_group", "out_note", "in_note"):
+        val = getattr(chain, prop, None)
+        if isinstance(val, int) and not isinstance(val, bool):
+            chain_entry[prop] = val
+    # NODE-ADDR Chunk F: per-chain mixer state — the ChainMixerDevice volume /
+    # panning values plus their intrinsic defaults. Present on EVERY chain (plain
+    # + drum), so unlike choke/out_note these never gate on chain class. Surfaced
+    # un-gated (not only detail='full', like choke/out_note) so a summary
+    # capture's non-default filter (`chain_authored_props`) can read value +
+    # default directly. mute/solo ride the is_muted/is_soloed bools above.
+    chain_mixer = getattr(chain, "mixer_device", None)
+    if chain_mixer is not None:
+        for attr, key in (("volume", "volume"), ("panning", "pan")):
+            param = getattr(chain_mixer, attr, None)
+            pval = getattr(param, "value", None) if param is not None else None
+            if isinstance(pval, (int, float)) and not isinstance(pval, bool):
+                chain_entry[key] = float(pval)
+                try:
+                    chain_entry[key + "_default"] = float(param.default_value)
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    # Some params raise on default_value (the Chunk B Snap case);
+                    # same guard tuple as the get_parameters default_value read.
+                    # Without a default the filter treats it as default (no
+                    # capture) — mixer state must not over-capture every chain.
+                    pass
     if detail == "full":
         mixer = _mixer_state(chain)
         if mixer is not None:
@@ -2278,6 +2320,133 @@ def get_device_chains_handler(
         "chain_count": len(chains_out),
         "chains": chains_out,
         "parent_kind": kind,
+    }
+    result.update(_parent_address(kind, idx))
+    return result
+
+
+# NODE-ADDR Chunk F: chain mixer field name → the ChainMixerDevice param it
+# writes. `pan` is the wire/DB name; Live calls the param `panning`.
+_CHAIN_MIXER_PARAM: dict[str, str] = {"volume": "volume", "pan": "panning"}
+
+
+def set_chain_property_handler(
+    context: LiveContext,
+    *,
+    node: dict[str, Any],
+    choke_group: int | None = None,
+    out_note: int | None = None,
+    mute: bool | None = None,
+    solo: bool | None = None,
+    volume: float | None = None,
+    pan: float | None = None,
+) -> dict[str, Any]:
+    """Set a chain's authored properties on the chain a ``chain``-terminal
+    NodeAddr resolves to (NODE-ADDR Chunk C + F). Pass at least one; any
+    combination may be set at once.
+
+    Two property families, each capability-probed (never whitelisted) before any
+    write, so a refusal never half-applies:
+
+    - **Per-drum (Chunk C), DrumChain only:** ``choke_group`` (0 = no choke) and
+      ``out_note`` (MIDI transpose; equal to the pad's ``in_note`` = no
+      transpose). A plain instrument/audio-rack ``Chain`` lacks these and gets a
+      teaching error — the runtime ``hasattr`` re-probe IS the matrix's
+      ``determination='probe'`` decision ("is this a DrumChain?").
+    - **Per-chain mixer state (Chunk F), every chain:** ``mute`` / ``solo``
+      (bools, on the Chain itself) and ``volume`` (0..1) / ``pan`` (-1..1),
+      written to the chain's ``ChainMixerDevice`` volume / panning params. These
+      exist on every chain (plain + drum), so they don't gate on chain class —
+      only a chain with no ``mixer_device`` (defensive) is refused.
+    """
+    # Validate every field up front (before resolving the chain) — split by the
+    # two write mechanisms below.
+    direct_ints: dict[str, int] = {}      # setattr on the Chain (DrumChain only)
+    if choke_group is not None:
+        if not isinstance(choke_group, int) or isinstance(choke_group, bool) \
+                or choke_group < 0:
+            raise ValueError(
+                f"choke_group must be a non-negative int, got {choke_group!r}"
+            )
+        direct_ints["choke_group"] = choke_group
+    if out_note is not None:
+        if not isinstance(out_note, int) or isinstance(out_note, bool) \
+                or not (0 <= out_note <= 127):
+            raise ValueError(
+                f"out_note must be a MIDI note 0..127, got {out_note!r}"
+            )
+        direct_ints["out_note"] = out_note
+    direct_bools: dict[str, bool] = {}    # setattr on the Chain (every chain)
+    for flag, fv in (("mute", mute), ("solo", solo)):
+        if fv is not None:
+            if not isinstance(fv, bool):
+                raise ValueError(f"{flag} must be a bool, got {fv!r}")
+            direct_bools[flag] = fv
+    mixer_floats: dict[str, float] = {}   # set .value on the ChainMixerDevice
+    if volume is not None:
+        if not isinstance(volume, (int, float)) or isinstance(volume, bool) \
+                or not (0.0 <= float(volume) <= 1.0):
+            raise ValueError(f"volume must be a float 0.0..1.0, got {volume!r}")
+        mixer_floats["volume"] = float(volume)
+    if pan is not None:
+        if not isinstance(pan, (int, float)) or isinstance(pan, bool) \
+                or not (-1.0 <= float(pan) <= 1.0):
+            raise ValueError(f"pan must be a float -1.0..1.0, got {pan!r}")
+        mixer_floats["pan"] = float(pan)
+    if not (direct_ints or direct_bools or mixer_floats):
+        raise ValueError(
+            "set_chain_property: pass at least one of choke_group / out_note / "
+            "mute / solo / volume / pan"
+        )
+    chain, kind, idx, spec = resolve_node_addr(context, node)
+    if spec["terminal"] != "chain":
+        raise ValueError(
+            "set_chain_property addresses a chain — node.terminal must be "
+            f"'chain' (got {spec['terminal']!r}); a {spec['terminal']!r} "
+            "terminal names a track/return/master/device, not a chain. Use "
+            "device_index (the rack) + chain_index (which chain on it)."
+        )
+    # Capability-probe every requested field BEFORE writing any of them.
+    missing = [p for p in direct_ints if not hasattr(chain, p)]
+    if missing:
+        class_name = type(chain).__name__
+        raise NotImplementedError(
+            f"set_chain_property: chain {getattr(chain, 'name', '?')!r} is a "
+            f"{class_name}, which has no {', '.join(missing)} — choke_group / "
+            "out_note exist on a DrumChain only (a drum-rack pad's chain), not a "
+            f"plain instrument/audio-rack chain. See {MATRIX_RESOURCE_URI}."
+        )
+    missing_bools = [p for p in direct_bools if not hasattr(chain, p)]
+    if missing_bools:
+        raise NotImplementedError(
+            f"set_chain_property: chain {getattr(chain, 'name', '?')!r} "
+            f"({type(chain).__name__}) has no {', '.join(missing_bools)}. "
+            f"See {MATRIX_RESOURCE_URI}."
+        )
+    mixer = getattr(chain, "mixer_device", None)
+    if mixer_floats:
+        missing_mixer = [
+            f for f in mixer_floats
+            if getattr(mixer, _CHAIN_MIXER_PARAM[f], None) is None
+        ]
+        if missing_mixer:
+            raise NotImplementedError(
+                f"set_chain_property: chain {getattr(chain, 'name', '?')!r} "
+                f"({type(chain).__name__}) has no mixer "
+                f"{', '.join(missing_mixer)} param — volume / pan are "
+                f"unavailable. See {MATRIX_RESOURCE_URI}."
+            )
+    # Apply: chain-direct attrs, then the mixer-device param values.
+    for prop, ival in direct_ints.items():
+        setattr(chain, prop, ival)
+    for prop, bval in direct_bools.items():
+        setattr(chain, prop, bool(bval))
+    for field, fval in mixer_floats.items():
+        getattr(mixer, _CHAIN_MIXER_PARAM[field]).value = fval
+    result: dict[str, Any] = {
+        "set": {**direct_ints, **direct_bools, **mixer_floats},
+        "chain_name": getattr(chain, "name", ""),
+        "node": spec,
     }
     result.update(_parent_address(kind, idx))
     return result
@@ -2385,4 +2554,5 @@ __all__ = [
     "navigate_preset_handler",
     "pad_info_handler",
     "get_device_chains_handler",
+    "set_chain_property_handler",
 ]

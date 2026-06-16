@@ -161,7 +161,7 @@ fresh `pytest` before any Chunk-A code review (current `prawduct-hook test-statu
 
 ## Status
 - [x] Probes (Chunk A predecessors): drum_pad, addresses-as-value, send-pre/post, return/master routing — DONE 2026-06-15 (`./probe-findings.md`; design §1.5). Wire-freeze decided: terminal enum `track|return|master|device|chain` (no drum_pad).
-- [x] Chunk A: addressing foundation [FLIP] — ✅ DONE + LIVE-VERIFIED 6/6 2026-06-15 (merged to develop):
+- [ ] Chunk A: addressing foundation [FLIP] — ✅ DONE + LIVE-VERIFIED 6/6 2026-06-15 (merged to develop):
   - [x] **Spine landed + green (31 tests, full suite 3782+):** one resolver `_resolve_node` (all 5
     terminals), one validator `validate_node_addr` (the single grammar, in-object `terminal` default),
     one facade `resolve_node_addr` — all in `handlers/device.py`. `get_parameters` returns `default_value`
@@ -207,7 +207,7 @@ fresh `pytest` before any Chunk-A code review (current `prawduct-hook test-statu
     learnings.md rule. NOT a wire-flip regression.
     Note (flagged, NOT dropped): `read_envelope`/`get_envelope` + shallow-nav surfaces kept flat per the plan
     (reads, outside the migrated set) — recommended fast-follow, not a Chunk-A gate.
-- [x] Chunk B: params read-side durability — ✅ CODE DONE + GREEN 2026-06-15 (full suite green; Live operator-verify pending):
+- [ ] Chunk B: params read-side durability — ✅ CODE DONE + GREEN 2026-06-15 (full suite green; Live operator-verify pending):
   - [x] **Deterministic `capture execute`** — `capture.assemble_snapshot_via_probes(probe, old_snapshot=)`
     walks the live set IN CODE (session/master/returns/tracks + full recursive rack tree), probing
     `get_parameters` at EVERY depth via NodeAddr `path`; assembles via `compile_snapshot` +
@@ -241,7 +241,7 @@ fresh `pytest` before any Chunk-A code review (current `prawduct-hook test-statu
   - [ ] **Operator (Live) — pending** (enqueued in operator-verification.md): swell `21 Voice Lead`
     `LFO 1 Sync` depth-2 survives `/song-snapshot` + rebuild without saving .als; + the bloat-measurement
     gate (Critic note b: non-default count per device + snapshot growth).
-- [x] Chunk C: per-DrumChain authorship — choke_group + out_note (`chain` terminal) — ✅ CODE DONE + GREEN
+- [ ] Chunk C: per-DrumChain authorship — choke_group + out_note (`chain` terminal) — ✅ CODE DONE + GREEN
   2026-06-15 (impl map `./chunk-c-impl.md`; full suite green; Live operator-verify pending). **Scope: choke +
   out_note only; chain mute/solo WRITE deferred to Chunk F** (mixer-state — the matrix `mixer_state` chain
   cell owns it; the `choke_out_note` feature was narrowed to drop the mute-solo mention). The 9 touchpoints:
@@ -268,7 +268,7 @@ fresh `pytest` before any Chunk-A code review (current `prawduct-hook test-statu
     choke_group/out_note (the negative capability case), validating the `hasattr` re-probe.
   - [ ] **Operator (Live) — pending** (enqueued): positive choke+out_note round-trip on a real DrumChain +
     durability + the plain-Chain teaching error. Needs re-vendor + a loaded Drum Rack (scratch set lacks one).
-- [x] Chunk E: zones — ✅ DONE 2026-06-15 (commit `584bca7`). **PROBE RE-SCOPE: zones are a hard LOM
+- [ ] Chunk E: zones — ✅ DONE 2026-06-15 (commit `584bca7`). **PROBE RE-SCOPE: zones are a hard LOM
   wall, not buildable.** The Chunk-E LOM probe (Live 12.4, scratch "808 Selector Rack") found a `Chain`
   exposes NO key_range/velocity_range/chain_select_range — not even on a chain-select selector rack (all
   raise AttributeError). The rack Zone editor is UI-only; `/song-snapshot` can't capture zones either. So
@@ -276,7 +276,7 @@ fresh `pytest` before any Chunk-A code review (current `prawduct-hook test-statu
   error/workaround. **No handler/schema** (a wall ships no code); node_features.py is outside
   `_FINGERPRINT_PATHS` → no re-vendor. Tests: moved `zones`/chain to the walls guard. No operator-verify
   (the probe IS the live confirmation).
-- [x] Chunk F: chain mixer-state — ✅ CODE DONE + GREEN 2026-06-15 (commit `66e1f58`; full suite 3947/2
+- [ ] Chunk F: chain mixer-state — ✅ CODE DONE + GREEN 2026-06-15 (commit `66e1f58`; full suite 3947/2
   skipped; Live operator-verify pending). Extends the Chunk C `set_chain_property` surface; `mixer_state`/
   chain flips NOT_IMPLEMENTED → SUPPORTED. **Scope: mute/solo/volume/pan** (probe-confirmed: Chain.mute set
   test passed; ChainMixerDevice exposes volume/panning DeviceParameters). Unlike choke/out_note these are on
@@ -291,7 +291,7 @@ fresh `pytest` before any Chunk-A code review (current `prawduct-hook test-statu
   +~40. **Re-vendor at Live-verify time** (touches handlers/+actions/).
   - [ ] **Operator (Live) — pending** (enqueued): mute/solo/volume/pan round-trip DB→push→Live→pull on a
     real chain + durability; plain-Chain accepts mixer state (no teaching error). Needs re-vendor.
-- [x] Chunk D: macro authorship — ✅ DONE 2026-06-15 (commit `b2371ca`; matrix honesty + value test, NO new
+- [ ] Chunk D: macro authorship — ✅ DONE 2026-06-15 (commit `b2371ca`; matrix honesty + value test, NO new
   handler). **PROBE RE-SCOPE — the planned "flip stub → handler" for macro values/names + variation recall
   collapses to matrix corrections** (flagged, not dropped):
   - Macro **values** → SUPPORTED, but they ARE DeviceParameters (parameters[1..8]) authored by the EXISTING

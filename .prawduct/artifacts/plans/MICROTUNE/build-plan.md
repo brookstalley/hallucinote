@@ -201,7 +201,19 @@ generators, `theory/`, and 12-TET lens math are deliberately **absent** from thi
       round-trip; 12-TET build byte-identical to feeding raw ints (mapper transparent for the
       99.99%). Critic `chunk`: no findings. (User-facing tuning *doc* deferred to Chunk 3,
       where the push re-load + lens-caveat story completes the picture.)
-- [ ] Chunk 3: lens caveat + push instruction + drift-warn (gated)
+- [x] Chunk 3: lens caveat + push instruction + drift-warn (all gated on `tuning_ref`).
+      `tools/tuning_caveat.py` (core, tuning-agnostic read via `Q.get_song_tuning`)
+      adds a one-line 12-TET-relative caveat to the melody + recurrence lens output;
+      `sync/push/tuning_notice.py` emits the cached-`.ascl` re-load instruction and a
+      non-blocking drift-warn (re-reads `song.tuning_system`: warns on nothing-loaded /
+      different-tuning, silent on match) before the phase loop in `execute_push`. Both
+      are core-side and import nothing from `hallucinote.tuning` (isolation grep-asserted).
+      User-facing `docs/alternate-tunings.md` + FAQ pointer. 34 new tests; 4057 green.
+      **Honest-confidence note:** the drift live re-read's *loaded-tuning* scalar reads
+      (`name` + `pseudo_octave_in_cents`) are unverified pending verify-api (same
+      Live-availability gate as `read.py`'s stub); the nothing-loaded branch rests on the
+      confirmed None shape; the compare is name+period only (coarse, not the cents array).
+      Operator-verification entry queued (instruction copy + the 3 drift cases).
 
 ## Context
 
@@ -212,9 +224,21 @@ one gated instruction. Acquisition is pull-from-Live (LOM read → reconstructed
 `.ascl` parser — we only write. The mapper needs just step-count + reference-note, so the
 core authoring loop (Chunk 2) needs no Live.
 
-**Chunk 1 done (2026-06-16).** Built: `tuning/{model,mapper,ascl,cache,read,store}.py`,
+**Chunks 1–3 done (2026-06-16).** Built: `tuning/{model,mapper,ascl,cache,read,store}.py`,
 `songs.{tuning_ref,tuning_data}` columns + migration + `set_song_tuning`/`get_song_tuning`,
-`SONG_TUNING_SET`. The `.ascl` writer follows the researched Scala/ASCL spec
-(`api-notes-tuning.md`); writer round-trips on EDO/JI/non-octave fixtures. **Next:** Chunk 2
-(19-EDO worked authoring example, no Live), then close the `read.py` loaded-tuning stub once
-a tuning can be probed (verify-api step 0 PENDING).
+`SONG_TUNING_SET` (Chunk 1); the 19-EDO worked authoring example (Chunk 2); the gated lens
+caveat (`tools/tuning_caveat.py`) + push instruction/drift-warn (`sync/push/tuning_notice.py`)
++ `docs/alternate-tunings.md` (Chunk 3). All three core touchpoints (two nullable columns,
+the lens caveat, the push instruction/drift-warn) are additive + NULL-inert; isolation
+grep-asserted. **All chunks `[x]`.** Three items remain open, all gated on the SAME
+Live-availability constraint (a tuning loaded in a readable Set), none in the v1 chunk scope:
+(1) close `read.py`'s loaded-tuning *extraction* stub (verify-api step 0 PENDING — the sole
+Medium→High remainder); (2) **wire the user-invocable acquisition command** — the spine exists
+in parts (`read_tuning_system` → `cache_ascl` → `persist_tuning`) but nothing assembles them
+into a `pull`-style command a composer runs to capture their loaded tuning (decision #2's
+pull-from-Live flow); it depends on (1) and can't be exercised until a tuning is readable;
+(3) operator-verify Chunk 3's drift live re-read + instruction copy (entry queued in
+`operator-verification.md`). The worked example (Chunk 2) sidesteps (1)/(2) by constructing
+`TuningData` directly, which is why authoring + push + caveat all work today without them.
+**Next:** PR into `develop` when the user asks; close (1)+(2) and operator-verify (3) on the
+next session with Live + a loadable tuning.

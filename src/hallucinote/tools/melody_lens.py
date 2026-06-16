@@ -28,6 +28,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from hallucinote.tools.tuning_caveat import lens_caveat, song_tuning_ref
 from hallucinote.workspace import resolve_song_dir
 
 
@@ -159,13 +160,21 @@ def main(argv: list[str] | None = None) -> int:
         return 3
 
     report = report_fn()
+    # MICROTUNE Chunk 3: gate a one-line honesty caveat on the song carrying an
+    # alternate tuning — the interval readings are 12-TET-relative. Inert (None)
+    # for the 99.99% of songs with tuning_ref NULL.
+    caveat = lens_caveat(song_tuning_ref(args.slug))
     if args.json:
         out = report.to_dict()
         if args.section is not None:
             out["sections"] = [s for s in out["sections"]
                                if s["section"] == args.section]
+        if caveat is not None:
+            out["tuning_caveat"] = caveat
         print(json.dumps(out, indent=2))
     else:
+        if caveat is not None:
+            print(caveat)
         print(render(report, section_filter=args.section))
     return 0
 

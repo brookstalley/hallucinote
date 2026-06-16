@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import logging
 
+from hallucinote.tuning_probe import is_no_tuning_loaded
+
 from .model import TuningData
 
 logger = logging.getLogger("hallucinote.tuning.read")
@@ -37,23 +39,6 @@ class TuningExtractionNotReady(NotImplementedError):
     """
 
 
-def _is_none_tuning(raw: object) -> bool:
-    """True when ``raw`` represents "no alternate tuning loaded" (= 12-TET).
-
-    Deliberately narrow — matched only against the **live-confirmed** shapes:
-    the unwrapped ``None`` and the ``ableton_probe`` wrapper
-    ``{"type": "NoneType", ...}`` observed on a 12-TET Set (api-notes-tuning.md).
-    It does **not** treat an arbitrary ``{"value": None}`` as 12-TET: the loaded
-    ``TuningSystem`` dict shape is still PENDING, so a generic null-``value`` test
-    could silently no-op a *real* pull once the loaded branch is implemented.
-    Anything not matching a confirmed none-shape falls through to the (stubbed)
-    loaded-extraction path, which fails loud rather than guessing.
-    """
-    if raw is None:
-        return True
-    return isinstance(raw, dict) and raw.get("type") == "NoneType"
-
-
 def read_tuning_system(raw: object) -> TuningData | None:
     """Derive :class:`TuningData` from a read of ``song.tuning_system``.
 
@@ -63,7 +48,7 @@ def read_tuning_system(raw: object) -> TuningData | None:
     :class:`TuningExtractionNotReady` for a loaded tuning until the verify-api
     dict shapes are captured.
     """
-    if _is_none_tuning(raw):
+    if is_no_tuning_loaded(raw):
         logger.info(
             "song.tuning_system is None — 12-TET (no alternate tuning loaded); "
             "nothing to pull."

@@ -2011,3 +2011,66 @@ def test_terminal_state_has_current_phase_none(conn, song, session, tiny_song, s
     )
     state = json.loads((state_dir / ".last-push-state.json").read_text())
     assert state["current_phase"] is None
+
+
+# ---------------------------------------------------------------------------
+# MICROTUNE Chunk 3: the gated tuning notice rides the warnings channel
+# ---------------------------------------------------------------------------
+def _tuning_aware_send(*, tuning_system):
+    """Wrap the standard fake so an ableton_probe get of song.tuning_system
+    returns the given {type,value}; everything else delegates to _make_send_fn."""
+    inner = _make_send_fn()
+
+    def send(req, *, read_timeout=None):
+        if req.tool == "ableton_probe" and req.action == "get":
+            path = req.params.get("path")
+            if path == "song.tuning_system":
+                return FakeResponse(ok=True, result={"path": path, **tuning_system})
+        return inner(req, read_timeout=read_timeout)
+
+    send.call_log = inner.call_log  # type: ignore[attr-defined]
+    return send
+
+
+def _set_tuning_on(conn, song_id):
+    from hallucinote.tuning.model import TuningData
+    tuning = TuningData(
+        name="19-EDO", step_count=19, period_cents=1200.0, reference_note=60,
+        step_cents=tuple(round(1200.0 * i / 19, 6) for i in range(1, 20)),
+    )
+    M.set_song_tuning(
+        conn, song_id=song_id,
+        tuning_ref="tunings/19-edo.ascl", tuning_data=tuning.to_blob(),
+    )
+
+
+def test_execute_emits_tuning_notices_for_alt_tuned_song(
+    conn, song, session, tiny_song, state_dir,
+):
+    _set_tuning_on(conn, song)
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session, state_dir=state_dir,
+        send_fn=_tuning_aware_send(tuning_system={"type": "NoneType", "value": None}),
+    )
+    # Push still OK; the notices ride the benign warnings channel + the summary.
+    assert result.outcome == "ok"
+    joined = "\n".join(result.warnings)
+    assert "tunings/19-edo.ascl" in joined  # the load instruction names the .ascl
+    assert "NO tuning loaded" in joined
+    assert "Warnings (push still OK)" in push_execute.format_summary(result)
+
+
+def test_execute_no_tuning_notice_for_12tet_song(
+    conn, song, session, tiny_song, state_dir,
+):
+    # No tuning set: the notice path returns [] without any probe of tuning_system.
+    send_fn = _make_send_fn()
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session, state_dir=state_dir,
+        send_fn=send_fn,
+    )
+    assert all("tuning" not in w.lower() for w in result.warnings)
+    probed = [c for c in send_fn.call_log
+              if c["tool"] == "ableton_probe"
+              and c["params"].get("path") == "song.tuning_system"]
+    assert probed == []  # 12-TET path costs no Live round-trip

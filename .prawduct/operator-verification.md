@@ -730,3 +730,28 @@ re-vendored server. On return, re-vendor then:
 > Chunks **D** + **E** need NO operator entry — both are probe-confirmed LOM facts
 > (D macro names + E zones = `UNSUPPORTED_IN_LIVE`; D macro values ride the
 > already-verified `device_parameters` path). The probes ARE the live evidence.
+
+---
+
+## MICROTUNE Chunk 3 — push tuning instruction + drift-warn (copy + live re-read)
+
+**Status:** UNIT-COMPLETE (lens caveat + push instruction + drift decision fully
+unit-tested, no Live). Two parts need an attended run, both gated on the **same
+Live-availability constraint as verify-api** (a tuning must be *loaded* in a
+readable Set — not available when this landed):
+
+1. **Instruction + drift copy (visual change).** On a real alt-tuned song's
+   `push_cli execute`, confirm the summary's "Warnings (push still OK)" section
+   carries the load instruction (`load songs/<slug>/tunings/<file>.ascl …`) and
+   that it reads clearly to an operator. A 12-TET push shows none of it.
+
+2. **Drift live re-read (the one unverified path).** The drift-warn re-reads
+   `song.tuning_system` live. The **nothing-loaded** branch rests on the
+   live-confirmed `{"type":"NoneType",…}` shape; the **different-tuning** branch
+   reads the scalar `name` + `pseudo_octave_in_cents` sub-paths, which are NOT yet
+   live-exercised. To verify: (a) push with NO tuning loaded → expect the "NO
+   tuning loaded" drift warning; (b) load the *correct* `.ascl` → expect silence;
+   (c) load a *different* tuning → expect the "DRIFT" warning naming both. If the
+   scalar sub-reads behave differently than assumed, this closes the same
+   verify-api gap as `read.py`'s loaded-tuning stub — capture the real shapes in
+   `api-notes-tuning.md` and adjust `tuning_notice._read_loaded_tuning`.

@@ -197,17 +197,29 @@ def _server_info() -> str:
     - ``fingerprint``   — the wire-shape content fingerprint (suffix of ``version``).
     - ``package_root``  — absolute path to this server's ``hallucinote_mcp`` package
       (a valid ``--from-package-root`` source for the Remote Script vendor).
+    - ``python``        — absolute path to THIS server's interpreter (the prewarmed
+      plugin uv env it's already running in). The agent runs engine commands as
+      ``"<python>" -m hallucinote.cli <command>`` (and ``"<python>" build.py``) so
+      they execute in the SAME env as the bridge — guaranteed version-synced, works
+      on a read-only plugin root, no clone/PyPI/separate-env (PLUGIN-SELF-CONTAINED).
+    - ``project_root``  — the uv project dir (holds ``uv.lock``); identity only.
+      ``null`` if there's no ``uv.lock`` ancestor (a plain editable dev install).
     """
+    import sys
+
     from .. import BASE_VERSION, __version__
-    from ..install_paths import package_root
+    from ..install_paths import package_root, project_root
 
     fingerprint = __version__.split("+", 1)[1] if "+" in __version__ else ""
+    proj = project_root()
     return json.dumps(
         {
             "version": __version__,
             "base_version": BASE_VERSION,
             "fingerprint": fingerprint,
             "package_root": str(package_root()),
+            "python": sys.executable,
+            "project_root": str(proj) if proj is not None else None,
         },
         indent=2,
     )

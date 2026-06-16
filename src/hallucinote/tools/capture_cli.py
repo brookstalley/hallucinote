@@ -229,7 +229,7 @@ def _cmd_migrate(args: argparse.Namespace) -> int:
     return 0
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
     # The legacy --plan flag is preserved so older skill bodies / docs keep
     # working; the subcommand form is the going-forward shape.
@@ -303,7 +303,7 @@ def main() -> int:
     )
     migrate_p.set_defaults(func=_cmd_migrate)
 
-    args = p.parse_args()
+    args = p.parse_args(argv)
     if args.plan:
         return _cmd_plan(args)
     if hasattr(args, "func"):

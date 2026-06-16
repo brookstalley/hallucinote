@@ -75,16 +75,19 @@ node = {
 
 Get `path` / `chain_index` from `ableton_device(action='get_device_chains')`.
 
-A `chain`-terminal node is also the authoring address for per-DrumChain
-properties: `ableton_device(action='set_chain_property', node={…terminal:'chain'…},
-choke_group=N, out_note=M)` sets a drum pad's choke group / MIDI transpose. It is
-capability-probed — a plain instrument/audio-rack chain (no `choke_group`) gets a
-teaching error pointing at the feature matrix.
+A `chain`-terminal node is also the authoring address for per-chain properties:
+`ableton_device(action='set_chain_property', node={…terminal:'chain'…},
+choke_group=N, out_note=M, mute=…, solo=…, volume=…, pan=…)`. Two families, each
+capability-probed: per-drum choke group / MIDI transpose (DrumChain only — a plain
+instrument/audio-rack chain gets a teaching error) and per-chain mixer state
+(mute / solo / volume / pan, on every chain). Pass at least one. See the feature
+matrix for which apply where.
 
 **Which features work on which node kind:** addressing is uniform (one `node`
 reaches every kind) but *operations are not* — Live's matrix is sparse. Read
 `ableton://reference/node-feature-matrix` BEFORE authoring a node feature
-(routing on a return, macros, chain zones, choke groups, …). Each cell is
+(routing on a return, macro values, chain mixer state, chain zones, choke
+groups, …). Each cell is
 `SUPPORTED` / `NOT_IMPLEMENTED` (Live can; not built — wait/file a request) /
 `UNSUPPORTED_IN_LIVE` (a hard wall — route around it), with the LOM evidence and
 a workaround, so you never burn a turn attempting an impossible op blind.

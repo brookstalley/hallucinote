@@ -2252,9 +2252,10 @@ def _describe_chain(
                 chain_entry[key] = float(pval)
                 try:
                     chain_entry[key + "_default"] = float(param.default_value)
-                except (RuntimeError, AttributeError):
+                except (AttributeError, RuntimeError, TypeError, ValueError):
                     # Some params raise on default_value (the Chunk B Snap case);
-                    # without a default the filter treats it as default (no
+                    # same guard tuple as the get_parameters default_value read.
+                    # Without a default the filter treats it as default (no
                     # capture) — mixer state must not over-capture every chain.
                     pass
     if detail == "full":

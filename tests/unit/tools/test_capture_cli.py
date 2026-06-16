@@ -177,3 +177,76 @@ def test_migrate_missing_file_returns_two(tmp_path: Path) -> None:
     proc = _run("migrate", str(tmp_path / "absent.json"))
     assert proc.returncode == 2
     assert "snapshot not found" in proc.stderr
+
+
+# ---------------------------------------------------------------------------
+# NODE-ADDR Chunk B — `execute` subcommand bridge glue (_make_probe +
+# _cmd_execute). The deterministic walk (assemble_snapshot_via_probes) is
+# fake-probe-tested in tests/unit/capture/; these cover the CLI↔bridge wiring
+# (the part with real branching), in-process so no live server is needed.
+# ---------------------------------------------------------------------------
+
+import argparse  # noqa: E402
+
+import hallucinote.tools.capture_cli as cc  # noqa: E402
+
+
+class _Resp:
+    def __init__(self, ok, result=None, error=None):
+        self.ok, self.result, self.error = ok, result, error
+
+
+def test_make_probe_unwraps_ok_result() -> None:
+    seen = {}
+
+    def send_fn(req):
+        seen["req"] = req
+        return _Resp(True, {"value": 42})
+
+    probe = cc._make_probe(send_fn)
+    assert probe("ableton_session", "info", x=1) == {"value": 42}
+    assert (seen["req"].tool, seen["req"].action) == ("ableton_session", "info")
+    assert seen["req"].params == {"x": 1}
+
+
+def test_make_probe_raises_loud_on_failure() -> None:
+    """A partial snapshot would silently drop authored state -> capture aborts
+    loudly rather than compiling a half-walk."""
+    probe = cc._make_probe(lambda req: _Resp(False, error="boom"))
+    with pytest.raises(RuntimeError, match="capture execute.*boom"):
+        probe("ableton_device", "get_parameters")
+
+
+def test_cmd_execute_writes_refresh_json_and_forwards_old(
+    tmp_path: Path, monkeypatch
+) -> None:
+    out = tmp_path / "captured_session.refresh.json"
+    old = tmp_path / "captured_session.json"
+    _write_snapshot(old, {"snapshot_version": 1, "browser_path": {"a": "b"}})
+
+    captured = {}
+
+    def fake_assemble(probe, *, old_snapshot=None):
+        captured["old"] = old_snapshot
+        return {"snapshot_version": 1, "tracks": []}
+
+    monkeypatch.setattr(cc, "_resolve_send_fn", lambda: (lambda req: _Resp(True, {})))
+    monkeypatch.setattr(
+        "hallucinote.capture.assemble_snapshot_via_probes", fake_assemble
+    )
+
+    rc = cc._cmd_execute(
+        argparse.Namespace(output=str(out), old=str(old), song=None)
+    )
+    assert rc == 0
+    # Writes the side-by-side refresh file (never the canonical name).
+    assert json.loads(out.read_text()) == {"snapshot_version": 1, "tracks": []}
+    assert not (tmp_path / "captured_session.json").read_text() == out.read_text()
+    # The old snapshot is loaded + forwarded so browser_path is preserved.
+    assert captured["old"] == {"snapshot_version": 1, "browser_path": {"a": "b"}}
+
+
+def test_cmd_execute_needs_song_or_output(capsys) -> None:
+    rc = cc._cmd_execute(argparse.Namespace(output=None, old=None, song=None))
+    assert rc == 2
+    assert "needs --song" in capsys.readouterr().err

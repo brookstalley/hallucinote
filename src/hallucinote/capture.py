@@ -714,8 +714,8 @@ def capture_plan() -> list[dict[str, str]]:
          "purpose": "per-device: dialed parameter map "
                     "(name -> {value, normalized}) — loop over each device"},
         {"tool": "ableton_device(action='get_device_chains')",
-         "purpose": "per-rack-device: one level of nested chains + their "
-                    "devices (W7-B). Emit for every device whose probed "
+         "purpose": "per-rack-device: the FULL nested chain tree + their "
+                    "devices. Emit for every device whose probed "
                     f"`class_display_name` is in {sorted(RACK_CLASS_NAMES)} "
                     "(Arc 4 / D4 — was `class_name` in {DrumGroupDevice, "
                     "InstrumentGroupDevice, AudioEffectGroupDevice} pre-D4; "
@@ -724,9 +724,12 @@ def capture_plan() -> list[dict[str, str]]:
                     "the result as the device's `chains` field on the "
                     "snapshot. DO NOT emit a `_note` placeholder ('Rack — "
                     "internal chain instruments not captured', etc.) on "
-                    "rack devices any more — the capture path now walks "
-                    "one level. Recursively nested racks (rack-in-rack) "
-                    "remain out of scope; replay raises on encounter."},
+                    "rack devices any more — `get_device_chains` returns the "
+                    "whole nested tree in ONE call (depth-N) and replay "
+                    "RECURSES into rack-in-rack (NODE-ADDR Chunk B lifted the "
+                    "former W7-B one-level cap; replay no longer raises). For "
+                    "nested racks prefer the deterministic `capture execute`, "
+                    "which walks the tree in code."},
         {"tool": "ableton_device(action='pad_info')",
          "purpose": "per-Drum-Rack: pad layout (midi_note + chain_name per "
                     "non-empty pad). M1-C. Emit ONLY for devices whose "

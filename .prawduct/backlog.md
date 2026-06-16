@@ -38,6 +38,15 @@ sections only via explicit `/backlog update` calls.
 
 ## Open
 
+- **[MCP-7F2K]** MCP version fingerprint over-triggers re-vendor — hash the wire CONTRACT, not handler implementation bodies
+  `effort: M · impact: M · area: mcp · source: user · added: 2026-06-16 · status: open · stage: research · related: INS-3W8P, INS-4H8M, MCP-4T6Y · refs: incoming-bugs/2026-06-14-version-mismatch-hint-misdiagnoses-stale-server-process.md`
+
+  Today `hallucinote_mcp.__version__` = `BASE_VERSION` + content-hash of `_FINGERPRINT_PATHS`, which includes the whole `handlers/` and `actions/` directories. Any edit to any handler body flips the fingerprint, so the server↔Remote-Script version handshake reports drift and prompts a full `/ableton-mcp-install` re-vendor — even for **server-internal changes that never cross the wire** (concrete trigger: the 2026-06-16 captures-dir fix in `handlers/analysis.py`, a pure read-side analysis change, flips it). Goal: **ONLY genuine wire-contract-breaking changes should force a re-vendor.**
+
+  **Candidate directions to evaluate in discovery (do not pre-pick):** (a) narrow `_FINGERPRINT_PATHS` to truly wire-crossing files only — risks false-negatives when a handler change DOES alter a response shape; (b) fingerprint the DECLARED contract structurally — derive a signature from the action/tool registry + schema (tool names, action names, param names/types, response field names) so it changes iff the interface changes, decoupled from implementation bytes; (c) separate the Remote-Script-vendored surface (`remote_script/`) from server-side-only handlers that aren't vendored into Live at all, and only re-vendor on changes to the former.
+
+  This is a **correctness-vs-friction tradeoff** (false re-vendor prompts erode trust in the handshake) and the fingerprint format is **lock-in**, so it warrants discovery before code. Type: bugfix/debt. **Stage: research** — route to `/prawduct:discovery` to evaluate the three directions and settle the fingerprint mechanism before implementation. (user, 2026-06-16)
+
 - **[AUD-8K2N]** Non-Max-for-Live audio analysis path for Standard-edition users (degraded, master-bus only)
   `effort: M · impact: M · area: audio · source: user · added: 2026-06-16 · status: open · stage: research · refs: README.md (Status — Live edition note), ableton://guides/gaps · related: DEV-9C4L, AUD-4S8T, SNP-8R4K`
 

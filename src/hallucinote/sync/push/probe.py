@@ -576,6 +576,7 @@ def probe_and_link(
     if live_devices_by_parent:
         _match_devices_for_linked_parents(
             conn,
+            song_id=song_id,
             session_id=session_id,
             result=result,
             live_devices_by_parent=live_devices_by_parent,
@@ -620,6 +621,7 @@ def probe_and_link(
 def _match_devices_for_linked_parents(
     conn: sqlite3.Connection,
     *,
+    song_id: str,
     session_id: str,
     result: ProbeAndLinkResult,
     live_devices_by_parent: dict[tuple[str, int], list[dict[str, Any]]],
@@ -629,7 +631,8 @@ def _match_devices_for_linked_parents(
     """W20-A: bind DB devices to Live device-chain slots by
     (parent, chain position, class_name).
 
-    For each linked track/return, walk the parent's top-level device chain
+    For each linked track/return (and the master), walk the parent's top-level
+    device chain
     in parallel: at position P we have a DB device (with ``kind`` and
     ``display_name``) and, if Live's chain runs that deep, a Live device
     (with ``class_name`` and ``name``). When the class names agree, write
@@ -651,9 +654,32 @@ def _match_devices_for_linked_parents(
     walks the top-level chains, the high-frequency case that resolves the
     punk-fate bug.
     """
+    # ANALYZER-INDEX: the master device chain reconciles like track/return
+    # chains. The master is a DB-singleton track (kind='master') with no
+    # name-match and no track_index, so synthesize its matched-parent entry
+    # directly — db_id = the song's master track, ableton_index = 0 (the device
+    # matcher's master key, matching `_probe_live_devices_via_mcp`'s
+    # ("master", 0)). Before this, the master was excluded from device
+    # reconciliation entirely (the track/return loop never covered it), so a
+    # master device link was frozen at first-load and never re-bound; once a
+    # render's analyzer load/reposition shifted the chain, a param re-push
+    # targeted the stale index — the master Limiter's Ceiling hit the analyzer
+    # and hard-halted the devices phase. Only attempt it when the master chain
+    # was actually probed into the map.
+    master_matched: list[dict[str, Any]] = []
+    if ("master", 0) in live_devices_by_parent:
+        master_track = next(
+            (t for t in Q.get_tracks_for_song(conn, song_id)
+             if t["kind"] == "master"),
+            None,
+        )
+        if master_track is not None:
+            master_matched = [{"db_id": master_track["id"], "ableton_index": 0}]
+
     for matched, parent_kind, get_devices_fn in (
         (result.matched_tracks, "track", Q.get_devices_for_track),
         (result.matched_returns, "return", Q.get_devices_for_return),
+        (master_matched, "master", Q.get_devices_for_track),
     ):
         for parent in matched:
             ableton_index = parent["ableton_index"]

@@ -317,20 +317,50 @@ MATRIX: tuple[Feature, ...] = (
     ),
     Feature(
         key="macro_values",
-        title="Macro values + names",
-        description="The 8 rack macro values and their custom names.",
+        title="Macro values",
+        description=(
+            "The rack macro knob values — authored as ordinary device "
+            "parameters (a macro IS a DeviceParameter)."
+        ),
         cells=(
             Cell(
                 "device",
-                FeatureStatus.NOT_IMPLEMENTED,
-                reason="Macro value/name authoring isn't built.",
+                FeatureStatus.SUPPORTED,
                 live_evidence=(
-                    "A rack exposes 8 macro DeviceParameters plus name / "
-                    "original_name (probe 2026-06-15)."
+                    "A rack's macros are its first DeviceParameters "
+                    "(parameters[1..8]); set + captured via the "
+                    "`device_parameters` feature — no separate macro-value path "
+                    "(NODE-ADDR Chunk D probe 2026-06-15). Capture keys params "
+                    "by name, so a by-ear macro RENAME (itself unauthorable — "
+                    "see `macro_names`) can decouple a stored value from its "
+                    "knob on rebuild."
                 ),
-                workaround=_SNAPSHOT_WORKAROUND,
-                request_tag="NODE-ADDR Chunk D",
                 determination="probe",
+            ),
+        ),
+    ),
+    Feature(
+        key="macro_names",
+        title="Macro custom names",
+        description="A macro knob's custom (renamed) label.",
+        cells=(
+            Cell(
+                "device",
+                FeatureStatus.UNSUPPORTED_IN_LIVE,
+                reason=(
+                    "A macro's custom name cannot be authored — "
+                    "DeviceParameter.name is read-only in Live's LOM."
+                ),
+                live_evidence=(
+                    "Setting a macro DeviceParameter.name raises AttributeError "
+                    "'property of DeviceParameter object has no setter' "
+                    "(NODE-ADDR Chunk D probe 2026-06-15, Live 12.4). A custom "
+                    "name rides the rack preset, not the API."
+                ),
+                workaround=(
+                    "Rename the macro in the rack preset / Live's UI; the name "
+                    "travels with the preset, not the DB."
+                ),
             ),
         ),
     ),
@@ -362,14 +392,21 @@ MATRIX: tuple[Feature, ...] = (
             Cell(
                 "device",
                 FeatureStatus.NOT_IMPLEMENTED,
-                reason="Macro variation authoring isn't built.",
+                reason=(
+                    "Macro variation authoring is deferred (NODE-ADDR Chunk D): "
+                    "a recalled variation's macro values are already durable as "
+                    "device parameters, and a stored selected_variation_index + "
+                    "recall on push would conflict with that captured-value "
+                    "truth — so the API exists but isn't wired."
+                ),
                 live_evidence=(
                     "variation_count / store_variation / "
-                    "recall_selected_variation / selected_variation_index are "
-                    "present on racks (probe 2026-06-15)."
+                    "recall_selected_variation are present, and "
+                    "selected_variation_index is settable to 0..count-1 "
+                    "(rejects -1) (probe 2026-06-15)."
                 ),
                 workaround="Store/recall variations in Live's UI.",
-                request_tag="NODE-ADDR Chunk D",
+                request_tag="NODE-ADDR (macro variations, deferred)",
                 determination="probe",
             ),
         ),

@@ -103,6 +103,10 @@ def test_not_implemented_cells_point_somewhere_actionable():
         # chain-select surface on a Chain — not even on a selector rack — so
         # zones are a hard LOM wall, re-scoped from NOT_IMPLEMENTED.
         ("zones", "chain"),
+        # NODE-ADDR Chunk D: a macro DeviceParameter.name has no setter — custom
+        # names are a LOM wall (the value rides device_parameters; the NAME does
+        # not).
+        ("macro_names", "device"),
     ],
 )
 def test_probed_walls_are_unsupported_in_live(feature, node_kind):
@@ -113,7 +117,9 @@ def test_probed_walls_are_unsupported_in_live(feature, node_kind):
 @pytest.mark.parametrize(
     "feature,node_kind",
     [
-        ("macro_values", "device"),
+        # macro_values/device flipped SUPPORTED in NODE-ADDR Chunk D (macros are
+        # device parameters); macro_names/device became a wall — see the other
+        # two guards.
         ("macro_variations", "device"),
         ("crossfade_assign", "track"),
         ("input_routing", "return"),
@@ -147,6 +153,9 @@ def test_probed_buildables_are_not_implemented(feature, node_kind):
         ("choke_out_note", "chain"),
         # NODE-ADDR Chunk F: per-chain mixer state (mute/solo/volume/pan).
         ("mixer_state", "chain"),
+        # NODE-ADDR Chunk D: macro values ARE device parameters (authored via
+        # the device_parameters path) — supported; only the NAME is a wall.
+        ("macro_values", "device"),
     ],
 )
 def test_shipped_features_are_supported(feature, node_kind):
@@ -171,8 +180,8 @@ def test_resolve_cell_unclassified_node_kind_teaches():
 
 
 def test_cell_response_carries_status_fields_and_matrix_pointer():
-    resp = cell_response("macro_values", "device")
-    assert resp["feature"] == "macro_values"
+    resp = cell_response("macro_variations", "device")
+    assert resp["feature"] == "macro_variations"
     assert resp["node_kind"] == "device"
     assert resp["status"] == "NOT_IMPLEMENTED"
     assert resp["reason"]
@@ -183,11 +192,11 @@ def test_cell_response_carries_status_fields_and_matrix_pointer():
 
 
 def test_teaching_error_not_implemented_is_actionable():
-    msg = teaching_error("macro_values", "device")
-    assert "Macro values" in msg
+    msg = teaching_error("macro_variations", "device")
+    assert "Macro variations" in msg
     assert "device" in msg
     assert "not yet implemented" in msg
-    assert "NODE-ADDR Chunk D" in msg  # the request tag
+    assert "deferred" in msg  # the request tag fragment
     assert MATRIX_RESOURCE_URI in msg
 
 

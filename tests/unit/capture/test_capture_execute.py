@@ -19,6 +19,7 @@ import pytest
 from hallucinote.capture import (
     assemble_snapshot_via_probes,
     replay_capture,
+    _params_dialed_via_probe,
     _snapshot_param_entry,
 )
 from hallucinote.db import init_db, mutations as M, queries as Q
@@ -86,6 +87,32 @@ def test_param_entry_enum_has_no_normalized():
 def test_param_entry_non_numeric_value_is_skipped():
     assert _snapshot_param_entry({"name": "X", "value": None}) is None
     assert _snapshot_param_entry({"name": "B", "value": True}) is None
+
+
+def test_macro_value_rides_device_parameters_keyed_by_name():
+    """NODE-ADDR Chunk D: a macro IS a DeviceParameter, so its value is captured
+    by the standard params_dialed path, keyed by the macro's (custom) name —
+    which is why `macro_values` is SUPPORTED with NO separate handler. The NAME
+    itself is a LOM wall (see the `macro_names` matrix cell); capture keys by
+    name, so a by-ear macro rename can decouple a stored value from its knob."""
+    def probe(tool, action, **params):
+        assert (tool, action) == ("ableton_device", "get_parameters")
+        return {"parameters": [
+            # The rack's Device On macro slot, sitting at its default -> dropped.
+            {"name": "Device On", "value": 1.0, "default_value": 1.0,
+             "value_display": "On", "min": 0.0, "max": 1.0, "is_enum": True,
+             "value_items": ["Off", "On"]},
+            # A renamed macro (name != original_name) dialed off its default.
+            {"name": "Filter Cutoff", "original_name": "Macro 1",
+             "value": 0.62, "default_value": 0.0, "value_display": "79.0",
+             "min": 0.0, "max": 1.0, "is_enum": False},
+        ]}
+    out = _params_dialed_via_probe(
+        probe,
+        node={"parent": {"kind": "track", "index": 1},
+              "terminal": "device", "device_index": 1},
+    )
+    assert out == {"Filter Cutoff": {"value": "79.0", "normalized": 0.62}}
 
 
 def test_param_entry_empty_display_stays_empty_not_raw():

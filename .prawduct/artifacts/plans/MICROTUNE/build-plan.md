@@ -194,7 +194,13 @@ generators, `theory/`, and 12-TET lens math are deliberately **absent** from thi
       pending verify-api dict shapes — the sole Medium→High remainder). Critic `final`: no
       blocking findings (1 warning + 2 coherence notes resolved). 4019 tests green; core
       12-TET suite untouched; isolation grep-asserted.
-- [ ] Chunk 2: worked authoring example (core untouched)
+- [x] Chunk 2: worked authoring example (core untouched) — `test_authoring_example.py`'s
+      `author_cadence` is the worked `build.py` compose step; a 19-EDO I–V–I authored via
+      `tuning.mapper` flows through the UNCHANGED `chord_tones`/`chord_pad` + the real
+      note-insertion pipeline. Tests: emitted notes == expected MIDI step indices; full DB
+      round-trip; 12-TET build byte-identical to feeding raw ints (mapper transparent for the
+      99.99%). Critic `chunk`: no findings. (User-facing tuning *doc* deferred to Chunk 3,
+      where the push re-load + lens-caveat story completes the picture.)
 - [ ] Chunk 3: lens caveat + push instruction + drift-warn (gated)
 
 ## Context

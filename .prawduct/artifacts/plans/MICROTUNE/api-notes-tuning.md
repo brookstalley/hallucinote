@@ -80,3 +80,16 @@ step once the LOM `reference_pitch` dict shape is captured (same verify-api gate
 spec-faithful Scala reader (the package ships no parser); the writer's cents re-read to
 `step_cents` on EDO / JI / non-octave fixtures. Live round-trip (success-criterion #3,
 re-drag → `note_tunings` matches) stays deferred to the same loaded-tuning gate.
+
+**Structural parity against a real Ableton file (2026-06-16).** `tests/unit/tuning/data/
+wendy_carlos_gamma.ascl` is copied verbatim from Live 12 Suite's Core Library
+(`Tunings/EDO/Wendy Carlos gamma.ascl`) — a genuine, Ableton-authored, **non-octave** tuning
+(20 equal divisions of the 3/2 perfect fifth; period ≈ 701.955 cents, NOT 1200). It confirms
+the researched format end-to-end: count line = 20 pitch lines (implicit unison unlisted),
+the period written as the ratio `3/2` on the last pitch line, and `@ABL NOTE_NAMES /
+REFERENCE_PITCH 3 0 440.0 / NOTE_RANGE_BY_INDEX / LINK` after the pitch list — exactly the
+directive shapes the research predicted. `test_ascl_parity.py` proves our writer round-trips
+this real tuning's cents and stays Ableton-compatible while honestly omitting the
+REFERENCE_PITCH / NOTE_NAMES / NOTE_RANGE we can't derive from the blob. (This is a *write*-side
+parity check — it does NOT close the read-side loaded-tuning stub, which still needs a tuning
+loaded in a readable Live Set to capture the LOM `tuning_system` dict shapes.)

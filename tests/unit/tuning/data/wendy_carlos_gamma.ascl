@@ -1,0 +1,33 @@
+! Wendy Carlos gamma.ascl
+!
+Wendy Carlos 'gamma', one of three equal division scales developed while working on the album "Beauty in the Beast" (1986). Gamma divides the 2:3 perfect fifth into 20 proportionally equal and equal sounding parts (ca. 35.1 cents each).
+!
+! Wendy Carlos alpha beta gamma tunings https://www.wendycarlos.com/resources/pitch.html
+!
+20
+!
+35.09775 ! 1\20 (3/2)
+70.1955 ! 2\20 (3/2)
+105.29325 ! 3\20 (3/2)
+140.391 ! 4\20 (3/2)
+175.48875 ! 5\20 (3/2)
+210.5865 ! 6\20 (3/2)
+245.68425 ! 7\20 (3/2)
+280.782 ! 8\20 (3/2)
+315.87975 ! 9\20 (3/2)
+350.9775 ! 10\20 (3/2)
+386.07525 ! 11\20 (3/2)
+421.173 ! 12\20 (3/2)
+456.27075 ! 13\20 (3/2)
+491.3685 ! 14\20 (3/2)
+526.46625 ! 15\20 (3/2)
+561.564001 ! 16\20 (3/2)
+596.661751 ! 17\20 (3/2)
+631.759501 ! 18\20 (3/2)
+666.857251 ! 19\20 (3/2)
+3/2 ! 0\20 (3/2)
+!
+! @ABL NOTE_NAMES "0\20 (3/2)" "1\20 (3/2)" "2\20 (3/2)" "3\20 (3/2)" "4\20 (3/2)" "5\20 (3/2)" "6\20 (3/2)" "7\20 (3/2)" "8\20 (3/2)" "9\20 (3/2)" "10\20 (3/2)" "11\20 (3/2)" "12\20 (3/2)" "13\20 (3/2)" "14\20 (3/2)" "15\20 (3/2)" "16\20 (3/2)" "17\20 (3/2)" "18\20 (3/2)" "19\20 (3/2)"
+! @ABL REFERENCE_PITCH 3 0 440.0
+! @ABL NOTE_RANGE_BY_INDEX -1 11 5 18
+! @ABL LINK https://www.ableton.com/learn-more/tuning-systems/20-ed3_2-wendy-carlos-gamma

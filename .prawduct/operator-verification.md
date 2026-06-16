@@ -697,3 +697,36 @@ Sequence: relaunch dev-mode (`/mcp` respawn so running==disk) → `/ableton-mcp-
 
 4. **Matrix.** `ableton://reference/node-feature-matrix` shows `choke_out_note`
    chain cell = SUPPORTED (determination probe).
+
+---
+
+## NODE-ADDR (DEV-9K7N) Chunk F — per-chain mixer state (mute/solo/volume/pan)
+
+Visual change: no (LOM state / round-trip). **Re-vendor REQUIRED** — Chunk F
+touches `handlers/`+`actions/` (fingerprint flips). Code done + green (commit
+`66e1f58`). Write paths spot-probed live this session (Live 12.4, "808 Selector
+Rack"): `Chain.mute` set False→True→False succeeded; `mixer_device.volume/panning`
+are settable DeviceParameters. The full round-trip through the NEW handler needs a
+re-vendored server. On return, re-vendor then:
+
+1. **Positive — mixer state on a chain (THE signal).** Find a chain via
+   `get_device_chains`. `ableton_device(action='set_chain_property',
+   node={parent, terminal:'chain', device_index:<rack>, chain_index:<n>},
+   mute=True, volume=0.5, pan=-0.3)` → confirm via `ableton_probe` the chain's
+   `mute`, `mixer_device.volume.value`, `mixer_device.panning.value` changed.
+
+2. **Universal — works on a PLAIN chain (not just DrumChains).** Run check 1 on
+   the 808 Selector Rack's chain[0] (a plain instrument-rack Chain) → mixer state
+   applies with NO teaching error (unlike choke/out_note, mixer state is on every
+   chain).
+
+3. **Durability.** `/song-snapshot` → `build.py --reset` + `push_cli execute` →
+   the chain's mute/volume/pan SURVIVE the rebuild **without saving the .als**
+   (push re-asserts via the `chain` terminal; capture filtered to non-defaults).
+
+4. **Matrix.** `ableton://reference/node-feature-matrix` shows `mixer_state`/chain
+   = SUPPORTED and `send_levels`/chain = NOT_IMPLEMENTED (chain sends deferred).
+
+> Chunks **D** + **E** need NO operator entry — both are probe-confirmed LOM facts
+> (D macro names + E zones = `UNSUPPORTED_IN_LIVE`; D macro values ride the
+> already-verified `device_parameters` path). The probes ARE the live evidence.

@@ -268,6 +268,49 @@ fresh `pytest` before any Chunk-A code review (current `prawduct-hook test-statu
     choke_group/out_note (the negative capability case), validating the `hasattr` re-probe.
   - [ ] **Operator (Live) — pending** (enqueued): positive choke+out_note round-trip on a real DrumChain +
     durability + the plain-Chain teaching error. Needs re-vendor + a loaded Drum Rack (scratch set lacks one).
-- [ ] Chunk D: macro values/names/variations (DEV-3W9R; mapping target UNSUPPORTED_IN_LIVE)
-- [ ] Chunk E: zones
-- [ ] Chunk F: chain mixer-state
+- [x] Chunk E: zones — ✅ DONE 2026-06-15 (commit `584bca7`). **PROBE RE-SCOPE: zones are a hard LOM
+  wall, not buildable.** The Chunk-E LOM probe (Live 12.4, scratch "808 Selector Rack") found a `Chain`
+  exposes NO key_range/velocity_range/chain_select_range — not even on a chain-select selector rack (all
+  raise AttributeError). The rack Zone editor is UI-only; `/song-snapshot` can't capture zones either. So
+  `zones`/chain flips NOT_IMPLEMENTED → `UNSUPPORTED_IN_LIVE` (static, version-scoped 12.4), + teaching
+  error/workaround. **No handler/schema** (a wall ships no code); node_features.py is outside
+  `_FINGERPRINT_PATHS` → no re-vendor. Tests: moved `zones`/chain to the walls guard. No operator-verify
+  (the probe IS the live confirmation).
+- [x] Chunk F: chain mixer-state — ✅ CODE DONE + GREEN 2026-06-15 (commit `66e1f58`; full suite 3947/2
+  skipped; Live operator-verify pending). Extends the Chunk C `set_chain_property` surface; `mixer_state`/
+  chain flips NOT_IMPLEMENTED → SUPPORTED. **Scope: mute/solo/volume/pan** (probe-confirmed: Chain.mute set
+  test passed; ChainMixerDevice exposes volume/panning DeviceParameters). Unlike choke/out_note these are on
+  EVERY chain (plain + drum). 9 touchpoints mirror C: schema+`_ADDED_COLUMNS` (mute/solo INTEGER, volume/pan
+  REAL, nullable); mutator `set_chain_properties` (+4 fields, bool→0/1 coercion, range validation); capture
+  (`chain_authored_props` → 6 keys; volume/pan filtered vs the chain's intrinsic `default_value` via Chunk
+  B's `_CAPTURE_DEFAULT_EPS`, no-default ⇒ not captured; `_describe_chain` surfaces volume/pan+defaults
+  un-gated; `_replay_rack_chains` applies); handler (+mute/solo chain bools, +volume/pan mixer params,
+  per-property capability probe, atomic); action (+bool/float ParamSpecs); push (`_emit_chain_property_calls`
+  emits all six); pull (`_diff_nested_chains`). **Chain SENDS deferred** (into a rack's own return chains —
+  rarely populated) → documented `send_levels`/chain NOT_IMPLEMENTED cell (flagged, not dropped). Tests
+  +~40. **Re-vendor at Live-verify time** (touches handlers/+actions/).
+  - [ ] **Operator (Live) — pending** (enqueued): mute/solo/volume/pan round-trip DB→push→Live→pull on a
+    real chain + durability; plain-Chain accepts mixer state (no teaching error). Needs re-vendor.
+- [x] Chunk D: macro authorship — ✅ DONE 2026-06-15 (commit `b2371ca`; matrix honesty + value test, NO new
+  handler). **PROBE RE-SCOPE — the planned "flip stub → handler" for macro values/names + variation recall
+  collapses to matrix corrections** (flagged, not dropped):
+  - Macro **values** → SUPPORTED, but they ARE DeviceParameters (parameters[1..8]) authored by the EXISTING
+    `device_parameters` feature — no separate path. Cell flipped + a test proves a renamed-macro param rides
+    `params_dialed` keyed by name.
+  - Macro **names** → `UNSUPPORTED_IN_LIVE` (NEW `macro_names` cell). PROBE: setting a macro
+    `DeviceParameter.name` raises "property … has no setter" — read-only; the custom name rides the preset.
+  - Macro **variations** → kept NOT_IMPLEMENTED (deferred). `selected_variation_index` IS settable
+    (0..count-1, rejects -1) + `recall_selected_variation` exists, but a recalled variation's macro values
+    are already durable as device params and a stored index+recall would conflict with that captured-value
+    truth on push (+ design §3 designated variations a documented stub). Not wired.
+  - Macro **mapping target** → stays `UNSUPPORTED_IN_LIVE` (LOM exposes no target).
+  - **DEVIATIONS from this plan's Chunk D (surfaced for the user to veto):** macro custom-NAME authoring
+    NOT built (LOM-impossible); macro variation recall NOT built (deferred). No schema/handler/re-vendor.
+    No operator-verify (the probes ARE the live confirmation; macro values ride existing device_parameters
+    verification).
+
+**RELEASE GATE STATUS:** the full in-scope set (A–F) is now built + tested. Remaining before release:
+cumulative Critic over D-E-F, the enqueued Live operator-verifications (B swell-depth-2, C drum-chain
+round-trip, F chain-mixer round-trip — all need a re-vendor + appropriate loaded devices), and a single
+re-vendor at release. The §3 build set's "macros + zones" items resolved to LOM walls (names/zones
+UNSUPPORTED, variations deferred) rather than handlers — the matrix records the probed truth.

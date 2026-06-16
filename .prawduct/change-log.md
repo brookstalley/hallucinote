@@ -6,7 +6,7 @@
 
 ## 2026-06-16 — Analyzer-infra robustness: master device-param re-push + captures-dir recency (sun-zone-done mix pass)
 
-<!-- prawduct: type=fix | chunks=master-device-analyzer-aware,captures-dir-recency | scope=mcp-handlers,sync-push,analysis,tests -->
+<!-- prawduct: type=fix | chunks=master-device-analyzer-aware,captures-dir-recency | scope=mcp-handlers,sync-push,analysis,tests | status=merged -->
 
 **Re-vendor REQUIRED by the current fingerprint** — `handlers/analysis.py` is in
 `_FINGERPRINT_PATHS`, so the version handshake flags drift and prompts

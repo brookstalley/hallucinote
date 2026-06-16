@@ -309,6 +309,27 @@ def test_sweep_auto_loads_master_analyzer_when_absent():
 # --- idempotency: the most load-bearing property ---------------------
 
 
+def test_sweep_raises_teaching_error_when_analyzer_not_installed():
+    """ONBOARD-M4L B1: when the analyzer .amxd isn't in the User Library
+    (no Max for Live, or a Suite user who skipped the install), the sweep
+    raises a teaching error naming the Max for Live requirement + what still
+    works — NOT the generic 'preset_query found no loadable matches'. Keyed
+    on the missing device, not on Live-edition inference (D1)."""
+    ctx = _FakeCtx(_FakeSong())  # default empty master = one surface to sweep
+    # "Analyzer not installed": the User Library holds no item whose name
+    # matches the analyzer pattern, so the preset_query resolves to nothing.
+    ctx.application.browser._item.name = "NotTheAnalyzer"
+
+    with pytest.raises(analyzer_setup.AnalyzerNotInstalledError) as exc:
+        ensure_analyzers_loaded(ctx)
+
+    msg = str(exc.value)
+    assert "Max for Live" in msg
+    assert "/hallucinote:ableton-mcp-install" in msg
+    assert "/compose-review" in msg          # tells them what still works
+    assert "no loadable matches" not in msg  # NOT the cryptic generic error
+
+
 def test_sweep_is_idempotent_no_duplicates():
     """Two consecutive sweeps must produce identical layouts and not
     add a second analyzer to any surface."""

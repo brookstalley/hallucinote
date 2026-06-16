@@ -714,6 +714,16 @@ def _walk_for_name(
     return None, None
 
 
+class PresetQueryNoMatchError(ValueError):
+    """A ``preset_query`` matched no loadable browser item.
+
+    A ``ValueError`` subclass so existing callers that catch ``ValueError``
+    — and ``inventory.find``, which keys on the message phrase — are
+    unaffected. The typed seam lets the analyzer-load path distinguish
+    "device not installed" from other load failures and raise a teaching
+    error (ONBOARD-M4L B1)."""
+
+
 def _resolve_preset_query(
     browser: Any, query: dict[str, Any],
 ) -> tuple[Any, list[str]]:
@@ -807,7 +817,7 @@ def _resolve_preset_query(
     _walk(scope_node, scope_path, _BROWSER_WALK_DEPTH)
 
     if not found_items:
-        raise ValueError(
+        raise PresetQueryNoMatchError(
             f"preset_query found no loadable matches for "
             f"pattern={pattern!r} mode={mode!r} root={root!r} "
             f"path_prefix={path_prefix!r}. Tighten the scope or "

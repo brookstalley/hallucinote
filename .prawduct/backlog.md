@@ -684,6 +684,11 @@ sections only via explicit `/backlog update` calls.
 
   **CONFIRMED-DEFERRED — re-verified 2026-06-13 (verify-first triage).** Re-read the live code: two of the three proposed fixes already exist — the hard wall-clock ceiling (`handlers/automation.py` ~1956–1981) and the pre-perform reset (`_arm_and_seek` ~1922–1932). The genuine residual is a **timeout on `run_on_main` itself**: the 0%-CPU hang blocks INSIDE `run_on_main`, so neither the deadline nor a worker-side watchdog (both run between callbacks) can fire. That is a high-blast-radius core primitive in `_FINGERPRINT_PATHS`, only tunable against real Live — NOT an autonomous-no-Live target. Kept open at this residual scope.
 
+- **[TUN-4Q7W]** Compose songs in alternate tuning systems (MICROTUNE)
+  `effort: M · impact: S · area: tuning/sync · source: user · added: 2026-06-16 · status: open · stage: ready · refs: .prawduct/artifacts/alternate-tunings.md, .prawduct/artifacts/plans/MICROTUNE/build-plan.md`
+
+  Pull-from-Live LOM acquisition of a loaded tuning, reconstructed per-song cached `.ascl`, integer-MIDI degree→MIDI mapper feeding the unchanged generators, isolated `hallucinote/tuning/` package the core never imports; one nullable `songs.tuning_ref`, gated lens caveat + push instruction/drift-warn. Build plan and requirements are written (see `refs:`).
+
 ## Promoted
 
 - **[SMP-7K2D]** Sample-instrument + the playback-parameter model — author a Simpler/Sampler with an assigned sample file from build.py/DB (the swell buried-"we" keystone primitive; absorbs the cluster)

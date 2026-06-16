@@ -950,6 +950,38 @@ def test_push_skips_default_only_drum_chain(conn, song, session, track):
     assert "set_chain_property" not in _calls_by_action(plan)
 
 
+# NODE-ADDR Chunk F — per-chain mixer state (mute/solo/volume/pan) push.
+
+def test_push_emits_mixer_state_for_authored_chain(conn, song, session, track):
+    rack = _linked_drum_rack(conn, session, track)
+    nested = M.create_device_chain(conn, parent_rack_device_id=rack, position=1)
+    M.set_chain_properties(
+        conn, chain_id=nested, mute=True, volume=0.5, pan=-0.25,
+    )
+    calls = _calls_by_action(
+        push.plan_push_devices(conn, song_id=song, session_id=session)
+    )["set_chain_property"]
+    assert len(calls) == 1
+    c = calls[0]
+    # mute stored 0/1 -> re-emitted as the handler's bool wire type.
+    assert c.args["mute"] is True
+    assert c.args["volume"] == 0.5 and c.args["pan"] == -0.25
+    assert "solo" not in c.args  # solo at default -> not emitted
+    assert c.args["node"]["terminal"] == "chain"
+    assert c.args["node"]["chain_index"] == 1
+
+
+def test_push_combines_choke_and_mixer_on_one_chain(conn, song, session, track):
+    rack = _linked_drum_rack(conn, session, track)
+    nested = M.create_device_chain(conn, parent_rack_device_id=rack, position=1)
+    M.set_chain_properties(conn, chain_id=nested, choke_group=2, solo=True)
+    calls = _calls_by_action(
+        push.plan_push_devices(conn, song_id=song, session_id=session)
+    )["set_chain_property"]
+    assert len(calls) == 1
+    assert calls[0].args["choke_group"] == 2 and calls[0].args["solo"] is True
+
+
 def test_push_addresses_a_nested_rack_chain_with_a_path(
     conn, song, session, track
 ):

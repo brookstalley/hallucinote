@@ -148,17 +148,16 @@ MATRIX: tuple[Feature, ...] = (
             Cell("master", FeatureStatus.SUPPORTED),
             Cell(
                 "chain",
-                FeatureStatus.NOT_IMPLEMENTED,
-                reason=(
-                    "Chain mixer-state authoring isn't built — chain "
-                    "volume/pan/sends/mute/solo are read-only today."
-                ),
+                FeatureStatus.SUPPORTED,
                 live_evidence=(
-                    "A chain exposes a ChainMixerDevice (volume/panning/sends) "
-                    "and settable mute/solo (probe 2026-06-15)."
+                    "Chain mute/solo are settable bools and the "
+                    "ChainMixerDevice exposes volume/panning DeviceParameters "
+                    "(probe 2026-06-15). NODE-ADDR Chunk F authors "
+                    "volume/pan/mute/solo via the `chain` terminal; the handler "
+                    "re-probes mixer_device. Chain SENDS are a separate cell "
+                    "(`send_levels`/chain) — not part of mixer state."
                 ),
-                workaround=_SNAPSHOT_WORKAROUND,
-                request_tag="NODE-ADDR Chunk F",
+                determination="probe",
             ),
         ),
     ),
@@ -169,6 +168,22 @@ MATRIX: tuple[Feature, ...] = (
         cells=(
             Cell("track", FeatureStatus.SUPPORTED),
             Cell("return", FeatureStatus.SUPPORTED),
+            Cell(
+                "chain",
+                FeatureStatus.NOT_IMPLEMENTED,
+                reason=(
+                    "Per-chain sends (into a rack's own return chains) aren't "
+                    "built — Chunk F authors chain volume/pan/mute/solo but not "
+                    "sends."
+                ),
+                live_evidence=(
+                    "ChainMixerDevice.sends is a DeviceParameter vector, empty "
+                    "unless the rack has its own return chains — uncommon "
+                    "(probe 2026-06-15)."
+                ),
+                workaround=_SNAPSHOT_WORKAROUND,
+                request_tag="NODE-ADDR (chain sends, deferred)",
+            ),
         ),
     ),
     Feature(

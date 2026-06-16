@@ -27,29 +27,35 @@ def conn(tmp_path):
 
 
 # --------------------------------------------------------------------------
-# chain_authored_props — the single non-default filter
+# chain_authored_props — the single non-default filter (Chunk C + F)
 # --------------------------------------------------------------------------
+
+def _props(choke_group=None, out_note=None, mute=None, solo=None,
+           volume=None, pan=None):
+    """The full 6-key authored-props dict (all keys always present so a pull
+    diff can clear any one back to its default)."""
+    return {"choke_group": choke_group, "out_note": out_note,
+            "mute": mute, "solo": solo, "volume": volume, "pan": pan}
+
 
 @pytest.mark.parametrize(
     "entry,expected",
     [
         # plain instrument-rack chain — no drum attrs at all.
-        ({"name": "808"}, {"choke_group": None, "out_note": None}),
+        ({"name": "808"}, _props()),
         # choke 0 is Live's "no choke group" default -> dropped.
-        ({"choke_group": 0, "out_note": 36, "in_note": 36},
-         {"choke_group": None, "out_note": None}),
+        ({"choke_group": 0, "out_note": 36, "in_note": 36}, _props()),
         # a real choke group is kept.
         ({"choke_group": 3, "out_note": 36, "in_note": 36},
-         {"choke_group": 3, "out_note": None}),
+         _props(choke_group=3)),
         # out_note == in_note is the no-transpose identity -> dropped.
-        ({"choke_group": 0, "out_note": 60, "in_note": 60},
-         {"choke_group": None, "out_note": None}),
+        ({"choke_group": 0, "out_note": 60, "in_note": 60}, _props()),
         # a real transpose is kept.
         ({"choke_group": 0, "out_note": 60, "in_note": 36},
-         {"choke_group": None, "out_note": 60}),
+         _props(out_note=60)),
         # both meaningful.
         ({"choke_group": 2, "out_note": 48, "in_note": 36},
-         {"choke_group": 2, "out_note": 48}),
+         _props(choke_group=2, out_note=48)),
     ],
 )
 def test_chain_authored_props_filter(entry, expected):
@@ -58,9 +64,36 @@ def test_chain_authored_props_filter(entry, expected):
 
 def test_chain_authored_props_ignores_bools():
     # A stray bool must never be read as a 0/1 int prop.
-    assert chain_authored_props({"choke_group": True, "out_note": False}) == {
-        "choke_group": None, "out_note": None,
-    }
+    assert chain_authored_props(
+        {"choke_group": True, "out_note": False}
+    ) == _props()
+
+
+@pytest.mark.parametrize(
+    "entry,expected",
+    [
+        # NODE-ADDR Chunk F mixer state. mute/solo default off -> dropped.
+        ({"is_muted": False, "is_soloed": False}, _props()),
+        # a set mute/solo is stored as 1.
+        ({"is_muted": True, "is_soloed": False}, _props(mute=1)),
+        ({"is_muted": False, "is_soloed": True}, _props(solo=1)),
+        # volume at its intrinsic default (within eps) -> dropped.
+        ({"volume": 0.85, "volume_default": 0.85}, _props()),
+        # volume off default -> kept.
+        ({"volume": 0.5, "volume_default": 0.85}, _props(volume=0.5)),
+        # pan centred at its default -> dropped; off-centre -> kept.
+        ({"pan": 0.0, "pan_default": 0.0}, _props()),
+        ({"pan": -0.5, "pan_default": 0.0}, _props(pan=-0.5)),
+        # value present but NO default (param raised on default_value) ->
+        # treated as default, NOT captured (mixer state must not over-capture).
+        ({"volume": 0.5}, _props()),
+        ({"pan": -0.5}, _props()),
+        # a stray bool is never read as a mixer float.
+        ({"volume": True, "pan": False}, _props()),
+    ],
+)
+def test_chain_authored_props_mixer_filter(entry, expected):
+    assert chain_authored_props(entry) == expected
 
 
 def test_capture_nested_chains_attaches_only_nondefault_props():
@@ -178,3 +211,60 @@ def test_re_replay_clears_a_dropped_prop(conn):
     replay_capture(conn, snap2, song_name="dc")
 
     assert _drum_rack_chains(conn, song_id)[1]["choke_group"] is None
+
+
+# --------------------------------------------------------------------------
+# NODE-ADDR Chunk F — per-chain mixer state through the capture->replay path
+# --------------------------------------------------------------------------
+
+def test_capture_replay_lands_mixer_state(conn):
+    chains = [
+        # chain 1: muted + volume off default; pan centred (default).
+        {"chain_index": 1, "name": "A", "device_count": 0, "devices": [],
+         "is_muted": True, "is_soloed": False,
+         "volume": 0.5, "volume_default": 0.85, "pan": 0.0, "pan_default": 0.0},
+        # chain 2: soloed + pan off centre; volume at default.
+        {"chain_index": 2, "name": "B", "device_count": 0, "devices": [],
+         "is_muted": False, "is_soloed": True,
+         "volume": 0.85, "volume_default": 0.85, "pan": -0.4, "pan_default": 0.0},
+        # chain 3: everything at the default -> nothing stored.
+        {"chain_index": 3, "name": "C", "device_count": 0, "devices": [],
+         "is_muted": False, "is_soloed": False,
+         "volume": 0.85, "volume_default": 0.85, "pan": 0.0, "pan_default": 0.0},
+    ]
+    snap = assemble_snapshot_via_probes(_drum_probe(chains))
+    snap_chains = snap["tracks"][0]["devices"][0]["chains"]
+    # chain 1: mute + volume kept; pan/solo at default -> absent.
+    assert snap_chains[0]["mute"] == 1 and snap_chains[0]["volume"] == 0.5
+    assert "pan" not in snap_chains[0] and "solo" not in snap_chains[0]
+    # chain 2: solo + pan kept; volume/mute at default -> absent.
+    assert snap_chains[1]["solo"] == 1 and snap_chains[1]["pan"] == -0.4
+    assert "volume" not in snap_chains[1] and "mute" not in snap_chains[1]
+    # chain 3: all default -> nothing.
+    for k in ("mute", "solo", "volume", "pan"):
+        assert k not in snap_chains[2]
+
+    song_id = replay_capture(conn, snap, song_name="mx")
+    db = _drum_rack_chains(conn, song_id)
+    assert db[1]["mute"] == 1 and db[1]["volume"] == 0.5 and db[1]["pan"] is None
+    assert db[2]["solo"] == 1 and db[2]["pan"] == -0.4 and db[2]["volume"] is None
+    assert all(db[3][k] is None for k in ("mute", "solo", "volume", "pan"))
+
+
+def test_re_replay_clears_dropped_mixer_state(conn):
+    """A chain unmuted / returned to unity in Live drops the prop from the
+    snapshot; re-replay clears the stale DB value (shared clear-on-None path)."""
+    on = [{"chain_index": 1, "name": "A", "device_count": 0, "devices": [],
+           "is_muted": True, "is_soloed": False,
+           "volume": 0.4, "volume_default": 0.85, "pan": 0.0, "pan_default": 0.0}]
+    song_id = replay_capture(conn, assemble_snapshot_via_probes(_drum_probe(on)),
+                             song_name="mx")
+    assert _drum_rack_chains(conn, song_id)[1]["mute"] == 1
+
+    off = [{"chain_index": 1, "name": "A", "device_count": 0, "devices": [],
+            "is_muted": False, "is_soloed": False,
+            "volume": 0.85, "volume_default": 0.85, "pan": 0.0, "pan_default": 0.0}]
+    replay_capture(conn, assemble_snapshot_via_probes(_drum_probe(off)),
+                   song_name="mx")
+    row = _drum_rack_chains(conn, song_id)[1]
+    assert row["mute"] is None and row["volume"] is None

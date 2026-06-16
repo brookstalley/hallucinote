@@ -726,21 +726,23 @@ register(
         tool="ableton_device",
         name="set_chain_property",
         description=(
-            "Set a DrumChain's per-drum properties — choke_group and/or out_note "
-            "(MIDI transpose) — addressed by a `chain`-terminal NodeAddr "
-            "(device_index = the drum rack, chain_index = which pad's chain). "
-            "Pass at least one; both may be set at once. Capability-probed: these "
-            "live on a DrumChain only (a drum-rack pad's chain). A plain "
-            "instrument/audio-rack chain raises a teaching error pointing at "
-            "ableton://reference/node-feature-matrix. choke_group 0 clears the "
-            "choke; out_note equal to the pad's in_note is no transpose. Get the "
-            "chain_index from ableton_device(action='get_device_chains')."
+            "Set a chain's authored properties, addressed by a `chain`-terminal "
+            "NodeAddr (device_index = the rack, chain_index = which chain). Pass "
+            "at least one; any combination may be set at once. Two families, each "
+            "capability-probed (a teaching error points at "
+            "ableton://reference/node-feature-matrix): "
+            "(1) PER-DRUM, DrumChain only — choke_group (0 = no choke group; "
+            "non-zero groups cut each other off, e.g. open/closed hats) and "
+            "out_note (MIDI transpose; equal to the pad's in_note = no "
+            "transpose). (2) PER-CHAIN MIXER, every chain — mute / solo (bools) "
+            "and volume (0..1) / pan (-1..1). Get the chain_index from "
+            "ableton_device(action='get_device_chains')."
         ),
         params=(
             node_addr_spec(
                 description=(
-                    "The DrumChain (terminal 'chain'): device_index = the drum "
-                    "rack, chain_index = which pad's chain on it."
+                    "The chain (terminal 'chain'): device_index = the rack, "
+                    "chain_index = which chain on it."
                 )
             ),
             ParamSpec(
@@ -749,8 +751,8 @@ register(
                 required=False,
                 minimum=0,
                 description=(
-                    "Live choke-group id (0 = no choke group). Pads sharing a "
-                    "non-zero group cut each other off (open/closed hats)."
+                    "DrumChain only. Live choke-group id (0 = no choke group). "
+                    "Pads sharing a non-zero group cut each other off."
                 ),
             ),
             ParamSpec(
@@ -760,8 +762,42 @@ register(
                 minimum=0,
                 maximum=127,
                 description=(
-                    "MIDI note the chain emits (transpose target). Equal to the "
-                    "pad's in_note means no transpose."
+                    "DrumChain only. MIDI note the chain emits (transpose "
+                    "target). Equal to the pad's in_note means no transpose."
+                ),
+            ),
+            ParamSpec(
+                name="mute",
+                type="bool",
+                required=False,
+                description="Mute this chain (every chain; default unmuted).",
+            ),
+            ParamSpec(
+                name="solo",
+                type="bool",
+                required=False,
+                description="Solo this chain (every chain; default unsoloed).",
+            ),
+            ParamSpec(
+                name="volume",
+                type="float",
+                required=False,
+                minimum=0.0,
+                maximum=1.0,
+                description=(
+                    "Chain mixer volume, 0.0..1.0 normalized (the "
+                    "ChainMixerDevice volume param; ~0.85 = unity)."
+                ),
+            ),
+            ParamSpec(
+                name="pan",
+                type="float",
+                required=False,
+                minimum=-1.0,
+                maximum=1.0,
+                description=(
+                    "Chain mixer pan, -1.0 (hard left) .. 1.0 (hard right); "
+                    "0.0 = centre."
                 ),
             ),
         ),
@@ -769,7 +805,7 @@ register(
         example=(
             "ableton_device(action='set_chain_property', "
             "node={'parent': {'kind': 'track', 'index': 2}, 'terminal': 'chain', "
-            "'device_index': 1, 'chain_index': 1}, choke_group=1)"
+            "'device_index': 1, 'chain_index': 1}, mute=True, volume=0.7)"
         ),
     )
 )

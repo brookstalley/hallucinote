@@ -120,11 +120,13 @@ def test_probed_walls_are_unsupported_in_live(feature, node_kind):
         ("input_routing", "master"),
         ("output_routing", "return"),
         ("output_routing", "master"),
-        # choke_out_note/chain flipped SUPPORTED in NODE-ADDR Chunk C — see
-        # test_shipped_features_are_supported below.
+        # choke_out_note/chain flipped SUPPORTED in NODE-ADDR Chunk C, and
+        # mixer_state/chain in Chunk F — see test_shipped_features_are_supported.
         # zones/chain re-scoped to UNSUPPORTED_IN_LIVE in Chunk E (see
         # test_probed_walls_are_unsupported_in_live).
-        ("mixer_state", "chain"),
+        # NODE-ADDR Chunk F: chain SENDS deferred (mixer_state covers vol/pan/
+        # mute/solo; sends into a rack's own return chains are rarely populated).
+        ("send_levels", "chain"),
     ],
 )
 def test_probed_buildables_are_not_implemented(feature, node_kind):
@@ -143,6 +145,8 @@ def test_probed_buildables_are_not_implemented(feature, node_kind):
         ("monitor_state", "track"),
         # NODE-ADDR Chunk C: per-DrumChain choke_group / out_note authoring.
         ("choke_out_note", "chain"),
+        # NODE-ADDR Chunk F: per-chain mixer state (mute/solo/volume/pan).
+        ("mixer_state", "chain"),
     ],
 )
 def test_shipped_features_are_supported(feature, node_kind):

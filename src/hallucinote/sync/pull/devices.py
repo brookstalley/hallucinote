@@ -932,19 +932,24 @@ def _diff_nested_chains(
         else:
             chain_id = existing_chain["id"]
 
-        # NODE-ADDR Chunk C: diff the chain's authored per-drum properties
-        # (choke_group / out_note) against the DB. chain_authored_props applies
-        # the non-default filter (None = Live default), so a now-default value
-        # clears the DB's stale one — symmetric with the set_track_routing /
-        # set_chain_properties clear-on-None contract. set_chain_properties is
-        # idempotent (no event when nothing changed), so a steady chain is a
-        # no-op even though we always pass both fields.
+        # NODE-ADDR Chunk C + F: diff the chain's authored properties (per-drum
+        # choke_group/out_note + per-chain mixer mute/solo/volume/pan) against the
+        # DB. chain_authored_props applies the non-default filter (None = Live
+        # default), so a now-default value clears the DB's stale one — symmetric
+        # with the set_track_routing / set_chain_properties clear-on-None
+        # contract. set_chain_properties is idempotent (no event when nothing
+        # changed), so a steady chain is a no-op even though we always pass every
+        # field.
         props = chain_authored_props(chain_entry)
         result = M.set_chain_properties(
             conn,
             chain_id=chain_id,
             choke_group=props["choke_group"],
             out_note=props["out_note"],
+            mute=props["mute"],
+            solo=props["solo"],
+            volume=props["volume"],
+            pan=props["pan"],
             actor=actor, request_id=request_id, reason=reason,
         )
         if result.kind == "updated":

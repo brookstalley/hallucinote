@@ -312,6 +312,13 @@ CREATE INDEX IF NOT EXISTS idx_sends_return ON sends(to_return_id);
 -- chain and on drum chains whose value is the Live default (choke 0 /
 -- out_note == in_note) — capture stores only non-defaults, push emits only
 -- stored (mirrors the Chunk B param filter). Authored via the `chain` terminal.
+-- NODE-ADDR Chunk F: per-chain mixer state — `mute`/`solo` (Chain bools, 0/1)
+-- and `volume`/`pan` (the ChainMixerDevice's volume/panning DeviceParameter
+-- values). Unlike choke/out_note these exist on EVERY chain (plain + drum), not
+-- just DrumChains. Same non-default discipline: NULL = the chain's Live/preset
+-- default (unmuted/unsoloed, unity volume, centre pan). Chain SENDS (into the
+-- rack's own return chains) are a distinct, rarely-populated surface — left as a
+-- documented NOT_IMPLEMENTED cell (`send_levels`/chain), not a column here.
 CREATE TABLE IF NOT EXISTS device_chains (
     id                      TEXT PRIMARY KEY,
     parent_track_id         TEXT REFERENCES tracks(id) ON DELETE CASCADE,
@@ -320,6 +327,10 @@ CREATE TABLE IF NOT EXISTS device_chains (
     position                INTEGER NOT NULL DEFAULT 0,
     choke_group             INTEGER,
     out_note                INTEGER,
+    mute                    INTEGER,
+    solo                    INTEGER,
+    volume                  REAL,
+    pan                     REAL,
     CHECK (
         (parent_track_id IS NOT NULL)
       + (parent_return_id IS NOT NULL)

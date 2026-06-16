@@ -372,15 +372,20 @@ def _replay_rack_chains(
             request_id=request_id,
             reason=reason,
         )
-        # NODE-ADDR Chunk C: apply the chain's authored per-drum properties.
-        # Passed explicitly (None when the snapshot omitted them) so a re-replay
-        # of a snapshot that DROPPED a prop clears the stale DB value — replay is
+        # NODE-ADDR Chunk C + F: apply the chain's authored properties (per-drum
+        # choke/out_note + per-chain mixer mute/solo/volume/pan). Passed
+        # explicitly (None when the snapshot omitted them) so a re-replay of a
+        # snapshot that DROPPED a prop clears the stale DB value — replay is
         # idempotent and the snapshot is the source of truth.
         M.set_chain_properties(
             conn,
             chain_id=nested_chain_id,
             choke_group=chain.get("choke_group"),
             out_note=chain.get("out_note"),
+            mute=chain.get("mute"),
+            solo=chain.get("solo"),
+            volume=chain.get("volume"),
+            pan=chain.get("pan"),
             actor=actor,
             request_id=request_id,
             reason=reason,
@@ -943,18 +948,47 @@ def _parent_flat_args(parent_kind: str, parent_index: int | None) -> dict[str, A
     return {"master": True}
 
 
-def chain_authored_props(chain_entry: dict[str, Any]) -> dict[str, int | None]:
-    """Normalize a ``get_device_chains`` chain entry's per-drum properties to
-    their AUTHORED form (NODE-ADDR Chunk C) — the single non-default filter
+def _chain_mixer_nondefault(
+    chain_entry: dict[str, Any], key: str,
+) -> float | None:
+    """Non-default filter for a chain mixer float (volume / pan) — NODE-ADDR
+    Chunk F. Returns the value only when it differs from the chain's intrinsic
+    ``<key>_default`` (within ``_CAPTURE_DEFAULT_EPS``, the same tolerance the
+    Chunk B param filter uses), else ``None``. With no default available (the
+    rare param that raises on ``default_value``) it returns ``None`` — mixer
+    state must not over-capture (a stored unity-volume on every chain is bloat),
+    so "can't prove non-default" errs toward NOT capturing here, the opposite of
+    the always-capture param fallback."""
+    val = chain_entry.get(key)
+    if not isinstance(val, (int, float)) or isinstance(val, bool):
+        return None
+    default = chain_entry.get(f"{key}_default")
+    if not isinstance(default, (int, float)) or isinstance(default, bool):
+        return None
+    if abs(float(val) - float(default)) <= _CAPTURE_DEFAULT_EPS:
+        return None
+    return float(val)
+
+
+def chain_authored_props(
+    chain_entry: dict[str, Any],
+) -> dict[str, int | float | None]:
+    """Normalize a ``get_device_chains`` chain entry's authored properties to
+    their AUTHORED form (NODE-ADDR Chunk C + F) — the single non-default filter
     shared by the snapshot-assemble (capture) and pull-diff paths.
 
-    ``choke_group`` / ``out_note`` exist on a ``DrumChain`` only; a plain
-    instrument-rack ``Chain`` has neither (both come back ``None``). The Live
-    defaults are filtered to ``None`` so the DB stores only meaningful per-drum
-    settings (mirrors the Chunk B param default-filter): ``choke_group`` 0 ("no
-    choke group") and an ``out_note`` equal to ``in_note`` (no transpose) are the
-    defaults. Returns ``{"choke_group": int|None, "out_note": int|None}`` — both
-    keys always present so a pull diff can clear a value back to ``None``.
+    Chunk C — ``choke_group`` / ``out_note`` exist on a ``DrumChain`` only; a
+    plain instrument-rack ``Chain`` has neither (both come back ``None``).
+    Defaults filtered to ``None``: ``choke_group`` 0 ("no choke group") and an
+    ``out_note`` equal to ``in_note`` (no transpose).
+
+    Chunk F — per-chain mixer state on EVERY chain: ``mute`` / ``solo`` (stored
+    1 only when set; unmuted/unsoloed is the default → ``None``) and ``volume`` /
+    ``pan`` (stored only when off the chain's intrinsic param default, via
+    :func:`_chain_mixer_nondefault`).
+
+    Returns all six keys always present so a pull diff can clear any one back to
+    its default. Mirrors the Chunk B param default-filter throughout.
     """
     choke = chain_entry.get("choke_group")
     out_note = chain_entry.get("out_note")
@@ -970,7 +1004,14 @@ def chain_authored_props(chain_entry: dict[str, Any]) -> dict[str, int | None]:
         and out_note != in_note
         else None
     )
-    return {"choke_group": choke_val, "out_note": out_val}
+    return {
+        "choke_group": choke_val,
+        "out_note": out_val,
+        "mute": 1 if chain_entry.get("is_muted") else None,
+        "solo": 1 if chain_entry.get("is_soloed") else None,
+        "volume": _chain_mixer_nondefault(chain_entry, "volume"),
+        "pan": _chain_mixer_nondefault(chain_entry, "pan"),
+    }
 
 
 def _capture_nested_chains(

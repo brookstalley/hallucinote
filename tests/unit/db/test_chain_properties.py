@@ -110,6 +110,78 @@ def test_out_note_validation(conn, drum_chain, bad):
         M.set_chain_properties(conn, chain_id=drum_chain, out_note=bad)
 
 
+# --------------------------------------------------------------------------
+# NODE-ADDR Chunk F — per-chain mixer state (mute / solo / volume / pan)
+# --------------------------------------------------------------------------
+
+def test_set_mixer_state_persists_and_emits(conn, drum_chain):
+    res = M.set_chain_properties(
+        conn, chain_id=drum_chain, mute=True, solo=False, volume=0.5, pan=-0.25,
+    )
+    assert res.kind == "updated"
+    row = Q.get_device_chain(conn, drum_chain)
+    # mute/solo are bool on the wire, coerced to 0/1 int for storage.
+    assert row["mute"] == 1 and row["solo"] == 0
+    assert row["volume"] == 0.5 and row["pan"] == -0.25
+    events = _props_events(conn)
+    assert len(events) == 1
+    assert json.loads(events[0]["payload_json"])["changes"] == {
+        "mute": 1, "solo": 0, "volume": 0.5, "pan": -0.25,
+    }
+
+
+def test_mute_solo_accept_int_0_1(conn, drum_chain):
+    M.set_chain_properties(conn, chain_id=drum_chain, mute=1, solo=0)
+    row = Q.get_device_chain(conn, drum_chain)
+    assert row["mute"] == 1 and row["solo"] == 0
+
+
+def test_mixer_none_clears_to_default(conn, drum_chain):
+    M.set_chain_properties(conn, chain_id=drum_chain, mute=True, volume=0.3)
+    res = M.set_chain_properties(conn, chain_id=drum_chain, mute=None, volume=None)
+    assert res.kind == "updated"
+    row = Q.get_device_chain(conn, drum_chain)
+    assert row["mute"] is None and row["volume"] is None
+
+
+def test_mixer_partial_update_leaves_unpassed(conn, drum_chain):
+    M.set_chain_properties(conn, chain_id=drum_chain, volume=0.6, pan=0.2)
+    M.set_chain_properties(conn, chain_id=drum_chain, volume=0.9)
+    row = Q.get_device_chain(conn, drum_chain)
+    assert row["volume"] == 0.9 and row["pan"] == 0.2
+
+
+def test_mixer_idempotent_no_event_when_unchanged(conn, drum_chain):
+    M.set_chain_properties(conn, chain_id=drum_chain, volume=0.5)
+    res = M.set_chain_properties(conn, chain_id=drum_chain, volume=0.5)
+    assert res.kind == "unchanged"
+    assert len(_props_events(conn)) == 1
+
+
+@pytest.mark.parametrize("bad", [2, -1, 1.5, "1"])
+def test_mute_validation(conn, drum_chain, bad):
+    with pytest.raises(ValueError, match="mute"):
+        M.set_chain_properties(conn, chain_id=drum_chain, mute=bad)
+
+
+@pytest.mark.parametrize("bad", [2, -1, 1.5, "0"])
+def test_solo_validation(conn, drum_chain, bad):
+    with pytest.raises(ValueError, match="solo"):
+        M.set_chain_properties(conn, chain_id=drum_chain, solo=bad)
+
+
+@pytest.mark.parametrize("bad", [-0.1, 1.1, True, "0.5"])
+def test_volume_validation(conn, drum_chain, bad):
+    with pytest.raises(ValueError, match="volume"):
+        M.set_chain_properties(conn, chain_id=drum_chain, volume=bad)
+
+
+@pytest.mark.parametrize("bad", [-1.1, 1.1, True, "0"])
+def test_pan_validation(conn, drum_chain, bad):
+    with pytest.raises(ValueError, match="pan"):
+        M.set_chain_properties(conn, chain_id=drum_chain, pan=bad)
+
+
 def test_props_set_protects_chain_from_tombstoning(conn, drum_chain):
     """A non-build actor touching a chain's props flips its latest actor, so the
     tombstone pass won't reclaim it — mirrors track_routing_set on a track."""

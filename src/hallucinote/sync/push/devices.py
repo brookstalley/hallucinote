@@ -452,15 +452,22 @@ def _emit_chain_property_calls(
     parent_kind: str,
     parent_name: str,
 ) -> None:
-    """Emit a `set_chain_property` call for a chain's stored per-drum properties
-    (NODE-ADDR Chunk C). The DB stores only non-defaults (choke != 0, out_note !=
-    in_note), so a default-only chain emits nothing. Addressed by the `chain`
-    terminal: device_index = the top-level rack, path = this rack's own path
-    (empty for the top-level rack), chain_index = the chain's DB position."""
+    """Emit a `set_chain_property` call for a chain's stored authored properties
+    (NODE-ADDR Chunk C per-drum choke/out_note + Chunk F mixer mute/solo/volume/
+    pan). The DB stores only non-defaults (choke != 0, out_note != in_note,
+    mute/solo only when set, volume/pan only off the preset default), so a
+    default-only chain emits nothing. Addressed by the `chain` terminal:
+    device_index = the top-level rack, path = this rack's own path (empty for the
+    top-level rack), chain_index = the chain's DB position. mute/solo are stored
+    0/1 and re-emitted as bools (the handler's wire type)."""
     keys = chain.keys()
     choke = chain["choke_group"] if "choke_group" in keys else None
     out_note = chain["out_note"] if "out_note" in keys else None
-    if choke is None and out_note is None:
+    mute = chain["mute"] if "mute" in keys else None
+    solo = chain["solo"] if "solo" in keys else None
+    volume = chain["volume"] if "volume" in keys else None
+    pan = chain["pan"] if "pan" in keys else None
+    if all(v is None for v in (choke, out_note, mute, solo, volume, pan)):
         return
     node = build_node_addr(
         parent_kv,
@@ -477,12 +484,24 @@ def _emit_chain_property_calls(
     if out_note is not None:
         args["out_note"] = int(out_note)
         set_desc.append(f"out_note={int(out_note)}")
+    if mute is not None:
+        args["mute"] = bool(mute)
+        set_desc.append(f"mute={bool(mute)}")
+    if solo is not None:
+        args["solo"] = bool(solo)
+        set_desc.append(f"solo={bool(solo)}")
+    if volume is not None:
+        args["volume"] = float(volume)
+        set_desc.append(f"volume={float(volume):.3f}")
+    if pan is not None:
+        args["pan"] = float(pan)
+        set_desc.append(f"pan={float(pan):.3f}")
     plan.add(ToolCall(
         tool="ableton_device",
         args=args,
         key=f"device_chain_props:{chain['id']}",
         purpose=(
-            f"{parent_name} / drum chain {chain['position']}: "
+            f"{parent_name} / chain {chain['position']}: "
             f"{', '.join(set_desc)}"
         ),
     ))

@@ -5656,3 +5656,82 @@ def test_pull_idempotent_after_steady_state(conn, song, session):
         song_id=song, session_id=session,
     )
     assert out.mutations == 0
+
+
+# ---------------------------------------------------------------------------
+# NODE-ADDR Chunk F — per-chain mixer state (mute/solo/volume/pan) pull
+# ---------------------------------------------------------------------------
+
+
+def _mixer_chain_entry(ci, name, *, is_muted=False, is_soloed=False,
+                       volume=0.85, volume_default=0.85,
+                       pan=0.0, pan_default=0.0):
+    """A get_device_chains entry carrying the Chunk F mixer fields
+    `_describe_chain` surfaces (value + intrinsic default for the filter)."""
+    return {
+        "chain_index": ci, "name": name, "device_count": 0, "devices": [],
+        "is_muted": is_muted, "is_soloed": is_soloed,
+        "volume": volume, "volume_default": volume_default,
+        "pan": pan, "pan_default": pan_default,
+    }
+
+
+def test_pull_writes_authored_mixer_state(conn, song, session):
+    _, _, rack_id = _build_track_with_rack(conn, song, session)
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"nested_rack_chains:{rack_id}",
+            _nested_payload_with_chains(
+                1,
+                _mixer_chain_entry(1, "A", is_muted=True, volume=0.5),
+                _mixer_chain_entry(2, "B", is_soloed=True, pan=-0.4),
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations >= 2
+    chains = {
+        c["position"]: c
+        for c in Q.get_device_chains_for_rack_device(conn, rack_id)
+    }
+    assert chains[1]["mute"] == 1 and chains[1]["volume"] == 0.5
+    assert chains[1]["pan"] is None and chains[1]["solo"] is None
+    assert chains[2]["solo"] == 1 and chains[2]["pan"] == -0.4
+    assert chains[2]["volume"] is None
+
+
+def test_pull_clears_mixer_state_returned_to_default(conn, song, session):
+    _, _, rack_id = _build_track_with_rack(conn, song, session)
+    nested = M.create_device_chain(conn, parent_rack_device_id=rack_id, position=1)
+    M.set_chain_properties(conn, chain_id=nested, mute=True, volume=0.4)
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"nested_rack_chains:{rack_id}",
+            # unmuted + back to unity volume in Live -> the diff clears the DB.
+            _nested_payload_with_chains(1, _mixer_chain_entry(1, "A")),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 1
+    chain = Q.get_device_chains_for_rack_device(conn, rack_id)[0]
+    assert chain["mute"] is None and chain["volume"] is None
+
+
+def test_pull_mixer_idempotent_after_steady_state(conn, song, session):
+    _, _, rack_id = _build_track_with_rack(conn, song, session)
+    nested = M.create_device_chain(conn, parent_rack_device_id=rack_id, position=1)
+    M.set_chain_properties(conn, chain_id=nested, mute=True, volume=0.5, pan=-0.2)
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"nested_rack_chains:{rack_id}",
+            _nested_payload_with_chains(
+                1, _mixer_chain_entry(1, "A", is_muted=True, volume=0.5,
+                                      pan=-0.2),
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0

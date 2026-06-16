@@ -271,6 +271,14 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # transpose target. Set via the set_chain_properties mutator at capture/pull.
     ("device_chains", "choke_group", "INTEGER"),
     ("device_chains", "out_note", "INTEGER"),
+    # NODE-ADDR Chunk F: per-chain mixer state — present on EVERY chain (not just
+    # DrumChains). All nullable, NULL = the chain's preset/Live default (unmuted /
+    # unsoloed / unity volume / centre pan). `mute`/`solo` = 0/1 bools; `volume`
+    # (0..1) / `pan` (-1..1) = the ChainMixerDevice volume/panning param values.
+    ("device_chains", "mute", "INTEGER"),
+    ("device_chains", "solo", "INTEGER"),
+    ("device_chains", "volume", "REAL"),
+    ("device_chains", "pan", "REAL"),
 )
 
 

@@ -152,11 +152,15 @@ def _resolve_chain_song(
     return None
 
 
-# NODE-ADDR Chunk C: per-DrumChain authored properties. Sentinel distinguishes
+# NODE-ADDR Chunk C/F: per-chain authored properties. Sentinel distinguishes
 # "field not passed" from "field passed as None" (None = clear to the Live
 # default — a meaningful value, exactly like set_track_routing's clear-a-route).
+# Chunk C: choke_group / out_note (DrumChain only). Chunk F: mute / solo /
+# volume / pan (every chain — the per-chain mixer state).
 _UNSET: Any = object()
-_CHAIN_PROP_FIELDS: tuple[str, ...] = ("choke_group", "out_note")
+_CHAIN_PROP_FIELDS: tuple[str, ...] = (
+    "choke_group", "out_note", "mute", "solo", "volume", "pan",
+)
 
 
 def set_chain_properties(
@@ -165,27 +169,41 @@ def set_chain_properties(
     chain_id: str,
     choke_group: Any = _UNSET,
     out_note: Any = _UNSET,
+    mute: Any = _UNSET,
+    solo: Any = _UNSET,
+    volume: Any = _UNSET,
+    pan: Any = _UNSET,
     actor: str = "system",
     request_id: str | None = None,
     reason: str | None = None,
 ) -> MutatorResult:
-    """Partial update of a chain's authored per-drum properties (NODE-ADDR
-    Chunk C). Only fields actually passed are touched; pass a field as ``None``
-    to clear it to the Live default (choke 0 / no transpose) — symmetric with
-    ``set_track_routing``'s clear-a-route. Idempotent: per-field diff against the
-    current row, emits ``DEVICE_CHAIN_PROPS_SET`` only when something changes.
+    """Partial update of a chain's authored properties (NODE-ADDR Chunk C/F).
+    Only fields actually passed are touched; pass a field as ``None`` to clear
+    it to the Live default — symmetric with ``set_track_routing``'s
+    clear-a-route. Idempotent: per-field diff against the current row, emits
+    ``DEVICE_CHAIN_PROPS_SET`` only when something changes.
 
-    ``choke_group`` / ``out_note`` exist on a ``DrumChain`` only; the capture /
-    pull paths store them non-default-filtered (choke != 0, out_note != in_note)
-    so a plain instrument-rack chain never carries them. The mutator itself is
+    ``choke_group`` / ``out_note`` (Chunk C) exist on a ``DrumChain`` only;
+    ``mute`` / ``solo`` / ``volume`` / ``pan`` (Chunk F — the per-chain mixer
+    state) exist on every chain. The capture / pull paths store them
+    non-default-filtered (choke != 0, out_note != in_note, mute/solo only when
+    set, volume/pan only off their preset default). The mutator itself is
     storage-only — it does not re-probe Live; the handler / capability matrix
-    own the "is this a DrumChain?" decision.
+    own the per-property "does this chain have it?" decision.
     """
     changes: dict[str, Any] = {}
     if choke_group is not _UNSET:
         changes["choke_group"] = choke_group
     if out_note is not _UNSET:
         changes["out_note"] = out_note
+    if mute is not _UNSET:
+        changes["mute"] = mute
+    if solo is not _UNSET:
+        changes["solo"] = solo
+    if volume is not _UNSET:
+        changes["volume"] = volume
+    if pan is not _UNSET:
+        changes["pan"] = pan
     if not changes:
         return MutatorResult(chain_id, "unchanged")
     if changes.get("choke_group") is not None:
@@ -200,10 +218,39 @@ def set_chain_properties(
             raise ValueError(
                 f"out_note must be a MIDI note 0..127 or None, got {on!r}"
             )
+    for flag in ("mute", "solo"):
+        if changes.get(flag) is not None:
+            fv = changes[flag]
+            # bools are accepted and coerced to 0/1 (the wire passes bool, the DB
+            # stores int) — but reject other types and out-of-range ints.
+            if isinstance(fv, bool):
+                changes[flag] = int(fv)
+            elif isinstance(fv, int) and fv in (0, 1):
+                pass
+            else:
+                raise ValueError(
+                    f"{flag} must be 0/1 (or bool) or None, got {fv!r}"
+                )
+    if changes.get("volume") is not None:
+        vol = changes["volume"]
+        if not isinstance(vol, (int, float)) or isinstance(vol, bool) \
+                or not (0.0 <= float(vol) <= 1.0):
+            raise ValueError(
+                f"volume must be a float 0.0..1.0 or None, got {vol!r}"
+            )
+        changes["volume"] = float(vol)
+    if changes.get("pan") is not None:
+        pn = changes["pan"]
+        if not isinstance(pn, (int, float)) or isinstance(pn, bool) \
+                or not (-1.0 <= float(pn) <= 1.0):
+            raise ValueError(
+                f"pan must be a float -1.0..1.0 or None, got {pn!r}"
+            )
+        changes["pan"] = float(pn)
     actor, request_id = _resolve_actor_and_request(actor, request_id)
     row = conn.execute(
         """SELECT parent_track_id, parent_return_id, parent_rack_device_id,
-                  choke_group, out_note
+                  choke_group, out_note, mute, solo, volume, pan
            FROM device_chains WHERE id = ?""",
         (chain_id,),
     ).fetchone()

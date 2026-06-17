@@ -49,8 +49,8 @@ hand-authored notes if that's what the art needs.
 7. ⭐ **Read the mix** — **`/mix-review`** (needs Max for Live — Suite or the
    M4L add-on; `/compose-review` is the any-edition alternative). Interpret the
    MixReport against intent — masking, loudness, feel, energy per section.
-8. **Snapshot + iterate** — `/song-snapshot`, `/snapshot-bake-recent-changes`,
-   `/ableton-pull`. Then loop back to compose or mix. As you iterate, log what you
+8. **Snapshot + iterate** — `/song-snapshot` (the single durable mix bake) and
+   `/ableton-pull` (build.py-staging). Then loop back to compose or mix. As you iterate, log what you
    *tried* and how it turned out — especially reverted dead ends — to the **attempt
    ledger** (the two review checkpoints propose the entries; recall via `/song-attempts`),
    so each loop starts smarter instead of re-running a move that already failed.

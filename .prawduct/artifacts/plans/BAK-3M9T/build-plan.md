@@ -41,7 +41,7 @@ Chunk 01's `verify-api` step before any handler is written.
 
 - [x] Chunk 01: Model sidechain source in the snapshot (durable round-trip — keystone)
 - [x] Chunk 02: Capture warns + lists any sidechain it cannot represent (no silent drop)
-- [ ] Chunk 03: Delete `/snapshot-bake-recent-changes` + clean all references
+- [x] Chunk 03: Delete `/snapshot-bake-recent-changes` + clean all references
 - [ ] Chunk 04: Reframe `/ableton-pull` as build.py-staging + document the one-bake model
 
 Context: Built on worktree `feat/snapshot-sidechain` (off develop); gates are worktree-blind

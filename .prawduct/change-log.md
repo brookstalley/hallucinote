@@ -4,6 +4,53 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-17 — Note edits now propagate to arrangement clips (PSH-6W2J)
+
+<!-- prawduct: type=fix | chunks=PSH-6W2J | scope=sync-push,queries,tests | -->
+
+**Silent correctness bug.** An arrangement clip is a distinct Live copy of a
+session clip, made once by `duplicate_to_arrangement`. A later note edit pushed to
+the session clip never reached the copy — yet push reported success, the DB and
+session clip were correct, and `/mix-review` ran clean against the *stale*
+arrangement audio. The only way to notice was probing arrangement-clip note counts
+directly. Root cause: `plan_push_arrangement` was idempotent on the **existence** of
+the `arrangement_clip` link (skip-if-linked), never on note **content** — and
+`push_notes` only ever touched the session clip.
+
+Fix (report direction 1 — propagate, don't re-duplicate): an already-linked
+placement now emits a `replace_notes(location='arrangement')` refresh instead of
+being skipped. The MCP handler already accepted `location='arrangement'` with
+`clip_index = arrangement_clip_index`, so the copy's notes are rewritten in place —
+idempotent on the *placement* (no doubled clips), but notes stay in sync. Both push
+paths are covered:
+
+- **Full `execute`** — `sync/push/arrangement.py::plan_push_arrangement`: the
+  already-linked branch emits a refresh; new-duplicate vs refresh are tracked
+  separately so the "agent must clear existing arrangement clips" warn fires only
+  for genuine new placements. A re-push of a built song refreshes every
+  arrangement-copy's notes unconditionally — the **heal path** for any
+  already-stale arrangement.
+- **Scoped `push-notes`** — `sync/push_notes.py`: after the session clip push,
+  appends `plan_push_arrangement_clip_notes(clip_id)` refresh calls for the clip's
+  linked placements; rides the existing `changed_only` fingerprint (unchanged
+  session clip ⇒ unchanged copy ⇒ no refresh).
+
+New: `queries.get_arrangement_for_clip`; `push.plan_push_arrangement_clip_notes`;
+ack-only key kind `arrangement_clip_notes` in `apply_push_results`. Unlinked
+placements (not yet materialized) and audio sources (no notes; CLP-AUD2) are skipped;
+when a linked placement can't be refreshed (unresolved track link / audio), the
+idempotency note names the gap rather than claiming a clean refresh.
+
+**Contract correction (tests-are-contracts note):** the prior
+`test_plan_push_arrangement_skips_already_linked_placements` asserted
+`plan.calls == []` for a re-push — that *encoded* the bug (W10-A's idempotent-skip
+was too aggressive, suppressing propagation). Rewritten to assert exactly one
+arrangement refresh (no `duplicate_to_arrangement`). Not a weakened test: a contract
+found to be wrong, corrected to match the fixed behavior.
+
+Resolves the report archived under
+`incoming-bugs/archives/2026-06-15-note-changes-never-reach-arrangement-clips.md`.
+
 ## 2026-06-17 — Songs-workspace bootstrap (`hallucinote init-workspace`) + two doc-only decisions
 
 <!-- prawduct: type=feat | chunks=WS-BOOTSTRAP | scope=cli,tools,skills,docs,backlog,artifacts,tests | | status=merged -->

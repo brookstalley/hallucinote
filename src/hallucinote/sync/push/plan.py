@@ -351,6 +351,12 @@ _ACK_ONLY_KINDS: frozenset[str] = frozenset({
     # structural property, not a Hallucinote entity — there's no per-scene DB
     # row to link, so the key is ack-only.
     "scene",
+    # PSH-6W2J: refresh notes on an ALREADY-linked arrangement clip via
+    # ableton_clip(action='replace_notes', location='arrangement'). The
+    # placement's `arrangement_clip` binding already exists (recorded when the
+    # duplicate landed); this op only rewrites content, so there's no new index
+    # to record — ack-only. Distinct from the `arrangement_clip:` duplicate key.
+    "arrangement_clip_notes",
 })
 
 

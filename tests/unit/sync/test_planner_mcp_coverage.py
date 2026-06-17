@@ -136,13 +136,21 @@ def synthetic_song(conn) -> dict:
         conn, from_track_id=track_id, to_return_id=return_id, level=0.3,
     )
 
-    # One session clip + one arrangement placement (clip + arrangement planners).
+    # One session clip + TWO arrangement placements of it: one left UNLINKED so
+    # plan_push_arrangement still exercises the `duplicate_to_arrangement` emit,
+    # and one LINKED (below) so both plan_push_arrangement's already-linked branch
+    # and plan_push_arrangement_clip_notes exercise the
+    # `replace_notes(location='arrangement')` refresh emit (PSH-6W2J).
     clip_id = M.create_clip(
         conn, track_id=track_id, slot=1, length_beats=8.0, name="Lead-1",
     )
     M.add_arrangement_clip(
         conn, song_id=song_id, track_id=track_id, clip_id=clip_id,
         start_bar=1.0, end_bar=3.0,
+    )
+    arrangement_clip_id = M.add_arrangement_clip(
+        conn, song_id=song_id, track_id=track_id, clip_id=clip_id,
+        start_bar=5.0, end_bar=7.0,
     )
 
     # One device on the track's top-level chain (devices planner).
@@ -161,8 +169,9 @@ def synthetic_song(conn) -> dict:
     M.add_breakpoint(conn, envelope_id=env_id, time_beats=0.0, value=0.5)
     M.add_breakpoint(conn, envelope_id=env_id, time_beats=4.0, value=0.85)
 
-    # Session + link the track & clip & return so plan_push_clip,
-    # plan_push_mix, plan_push_arrangement see them as already-linked.
+    # Session + link the track & clip & return (and ONE of the two arrangement
+    # placements) so plan_push_clip, plan_push_mix, plan_push_arrangement, and
+    # plan_push_arrangement_clip_notes see them as already-linked.
     session_id = M.create_ableton_session(
         conn, song_id=song_id, name="canary-session", actor="sync",
     )
@@ -177,6 +186,10 @@ def synthetic_song(conn) -> dict:
     M.link_db_to_ableton(
         conn, session_id=session_id, db_kind="return", db_id=return_id, ableton_index=1,
         actor="sync",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session_id, db_kind="arrangement_clip",
+        db_id=arrangement_clip_id, ableton_index=1, actor="sync",
     )
 
     return {
@@ -251,6 +264,17 @@ _ALL_PLANNERS: tuple[PlannerEntry, ...] = (
         name="plan_push_arrangement",
         invoke=lambda conn, **kw: push.plan_push_arrangement(
             conn, song_id=kw["song_id"], session_id=kw["session_id"],
+        ),
+        must_emit_calls=True,
+    ),
+    PlannerEntry(
+        # Per-clip refresh planner (PSH-6W2J) — different signature (clip_id,
+        # not song_id), so it gets an adapter. Emits a
+        # replace_notes(location='arrangement') per LINKED placement; the
+        # fixture links one, so it must emit.
+        name="plan_push_arrangement_clip_notes",
+        invoke=lambda conn, **kw: push.plan_push_arrangement_clip_notes(
+            conn, clip_id=kw["clip_id"], session_id=kw["session_id"],
         ),
         must_emit_calls=True,
     ),

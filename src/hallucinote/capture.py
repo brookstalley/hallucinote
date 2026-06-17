@@ -1321,32 +1321,61 @@ def _resolve_captured_sidechain_sources(snapshot: dict[str, Any]) -> None:
     """Filter the raw per-device ``sidechain_source`` references captured by
     `_capture_devices_for_parent`, in place, now that every track name is known.
 
-    `get_input_routing` reports a device's OWN host track as the default input
-    when no external sidechain is set — that is not a sidechain, so it is dropped.
-    A source that resolves to a real OTHER track in the snapshot is kept. Anything
-    else — a non-track input ("No Input" / external) or a name that matches no
-    track — cannot be represented as a surface-stable reference and is dropped
-    here (Chunk 02 upgrades that drop into a warning + re-apply list). Top-level
-    devices only, matching what `_capture_devices_for_parent` emits.
+    Three cases:
+      * source == the device's OWN host track — Live's default input, not a
+        sidechain. Dropped QUIETLY (there is nothing to re-apply).
+      * source resolves to a real OTHER track in the snapshot — KEPT.
+      * a genuine sidechain whose source is NOT a track in the snapshot (a return /
+        master / external input, or a track absent from the capture) — cannot be
+        represented as a surface-stable reference. Rather than drop it silently
+        (the umbrella's anti-pattern, BAK-3M9T), it is dropped WITH a UserWarning
+        that lists each dropped source so the operator can re-apply it in Live.
+
+    Top-level devices only, matching what `_capture_devices_for_parent` emits.
+    Scope (deliberate): this is the *sidechain* re-apply guarantee — a general
+    "diff everything probed vs everything the schema represents" sweep is out of
+    scope (open-ended; rule-of-three not met).
     """
     track_names = {t.get("name") for t in (snapshot.get("tracks") or [])}
+    unrepresentable: list[str] = []
 
-    def _filter(parent: dict[str, Any], *, own_track_name: str | None) -> None:
+    def _filter(
+        parent: dict[str, Any], *, own_track_name: str | None, parent_label: str,
+    ) -> None:
         for d in parent.get("devices") or []:
             src = d.get("sidechain_source")
             if src is None:
                 continue
-            if src == own_track_name or src not in track_names:
+            if src == own_track_name:
+                d.pop("sidechain_source", None)  # own-track default, not a sidechain
+                d.pop("sidechain_source_channel", None)
+            elif src not in track_names:
+                name = d.get("name") or d.get("class") or "device"
+                unrepresentable.append(f"{name!r} on {parent_label} → {src!r}")
                 d.pop("sidechain_source", None)
                 d.pop("sidechain_source_channel", None)
+            # else: a real cross-track sidechain — keep it.
 
     for t in snapshot.get("tracks") or []:
-        _filter(t, own_track_name=t.get("name"))
+        _filter(t, own_track_name=t.get("name"),
+                parent_label=f"track {t.get('name')!r}")
     for r in snapshot.get("returns") or []:
-        _filter(r, own_track_name=None)
+        _filter(r, own_track_name=None, parent_label=f"return {r.get('name')!r}")
     master = (snapshot.get("song") or {}).get("master")
     if master:
-        _filter(master, own_track_name=None)
+        _filter(master, own_track_name=None, parent_label="master")
+
+    if unrepresentable:
+        pretty = "; ".join(unrepresentable)
+        warnings.warn(
+            "capture: dropped sidechain source(s) that don't resolve to a track in "
+            f"the snapshot — RE-APPLY MANUALLY in Live: {pretty}. Only a track can "
+            "be a snapshot-stable sidechain source (the DB models the source as a "
+            "track FK); a return / master / external source isn't carried. See "
+            "docs/snapshot-schema.md ('sidechain_source').",
+            UserWarning,
+            stacklevel=2,
+        )
 
 
 def _capture_sends(probe, *, track_index: int) -> dict[str, Any]:

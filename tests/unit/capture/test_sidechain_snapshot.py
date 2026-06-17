@@ -259,12 +259,29 @@ def test_capture_filters_own_track_default_input():
     assert "sidechain_source_channel" not in dev
 
 
-def test_capture_drops_non_track_source():
-    """A source that matches no track (a non-track input / external) cannot be a
-    surface-stable reference — Chunk 01 drops it (Chunk 02 upgrades to a warning)."""
-    snap = assemble_snapshot_via_probes(_capture_probe(source="Ext. In"))
+def test_capture_warns_and_drops_non_track_source():
+    """A genuine sidechain whose source isn't a track in the snapshot can't be a
+    surface-stable reference — Chunk 02: WARN with a re-apply list, never drop it
+    silently. Capture still completes (warn, don't abort)."""
+    with pytest.warns(UserWarning, match=r"RE-APPLY MANUALLY in Live.*Ext\. In"):
+        snap = assemble_snapshot_via_probes(_capture_probe(source="Ext. In"))
     dev = _bass_device(snap)
     assert "sidechain_source" not in dev
+    assert "sidechain_source_channel" not in dev
+    # The rest of the snapshot is captured normally.
+    assert dev["name"] == "Bass Comp"
+    assert {t["name"] for t in snap["tracks"]} == {"Kick", "Bass"}
+
+
+def test_capture_own_track_default_does_not_warn(recwarn):
+    """The own-track default input is not a sidechain — dropped quietly, no
+    re-apply warning (there is nothing to re-apply)."""
+    assemble_snapshot_via_probes(_capture_probe(source="Bass"))
+    assert not [
+        w for w in recwarn.list
+        if issubclass(w.category, UserWarning)
+        and "RE-APPLY MANUALLY" in str(w.message)
+    ]
 
 
 def test_capture_no_field_when_routing_unavailable():

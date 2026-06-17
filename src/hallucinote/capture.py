@@ -290,6 +290,7 @@ def _replay_devices(
     actor: str,
     request_id: str | None,
     reason: str | None,
+    sidechain_pending: list[tuple[str, str | None, str | None]],
 ) -> None:
     """Insert each entry of `devices_array` into the given chain, plus any
     dialed parameters and any nested rack chains — recursively, to arbitrary
@@ -297,6 +298,13 @@ def _replay_devices(
     `_replay_rack_chains` the same way a top-level rack does; `device_chains`
     and `device_parameters` are depth-agnostic in the DB, so no per-depth
     special-casing is needed.
+
+    BAK-3M9T — every device's sidechain source is appended to `sidechain_pending`
+    as ``(device_id, sidechain_source_name | None, channel | None)``. Resolution
+    is deferred to `replay_capture` (a source may name a track created later in
+    the loop); the snapshot is authoritative, so an absent source clears any
+    prior one (idempotent) — the same drop-clears-stale idiom as the per-chain
+    properties in `_replay_rack_chains`.
 
     SNP-8R4K — defensive analyzer exclusion: capture filters the analyzer at
     `compile_snapshot`, but a legacy-polluted snapshot on disk may still carry
@@ -357,6 +365,13 @@ def _replay_devices(
             request_id=request_id,
             reason=reason,
         )
+        # BAK-3M9T: defer sidechain-source resolution (the source may name a
+        # track created later in the replay loop). None → clear on the post-pass.
+        sidechain_pending.append((
+            device_id,
+            d.get("sidechain_source"),
+            d.get("sidechain_source_channel"),
+        ))
         for name, p in (d.get("params_dialed") or {}).items():
             value_display, value_normalized, value_items, value_raw = \
                 _param_value_fields(
@@ -416,6 +431,7 @@ def _replay_devices(
                 actor=actor,
                 request_id=request_id,
                 reason=reason,
+                sidechain_pending=sidechain_pending,
             )
         # M1-C: Drum Rack pad mapping. Each Drum Rack may carry a
         # `drum_pads` array captured via `ableton_device(action='pad_info')`:
@@ -456,10 +472,12 @@ def _replay_rack_chains(
     actor: str,
     request_id: str | None,
     reason: str | None,
+    sidechain_pending: list[tuple[str, str | None, str | None]],
 ) -> None:
     """Insert each nested chain under `rack_device_id` and recurse into the
     chain's devices — which may themselves be racks, recursing again to
-    arbitrary depth (DEEP-RACK-ADDR).
+    arbitrary depth (DEEP-RACK-ADDR). `sidechain_pending` threads through the
+    recursion so a nested device's sidechain source is collected too (BAK-3M9T).
 
     Each entry: ``{chain_index: int>=1, name: str (optional), devices: [...]}``.
     The chain row's `position` matches W6-I/J's 1-based `chain_index` on the
@@ -509,6 +527,7 @@ def _replay_rack_chains(
             actor=actor,
             request_id=request_id,
             reason=reason,
+            sidechain_pending=sidechain_pending,
         )
 
 
@@ -602,6 +621,10 @@ def replay_capture(
         reason=reason,
     )
 
+    # BAK-3M9T: device sidechain sources, collected during _replay_devices and
+    # applied after the full track loop (resolution needs every track_id_by_name).
+    sidechain_pending: list[tuple[str, str | None, str | None]] = []
+
     song_block = snapshot.get("song") or {}
     master = song_block.get("master")
     if master:
@@ -651,6 +674,7 @@ def replay_capture(
                 actor=actor,
                 request_id=request_id,
                 reason=reason,
+                sidechain_pending=sidechain_pending,
             )
 
     return_ids_by_name: dict[str, str] = {}
@@ -690,6 +714,7 @@ def replay_capture(
                 actor=actor,
                 request_id=request_id,
                 reason=reason,
+                sidechain_pending=sidechain_pending,
             )
 
     if stripped_pairs:
@@ -778,7 +803,33 @@ def replay_capture(
                 actor=actor,
                 request_id=request_id,
                 reason=reason,
+                sidechain_pending=sidechain_pending,
             )
+
+    # BAK-3M9T: apply each device's sidechain source now that every track exists.
+    # The source is stored by surface name (never a per-build UUID), resolved here
+    # against this song's tracks (the source is always a track — see
+    # set_device_sidechain / plan_pull_device_sidechain). A device with no
+    # `sidechain_source` clears any prior source (None), idempotently — the
+    # snapshot is authoritative.
+    for device_id, source_name, channel in sidechain_pending:
+        if source_name is None:
+            M.set_device_sidechain(
+                conn, device_id=device_id, source_track_id=None, channel=None,
+                actor=actor, request_id=request_id, reason=reason,
+            )
+            continue
+        source_track_id = track_ids_by_name.get(source_name)
+        if source_track_id is None:
+            raise ValueError(
+                f"device sidechain source {source_name!r} is not a track defined "
+                "in snapshot['tracks'] — cannot resolve the reference (capture "
+                "filters unresolvable sources; check a hand-authored source name)"
+            )
+        M.set_device_sidechain(
+            conn, device_id=device_id, source_track_id=source_track_id,
+            channel=channel, actor=actor, request_id=request_id, reason=reason,
+        )
 
     return song_id
 
@@ -1223,6 +1274,22 @@ def _capture_devices_for_parent(
         params = _params_dialed_via_probe(probe, node=node)
         if params:
             entry["params_dialed"] = params
+        # BAK-3M9T: a top-level device's sidechain SOURCE — the one piece the
+        # S/C On/Gain/Mix params can't carry (see set_device_sidechain). Probe the
+        # input-routing surface (cheap: has_input_routing=False on non-capable
+        # devices); `current_type` is the source track's display name. Stored raw
+        # by surface name (+ channel) here; `_resolve_captured_sidechain_sources`
+        # drops the own-track default and unrepresentable sources once every track
+        # name is known. Top-level only, matching plan_pull_device_sidechain.
+        routing = probe(
+            "ableton_device", "get_input_routing",
+            device_index=di, **_parent_flat_args(parent_kind, parent_index),
+        )
+        if routing.get("has_input_routing") and routing.get("current_type"):
+            entry["sidechain_source"] = routing["current_type"]
+            channel = routing.get("current_channel")
+            if channel:
+                entry["sidechain_source_channel"] = channel
         if cls_display in RACK_CLASS_NAMES:
             chains_resp = probe(
                 "ableton_device", "get_device_chains",
@@ -1248,6 +1315,38 @@ def _capture_devices_for_parent(
                 entry["drum_pads"] = pads
         out.append(entry)
     return out
+
+
+def _resolve_captured_sidechain_sources(snapshot: dict[str, Any]) -> None:
+    """Filter the raw per-device ``sidechain_source`` references captured by
+    `_capture_devices_for_parent`, in place, now that every track name is known.
+
+    `get_input_routing` reports a device's OWN host track as the default input
+    when no external sidechain is set — that is not a sidechain, so it is dropped.
+    A source that resolves to a real OTHER track in the snapshot is kept. Anything
+    else — a non-track input ("No Input" / external) or a name that matches no
+    track — cannot be represented as a surface-stable reference and is dropped
+    here (Chunk 02 upgrades that drop into a warning + re-apply list). Top-level
+    devices only, matching what `_capture_devices_for_parent` emits.
+    """
+    track_names = {t.get("name") for t in (snapshot.get("tracks") or [])}
+
+    def _filter(parent: dict[str, Any], *, own_track_name: str | None) -> None:
+        for d in parent.get("devices") or []:
+            src = d.get("sidechain_source")
+            if src is None:
+                continue
+            if src == own_track_name or src not in track_names:
+                d.pop("sidechain_source", None)
+                d.pop("sidechain_source_channel", None)
+
+    for t in snapshot.get("tracks") or []:
+        _filter(t, own_track_name=t.get("name"))
+    for r in snapshot.get("returns") or []:
+        _filter(r, own_track_name=None)
+    master = (snapshot.get("song") or {}).get("master")
+    if master:
+        _filter(master, own_track_name=None)
 
 
 def _capture_sends(probe, *, track_index: int) -> dict[str, Any]:
@@ -1355,6 +1454,7 @@ def assemble_snapshot_via_probes(
     snapshot = compile_snapshot(
         session_info=session_info, returns=returns_out, tracks=tracks_out,
     )
+    _resolve_captured_sidechain_sources(snapshot)
     if old_snapshot is not None:
         preserve_browser_paths(old_snapshot, snapshot)
         # SNP-2H9F: a device the prior snapshot loaded via preset_query keeps its

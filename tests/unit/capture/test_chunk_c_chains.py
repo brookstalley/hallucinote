@@ -164,6 +164,8 @@ def _drum_probe(chains):
             return {"pads": []}  # Chunk C is about chains, not pad mappings
         if (tool, action) == ("ableton_device", "get_parameters"):
             return {"parameters": []}
+        if (tool, action) == ("ableton_device", "get_input_routing"):
+            return {"has_input_routing": False}
         raise AssertionError(f"unrouted probe {tool}.{action} {params}")
     return probe
 

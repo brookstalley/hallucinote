@@ -26,7 +26,7 @@ silent-degrade failure mode).
 - **`/getting-started` + `/song-new`** now `--check` for a workspace and offer to
   create one instead of silently scattering a song into `./songs/<slug>`.
 - Closes the **fresh-workspace half** of the filed gitignore bug
-  (`incoming-bugs/…fresh-workspace-gitignore-misses-tool-generated-artifacts.md`)
+  (`incoming-bugs/2026-06-14-song-workspace-gitignore-misses-tool-generated-artifacts.md`)
   at the natural moment (workspace creation): the managed block covers the
   regenerable-artifact set.
 

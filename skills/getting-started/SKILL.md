@@ -25,7 +25,7 @@ It's JSON. Read these blocks:
 
 If Live is open, confirm the bridge actually talks to it: `ableton_session(action='info')`. A real response (tempo, tracks, master) proves the Remote Script is assigned to a Control Surface slot and the server is connected. A hang or "no connection" means Live isn't running, the Control Surface slot isn't assigned, or Claude Code needs a restart after assigning it — see `/ableton-mcp-install` and the README troubleshooting.
 
-The composing **engine** (the `hallucinote` package `build.py` imports) ships in the plugin's uv env — the same env as the bridge — so there's nothing separate to install. Engine commands run via the plugin's own interpreter (`ableton://server/info` → `python`); see [`docs/running-the-engine.md`](../../docs/running-the-engine.md).
+The composing **engine** (the `hallucinote` package `build.py` imports) ships in the plugin's uv env — the same env as the bridge — so there's nothing separate to install. Engine commands run via the plugin's own interpreter: resolve `$PY` once from `ableton://server/info`'s `python`, then invoke as `"$PY" -m hallucinote.cli …`; see [`docs/running-the-engine.md`](../../docs/running-the-engine.md).
 
 ## 2. Say what works — honestly, Max for Live included
 
@@ -37,7 +37,7 @@ Tell them in plain language where they stand:
 
 Read the state and propose ONE next step as an offer, then let the conversation carry it (rely on context — don't force a fixed script):
 - **Remote Script / analyzer missing and they want Live set up** → offer: *"Want me to walk you through `/ableton-mcp-install`?"* It has interactive checkpoints (quit Live first), so let them drive it — don't run it unprompted.
-- **Not in a songs workspace yet** → before any song work, check: run `python -m hallucinote.cli init-workspace --check` and read `already_workspace`. If it's `false`, the user isn't in a Hallucinote **songs workspace** (a folder with a `hallucinote.toml` marker), and a `/song-new` here would scatter the song into `./songs/<slug>` relative to wherever Claude launched — untracked. Offer to fix it: *"You're not in a songs workspace yet — want me to set one up here? (it writes the `hallucinote.toml` marker, a `.gitignore` for regenerable artifacts, and `git init`s the folder)"* → on yes, run `python -m hallucinote.cli init-workspace`. If they'd rather use an existing songs repo, tell them to `cd` there and restart Claude. Don't scaffold a song into a non-workspace silently.
+- **Not in a songs workspace yet** → before any song work, check: run `"$PY" -m hallucinote.cli init-workspace --check` and read `already_workspace`. If it's `false`, the user isn't in a Hallucinote **songs workspace** (a folder with a `hallucinote.toml` marker), and a `/song-new` here would scatter the song into `./songs/<slug>` relative to wherever Claude launched — untracked. Offer to fix it: *"You're not in a songs workspace yet — want me to set one up here? (it writes the `hallucinote.toml` marker, a `.gitignore` for regenerable artifacts, and `git init`s the folder)"* → on yes, run `"$PY" -m hallucinote.cli init-workspace`. If they'd rather use an existing songs repo, tell them to `cd` there and restart Claude. Don't scaffold a song into a non-workspace silently.
 - **Set up and in a workspace** → offer the fork: *"Want to start a new song, or open one you already have?"* — new → `/song-new`; existing → name it and push it. The full lifecycle map is `/song-workflow`.
 - **Just exploring** → point at the README and `ableton://guides/getting-started`.
 

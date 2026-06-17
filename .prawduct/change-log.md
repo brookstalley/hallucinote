@@ -6,7 +6,7 @@
 
 ## 2026-06-17 — Songs-workspace bootstrap (`hallucinote init-workspace`) + two doc-only decisions
 
-<!-- prawduct: type=feat | chunks=WS-BOOTSTRAP | scope=cli,tools,skills,docs,backlog,artifacts,tests | -->
+<!-- prawduct: type=feat | chunks=WS-BOOTSTRAP | scope=cli,tools,skills,docs,backlog,artifacts,tests | | status=merged -->
 
 Delivers the **author side** of the project-root contract. The reader
 (`hallucinote.workspace`) already discovered a `hallucinote.toml` marker, but

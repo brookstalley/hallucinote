@@ -6,7 +6,7 @@
 
 ## 2026-06-17 — Note edits now propagate to arrangement clips (PSH-6W2J)
 
-<!-- prawduct: type=fix | chunks=PSH-6W2J | scope=sync-push,queries,tests | -->
+<!-- prawduct: type=fix | chunks=PSH-6W2J | scope=sync-push,queries,tests | | status=merged -->
 
 **Silent correctness bug.** An arrangement clip is a distinct Live copy of a
 session clip, made once by `duplicate_to_arrangement`. A later note edit pushed to

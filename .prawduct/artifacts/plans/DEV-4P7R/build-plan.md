@@ -114,3 +114,19 @@ reinterpreting `value_normalized` as raw.
 
 Full suite green (baseline 4037p/2s); round-trip test passes; `/prawduct:critic`
 (chunk → cumulative) blocking-free; docs updated; backlog DEV-4P7R → shipped at merge.
+
+## Status — BUILT (2026-06-17), branch `feat/param-overrides-value-raw`
+
+- [x] **C1 — `value_raw` channel end-to-end.** Schema + additive migration (both tables),
+  mutators (exclusivity + dedup), push branch (raw before display), capture authoring +
+  generation (range-based auto-emit), pull (raw channel + relative-tolerance no-churn), docs.
+- Tests: **4057 passed, 2 skipped** (+20 over baseline). Commits `407b752` (feature) +
+  `e0b74e0` (Critic-fix). Backlog chore `a606ed7` on develop.
+- **Independent Critic:** 1 BLOCKING (B1 — flatten dropped `value_raw` on the `/song-snapshot`
+  nested-override path) + 1 WARNING (W1 — absolute-tolerance churn on large raw values), both
+  FIXED; verify-resolutions pass = RESOLVED.
+- **PENDING — Live operator-verification (not blocking the logic):** the true end-to-end proof
+  (bake swell's `LFO 1 S. Rate` override as `value_raw` → `build.py --reset` rebuild → push →
+  confirm "1/2" survives without saving the `.als`) needs the dev engine deployed to the running
+  Live session (relaunch dev-mode + `/ableton-mcp-install`). The wire behavior (`set_parameter
+  value=8.0` → "1/2") is already proven; the symbolic round-trip is covered by tests.

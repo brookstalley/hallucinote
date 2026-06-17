@@ -742,6 +742,11 @@ sections only via explicit `/backlog update` calls.
 
 Closed investigations — no fix possible / structural-close on Ableton's roadmap. Kept for search so a future scrub doesn't re-open them without new evidence. Status `dropped` = investigated and intentionally not pursued; `shipped` = built and closed.
 
+- **[WS-BOOTSTRAP]** songs-workspace bootstrap (`hallucinote init-workspace`)
+  `effort: S · impact: M · area: onboarding/install · source: user · added: 2026-06-17 · status: shipped · stage: ready · reviewed: 2026-06-17 · closed-by: feature/songs-workspace-bootstrap (01d746a, 012660a) · related: WSP-1K4D, project-root-contract`
+
+  The author side of the project-root contract: a CLI subcommand + module that writes the `hallucinote.toml` marker, an idempotent `.gitignore` managed block, and git-inits. `/getting-started` and `/song-new` now `--check` and offer to create a workspace instead of silently degrading to `./songs/<slug>`. Implements a code-level slice of the "technical entry gate" deferred by `onboarding-and-teaching-model.md`. Closes the fresh-workspace half of the incoming-bugs gitignore report (`incoming-bugs/2026-06-14-song-workspace-gitignore-misses-tool-generated-artifacts.md`; the report's "Still open: workspaces created *before* this" half is not covered here). **SHIPPED** on `feature/songs-workspace-bootstrap` (commits 01d746a, 012660a); Critic chunk 0/0/1 (resolved); suite 3994 passed.
+
 - **[ATL-7K3M]** Per-song attempt ledger — record try→outcome→correction (incl. reverted dead ends) as a new `kind: attempt`
   `effort: S · impact: M · area: song-craft · source: user · added: 2026-06-14 · status: shipped · stage: design · refs: .prawduct/artifacts/song-attempt-ledger.md · reviewed: 2026-06-14`
 

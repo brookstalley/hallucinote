@@ -29,8 +29,8 @@ The copy's excludes, the verification, and the atomic vendor live in tested Pyth
 
 **First, read the running server's identity** so the install vendors + verifies
 against the copy the *plugin actually launches*, not whatever the install shell's
-`sys.path` resolves (INS-3W8P). In a coexistence setup — the installed plugin **and**
-an editable `pip install -e` clone whose versions diverge — those are different
+`sys.path` resolves (INS-3W8P). In a coexistence setup — the marketplace plugin **and**
+a `--plugin-dir` dev checkout whose versions diverge — those are different
 copies, and vendoring the wrong one re-creates a server↔Remote-Script handshake
 mismatch that blocks every push until corrected (it cost multiple Live-restart
 cycles on 2026-06-13).
@@ -55,9 +55,11 @@ Then run preflight, passing the server version when you have it:
 python -m hallucinote_mcp.cli preflight --server-version "<SERVER_VERSION>"
 ```
 
-(Omit `--server-version` entirely if the resource read failed. If import fails, stop
-and tell the user to `pip install hallucinote-mcp`. On Windows, if `python` opens the
-Microsoft Store, use `py -3`.)
+(Omit `--server-version` entirely if the resource read failed. If `hallucinote_mcp`
+import fails, the plugin's env isn't built or connected — make sure the plugin is
+installed and run `/mcp` to connect, then retry; the plugin provides the package, so
+there's nothing to `pip install`. On Windows, if `python` opens the Microsoft Store,
+use `py -3`.)
 
 The JSON report blocks you act on:
 

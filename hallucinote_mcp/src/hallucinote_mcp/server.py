@@ -1,4 +1,4 @@
-"""FastMCP server — 13 unified tools + 12 resources (all static) as MCP entry points.
+"""FastMCP server — 13 unified tools + 13 resources (all static) as MCP entry points.
 
 Each ``@mcp.tool()`` is a thin wrapper that:
   1. Builds a ``wire.Request`` from its arguments.
@@ -79,7 +79,7 @@ logger = logging.getLogger("hallucinote_mcp")
 
 
 PRIMER = """\
-hallucinote-mcp — 13 unified tools + 12 resources (all static) for Ableton Live,
+hallucinote-mcp — 13 unified tools + 13 resources (all static) for Ableton Live,
 structured for low-context-cost agent interaction.
 
 Tools (call action='help' on any tool for its action menu):
@@ -101,6 +101,7 @@ Resources (read via resources/read, no turn cost):
   ableton://session/snapshot          session+tracks+returns in one read
   ableton://browser/{instruments,effects,drums}  + ableton://plugins/installed
   ableton://reference/{scales,device-params}     static lookups
+  ableton://reference/node-feature-matrix        feature × node-kind support (read before authoring)
   ableton://guides/{getting-started,conventions,error-recovery,gaps}
   ableton://server/info               running server version + package_root (install)
 
@@ -109,7 +110,7 @@ MCP prompts — so the agent can invoke them directly. For ANY song
 work, read /song-workflow first — it is the lifecycle map. The arc:
   /song-new -> /song-pick-instruments -> /compose-part ->
   /compose-review (READ the composition) -> /ableton-push ->
-  ableton_render + ableton_analysis -> /mix-review (READ the mix) ->
+  ableton_render + ableton_analysis -> /mix-review (READ the mix; needs Max for Live) ->
   /song-snapshot, then loop. Building blocks: /track-new-with-instrument,
   /return-new, /mix-sidechain, /clip-humanize, /ableton-pull, /song-context.
   The two review checkpoints (/compose-review, /mix-review) are easy to
@@ -141,8 +142,8 @@ def create_server(name: str = "hallucinote-mcp") -> FastMCP:
 
     mcp = FastMCP(name=name, instructions=PRIMER)
 
-    # Wave M-6 + Arc 5 / P3: register 12 static resources (5 Live-backed +
-    # 2 reference + 4 guides + 1 server self-report, INS-3W8P). Done before tool registration
+    # Wave M-6 + Arc 5 / P3: register 13 static resources (5 Live-backed +
+    # 3 reference + 4 guides + 1 server self-report, INS-3W8P). Done before tool registration
     # so the resource URIs are visible to the client immediately on
     # initialize.
     from .resources import register_resources

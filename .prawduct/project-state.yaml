@@ -306,6 +306,10 @@ technical_decisions:
       rationale: "/ableton-mcp-install must vendor + fingerprint against the hallucinote_mcp copy the plugin LAUNCHES, never the invoking interpreter's sys.path pick (a coexistence setup — installed plugin + editable clone — diverges and silently produces a handshake mismatch). CLAUDE_PLUGIN_ROOT is NOT available in the skill's bash env (verified empirically), and a --plugin-dir root is an arbitrary path no disk-scan can find — so the only reliable source of truth is the running server process. It self-reports {version, package_root} via a static, Live-independent resource; the skill threads those into preflight --server-version and install-remote-script --from-package-root/--require-server-version. resources/ is outside _FINGERPRINT_PATHS, so the new resource doesn't change the handshake fingerprint. Contract surface documented in boundary-patterns.md; topology guidance in docs/dev-vs-use-coexistence.md."
       alternatives_considered: "(a) Pin the skill's CLI to the plugin uv env via UV_PROJECT_ENVIRONMENT/CLAUDE_PLUGIN_ROOT — rejected: that env var isn't present in the skill's bash. (b) Disk-discover ~/.claude/plugins/cache/… — rejected: can't locate an arbitrary --plugin-dir root and is fragile against Claude Code internals. The runtime handshake remains the ultimate safety net under all three."
       date: "2026-06-13 (INS-3W8P)"
+    - decision: "Self-contained plugin: the engine ships INSIDE the plugin's uv env; skills run it via the server's own interpreter; no PyPI, no separate clone (PLUGIN-SELF-CONTAINED)"
+      rationale: "Reverses INS-7V2D's implicit posture that a song repo would `pip install hallucinote[live]` from PyPI. We never publish to PyPI (private project), so a song-side install had nothing to resolve against. Instead the repo is a uv workspace ([tool.uv.workspace] members=[hallucinote_mcp], root project=hallucinote) and `uv sync --all-packages` builds ONE env holding both the MCP server and the engine (editable). Skills invoke the engine as `\"$PY\" -m hallucinote.cli <cmd>` where $PY is the running server's interpreter (the `python` field of ableton://server/info = sys.executable of the prewarmed env) — so the agent targets the SAME env the bridge runs in, on a read-only plugin root, with no `uv run --project` default-venv divergence (the Critic-W2 fix). A unified `hallucinote` console-script CLI (src/hallucinote/cli.py) dispatches push/pull/capture/etc. so skills sequence one command, not many. The `[live]` extra and the import-time isolation contract (project_mcp_server_stdlib_only) are preserved but vestigial; the server stays stdlib-only at startup and lazy-imports the numpy-bound engine only on analysis calls."
+      alternatives_considered: "(a) Publish hallucinote to PyPI and have songs `pip install` it — rejected: private project, nothing to publish to, and a second install surface to keep in sync. (b) Skills run `uv run --project <plugin-root> --frozen hallucinote` — rejected (Critic-W2): uv's default `$ROOT/.venv` is a DIFFERENT env from the bridge's and fails on a read-only plugin root. (c) Keep the engine a separate clone the user installs — rejected: defeats one-command `/plugin install`."
+      date: "2026-06-16 (PLUGIN-SELF-CONTAINED; supersedes INS-7V2D's PyPI-out assumption)"
 
 # =============================================================================
 # DESIGN DECISIONS
@@ -324,7 +328,7 @@ design_decisions:
       date: "2026-05-17 (J-2b)"
   interaction_patterns: []
   accessibility_approach: null
-  error_handling_approach: "Plain exceptions (ValueError, KeyError); no custom hierarchy. Broad catches require `# prawduct:ok-broad-except` annotation with rationale. Never silently swallow exceptions — every catch logs context."
+  error_handling_approach: "Plain exceptions (ValueError, KeyError); no custom hierarchy. Broad catches require `# prawduct:ok-broad-except` annotation with rationale. Never silently swallow exceptions — every catch logs context. NARROW CARVE-OUT (ONBOARD-M4L): two single-purpose subclasses exist so a specific cause can be caught precisely rather than by message-matching — `PresetQueryNoMatchError(ValueError)` (device.py, raised when a preset query finds no loadable match) and `AnalyzerNotInstalledError(RuntimeError)` (analyzer/setup.py, raised to teach when the Max-for-Live analyzer is absent). These are leaf classes a caller catches by identity, not a parallel hierarchy; new code still defaults to plain exceptions."
   observability_approach: "The event log IS the audit trail. Every mutator emits an event with actor (in events.ACTORS), reason, request_id, and monotonic seq. No logging frameworks beyond stdlib `logging`. The `requests` table groups events under higher-level intent for cross-mutator correlation."
   infrastructure_dependencies: "SQLite (embedded, WAL mode) for state. Ableton Live + hallucinote-mcp Remote Script for the rendering engine. No external services. Live-Ableton tests are manual; CI runs against mocked dispatcher tests in hallucinote_mcp/tests/."
   visual_direction: null
@@ -491,7 +495,7 @@ build_state:
 # RELIABILITY-CLUSTER (on this branch) are shipped/Critic-clean. Prior plans
 # RTE-1K9T (PR #163), ENV-9P4T (#161), ENV-8K2R/ENV-2T9K and the deleted
 # PSH-CLUSTER are shipped/stale; their plan dirs may be deleted.
-active_build_plan: artifacts/plans/INCOMING-2026-06-14/build-plan.md
+active_build_plan: null
 
 # =============================================================================
 # CHANGE LOG

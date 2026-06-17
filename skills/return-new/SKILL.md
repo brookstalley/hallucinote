@@ -16,7 +16,7 @@ $ARGUMENTS
 
 1. **Create the return.** Call `ableton_return(action='create', name=<name>)`. Capture the returned `return_index`.
 
-2. **Load the effect.** Call `ableton_device(action='load', return_index=<from step 1>, kind=<browser display name>, preset_uri=<effect-uri>)`. `kind` is REQUIRED — pass the browser display name (`Reverb`, `Delay`, `Echo`, `Compressor`, etc.; see `ableton://guides/conventions`).
+2. **Load the effect.** Call `ableton_device(action='load', node={'parent': {'kind': 'return', 'index': <from step 1>}, 'terminal': 'return'}, kind=<browser display name>, preset_uri=<effect-uri>)` (a `return` terminal loads onto the return's main chain). `kind` is REQUIRED — pass the browser display name (`Reverb`, `Delay`, `Echo`, `Compressor`, etc.; see `ableton://guides/conventions`).
 
 3. **Initialize sends** (only if `sends-from` supplied). For each source `track_index`, call `ableton_track(action='set_send', track_index=<src>, return_index=<from step 1>, value=0.4)`.
 

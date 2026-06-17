@@ -5,8 +5,7 @@
 All indices are 1-based on the wire: `track_index=1` is the first track,
 `clip_index=1` is the first session slot or arrangement clip, `device_index=1`
 is the first device in a chain, `scene_index=1` is the first scene. Index 0
-is never valid. Dotted parameter targets inside automation (e.g.
-`device.<device_index>.parameter.<param_index>`) follow the same rule.
+is never valid.
 
 ## Time positions: beats, not bars
 
@@ -34,7 +33,7 @@ caller's job.
 Out-of-range writes raise a teaching error instead of silently clamping.
 
 **Display units (dB, ratios, ms).** Continuous `set_parameter` (at any rack
-depth via `device_path`), plus `ableton_track(action='set_property',
+depth via the `node`'s `path`), plus `ableton_track(action='set_property',
 property='volume')`, accept `value_display` instead of `value` — a display
 string like `'-18 dB'`, `'3:1'`, `'20 ms'`, `'80 Hz'`. The handler inverts
 Live's display curve to the raw value for you, so you can hit a musical target
@@ -47,10 +46,58 @@ fully down, volume 0). Panning has no dB sense, so its `value_display` is refuse
 rare params whose display can't be addressed numerically (e.g. Expansion Ratio
 renders `'1 : 1.15'`, where the leading number never varies).
 
-## Devices on tracks XOR returns
+## Addressing a device: the `node` object (NODE-ADDR)
 
-Pass EXACTLY ONE of `track_index` / `return_index` (never both, never neither).
-Handler validates with a teaching error if you slip.
+The device-addressed actions — `ableton_device` `get_parameters` / `set_parameter`
+/ `load` / `set_sidechain`, and `ableton_automation` `write_envelope` / `clear` /
+`perform_batch` for `target_kind='device_parameter'` — take a single structured
+`node` object (the frozen addressing unit):
+
+```
+node = {
+  parent:       { kind: "track"|"return"|"master", index?: int },   # index omitted for master
+  terminal?:    "track"|"return"|"master"|"device"|"chain",          # default "device"
+  device_index?: int,                                                # 1-based top-level device
+  path?:         [ { chain_index, device_position }, … ],            # deeper rack descent
+  chain_index?: int,                                                 # terminal="chain" only
+}
+```
+
+- A `device` terminal (the default) addresses a device: `device_index` + optional
+  `path` for a nested-rack device at any depth.
+- A `track`/`return`/`master` terminal addresses the node *itself* (no
+  `device_index`) — used for a top-level `load` destination and as the
+  **as-value** shape (e.g. `set_sidechain`'s `source`).
+- A `chain` terminal addresses a rack chain: `device_index` (the rack) +
+  `chain_index` + optional `path` — used as a `load` destination INTO a nested
+  chain.
+
+Get `path` / `chain_index` from `ableton_device(action='get_device_chains')`.
+
+A `chain`-terminal node is also the authoring address for per-chain properties:
+`ableton_device(action='set_chain_property', node={…terminal:'chain'…},
+choke_group=N, out_note=M, mute=…, solo=…, volume=…, pan=…)`. Two families, each
+capability-probed: per-drum choke group / MIDI transpose (DrumChain only — a plain
+instrument/audio-rack chain gets a teaching error) and per-chain mixer state
+(mute / solo / volume / pan, on every chain). Pass at least one. See the feature
+matrix for which apply where.
+
+**Which features work on which node kind:** addressing is uniform (one `node`
+reaches every kind) but *operations are not* — Live's matrix is sparse. Read
+`ableton://reference/node-feature-matrix` BEFORE authoring a node feature
+(routing on a return, macro values, chain mixer state, chain zones, choke
+groups, …). Each cell is
+`SUPPORTED` / `NOT_IMPLEMENTED` (Live can; not built — wait/file a request) /
+`UNSUPPORTED_IN_LIVE` (a hard wall — route around it), with the LOM evidence and
+a workaround, so you never burn a turn attempting an impossible op blind.
+
+The **shallow navigation surfaces** keep flat `track_index` / `return_index` /
+`master`: `ableton_device` `list` / `info` / `get_routing` / `navigate_preset` /
+`pad_info` / `set_input_routing`, the `ableton_automation` read surfaces
+(`read_envelope` / `get_envelope` keep `device_index`), and the direct mixer
+surfaces (`ableton_track` / `ableton_return` volume/pan/mute/sends). Those pass
+EXACTLY ONE of `track_index` / `return_index` (never both, never neither) — the
+handler validates with a teaching error if you slip.
 
 ## Notes replace_notes is all-or-nothing
 

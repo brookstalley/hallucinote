@@ -4,6 +4,238 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-17 — Durable nested-param overrides on a preset_query device (SNP-2H9F)
+
+<!-- prawduct: type=feat | chunks=SNP-2H9F | scope=capture,db-schema,db-mutations,db-queries,sync-push,docs,tests | status=merged -->
+
+**Silent durability loss, fixed.** A by-ear param tweak NESTED inside a rack loaded
+via `preset_query` reverted on every from-scratch rebuild: a preset device has only
+its top-level row in the DB (the preset instantiates the nested tree at push time),
+so the nested delta had no durable home, and capture's full `chains` dump dropped
+`preset_query` + the preset's un-parameterizable timbre (a Wavetable waveform is not
+a `DeviceParameter`) and bloated the snapshot. There was no clean snapshot shape for
+"load X from its portable preset, then override nested param P".
+
+New `param_overrides` representation on a device entry, end-to-end (NODE-ADDR Chunk B
+follow-on; folds into the same uniform-addressing release):
+
+- **Schema** — `device_param_overrides` table keyed `(device_id, path_json, name)`,
+  auto-migrating onto existing song DBs via `init_db`'s `CREATE TABLE IF NOT EXISTS`
+  (mirrors `drum_pad_mappings`); `DEVICE_PARAM_OVERRIDES_REPLACED` event registered
+  under the `device` row-kind so a pulled override protects the preset device from
+  the build sweep.
+- **Mutator + query** — `replace_device_param_overrides` (atomic, idempotent,
+  validating) + `get_device_param_overrides`.
+- **Replay** — `_replay_devices` lands overrides keeping `preset_query`; `chains` +
+  `param_overrides` on one device is a `ValueError` (contradictory representations).
+- **Push** — `_emit_param_override_writes` re-asserts each override via a
+  node-addressed `set_parameter` at its NodeAddr path after the preset loads — no
+  `create_device_chain`, so the preset's waveform/samples survive and nothing
+  duplicates. Shared `_param_value_kv`/`_param_value_fields` helpers so an override
+  dials identically to a top-level `params_dialed`.
+- **Capture** — `preserve_preset_overrides` carries `preset_query` forward and
+  rewrites the fresh `chains` dump into a flat `param_overrides` list; a
+  drum-rack-via-preset with authored per-chain props keeps its `chains` dump + warns
+  (a documented fast-follow).
+
+Verifiable signal met: a preset device's depth-2 override round-trips
+capture→replay→DB→push (fake-probe). 34 new tests; full suite 4037 passed.
+Docs: `docs/snapshot-schema.md`. Plan: `NODE-ADDR/snp-2h9f-slice.md`.
+**Deferred fast-follows** (tracked on SNP-2H9F): pull-symmetry (confirmed
+non-corrupting), drum-rack-chain-props, bounded preset-cache if over-capture bloats.
+
+## 2026-06-17 — Note edits now propagate to arrangement clips (PSH-6W2J)
+
+<!-- prawduct: type=fix | chunks=PSH-6W2J | scope=sync-push,queries,tests | | status=merged -->
+
+**Silent correctness bug.** An arrangement clip is a distinct Live copy of a
+session clip, made once by `duplicate_to_arrangement`. A later note edit pushed to
+the session clip never reached the copy — yet push reported success, the DB and
+session clip were correct, and `/mix-review` ran clean against the *stale*
+arrangement audio. The only way to notice was probing arrangement-clip note counts
+directly. Root cause: `plan_push_arrangement` was idempotent on the **existence** of
+the `arrangement_clip` link (skip-if-linked), never on note **content** — and
+`push_notes` only ever touched the session clip.
+
+Fix (report direction 1 — propagate, don't re-duplicate): an already-linked
+placement now emits a `replace_notes(location='arrangement')` refresh instead of
+being skipped. The MCP handler already accepted `location='arrangement'` with
+`clip_index = arrangement_clip_index`, so the copy's notes are rewritten in place —
+idempotent on the *placement* (no doubled clips), but notes stay in sync. Both push
+paths are covered:
+
+- **Full `execute`** — `sync/push/arrangement.py::plan_push_arrangement`: the
+  already-linked branch emits a refresh; new-duplicate vs refresh are tracked
+  separately so the "agent must clear existing arrangement clips" warn fires only
+  for genuine new placements. A re-push of a built song refreshes every
+  arrangement-copy's notes unconditionally — the **heal path** for any
+  already-stale arrangement.
+- **Scoped `push-notes`** — `sync/push_notes.py`: after the session clip push,
+  appends `plan_push_arrangement_clip_notes(clip_id)` refresh calls for the clip's
+  linked placements; rides the existing `changed_only` fingerprint (unchanged
+  session clip ⇒ unchanged copy ⇒ no refresh).
+
+New: `queries.get_arrangement_for_clip`; `push.plan_push_arrangement_clip_notes`;
+ack-only key kind `arrangement_clip_notes` in `apply_push_results`. Unlinked
+placements (not yet materialized) and audio sources (no notes; CLP-AUD2) are skipped;
+when a linked placement can't be refreshed (unresolved track link / audio), the
+idempotency note names the gap rather than claiming a clean refresh.
+
+**Contract correction (tests-are-contracts note):** the prior
+`test_plan_push_arrangement_skips_already_linked_placements` asserted
+`plan.calls == []` for a re-push — that *encoded* the bug (W10-A's idempotent-skip
+was too aggressive, suppressing propagation). Rewritten to assert exactly one
+arrangement refresh (no `duplicate_to_arrangement`). Not a weakened test: a contract
+found to be wrong, corrected to match the fixed behavior.
+
+Resolves the report archived under
+`incoming-bugs/archives/2026-06-15-note-changes-never-reach-arrangement-clips.md`.
+
+## 2026-06-17 — Songs-workspace bootstrap (`hallucinote init-workspace`) + two doc-only decisions
+
+<!-- prawduct: type=feat | chunks=WS-BOOTSTRAP | scope=cli,tools,skills,docs,backlog,artifacts,tests | | status=merged -->
+
+Delivers the **author side** of the project-root contract. The reader
+(`hallucinote.workspace`) already discovered a `hallucinote.toml` marker, but
+nothing *wrote* one — so a song scaffolded outside a workspace silently scattered
+into `./songs/<slug>` (a documented prerequisite with zero authoring tooling and a
+silent-degrade failure mode).
+
+- **`hallucinote init-workspace`** (`src/hallucinote/tools/init_workspace.py` +
+  `cli.py` subcommand) writes the `hallucinote.toml` marker atomically
+  (`os.replace`), seeds an **idempotent** `.gitignore` managed block (BEGIN/END
+  sentinels — re-runs are no-ops), and `git init`s. Refuses to clobber an existing
+  workspace without `--force`; `--check` reports detection without writing;
+  `--no-gitignore` opts out of the managed block. `git init` failure degrades
+  gracefully — the marker is the essential artifact. The written marker keys
+  (`layout`/`songs_root`/`slug`) round-trip cleanly through the existing reader's
+  `_workspace_from_marker`.
+- **`/getting-started` + `/song-new`** now `--check` for a workspace and offer to
+  create one instead of silently scattering a song into `./songs/<slug>`.
+- Closes the **fresh-workspace half** of the filed gitignore bug
+  (`incoming-bugs/2026-06-14-song-workspace-gitignore-misses-tool-generated-artifacts.md`)
+  at the natural moment (workspace creation): the managed block covers the
+  regenerable-artifact set.
+
+Two doc-only decisions ride along (no code):
+
+- **MCP-7F2K** fingerprint over-trigger — approach decided (c→a) in
+  `.prawduct/artifacts/mcp-fingerprint-design.md`; backlog moved research→ready.
+  Root cause: server-side-only handlers (`handlers/analysis.py`,
+  `runs_server_side=True`, never executes in Live) are hashed into the version
+  fingerprint, prompting needless re-vendor.
+- **AUD-8K2N** — split `docs/capability-truth.md` Mix into *authoring* (any edition)
+  vs *measured review* (Max-for-Live only); the anti-hallucination spine had listed
+  the M4L-gated review as "✓ full" for Standard users. Build declined by design.
+
+24 unit tests for init-workspace (`tests/unit/tools/test_init_workspace.py`),
+including CLI-level `--no-gitignore` coverage. Full suite green this session.
+
+## 2026-06-16 — Analyzer-infra robustness: master device-param re-push + captures-dir recency (sun-zone-done mix pass)
+
+<!-- prawduct: type=fix | chunks=master-device-analyzer-aware,captures-dir-recency | scope=mcp-handlers,sync-push,analysis,tests | status=merged -->
+
+**Re-vendor REQUIRED by the current fingerprint** — `handlers/analysis.py` is in
+`_FINGERPRINT_PATHS`, so the version handshake flags drift and prompts
+`/ableton-mcp-install`. But the analysis change is SERVER-INTERNAL (captures-dir
+selection; the wire contract is unchanged), so this re-vendor is an over-trigger —
+exactly the case MCP-7F2K now tracks. To pick up the fix in a running dev server:
+relaunch dev-mode / `/mcp`, then re-vendor to clear the handshake. The master-side
+fix lives in the engine (`src/hallucinote/`), outside the fingerprint.
+
+Two framework bugs surfaced dogfooding the sun-zone-done mix pass:
+
+- **Master device-param re-push wasn't analyzer-aware** (`sync/push`). Re-pushing a
+  master device parameter (e.g. the master Limiter's Ceiling) targeted the
+  auto-loaded HallucinoteAnalyzer and hard-halted the devices phase. The push probe
+  re-binds track/return device links every push (filtering the analyzer before
+  position-matching, BUG1A), but the master was excluded entirely and never even
+  probed into `live_devices_by_parent` — so a master device link froze at first-load
+  and mis-targeted once a render's analyzer load/reposition shifted the chain.
+  DEV-6M2K newly made master device chains pushable; the probe's master-exclusion
+  was a pre-DEV-6M2K assumption that was never updated. Fix:
+  `_probe_live_devices_via_mcp` now probes the master chain (`master=True`, keyed
+  `("master", 0)`) and `_match_devices_for_linked_parents` reconciles the master with
+  the same analyzer-filtered position match — the link self-heals against analyzer
+  drift. Side-benefit: the push-preflight stale-set detector now covers the master
+  surface too (closes the "still-open piece" in `analyzer_staleness.py`).
+- **Captures-dir picked by dir NAME, not capture time** (`handlers/analysis`).
+  `_latest_captures_dir` used `max()` over dir names assuming ISO-8601 naming, so a
+  hand-named focused-capture dir (`v4-…`, lexically above `2026…`) shadowed the
+  newest render → analysis read the wrong (tiny, single-section) audio. Now keys on
+  the manifest's recorded `captured_at`.
+
+Full suite 3971 passed / 2 skipped @ HEAD. Cumulative Critic 0 blocking (base
+develop); 1 warning (master stale-set label `master #0` → `master:`) resolved via
+verify-resolutions chain. Resolved bug report archived under
+`incoming-bugs/archives/2026-06-16-master-device-param-repush-not-analyzer-aware-stale-link-halts-push.md`.
+Filed MCP-7F2K (fingerprint over-triggers re-vendor for server-internal changes).
+
+## 2026-06-16 — Uniform node addressing (NODE-ADDR / DEV-9K7N) + release-prep: self-contained plugin, onboarding, M4L handling
+
+<!-- prawduct: type=feat | chunks=NODE-ADDR-B,NODE-ADDR-C,NODE-ADDR-D,NODE-ADDR-E,NODE-ADDR-F,PLUGIN-SELF-CONTAINED,ONBOARD-M4L | scope=node-features,mcp-handlers,capture,sync-pull,db-mutations,skills,docs,readme,pyproject,cli,hooks,project-state | status=merged -->
+
+**Re-vendor REQUIRED** — the wire shape changed (`_FINGERPRINT_PATHS` touched): uniform
+`node` addressing, the new `chain` terminal, and `set_chain_property`. Operator-verified
+live on 2026-06-15 (user re-vendored; no-clone install path verified end to end).
+
+Three threads land together as the pre-1.0 release-prep bundle:
+
+- **NODE-ADDR (DEV-9K7N) — uniform node addressing.** One `NodeAddr` (terminals
+  track|return|master|device|chain) reaches every node; operations stay honest via the
+  tri-state node-feature matrix (`SUPPORTED` / `NOT_IMPLEMENTED` / `UNSUPPORTED_IN_LIVE`,
+  published as `ableton://reference/node-feature-matrix`). Chunk B: read-side acquisition
+  (capture execute + depth-N pull + `default_value` capture filter). Chunk C: per-DrumChain
+  authorship (`choke_group` / `out_note` via the `chain` terminal). Chunk D: macro authorship
+  honesty (value-via-params; macro-names/variations re-scoped). Chunk E: zones →
+  `UNSUPPORTED_IN_LIVE`. Chunk F: per-chain mixer state (mute/solo/volume/pan).
+- **PLUGIN-SELF-CONTAINED.** The engine ships INSIDE the plugin's uv env (uv workspace +
+  `uv sync --all-packages`); no PyPI, no separate clone. New unified `hallucinote` console-CLI
+  (`src/hallucinote/cli.py`) so skills sequence one command; skills run it via the server's
+  own interpreter (`"$PY" -m hallucinote.cli`, $PY = `ableton://server/info`'s `python`) — the
+  same env the bridge runs in, on a read-only plugin root. Bash hooks ported to Python
+  (`uv run --no-project python`) for Windows. Decision recorded in project-state
+  (supersedes INS-7V2D's PyPI-out assumption).
+- **ONBOARD-M4L.** `/getting-started` orientation skill; render teaches when the Max-for-Live
+  analyzer is absent (`AnalyzerNotInstalledError`); compose/push/pull/compose-review qualified
+  as edition-agnostic vs. the Suite-only audio-analysis path; install ASKS the edition (D1 —
+  edition isn't reliably detectable).
+
+Plus a README rewrite (no-clone install, breadth examples), the three-leg authorship model
+(`.prawduct/artifacts/authorship-model.md`), and doc coherence cleanup.
+
+Full suite 3965 passed / 2 skipped @ HEAD. Cumulative Critic 0 blocking (base develop); 2
+warnings + 2 notes resolved in HEAD + a real py3.10/3.11 f-string defect the green-on-3.12
+suite had masked. Plans: `.prawduct/artifacts/plans/{NODE-ADDR,PLUGIN-SELF-CONTAINED,ONBOARD-M4L}/`.
+**Follow-ups before develop→main/marketplace:** install-skill `python -m hallucinote_mcp.cli`
+→ server-python migration; Windows-hook + read-only-root operator-verify; deferred
+`[live]`/PyPI extra scrub.
+
+## 2026-06-14 — Per-song attempt ledger (ATL-7K3M): `kind: attempt` + `/song-attempts`
+
+<!-- prawduct: type=feat | chunks=ATL-7K3M-ch1,ATL-7K3M-ch2 | scope=db-schema,markdown-refs,song-context,skills,docs,claude-md | status=merged -->
+
+**No re-vendor** — no `_FINGERPRINT_PATHS` touched (no MCP handler reads `markdown_refs`).
+A per-song ledger of *what was tried and how it turned out*, incl. reverted dead ends —
+augments `decisions/` (kept rationale) + `annotations/` (intent) with the experiment trail
+so a later pass doesn't re-try a known dead end. Pull-only, musical-craft only.
+
+- **ch1 (code):** new `kind: attempt` on the `markdown_refs` corpus with `outcome`
+  (worked|partial|failed) + `resolution` (kept|reverted|superseded); the
+  try→outcome→correction chain rides the existing `related` links. `markdown_refs` joins the
+  disposable-projection rebuild (the new kind CHECK is a domain change ALTER can't express;
+  reindex rebuilds rows from disk → no authored data lost; schema canary stays green).
+  `find_markdown_refs` gains an `outcome` filter; `song_context` gains `--kind attempt` +
+  `--outcome`; `song-new` scaffolds `attempts/`. 16 new tests.
+- **ch2 (doc):** new `/song-attempts` pull skill; a LOG-ATTEMPTS capture step in
+  `/compose-review` + `/mix-review` (distinct from the intent learn-back); discoverability
+  spine (`/song-workflow` + `docs/song-workflow.md`, `song-conventions.md` schema + worked
+  example, `docs/song-authoring-conventions.md`, CLAUDE.md norm).
+
+Full suite 3752 passed / 2 skipped. Cumulative Critic 0 blocking / 0 warning (5 notes, 2
+acted on); verify-resolutions chain clean. Requirements:
+`.prawduct/artifacts/song-attempt-ledger.md`; plan: `.prawduct/artifacts/plans/ATL-7K3M/build-plan.md`.
+
 ## 2026-06-14 — Song-workflow discoverability: `/song-workflow` spine + review-checkpoint wiring
 
 <!-- prawduct: type=docs | chunks=song-workflow-spine,discoverability-wiring | scope=skills,docs,mcp-primer,claude-md | status=shipped | release=v0.9.8 -->

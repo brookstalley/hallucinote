@@ -28,9 +28,10 @@ churn-free internally, and make the boundary crossing a single deliberate action
    shadows the other (same plugin name).
 2. **Remote Script vendor** — the copy in Live's User Library; must fingerprint-match
    the running server (axis 1). This is the singleton above.
-3. **Python engine** (`hallucinote`, imported by every `songs/*/build.py`) — installed
-   editable (`pip install -e`) vs a pinned release. An editable install means your
-   in-flight generator edits silently change song builds.
+3. **Python engine** (`hallucinote`, imported by every `songs/*/build.py`) — now ships
+   in the plugin's uv env (no separate install). Under `--plugin-dir` it's **editable
+   from your checkout**, so in-flight generator edits change song builds live; the
+   marketplace plugin runs the engine frozen from its lock.
 
 Axes 1+2 are the handshake. Axis 3 is independent — decide it deliberately too.
 

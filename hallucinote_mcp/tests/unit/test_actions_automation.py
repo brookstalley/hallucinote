@@ -635,7 +635,7 @@ def test_write_envelope_device_parameter_without_clip_raises_teaching_error(load
             tool="ableton_automation", action="write_envelope",
             params={
                 "target_kind": "device_parameter",
-                "track_index": 1, "device_index": 1,
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1},
                 "parameter_name": "Threshold",
                 "breakpoints": [{"time_beats": 0.0, "value": 0.5}],
             },
@@ -735,7 +735,7 @@ def test_write_envelope_device_parameter_clip_scoped(loaded_actions):
             tool="ableton_automation", action="write_envelope",
             params={
                 "target_kind": "device_parameter",
-                "track_index": 1, "device_index": 1,
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1},
                 "parameter_name": "Threshold",
                 "location": "session", "clip_index": 1,
                 "breakpoints": [
@@ -774,8 +774,11 @@ def test_write_envelope_device_parameter_nested_refuses_pointing_at_perform(
             tool="ableton_automation", action="write_envelope",
             params={
                 "target_kind": "device_parameter",
-                "track_index": 1, "device_index": 1,
-                "device_path": [{"chain_index": 1, "device_position": 1}],
+                "node": {
+                    "parent": {"kind": "track", "index": 1},
+                    "device_index": 1,
+                    "path": [{"chain_index": 1, "device_position": 1}],
+                },
                 "parameter_name": "Threshold",
                 "location": "session", "clip_index": 1,
                 "breakpoints": [
@@ -807,7 +810,7 @@ def test_write_envelope_device_parameter_unknown_name(loaded_actions):
             tool="ableton_automation", action="write_envelope",
             params={
                 "target_kind": "device_parameter",
-                "track_index": 1, "device_index": 1,
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1},
                 "parameter_name": "Bogus",
                 "location": "session", "clip_index": 1,
                 "breakpoints": [{"time_beats": 0.0, "value": 0.5}],
@@ -861,7 +864,7 @@ def test_write_envelope_value_type_enum_resolves_string_values(loaded_actions):
             tool="ableton_automation", action="write_envelope",
             params={
                 "target_kind": "device_parameter",
-                "track_index": 1, "device_index": 1,
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1},
                 "parameter_name": "Amp Type",
                 "location": "session", "clip_index": 1,
                 "value_type": "enum",
@@ -894,7 +897,7 @@ def test_write_envelope_value_type_default_is_continuous(loaded_actions):
             tool="ableton_automation", action="write_envelope",
             params={
                 "target_kind": "device_parameter",
-                "track_index": 1, "device_index": 1,
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1},
                 "parameter_name": "Bass",  # continuous param
                 "location": "session", "clip_index": 1,
                 "breakpoints": [
@@ -919,7 +922,7 @@ def test_write_envelope_value_type_enum_refuses_non_enum_param(loaded_actions):
             tool="ableton_automation", action="write_envelope",
             params={
                 "target_kind": "device_parameter",
-                "track_index": 1, "device_index": 1,
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1},
                 "parameter_name": "Bass",  # continuous, is_quantized=False
                 "location": "session", "clip_index": 1,
                 "value_type": "enum",
@@ -945,7 +948,7 @@ def test_write_envelope_value_type_enum_rejects_unknown_enum_name(loaded_actions
             tool="ableton_automation", action="write_envelope",
             params={
                 "target_kind": "device_parameter",
-                "track_index": 1, "device_index": 1,
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1},
                 "parameter_name": "Amp Type",
                 "location": "session", "clip_index": 1,
                 "value_type": "enum",
@@ -971,7 +974,7 @@ def test_write_envelope_value_type_enum_rejects_non_string_value(loaded_actions)
             tool="ableton_automation", action="write_envelope",
             params={
                 "target_kind": "device_parameter",
-                "track_index": 1, "device_index": 1,
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1},
                 "parameter_name": "Amp Type",
                 "location": "session", "clip_index": 1,
                 "value_type": "enum",
@@ -1017,7 +1020,7 @@ def test_write_envelope_invalid_value_type_raises(loaded_actions):
             tool="ableton_automation", action="write_envelope",
             params={
                 "target_kind": "device_parameter",
-                "track_index": 1, "device_index": 1,
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1},
                 "parameter_name": "Amp Type",
                 "location": "session", "clip_index": 1,
                 "value_type": "magic",
@@ -1163,7 +1166,7 @@ def test_write_envelope_device_parameter_return_clip_scoped(loaded_actions):
             tool="ableton_automation", action="write_envelope",
             params={
                 "target_kind": "device_parameter",
-                "return_index": 1, "device_index": 1,
+                "node": {"parent": {"kind": "return", "index": 1}, "device_index": 1},
                 "parameter_name": "Decay Time",
                 "location": "session", "clip_index": 1,
                 "breakpoints": [
@@ -1715,8 +1718,9 @@ def test_read_envelope_device_parameter_round_trip(loaded_actions):
             tool="ableton_automation", action="write_envelope",
             params={
                 "target_kind": "device_parameter",
-                "track_index": 1, "location": "session", "clip_index": 1,
-                "device_index": 1, "parameter_name": "Threshold",
+                "node": {"parent": {"kind": "track", "index": 1}, "device_index": 1},
+                "location": "session", "clip_index": 1,
+                "parameter_name": "Threshold",
                 "breakpoints": [
                     {"time_beats": 0.0, "value": 0.2},
                     {"time_beats": 1.5, "value": 0.9},

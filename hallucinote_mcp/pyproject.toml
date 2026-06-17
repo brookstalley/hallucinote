@@ -4,7 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hallucinote-mcp"
-version = "0.9.0"
+# Kept in lockstep with the root pyproject.toml (canonical product version) —
+# tests/unit/test_version_parity.py fails on drift. This is the PACKAGE
+# distribution version, distinct from hallucinote_mcp.BASE_VERSION (the
+# decoupled wire-protocol epoch used in the Live handshake string).
+version = "1.5.0"
 description = "Ableton Live MCP server: 12 unified tools with action dispatch, designed for low-context-cost agent interaction."
 requires-python = ">=3.10"
 authors = [
@@ -39,5 +43,10 @@ hallucinote_mcp = [
 ]
 
 [tool.pytest.ini_options]
+# Front-insert the local checkout's source (this sub-pkg + the engine at ../src)
+# so a targeted `pytest hallucinote_mcp/tests/...` — whose nearest configfile is
+# THIS file — imports the worktree tree, not the editable-install `.pth` target
+# (the PRIMARY checkout). Mirrors the root pyproject's pythonpath; see its note.
+pythonpath = ["src", "../src"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]

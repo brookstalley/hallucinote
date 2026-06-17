@@ -306,12 +306,31 @@ CREATE INDEX IF NOT EXISTS idx_sends_return ON sends(to_return_id);
 -- would have required mutator-level cascade discipline and broken the
 -- chunk-1 invariant that deleting a track cascades to everything it owns.
 
+-- NODE-ADDR Chunk C: per-DrumChain authorship. `choke_group` (0 = none) and
+-- `out_note` (MIDI transpose target) live on a DrumChain only (a plain
+-- instrument-rack Chain has neither). Both nullable: NULL on every non-drum
+-- chain and on drum chains whose value is the Live default (choke 0 /
+-- out_note == in_note) — capture stores only non-defaults, push emits only
+-- stored (mirrors the Chunk B param filter). Authored via the `chain` terminal.
+-- NODE-ADDR Chunk F: per-chain mixer state — `mute`/`solo` (Chain bools, 0/1)
+-- and `volume`/`pan` (the ChainMixerDevice's volume/panning DeviceParameter
+-- values). Unlike choke/out_note these exist on EVERY chain (plain + drum), not
+-- just DrumChains. Same non-default discipline: NULL = the chain's Live/preset
+-- default (unmuted/unsoloed, unity volume, centre pan). Chain SENDS (into the
+-- rack's own return chains) are a distinct, rarely-populated surface — left as a
+-- documented NOT_IMPLEMENTED cell (`send_levels`/chain), not a column here.
 CREATE TABLE IF NOT EXISTS device_chains (
     id                      TEXT PRIMARY KEY,
     parent_track_id         TEXT REFERENCES tracks(id) ON DELETE CASCADE,
     parent_return_id        TEXT REFERENCES returns(id) ON DELETE CASCADE,
     parent_rack_device_id   TEXT REFERENCES devices(id) ON DELETE CASCADE,
     position                INTEGER NOT NULL DEFAULT 0,
+    choke_group             INTEGER,
+    out_note                INTEGER,
+    mute                    INTEGER,
+    solo                    INTEGER,
+    volume                  REAL,
+    pan                     REAL,
     CHECK (
         (parent_track_id IS NOT NULL)
       + (parent_return_id IS NOT NULL)
@@ -421,6 +440,14 @@ CREATE TABLE IF NOT EXISTS device_parameters (
     value_normalized    REAL CHECK (value_normalized IS NULL
                                   OR (value_normalized >= 0.0 AND value_normalized <= 1.0)),
     value_items_json    TEXT,
+    -- DEV-4P7R: the raw continuous channel. Live's own param.value, UNCLAMPED
+    -- (no [0,1] CHECK) — the only authorable form for a quantized continuous
+    -- param whose raw range != [0,1] and whose display is non-monotonic (e.g.
+    -- Wavetable LFO S. Rate, raw 8.0 -> "1/2", range [0,21]). Pushed via
+    -- set_parameter's raw `value`. NULL for params on the display / normalized /
+    -- enum channels. Mutually exclusive with value_normalized + value_items_json
+    -- (enforced by set_device_parameter).
+    value_raw           REAL,
     UNIQUE(device_id, name)
 );
 
@@ -453,6 +480,49 @@ CREATE TABLE IF NOT EXISTS drum_pad_mappings (
 );
 
 CREATE INDEX IF NOT EXISTS idx_drum_pad_mappings_device ON drum_pad_mappings(device_id);
+
+-- SNP-2H9F: nested-param overrides on a `preset_query` (or `preset_uri`) device.
+--
+-- A device loaded from a portable preset has only its TOP-LEVEL row in the DB —
+-- the preset instantiates the whole nested tree at push time, so there is no
+-- nested `devices` row to hang a `device_parameters` row on. A by-ear tweak deep
+-- inside such a rack (e.g. a Wavetable LFO sync two levels down) therefore had no
+-- durable home: dumping the full `chains` tree to capture it drops the preset's
+-- un-parameterizable timbre (the Wavetable waveform is not a DeviceParameter) and
+-- bloats the snapshot. This table is that home: each row is one override applied
+-- to a descendant of the preset device, keyed by the descent `path` (NodeAddr,
+-- relative to the preset device) + the parameter `name`.
+--
+-- `path_json` is a JSON array of `{chain_index, device_position}` steps (1-based,
+-- DEEP-RACK-ADDR), e.g. `[{"chain_index":1,"device_position":1},
+-- {"chain_index":1,"device_position":1}]`. Mirrors `device_parameters`' value
+-- columns (value_display always set; value_normalized for continuous params;
+-- value_items_json for enums). Push re-asserts each override via a node-addressed
+-- `set_parameter` after the preset loads — no `create_device_chain`, so nothing
+-- duplicates and the preset waveform/samples survive (SNP-2H9F).
+--
+-- Replace-style: capture/replay/pull store the full non-default override set per
+-- device atomically (one DEVICE_PARAM_OVERRIDES_REPLACED event), like
+-- drum_pad_mappings. New tables auto-migrate onto existing song DBs via init_db's
+-- CREATE TABLE IF NOT EXISTS (no _ADDED_COLUMNS entry — that is for new columns).
+
+CREATE TABLE IF NOT EXISTS device_param_overrides (
+    id                  TEXT PRIMARY KEY,
+    device_id           TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    path_json           TEXT NOT NULL,
+    name                TEXT NOT NULL,
+    value_display       TEXT NOT NULL,
+    value_normalized    REAL CHECK (value_normalized IS NULL
+                                  OR (value_normalized >= 0.0 AND value_normalized <= 1.0)),
+    value_items_json    TEXT,
+    -- DEV-4P7R: raw continuous channel (see device_parameters.value_raw). The
+    -- whole point of param_overrides is a preset device's nested params, so the
+    -- quantized-non-unit-range class bites hardest here.
+    value_raw           REAL,
+    UNIQUE(device_id, path_json, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_device_param_overrides_device ON device_param_overrides(device_id);
 
 -- =============================================================================
 -- Mix: automation envelopes + breakpoints
@@ -663,7 +733,9 @@ CREATE INDEX IF NOT EXISTS idx_requests_song ON requests(song_id);
 -- Song metadata layer: markdown_refs + FTS5 index
 -- =============================================================================
 -- Composer intent + decision rationale live in atomic markdown files under
--- `songs/<name>/decisions/` and `songs/<name>/annotations/`. Markdown is the
+-- `songs/<name>/decisions/`, `songs/<name>/annotations/`, and the attempt
+-- ledger `songs/<name>/attempts/` (kind: attempt — try → outcome → correction,
+-- incl. reverted dead ends; ATL-7K3M). Markdown is the
 -- source of truth (git-tracked, LLM-native to read); this table is a
 -- rebuildable projection that makes the corpus queryable from SQL, with FTS5
 -- for prose + tag search. Body text is owned by FTS5; this table carries the
@@ -684,7 +756,7 @@ CREATE INDEX IF NOT EXISTS idx_requests_song ON requests(song_id);
 CREATE TABLE IF NOT EXISTS markdown_refs (
     path                TEXT PRIMARY KEY,
     kind                TEXT NOT NULL
-                            CHECK (kind IN ('decision', 'annotation', 'structural-fact')),
+                            CHECK (kind IN ('decision', 'annotation', 'structural-fact', 'attempt')),
     scope               TEXT NOT NULL
                             CHECK (scope IN ('song', 'time', 'track', 'track-time')),
     song_id             TEXT REFERENCES songs(id) ON DELETE SET NULL,
@@ -692,6 +764,11 @@ CREATE TABLE IF NOT EXISTS markdown_refs (
     bars_json           TEXT,           -- '[start, end]' or '[start]' when scope ∈ {time, track-time}
     tags_json           TEXT,           -- '[str, ...]'
     related_json        TEXT,           -- '[path, ...]'  cross-links to other refs
+    -- Attempt-ledger fields (kind: attempt only; NULL on every other kind).
+    -- `outcome` = did the move achieve its goal; `resolution` = what we did with
+    -- it (superseded pairs with a related_json link to the successor attempt).
+    outcome             TEXT CHECK (outcome IS NULL OR outcome IN ('worked', 'partial', 'failed')),
+    resolution          TEXT CHECK (resolution IS NULL OR resolution IN ('kept', 'reverted', 'superseded')),
     frontmatter_date    TEXT,           -- ISO 'YYYY-MM-DD' (required for decisions)
     content_hash        TEXT NOT NULL,  -- SHA-256 hex digest of file content (change detection)
     indexed_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),

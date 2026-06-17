@@ -911,11 +911,15 @@ def test_perform_send_level_refuses_master_and_requires_both_indices():
         )
 
 
-def test_perform_device_parameter_requires_device_and_name():
+def test_perform_device_parameter_requires_parameter_name():
+    # NODE-ADDR: device_index is now structural inside `node` (its absence is
+    # caught by validate_node_addr — see test_node_addr.py), so this pins the
+    # remaining parameter_name requirement via the downstream combined check.
     ctx = FakeCtx()
     with pytest.raises(ValueError, match="device_index and parameter_name"):
         _one(
-            ctx, target_kind="device_parameter", master=True,
+            ctx, target_kind="device_parameter",
+            node={"parent": {"kind": "master"}, "device_index": 1},
             breakpoints=[_bp(0.0, 0.5), _bp(2.0, 0.9)],
         )
 
@@ -925,8 +929,9 @@ def test_perform_device_parameter_on_master_chain():
     cutoff = FakeNamedParam(ctx.events, "Frequency")
     ctx.song.master_track.devices = [FakeDevice([cutoff])]
     result = _one(
-        ctx, target_kind="device_parameter", master=True,
-        device_index=1, parameter_name="Frequency",
+        ctx, target_kind="device_parameter",
+        node={"parent": {"kind": "master"}, "device_index": 1},
+        parameter_name="Frequency",
         breakpoints=[_bp(0.0, 0.2), _bp(2.0, 0.9)],
     )
     arc = _arc0(result)
@@ -944,9 +949,12 @@ def test_perform_device_parameter_nested_via_device_path():
     rack = _FakeRackDevice([_FakeRackChain("Inner", [FakeDevice([nested_param])])])
     ctx.song.master_track.devices = [rack]
     result = _one(
-        ctx, target_kind="device_parameter", master=True,
-        device_index=1,
-        device_path=[{"chain_index": 1, "device_position": 1}],
+        ctx, target_kind="device_parameter",
+        node={
+            "parent": {"kind": "master"},
+            "device_index": 1,
+            "path": [{"chain_index": 1, "device_position": 1}],
+        },
         parameter_name="Volume",
         breakpoints=[_bp(0.0, 0.2), _bp(2.0, 0.9)],
     )

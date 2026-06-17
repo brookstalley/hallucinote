@@ -52,6 +52,83 @@ shows `current_phase` advance). Not gating — the logic is fully unit-covered.
 
 ---
 
+## NODE-ADDR Chunk A — wire flip + addressing spine (re-vendor + migrated-op Live verify)
+
+**Status:** ✅ **FULLY LIVE-VERIFIED 6/6 2026-06-15** (Live 12.4.2; final served fingerprint
+`0.1.0+c487d2b32ba7` after three re-vendor cycles as the chain-load fix iterated). The addressing
+spine is proven end-to-end on a real set (808 Core Kit drum rack + 808 Selector Rack with a genuine
+depth-2 nested Saturator). Checks 1, 2, 3a, 4, 5, 6 passed on the first pass. Check **3b
+(chain-terminal load) FAILED first**, was root-caused to a **pre-existing, NOT-a-Chunk-A** defect
+in the wire-flip-unchanged `_load_into_rack_chain` (`browser.load_item` ONLY targets the track's
+MAIN chain — probed inert against `rack.view.selected_chain` AND `song.view.select_device`, two
+wrong fixes that left strays top-level), and **FIXED via `Chain.insert_device(name)`** (found by
+probing the `Chain` LOM object). The integrated handler is now **confirmed live**: `ableton_device
+load` with a `chain` terminal put Reverb at the depth-1 "808" chain (pos 8) and Compressor at the
+depth-2 "Punch" chain (pos 7), **with no stray top-level devices**. Presets are refused for chain
+loads (insert_device is name-only); the false-green fakes were rewritten to model insert_device.
+No remaining Chunk-A gates.
+
+Earlier: CODE-COMPLETE 2026-06-15 (worktree `feature/node-addr`), full suite green (baseline +
+38 new tests). Critic note d: `device_path` was a shipped contract (DEEP-RACK-ADDR), so the
+migration verified **every** migrated op against a real set via the new `node` address.
+
+**Bridge step first** (re-vendor required — touches `actions/`+`handlers/`; the fingerprint
+flips from develop's `e10695d17559` to Chunk A's **`0.1.0+b23b59ab5e34`**). Chunk A is merged
+to `develop`, so re-vendor from the primary repo (not a worktree) — this keeps the running
+server and the vendored Remote Script the *same* copy, so `/ableton-mcp-install`'s INS-3W8P
+match-against-running-server guard stays intact:
+1. In the primary repo (`~/source/hallucinote`, on `develop`): `git pull` → develop now carries Chunk A.
+2. `/mcp` reconnect (respawn the server on the pulled code) → `ableton://server/info` should now
+   report version `0.1.0+b23b59ab5e34`.
+3. (Live closed) `/ableton-mcp-install` → it reads server/info, re-vendors the Remote Script
+   with `--require-server-version 0.1.0+b23b59ab5e34` (guard confirms source==server).
+4. Reopen Live (it caches Control Surface modules at startup), `/mcp` reconnect, confirm the
+   handshake reports `b23b59ab5e34`. Then:
+
+1. **Nested set_parameter via `node`** — set a depth-2 nested device param through
+   `ableton_device(action='set_parameter', node={parent, terminal:'device', device_index, path:[…]})`
+   → it lands on the right nested device (not the top-level rack).
+2. **Nested get_parameters via `node`** — read the same nested device; confirm values + the
+   new `default_value` field present (guarded — omitted only on the params that raise).
+3. **load via `node`** — a track/return/master-terminal load (top-level) AND a `chain`-terminal
+   load INTO a nested chain both place the device correctly.
+4. **write_envelope + a performed arc via `node`** — author a `device_parameter` envelope on a
+   nested device and run a performed automation pass → both route to the right nested param.
+5. **`chain` terminal resolves** — a DrumChain reached via a `chain`-terminal `node`;
+   `choke_group`/`out_note` are reachable on it (the Chunk-C surface), proving the new terminal.
+6. **Capability matrix end-to-end** — read `ableton://reference/node-feature-matrix`; confirm an
+   unbuilt feature reports `NOT_IMPLEMENTED` and a structural-impossible op (send pre/post,
+   macro-mapping-target, per-chain audio out) reports `UNSUPPORTED_IN_LIVE`, each with the
+   documented evidence + workaround.
+
+**Results (2026-06-15, Live 12.4.2):**
+1. ✅ **set_parameter @ depth-2** — Saturator `Dry/Wet`→0.5 at `path:[{2,1},{1,2}]`; `device_path`
+   echoed the nested address (not the top rack). (Note: a first attempt on `Drive` returned Live's
+   "parameter is disabled" — the resolver reached the device; the param was just non-settable.)
+2. ✅ **get_parameters @ depth-2 + `default_value`** — 19 params; `default_value` present on
+   continuous params, **correctly omitted on enums** (the guarded raises-fallback).
+3. ✅ **load** — top-level (track-terminal) load ✅ (both racks). **Chain-terminal load INTO a nested
+   chain** ❌ on the first pass (`browser.load_item` appended to the track top-level — it ONLY reaches
+   the MAIN chain; the fail-loud post-condition caught it but left a stray, cleaned up). Two wrong
+   fixes (`rack.view.selected_chain`, then `song.view.select_device`) both probed inert. **Pre-existing**
+   (the `_load_into_rack_chain` mechanism was byte-identical develop↔HEAD; the wire flip only changed
+   the node→chain_index *entry*). **The right API is `Chain.insert_device(name)`** (found by
+   `ableton_probe describe`-ing the `Chain` object). **FIXED + confirmed live via the integrated
+   handler:** `ableton_device(load, node={…chain…})` put Reverb at the depth-1 "808" chain (pos 8) and
+   Compressor at the depth-2 "Punch" chain (pos 7), **no stray top-level device**. Presets refused for
+   chain loads (insert_device is name-only); the false-green fakes were rewritten to model insert_device.
+4. ✅ **automation** — `perform_batch` on the depth-2 Saturator `Dry/Wet` recorded with
+   `automation_state:1`, `device_path` echoed nested. `write_envelope` verified at top-level (its
+   nested route is a documented Live-12.4 impossibility → `perform_batch` is the nested path).
+5. ✅ **`chain` terminal** — `ableton_probe` confirmed `choke_group` (int 0) reachable on the Bass
+   Drum DrumChain behind a `chain`-terminal address (the Chunk-C surface), proving the new terminal.
+6. ✅ **capability matrix** — `ableton://reference/node-feature-matrix` tri-state matches
+   `probe-findings.md` (SUPPORTED / NOT_IMPLEMENTED+request_tag / UNSUPPORTED_IN_LIVE+live_evidence).
+
+Visual change: no (wire/behavior, not UI). Operator-attended Live session required.
+
+---
+
 ## ENV-8K2R + ENV-2T9K — perform-handler hardening + tempo-reduction fidelity (Live smoke)
 
 **Status:** PENDING — needs a `/mcp` reconnect (respawn the server on the new handler code,
@@ -560,3 +637,132 @@ What units can't cover (needs real Live):
      caveat up front: the `device_parameters` table doesn't hold non-parameter
      properties, so a property accessor needs its own persistence story or it
      won't survive a rebuild — scope that before building.
+
+## NODE-ADDR (DEV-9K7N) Chunk B — capture execute + depth-N durability
+
+Visual change: no (data/round-trip). Needs a running Live + the swell set.
+Code shipped + full suite green 2026-06-15; these are the Live-side proofs the
+build plan names as the verifiable signal + bloat gate (Critic note b).
+
+1. **Acquisition durability (THE signal)** — set swell's `21 Voice Lead`
+   `LFO 1 Sync` (a depth-2 nested param) in Live via its `device_path`, then
+   `python -m hallucinote.tools.capture_cli execute --song swell` →
+   `capture_cli diff` (the change shows) → merge/overwrite →
+   `build.py --reset` + `push_cli execute` → confirm the depth-2 value SURVIVES
+   the rebuild **without saving the .als** (the capture wrote it to source).
+
+2. **Full-set fidelity** — `capture execute` on swell produces a snapshot whose
+   `diff` against the committed one is empty (or only the intended edits) — i.e.
+   the in-code walk captures the same surface the by-hand recipe did (tracks,
+   returns, master, sends, top-level + nested devices), no dropped state.
+
+3. **Bloat-measurement gate (Critic note b — DECIDES a follow-up):** after a
+   clean `capture execute` on swell, measure per-device captured non-default
+   param count + total snapshot growth vs the prior snapshot.
+   - Within ~25 params/preset and snapshot ≤ ~2× the by-ear delta → the
+     intrinsic-default filter stands; close the gate.
+   - A single preset over-captures (>~25) or snapshot > ~2× → schedule the
+     bounded preset-default cache (the filter is keeping too much; defaults the
+     filter can't see need a per-preset reference). File it with the measured
+     numbers.
+
+## NODE-ADDR (DEV-9K7N) Chunk C — per-DrumChain choke_group / out_note
+
+Visual change: no (LOM state / round-trip). **Re-vendor REQUIRED** — Chunk C adds
+the `set_chain_property` wire action (fingerprint flips). Needs a loaded **Drum
+Rack**: the scratch verification set has only an *Instrument* Rack ("808 Selector
+Rack"), whose chains are plain `Chain`s with no choke_group/out_note (live-probed
+2026-06-15 — that IS the negative case below). Code shipped + full suite green;
+these are the build-plan signal Live can't fake with unit fakes.
+
+Sequence: relaunch dev-mode (`/mcp` respawn so running==disk) → `/ableton-mcp-install`
+(Live restart — Control Surface modules cache at startup). Then:
+
+1. **Positive — choke + out_note on a real DrumChain (THE signal).** Load a Drum
+   Rack (any kit) on a MIDI track; `ableton_device(action='get_device_chains', …)`
+   to find a pad's `chain_index`. `ableton_device(action='set_chain_property',
+   node={parent, terminal:'chain', device_index:<rack>, chain_index:<pad>},
+   choke_group=1, out_note=60)` → confirm via `ableton_probe` (or by ear) the
+   DrumChain's `choke_group`/`out_note` changed.
+
+2. **Durability.** `/song-snapshot` the set → `build.py --reset` + `push_cli
+   execute` → confirm the choke group + transpose SURVIVE the rebuild **without
+   saving the .als** (push re-asserts them via the `chain` terminal).
+
+3. **Negative — plain Chain teaches, never crashes.** Call `set_chain_property`
+   on the 808 Selector Rack's chain[0] (a plain instrument-rack Chain):
+   `node={parent:{kind track,index 2}, terminal:'chain', device_index:1,
+   chain_index:1}, choke_group=1` → expect the teaching `NotImplementedError`
+   ("DrumChain only … see ableton://reference/node-feature-matrix"), NOT a crash.
+
+4. **Matrix.** `ableton://reference/node-feature-matrix` shows `choke_out_note`
+   chain cell = SUPPORTED (determination probe).
+
+---
+
+## NODE-ADDR (DEV-9K7N) Chunk F — per-chain mixer state (mute/solo/volume/pan)
+
+Visual change: no (LOM state / round-trip). **Re-vendor REQUIRED** — Chunk F
+touches `handlers/`+`actions/` (fingerprint flips). Code done + green (commit
+`66e1f58`). Write paths spot-probed live this session (Live 12.4, "808 Selector
+Rack"): `Chain.mute` set False→True→False succeeded; `mixer_device.volume/panning`
+are settable DeviceParameters. The full round-trip through the NEW handler needs a
+re-vendored server. On return, re-vendor then:
+
+1. **Positive — mixer state on a chain (THE signal).** Find a chain via
+   `get_device_chains`. `ableton_device(action='set_chain_property',
+   node={parent, terminal:'chain', device_index:<rack>, chain_index:<n>},
+   mute=True, volume=0.5, pan=-0.3)` → confirm via `ableton_probe` the chain's
+   `mute`, `mixer_device.volume.value`, `mixer_device.panning.value` changed.
+
+2. **Universal — works on a PLAIN chain (not just DrumChains).** Run check 1 on
+   the 808 Selector Rack's chain[0] (a plain instrument-rack Chain) → mixer state
+   applies with NO teaching error (unlike choke/out_note, mixer state is on every
+   chain).
+
+3. **Durability.** `/song-snapshot` → `build.py --reset` + `push_cli execute` →
+   the chain's mute/volume/pan SURVIVE the rebuild **without saving the .als**
+   (push re-asserts via the `chain` terminal; capture filtered to non-defaults).
+
+4. **Matrix.** `ableton://reference/node-feature-matrix` shows `mixer_state`/chain
+   = SUPPORTED and `send_levels`/chain = NOT_IMPLEMENTED (chain sends deferred).
+
+> Chunks **D** + **E** need NO operator entry — both are probe-confirmed LOM facts
+> (D macro names + E zones = `UNSUPPORTED_IN_LIVE`; D macro values ride the
+> already-verified `device_parameters` path). The probes ARE the live evidence.
+
+---
+
+## BAK-3M9T Chunk 01 — sidechain source round-trips through the durable snapshot
+
+> **2026-06-17 — merged with this check PENDING (user-directed).** PR #178 was
+> merged into develop on the user's explicit "please merge" after being told the
+> Live round-trip is the remaining merge gate. This is **operator-accepted by
+> direction, NOT agent-Live-verified** — the round-trip below has **not** been run.
+> Re-verify next time Live is open; the unit tests only exercise a fake
+> `get_input_routing` probe (learning #7), so a Live-shape surprise is still possible.
+
+Visual change: yes (live external integration — a dialed sidechain SOURCE the unit
+tests verify only against a fake `get_input_routing` probe). This IS BAK-3M9T
+**acceptance criterion 5** (the end-to-end trap-category round-trip) for the
+sidechain category; fold the other trap categories in when the later chunks land.
+Branch `feat/snapshot-sidechain` (merged as `90214d3`, PR #178). On an attended Live run:
+
+1. **Dial a real sidechain.** In a built song, add a Compressor to a track (e.g.
+   Bass) and set its "Audio From" to ANOTHER track (e.g. Kick), pick a channel
+   (Post FX). Confirm it pumps.
+
+2. **Bake via `/song-snapshot` (the single durable bake).** Run `/song-snapshot`
+   → confirm the refreshed `captured_session.json` shows the Bass Compressor entry
+   carrying `"sidechain_source": "Kick"` (the source track's surface NAME, not a
+   UUID) and `"sidechain_source_channel": "Post FX"`. Confirm a Compressor whose
+   input is left at its OWN track default does NOT get a `sidechain_source`.
+
+3. **Rebuild + push reproduces it.** `build.py --reset` + `push_cli execute` (or
+   `/ableton-push`) into a fresh set → confirm the Bass Compressor's Audio From is
+   Kick again, analyzer-free. The durable round-trip is the keystone claim:
+   the sidechain survives a rebuild **without saving the `.als`**.
+
+4. **Clear-on-absence.** Remove the sidechain in Live (Audio From → own track /
+   No Input), `/song-snapshot` (field disappears), rebuild → confirm the sidechain
+   is cleared, not stale (snapshot is authoritative).

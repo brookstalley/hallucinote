@@ -55,6 +55,12 @@ def _has_negation(text: str | None) -> bool:
 def _format_row(row: Any, *, defensive: bool = False) -> str:
     parts = [f"### `{row['path']}`"]
     meta_bits = [f"kind: {row['kind']}", f"scope: {row['scope']}"]
+    # Attempt-ledger fields (kind: attempt). Guarded so an FTS-snippet row or a
+    # pre-column projection never KeyErrors.
+    if "outcome" in row.keys() and row["outcome"]:
+        meta_bits.append(f"outcome: {row['outcome']}")
+    if "resolution" in row.keys() and row["resolution"]:
+        meta_bits.append(f"resolution: {row['resolution']}")
     if row["frontmatter_date"]:
         meta_bits.append(f"date: {row['frontmatter_date']}")
     if row["bars_json"]:
@@ -109,7 +115,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Fulltext search topic (FTS5 match). Optional.",
     )
     parser.add_argument(
-        "--kind", choices=("decision", "annotation", "structural-fact"),
+        "--kind", choices=("decision", "annotation", "structural-fact", "attempt"),
+    )
+    parser.add_argument(
+        "--outcome", choices=("worked", "partial", "failed"),
+        help="Filter attempt-ledger rows by outcome (kind: attempt).",
     )
     parser.add_argument(
         "--scope", choices=("song", "time", "track", "track-time"),
@@ -197,6 +207,7 @@ def main(argv: list[str] | None = None) -> int:
             scope=args.scope,
             track_id=track_id,
             tags=tags,
+            outcome=args.outcome,
             fulltext=args.topic,
             bars=bars,
             limit=args.limit,

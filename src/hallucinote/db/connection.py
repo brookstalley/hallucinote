@@ -103,10 +103,23 @@ def _rebuild_disposable_tables(conn: sqlite3.Connection) -> None:
       false-skipped every arc. Rebuilt as UNIQUE(envelope_id, session_id);
       dropped fingerprints just mean the next push re-performs each arc
       (slower, never wrong).
+    - ``markdown_refs`` pre-attempt-ledger (ATL-7K3M): the ``kind`` CHECK
+      gained ``'attempt'`` and two columns (``outcome``/``resolution``) — a
+      CHECK-domain change ALTER can't express, so an existing DB would reject
+      every ``kind='attempt'`` row. markdown_refs is a rebuildable projection
+      of the on-disk markdown corpus (reindex_corpus repopulates it on the next
+      recall-on-read), so dropping it loses no authored content — only the
+      cached projection, which is re-derived from disk. Staleness signal: the
+      table exists but lacks the ``outcome`` column. Drop the paired FTS5 index
+      too; both are recreated by schema.sql's CREATE ... IF NOT EXISTS.
     """
     rows = conn.execute("PRAGMA table_info(performed_automation)").fetchall()
     if rows and "session_id" not in {r["name"] for r in rows}:
         conn.execute("DROP TABLE performed_automation")
+    md_rows = conn.execute("PRAGMA table_info(markdown_refs)").fetchall()
+    if md_rows and "outcome" not in {r["name"] for r in md_rows}:
+        conn.execute("DROP TABLE markdown_refs")
+        conn.execute("DROP TABLE IF EXISTS markdown_refs_fts")
 
 
 # Column additions that post-date the original schema CREATE statements.
@@ -251,6 +264,29 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
         "TEXT CHECK (monitoring_state IS NULL OR "
         "monitoring_state IN ('In','Auto','Off'))",
     ),
+    # NODE-ADDR Chunk C: per-DrumChain authorship. Both nullable — NULL on every
+    # non-drum chain (a plain Chain has neither attribute) and on drum chains at
+    # the Live default (choke 0 / out_note == in_note). Existing rows get NULL.
+    # `choke_group` = Live's choke-group id (0 = none); `out_note` = the MIDI
+    # transpose target. Set via the set_chain_properties mutator at capture/pull.
+    ("device_chains", "choke_group", "INTEGER"),
+    ("device_chains", "out_note", "INTEGER"),
+    # NODE-ADDR Chunk F: per-chain mixer state — present on EVERY chain (not just
+    # DrumChains). All nullable, NULL = the chain's preset/Live default (unmuted /
+    # unsoloed / unity volume / centre pan). `mute`/`solo` = 0/1 bools; `volume`
+    # (0..1) / `pan` (-1..1) = the ChainMixerDevice volume/panning param values.
+    ("device_chains", "mute", "INTEGER"),
+    ("device_chains", "solo", "INTEGER"),
+    ("device_chains", "volume", "REAL"),
+    ("device_chains", "pan", "REAL"),
+    # DEV-4P7R: the raw continuous channel on device params + nested overrides.
+    # UNCLAMPED (no [0,1] CHECK, unlike value_normalized) — the only authorable
+    # form for a quantized continuous param whose raw range != [0,1] and whose
+    # display is non-monotonic (Wavetable LFO S. Rate). Existing rows get NULL.
+    # Set by set_device_parameter / replace_device_param_overrides; pushed via
+    # set_parameter's raw `value`. Keep in sync with schema.sql's CREATE TABLEs.
+    ("device_parameters", "value_raw", "REAL"),
+    ("device_param_overrides", "value_raw", "REAL"),
 )
 
 

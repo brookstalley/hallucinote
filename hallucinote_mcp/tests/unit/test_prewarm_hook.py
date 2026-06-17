@@ -1,6 +1,6 @@
 """Contract: the SessionStart pre-warm hook rebuilds the MCP env only on a lock change.
 
-INS-7V2D C2 — the plugin ships a SessionStart hook (`hooks/prewarm-mcp-env.sh`,
+INS-7V2D C2 — the plugin ships a SessionStart hook (`hooks/prewarm_mcp_env.py`,
 declared in `hooks/hooks.json`) that pre-builds the bundled server's uv environment
 into ``${CLAUDE_PLUGIN_DATA}/venv`` BEFORE the server's init handshake, dodging the
 CC#60224 cold-start silent-tool-drop. It must:
@@ -20,11 +20,12 @@ import json
 import os
 import pathlib
 import subprocess
+import sys
 
 import pytest
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
-_HOOK_SCRIPT = _REPO_ROOT / "hooks" / "prewarm-mcp-env.sh"
+_HOOK_SCRIPT = _REPO_ROOT / "hooks" / "prewarm_mcp_env.py"
 _HOOKS_JSON = _REPO_ROOT / "hooks" / "hooks.json"
 
 # Minimal real-binary PATH the script needs (cmp, cp, mkdir, bash builtins) WITHOUT
@@ -40,11 +41,15 @@ def _make_uv_stub(bin_dir: pathlib.Path, calls_log: pathlib.Path, *, succeed: bo
     rc = 0 if succeed else 1
     # On a simulated successful `uv sync`, materialise the target venv dir so the
     # script's "already warm" fast-path can see it next run (UV_PROJECT_ENVIRONMENT).
+    # Bind the shell snippet outside the f-string: a backslash inside an f-string
+    # expression part is a SyntaxError before Python 3.12 (PEP 701), and our floor
+    # is 3.10 — so the test must parse there too.
+    mkdir_line = 'mkdir -p "$UV_PROJECT_ENVIRONMENT"' if succeed else ":"
     stub.write_text(
         "#!/bin/bash\n"
         f'echo "$@" >> "{calls_log}"\n'
         'if [ "${1:-}" = "sync" ] && [ -n "${UV_PROJECT_ENVIRONMENT:-}" ]; then\n'
-        f"  {'mkdir -p \"$UV_PROJECT_ENVIRONMENT\"' if succeed else ':'}\n"
+        f"  {mkdir_line}\n"
         "fi\n"
         f"exit {rc}\n",
         encoding="utf-8",
@@ -58,7 +63,7 @@ def _run_hook(root: pathlib.Path, data: pathlib.Path, *, path: str) -> subproces
     env["CLAUDE_PLUGIN_DATA"] = str(data)
     env["PATH"] = path
     return subprocess.run(
-        ["bash", str(_HOOK_SCRIPT)],
+        [sys.executable, str(_HOOK_SCRIPT)],
         env=env,
         capture_output=True,
         text=True,
@@ -222,8 +227,8 @@ def test_hooks_json_declares_the_prewarm_on_session_start():
         for group in session_start
         for h in group.get("hooks", [])
     ]
-    assert any("prewarm-mcp-env.sh" in c for c in commands), (
-        "SessionStart must invoke prewarm-mcp-env.sh so the env warms before the "
+    assert any("prewarm_mcp_env.py" in c for c in commands), (
+        "SessionStart must invoke prewarm_mcp_env.py so the env warms before the "
         f"server handshake — got commands {commands!r}"
     )
     # It must reference the bundled script via the plugin-root env var (read-only
@@ -231,8 +236,17 @@ def test_hooks_json_declares_the_prewarm_on_session_start():
     assert any("${CLAUDE_PLUGIN_ROOT}" in c for c in commands), (
         "the prewarm command must locate its script via ${CLAUDE_PLUGIN_ROOT}"
     )
+    # Cross-platform: hooks must NOT launch via bash (not guaranteed on Windows).
+    # Launched via `uv run --no-project python` — uv is the one consistently-named
+    # hard prereq, dodging the python-vs-python3 name gap.
+    assert all("bash " not in c for c in commands), (
+        f"hooks must not launch via bash (Windows has no guaranteed bash) — {commands!r}"
+    )
+    assert any("python" in c and "prewarm_mcp_env.py" in c for c in commands), (
+        f"the prewarm command must launch the .py via python — got {commands!r}"
+    )
 
 
-def test_prewarm_script_is_executable_and_present():
+def test_prewarm_script_present():
     assert _HOOK_SCRIPT.exists(), f"prewarm script missing at {_HOOK_SCRIPT}"
-    assert os.access(_HOOK_SCRIPT, os.X_OK), "prewarm script must be executable"
+    # Launched via `python <script>.py`, so it needn't be marked executable.

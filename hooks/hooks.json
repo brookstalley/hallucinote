@@ -6,8 +6,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/prewarm-mcp-env.sh\"",
+            "command": "uv run --no-project python \"${CLAUDE_PLUGIN_ROOT}/hooks/prewarm_mcp_env.py\"",
             "statusMessage": "Hallucinote: preparing the MCP server env (first run builds it — up to ~1–2 min; later starts are instant)…"
+          },
+          {
+            "type": "command",
+            "command": "uv run --no-project python \"${CLAUDE_PLUGIN_ROOT}/hooks/first_run_nudge.py\""
           }
         ]
       }

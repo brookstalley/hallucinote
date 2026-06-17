@@ -9,6 +9,8 @@ disable-model-invocation: false
 
 # /compose-review — help the user *hear* the composition against what they wanted
 
+> **Running engine commands.** The symbolic lenses ship in the plugin's uv env. Resolve `$PY` once from `ableton://server/info`'s `python`; the `hallucinote melody …` / `recurrence …` commands below run as `"$PY" -m hallucinote.cli …`. See [`docs/running-the-engine.md`](../../docs/running-the-engine.md).
+
 The deepest novice gap is that they can **generate but can't yet evaluate**.
 This is the compose-stage answer: not "is the mix clean?" (`/mix-review` owns
 that, after this), but **"does the *composition* do what the song is trying to
@@ -98,8 +100,8 @@ score; the *melodic line itself* — its shape and harmonic fit — you cannot e
 Run the symbolic melody lens:
 
 ```
-python3 -m hallucinote.tools.melody_lens <song-slug>          # whole song
-python3 -m hallucinote.tools.melody_lens <song-slug> --section <name>
+"$PY" -m hallucinote.cli melody <song-slug>          # whole song
+"$PY" -m hallucinote.cli melody <song-slug> --section <name>
 ```
 
 Per monophonic line, per section, it reports: **contour** shape + apex,
@@ -141,8 +143,8 @@ variation** (an `exact` quote, or a recovered `transpose` / `augment` / `diminis
 `diminish∘fragment`). Run it:
 
 ```
-python3 -m hallucinote.tools.recurrence_lens <song-slug>          # whole song
-python3 -m hallucinote.tools.recurrence_lens <song-slug> --section <name>
+"$PY" -m hallucinote.cli recurrence <song-slug>          # whole song
+"$PY" -m hallucinote.cli recurrence <song-slug> --section <name>
 ```
 
 It reports each recall (motif → section → layer → variation) plus a **motivic-economy
@@ -240,12 +242,46 @@ the request). Choose the altitude:
 Next run, RECALL covers it and INTERPRET stays quiet. **Never re-flag** what the
 user already settled.
 
+### 6. LOG ATTEMPTS — record what you tried and how it turned out
+
+The learn-back above captures *intent* (where the song wants to land). The **attempt
+ledger** captures the *path* — a move you tried and how it resolved, **especially the
+reverted dead ends**, so a later pass doesn't re-try them. Different thing, same moment:
+when a compositional move is resolved this pass (kept / reverted / replaced), propose a
+one-line `kind: attempt` entry and let the user confirm (propose-and-react — don't
+auto-write a verdict). Query the ledger *before* re-touching a part via `/song-attempts`.
+
+```python
+write_markdown_ref(
+    conn,
+    path=Path("songs/<slug>/attempts/2026-06-14-lead-octave-double.md"),
+    repo_root=Path("."),
+    frontmatter={"date": "2026-06-14", "kind": "attempt", "scope": "track",
+                 "track": "Lead", "outcome": "failed", "resolution": "reverted",
+                 "tags": ["arrangement", "doubling", "chorus"]},
+    body="Tried doubling the lead an octave up through the chorus to lift it — "
+         "muddied the 2–3 kHz band and buried it. Reverted; held the single line "
+         "and subtracted the pad instead (that worked).",
+    actor="llm", reason="attempt-log from compose-review",
+)
+```
+
+`outcome` ∈ {worked, partial, failed}; `resolution` ∈ {kept, reverted, superseded}.
+Chain a correction by adding `related: ["songs/<slug>/attempts/<the-move-that-worked>.md"]`
+to the failed entry. Musical-craft only — a *tool* gripe (a push glitch, a Live bug) is an
+incoming-bug, not an attempt; revealed *intent* is an annotation, not an attempt.
+
 ## When to use this vs /mix-review
 
 `/compose-review` is **before** `/mix-review` in the lifecycle: it asks whether
 the *notes and arrangement* serve the song. `/mix-review` asks whether the *mix*
 lets the right element win. A flat chorus is usually a composition problem
 (nothing was held back) long before it's a mix problem — fix it here first.
+
+`/compose-review` is symbolic (it reads `build.py` + the arrangement), so it runs
+on **any Live edition**. `/mix-review` reads rendered audio and **needs Max for
+Live** (Suite, or the M4L add-on) — so without Max for Live, this is the intent
+read you have.
 
 ## Honest confidence — caveats you MUST carry
 

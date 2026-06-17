@@ -4,10 +4,12 @@ description: Compose a part to a FINISHED audible state via the author-as-code l
 argument-hint: <slug> <what-to-compose> (e.g. "sun-zone-done verse2 bass — busier, walking into the chorus")
 user-invocable: true
 disable-model-invocation: false
-allowed-tools: Read, Write, Edit, Bash(python3 songs/*), Bash(python3 -m hallucinote.sync.push_cli *), Bash(pytest songs/*), Bash(rg *), Skill(song-context), Skill(ableton-push), mcp__hallucinote-mcp__ableton_clip, mcp__hallucinote-mcp__ableton_track, mcp__hallucinote-mcp__ableton_session
+allowed-tools: Read, Write, Edit, Bash, Bash(pytest songs/*), Bash(rg *), Skill(song-context), Skill(ableton-push), mcp__hallucinote-mcp__ableton_clip, mcp__hallucinote-mcp__ableton_track, mcp__hallucinote-mcp__ableton_session
 ---
 
 # /compose-part
+
+> **Running engine commands.** The engine ships in the plugin's uv env — no separate install. Resolve `$PY` once from `ableton://server/info`'s `python`; build + push run as `"$PY" -m hallucinote.cli …` (shown in full below). See [`docs/running-the-engine.md`](../../docs/running-the-engine.md).
 
 You compose a part to a **finished, audible** state. The deliverable is the part as it's meant to sound — not a scaffold with a "tune it later" list. This is the interactive author→build→scoped-push loop: you write the smallest correct note-generating **code**, a build expands it to notes and persists through mutators, and a scoped push materializes only what changed to Live. **The note array never enters your context** — you author the generator expression, not the data.
 
@@ -33,13 +35,13 @@ All composing goes through the DB so DB and Live never diverge. You author notes
 
 ### 3. Build (DB through mutators)
 ```
-python3 songs/<slug>/build.py
+"$PY" songs/<slug>/build.py
 ```
 The state-converger reconciles: changed parts re-author through mutators (events fall out), unchanged parts are no-ops. No `--reset` — that's the wipe-and-rebuild escape hatch. Run the song's shape tests if the change is structural: `pytest songs/<slug>/tests/`.
 
 ### 4. Scoped push (materialize only what changed)
 ```
-python3 -m hallucinote.sync.push_cli push-notes <session_id> --changed
+"$PY" -m hallucinote.cli push push-notes <session_id> --changed
 ```
 `--changed` pushes only the clips whose **note content** changed since the last push (content fingerprint, not event log — so a whole-DB rebuild that didn't alter a clip won't re-push it). Or target explicitly with `--clip <id>` (repeatable). The command runs in-process and prints a **counts-only summary** (`clips pushed, per-clip note counts, what was skipped + why`) — the notes never enter your tool-use channel.
 

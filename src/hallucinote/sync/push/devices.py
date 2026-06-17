@@ -7,7 +7,7 @@ import sqlite3
 from hallucinote.analyzer_identity import is_analyzer_device
 from hallucinote.db import queries as Q
 
-from ._core import PushPlan, ToolCall
+from ._core import PushPlan, ToolCall, build_node_addr
 
 
 def plan_push_devices(
@@ -199,9 +199,12 @@ def _emit_device_calls(
         # If the DB chain order needs to be enforced, push devices in the
         # order they appear in the chain (position-asc) and Live's
         # tail-append will match.
+        # Top-level load: the destination is the parent's main device chain, a
+        # node-itself address (terminal == parent_kind). Push never loads NESTED
+        # devices — they arrive with the rack preset (DEEP-RACK-ADDR §3c).
         load_args = {
-            **parent_kv,
             "action": "load",
+            "node": build_node_addr(parent_kv, terminal=parent_kind),
             "kind": device["kind"],
         }
         # Arc 7-tail / E3 (W13-A v1.0): the captured browser path is a
@@ -288,6 +291,116 @@ def _emit_device_calls(
         parent_kind=parent_kind,
         parent_name=parent_name,
     )
+    # SNP-2H9F: re-assert nested-param overrides on a preset-seeded device. The
+    # override's path addresses a DESCENDANT instantiated by the preset load, so
+    # push sets it via set_parameter (never create_device_chain — the preset's
+    # waveform/samples and structure survive, nothing duplicates). The override
+    # table is empty for the common (non-preset) device, so this is a no-op there.
+    _emit_param_override_writes(
+        plan, conn,
+        device=device,
+        parent_kv=parent_kv,
+        device_index=device_at,
+        parent_kind=parent_kind,
+        parent_name=parent_name,
+    )
+
+
+def _param_value_kv(p: sqlite3.Row) -> tuple[dict[str, object], str] | None:
+    """SYN-9F2L wire-form selection for ONE stored param/override row -> the
+    `set_parameter` value kwargs + a human description, or None when the row has
+    no writable form (no display value and no normalized value). Shared by
+    `_emit_param_writes` (device_parameters) and `_emit_param_override_writes`
+    (device_param_overrides) — both column shapes carry value_display /
+    value_items_json / value_normalized / value_raw, so they dial identically:
+      * captured value_items -> a known enum: value_type='enum' with the display
+        string (the handler validates membership);
+      * value_raw present -> the UNCLAMPED raw value on the wire (DEV-4P7R) — the
+        only form for a quantized continuous param whose raw range != [0,1] and
+        whose display is non-monotonic; checked BEFORE display so an explicit raw
+        wins even when a readable display hint is also stored on the row;
+      * display string present -> value_display (the handler inverts the param's
+        own display curve — exact, and safe for center-zero params);
+      * normalized only -> the raw value (stringified on the wire). The handler
+        has no value_normalized kwarg, so this rides `value` as raw and only
+        round-trips when the param's raw range IS [0,1] — else use value_raw;
+      * neither -> None (the caller surfaces an operator ALERT, never a silent drop).
+    """
+    display = (p["value_display"] or "").strip()
+    if p["value_items_json"] is not None:
+        if not display:
+            return None
+        return ({"value": display, "value_type": "enum"}, f"enum {display!r}")
+    if p["value_raw"] is not None:
+        return ({"value": str(p["value_raw"]), "value_type": "continuous"},
+                f"raw {p['value_raw']:g}")
+    if display:
+        return ({"value_display": display, "value_type": "continuous"},
+                f"display {display!r}")
+    if p["value_normalized"] is not None:
+        return ({"value": str(p["value_normalized"]), "value_type": "continuous"},
+                f"normalized {p['value_normalized']:g}")
+    return None
+
+
+def _emit_param_override_writes(
+    plan: PushPlan,
+    conn: sqlite3.Connection,
+    *,
+    device: sqlite3.Row,
+    parent_kv: dict[str, object],
+    device_index: int,
+    parent_kind: str,
+    parent_name: str,
+) -> None:
+    """Emit a node-addressed `set_parameter` for each stored nested-param override
+    on a preset-seeded device (SNP-2H9F). Each override's ``path_json`` is the
+    NodeAddr descent to a device nested inside the preset; push addresses it from
+    the top-level preset's Live index (``device_index``) + that path, exactly like
+    a nested ``device_parameters`` write — but the override exists WITHOUT a nested
+    DB device row (the preset, not the DB, owns the tree). No load, no chain
+    creation: just the param set after the preset instantiates the descendant."""
+    unwritable: list[str] = []
+    for o in Q.get_device_param_overrides(conn, device["id"]):
+        try:
+            path = json.loads(o["path_json"])
+        except (json.JSONDecodeError, TypeError) as exc:
+            plan.alert(
+                f"device {device['display_name']!r} on {parent_kind} "
+                f"{parent_name!r}: param override {o['name']!r} has a malformed "
+                f"path ({exc}); the override was NOT pushed"
+            )
+            continue
+        kv = _param_value_kv(o)
+        if kv is None:
+            unwritable.append(o["name"])
+            continue
+        value_kv, chosen = kv
+        args: dict[str, object] = {
+            "action": "set_parameter",
+            "node": build_node_addr(
+                parent_kv, device_index=device_index, device_path=path,
+            ),
+            "parameter_name": o["name"],
+            **value_kv,
+        }
+        plan.add(ToolCall(
+            tool="ableton_device",
+            args=args,
+            key=f"device_param_override:{device['id']}:{o['path_json']}:{o['name']}",
+            purpose=(
+                f"{parent_name} / {device['display_name']} "
+                f"(preset override depth {len(path)}) / {o['name']} = {chosen}"
+            ),
+        ))
+    if unwritable:
+        plan.alert(
+            f"device {device['display_name']!r} on {parent_kind} {parent_name!r}: "
+            f"{len(unwritable)} param override(s) have no writable form "
+            f"({', '.join(unwritable[:3])}{'...' if len(unwritable) > 3 else ''}) "
+            "— no display value and no normalized value stored; the override was "
+            "NOT pushed"
+        )
 
 
 def _emit_param_writes(
@@ -324,36 +437,19 @@ def _emit_param_writes(
     unwritable: list[str] = []
     nested_note = f" (nested depth {len(device_path)})" if device_path else ""
     for p in params:
-        display = (p["value_display"] or "").strip()
-        if p["value_items_json"] is not None:
-            if not display:
-                unwritable.append(p["name"])
-                continue
-            value_kv: dict[str, object] = {
-                "value": display, "value_type": "enum",
-            }
-            chosen = f"enum {display!r}"
-        elif display:
-            value_kv = {"value_display": display, "value_type": "continuous"}
-            chosen = f"display {display!r}"
-        elif p["value_normalized"] is not None:
-            value_kv = {
-                "value": str(p["value_normalized"]),
-                "value_type": "continuous",
-            }
-            chosen = f"normalized {p['value_normalized']:g}"
-        else:
+        kv = _param_value_kv(p)
+        if kv is None:
             unwritable.append(p["name"])
             continue
+        value_kv, chosen = kv
         args: dict[str, object] = {
             "action": "set_parameter",
-            **parent_kv,
-            "device_index": device_index,
+            "node": build_node_addr(
+                parent_kv, device_index=device_index, device_path=device_path,
+            ),
             "parameter_name": p["name"],
             **value_kv,
         }
-        if device_path:
-            args["device_path"] = device_path
         plan.add(ToolCall(
             tool="ableton_device",
             args=args,
@@ -395,8 +491,24 @@ def _emit_nested_param_writes(
     DB hierarchy (`get_device_nesting_path`), so it matches the reloaded
     preset's structure. ``top_device_index`` is the Live index of the top-level
     rack — every nested device addresses from there.
+
+    NODE-ADDR Chunk C: each chain may also carry authored per-drum properties
+    (choke_group / out_note). Those are re-asserted on the DrumChain via the
+    `chain` terminal after the rack loads — like nested params, they survive a
+    rebuild only if pushed. ``rack_path`` is this rack's own device_path from the
+    top-level rack ([] when ``rack_device_id`` IS the top-level rack).
     """
+    rack_path = Q.get_device_nesting_path(conn, rack_device_id)
     for chain in Q.get_device_chains_for_rack_device(conn, rack_device_id):
+        _emit_chain_property_calls(
+            plan,
+            chain=chain,
+            parent_kv=parent_kv,
+            top_device_index=top_device_index,
+            rack_path=rack_path,
+            parent_kind=parent_kind,
+            parent_name=parent_name,
+        )
         for nested in Q.get_devices_for_chain(conn, chain["id"]):
             # Defensive: a clean DB never nests a placeholder or the analyzer,
             # but a legacy-polluted one might — skip both (mirrors the
@@ -422,6 +534,71 @@ def _emit_nested_param_writes(
                 parent_kind=parent_kind,
                 parent_name=parent_name,
             )
+
+
+def _emit_chain_property_calls(
+    plan: PushPlan,
+    *,
+    chain: sqlite3.Row,
+    parent_kv: dict[str, object],
+    top_device_index: int,
+    rack_path: list[dict[str, int]],
+    parent_kind: str,
+    parent_name: str,
+) -> None:
+    """Emit a `set_chain_property` call for a chain's stored authored properties
+    (NODE-ADDR Chunk C per-drum choke/out_note + Chunk F mixer mute/solo/volume/
+    pan). The DB stores only non-defaults (choke != 0, out_note != in_note,
+    mute/solo only when set, volume/pan only off the preset default), so a
+    default-only chain emits nothing. Addressed by the `chain` terminal:
+    device_index = the top-level rack, path = this rack's own path (empty for the
+    top-level rack), chain_index = the chain's DB position. mute/solo are stored
+    0/1 and re-emitted as bools (the handler's wire type)."""
+    keys = chain.keys()
+    choke = chain["choke_group"] if "choke_group" in keys else None
+    out_note = chain["out_note"] if "out_note" in keys else None
+    mute = chain["mute"] if "mute" in keys else None
+    solo = chain["solo"] if "solo" in keys else None
+    volume = chain["volume"] if "volume" in keys else None
+    pan = chain["pan"] if "pan" in keys else None
+    if all(v is None for v in (choke, out_note, mute, solo, volume, pan)):
+        return
+    node = build_node_addr(
+        parent_kv,
+        device_index=top_device_index,
+        device_path=rack_path or None,
+        terminal="chain",
+        chain_index=int(chain["position"]),
+    )
+    args: dict[str, object] = {"action": "set_chain_property", "node": node}
+    set_desc: list[str] = []
+    if choke is not None:
+        args["choke_group"] = int(choke)
+        set_desc.append(f"choke_group={int(choke)}")
+    if out_note is not None:
+        args["out_note"] = int(out_note)
+        set_desc.append(f"out_note={int(out_note)}")
+    if mute is not None:
+        args["mute"] = bool(mute)
+        set_desc.append(f"mute={bool(mute)}")
+    if solo is not None:
+        args["solo"] = bool(solo)
+        set_desc.append(f"solo={bool(solo)}")
+    if volume is not None:
+        args["volume"] = float(volume)
+        set_desc.append(f"volume={float(volume):.3f}")
+    if pan is not None:
+        args["pan"] = float(pan)
+        set_desc.append(f"pan={float(pan):.3f}")
+    plan.add(ToolCall(
+        tool="ableton_device",
+        args=args,
+        key=f"device_chain_props:{chain['id']}",
+        purpose=(
+            f"{parent_name} / chain {chain['position']}: "
+            f"{', '.join(set_desc)}"
+        ),
+    ))
 
 
 def plan_push_device_sidechain(

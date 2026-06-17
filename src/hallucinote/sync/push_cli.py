@@ -128,19 +128,26 @@ def _probe_live_devices_via_mcp(
     send_fn=None,
 ) -> dict[tuple[str, int], list[dict]]:
     """W20-A: probe ``ableton_device(action='list')`` per Live track + return
-    so probe-and-link can bind DB devices to existing Live device-chain slots
-    by ``(parent, position, class_name)`` — closing the re-push device
-    duplication path.
+    (and the master) so probe-and-link can bind DB devices to existing Live
+    device-chain slots by ``(parent, position, class_name)`` — closing the
+    re-push device duplication path.
 
     Returns a dict keyed by ``("track", track_index)`` / ``("return",
-    return_index)`` with values shaped like the device handler's list output
-    (``{device_index, name, class_name}``). Empty list when Live's chain is
-    empty. Errors per parent fall back to "no devices known" — a transient
-    failure on one parent shouldn't refuse the whole probe.
+    return_index)`` / ``("master", 0)`` with values shaped like the device
+    handler's list output (``{device_index, name, class_name}``). Empty list
+    when Live's chain is empty. Errors per parent fall back to "no devices
+    known" — a transient failure on one parent shouldn't refuse the whole probe.
 
-    Issues ``1 + len(tracks) + len(returns)`` calls (one each for the two
-    list probes the caller already ran, plus N + M per-parent device list
-    probes); cheap in practice and the existing ``execute`` path's per-call
+    ANALYZER-INDEX: the master chain is probed too (singleton, addressed by
+    ``master=True``, keyed ``("master", 0)``) so probe-and-link can reconcile
+    the master device links against analyzer drift exactly like track/return
+    chains — without it a master device link froze at first-load and an
+    analyzer-shifted index later mis-targeted a param re-push. Probing it also
+    extends the stale-set detector to the master surface for free.
+
+    Issues ``1 + len(tracks) + len(returns) + 1`` calls (the two list probes
+    the caller already ran, plus N + M per-parent device list probes, plus the
+    master); cheap in practice and the existing ``execute`` path's per-call
     cost is the same shape.
     """
     if send_fn is None:
@@ -167,6 +174,17 @@ def _probe_live_devices_via_mcp(
         if getattr(resp, "ok", False):
             payload = getattr(resp, "result", None) or {}
             by_parent[("return", idx)] = list(payload.get("devices") or [])
+    # ANALYZER-INDEX: probe the master chain too (singleton, master=True), keyed
+    # ("master", 0) to match the int-keyed device matcher. Same per-parent
+    # tolerance — a transient master probe failure drops the master key without
+    # aborting the whole probe.
+    master_resp = send_fn(Request(
+        tool="ableton_device", action="list",
+        params={"master": True},
+    ))
+    if getattr(master_resp, "ok", False):
+        payload = getattr(master_resp, "result", None) or {}
+        by_parent[("master", 0)] = list(payload.get("devices") or [])
     return by_parent
 
 

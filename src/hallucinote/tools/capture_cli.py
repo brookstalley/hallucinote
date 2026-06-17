@@ -1,26 +1,31 @@
-"""Live-Ableton capture orchestration (agent-driven).
+"""Live-Ableton capture orchestration.
 
 Captures the mix layout of a running Ableton session to a snapshot JSON file.
-The actual probing of Live's state is done by an MCP-equipped agent because
-Python can't call MCP tools directly — this script's job is to document the
-protocol and to serialize the assembled dict to disk.
+The ``execute`` subcommand probes Live's state IN CODE over the
+`hallucinote_mcp.client.send` bridge (the same transport push/pull use), so the
+whole capture is deterministic — no agent assembly step. (The earlier "Python
+can't call MCP tools directly" framing was wrong; the bridge has always been
+callable.) The legacy ``--plan`` form still prints the probe sequence for a
+hand-driven / first capture.
 
-Workflow:
+Workflow (deterministic — NODE-ADDR Chunk B):
 
   1. Open the target Ableton set.
-  2. Have the agent run the probes listed by `hallucinote.capture.capture_plan()`:
-       - `ableton_session(action='info')`              -> tempo, signature, master, counts
-       - `ableton_return(action='list')`               -> return tracks list
-       - `ableton_track(action='get_info', track_index=N)`   -> for each main track
-       - `ableton_track(action='get_sends', track_index=N)`  -> for each main track
-  3. Agent assembles the per-track / per-return / session dicts and calls
-     `hallucinote.capture.compile_snapshot(...)`.
-  4. Agent writes the result to `songs/<name>/captured_session.json`.
-  5. `build.py` calls `hallucinote.capture.replay_capture(...)` to ingest.
+  2. ``python -m hallucinote.tools.capture_cli execute --song <slug>`` walks the
+     live set via `hallucinote.capture.assemble_snapshot_via_probes`, reaching
+     device parameters at every nesting depth (NodeAddr `path`), and writes
+     `songs/<slug>/captured_session.refresh.json` (carrying `browser_path`
+     forward from the existing snapshot).
+  3. ``diff`` the refresh against the committed snapshot; on confirm, ``merge``
+     + overwrite (the `/song-snapshot` skill drives the gate).
+  4. `build.py` calls `hallucinote.capture.replay_capture(...)` to ingest.
 
-CLI usage is intentionally minimal — the heavy lifting is the agent's:
+CLI subcommands:
 
-  * ``--plan``                  print the MCP probe plan (JSON to stdout)
+  * ``execute --song <slug>``   deterministic in-code capture -> writes the
+                                `.refresh.json` and prints its path to stdout
+  * ``--plan``                  print the MCP probe plan (JSON to stdout) — the
+                                hand/first-capture documentation form
   * ``diff <old.json> <new.json>``  W12-B snapshot-refresh diff; structured
                                 JSON to stdout + human summary to stderr
                                 so the agent can pipe it both ways.
@@ -56,6 +61,82 @@ from hallucinote.capture import (
 def _cmd_plan(_: argparse.Namespace) -> int:
     json.dump(capture_plan(), sys.stdout, indent=2)
     sys.stdout.write("\n")
+    return 0
+
+
+def _resolve_send_fn():
+    """Lazy resolver for ``hallucinote_mcp.client.send`` — mirrors
+    :func:`hallucinote.sync.pull_cli._resolve_send_fn`. Keeps this module
+    importable when ``hallucinote_mcp`` isn't installed (only ``execute`` enters
+    this path; ``plan``/``diff``/``merge``/``migrate`` are MCP-free). Tests
+    inject a fake via ``monkeypatch.setattr(capture_cli, "_resolve_send_fn",
+    lambda: fake)``.
+    """
+    from hallucinote_mcp import client as _client  # type: ignore[import-not-found]
+    return _client.send
+
+
+def _make_probe(send_fn):
+    """Wrap a ``send_fn(Request) -> Response`` into the high-level
+    ``probe(tool, action, **params) -> result_dict`` contract
+    `assemble_snapshot_via_probes` expects. Raises on a tool-side failure — a
+    partial snapshot would silently drop authored state, so capture aborts loudly.
+    """
+    from hallucinote_mcp.wire import Request  # type: ignore[import-not-found]
+
+    def probe(tool: str, action: str, **params):
+        resp = send_fn(Request(tool=tool, action=action, params=params))
+        if not getattr(resp, "ok", False):
+            raise RuntimeError(
+                f"capture execute: {tool}(action={action!r}) failed: "
+                f"{getattr(resp, 'error', 'unknown error')} (params={params!r})"
+            )
+        return getattr(resp, "result", None) or {}
+
+    return probe
+
+
+def _cmd_execute(args: argparse.Namespace) -> int:
+    """Deterministic in-code capture (NODE-ADDR Chunk B): walk the live set via
+    the MCP bridge, assemble a full snapshot, and write it to a side-by-side
+    ``.refresh.json`` (never the canonical name — overwriting before the user
+    has seen the diff is the bug `/song-snapshot` exists to prevent). Carries
+    `browser_path` forward from the existing snapshot. Prints the refresh path
+    to stdout so the skill can diff it.
+    """
+    from hallucinote.capture import assemble_snapshot_via_probes
+    from hallucinote.workspace import resolve_song_dir
+
+    if args.output:
+        out_path = Path(args.output)
+        old_path = Path(args.old) if args.old else None
+    elif args.song:
+        song_dir = resolve_song_dir(args.song)
+        out_path = song_dir / "captured_session.refresh.json"
+        old_path = song_dir / "captured_session.json"
+    else:
+        print(
+            "error: capture execute needs --song SLUG (writes "
+            "songs/<slug>/captured_session.refresh.json) or --output PATH",
+            file=sys.stderr,
+        )
+        return 2
+
+    old_snapshot = None
+    if old_path is not None and old_path.exists():
+        old_snapshot = json.loads(old_path.read_text())
+
+    probe = _make_probe(_resolve_send_fn())
+    snapshot = assemble_snapshot_via_probes(probe, old_snapshot=old_snapshot)
+
+    out_path.write_text(json.dumps(snapshot, indent=2) + "\n")
+    print(
+        f"capture execute: wrote {out_path} "
+        f"({len(snapshot.get('tracks') or [])} tracks, "
+        f"{len(snapshot.get('returns') or [])} returns)",
+        file=sys.stderr,
+    )
+    print(str(out_path))
     return 0
 
 
@@ -148,7 +229,7 @@ def _cmd_migrate(args: argparse.Namespace) -> int:
     return 0
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
     # The legacy --plan flag is preserved so older skill bodies / docs keep
     # working; the subcommand form is the going-forward shape.
@@ -160,6 +241,31 @@ def main() -> int:
 
     plan_p = sub.add_parser("plan", help="Print the MCP probe plan")
     plan_p.set_defaults(func=_cmd_plan)
+
+    exec_p = sub.add_parser(
+        "execute",
+        help=(
+            "Deterministic in-code capture: walk the live set via the MCP "
+            "bridge and write a side-by-side .refresh.json (requires "
+            "hallucinote_mcp + a running Hallucinote bridge). Reaches device "
+            "parameters at every nesting depth."
+        ),
+    )
+    exec_p.add_argument(
+        "--song", default=None,
+        help="song slug — writes songs/<slug>/captured_session.refresh.json "
+             "and preserves browser_path from the existing captured_session.json",
+    )
+    exec_p.add_argument(
+        "--output", "-o", default=None,
+        help="explicit output path (escape hatch / tests); overrides --song",
+    )
+    exec_p.add_argument(
+        "--old", default=None,
+        help="explicit existing-snapshot path for browser_path preservation "
+             "(only meaningful with --output)",
+    )
+    exec_p.set_defaults(func=_cmd_execute)
 
     diff_p = sub.add_parser(
         "diff",
@@ -197,7 +303,7 @@ def main() -> int:
     )
     migrate_p.set_defaults(func=_cmd_migrate)
 
-    args = p.parse_args()
+    args = p.parse_args(argv)
     if args.plan:
         return _cmd_plan(args)
     if hasattr(args, "func"):

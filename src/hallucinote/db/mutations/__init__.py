@@ -79,7 +79,9 @@ from .devices import (
     remove_breakpoint,
     remove_device_parameter,
     replace_breakpoints,
+    replace_device_param_overrides,
     replace_drum_pad_mappings,
+    set_chain_properties,
     set_device_parameter,
     set_device_sidechain,
 )
@@ -213,8 +215,10 @@ __all__ = [
     "remove_breakpoint",
     "remove_device_parameter",
     "replace_breakpoints",
+    "replace_device_param_overrides",
     "replace_drum_pad_mappings",
     "set_device_parameter",
+    "set_chain_properties",
     "set_device_sidechain",
     # links + reset
     "ABLETON_LINK_KINDS",

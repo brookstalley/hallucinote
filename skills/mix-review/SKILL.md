@@ -1,12 +1,14 @@
 ---
 name: mix-review
-description: Holistic, intent-aware mix review for a song. Recalls the song's declared composer intent, reads the whole MixReport (masking + bed buildup + loudness + attribution + reverb + per-part timing/feel + cross-rhythm) per section, and interprets the measurements AGAINST intent — surfacing only the collisions that hurt the element meant to win each section, framed as a producer's question, never a verdict. The single read-side surface over all audio analyses; masking is its richest input. Learns revealed intent back as a markdown annotation so it never re-flags. Use after an analysis pass, or when the user asks "how's the mix?", "is anything masking the vocal?", "is the groove tight?", "review the chorus", etc.
+description: Holistic, intent-aware mix review for a song. Recalls the song's declared composer intent, reads the whole MixReport (masking + bed buildup + loudness + attribution + reverb + per-part timing/feel + cross-rhythm) per section, and interprets the measurements AGAINST intent — surfacing only the collisions that hurt the element meant to win each section, framed as a producer's question, never a verdict. The single read-side surface over all audio analyses; masking is its richest input. Learns revealed intent back as a markdown annotation so it never re-flags. Use after an analysis pass, or when the user asks "how's the mix?", "is anything masking the vocal?", "is the groove tight?", "review the chorus", etc. Uses Max for Live (Live Suite, or the M4L add-on) — it reads rendered audio; without Max for Live use /compose-review (symbolic) instead.
 argument-hint: <song-slug> [section] [--focus masking|loudness|reverb|all]
 user-invocable: true
 disable-model-invocation: false
 ---
 
 # /mix-review — the producer who remembers this song
+
+> **Requires Max for Live** (Live Suite, or the M4L add-on). `/mix-review` reads a rendered `MixReport`, and rendering uses the HallucinoteAnalyzer — a Max for Live device. Without Max for Live this skill can't run; use **`/compose-review`** (symbolic, any Live edition) for an intent read instead. See `ableton://guides/getting-started`.
 
 You are acting as the best producer the user has ever had: one who **remembers
 this song's artistic intent**, reads the measurements, and amplifies what the
@@ -294,6 +296,35 @@ write_markdown_ref(
 
 Next run, step 1 recalls it and step 3 stays quiet. **Never re-flag** what the
 user already settled.
+
+### 6. LOG ATTEMPTS — record the mix moves you tried and how they turned out
+
+Learn-back captures *intent*; the **attempt ledger** captures the *path* — a mix move you
+tried and how it resolved, **especially the reverted dead ends** (the bagpipe-notch case:
+*tried a notch → still overwhelmed → reverted → gated instead*). When a move resolves this
+pass (kept / reverted / replaced), propose a one-line `kind: attempt` entry, propose-and-
+react — so the next mix pass starts from the gate, not the notch. Query before you re-touch
+a part via `/song-attempts`.
+
+```python
+write_markdown_ref(
+    conn,
+    path=Path("songs/<slug>/attempts/2026-06-14-bagpipes-notch.md"),
+    repo_root=Path("."),
+    frontmatter={"date": "2026-06-14", "kind": "attempt", "scope": "track",
+                 "track": "Bagpipes", "outcome": "failed", "resolution": "reverted",
+                 "tags": ["mix", "notch-filter", "masking"],
+                 "related": ["songs/<slug>/attempts/2026-06-14-bagpipes-gate.md"]},
+    body="v12: notch at ~2.2 kHz still let the chanter overwhelm the vocal and "
+         "hollowed the tone. Reverted; gated under the vocal phrases instead (kept).",
+    actor="llm", reason="attempt-log from mix-review",
+)
+```
+
+`outcome` ∈ {worked, partial, failed}; `resolution` ∈ {kept, reverted, superseded}; chain
+a correction with `related:` → the entry that worked. Musical-craft only — a *tool* failure
+(stale server, push glitch) is an incoming-bug, not an attempt; revealed *intent* is an
+annotation.
 
 ## Refreshing the analysis
 

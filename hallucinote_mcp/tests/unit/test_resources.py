@@ -29,6 +29,7 @@ _EXPECTED_URIS = {
     "ableton://plugins/installed",
     "ableton://reference/scales",
     "ableton://reference/device-params",
+    "ableton://reference/node-feature-matrix",
     "ableton://guides/getting-started",
     "ableton://guides/conventions",
     "ableton://guides/error-recovery",
@@ -38,8 +39,8 @@ _EXPECTED_URIS = {
 
 
 def test_resource_uri_list_matches_design():
-    """Lock the surface: exactly these 12 URIs (11 M-6 + INS-3W8P server/info),
-    no more, no less.
+    """Lock the surface: exactly these 13 URIs (11 M-6 + INS-3W8P server/info
+    + NODE-ADDR node-feature-matrix), no more, no less.
 
     Carry-forward principle #3 (lock-the-surface negative test for
     deliberate omissions). A future PR that adds an unlisted resource
@@ -284,6 +285,19 @@ def test_server_info_reports_running_server_identity():
     assert root.is_dir()
     assert (root / "__init__.py").is_file()
     assert root.name == "hallucinote_mcp"
+    # python: THIS server's interpreter — the agent runs the engine as
+    # `"<python>" -m hallucinote.cli …` so it executes in the SAME prewarmed env
+    # (PLUGIN-SELF-CONTAINED). Must be a real executable path.
+    assert "python" in payload
+    assert payload["python"]
+    assert Path(payload["python"]).name.lower().startswith("python")
+    # project_root: the uv project dir (holds uv.lock); identity only. Present
+    # whenever a uv.lock ancestor exists (the dev repo + a plugin install both have
+    # one); None only on a plain editable install with no lock.
+    assert "project_root" in payload
+    if payload["project_root"] is not None:
+        proj = Path(payload["project_root"])
+        assert (proj / "uv.lock").is_file()
 
 
 def test_primer_resource_count_matches_actual_registry():

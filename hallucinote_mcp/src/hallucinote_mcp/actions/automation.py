@@ -33,7 +33,7 @@ from __future__ import annotations
 
 from ..handlers import automation as automation_handlers
 from ..handlers.automation import TARGET_KINDS as _TARGET_KINDS
-from ..schema import Action, ParamSpec, register
+from ..schema import Action, ParamSpec, node_addr_spec, register
 
 
 _LOCATION_ENUM = ("session", "arrangement")
@@ -71,6 +71,12 @@ def _envelope_target_params() -> tuple[ParamSpec, ...]:
     target_kind-specific requirements — this is cleaner than seven separate
     action signatures since the consumer (planner) writes the discriminator
     once.
+
+    NODE-ADDR: the ``device_parameter`` device address moved off the flat
+    ``device_index``/``device_path`` onto a single ``node`` object on the
+    migrated actions (write_envelope / clear / perform_batch). The shallow read
+    surfaces (read_envelope / get_envelope) keep flat ``device_index`` (added
+    explicitly on those actions), so this shared set no longer carries it.
     """
     return (
         ParamSpec(name="track_index", type="int", required=False, minimum=1),
@@ -93,7 +99,6 @@ def _envelope_target_params() -> tuple[ParamSpec, ...]:
                 "is set."
             ),
         ),
-        ParamSpec(name="device_index", type="int", required=False, minimum=1),
         ParamSpec(
             name="parameter_name", type="str", required=False,
             description="Required for target_kind='device_parameter'.",
@@ -190,20 +195,15 @@ register(
                 ),
             ),
             *_envelope_target_params(),
-            ParamSpec(
-                name="device_path",
-                type="list",
+            node_addr_spec(
                 required=False,
                 description=(
-                    "DEEP-RACK-ADDR: address a device nested inside a rack — a "
-                    "list of {chain_index, device_position} steps (1-based) "
-                    "from device_index. NOTE: the session-clip route can't "
-                    "automate nested params on Live 12.4 "
-                    "(Clip.create_automation_envelope addresses top-level "
-                    "devices only), so write_envelope REFUSES a nested "
-                    "device_parameter — use action='perform_batch' (it rides "
-                    "nested params via device_path). Only meaningful for "
-                    "target_kind='device_parameter'."
+                    "Required for target_kind='device_parameter': the device "
+                    "whose parameter the envelope rides (terminal 'device', "
+                    "TOP-LEVEL only — the session-clip route can't automate a "
+                    "NESTED-rack param on Live 12.4; use action='perform_batch' "
+                    "for nested params). The device's track/return parent also "
+                    "hosts the containing clip. Omit for non-device kinds."
                 ),
             ),
         ),
@@ -223,8 +223,9 @@ register(
             "note_expression → track_index + location + clip_index + "
             "note_pitch + note_start_beats + axis (+ note_duration to "
             "extend the last-step tail to note end); "
-            "device_parameter → (track_index | return_index) + "
-            "device_index + parameter_name + location + clip_index; "
+            "device_parameter → node (terminal 'device', top-level; its "
+            "track/return parent hosts the clip) + parameter_name + location "
+            "+ clip_index; "
             "mixer_volume / mixer_pan → (track_index | return_index) "
             "+ location + clip_index; "
             "send_level → track_index + return_index + location + "
@@ -281,12 +282,14 @@ register(
                     "mixer_volume|mixer_pan|send_level|device_parameter, "
                     "<addressing>, breakpoints: [{time_beats, value, "
                     "curve?}, ...]}, ...]. <addressing> per target_kind: "
-                    "mixer_volume / mixer_pan / device_parameter → exactly "
-                    "one of master=true / track_index / return_index "
-                    "(+ device_index + parameter_name for device_parameter; "
-                    "+ optional device_path=[{chain_index, device_position}, "
-                    "...] to ride a NESTED-rack device param at any depth — "
-                    "DEEP-RACK-ADDR); "
+                    "mixer_volume / mixer_pan → exactly one of "
+                    "master=true / track_index / return_index; "
+                    "device_parameter → node (a NODE-ADDR device address, "
+                    "terminal 'device'; parent track/return/master + "
+                    "device_index, + optional path to ride a NESTED-rack "
+                    "device param at any depth — the perform surface rides the "
+                    "Parameter object directly so nesting works here) + "
+                    "parameter_name; "
                     "send_level → track_index (source) + return_index "
                     "(destination). Each arc's span is [first, last] "
                     "breakpoint time. arc_id is an opaque caller correlation "
@@ -376,6 +379,15 @@ register(
         params=(
             ParamSpec(name="target_kind", type="str", enum=_TARGET_KINDS),
             *_envelope_target_params(),
+            node_addr_spec(
+                required=False,
+                description=(
+                    "Required for target_kind='device_parameter': the device "
+                    "whose parameter envelope to clear (terminal 'device', "
+                    "top-level — same surface as write_envelope). Omit for "
+                    "non-device kinds."
+                ),
+            ),
         ),
         handler=automation_handlers.clear_handler,
         example=(
@@ -469,6 +481,14 @@ register(
             ParamSpec(name="target_kind", type="str", enum=_TARGET_KINDS),
             *_envelope_target_params(),
             ParamSpec(
+                name="device_index", type="int", required=False, minimum=1,
+                description=(
+                    "Required for target_kind='device_parameter' (1-based "
+                    "top-level device). The read surface keeps flat addressing "
+                    "— it isn't part of the NODE-ADDR write migration."
+                ),
+            ),
+            ParamSpec(
                 name="resolution_beats",
                 type="float",
                 required=False,
@@ -507,6 +527,14 @@ register(
         params=(
             ParamSpec(name="target_kind", type="str", enum=_TARGET_KINDS),
             *_envelope_target_params(),
+            ParamSpec(
+                name="device_index", type="int", required=False, minimum=1,
+                description=(
+                    "Required for target_kind='device_parameter' (1-based "
+                    "top-level device). The read surface keeps flat addressing "
+                    "— it isn't part of the NODE-ADDR write migration."
+                ),
+            ),
             ParamSpec(
                 name="resolution_beats",
                 type="float",

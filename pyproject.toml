@@ -4,7 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hallucinote"
-version = "0.9.0"
+# CANONICAL VERSION — the single source of truth for the product version.
+# Keep .claude-plugin/plugin.json and src/hallucinote/__init__.py in lockstep;
+# tests/unit/test_version_parity.py FAILS if any drifts. (The MCP server's
+# hallucinote_mcp.BASE_VERSION is a SEPARATE wire-protocol axis — see that file.)
+version = "1.5.0"
 description = "DB-backed MIDI authoring with Ableton sync via MCP"
 requires-python = ">=3.10"
 dependencies = [
@@ -27,17 +31,24 @@ dependencies = [
     "tomli>=2.0; python_version < '3.11'",
 ]
 
+[project.scripts]
+# The unified engine CLI — a thin dispatcher over the sync/tools modules
+# (PLUGIN-SELF-CONTAINED). Registered in the plugin's uv env so the agent runs
+# `uv run --project <plugin-root> --frozen hallucinote <cmd>` — no separate install.
+hallucinote = "hallucinote.cli:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
     "pytest-xdist>=3.6",
     "hypothesis>=6.0",
 ]
-# A song repo whose build.py pushes to Live needs the MCP client transport the
-# engine imports lazily (sync/push_cli.py). It's an undeclared coupling in the
-# monorepo (both packages coexist in the dev venv); declared here so a
-# standalone song repo can `pip install hallucinote[live]` instead of hitting
-# an ImportError at push time. See .prawduct/artifacts/project-root-contract.md.
+# LEGACY (PLUGIN-SELF-CONTAINED): build.py's push path imports the MCP client
+# transport lazily. The plugin now ships BOTH packages in one uv env and skills run
+# the engine via the server's own interpreter, so there's no standalone song-repo
+# `pip install` to satisfy — this extra is vestigial (kept to avoid a uv.lock
+# re-lock; safe to drop in a later cleanup). The `[tool.uv.workspace]` below is what
+# actually builds the one env with both packages.
 live = [
     "hallucinote-mcp>=0.9",
 ]
@@ -52,8 +63,10 @@ live = [
 # contract, memory project_mcp_server_stdlib_only, is preserved). The source
 # mapping resolves the `[live]` extra's `hallucinote-mcp` to the workspace member
 # instead of PyPI (where it isn't published), so `uv lock` succeeds. pip ignores
-# [tool.uv], so the editable dev install + song-side `pip install hallucinote[live]`
-# are unchanged.
+# [tool.uv], so the editable dev install is unchanged. (PLUGIN-SELF-CONTAINED:
+# there is no song-side `pip install` anymore — skills run the engine via the
+# server's own interpreter from this one env; the `[live]` extra above is now
+# vestigial. See technical_decisions: "Self-contained plugin".)
 [tool.uv.workspace]
 members = ["hallucinote_mcp"]
 
@@ -73,6 +86,14 @@ where = ["src"]
 [tool.pytest.ini_options]
 # Songs now live in their own repo (hallucinote-songs) with their own pytest
 # config — the framework tests the ENGINE + MCP server only.
+# Front-insert THIS checkout's source dirs (relative to rootdir) so a bare
+# `pytest` always tests the local tree — critical in a git worktree, where the
+# editable-install `.pth` files resolve `hallucinote`/`hallucinote_mcp` to the
+# PRIMARY checkout. Without this, a worktree `pytest` (and every prawduct hook
+# that shells `python -m pytest`) silently imports primary-dir code and reports
+# green against the wrong tree. In the primary dir these are the same paths the
+# `.pth` already targets, so it's a no-op there.
+pythonpath = ["src", "hallucinote_mcp/src"]
 testpaths = ["tests", "hallucinote_mcp/tests"]
 python_files = ["test_*.py"]
 markers = [

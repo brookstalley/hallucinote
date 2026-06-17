@@ -1,14 +1,34 @@
 ---
-description: Pull Ableton state into the Hallucinote DB. Diffs Ableton against the DB and writes mutations through the standard mutator path so events fall out naturally. Use for ingesting manual edits made in Ableton (fader moves, mute toggles, send tweaks).
+description: Pull Ableton state into the Hallucinote DB (a regenerable build artifact) — the lower-level build.py-staging primitive, NOT a parallel mix bake. Diffs Ableton against the DB and writes mutations through the standard mutator path so events fall out naturally. Use to stage build.py-owned manual edits (clip notes, automation) for folding into build.py, or for a quick DB-only ingest of fader/mute/send tweaks. For a DURABLE mix bake (params, sends, device chains, sidechain) that survives a rebuild, use /song-snapshot instead.
 user-invocable: true
 disable-model-invocation: false
-allowed-tools: Read, Write, Bash(python3 -m hallucinote.sync.pull_cli *), mcp__hallucinote-mcp__ableton_session, mcp__hallucinote-mcp__ableton_track, mcp__hallucinote-mcp__ableton_return, mcp__hallucinote-mcp__ableton_arrangement, mcp__hallucinote-mcp__ableton_device, mcp__hallucinote-mcp__ableton_clip, mcp__hallucinote-mcp__ableton_note
+allowed-tools: Read, Write, Bash, mcp__hallucinote-mcp__ableton_session, mcp__hallucinote-mcp__ableton_track, mcp__hallucinote-mcp__ableton_return, mcp__hallucinote-mcp__ableton_arrangement, mcp__hallucinote-mcp__ableton_device, mcp__hallucinote-mcp__ableton_clip, mcp__hallucinote-mcp__ableton_note
 argument-hint: <song-slug> <session_id> <domain | natural-language request>
 ---
 
 You are the Ableton pull orchestrator. Read what the user wants pulled, run the right MCP probes, hand the results to the DB layer, and report what changed.
 
 $ARGUMENTS
+
+> **Running engine commands.** The engine ships in the plugin's uv env — no separate install. Resolve `$PY` once from `ableton://server/info`'s `python`; the `pull` commands below run as `"$PY" -m hallucinote.cli pull …`. See [`docs/running-the-engine.md`](../../docs/running-the-engine.md).
+
+## When to use this — and the durability boundary (BAK-3M9T)
+
+`/ableton-pull` writes to the song **`.db`**, which is a **regenerable build
+artifact**: every `build.py` runs `replay_capture(captured_session.json)`, which
+re-asserts the snapshot onto the DB. So a pulled **mix** edit (params, sends,
+mixer, sidechain) **reverts on the next `build.py`** unless it is also in the
+durable snapshot. `/ableton-pull` is therefore the lower-level **build.py-staging
+primitive**, NOT a parallel mix bake:
+
+- **Durable mix bake → `/song-snapshot`.** The single mix bake — instrument params,
+  sends, device chains, and **sidechain sources** land in the git-tracked
+  `captured_session.json` and survive a rebuild. Use it for "I dialed the mix; keep it."
+- **`/ableton-pull`'s durable lane is the build.py-owned domains** — clip notes and
+  automation envelopes — that you ingest here and then fold into `build.py` (the
+  authorship home for notes/score). Its mix-domain pulls (`mix-state`,
+  `device-parameters`, …) are a quick DB-only ingest / inspection; to make them
+  durable, run `/song-snapshot` after.
 
 ## Conflict policy
 
@@ -68,7 +88,7 @@ For each resolved domain, do the steps in order. Run `mix-state` end-to-end befo
 ### Step 1 — Plan
 
 ```
-python3 -m hallucinote.sync.pull_cli plan <domain> <session_id> --song <slug>
+"$PY" -m hallucinote.cli pull plan <domain> <session_id> --song <slug>
 ```
 
 Writes JSON to stdout: `{calls: [{tool, args, key, purpose}, ...], notes: [...]}`. Save to `/tmp/ableton-pull-plan.json` via Write. Display non-empty `notes` before proceeding — they often surface unlinked tracks.
@@ -94,7 +114,7 @@ Write the results array to `/tmp/ableton-pull-results.json`.
 ### Step 3 — Apply
 
 ```
-python3 -m hallucinote.sync.pull_cli apply <session_id> --song <slug> \
+"$PY" -m hallucinote.cli pull apply <session_id> --song <slug> \
   --plan /tmp/ableton-pull-plan.json \
   --results /tmp/ableton-pull-results.json
 ```

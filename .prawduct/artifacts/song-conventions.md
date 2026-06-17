@@ -18,11 +18,13 @@ songs/<song-name>/
     YYYY-MM-DD-slug.md    ← one deliberate choice per file (ADR-shaped)
   annotations/
     slug.md               ← scoped intent notes (timeless, no date required)
+  attempts/
+    YYYY-MM-DD-slug.md    ← attempt ledger: one tried move + its outcome per file (ATL-7K3M)
   tests/
     test_*.py
 ```
 
-Files in `decisions/` and `annotations/` are atomic — one decision or one scoped intent per file. The `<song-name>.md` is the curated overview; the dated/scoped files are the high-volume detail layer.
+Files in `decisions/`, `annotations/`, and `attempts/` are atomic — one decision / one scoped intent / one tried move per file. The `<song-name>.md` is the curated overview; the dated/scoped files are the high-volume detail layer.
 
 ## When does something become a `decisions/` file vs an `annotations/` file vs stay in the overview?
 
@@ -36,21 +38,27 @@ Files in `decisions/` and `annotations/` are atomic — one decision or one scop
 
 **Overview** (`<song-name>.md`) — the orienting document. Concept, structural specs, harmony tables, form chart, track index mapping, MIDI pitch reference, "where things live." This is what a new agent reads first.
 
-The boundary heuristic: if it has a **date and a change**, → `decisions/`. If it describes **what something is or should feel like**, → `annotations/`. If it's **reference data** (table of bar positions, MIDI pitch map, track list), → overview.
+**Attempt** (`attempts/`) — a move you *tried* and how it turned out, **including the ones you reverted**. Decisions record what you *kept* and why; attempts record the *path*, especially the dead ends, so a later pass doesn't re-try them.
+
+> Example: "v12: notch at ~2.2 kHz still let the bagpipes overwhelm the vocal and hollowed the tone. Reverted; gated under the vocal phrases instead (kept)." — `outcome: failed`, `resolution: reverted`, `related:` → the gate entry that worked.
+
+The boundary heuristic: if it has a **date and a change you kept**, → `decisions/`. If it describes **what something is or should feel like**, → `annotations/`. If it's a **move you tried + how it turned out** (kept *or* reverted), → `attempts/`. If it's **reference data** (table of bar positions, MIDI pitch map, track list), → overview. A *tool* failure (a push glitch, a Live bug) is none of these — it's an `incoming-bugs/` report.
 
 ## Frontmatter schema
 
-Every file in `decisions/` and `annotations/` opens with a YAML-subset frontmatter block:
+Every file in `decisions/`, `annotations/`, and `attempts/` opens with a YAML-subset frontmatter block:
 
 ```yaml
 ---
 date: 2026-05-26          # required for decisions; ISO YYYY-MM-DD
-kind: decision            # decision | annotation | structural-fact
+kind: decision            # decision | annotation | structural-fact | attempt
 scope: track-time         # song | time | track | track-time
 track: 03 Synth Bass      # required when scope ∈ {track, track-time}; matches tracks.name
 bars: [33, 40]            # required when scope ∈ {time, track-time}; [start] for point, [start, end] for range
 tags: [dim7, bridge]      # optional; inline-list literal
 related: [decisions/2026-05-19-bridge.md]   # optional cross-links
+outcome: failed           # attempt only, REQUIRED: worked | partial | failed
+resolution: reverted      # attempt only, REQUIRED: kept | reverted | superseded
 ---
 ```
 
@@ -60,13 +68,15 @@ Then the prose body.
 
 | Field | Type | Required when | Notes |
 |---|---|---|---|
-| `kind` | enum | always | `decision`, `annotation`, or `structural-fact` |
+| `kind` | enum | always | `decision`, `annotation`, `structural-fact`, or `attempt` |
 | `scope` | enum | always | `song`, `time`, `track`, or `track-time` |
-| `date` | ISO date | `kind=decision` | `YYYY-MM-DD`; optional for annotations |
+| `date` | ISO date | `kind=decision` | `YYYY-MM-DD`; optional for annotations; conventional on attempts |
 | `track` | string | `scope ∈ {track, track-time}` | Matches `tracks.name` in the DB (resolves to track_id on reindex) |
 | `bars` | inline list of numbers | `scope ∈ {time, track-time}` | `[start]` (point) or `[start, end]` (half-open range); end > start |
 | `tags` | inline list of strings | optional | Free-form taxonomy; queryable via FTS5 |
-| `related` | inline list of paths | optional | Cross-links to other refs (path-relative-to-repo-root) |
+| `related` | inline list of paths | optional | Cross-links to other refs (path-relative-to-repo-root); on an attempt, links a failed move forward to the one that replaced it |
+| `outcome` | enum | `kind=attempt` (required) | `worked`, `partial`, or `failed`. **Forbidden on every other kind.** |
+| `resolution` | enum | `kind=attempt` (required) | `kept`, `reverted`, or `superseded`. **Forbidden on every other kind.** |
 
 ### Controlled `tags` vocabulary for mix + groove intent
 
@@ -108,9 +118,56 @@ relevant section/track file — no one-file-per-detail explosion.
 - Duplicate keys raise an error.
 - Blank lines and `# comments` inside the frontmatter block are ignored.
 
+### The attempt ledger (kind: attempt) — ATL-7K3M
+
+An attempt records one tried move and how it turned out. Its value is the **negative
+trail**: a `failed`/`reverted` entry stops a later pass from re-trying a known dead end. A
+correction is **two linked entries** — the failed move's `related:` points forward to the
+move that replaced it. `outcome` and `resolution` are both **required** on an attempt and
+**forbidden** on every other kind.
+
+```yaml
+# songs/highland/attempts/2026-06-14-bagpipes-notch.md
+---
+date: 2026-06-14
+kind: attempt
+scope: track
+track: Bagpipes
+outcome: failed
+resolution: reverted
+tags: [mix, notch-filter, masking]
+related: [songs/highland/attempts/2026-06-14-bagpipes-gate.md]   # → what worked instead
+---
+v12: notch at ~2.2 kHz still let the chanter overwhelm the vocal, and it hollowed the
+bagpipe tone. Reverted.
+```
+
+```yaml
+# songs/highland/attempts/2026-06-14-bagpipes-gate.md
+---
+date: 2026-06-14
+kind: attempt
+scope: track
+track: Bagpipes
+outcome: worked
+resolution: kept
+tags: [mix, noise-gate, masking]
+---
+v13: gated the bagpipes under the vocal's phrases (sidechained to the vocal). Drone holds
+its timbre, clears space when the vocal enters. Kept.
+```
+
+**What belongs here vs not.** Musical-craft moves only — composition, arrangement, sound-
+design, mix. Revealed *intent* ("the chorus should be the payoff") is an `annotation`, not
+an attempt. A choice you *kept* with rationale you want future composers to see is a
+`decision`. A *tool* failure (a push glitch, a stale server, a Live bug) is an
+`incoming-bugs/` report. The ledger is **per-song** and **never a verdict** — a `failed`
+row means "didn't achieve its goal *in this song*," read like a `--defensive` constraint,
+not "never do this."
+
 ## Retrieval
 
-The LLM retrieves relevant decisions + annotations via the `/song-context` skill before non-trivial composition work. The skill queries `markdown_refs` (the SQLite projection) with FTS5 fulltext, tag, kind, scope, track, and bar-range filters.
+The LLM retrieves relevant decisions + annotations via the `/song-context` skill before non-trivial composition work, and the **attempt ledger** via `/song-attempts` (or `song_context --kind attempt`) **before re-touching a part it has worked before**. Both query `markdown_refs` (the SQLite projection) with FTS5 fulltext, tag, kind, scope, track, and bar-range filters; `/song-attempts` adds an `--outcome` filter for "show me the dead ends."
 
 The skill returns matching paths + previews. The LLM then `Read()`s the full files it wants.
 

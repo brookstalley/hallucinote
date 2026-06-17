@@ -236,6 +236,51 @@ class Action:
         return tuple(p.name for p in self.params if not p.required)
 
 
+# NODE-ADDR: the single wire shape for addressing any Live node — the frozen
+# unit (design §1c). One `node` object replaces the retired flat combo
+# (track_index|return_index|master + device_index + device_path) on every
+# node-addressed action, and the SAME object is the as-value shape (a sidechain
+# source is a track-terminal node). The dispatcher validates only `type='dict'`
+# here; the nested grammar has one validation home — `handlers.device.
+# validate_node_addr` — so target and value can't drift to two encodings.
+_NODE_ADDR_GRAMMAR = (
+    "A NodeAddr object addressing one Live node: "
+    "{parent:{kind:'track'|'return'|'master', index?:int}, "
+    "terminal?:'track'|'return'|'master'|'device'|'chain', "
+    "device_index?:int, path?:[{chain_index:int,device_position:int},...], "
+    "chain_index?:int}. "
+    "parent.index is 1-based (omit for the master singleton). terminal "
+    "defaults to 'device'. By terminal: track/return/master address the "
+    "parent node itself (device_index/path/chain_index absent; terminal must "
+    "equal parent.kind) — this is also the as-value shape; 'device' (default) "
+    "needs device_index (1-based top-level device) + optional path (deeper "
+    "rack descent: each step picks chain_index then device_position, 1-based); "
+    "'chain' needs device_index + chain_index (which chain on that rack) + "
+    "optional path (to reach a nested rack). Get path/chain_index from "
+    "ableton_device(action='get_device_chains')."
+)
+
+
+def node_addr_spec(
+    *, name: str = "node", required: bool = True, description: str = ""
+) -> ParamSpec:
+    """A ParamSpec for a NODE-ADDR ``node`` object — the single addressing unit.
+
+    Shared by every node-addressed action (get_parameters / set_parameter /
+    load / write_envelope / perform / clear device-param / set_sidechain) so
+    the wire address shape is declared once. ``name`` lets the as-value uses
+    (e.g. set_sidechain's ``source``) reuse the same grammar under a different
+    key. The deep shape is validated by ``handlers.device.validate_node_addr``;
+    the dispatcher only checks it's a dict.
+    """
+    return ParamSpec(
+        name=name,
+        type="dict",
+        required=required,
+        description=(description + " " if description else "") + _NODE_ADDR_GRAMMAR,
+    )
+
+
 # Module-level registry. Keyed by ``(tool, action_name)`` for O(1) dispatch.
 _REGISTRY: dict[tuple[str, str], Action] = {}
 

@@ -35,7 +35,12 @@ Thin vertical slice — after this you can READ and SET a param at any depth in 
   handler depth-N get/set/enumerate against a synthetic nested structure.
 - **Re-vendor:** required (actions/ + handlers/ flip the fingerprint).
 
-### Chunk 2: snapshot durability — capture + push depth-N (THE unblocker)
+### Chunk 2: snapshot durability — replay + push depth-N (THE unblocker)
+> **Correction (NODE-ADDR / DEV-9K7N, 2026-06-15):** this chunk shipped *replay*
+> (snapshot→DB) + *push* depth-N, NOT *acquisition* (Live→snapshot). The earlier
+> "capture + push depth-N" wording overclaimed — there was no in-code Live→snapshot
+> capture, so a deep dialed param could be re-emitted only if it was already in a
+> hand-authored snapshot. The acquisition half (`capture execute`) is NODE-ADDR Chunk B.
 - **capture.py:** delete the `_depth > 0` raise; replay already handles params at any depth.
 - **db/queries.py:** add `get_device_nesting_path(conn, device_id)` → positional path from the
   DB hierarchy alone (no live round-trips).
@@ -82,7 +87,7 @@ song/Live-side. (Design + planning are collision-free; building is not.)
 
 ## Status
 - [x] Chunk 1: canonical device_path primitive + shared resolver
-- [x] Chunk 2: snapshot durability — capture + push depth-N
+- [x] Chunk 2: snapshot durability — *replay* + push depth-N (acquisition/`capture execute` deferred to NODE-ADDR/DEV-9K7N — corrected 2026-06-15)
 - [x] Chunk 3: nested-rack device_parameter automation
 - [x] Chunk 4: voices accessor (covered branch shipped; property branch probe-gated)
 

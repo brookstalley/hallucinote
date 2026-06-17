@@ -93,12 +93,42 @@ def _resolve_song_dir(song_slug: str) -> Path:
     return db_path.parent
 
 
+def _capture_recency_key(captures_dir: Path) -> tuple[str, float, str]:
+    """Recency sort key for a captures dir, robust to NON-ISO dir names.
+
+    Renders name their dirs ISO-8601 (``20260527T200614Z``), but a dir may also
+    be hand-named for a focused capture (e.g. ``v4-seam-verse2-chorus2``). Keying
+    on the dir NAME assumed ISO-only naming, so a hand-named dir silently
+    shadowed the newest render: ``'v'`` (0x76) sorts ABOVE every ``2026…``
+    timestamp (0x32), and ``max(by name)`` picked the stale ``v4-…`` dir — the
+    analysis then read the wrong (often tiny, single-section) audio while every
+    timestamped full-song render was ignored.
+
+    So key on the manifest's recorded ``captured_at`` — the TRUE capture time,
+    naming-independent, and itself ISO-8601 so it still sorts chronologically.
+    Fall back to the manifest mtime, then the dir name, when ``captured_at`` is
+    absent (an old or partial manifest)."""
+    manifest = captures_dir / "manifest.json"
+    captured_at = ""
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        captured_at = str(data.get("captured_at") or "")
+    except (OSError, ValueError):
+        pass
+    try:
+        mtime = manifest.stat().st_mtime
+    except OSError:
+        mtime = 0.0
+    return (captured_at, mtime, captures_dir.name)
+
+
 def _latest_captures_dir(song_slug: str) -> Path:
     """Pick the most recent captures dir under ``songs/<slug>/captures/``.
 
-    Names are ISO-8601 (UTC, like ``20260527T200614Z``) so lex order
-    == chronological order. Raises a teaching ``_AnalysisError`` if the
-    captures dir is empty or absent.
+    "Most recent" is the manifest's recorded ``captured_at`` (see
+    :func:`_capture_recency_key`) — NOT the dir name, so a hand-named focused
+    capture can't shadow the newest render. Raises a teaching ``_AnalysisError``
+    if the captures dir is empty or absent.
     """
     captures_root = _resolve_song_dir(song_slug) / "captures"
     if not captures_root.exists():
@@ -108,17 +138,17 @@ def _latest_captures_dir(song_slug: str) -> Path:
             f"been called yet? Captures are written to "
             f"songs/{song_slug}/captures/<iso-ts>/."
         )
-    candidates = sorted(
+    candidates = [
         p for p in captures_root.iterdir()
         if p.is_dir() and (p / "manifest.json").exists()
-    )
+    ]
     if not candidates:
         raise _AnalysisError(
             f"{captures_root} has no captures dirs with a manifest.json — "
             f"each ableton_render(render) call writes one; if you see "
             f"WAVs but no manifest the render didn't complete cleanly."
         )
-    return candidates[-1]
+    return max(candidates, key=_capture_recency_key)
 
 
 def _latest_report_path(song_slug: str) -> Path | None:

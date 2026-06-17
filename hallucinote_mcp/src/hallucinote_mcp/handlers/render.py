@@ -789,14 +789,15 @@ def _set_arm_on_all(
     """
     value = "1.0" if arm else "0.0"
     for inst in layout.instances:
-        addr = _surface_address(inst)
-        context.run_on_main(lambda inst=inst, addr=addr: device_handlers.set_parameter_handler(
+        node = device_handlers.build_node_addr(
+            _surface_address(inst), device_index=inst.device_index,
+        )
+        context.run_on_main(lambda node=node: device_handlers.set_parameter_handler(
             context,
-            device_index=inst.device_index,
+            node=node,
             parameter_name="Arm",
             value=value,
             value_type="continuous",
-            **addr,
         ))
         time.sleep(_INTER_MUTATION_YIELD_S)
 

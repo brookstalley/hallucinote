@@ -31,7 +31,9 @@ Hallucinote authors the mix as part of composing — instrument **chains**, devi
 settings, sends, and per-part feel ship with the song (sound design is
 authorship, not a post-hoc to-do). You then push to Live and do hands-on mixing
 there; pull your tweaks back with `/hallucinote:ableton-pull` to keep them. Detailed mix
-*review* (masking, loudness, reverb, timing) is available via `/hallucinote:mix-review`.
+*review* (masking, loudness, reverb, timing) is available via `/hallucinote:mix-review`,
+which uses Max for Live (Live Suite, or the M4L add-on); `/hallucinote:compose-review`
+reviews the composition against intent on any edition.
 
 ## A push overwrote my manual Live tweaks. How do I keep them?
 
@@ -39,8 +41,10 @@ The DB is the source of truth, so a fresh push converges Live to the DB. Before
 re-pushing, fold your manual edits back into the DB:
 
 - Faders / mutes / sends / notes → `/hallucinote:ableton-pull`.
-- Device-parameter knob tweaks → `/hallucinote:snapshot-bake-recent-changes` (lighter), or
-  `/hallucinote:song-snapshot` for the full mix layout.
+- Device-parameter knob tweaks (and the full mix layout — params, sends, chains,
+  sidechain) → `/hallucinote:song-snapshot`, the single durable mix bake. It writes
+  the git-tracked `captured_session.json`, so the next `build.py` reproduces them
+  (a DB-only bake would revert on rebuild).
 
 See the [Quickstart](quickstart.md#4-pull-manual-edits-back-optional).
 

@@ -1,7 +1,9 @@
 """Markdown corpus parser + projection index.
 
 Composer intent + decision rationale live as atomic markdown files under
-`songs/<name>/decisions/` and `songs/<name>/annotations/`. This module:
+`songs/<name>/decisions/` and `songs/<name>/annotations/`; the attempt ledger
+(kind: attempt — try → outcome → correction, incl. reverted dead ends; ATL-7K3M)
+lives under `songs/<name>/attempts/`. This module:
 
 - Parses a YAML-subset frontmatter at the head of each file.
 - Walks the corpus and upserts rows into `markdown_refs` (a rebuildable
@@ -32,12 +34,20 @@ from hallucinote.db.connection import transaction
 # Frontmatter schema constants
 # ---------------------------------------------------------------------------
 
-KINDS = frozenset({"decision", "annotation", "structural-fact"})
+KINDS = frozenset({"decision", "annotation", "structural-fact", "attempt"})
 SCOPES = frozenset({"song", "time", "track", "track-time"})
+
+# Attempt-ledger (kind: attempt) enums (ATL-7K3M). `outcome` = did the tried
+# move achieve its goal; `resolution` = what we did with it. `superseded` pairs
+# with a `related` link to the successor attempt (the try → outcome → correction
+# chain). Both are REQUIRED on an attempt and FORBIDDEN on every other kind.
+ATTEMPT_OUTCOMES = frozenset({"worked", "partial", "failed"})
+ATTEMPT_RESOLUTIONS = frozenset({"kept", "reverted", "superseded"})
 
 # Allowed frontmatter keys. Unknown keys raise — catches typos at index time.
 _ALLOWED_KEYS = frozenset(
-    {"date", "kind", "scope", "track", "bars", "tags", "related"}
+    {"date", "kind", "scope", "track", "bars", "tags", "related",
+     "outcome", "resolution"}
 )
 
 # Keys whose values must be inline-list literals `[a, b, ...]`.
@@ -62,6 +72,8 @@ class Frontmatter:
     bars: list[float] | None = None
     tags: list[str] = field(default_factory=list)
     related: list[str] = field(default_factory=list)
+    outcome: str | None = None       # kind: attempt only (worked|partial|failed)
+    resolution: str | None = None    # kind: attempt only (kept|reverted|superseded)
 
 
 @dataclass
@@ -245,6 +257,29 @@ def _build_frontmatter(raw: dict[str, Any]) -> Frontmatter:
     if scope in ("track", "track-time") and not track:
         raise ValueError(f"scope {scope!r} requires 'track' field")
 
+    outcome = raw.get("outcome")
+    resolution = raw.get("resolution")
+    if kind == "attempt":
+        if outcome is None or resolution is None:
+            raise ValueError(
+                "attempt requires both 'outcome' and 'resolution' fields"
+            )
+        if outcome not in ATTEMPT_OUTCOMES:
+            raise ValueError(
+                f"invalid outcome {outcome!r}; allowed: {sorted(ATTEMPT_OUTCOMES)}"
+            )
+        if resolution not in ATTEMPT_RESOLUTIONS:
+            raise ValueError(
+                f"invalid resolution {resolution!r}; "
+                f"allowed: {sorted(ATTEMPT_RESOLUTIONS)}"
+            )
+    else:
+        if outcome is not None or resolution is not None:
+            raise ValueError(
+                f"'outcome'/'resolution' are valid only on kind 'attempt', "
+                f"not {kind!r}"
+            )
+
     return Frontmatter(
         kind=kind,
         scope=scope,
@@ -253,6 +288,8 @@ def _build_frontmatter(raw: dict[str, Any]) -> Frontmatter:
         bars=bars,
         tags=raw.get("tags", []),
         related=raw.get("related", []),
+        outcome=outcome,
+        resolution=resolution,
     )
 
 
@@ -262,10 +299,11 @@ def _build_frontmatter(raw: dict[str, Any]) -> Frontmatter:
 
 _DECISIONS_GLOB = "decisions/*.md"
 _ANNOTATIONS_GLOB = "annotations/*.md"
+_ATTEMPTS_GLOB = "attempts/*.md"
 
 
 def discover_corpus(songs_root: Path) -> list[Path]:
-    """Walk `songs/<name>/decisions/*.md` + `songs/<name>/annotations/*.md`.
+    """Walk decisions/, annotations/, and attempts/ `*.md` for every song.
 
     Returns absolute paths sorted for determinism.
     """
@@ -280,7 +318,7 @@ def discover_corpus(songs_root: Path) -> list[Path]:
 
 
 def discover_song_corpus(song_dir: Path) -> list[Path]:
-    """The decisions + annotations of a SINGLE song (`songs/<name>/`).
+    """The decisions + annotations + attempts of a SINGLE song (`songs/<name>/`).
 
     Returns absolute paths sorted for determinism. Used by per-song
     reindex (recall-on-read) so one song's DB only ever indexes its own
@@ -290,7 +328,7 @@ def discover_song_corpus(song_dir: Path) -> list[Path]:
     paths: list[Path] = []
     if not song_dir.is_dir():
         return paths
-    for sub in (_DECISIONS_GLOB, _ANNOTATIONS_GLOB):
+    for sub in (_DECISIONS_GLOB, _ANNOTATIONS_GLOB, _ATTEMPTS_GLOB):
         paths.extend(sorted(song_dir.glob(sub)))
     return paths
 
@@ -324,10 +362,12 @@ def write_markdown_ref(
     request_id: str | None = None,
     reason: str | None = None,
 ) -> MarkdownDoc:
-    """Write a new decision/annotation file and emit the audit event.
+    """Write a new corpus markdown file (decision / annotation / structural-fact
+    / attempt) and emit the audit event.
 
-    This is the LLM-facing one-call surface for "I made a deliberate choice
-    and want to record it." It:
+    This is the LLM-facing one-call surface for "I want to record this" — a
+    deliberate choice (`decision`), a scoped intent (`annotation`), or a tried
+    move and how it turned out, incl. a reverted dead end (`attempt`). It:
 
       1. Serializes `frontmatter` into the file's YAML-subset header.
       2. Writes `path` to disk (parents created as needed; UTF-8).
@@ -336,7 +376,7 @@ def write_markdown_ref(
       4. Upserts the `markdown_refs` row + refreshes FTS5 in one transaction.
       5. Emits `MARKDOWN_REF_RECORDED` via `M.record_markdown_ref`, threaded
          to the active `request_id` so cross-reference queries link this
-         decision back to the compose session that produced it.
+         record back to the compose session that produced it.
 
     Returns the parsed `MarkdownDoc`. Reindex of pre-existing files (via
     `reindex_corpus`) is a separate path that does NOT emit this event —
@@ -373,7 +413,10 @@ def _serialize_markdown(fm: dict[str, Any], body: str) -> str:
     """Serialize frontmatter dict + body to the YAML-subset format the
     parser accepts. Keys emit in a stable order; lists serialize inline.
     """
-    field_order = ("date", "kind", "scope", "track", "bars", "tags", "related")
+    field_order = (
+        "date", "kind", "scope", "track", "bars", "tags", "related",
+        "outcome", "resolution",
+    )
     lines = ["---"]
     for k in field_order:
         if k not in fm or fm[k] is None or fm[k] == []:
@@ -521,9 +564,9 @@ def _upsert_markdown_ref(
     conn.execute(
         """INSERT INTO markdown_refs
               (path, kind, scope, song_id, track_id,
-               bars_json, tags_json, related_json, frontmatter_date,
-               content_hash, indexed_at, tombstoned_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+               bars_json, tags_json, related_json, outcome, resolution,
+               frontmatter_date, content_hash, indexed_at, tombstoned_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                    strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), NULL)
            ON CONFLICT(path) DO UPDATE SET
              kind             = excluded.kind,
@@ -533,6 +576,8 @@ def _upsert_markdown_ref(
              bars_json        = excluded.bars_json,
              tags_json        = excluded.tags_json,
              related_json     = excluded.related_json,
+             outcome          = excluded.outcome,
+             resolution       = excluded.resolution,
              frontmatter_date = excluded.frontmatter_date,
              content_hash     = excluded.content_hash,
              indexed_at       = excluded.indexed_at,
@@ -546,6 +591,8 @@ def _upsert_markdown_ref(
             json.dumps(fm.bars, separators=(",", ":")) if fm.bars is not None else None,
             json.dumps(fm.tags, separators=(",", ":")) if fm.tags else None,
             json.dumps(fm.related, separators=(",", ":")) if fm.related else None,
+            fm.outcome,
+            fm.resolution,
             fm.date,
             doc.content_hash,
         ),

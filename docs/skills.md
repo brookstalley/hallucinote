@@ -19,6 +19,7 @@ are the same.)
 
 | Skill | What it does |
 |---|---|
+| `/hallucinote:getting-started` | Orientation for a new user — checks your install (uv, the MCP bridge, the Remote Script, the Max for Live analyzer), says plainly what works with and without Max for Live, and **proposes** the next step (install if needed, then a new or existing song). Run it first, or whenever you're unsure "what now?". |
 | `/hallucinote:song-workflow` | The song-creation **lifecycle map** — the phases, the skill that runs each, and the two review checkpoints (`/compose-review`, `/mix-review`) that are easy to skip. Read first for any song work; links to [`docs/song-workflow.md`](song-workflow.md) for the full depth and the research behind each tool. |
 
 ## Setup
@@ -45,8 +46,7 @@ are the same.)
 |---|---|
 | `/hallucinote:ableton-push` | Push the DB into Live through fourteen ordered phases (tempo → meter → tracks → returns → scenes → clips → mix → devices → routing → device-sidechain → envelopes → performed-automation → arrangement → cues). Materializes a song from scratch or converges an existing set. |
 | `/hallucinote:ableton-pull` | Pull manual Live edits (faders, mutes, sends, notes) back into the DB through the mutator path. |
-| `/hallucinote:song-snapshot` | Refresh a song's `captured_session.json` against the open set — instrument params, sends, device chains. (Not for clips/notes/automation.) |
-| `/hallucinote:snapshot-bake-recent-changes` | Bake mid-session device-parameter tweaks back into the DB so they survive the next push. Lighter than a full snapshot. |
+| `/hallucinote:song-snapshot` | Refresh a song's `captured_session.json` against the open set — the single durable mix bake: instrument params, sends, device chains, sidechain sources. (Not for clips/notes/automation — those are build.py-owned; use `/ableton-pull` to stage them.) |
 
 ## Mix
 
@@ -59,7 +59,7 @@ are the same.)
 | Skill | What it does |
 |---|---|
 | `/hallucinote:compose-review` | Compose-stage guided evaluation — reads the composition (sections, density, energy arc) and the symbolic melody/recurrence lenses *against* declared intent: *"you wanted the chorus to lift — does it?"* Use before the mix stage, or when you ask *"is the chorus landing?"* / *"what's missing?"* |
-| `/hallucinote:mix-review` | Holistic, intent-aware mix review — reads the whole MixReport (masking, loudness, reverb, per-part timing/feel, cross-rhythm) per section and interprets it *against* declared intent. Use after an analysis pass or when you ask *"how's the mix?"* |
+| `/hallucinote:mix-review` | Holistic, intent-aware mix review — reads the whole MixReport (masking, loudness, reverb, per-part timing/feel, cross-rhythm) per section and interprets it *against* declared intent. Use after an analysis pass or when you ask *"how's the mix?"* **Uses Max for Live (Live Suite, or the M4L add-on); without it, `/compose-review` is the symbolic alternative.** |
 
 ## Understand a song
 
@@ -67,6 +67,7 @@ are the same.)
 |---|---|
 | `/hallucinote:song-context` | Query a song's composer intent + decision rationale (markdown-primary, FTS5-indexed) before non-trivial composition work. |
 | `/hallucinote:decisions` | Query a song's compose-time audit log for prior LLM prompts and decision rationale. Complementary to `/hallucinote:song-context`. |
+| `/hallucinote:song-attempts` | Query a song's attempt ledger — what was tried on a part/section and how it turned out (including reverted dead ends) — *before* re-trying something. The compositional/mix sibling of `/song-context`. |
 
 ## Contributing & project health
 

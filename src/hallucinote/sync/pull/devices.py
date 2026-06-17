@@ -8,7 +8,12 @@ import sqlite3
 from typing import Any
 
 from hallucinote.analyzer_identity import is_analyzer_device
-from hallucinote.capture import RACK_CLASS_NAMES
+from hallucinote.capture import (
+    RACK_CLASS_NAMES,
+    chain_authored_props,
+    normalize_param_value,
+    param_needs_raw_channel,
+)
 
 from hallucinote.db import mutations as M, queries as Q
 
@@ -16,8 +21,8 @@ from ._core import (
     PullCall,
     PullPlan,
     ApplyResult,
-    _normalize_param_value,
     _normalized_values_match,
+    _raw_values_match,
 )
 
 
@@ -78,11 +83,13 @@ def _iter_linked_top_level_devices(
     device on the top-level chain (``position == 0``) of each linked parent.
 
     Layered on ``_iter_linked_parents`` (same link resolution, master-skip, and
-    unlinked-warn policy), then descends one level — the top-level chain only,
-    the gap-#17b boundary every per-device planner already draws. Yields in
-    (tracks…, returns…) order, one tuple per device, so callers keep their
-    per-device emission, rack filtering, and "nothing emitted" bookkeeping
-    unchanged.
+    unlinked-warn policy), then descends one level — the top-level chain only.
+    Used by the planners that legitimately stay shallow: ``plan_pull_nested_rack_chains``
+    (whose ONE probe per top-level rack returns the full recursive tree) and
+    ``plan_pull_device_sidechain``. The parameter pull goes depth-N via the
+    sibling ``_iter_linked_device_params``. Yields in (tracks…, returns…) order,
+    one tuple per device, so callers keep their per-device emission, rack
+    filtering, and "nothing emitted" bookkeeping unchanged.
     """
     for parent_kind, parent_at, parent_row in _iter_linked_parents(
         conn, song_id=song_id, session_id=session_id,
@@ -99,6 +106,82 @@ def _iter_linked_top_level_devices(
                 yield parent_kind, parent_at, parent_row, d
 
 
+def _walk_nested_device_params(
+    conn: sqlite3.Connection,
+    *,
+    parent_kind: str,
+    parent_at: int,
+    parent_row,
+    rack_device,
+    top_device_index: int,
+    path: list[dict[str, int]],
+):
+    """Recurse a rack device's nested chains, yielding
+    ``(parent_kind, parent_at, parent_row, device_row, node)`` for every nested
+    device at any depth. ``node`` is the NodeAddr addressing it live — the LIVE
+    parent index, the TOP-LEVEL ``device_index``, and the ``path`` of
+    ``{chain_index, device_position}`` steps down to it (the address Chunk A
+    froze; ``get_parameters`` resolves it server-side)."""
+    for nchain in Q.get_device_chains_for_rack_device(conn, rack_device["id"]):
+        for nd in Q.get_devices_for_chain(conn, nchain["id"]):
+            step = {
+                "chain_index": nchain["position"],
+                "device_position": nd["position"],
+            }
+            node = {
+                "parent": {"kind": parent_kind, "index": parent_at},
+                "device_index": top_device_index,
+                "path": path + [step],
+            }
+            yield parent_kind, parent_at, parent_row, nd, node
+            if nd["kind"] in RACK_CLASS_NAMES:
+                yield from _walk_nested_device_params(
+                    conn, parent_kind=parent_kind, parent_at=parent_at,
+                    parent_row=parent_row, rack_device=nd,
+                    top_device_index=top_device_index, path=path + [step],
+                )
+
+
+def _iter_linked_device_params(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+    plan: PullPlan,
+    unlinked_warn,
+):
+    """Yield ``(parent_kind, parent_at, parent_row, device_row, node)`` for
+    EVERY device on a linked parent — top-level chain AND nested rack chains, to
+    any depth. The depth-N successor to `_iter_linked_top_level_devices` for the
+    parameter pull: addressing is no longer the gap (Chunk A froze the NodeAddr
+    `path`), so the param planner reaches nested devices too. For a top-level
+    device the ``node`` is the flat ``{parent, device_index}`` shape (no path);
+    nested devices carry the ``path``."""
+    for parent_kind, parent_at, parent_row in _iter_linked_parents(
+        conn, song_id=song_id, session_id=session_id,
+        plan=plan, unlinked_warn=unlinked_warn,
+    ):
+        if parent_kind == "track":
+            chains = Q.get_device_chains_for_track(conn, parent_row["id"])
+        else:
+            chains = Q.get_device_chains_for_return(conn, parent_row["id"])
+        for chain in chains:
+            if chain["position"] != 0:
+                continue
+            for d in Q.get_devices_for_chain(conn, chain["id"]):
+                node = {
+                    "parent": {"kind": parent_kind, "index": parent_at},
+                    "device_index": d["position"],
+                }
+                yield parent_kind, parent_at, parent_row, d, node
+                if d["kind"] in RACK_CLASS_NAMES:
+                    yield from _walk_nested_device_params(
+                        conn, parent_kind=parent_kind, parent_at=parent_at,
+                        parent_row=parent_row, rack_device=d,
+                        top_device_index=d["position"], path=[],
+                    )
+
+
 def plan_pull_devices(
     conn: sqlite3.Connection,
     *,
@@ -110,14 +193,15 @@ def plan_pull_devices(
 
     Emits one ``ableton_device(action='list')`` per linked parent. The
     ``list`` probe returns positional device identity (``device_index``,
-    ``class_name``, ``name``, ``is_active``) for the top-level chain
-    only — nested rack chains are not traversed (Live's API constraint,
-    tracked as gap #17b).
+    ``class_name``, ``name``, ``is_active``) for the top-level chain only —
+    this planner pulls the top-level chain shape; nested structure + params are
+    separate planners (below).
 
-    Out of scope (separate backlog items):
-      - Nested rack chains (gap #17b)
+    Out of scope of THIS planner (separate planners, no longer gap-gated —
+    NODE-ADDR Chunk A froze the addressing, Chunk B reaches depth-N):
+      - Nested rack chains → ``plan_pull_nested_rack_chains`` (depth-N apply)
       - Master-strip device chain (separate parent kind / planner)
-      - Per-device parameter values (gated on gap #17b)
+      - Per-device parameter values → ``plan_pull_device_parameters`` (depth-N)
       - ``is_active`` flag (no DB column today; the field rides along in
         the probe but apply currently ignores it)
 
@@ -178,11 +262,16 @@ def plan_pull_nested_rack_chains(
     rows for the session. If no top-level devices exist (no `plan_pull_devices`
     pull run yet), the planner emits nothing and warns.
 
-    Out of scope: recursively nested racks (rack-in-rack); tracked in backlog.
+    Depth: one probe per TOP-LEVEL rack is enough — ``get_device_chains``
+    returns the FULL recursive tree (a nested device that is itself a rack
+    carries its own `chains`), and the apply recurses it depth-N (NODE-ADDR
+    Chunk B lifted the W7-B rack-in-rack scope cap). No separate probe per
+    nested rack.
 
     `detail='summary'` is the default — identity-only nested device entries
-    are sufficient for the diff. The full detail (per-nested mixer state)
-    would land schema columns that don't exist yet.
+    are sufficient for the diff (the recursive tree is present at summary
+    detail; only per-nested mixer state needs `detail='full'`, and no schema
+    column consumes it yet).
     """
     plan = PullPlan()
     any_emitted = False
@@ -247,16 +336,18 @@ def plan_pull_device_parameters(
     ``value_normalized`` for the DB's [0, 1] storage form (enum and
     constant-range params get NULL).
 
-    Iterates the SAME structural pass as `plan_pull_devices` — top-level
-    chain only (`position==0`); nested rack chains gated by gap #17b;
-    `master` tracks skipped. Operates on the device rows the previous
-    `plan_pull_devices` pull wrote, so callers should run device pull
+    Iterates every device on each linked track/return — top-level chain AND
+    nested rack chains, to any depth (NODE-ADDR Chunk B closes gap #17b: the
+    nesting was gated on *addressing*, which Chunk A froze, so the planner now
+    emits a `node` with the nested `path` for deep devices). `master` tracks are
+    skipped. Operates on the device rows the previous `plan_pull_devices` +
+    `plan_pull_nested_rack_chains` pulls wrote, so callers should run those
     first if the chain isn't already current.
     """
     plan = PullPlan()
     any_emitted = False
 
-    for parent_kind, parent_at, row, d in _iter_linked_top_level_devices(
+    for parent_kind, parent_at, row, d, node in _iter_linked_device_params(
         conn, song_id=song_id, session_id=session_id, plan=plan,
         unlinked_warn=lambda _pk, _row: (
             f"{_pk} {_row['name']!r} ({_row['id']}): not linked; skipping "
@@ -264,19 +355,21 @@ def plan_pull_device_parameters(
         ),
     ):
         any_emitted = True
-        index_kwarg = "track_index" if parent_kind == "track" else "return_index"
+        # NODE-ADDR: get_parameters takes a `node` device address. Top-level
+        # devices get a flat `{parent, device_index}`; nested devices carry the
+        # `path` of {chain_index, device_position} steps (built by the walk).
+        depth = f", depth {len(node['path'])}" if node.get("path") else ""
         plan.add(PullCall(
             tool="ableton_device",
             args={
                 "action": "get_parameters",
-                index_kwarg: parent_at,
-                "device_index": d["position"],
+                "node": node,
                 "detail": "full",
             },
             key=f"device_parameters:{d['id']}",
             purpose=(
                 f"pull parameters for device {d['kind']!r} "
-                f"(pos {d['position']}) on {parent_kind} {row['name']!r}"
+                f"(pos {d['position']}{depth}) on {parent_kind} {row['name']!r}"
             ),
         ))
 
@@ -306,10 +399,11 @@ def plan_pull_device_sidechain(
     via the symmetric ``get_input_routing``.
 
     Emits one ``ableton_device(action='get_input_routing')`` per device on a
-    linked track or return, iterating the SAME structural pass as
-    ``plan_pull_device_parameters`` — top-level chain only (``position==0``;
-    nested rack chains gated by gap #17b), ``master`` tracks skipped. The handler
-    returns ``has_input_routing: False`` (no raise) for devices that lack the API,
+    linked track or return via ``_iter_linked_top_level_devices`` — top-level
+    chain only (``position==0``), ``master`` tracks skipped. (Sidechain pull is
+    not yet extended depth-N — a nested sidechained compressor is uncommon; the
+    addressing exists since NODE-ADDR if a witness appears.) The handler returns
+    ``has_input_routing: False`` (no raise) for devices that lack the API,
     so probing every device is cheap and the apply layer no-ops the ones without
     a routing surface. Devices set in Ableton outside the DB are not
     auto-discovered (V1 — same boundary as the rest of pull).
@@ -780,6 +874,37 @@ def _apply_nested_rack_chains_for_device(
         )
         return
 
+    # `get_device_chains` returns the FULL recursive tree (each nested device
+    # that is itself a rack carries its own `chains`), so the whole subtree is
+    # diffed depth-N from this one probe — no rack-in-rack scope limit anymore
+    # (NODE-ADDR Chunk B; the W7-B one-level cap is lifted).
+    _diff_nested_chains(
+        conn,
+        rack_device_id=rack_device_id,
+        rack_kind=rack["kind"],
+        chains_in=chains_in,
+        out=out,
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+
+
+def _diff_nested_chains(
+    conn: sqlite3.Connection,
+    *,
+    rack_device_id: str,
+    rack_kind: str,
+    chains_in: list[dict[str, Any]],
+    out: ApplyResult,
+    actor: str,
+    request_id: str | None,
+    reason: str | None,
+) -> None:
+    """Diff one rack's nested chains against a `get_device_chains` subtree, then
+    recurse into any nested device that is itself a rack — closing the W7-B
+    one-level cap (NODE-ADDR Chunk B). The probe already carries the full tree,
+    so recursion is pure DB-side bookkeeping (no extra probes)."""
     db_chains = Q.get_device_chains_for_rack_device(conn, rack_device_id)
     db_chain_by_position = {c["position"]: c for c in db_chains}
 
@@ -804,10 +929,37 @@ def _apply_nested_rack_chains_for_device(
             )
             out.mutations += 1
             out.details.append(
-                f"nested chain {ci} on rack {rack['kind']}: added"
+                f"nested chain {ci} on rack {rack_kind}: added"
             )
         else:
             chain_id = existing_chain["id"]
+
+        # NODE-ADDR Chunk C + F: diff the chain's authored properties (per-drum
+        # choke_group/out_note + per-chain mixer mute/solo/volume/pan) against the
+        # DB. chain_authored_props applies the non-default filter (None = Live
+        # default), so a now-default value clears the DB's stale one — symmetric
+        # with the set_track_routing / set_chain_properties clear-on-None
+        # contract. set_chain_properties is idempotent (no event when nothing
+        # changed), so a steady chain is a no-op even though we always pass every
+        # field.
+        props = chain_authored_props(chain_entry)
+        result = M.set_chain_properties(
+            conn,
+            chain_id=chain_id,
+            choke_group=props["choke_group"],
+            out_note=props["out_note"],
+            mute=props["mute"],
+            solo=props["solo"],
+            volume=props["volume"],
+            pan=props["pan"],
+            actor=actor, request_id=request_id, reason=reason,
+        )
+        if result.kind == "updated":
+            out.mutations += 1
+            out.details.append(
+                f"nested chain {ci} on rack {rack_kind}: per-drum props "
+                f"{props}"
+            )
 
         # Normalize wire-shape `position` to `device_index` so `_diff_chain_devices`
         # can be shared with the top-level apply path. The MCP `get_device_chains`
@@ -823,7 +975,7 @@ def _apply_nested_rack_chains_for_device(
             conn,
             chain_id=chain_id,
             entries=normalized,
-            label=f"nested chain {ci} on rack {rack['kind']} device",
+            label=f"nested chain {ci} on rack {rack_kind} device",
             context_label=f"nested_rack_chains for rack {rack_device_id!r}, "
                           f"chain {ci}",
             out=out,
@@ -831,6 +983,33 @@ def _apply_nested_rack_chains_for_device(
             request_id=request_id,
             reason=reason,
         )
+
+        # DEPTH-N recursion: a nested device that is itself a rack carries its
+        # own `chains` in the probe tree. After `_diff_chain_devices` has
+        # created/matched the device row at that slot, descend into it. Nested
+        # chains never hold the analyzer (it is injected only on top-level
+        # track/return/master surfaces), so the probe `position` matches the DB
+        # position 1:1 — no densify drift to reconcile here.
+        db_devices_now = {
+            d["position"]: d for d in Q.get_devices_for_chain(conn, chain_id)
+        }
+        for e in normalized:
+            sub_chains = e.get("chains")
+            if not sub_chains:
+                continue
+            sub_device = db_devices_now.get(e.get("device_index"))
+            if sub_device is None or sub_device["kind"] not in RACK_CLASS_NAMES:
+                continue
+            _diff_nested_chains(
+                conn,
+                rack_device_id=sub_device["id"],
+                rack_kind=sub_device["kind"],
+                chains_in=sub_chains,
+                out=out,
+                actor=actor,
+                request_id=request_id,
+                reason=reason,
+            )
 
     # Removals: chains in DB that Ableton didn't report. Cascade clears nested
     # devices + their parameters.
@@ -843,7 +1022,7 @@ def _apply_nested_rack_chains_for_device(
         )
         out.mutations += 1
         out.details.append(
-            f"nested chain {c['position']} on rack {rack['kind']}: removed"
+            f"nested chain {c['position']} on rack {rack_kind}: removed"
         )
 
 
@@ -934,9 +1113,20 @@ def _apply_device_parameters_for_device(
         min_val = float(entry.get("min", 0.0))
         max_val = float(entry.get("max", 1.0))
         is_enum = bool(entry.get("is_enum", False))
-        value_normalized = _normalize_param_value(
-            float(raw_value), min_val, max_val, is_enum,
-        )
+        # DEV-4P7R: a non-enum param whose raw range != [0,1] takes the raw
+        # channel — normalize-as-raw mis-dials it at push (no value_normalized
+        # handler kwarg) and a non-monotonic display is refused. value_raw is
+        # Live's own param.value, pushed straight through. The two numeric
+        # continuous channels are mutually exclusive (mutator-enforced).
+        use_raw = param_needs_raw_channel(min_val, max_val, is_enum)
+        if use_raw:
+            value_raw: float | None = float(raw_value)
+            value_normalized: float | None = None
+        else:
+            value_raw = None
+            value_normalized = normalize_param_value(
+                float(raw_value), min_val, max_val, is_enum,
+            )
         # E1: capture value_items for enum params so the compose-time envelope
         # helper can resolve enum-name breakpoints without the build.py author
         # hand-listing the cardinality.
@@ -957,7 +1147,13 @@ def _apply_device_parameters_for_device(
         #     stored) -> compare the display string (its only stored form). The
         #     old `display_same AND norm_same` forced a mismatch here because the
         #     pull always computes a non-NULL normalized from Live's raw value.
-        if existing["value_normalized"] is not None:
+        #   * raw-channel (DEV-4P7R) -> compare value_raw within _FLOAT_EPS. A
+        #     legacy row that stored this param as normalized has value_raw=NULL,
+        #     so it reads as changed and the pull rewrites it to the raw form
+        #     (migrating the broken legacy representation in place).
+        if use_raw:
+            value_same = _raw_values_match(value_raw, existing["value_raw"])
+        elif existing["value_normalized"] is not None:
             value_same = _normalized_values_match(
                 value_normalized, existing["value_normalized"],
             )
@@ -973,6 +1169,7 @@ def _apply_device_parameters_for_device(
             value_display=value_display,
             value_normalized=value_normalized,
             value_items=value_items,
+            value_raw=value_raw,
             actor=actor, request_id=request_id, reason=reason,
         )
         out.mutations += 1

@@ -6,10 +6,11 @@ Resources differ from tools structurally:
   - **Resources** are addressable content; the MCP client (or the agent)
     reads them by URI without consuming a per-tool turn.
 
-The surface is **12 static resources, 0 templated** (the Arc 5 / P3 templated
+The surface is **13 static resources, 0 templated** (the Arc 5 / P3 templated
 slot — ``hallucinote://song/{slug}/annotations`` — was retired with the DB
 annotations table; ``RESOURCE_TEMPLATE_URIS`` is empty). Wave M-6 shipped 11
-static; INS-3W8P added the 12th (``ableton://server/info``):
+static; INS-3W8P added the 12th (``ableton://server/info``); NODE-ADDR added
+the 13th (``ableton://reference/node-feature-matrix``):
 
 Live-backed (delegate to existing handlers via the server's
 ``handle_tool_call`` so they reuse the forward-to-Remote-Script path):
@@ -28,6 +29,12 @@ is closed, which the install skill requires):
 Static reference (shipped as JSON in the package data dir):
   - ``ableton://reference/scales``
   - ``ableton://reference/device-params``
+
+Static reference (generated from a typed in-code table, not a JSON file):
+  - ``ableton://reference/node-feature-matrix`` — the tri-state capability
+    matrix (which features Hallucinote can author on which node kinds),
+    rendered from ``hallucinote_mcp.node_features`` so the doc, the runtime
+    stub responses, and the teaching errors can't drift (NODE-ADDR §2).
 
 Static guides (shipped as markdown in the package data dir):
   - ``ableton://guides/getting-started``
@@ -70,6 +77,7 @@ RESOURCE_URIS: tuple[str, ...] = (
     "ableton://plugins/installed",
     "ableton://reference/scales",
     "ableton://reference/device-params",
+    "ableton://reference/node-feature-matrix",
     "ableton://guides/getting-started",
     "ableton://guides/conventions",
     "ableton://guides/error-recovery",
@@ -105,6 +113,18 @@ def _read_reference_json(name: str) -> str:
     raw = path.read_text(encoding="utf-8")
     json.loads(raw)  # validation; discards
     return raw
+
+
+def _node_feature_matrix() -> str:
+    """Serialize the node-feature capability matrix (NODE-ADDR §2a). Unlike the
+    other reference resources this is NOT a JSON file on disk — it is rendered
+    from the typed in-code table (``hallucinote_mcp.node_features``) that the
+    runtime stub responder and teaching errors also derive from, so the doc and
+    the enforcement are one source and can't disagree.
+    """
+    from ..node_features import matrix_payload
+
+    return json.dumps(matrix_payload(), indent=2)
 
 
 # ---------------------------------------------------------------------------
@@ -177,17 +197,29 @@ def _server_info() -> str:
     - ``fingerprint``   — the wire-shape content fingerprint (suffix of ``version``).
     - ``package_root``  — absolute path to this server's ``hallucinote_mcp`` package
       (a valid ``--from-package-root`` source for the Remote Script vendor).
+    - ``python``        — absolute path to THIS server's interpreter (the prewarmed
+      plugin uv env it's already running in). The agent runs engine commands as
+      ``"<python>" -m hallucinote.cli <command>`` (and ``"<python>" build.py``) so
+      they execute in the SAME env as the bridge — guaranteed version-synced, works
+      on a read-only plugin root, no clone/PyPI/separate-env (PLUGIN-SELF-CONTAINED).
+    - ``project_root``  — the uv project dir (holds ``uv.lock``); identity only.
+      ``null`` if there's no ``uv.lock`` ancestor (a plain editable dev install).
     """
+    import sys
+
     from .. import BASE_VERSION, __version__
-    from ..install_paths import package_root
+    from ..install_paths import package_root, project_root
 
     fingerprint = __version__.split("+", 1)[1] if "+" in __version__ else ""
+    proj = project_root()
     return json.dumps(
         {
             "version": __version__,
             "base_version": BASE_VERSION,
             "fingerprint": fingerprint,
             "package_root": str(package_root()),
+            "python": sys.executable,
+            "project_root": str(proj) if proj is not None else None,
         },
         indent=2,
     )
@@ -300,6 +332,24 @@ def register_resources(mcp: Any) -> None:
     )
     def reference_device_params() -> str:
         return _read_reference_json("device-params")
+
+    @mcp.resource(
+        "ableton://reference/node-feature-matrix",
+        name="reference_node_feature_matrix",
+        description=(
+            "Tri-state capability matrix: which node features (device params, "
+            "routing, macros, chain zones, choke groups, …) Hallucinote can "
+            "author on which node kinds (track/return/master/device/chain). "
+            "Each cell is SUPPORTED / NOT_IMPLEMENTED (Live can, not built yet) "
+            "/ UNSUPPORTED_IN_LIVE (a hard wall) with the LOM evidence + "
+            "workaround. Read this BEFORE authoring a node feature so you never "
+            "attempt an impossible op blind. Addressing is uniform; operations "
+            "are not (NODE-ADDR §2)."
+        ),
+        mime_type="application/json",
+    )
+    def reference_node_feature_matrix() -> str:
+        return _node_feature_matrix()
 
     # ---- Guides (static markdown) ----
     @mcp.resource(

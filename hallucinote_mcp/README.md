@@ -64,9 +64,10 @@ Every tool answers `action='help'` with a structured menu — required / optiona
 params, examples, tips — generated from the shared schema. Errors carry recovery
 hints: valid action list, missing-param list, an example, a `hint` string.
 
-In addition to the tools, the server exposes **12 resources** (all static)
+In addition to the tools, the server exposes **13 resources** (all static)
 for low-context-cost reads (`ableton://session/snapshot`,
-`ableton://browser/*`, `ableton://plugins/installed`, `ableton://reference/*`,
+`ableton://browser/*`, `ableton://plugins/installed`, `ableton://reference/*`
+— including the `node-feature-matrix` capability table —
 `ableton://guides/*`, `ableton://server/info`). Multi-step workflows live as Claude
 Code skills (`skills/` in the parent repo) — `/song-new`, `/song-pick-instruments`,
 `/track-new-with-instrument`, `/return-new`, `/mix-sidechain`, `/clip-humanize`,

@@ -6,6 +6,7 @@ import pytest
 from hallucinote.capture import SNAPSHOT_SCHEMA_VERSION, replay_capture
 from hallucinote.db import init_db, mutations as M, queries as Q
 from hallucinote.sync import push
+from hallucinote.sync.push._core import build_node_addr
 
 
 @pytest.fixture
@@ -128,7 +129,7 @@ def test_plan_push_devices_emits_load_for_unlinked_device(
     assert "load" in by_action
     load = by_action["load"][0]
     assert load.tool == "ableton_device"
-    assert load.args["track_index"] == 5
+    assert load.args["node"] == build_node_addr({"track_index": 5}, terminal="track")
     # Live 12.4 has no public reorder API — planner does NOT emit position.
     assert "position" not in load.args
     assert load.args["kind"] == "Drum Rack"
@@ -330,8 +331,9 @@ def test_plan_push_devices_emits_params_for_linked_device(
     by_param = {c.args["parameter_name"]: c for c in calls}
     freq = by_param["Freq"]
     assert freq.tool == "ableton_device"
-    assert freq.args["track_index"] == 5
-    assert freq.args["device_index"] == 2
+    assert freq.args["node"] == build_node_addr(
+        {"track_index": 5}, device_index=2,
+    )
     assert freq.args["parameter_name"] == "Freq"
     # SYN-9F2L: the display value is the preferred wire form — the handler
     # inverts the param's own display curve, which is exact for center-zero
@@ -379,9 +381,11 @@ def test_plan_push_devices_emits_nested_params_with_device_path(
     calls = by_action["set_parameter"]
     assert len(calls) == 1  # only the nested Volume (the rack itself has no params)
     c = calls[0]
-    assert c.args["track_index"] == 5
-    assert c.args["device_index"] == 2  # the TOP-LEVEL rack's Live index
-    assert c.args["device_path"] == [{"chain_index": 1, "device_position": 1}]
+    # the TOP-LEVEL rack's Live index (5/2) + the nested device's path.
+    assert c.args["node"] == build_node_addr(
+        {"track_index": 5}, device_index=2,
+        device_path=[{"chain_index": 1, "device_position": 1}],
+    )
     assert c.args["parameter_name"] == "Volume"
     assert c.args["value_display"] == "-6 dB"
     assert c.key == f"device_parameter:{nested}:Volume"
@@ -453,12 +457,13 @@ def test_capture_replay_push_roundtrip_depth2_nested_param(conn):
     sets = [c for c in plan.calls if c.args.get("action") == "set_parameter"]
     assert len(sets) == 1  # only the deep Operator's Volume
     c = sets[0]
-    assert c.args["track_index"] == 3
-    assert c.args["device_index"] == 1
-    assert c.args["device_path"] == [
-        {"chain_index": 1, "device_position": 1},
-        {"chain_index": 1, "device_position": 1},
-    ]
+    assert c.args["node"] == build_node_addr(
+        {"track_index": 3}, device_index=1,
+        device_path=[
+            {"chain_index": 1, "device_position": 1},
+            {"chain_index": 1, "device_position": 1},
+        ],
+    )
     assert c.args["parameter_name"] == "Volume"
     assert c.args["value_display"] == "-4 dB"
 
@@ -482,6 +487,48 @@ def test_plan_push_devices_falls_back_to_normalized_without_display(
     assert float(call.args["value"]) == pytest.approx(0.42)
     assert "value_display" not in call.args
     assert call.args["value_type"] == "continuous"
+
+
+def test_plan_push_devices_writes_value_raw_as_raw_continuous(
+    conn, song, session, linked_track,
+):
+    """DEV-4P7R: a param stored on the raw channel emits its UNCLAMPED raw value
+    on the wire as a continuous `value` (the witness LFO S. Rate: raw 8.0 in
+    [0,21]) — never value_display (which the live setter refuses) nor the
+    normalized-as-raw form (which mis-dials a non-[0,1] param)."""
+    cid = M.create_device_chain(conn, parent_track_id=linked_track)
+    did = M.create_device(conn, chain_id=cid, position=1, kind="Wavetable",
+                          display_name="WT")
+    M.set_device_parameter(conn, device_id=did, name="LFO 1 S. Rate",
+                           value_display="1/2", value_raw=8.0)
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=did, ableton_index=1,
+    )
+    plan = push.plan_push_devices(conn, song_id=song, session_id=session)
+    call = _calls_by_action(plan)["set_parameter"][0]
+    assert float(call.args["value"]) == pytest.approx(8.0)
+    assert call.args["value_type"] == "continuous"
+    assert "value_display" not in call.args
+
+
+def test_plan_push_devices_value_raw_beats_display_hint(
+    conn, song, session, linked_track,
+):
+    """Channel precedence: an explicit value_raw wins over a stored display
+    string, so a readable hint can ride alongside the authoritative raw."""
+    cid = M.create_device_chain(conn, parent_track_id=linked_track)
+    did = M.create_device(conn, chain_id=cid, position=1, kind="Wavetable",
+                          display_name="WT")
+    # Both stored: display is a hint; raw is authoritative.
+    M.set_device_parameter(conn, device_id=did, name="LFO 1 S. Rate",
+                           value_display="1/2", value_raw=8.0)
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=did, ableton_index=1,
+    )
+    plan = push.plan_push_devices(conn, song_id=song, session_id=session)
+    call = _calls_by_action(plan)["set_parameter"][0]
+    assert float(call.args["value"]) == pytest.approx(8.0)
+    assert "value_display" not in call.args
 
 
 def test_plan_push_devices_writes_known_enums_as_enum(
@@ -566,7 +613,9 @@ def test_plan_push_devices_emits_return_specific_tools(
     assert "load" in by_action
     load = by_action["load"][0]
     assert load.tool == "ableton_device"
-    assert load.args["return_index"] == 1
+    assert load.args["node"] == build_node_addr(
+        {"return_index": 1}, terminal="return",
+    )
     # No position emission — Live 12.4 cannot reorder, planner relies on
     # chain-order push to match DB position.
     assert "position" not in load.args
@@ -585,8 +634,9 @@ def test_plan_push_devices_emits_return_specific_tools(
     assert "set_parameter" in by_action
     param_call = by_action["set_parameter"][0]
     assert param_call.tool == "ableton_device"
-    assert param_call.args["return_index"] == 1
-    assert param_call.args["device_index"] == 2
+    assert param_call.args["node"] == build_node_addr(
+        {"return_index": 1}, device_index=2,
+    )
     assert param_call.args["parameter_name"] == "Decay"
     # SYN-9F2L: display form preferred on the wire.
     assert param_call.args["value_display"] == "2.5 s"
@@ -667,7 +717,7 @@ def test_plan_push_devices_handles_mixed_linked_unlinked(
     loads = by_action.get("load", [])
     assert len(loads) == 2  # one for track-side Comp, one for return-side Reverb
     by_target = {
-        ("track" if "track_index" in c.args else "return"): c for c in loads
+        c.args["node"]["parent"]["kind"]: c for c in loads
     }
     assert by_target["track"].args["kind"] == "Compressor"
     assert by_target["return"].args["kind"] == "Reverb"
@@ -706,7 +756,7 @@ def test_plan_push_devices_walks_master_chain(
     loads = [c for c in plan.calls if c.args.get("action") == "load"]
     assert len(loads) == 1, f"unlinked master device must emit one load, got {loads}"
     args = loads[0].args
-    assert args.get("master") is True
+    assert args["node"] == build_node_addr({"master": True}, terminal="master")
     assert "track_index" not in args and "return_index" not in args
     assert args["kind"] == "Limiter"
     # Standard device-level "not linked yet" note (the generic path), NOT the
@@ -759,7 +809,7 @@ def test_plan_push_devices_master_set_parameter_uses_master_kv(
     set_calls = [c for c in plan.calls if c.args.get("action") == "set_parameter"]
     assert len(set_calls) == 1
     args = set_calls[0].args
-    assert args.get("master") is True
+    assert args["node"] == build_node_addr({"master": True}, device_index=1)
     assert "track_index" not in args
     assert "return_index" not in args
     assert args["parameter_name"] == "Ceiling"
@@ -876,3 +926,128 @@ def test_plan_push_devices_analyzer_skip_does_not_block_authored_devices(
     assert loaded_kinds == ["Operator", "EQ Eight"]
     assert all(k != "Max Audio Effect" for k in loaded_kinds)
     assert any("HallucinoteAnalyzer" in n for n in plan.notes)
+
+
+# ---------------------------------------------------------------------------
+# NODE-ADDR Chunk C — per-DrumChain choke_group / out_note push
+# ---------------------------------------------------------------------------
+
+
+def _linked_drum_rack(conn, session, track, *, track_at=5, rack_at=1):
+    """A linked track with a linked Drum Rack on its top-level chain. Returns
+    the rack's DB id so the test can hang nested (drum) chains off it."""
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track,
+        ableton_index=track_at,
+    )
+    top_chain = M.create_device_chain(conn, parent_track_id=track, position=0)
+    rack = M.create_device(
+        conn, chain_id=top_chain, position=1,
+        kind="Drum Rack", display_name="Drum Rack",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=rack,
+        ableton_index=rack_at,
+    )
+    return rack
+
+
+def test_push_emits_set_chain_property_for_authored_drum_chain(
+    conn, song, session, track
+):
+    rack = _linked_drum_rack(conn, session, track)
+    nested = M.create_device_chain(conn, parent_rack_device_id=rack, position=1)
+    M.set_chain_properties(conn, chain_id=nested, choke_group=1, out_note=60)
+
+    plan = push.plan_push_devices(conn, song_id=song, session_id=session)
+    calls = _calls_by_action(plan)["set_chain_property"]
+    assert len(calls) == 1
+    c = calls[0]
+    assert c.args["choke_group"] == 1 and c.args["out_note"] == 60
+    assert c.args["node"] == build_node_addr(
+        {"track_index": 5}, device_index=1, terminal="chain", chain_index=1,
+    )
+    assert c.key == f"device_chain_props:{nested}"
+
+
+def test_push_emits_only_the_authored_field(conn, song, session, track):
+    rack = _linked_drum_rack(conn, session, track)
+    nested = M.create_device_chain(conn, parent_rack_device_id=rack, position=2)
+    M.set_chain_properties(conn, chain_id=nested, choke_group=3)  # out_note default
+
+    calls = _calls_by_action(
+        push.plan_push_devices(conn, song_id=song, session_id=session)
+    )["set_chain_property"]
+    assert len(calls) == 1
+    assert calls[0].args["choke_group"] == 3
+    assert "out_note" not in calls[0].args
+    assert calls[0].args["node"]["chain_index"] == 2
+
+
+def test_push_skips_default_only_drum_chain(conn, song, session, track):
+    rack = _linked_drum_rack(conn, session, track)
+    # A chain row with no authored props (the common case — most pads).
+    M.create_device_chain(conn, parent_rack_device_id=rack, position=1)
+    plan = push.plan_push_devices(conn, song_id=song, session_id=session)
+    assert "set_chain_property" not in _calls_by_action(plan)
+
+
+# NODE-ADDR Chunk F — per-chain mixer state (mute/solo/volume/pan) push.
+
+def test_push_emits_mixer_state_for_authored_chain(conn, song, session, track):
+    rack = _linked_drum_rack(conn, session, track)
+    nested = M.create_device_chain(conn, parent_rack_device_id=rack, position=1)
+    M.set_chain_properties(
+        conn, chain_id=nested, mute=True, volume=0.5, pan=-0.25,
+    )
+    calls = _calls_by_action(
+        push.plan_push_devices(conn, song_id=song, session_id=session)
+    )["set_chain_property"]
+    assert len(calls) == 1
+    c = calls[0]
+    # mute stored 0/1 -> re-emitted as the handler's bool wire type.
+    assert c.args["mute"] is True
+    assert c.args["volume"] == 0.5 and c.args["pan"] == -0.25
+    assert "solo" not in c.args  # solo at default -> not emitted
+    assert c.args["node"]["terminal"] == "chain"
+    assert c.args["node"]["chain_index"] == 1
+
+
+def test_push_combines_choke_and_mixer_on_one_chain(conn, song, session, track):
+    rack = _linked_drum_rack(conn, session, track)
+    nested = M.create_device_chain(conn, parent_rack_device_id=rack, position=1)
+    M.set_chain_properties(conn, chain_id=nested, choke_group=2, solo=True)
+    calls = _calls_by_action(
+        push.plan_push_devices(conn, song_id=song, session_id=session)
+    )["set_chain_property"]
+    assert len(calls) == 1
+    assert calls[0].args["choke_group"] == 2 and calls[0].args["solo"] is True
+
+
+def test_push_addresses_a_nested_rack_chain_with_a_path(
+    conn, song, session, track
+):
+    """A drum rack nested INSIDE another rack: the chain-terminal node carries
+    the path to the inner rack, device_index stays the top-level rack."""
+    rack = _linked_drum_rack(conn, session, track)
+    inner_chain = M.create_device_chain(conn, parent_rack_device_id=rack, position=1)
+    inner_rack = M.create_device(
+        conn, chain_id=inner_chain, position=1,
+        kind="Drum Rack", display_name="Inner Kit",
+    )
+    drum_chain = M.create_device_chain(
+        conn, parent_rack_device_id=inner_rack, position=2,
+    )
+    M.set_chain_properties(conn, chain_id=drum_chain, choke_group=4)
+
+    calls = _calls_by_action(
+        push.plan_push_devices(conn, song_id=song, session_id=session)
+    )["set_chain_property"]
+    assert len(calls) == 1
+    assert calls[0].args["node"] == build_node_addr(
+        {"track_index": 5},
+        device_index=1,
+        device_path=[{"chain_index": 1, "device_position": 1}],
+        terminal="chain",
+        chain_index=2,
+    )

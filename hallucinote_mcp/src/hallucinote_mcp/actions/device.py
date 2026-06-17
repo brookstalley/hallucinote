@@ -20,16 +20,20 @@ Actions covering devices on tracks and return tracks:
     (``device_path``) — one canonical address shape at every depth.
   - **Help**: dispatcher-special
 
-Devices live on either a track or a return; the schema accepts exactly one
-of ``track_index`` / ``return_index`` (both optional in the schema; the
-handler validates exactly-one). Devices nested inside racks are addressed by
-the canonical ``device_path`` — a list of ``{chain_index, device_position}``
-steps from the top-level ``device_index`` device, to arbitrary depth.
+The node-addressed actions (get_parameters / set_parameter / load /
+set_sidechain) take a single ``node`` object (NODE-ADDR design §1c) — the
+frozen addressing unit — replacing the retired flat combo
+(``track_index``/``return_index``/``master`` + ``device_index`` +
+``device_path``). The same object is the as-value shape (set_sidechain's
+``source``). The shallow navigation surfaces (list / info / get_routing /
+navigate_preset / pad_info / set_input_routing) keep flat
+``track_index``/``return_index``/``master`` — they address a track/return/
+device directly without the chain terminal or as-value need.
 """
 from __future__ import annotations
 
 from ..handlers import device as device_handlers
-from ..schema import Action, ParamSpec, register
+from ..schema import Action, ParamSpec, node_addr_spec, register
 
 
 _VALUE_TYPES = ("continuous", "enum")
@@ -161,14 +165,14 @@ register(
         name="get_parameters",
         description=(
             "Read a device's parameters with current values. detail='summary' "
-            "returns name + value + value_display (cheap). detail='full' adds "
-            "min/max + is_enum + value_items. Pass device_path to read a device "
-            "nested inside a rack (any depth)."
+            "returns name + value + value_display + default_value (cheap). "
+            "detail='full' adds min/max + is_enum + value_items. Address the "
+            "device with `node` (terminal 'device', path for nested racks)."
         ),
         params=(
-            *_parent_addressing_specs(),
-            ParamSpec(name="device_index", type="int", minimum=1),
-            _device_path_spec(),
+            node_addr_spec(
+                description="The device to read (terminal 'device')."
+            ),
             ParamSpec(
                 name="detail",
                 type="str",
@@ -179,8 +183,9 @@ register(
         ),
         handler=device_handlers.get_parameters_handler,
         example=(
-            "ableton_device(action='get_parameters', track_index=2, "
-            "device_index=1, detail='full')"
+            "ableton_device(action='get_parameters', "
+            "node={'parent': {'kind': 'track', 'index': 2}, 'device_index': 1}, "
+            "detail='full')"
         ),
         tips=(
             "Enum parameters appear with is_enum=True and a value_items list "
@@ -215,7 +220,17 @@ register(
             "public reorder API."
         ),
         params=(
-            *_parent_addressing_specs(),
+            node_addr_spec(
+                description=(
+                    "The load DESTINATION. terminal 'track'/'return'/'master' "
+                    "(the default for a node-itself address) loads onto that "
+                    "node's main device chain; terminal 'chain' (device_index "
+                    "+ chain_index, + optional path for a deeper rack) loads "
+                    "INTO a nested rack chain — the unified replacement for "
+                    "load_in_rack. A 'device' terminal is not a load "
+                    "destination."
+                )
+            ),
             ParamSpec(
                 name="kind",
                 type="str",
@@ -273,35 +288,12 @@ register(
                     "name plugins from different manufacturers."
                 ),
             ),
-            ParamSpec(
-                name="device_index",
-                type="int",
-                required=False,
-                minimum=1,
-                description=(
-                    "Nested load only: the 1-based top-level rack device to "
-                    "load into. Required when chain_index is given; omit for a "
-                    "top-level load."
-                ),
-            ),
-            _device_path_spec(),
-            ParamSpec(
-                name="chain_index",
-                type="int",
-                required=False,
-                minimum=1,
-                description=(
-                    "Nested load only: the 1-based destination chain INSIDE "
-                    "the rack (at device_index, + optional device_path for a "
-                    "deeper rack). Pass it to load a device into a rack chain "
-                    "(the unified replacement for load_in_rack); omit for a "
-                    "top-level load onto the parent's main chain."
-                ),
-            ),
         ),
         handler=device_handlers.load_handler,
         example=(
-            "ableton_device(action='load', track_index=2, kind='Compressor')"
+            "ableton_device(action='load', "
+            "node={'parent': {'kind': 'track', 'index': 2}, "
+            "'terminal': 'track'}, kind='Compressor')"
         ),
         tips=(
             "Returns {device_index, name, kind} — capture device_index for "
@@ -311,8 +303,9 @@ register(
             "{root: 'drums', pattern: 'Late Nite Kit'}.",
             "For an unambiguous per-machine URI, resolve via "
             "ableton_browser(action='at_path', ...) and pass as preset_uri.",
-            "To load INTO a rack chain, pass device_index (the rack) + "
-            "chain_index (the destination chain) — plus device_path to reach a "
+            "To load INTO a rack chain, address it with a 'chain' terminal: "
+            "node={parent, device_index (the rack), chain_index (the "
+            "destination chain), terminal: 'chain'} — plus path to reach a "
             "deeper rack. Returns nested_device_position.",
         ),
     )
@@ -391,15 +384,16 @@ register(
             "many params, so '0.85' not '-3 dB') — or `value_display`, the "
             "display units as a string ('-18 dB', '3:1', '20 ms'), which the "
             "handler inverts to the raw value for you. value_type='enum' "
-            "requires a string `value` in the parameter's value_items. Pass "
-            "device_path to write a parameter on a device nested inside a rack "
-            "(any depth) — the unified replacement for set_parameter_in_rack. "
-            "Resolves the legacy fork's gap #17b workaround."
+            "requires a string `value` in the parameter's value_items. Use a "
+            "`node` with a `path` to write a parameter on a device nested "
+            "inside a rack (any depth) — the unified replacement for "
+            "set_parameter_in_rack. Resolves the legacy fork's gap #17b "
+            "workaround."
         ),
         params=(
-            *_parent_addressing_specs(),
-            ParamSpec(name="device_index", type="int", minimum=1),
-            _device_path_spec(),
+            node_addr_spec(
+                description="The device to write (terminal 'device')."
+            ),
             ParamSpec(name="parameter_name", type="str"),
             ParamSpec(
                 name="value",
@@ -437,8 +431,9 @@ register(
         ),
         handler=device_handlers.set_parameter_handler,
         example=(
-            "ableton_device(action='set_parameter', track_index=2, "
-            "device_index=1, parameter_name='Threshold', value_display='-18 dB')"
+            "ableton_device(action='set_parameter', "
+            "node={'parent': {'kind': 'track', 'index': 2}, 'device_index': 1}, "
+            "parameter_name='Threshold', value_display='-18 dB')"
         ),
         tips=(
             "Continuous params: use `value_display` ('-18 dB', '3:1') to hit a "
@@ -570,20 +565,24 @@ register(
             "directly."
         ),
         params=(
-            *_parent_addressing_specs(),
-            ParamSpec(name="device_index", type="int", minimum=1),
+            node_addr_spec(
+                description=(
+                    "The sidechained device (terminal 'device', top-level)."
+                )
+            ),
             ParamSpec(name="enabled", type="bool"),
-            ParamSpec(
-                name="source_display_name",
-                type="str",
+            node_addr_spec(
+                name="source",
                 required=False,
                 description=(
-                    "Sidechain source display_name: the BARE track name "
-                    "(e.g. 'Drums' / '02 Kit Punk' — NOT index-prefixed like "
-                    "'1-Drums', which fails), or a return's letter-prefixed "
-                    "name ('A-Reverb'). Requires the device to expose "
-                    "input_routing_*; otherwise the call raises a teaching "
-                    "error after toggling enable."
+                    "Sidechain source AS A NODE (the as-value shape): a "
+                    "track/return/master-terminal node whose name is the "
+                    "routing source (e.g. {parent: {kind: 'track', index: 3}, "
+                    "terminal: 'track'} routes from track 3). Resolved to its "
+                    "name and applied via the set_input_routing primitive; "
+                    "requires the device to expose input_routing_*. For the "
+                    "special non-node sources ('No Input' / 'Main'), use "
+                    "set_input_routing directly."
                 ),
             ),
             ParamSpec(
@@ -598,8 +597,11 @@ register(
         ),
         handler=device_handlers.set_sidechain_handler,
         example=(
-            "ableton_device(action='set_sidechain', track_index=4, "
-            "device_index=1, enabled=True, source_display_name='Drums')"
+            "ableton_device(action='set_sidechain', "
+            "node={'parent': {'kind': 'track', 'index': 4}, 'device_index': 1}, "
+            "enabled=True, "
+            "source={'parent': {'kind': 'track', 'index': 1}, "
+            "'terminal': 'track'})"
         ),
     )
 )
@@ -714,6 +716,96 @@ register(
             "Copy a nested device's reported `device_path` straight into "
             "set_parameter / get_parameters / load (chain_index) — never "
             "hand-count indices.",
+        ),
+    )
+)
+
+
+register(
+    Action(
+        tool="ableton_device",
+        name="set_chain_property",
+        description=(
+            "Set a chain's authored properties, addressed by a `chain`-terminal "
+            "NodeAddr (device_index = the rack, chain_index = which chain). Pass "
+            "at least one; any combination may be set at once. Two families, each "
+            "capability-probed (a teaching error points at "
+            "ableton://reference/node-feature-matrix): "
+            "(1) PER-DRUM, DrumChain only — choke_group (0 = no choke group; "
+            "non-zero groups cut each other off, e.g. open/closed hats) and "
+            "out_note (MIDI transpose; equal to the pad's in_note = no "
+            "transpose). (2) PER-CHAIN MIXER, every chain — mute / solo (bools) "
+            "and volume (0..1) / pan (-1..1). Get the chain_index from "
+            "ableton_device(action='get_device_chains')."
+        ),
+        params=(
+            node_addr_spec(
+                description=(
+                    "The chain (terminal 'chain'): device_index = the rack, "
+                    "chain_index = which chain on it."
+                )
+            ),
+            ParamSpec(
+                name="choke_group",
+                type="int",
+                required=False,
+                minimum=0,
+                description=(
+                    "DrumChain only. Live choke-group id (0 = no choke group). "
+                    "Pads sharing a non-zero group cut each other off."
+                ),
+            ),
+            ParamSpec(
+                name="out_note",
+                type="int",
+                required=False,
+                minimum=0,
+                maximum=127,
+                description=(
+                    "DrumChain only. MIDI note the chain emits (transpose "
+                    "target). Equal to the pad's in_note means no transpose."
+                ),
+            ),
+            ParamSpec(
+                name="mute",
+                type="bool",
+                required=False,
+                description="Mute this chain (every chain; default unmuted).",
+            ),
+            ParamSpec(
+                name="solo",
+                type="bool",
+                required=False,
+                description="Solo this chain (every chain; default unsoloed).",
+            ),
+            ParamSpec(
+                name="volume",
+                type="float",
+                required=False,
+                minimum=0.0,
+                maximum=1.0,
+                description=(
+                    "Chain mixer volume, 0.0..1.0 normalized (the "
+                    "ChainMixerDevice volume param; ~0.85 = unity)."
+                ),
+            ),
+            ParamSpec(
+                name="pan",
+                type="float",
+                required=False,
+                minimum=-1.0,
+                maximum=1.0,
+                description=(
+                    "Chain mixer pan, -1.0 (hard left) .. 1.0 (hard right); "
+                    "0.0 = centre."
+                ),
+            ),
+        ),
+        handler=device_handlers.set_chain_property_handler,
+        example=(
+            "ableton_device(action='set_chain_property', "
+            "node={'parent': {'kind': 'track', 'index': 2}, 'terminal': 'chain', "
+            "'device_index': 1, 'chain_index': 1}, mute=True, volume=0.7)"
         ),
     )
 )

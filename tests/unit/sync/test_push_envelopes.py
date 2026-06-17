@@ -18,6 +18,7 @@ import pytest
 
 from hallucinote.db import init_db, mutations as M
 from hallucinote.sync import push
+from hallucinote.sync.push._core import build_node_addr
 
 
 @pytest.fixture
@@ -268,10 +269,9 @@ def test_device_parameter_track_emits_via_session_clip(
     assert call.args == {
         "action": "write_envelope",
         "target_kind": "device_parameter",
-        "track_index": 5,
+        "node": build_node_addr({"track_index": 5}, device_index=2),
         "location": "session",
         "clip_index": 1,
-        "device_index": 2,
         "parameter_name": "Threshold",
         "breakpoints": [
             {"time_beats": 0.0, "value": 0.5, "curve": "linear"},

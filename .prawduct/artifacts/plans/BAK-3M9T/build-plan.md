@@ -42,7 +42,7 @@ Chunk 01's `verify-api` step before any handler is written.
 - [x] Chunk 01: Model sidechain source in the snapshot (durable round-trip — keystone)
 - [x] Chunk 02: Capture warns + lists any sidechain it cannot represent (no silent drop)
 - [x] Chunk 03: Delete `/snapshot-bake-recent-changes` + clean all references
-- [ ] Chunk 04: Reframe `/ableton-pull` as build.py-staging + document the one-bake model
+- [x] Chunk 04: Reframe `/ableton-pull` as build.py-staging + document the one-bake model
 
 Context: Built on worktree `feat/snapshot-sidechain` (off develop); gates are worktree-blind
 so Critic runs via an independent Agent. **Chunk 01 DONE** (commit `dcfd16c`): capture probes
@@ -52,8 +52,15 @@ confirmed `_LATEST_ACTOR_EVENTS["device"]` already carries `device_sidechain_set
 change) and the DB source is track-only (`REFERENCES tracks(id)`). 13 new tests; full suite
 4070 green. Independent Critic `final`: 0 blocking / 0 warning / 2 note (both accepted —
 idempotent clear-on-absence is safe; non-track-source drop is Chunk 02's warn). Operator
-round-trip queued (acceptance criterion 5). **Next: Chunk 02** — turn the capture-side
-non-track / unrepresentable drop into a `UserWarning` + re-apply list (no silent drop).
+round-trip queued (acceptance criterion 5).
+
+**ALL 4 CHUNKS DONE** (2026-06-17): ch01 keystone (`dcfd16c`), ch02 no-silent-drop warn
+(`a133453`), ch03 delete alias + redirect refs (`3ce93df`), ch04 reframe `/ableton-pull` +
+one-bake docs. Per `feedback_critic_cadence_for_small_chunks`, ch02–04 (small additive /
+cleanup / doc) rolled into ONE cumulative Critic at ch04 instead of per-chunk runs; ch01
+got its own `final` Critic (0/0/2). **Next:** cumulative Critic via independent Agent (the
+PR gate) → then PR into develop via `gh` when the user asks. The Live operator round-trip
+(acceptance criterion 5) is the remaining merge-gate item — operator-only (no Live here).
 
 ## Scaffolding
 

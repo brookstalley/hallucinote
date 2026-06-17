@@ -205,6 +205,14 @@ def test_cli_writes_and_prints_json(tmp_path, capsys):
     assert find_workspace(start=tmp_path) is not None
 
 
+def test_cli_no_gitignore_flag(tmp_path, capsys):
+    rc = IW.main([str(tmp_path), "--no-git", "--no-gitignore"])
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["ok"] is True and out["gitignore_written"] is False
+    assert not (tmp_path / ".gitignore").exists()
+
+
 def test_cli_check_is_readonly(tmp_path, capsys):
     rc = IW.main([str(tmp_path), "--check"])
     assert rc == 0

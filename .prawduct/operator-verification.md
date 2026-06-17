@@ -730,3 +730,32 @@ re-vendored server. On return, re-vendor then:
 > Chunks **D** + **E** need NO operator entry — both are probe-confirmed LOM facts
 > (D macro names + E zones = `UNSUPPORTED_IN_LIVE`; D macro values ride the
 > already-verified `device_parameters` path). The probes ARE the live evidence.
+
+---
+
+## BAK-3M9T Chunk 01 — sidechain source round-trips through the durable snapshot
+
+Visual change: yes (live external integration — a dialed sidechain SOURCE the unit
+tests verify only against a fake `get_input_routing` probe). This IS BAK-3M9T
+**acceptance criterion 5** (the end-to-end trap-category round-trip) for the
+sidechain category; fold the other trap categories in when the later chunks land.
+Branch `feat/snapshot-sidechain` (commit `dcfd16c`). On an attended Live run:
+
+1. **Dial a real sidechain.** In a built song, add a Compressor to a track (e.g.
+   Bass) and set its "Audio From" to ANOTHER track (e.g. Kick), pick a channel
+   (Post FX). Confirm it pumps.
+
+2. **Bake via `/song-snapshot` (the single durable bake).** Run `/song-snapshot`
+   → confirm the refreshed `captured_session.json` shows the Bass Compressor entry
+   carrying `"sidechain_source": "Kick"` (the source track's surface NAME, not a
+   UUID) and `"sidechain_source_channel": "Post FX"`. Confirm a Compressor whose
+   input is left at its OWN track default does NOT get a `sidechain_source`.
+
+3. **Rebuild + push reproduces it.** `build.py --reset` + `push_cli execute` (or
+   `/ableton-push`) into a fresh set → confirm the Bass Compressor's Audio From is
+   Kick again, analyzer-free. The durable round-trip is the keystone claim:
+   the sidechain survives a rebuild **without saving the `.als`**.
+
+4. **Clear-on-absence.** Remove the sidechain in Live (Audio From → own track /
+   No Input), `/song-snapshot` (field disappears), rebuild → confirm the sidechain
+   is cleared, not stale (snapshot is authoritative).

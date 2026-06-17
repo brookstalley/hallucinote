@@ -302,9 +302,8 @@ def _cmd_execute(args: argparse.Namespace) -> int:
     ``--dry-run`` wraps the request + apply in a SAVEPOINT that always
     rolls back, so the caller sees what WOULD change without committing.
     The output JSON's ``applied`` block reflects the diff that was
-    computed; ``dry_run`` is echoed so a wrapper (e.g. the
-    ``/snapshot-bake-recent-changes`` skill) can confirm the run was
-    preview-only before promoting to a real apply.
+    computed; ``dry_run`` is echoed so a wrapper (e.g. the ``/ableton-pull``
+    skill) can confirm the run was preview-only before promoting to a real apply.
     """
     if args.domain not in _DOMAINS:
         raise SystemExit(
@@ -386,8 +385,8 @@ def _cmd_execute(args: argparse.Namespace) -> int:
     json.dump(out, sys.stdout, indent=2)
     sys.stdout.write("\n")
     # PULL-DRIFT-DETECT: probes that couldn't be read mean we could NOT
-    # determine drift — exit non-zero so a wrapper (the
-    # /snapshot-bake-recent-changes skill) never mistakes an unreadable run for
+    # determine drift — exit non-zero so a wrapper (the /ableton-pull skill)
+    # never mistakes an unreadable run for
     # "0 changes / in sync". The JSON report still prints (with `unreadable` and
     # per-probe warnings) so the caller sees exactly what failed.
     if applied.unreadable > 0:
@@ -453,8 +452,7 @@ def main(argv: list[str] | None = None) -> int:
             "Compute diffs and run apply inside a SAVEPOINT that always "
             "rolls back. The output JSON reports what WOULD change; the "
             "DB is byte-identical after the call. Used by the "
-            "`/snapshot-bake-recent-changes` skill to preview before "
-            "committing."
+            "`/ableton-pull` skill to preview before committing."
         ),
     )
     p_exec.set_defaults(func=_cmd_execute)

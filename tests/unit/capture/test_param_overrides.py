@@ -347,6 +347,8 @@ class _PresetProbe:
                     "default_value": 0.0, "min": 0.0, "max": 1.0, "is_enum": True,
                     "value_items": ["Free", "Tempo"]}]}
             return {"parameters": []}
+        if (tool, action) == ("ableton_device", "get_input_routing"):
+            return {"has_input_routing": False}
         raise AssertionError(f"unrouted probe {tool}.{action} {params}")
 
 

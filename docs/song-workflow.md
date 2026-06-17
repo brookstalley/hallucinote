@@ -56,7 +56,7 @@ and mix many times. But the arc has a natural order, and two of its phases are
 | 5 | Materialize in Live | `/ableton-push` | [push-execute-design.md](../.prawduct/artifacts/push-execute-design.md) |
 | 6 | Capture + analyze | `ableton_render` → `ableton_analysis` | [masking-analyzer-goals.md](../.prawduct/artifacts/masking-analyzer-goals.md) |
 | 7 | **Read the mix** ⭐ | **`/mix-review`** | masking · loudness · feel · energy vs intent — *needs Max for Live* |
-| 8 | Snapshot + iterate | `/song-snapshot`, `/snapshot-bake-recent-changes`, `/ableton-pull` | — |
+| 8 | Snapshot + iterate | `/song-snapshot` (durable mix bake), `/ableton-pull` (build.py-staging) | — |
 
 The two ⭐ checkpoints are the ones agents forget exist. **They are not
 optional polish — they are how the framework's ear gets applied to your work.**
@@ -134,10 +134,18 @@ Both review skills **learn revealed intent back** as a markdown annotation, so
 they never re-flag a choice you've confirmed.
 
 ### 8 — Snapshot + iterate
-`/song-snapshot` refreshes `captured_session.json` against the open set;
-`/snapshot-bake-recent-changes` bakes mid-session knob tweaks back to the DB
-before a re-push overwrites them; `/ableton-pull` ingests manual Live edits
-through the mutator path. Then loop back to compose or mix.
+**The one-bake model (BAK-3M9T).** There is one durable mix bake and one staging
+primitive — they write different targets:
+- `/song-snapshot` → `captured_session.json` (git-tracked, **durable**). The
+  **single mix bake**: params, sends, device chains, and sidechain sources. The
+  next `build.py` reproduces your dialed mix from it.
+- `/ableton-pull` → the song `.db` (a **regenerable** build artifact). The
+  lower-level **build.py-staging** primitive for build.py-owned domains (clip
+  notes, automation) you fold into `build.py`. It is NOT a parallel mix bake:
+  `replay_capture` re-asserts the snapshot onto the DB every build, so a mix edit
+  you pull but don't `/song-snapshot` reverts on the next rebuild.
+
+Then loop back to compose or mix.
 
 As you loop, keep the **attempt ledger** (`songs/<slug>/attempts/`, `kind: attempt`)
 current — log each move you *tried* and how it turned out (`outcome` worked/partial/failed,

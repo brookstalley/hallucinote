@@ -221,6 +221,8 @@ class _FakeProbe:
             node = params["node"]
             depth = len(node.get("path") or [])
             return {"parameters": self._nested_params.get(depth, [])}
+        if (tool, action) == ("ableton_device", "get_input_routing"):
+            return {"has_input_routing": False}
         raise AssertionError(f"unrouted probe {tool}.{action} {params}")
 
 
@@ -330,6 +332,8 @@ def test_assemble_captures_master_and_returns():
                 {"name": "Ceiling", "value": 0.95, "value_display": "-0.3 dB",
                  "default_value": 1.0, "min": 0.0, "max": 1.0, "is_enum": False},
             ]}
+        if (tool, action) == ("ableton_device", "get_input_routing"):
+            return {"has_input_routing": False}
         raise AssertionError(f"unrouted {tool}.{action}")
 
     snap = assemble_snapshot_via_probes(probe)

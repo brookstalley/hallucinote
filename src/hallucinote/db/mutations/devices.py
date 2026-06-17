@@ -621,6 +621,7 @@ def set_device_parameter(
     value_display: str,
     value_normalized: float | None = None,
     value_items: Sequence[str] | None = None,
+    value_raw: float | None = None,
     actor: str = "system",
     request_id: str | None = None,
     reason: str | None = None,
@@ -636,11 +637,34 @@ def set_device_parameter(
     Live stores). Persisted as JSON; NULL for continuous params. Captured
     at pull time when present; the enum-aware envelope helper reads it
     back to resolve enum-name breakpoints at compose time.
+
+    `value_raw` (DEV-4P7R) is the UNCLAMPED raw continuous channel — Live's own
+    `param.value`, pushed via set_parameter's raw `value`. It is the only
+    authorable form for a quantized continuous param whose raw range != [0,1]
+    and whose display is non-monotonic (Wavetable LFO S. Rate). Mutually
+    exclusive with `value_normalized` (the other numeric continuous channel) and
+    with `value_items` (enum). `value_display` may still carry a readable hint.
     """
     if value_normalized is not None and not (0.0 <= value_normalized <= 1.0):
         raise ValueError(
             f"value_normalized {value_normalized} out of range [0.0, 1.0]"
         )
+    if value_raw is not None:
+        if not isinstance(value_raw, (int, float)) or isinstance(value_raw, bool):
+            raise ValueError(
+                f"value_raw must be a number, got {value_raw!r}"
+            )
+        if value_normalized is not None:
+            raise ValueError(
+                f"param {name!r}: value_raw and value_normalized are mutually "
+                "exclusive continuous channels — pass exactly one"
+            )
+        if value_items is not None:
+            raise ValueError(
+                f"param {name!r}: value_raw is for continuous params; an enum "
+                "uses value_items, not value_raw"
+            )
+        value_raw = float(value_raw)
     value_items_json: str | None = None
     if value_items is not None:
         items_list = [str(item) for item in value_items]
@@ -658,7 +682,7 @@ def set_device_parameter(
         value_items_json = json.dumps(items_list)
     actor, request_id = _resolve_actor_and_request(actor, request_id)
     existing = conn.execute(
-        """SELECT id, value_display, value_normalized, value_items_json
+        """SELECT id, value_display, value_normalized, value_items_json, value_raw
              FROM device_parameters
            WHERE device_id = ? AND name = ?""",
         (device_id, name),
@@ -669,16 +693,19 @@ def set_device_parameter(
             existing["value_display"],
             existing["value_normalized"],
             existing["value_items_json"],
-        ) == (value_display, value_normalized, value_items_json):
+            existing["value_raw"],
+        ) == (value_display, value_normalized, value_items_json, value_raw):
             _record_touch_if_session("device_parameter", param_id)
             return MutatorResult(param_id, "unchanged")
         conn.execute(
             """UPDATE device_parameters
                   SET value_display = ?,
                       value_normalized = ?,
-                      value_items_json = ?
+                      value_items_json = ?,
+                      value_raw = ?
                 WHERE id = ?""",
-            (value_display, value_normalized, value_items_json, param_id),
+            (value_display, value_normalized, value_items_json, value_raw,
+             param_id),
         )
         result_kind = "updated"
     else:
@@ -686,10 +713,10 @@ def set_device_parameter(
         conn.execute(
             """INSERT INTO device_parameters
                    (id, device_id, name, value_display,
-                    value_normalized, value_items_json)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+                    value_normalized, value_items_json, value_raw)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (param_id, device_id, name, value_display,
-             value_normalized, value_items_json),
+             value_normalized, value_items_json, value_raw),
         )
         result_kind = "created"
     song_id = _resolve_device_song(conn, device_id=device_id)
@@ -703,6 +730,7 @@ def set_device_parameter(
             "value_display": value_display,
             "value_normalized": value_normalized,
             "value_items_json": value_items_json,
+            "value_raw": value_raw,
         },
         song_id=song_id,
         actor=actor,
@@ -901,14 +929,18 @@ def replace_device_param_overrides(
     when the existing rows already match the incoming set by content (SNP-2H9F).
 
     Each override dict: ``{path, name, value_display[, value_normalized]
-    [, value_items]}`` where ``path`` is the non-empty NodeAddr descent
-    (``[{chain_index, device_position}, ...]``) to a device nested inside the
-    preset. The value columns mirror ``set_device_parameter`` (value_display
-    always set; value_normalized for continuous params; value_items for enums).
+    [, value_items][, value_raw]}`` where ``path`` is the non-empty NodeAddr
+    descent (``[{chain_index, device_position}, ...]``) to a device nested inside
+    the preset. The value columns mirror ``set_device_parameter`` (value_display
+    always set; value_normalized for continuous params; value_items for enums;
+    value_raw — DEV-4P7R — the UNCLAMPED raw channel, mutually exclusive with
+    value_normalized + value_items).
     """
     actor, request_id = _resolve_actor_and_request(actor, request_id)
-    # (path_json, name, value_display, value_normalized, value_items_json)
-    incoming: list[tuple[str, str, str, float | None, str | None]] = []
+    # (path_json, name, value_display, value_normalized, value_items_json, value_raw)
+    incoming: list[
+        tuple[str, str, str, float | None, str | None, float | None]
+    ] = []
     seen: set[tuple[str, str]] = set()
     for o in overrides:
         path = _canonical_override_path(o.get("path"))
@@ -945,6 +977,25 @@ def replace_device_param_overrides(
                     "enum strings"
                 )
             value_items_json = json.dumps(items_list)
+        value_raw = o.get("value_raw")
+        if value_raw is not None:
+            if not isinstance(value_raw, (int, float)) \
+                    or isinstance(value_raw, bool):
+                raise ValueError(
+                    f"param override {name!r}: value_raw must be a number, "
+                    f"got {value_raw!r}"
+                )
+            if value_normalized is not None:
+                raise ValueError(
+                    f"param override {name!r}: value_raw and value_normalized "
+                    "are mutually exclusive continuous channels — pass one"
+                )
+            if value_items_json is not None:
+                raise ValueError(
+                    f"param override {name!r}: value_raw is for continuous "
+                    "params; an enum uses value_items, not value_raw"
+                )
+            value_raw = float(value_raw)
         key = (path_json, name)
         if key in seen:
             raise ValueError(
@@ -953,18 +1004,19 @@ def replace_device_param_overrides(
             )
         seen.add(key)
         incoming.append(
-            (path_json, name, value_display, value_normalized, value_items_json)
+            (path_json, name, value_display, value_normalized, value_items_json,
+             value_raw)
         )
     existing_rows = conn.execute(
         """SELECT id, path_json, name, value_display, value_normalized,
-                  value_items_json
+                  value_items_json, value_raw
              FROM device_param_overrides
             WHERE device_id = ?""",
         (device_id,),
     ).fetchall()
     existing_sig = {
         (r["path_json"], r["name"], r["value_display"],
-         r["value_normalized"], r["value_items_json"])
+         r["value_normalized"], r["value_items_json"], r["value_raw"])
         for r in existing_rows
     }
     # Set equality (tuples carry None for normalized/items, so set membership —
@@ -983,14 +1035,14 @@ def replace_device_param_overrides(
             (device_id,),
         )
         new_ids: list[str] = []
-        for path_json, name, vd, vn, vi_json in incoming:
+        for path_json, name, vd, vn, vi_json, vr in incoming:
             oid = _uuid()
             conn.execute(
                 """INSERT INTO device_param_overrides
                        (id, device_id, path_json, name, value_display,
-                        value_normalized, value_items_json)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (oid, device_id, path_json, name, vd, vn, vi_json),
+                        value_normalized, value_items_json, value_raw)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (oid, device_id, path_json, name, vd, vn, vi_json, vr),
             )
             new_ids.append(oid)
         song_id = _resolve_device_song(conn, device_id=device_id)

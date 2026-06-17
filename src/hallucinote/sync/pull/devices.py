@@ -12,6 +12,7 @@ from hallucinote.capture import (
     RACK_CLASS_NAMES,
     chain_authored_props,
     normalize_param_value,
+    param_needs_raw_channel,
 )
 
 from hallucinote.db import mutations as M, queries as Q
@@ -1111,9 +1112,20 @@ def _apply_device_parameters_for_device(
         min_val = float(entry.get("min", 0.0))
         max_val = float(entry.get("max", 1.0))
         is_enum = bool(entry.get("is_enum", False))
-        value_normalized = normalize_param_value(
-            float(raw_value), min_val, max_val, is_enum,
-        )
+        # DEV-4P7R: a non-enum param whose raw range != [0,1] takes the raw
+        # channel — normalize-as-raw mis-dials it at push (no value_normalized
+        # handler kwarg) and a non-monotonic display is refused. value_raw is
+        # Live's own param.value, pushed straight through. The two numeric
+        # continuous channels are mutually exclusive (mutator-enforced).
+        use_raw = param_needs_raw_channel(min_val, max_val, is_enum)
+        if use_raw:
+            value_raw: float | None = float(raw_value)
+            value_normalized: float | None = None
+        else:
+            value_raw = None
+            value_normalized = normalize_param_value(
+                float(raw_value), min_val, max_val, is_enum,
+            )
         # E1: capture value_items for enum params so the compose-time envelope
         # helper can resolve enum-name breakpoints without the build.py author
         # hand-listing the cardinality.
@@ -1134,7 +1146,13 @@ def _apply_device_parameters_for_device(
         #     stored) -> compare the display string (its only stored form). The
         #     old `display_same AND norm_same` forced a mismatch here because the
         #     pull always computes a non-NULL normalized from Live's raw value.
-        if existing["value_normalized"] is not None:
+        #   * raw-channel (DEV-4P7R) -> compare value_raw within _FLOAT_EPS. A
+        #     legacy row that stored this param as normalized has value_raw=NULL,
+        #     so it reads as changed and the pull rewrites it to the raw form
+        #     (migrating the broken legacy representation in place).
+        if use_raw:
+            value_same = _normalized_values_match(value_raw, existing["value_raw"])
+        elif existing["value_normalized"] is not None:
             value_same = _normalized_values_match(
                 value_normalized, existing["value_normalized"],
             )
@@ -1150,6 +1168,7 @@ def _apply_device_parameters_for_device(
             value_display=value_display,
             value_normalized=value_normalized,
             value_items=value_items,
+            value_raw=value_raw,
             actor=actor, request_id=request_id, reason=reason,
         )
         out.mutations += 1

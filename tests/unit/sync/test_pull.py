@@ -2512,10 +2512,17 @@ def test_apply_device_parameters_handles_mixed_diff(conn, song, session):
     assert by_name["Attack"]["value_display"] == "0.50"
 
 
-def test_apply_device_parameters_normalizes_against_min_max(conn, song, session):
-    """value_normalized = (value - min) / (max - min). The raw 'value'
-    from Live is in [min, max]; the DB stores the [0, 1] form. With
-    a -60..0 range, value=-12 normalizes to 0.8."""
+def test_apply_device_parameters_nonunit_range_stores_value_raw(
+    conn, song, session,
+):
+    """DEV-4P7R: a non-enum param whose raw range != [0,1] pulls onto the raw
+    channel — value_raw = Live's own param.value (UNCLAMPED, lossless), with
+    value_normalized NULL. Normalizing it (the pre-DEV-4P7R behavior: -12 in
+    -60..0 -> 0.8) was a dead value: the normalized form is pushed AS raw (no
+    value_normalized handler kwarg), so 0.8 would dial raw 0.8 dB, not -12 — only
+    masked because the monotonic display "-12.0 dB" wins at push. value_raw makes
+    it robust regardless of display addressability. The display is kept as a
+    readable hint."""
     tid = M.create_track(conn, song_id=song, track_index=1, name="Lead")
     _link_track(conn, session=session, db_id=tid, ableton_index=5)
     chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
@@ -2523,7 +2530,7 @@ def test_apply_device_parameters_normalizes_against_min_max(conn, song, session)
         conn, chain_id=chain_id, position=1, kind="Compressor", display_name="Glue",
     )
     # The drift pull diffs the TRACKED set, so seed the param (sentinel value)
-    # to exercise the normalization on the update path (PULL-DRIFT-DETECT).
+    # to exercise the raw-channel store on the update path (PULL-DRIFT-DETECT).
     M.set_device_parameter(
         conn, device_id=did, name="Threshold",
         value_display="(seed)", value_normalized=None,
@@ -2542,7 +2549,8 @@ def test_apply_device_parameters_normalizes_against_min_max(conn, song, session)
     assert out.mutations == 1
     row = Q.get_device_parameters(conn, did)[0]
     assert row["value_display"] == "-12.0 dB"
-    assert row["value_normalized"] == pytest.approx(0.8)
+    assert row["value_raw"] == pytest.approx(-12.0)
+    assert row["value_normalized"] is None
 
 
 def test_apply_device_parameters_constant_range_stores_null_normalized(
@@ -2773,12 +2781,14 @@ def _param_tuple(draw):
 )
 def test_apply_device_parameters_property_round_trip(entries):
     """Property: synthesized Live-side params → apply → DB rows that
-    match. Pins the (normalize + diff) pipeline against random input.
+    match. Pins the (channel-select + diff) pipeline against random input.
 
-    Tolerances:
-    - ``value_display`` is verbatim verbatim from the wire
-    - ``value_normalized`` is within ``_FLOAT_EPS`` (or NULL when the
-      synthesized param is enum / constant-range)
+    Per-param channel (DEV-4P7R):
+    - ``value_display`` is verbatim from the wire (always — a hint on the
+      raw channel, the authoritative form on the normalized channel)
+    - enum / constant-range -> value_normalized NULL, value_raw NULL
+    - range != [0,1] -> value_raw = the raw value, value_normalized NULL
+    - range == [0,1] -> value_normalized within ``_FLOAT_EPS``, value_raw NULL
     """
     from hallucinote.db import init_db
     import tempfile, os
@@ -2829,13 +2839,22 @@ def test_apply_device_parameters_property_round_trip(entries):
             row = rows[name]
             assert row["value_display"] == display
             rng = max_v - min_v
+            unit_range = abs(min_v) < 1e-9 and abs(max_v - 1.0) < 1e-9
             if is_enum or abs(rng) < 1e-9:
+                # enum / constant-range: no continuous channel at all.
+                assert row["value_normalized"] is None
+                assert row["value_raw"] is None
+            elif not unit_range:
+                # DEV-4P7R: range != [0,1] -> raw channel, value_normalized NULL.
+                assert row["value_raw"] == pytest.approx(value, abs=1e-9)
                 assert row["value_normalized"] is None
             else:
+                # range == [0,1]: normalized channel (== value here), no raw.
                 expected = max(0.0, min(1.0, (value - min_v) / rng))
                 assert row["value_normalized"] == pytest.approx(
                     expected, abs=1e-9
                 )
+                assert row["value_raw"] is None
         conn.close()
     finally:
         os.unlink(path)

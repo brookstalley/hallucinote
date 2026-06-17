@@ -312,12 +312,18 @@ def _param_value_kv(p: sqlite3.Row) -> tuple[dict[str, object], str] | None:
     no writable form (no display value and no normalized value). Shared by
     `_emit_param_writes` (device_parameters) and `_emit_param_override_writes`
     (device_param_overrides) — both column shapes carry value_display /
-    value_items_json / value_normalized, so they dial identically:
+    value_items_json / value_normalized / value_raw, so they dial identically:
       * captured value_items -> a known enum: value_type='enum' with the display
         string (the handler validates membership);
+      * value_raw present -> the UNCLAMPED raw value on the wire (DEV-4P7R) — the
+        only form for a quantized continuous param whose raw range != [0,1] and
+        whose display is non-monotonic; checked BEFORE display so an explicit raw
+        wins even when a readable display hint is also stored on the row;
       * display string present -> value_display (the handler inverts the param's
         own display curve — exact, and safe for center-zero params);
-      * normalized only -> the raw value (stringified on the wire);
+      * normalized only -> the raw value (stringified on the wire). The handler
+        has no value_normalized kwarg, so this rides `value` as raw and only
+        round-trips when the param's raw range IS [0,1] — else use value_raw;
       * neither -> None (the caller surfaces an operator ALERT, never a silent drop).
     """
     display = (p["value_display"] or "").strip()
@@ -325,6 +331,9 @@ def _param_value_kv(p: sqlite3.Row) -> tuple[dict[str, object], str] | None:
         if not display:
             return None
         return ({"value": display, "value_type": "enum"}, f"enum {display!r}")
+    if p["value_raw"] is not None:
+        return ({"value": str(p["value_raw"]), "value_type": "continuous"},
+                f"raw {p['value_raw']:g}")
     if display:
         return ({"value_display": display, "value_type": "continuous"},
                 f"display {display!r}")

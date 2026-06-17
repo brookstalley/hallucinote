@@ -489,6 +489,48 @@ def test_plan_push_devices_falls_back_to_normalized_without_display(
     assert call.args["value_type"] == "continuous"
 
 
+def test_plan_push_devices_writes_value_raw_as_raw_continuous(
+    conn, song, session, linked_track,
+):
+    """DEV-4P7R: a param stored on the raw channel emits its UNCLAMPED raw value
+    on the wire as a continuous `value` (the witness LFO S. Rate: raw 8.0 in
+    [0,21]) — never value_display (which the live setter refuses) nor the
+    normalized-as-raw form (which mis-dials a non-[0,1] param)."""
+    cid = M.create_device_chain(conn, parent_track_id=linked_track)
+    did = M.create_device(conn, chain_id=cid, position=1, kind="Wavetable",
+                          display_name="WT")
+    M.set_device_parameter(conn, device_id=did, name="LFO 1 S. Rate",
+                           value_display="1/2", value_raw=8.0)
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=did, ableton_index=1,
+    )
+    plan = push.plan_push_devices(conn, song_id=song, session_id=session)
+    call = _calls_by_action(plan)["set_parameter"][0]
+    assert float(call.args["value"]) == pytest.approx(8.0)
+    assert call.args["value_type"] == "continuous"
+    assert "value_display" not in call.args
+
+
+def test_plan_push_devices_value_raw_beats_display_hint(
+    conn, song, session, linked_track,
+):
+    """Channel precedence: an explicit value_raw wins over a stored display
+    string, so a readable hint can ride alongside the authoritative raw."""
+    cid = M.create_device_chain(conn, parent_track_id=linked_track)
+    did = M.create_device(conn, chain_id=cid, position=1, kind="Wavetable",
+                          display_name="WT")
+    # Both stored: display is a hint; raw is authoritative.
+    M.set_device_parameter(conn, device_id=did, name="LFO 1 S. Rate",
+                           value_display="1/2", value_raw=8.0)
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=did, ableton_index=1,
+    )
+    plan = push.plan_push_devices(conn, song_id=song, session_id=session)
+    call = _calls_by_action(plan)["set_parameter"][0]
+    assert float(call.args["value"]) == pytest.approx(8.0)
+    assert "value_display" not in call.args
+
+
 def test_plan_push_devices_writes_known_enums_as_enum(
     conn, song, session, linked_track,
 ):

@@ -144,6 +144,44 @@ def test_roundtrip_override_pushes_at_nested_path(conn):
     assert sync.args["value"] == "Tempo" and sync.args["value_type"] == "enum"
 
 
+def test_roundtrip_value_raw_override_pushes_raw_at_nested_path(conn):
+    """DEV-4P7R durability signal: a nested override authored on the raw channel
+    (the witness LFO S. Rate: value_raw 8.0, range [0,21], display "1/2")
+    round-trips snapshot -> replay -> DB -> push as a raw continuous
+    set_parameter at its NodeAddr path. This is the half that had NO durable
+    home before DEV-4P7R (display refused, normalized clamped + mis-dialed)."""
+    ovr = [{"path": DEEP, "name": "LFO 1 S. Rate", "value": "1/2",
+            "value_raw": 8.0}]
+    song_id = replay_capture(
+        conn, _snapshot(_preset_track(param_overrides=ovr)), song_name="rtraw")
+    dev = _preset_device(conn, song_id)
+    row = Q.get_device_param_overrides(conn, dev["id"])[0]
+    assert row["value_raw"] == pytest.approx(8.0)
+    assert row["value_normalized"] is None
+    assert row["value_display"] == "1/2"
+
+    session = M.create_ableton_session(conn, song_id=song_id, name="draft")
+    track = Q.get_tracks_for_song(conn, song_id)[0]
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track["id"],
+        ableton_index=3,
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=dev["id"],
+        ableton_index=1,
+    )
+    plan = push.plan_push_devices(conn, song_id=song_id, session_id=session)
+    assert not any(c.args.get("action") == "create_device_chain"
+                   for c in plan.calls)
+    sets = [c for c in plan.calls if c.args.get("action") == "set_parameter"]
+    c = next(c for c in sets if c.args["parameter_name"] == "LFO 1 S. Rate")
+    assert c.args["node"] == build_node_addr(
+        {"track_index": 3}, device_index=1, device_path=DEEP)
+    assert float(c.args["value"]) == pytest.approx(8.0)
+    assert c.args["value_type"] == "continuous"
+    assert "value_display" not in c.args
+
+
 # --------------------------------------------------------------------------
 # preserve_preset_overrides / _flatten / _chains_carry_props — the transform
 # --------------------------------------------------------------------------

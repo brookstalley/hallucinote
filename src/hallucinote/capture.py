@@ -165,36 +165,74 @@ def normalize_param_value(
     return max(0.0, min(1.0, norm))
 
 
+def param_needs_raw_channel(
+    min_val: float, max_val: float, is_enum: bool,
+) -> bool:
+    """DEV-4P7R: True when a CONTINUOUS (non-enum) param must ride the raw
+    ``value_raw`` channel — i.e. it is not an enum AND its raw range is not
+    ``[0,1]``.
+
+    Raw range != [0,1] is the principled discriminator, NOT ``is_quantized``
+    (probed False on the witness ``Wavetable LFO S. Rate``: raw ``8.0`` ->
+    "1/2", range ``[0,21]``, is_quantized False). For ANY non-[0,1] continuous
+    param both other channels are unsafe: the normalized form is pushed AS raw
+    (the handler has no value_normalized kwarg) so it mis-dials, and the display
+    is non-monotonic for the step-list class ("8,6,4,...,1/64") so the live
+    setter refuses to invert it. ``value_raw`` stores Live's own ``param.value``
+    and pushes it straight through — always exact, so this rule can never
+    mis-dial; it just routes the lossless channel for the affected class.
+
+    Single source shared by the capture path (``_snapshot_param_entry``) and the
+    pull apply path, mirroring ``normalize_param_value``."""
+    if is_enum:
+        return False
+    if abs(max_val - min_val) < 1e-9:
+        return False  # constant-range (min == max): nothing to dial, no channel
+    return abs(min_val) > 1e-9 or abs(max_val - 1.0) > 1e-9
+
+
 def _param_value_fields(
     p: Any, *, device_name: Any, param_name: Any,
-) -> tuple[str, float | None, list[str] | None]:
-    """Translate one snapshot param spec ``{value, normalized?, value_items?}``
-    into the ``(value_display, value_normalized, value_items)`` the device
+) -> tuple[str, float | None, list[str] | None, float | None]:
+    """Translate one snapshot param spec
+    ``{value, normalized?, value_items?, value_raw?}`` into the
+    ``(value_display, value_normalized, value_items, value_raw)`` the device
     mutators store. Emits the BUG4 bare-numeric-value warning. Shared by the
     top-level ``params_dialed`` replay and the nested ``param_overrides`` replay
     (SNP-2H9F) so both translate identically.
+
+    ``value_raw`` (DEV-4P7R) is the UNCLAMPED raw channel for a quantized
+    continuous param whose range != [0,1]. When present, ``value`` is optional
+    (a readable display HINT only — push uses the raw); the mutator rejects
+    pairing it with ``normalized`` / ``value_items``.
     """
-    if not isinstance(p, dict) or "value" not in p:
+    if not isinstance(p, dict) or ("value" not in p and "value_raw" not in p):
         raise ValueError(
             f"snapshot param {param_name!r} on device {device_name!r}: "
-            f"expected dict with 'value' key, got {p!r}"
+            f"expected dict with a 'value' or 'value_raw' key, got {p!r}"
         )
     normalized = p.get("normalized")
+    value_raw = p.get("value_raw")
     raw_items = p.get("value_items")
     value_items = (
         [str(item) for item in raw_items]
         if isinstance(raw_items, (list, tuple))
         else None
     )
+    # `value` is the display string (or a readable hint when value_raw drives).
+    # Absent only in a raw-only entry, where it defaults to "" (push ignores it).
+    value = p.get("value", "")
     # BUG4 (params_dialed authoring trap): a bare numeric `value` with no
     # `normalized` is stored as the DISPLAY string str(value) and pushed via
     # the display path (push devices.py branch 2 → the live setter's curve
     # inversion), which mis-dials a continuous param. The two correct author
     # forms are an explicit `normalized` (for a 0..1 value) or a display
     # STRING like "180 Hz" (the live setter inverts the log curve, DPP-7H2K).
-    value = p["value"]
+    # value_raw is the third correct form, so a numeric `value` riding alongside
+    # it is a readable hint, not the bare-numeric trap — don't warn there.
     if (
-        normalized is None
+        value_raw is None
+        and normalized is None
         and isinstance(value, (int, float))
         and not isinstance(value, bool)
     ):
@@ -205,7 +243,8 @@ def _param_value_fields(
             "(likely mis-dialing a continuous param). To author a NORMALIZED "
             f'0..1 value add "normalized": {value}; to author a display value '
             'use a string, e.g. "value": "180 Hz" (the push inverts it via the '
-            "live setter). See docs/snapshot-schema.md 'params_dialed'.",
+            "live setter); for a quantized non-[0,1] param use "
+            f'"value_raw": {value}. See docs/snapshot-schema.md.',
             UserWarning,
             stacklevel=2,
         )
@@ -213,6 +252,7 @@ def _param_value_fields(
         str(value),
         float(normalized) if normalized is not None else None,
         value_items,
+        float(value_raw) if value_raw is not None else None,
     )
 
 
@@ -229,7 +269,7 @@ def _override_entry_for_replay(
             f"snapshot param_override on device {device_name!r}: expected a dict "
             f"with 'path' and 'name', got {o!r}"
         )
-    value_display, value_normalized, value_items = _param_value_fields(
+    value_display, value_normalized, value_items, value_raw = _param_value_fields(
         o, device_name=device_name, param_name=o["name"],
     )
     return {
@@ -238,6 +278,7 @@ def _override_entry_for_replay(
         "value_display": value_display,
         "value_normalized": value_normalized,
         "value_items": value_items,
+        "value_raw": value_raw,
     }
 
 
@@ -317,9 +358,10 @@ def _replay_devices(
             reason=reason,
         )
         for name, p in (d.get("params_dialed") or {}).items():
-            value_display, value_normalized, value_items = _param_value_fields(
-                p, device_name=d.get("name"), param_name=name,
-            )
+            value_display, value_normalized, value_items, value_raw = \
+                _param_value_fields(
+                    p, device_name=d.get("name"), param_name=name,
+                )
             M.set_device_parameter(
                 conn,
                 device_id=device_id,
@@ -327,6 +369,7 @@ def _replay_devices(
                 value_display=value_display,
                 value_normalized=value_normalized,
                 value_items=value_items,
+                value_raw=value_raw,
                 actor=actor,
                 request_id=request_id,
                 reason=reason,
@@ -950,6 +993,12 @@ def _snapshot_param_entry(p: dict[str, Any]) -> dict[str, Any] | None:
     continuous form — replay then stores ``value_normalized = NULL``). Computed
     via the single-source `normalize_param_value`, so a captured-then-replayed
     param lands the same DB row a pull would write.
+
+    DEV-4P7R: a non-enum param whose raw range != [0,1] instead gets
+    ``value_raw`` (Live's own ``param.value``) — the only channel that round-trips
+    for it (normalized is pushed AS raw so it mis-dials, and a step-list display
+    like LFO S. Rate's "8..1/64" is non-monotonic so push refuses it). ``value``
+    keeps the display string as a readable HINT; push prefers the raw.
     """
     raw = p.get("value")
     if not isinstance(raw, (int, float)) or isinstance(raw, bool):
@@ -961,7 +1010,6 @@ def _snapshot_param_entry(p: dict[str, Any]) -> dict[str, Any] | None:
     is_enum = bool(p.get("is_enum", False))
     min_val = float(p.get("min", 0.0))
     max_val = float(p.get("max", 1.0))
-    normalized = normalize_param_value(float(raw), min_val, max_val, is_enum)
     value_display = p.get("value_display")
     if not isinstance(value_display, str):
         # Probe omitted a display string (rare — a param with no str_for_value).
@@ -972,6 +1020,11 @@ def _snapshot_param_entry(p: dict[str, Any]) -> dict[str, Any] | None:
         # land the same DB row.
         value_display = ""
     entry: dict[str, Any] = {"value": value_display}
+    if param_needs_raw_channel(min_val, max_val, is_enum):
+        # The display string stays as a readable hint; value_raw is authoritative.
+        entry["value_raw"] = float(raw)
+        return entry
+    normalized = normalize_param_value(float(raw), min_val, max_val, is_enum)
     if normalized is not None:
         entry["normalized"] = normalized
     if is_enum:

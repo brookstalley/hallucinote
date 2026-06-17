@@ -2482,6 +2482,91 @@ def test_set_device_parameter_rejects_empty_value_items(conn, amp_device):
     assert "non-empty" in str(exc.value)
 
 
+# --- DEV-4P7R: the raw continuous channel ---
+
+def test_set_device_parameter_persists_value_raw_unclamped(conn, amp_device):
+    """value_raw stores Live's own raw value UNCLAMPED — the [0,1] CHECK that
+    binds value_normalized does NOT apply (the witness LFO S. Rate is raw 8.0
+    in [0,21])."""
+    M.set_device_parameter(
+        conn, device_id=amp_device, name="LFO 1 S. Rate",
+        value_display="1/2", value_raw=8.0,
+    )
+    row = conn.execute(
+        "SELECT value_raw, value_normalized, value_display FROM device_parameters "
+        "WHERE device_id = ? AND name = ?",
+        (amp_device, "LFO 1 S. Rate"),
+    ).fetchone()
+    assert row["value_raw"] == pytest.approx(8.0)
+    assert row["value_normalized"] is None
+    assert row["value_display"] == "1/2"  # readable hint retained
+
+
+def test_set_device_parameter_value_raw_unchanged_is_no_op(conn, amp_device):
+    """Idempotency: re-setting the same value_raw row yields 'unchanged' and
+    emits no second event (the dedup tuple includes value_raw)."""
+    M.set_device_parameter(
+        conn, device_id=amp_device, name="LFO 1 S. Rate",
+        value_display="1/2", value_raw=8.0,
+    )
+    before = len([
+        e for e in _events(conn) if e["kind"] == E.DEVICE_PARAMETER_SET
+    ])
+    result = M.set_device_parameter(
+        conn, device_id=amp_device, name="LFO 1 S. Rate",
+        value_display="1/2", value_raw=8.0,
+    )
+    after = len([
+        e for e in _events(conn) if e["kind"] == E.DEVICE_PARAMETER_SET
+    ])
+    assert after == before
+    assert result.kind == "unchanged"
+
+
+def test_set_device_parameter_value_raw_change_updates(conn, amp_device):
+    """A value_raw change alone (display unchanged) triggers an update — the
+    raw value is part of the row state."""
+    M.set_device_parameter(
+        conn, device_id=amp_device, name="LFO 1 S. Rate",
+        value_display="1/2", value_raw=8.0,
+    )
+    result = M.set_device_parameter(
+        conn, device_id=amp_device, name="LFO 1 S. Rate",
+        value_display="1/2", value_raw=4.0,
+    )
+    assert result.kind == "updated"
+
+
+def test_set_device_parameter_value_raw_rejects_normalized_pair(conn, amp_device):
+    """value_raw and value_normalized are mutually exclusive continuous
+    channels — passing both raises."""
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        M.set_device_parameter(
+            conn, device_id=amp_device, name="LFO 1 S. Rate",
+            value_display="1/2", value_raw=8.0, value_normalized=0.38,
+        )
+
+
+def test_set_device_parameter_value_raw_rejects_enum_pair(conn, amp_device):
+    """value_raw is for continuous params; pairing it with value_items (enum)
+    raises."""
+    with pytest.raises(ValueError, match="continuous"):
+        M.set_device_parameter(
+            conn, device_id=amp_device, name="Amp Type",
+            value_display="Clean", value_raw=1.0, value_items=_AMP_TYPE_ITEMS,
+        )
+
+
+def test_set_device_parameter_value_raw_rejects_bool(conn, amp_device):
+    """A bool is not a valid raw value (guards against True/False slipping in
+    as 1/0)."""
+    with pytest.raises(ValueError, match="must be a number"):
+        M.set_device_parameter(
+            conn, device_id=amp_device, name="LFO 1 S. Rate",
+            value_display="1/2", value_raw=True,
+        )
+
+
 def test_create_enum_envelope_resolves_via_snapshot(conn, amp_device):
     """Primary path: helper looks up value_items from the captured
     device-parameter snapshot. Author writes enum names; helper stores

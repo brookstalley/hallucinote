@@ -45,6 +45,13 @@ DEVICE_CREATED = "device_created"
 DEVICE_DELETED = "device_deleted"
 DEVICE_PARAMETER_SET = "device_parameter_set"
 DEVICE_PARAMETER_REMOVED = "device_parameter_removed"
+# SNP-2H9F: nested-param overrides on a `preset_query` device. A preset device
+# has only the top-level row in the DB (the preset instantiates the nested tree
+# at push time), so a by-ear tweak deep inside it can't ride DEVICE_PARAMETER_SET
+# (no nested device row to key on). Overrides are stored as a replace-style
+# per-device list keyed by (device_id, descent path, name) — one coarse event
+# per device, mirroring DRUM_PAD_MAPPINGS_REPLACED.
+DEVICE_PARAM_OVERRIDES_REPLACED = "device_param_overrides_replaced"
 # SDC-7K3M: a device's sidechain SOURCE (input routing) — a semantic FK to the
 # source track, symmetric with TRACK_ROUTING_SET (resolved to/from Live's
 # display_name at push/pull). The S/C On / Gain / Mix params round-trip

@@ -291,6 +291,107 @@ def _emit_device_calls(
         parent_kind=parent_kind,
         parent_name=parent_name,
     )
+    # SNP-2H9F: re-assert nested-param overrides on a preset-seeded device. The
+    # override's path addresses a DESCENDANT instantiated by the preset load, so
+    # push sets it via set_parameter (never create_device_chain — the preset's
+    # waveform/samples and structure survive, nothing duplicates). The override
+    # table is empty for the common (non-preset) device, so this is a no-op there.
+    _emit_param_override_writes(
+        plan, conn,
+        device=device,
+        parent_kv=parent_kv,
+        device_index=device_at,
+        parent_kind=parent_kind,
+        parent_name=parent_name,
+    )
+
+
+def _param_value_kv(p: sqlite3.Row) -> tuple[dict[str, object], str] | None:
+    """SYN-9F2L wire-form selection for ONE stored param/override row -> the
+    `set_parameter` value kwargs + a human description, or None when the row has
+    no writable form (no display value and no normalized value). Shared by
+    `_emit_param_writes` (device_parameters) and `_emit_param_override_writes`
+    (device_param_overrides) — both column shapes carry value_display /
+    value_items_json / value_normalized, so they dial identically:
+      * captured value_items -> a known enum: value_type='enum' with the display
+        string (the handler validates membership);
+      * display string present -> value_display (the handler inverts the param's
+        own display curve — exact, and safe for center-zero params);
+      * normalized only -> the raw value (stringified on the wire);
+      * neither -> None (the caller surfaces an operator ALERT, never a silent drop).
+    """
+    display = (p["value_display"] or "").strip()
+    if p["value_items_json"] is not None:
+        if not display:
+            return None
+        return ({"value": display, "value_type": "enum"}, f"enum {display!r}")
+    if display:
+        return ({"value_display": display, "value_type": "continuous"},
+                f"display {display!r}")
+    if p["value_normalized"] is not None:
+        return ({"value": str(p["value_normalized"]), "value_type": "continuous"},
+                f"normalized {p['value_normalized']:g}")
+    return None
+
+
+def _emit_param_override_writes(
+    plan: PushPlan,
+    conn: sqlite3.Connection,
+    *,
+    device: sqlite3.Row,
+    parent_kv: dict[str, object],
+    device_index: int,
+    parent_kind: str,
+    parent_name: str,
+) -> None:
+    """Emit a node-addressed `set_parameter` for each stored nested-param override
+    on a preset-seeded device (SNP-2H9F). Each override's ``path_json`` is the
+    NodeAddr descent to a device nested inside the preset; push addresses it from
+    the top-level preset's Live index (``device_index``) + that path, exactly like
+    a nested ``device_parameters`` write — but the override exists WITHOUT a nested
+    DB device row (the preset, not the DB, owns the tree). No load, no chain
+    creation: just the param set after the preset instantiates the descendant."""
+    unwritable: list[str] = []
+    for o in Q.get_device_param_overrides(conn, device["id"]):
+        try:
+            path = json.loads(o["path_json"])
+        except (json.JSONDecodeError, TypeError) as exc:
+            plan.alert(
+                f"device {device['display_name']!r} on {parent_kind} "
+                f"{parent_name!r}: param override {o['name']!r} has a malformed "
+                f"path ({exc}); the override was NOT pushed"
+            )
+            continue
+        kv = _param_value_kv(o)
+        if kv is None:
+            unwritable.append(o["name"])
+            continue
+        value_kv, chosen = kv
+        args: dict[str, object] = {
+            "action": "set_parameter",
+            "node": build_node_addr(
+                parent_kv, device_index=device_index, device_path=path,
+            ),
+            "parameter_name": o["name"],
+            **value_kv,
+        }
+        plan.add(ToolCall(
+            tool="ableton_device",
+            args=args,
+            key=f"device_param_override:{device['id']}:{o['path_json']}:{o['name']}",
+            purpose=(
+                f"{parent_name} / {device['display_name']} "
+                f"(preset override depth {len(path)}) / {o['name']} = {chosen}"
+            ),
+        ))
+    if unwritable:
+        plan.alert(
+            f"device {device['display_name']!r} on {parent_kind} {parent_name!r}: "
+            f"{len(unwritable)} param override(s) have no writable form "
+            f"({', '.join(unwritable[:3])}{'...' if len(unwritable) > 3 else ''}) "
+            "— no display value and no normalized value stored; the override was "
+            "NOT pushed"
+        )
 
 
 def _emit_param_writes(
@@ -327,27 +428,11 @@ def _emit_param_writes(
     unwritable: list[str] = []
     nested_note = f" (nested depth {len(device_path)})" if device_path else ""
     for p in params:
-        display = (p["value_display"] or "").strip()
-        if p["value_items_json"] is not None:
-            if not display:
-                unwritable.append(p["name"])
-                continue
-            value_kv: dict[str, object] = {
-                "value": display, "value_type": "enum",
-            }
-            chosen = f"enum {display!r}"
-        elif display:
-            value_kv = {"value_display": display, "value_type": "continuous"}
-            chosen = f"display {display!r}"
-        elif p["value_normalized"] is not None:
-            value_kv = {
-                "value": str(p["value_normalized"]),
-                "value_type": "continuous",
-            }
-            chosen = f"normalized {p['value_normalized']:g}"
-        else:
+        kv = _param_value_kv(p)
+        if kv is None:
             unwritable.append(p["name"])
             continue
+        value_kv, chosen = kv
         args: dict[str, object] = {
             "action": "set_parameter",
             "node": build_node_addr(

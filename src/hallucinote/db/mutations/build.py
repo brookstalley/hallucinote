@@ -102,7 +102,13 @@ _LATEST_ACTOR_EVENTS: dict[str, tuple[tuple[str, str], ...]] = {
     "device_chain":          (("device_chain_created", "chain_id"),
                               ("device_chain_props_set", "chain_id")),
     "device":                (("device_created", "device_id"),
-                              ("device_sidechain_set", "device_id")),
+                              ("device_sidechain_set", "device_id"),
+                              # SNP-2H9F: a pulled/captured nested-param override
+                              # touches the preset device's own row-kind so the
+                              # override (a CASCADE child) survives the next build
+                              # sweep — symmetric with device_chain_props_set
+                              # protecting a chain it was set on.
+                              ("device_param_overrides_replaced", "device_id")),
     "device_parameter":      (("device_parameter_set", "parameter_id"),),
     "envelope":              (("envelope_created", "envelope_id"),),
 }

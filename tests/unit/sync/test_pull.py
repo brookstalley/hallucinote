@@ -2553,6 +2553,42 @@ def test_apply_device_parameters_nonunit_range_stores_value_raw(
     assert row["value_normalized"] is None
 
 
+def test_apply_device_parameters_value_raw_large_magnitude_no_churn(
+    conn, song, session,
+):
+    """DEV-4P7R (W1): the raw channel uses a RELATIVE tolerance so Live's
+    low-order jitter on a large-magnitude raw value (a raw-Hz param at 18000)
+    does NOT read as drift and re-write the row + emit an event on every pull.
+    First pull stores it; a second pull jittered by 1.0 (« 0.1% of 18000) is a
+    no-op. An absolute 1e-3 tolerance would have churned here."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    did = M.create_device(
+        conn, chain_id=chain_id, position=1, kind="EQ", display_name="EQ",
+    )
+    M.set_device_parameter(
+        conn, device_id=did, name="Freq",
+        value_display="(seed)", value_normalized=None,
+    )
+    first = pull.apply_pull_results(
+        conn,
+        [_result(f"device_parameters:{did}",
+                 _params_payload(("Freq", 18000.0, "18.0 kHz", 0.0, 20000.0, False)))],
+        song_id=song, session_id=session,
+    )
+    assert first.mutations == 1
+    # Second pull: same param jittered within Live's display precision.
+    second = pull.apply_pull_results(
+        conn,
+        [_result(f"device_parameters:{did}",
+                 _params_payload(("Freq", 18001.0, "18.0 kHz", 0.0, 20000.0, False)))],
+        song_id=song, session_id=session,
+    )
+    assert second.mutations == 0
+    assert second.no_ops == 1
+
+
 def test_apply_device_parameters_constant_range_stores_null_normalized(
     conn, song, session,
 ):

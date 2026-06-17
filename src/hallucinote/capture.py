@@ -1777,6 +1777,12 @@ def _flatten_chains_to_overrides(
                     entry["normalized"] = p["normalized"]
                 if "value_items" in p:
                     entry["value_items"] = p["value_items"]
+                # DEV-4P7R: carry the raw channel — a preset device's nested
+                # quantized non-[0,1] param (the witness LFO S. Rate) is exactly
+                # what param_overrides exists for; dropping it here would silently
+                # revert the fix on the next /song-snapshot refresh.
+                if "value_raw" in p:
+                    entry["value_raw"] = p["value_raw"]
                 out.append(entry)
             if dev.get("chains"):
                 out.extend(_flatten_chains_to_overrides(dev["chains"], path))

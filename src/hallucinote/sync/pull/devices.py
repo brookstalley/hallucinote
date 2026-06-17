@@ -22,6 +22,7 @@ from ._core import (
     PullPlan,
     ApplyResult,
     _normalized_values_match,
+    _raw_values_match,
 )
 
 
@@ -1151,7 +1152,7 @@ def _apply_device_parameters_for_device(
         #     so it reads as changed and the pull rewrites it to the raw form
         #     (migrating the broken legacy representation in place).
         if use_raw:
-            value_same = _normalized_values_match(value_raw, existing["value_raw"])
+            value_same = _raw_values_match(value_raw, existing["value_raw"])
         elif existing["value_normalized"] is not None:
             value_same = _normalized_values_match(
                 value_normalized, existing["value_normalized"],

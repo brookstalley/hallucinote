@@ -219,6 +219,20 @@ def test_flatten_chains_to_overrides_depth2_path():
          "value_items": ["Free", "Tempo"]}]
 
 
+def test_flatten_chains_to_overrides_carries_value_raw():
+    """DEV-4P7R (B1): a preset device's nested raw-channel param (the witness
+    LFO S. Rate, value_raw 8.0) must survive the /song-snapshot flatten into
+    param_overrides — dropping value_raw here silently reverts the fix on the
+    next snapshot refresh."""
+    chains = [{"chain_index": 1, "name": "", "devices": [{
+        "index": 1, "class": "Wavetable", "name": "WT",
+        "params_dialed": {"LFO 1 S. Rate": {"value": "1/2", "value_raw": 8.0}},
+    }]}]
+    assert _flatten_chains_to_overrides(chains, []) == [
+        {"path": [{"chain_index": 1, "device_position": 1}],
+         "name": "LFO 1 S. Rate", "value": "1/2", "value_raw": 8.0}]
+
+
 def test_chains_carry_props_detects_nested_choke():
     plain = [{"chain_index": 1, "devices": [
         {"index": 1, "class": "X", "params_dialed": {"a": {"value": "1"}}}]}]

@@ -23,8 +23,11 @@ Critic mode: **cumulative** at PR (single cohesive change; per-build-cycle = chu
 3. **Out of scope.** (a) Pull-symmetry for nested `param_overrides` — SNP-2H9F already
    defers it (pull lands nested tweaks as transient `device_parameters`); we fix pull for
    TOP-LEVEL params only. (b) Reinterpreting/renaming the existing `value_normalized`
-   column (see Decision below — rejected as disproportionate). (c) Broadening `value_raw`
-   to non-quantized continuous params (freq/dB) — those round-trip via display (DPP-7H2K).
+   column (see Decision below — rejected as disproportionate). [Initially also scoped OUT
+   "broadening to freq/dB params" — REVERSED during build: see the Scope note in the
+   Decision section. After probing, the discriminator is raw range ≠ [0,1] (not
+   `is_quantized`), which necessarily covers any non-[0,1] continuous param; that is the
+   minimal *correct* rule, and `value_raw` is lossless/always-right for them.]
 
 ## Key decision (lock-in — persisted format)
 

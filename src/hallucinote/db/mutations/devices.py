@@ -969,6 +969,10 @@ def replace_device_param_overrides(
     }
     # Set equality (tuples carry None for normalized/items, so set membership —
     # not sorted-list comparison — sidesteps None-vs-value ordering).
+    # The touch is recorded against the parent DEVICE (not an override row-kind,
+    # which the build session doesn't track): touching the device is what
+    # protects it — and its CASCADE-child overrides — from the build sweep, the
+    # same reason DEVICE_PARAM_OVERRIDES_REPLACED registers under "device".
     if existing_sig == set(incoming):
         _record_touch_if_session("device", device_id)
         return [r["id"] for r in existing_rows]

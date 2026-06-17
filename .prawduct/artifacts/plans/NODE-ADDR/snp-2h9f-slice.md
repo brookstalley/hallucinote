@@ -38,11 +38,13 @@ keyed `UNIQUE(device_id, path_json, name)`. Rationale + alternatives:
 
 Consumers' future queries the schema must answer (enumerated per build-cycle lock-in rule):
 push "all overrides for device X" (→ index on `device_id`); capture/pull per-(path,name) diff;
-audit "what overrode this preset param" (event carries device_id + full override set).
+audit "what overrode this preset param" (the replace event carries `device_id` + the new
+override ids + prev/new counts — the full row content is recoverable from the rows it wrote,
+matching the `drum_pad_mappings_replaced` house pattern).
 
 ## Touchpoints
 1. **Schema** — `device_param_overrides` table + index in `schema.sql`. New event
-   `DEVICE_PARAM_OVERRIDES_SET` (replace-style, coarse — mirrors drum_pad_mappings). Register in
+   `DEVICE_PARAM_OVERRIDES_REPLACED` (replace-style, coarse — mirrors drum_pad_mappings). Register in
    `build.py` `_LATEST_ACTOR_EVENTS` (tombstone protection — a sync/pull actor must not get the
    row CASCADE-dropped on the next build sweep).
 2. **Mutator** — `replace_device_param_overrides(conn, device_id, overrides, actor, …)`: atomic

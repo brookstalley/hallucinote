@@ -357,3 +357,44 @@ def test_capture_to_push_roundtrip_preset_override(conn):
                      {"chain_index": 1, "device_position": 1}])
     assert c.args["parameter_name"] == "LFO 1 Sync"
     assert c.args["value"] == "Tempo" and c.args["value_type"] == "enum"
+
+
+# --------------------------------------------------------------------------
+# Push override error paths — never a silent drop (operator ALERT)
+# --------------------------------------------------------------------------
+
+def _linked_preset_device(conn):
+    """A preset device replayed + linked in a session, ready for push."""
+    song_id = replay_capture(conn, _snapshot(_preset_track()), song_name="pe")
+    session = M.create_ableton_session(conn, song_id=song_id, name="d")
+    track = Q.get_tracks_for_song(conn, song_id)[0]
+    M.link_db_to_ableton(conn, session_id=session, db_kind="track",
+                         db_id=track["id"], ableton_index=2)
+    dev = Q.get_devices_for_track(conn, track["id"])[0]
+    M.link_db_to_ableton(conn, session_id=session, db_kind="device",
+                         db_id=dev["id"], ableton_index=1)
+    return song_id, session, dev
+
+
+def test_push_override_with_no_writable_form_alerts(conn):
+    """An override with no display string and no normalized value can't be pushed
+    — surface an operator ALERT, never a silent drop."""
+    song_id, session, dev = _linked_preset_device(conn)
+    M.replace_device_param_overrides(conn, device_id=dev["id"], overrides=[
+        {"path": DEEP, "name": "Ghost", "value_display": ""}])
+    plan = push.plan_push_devices(conn, song_id=song_id, session_id=session)
+    assert not any(c.args.get("action") == "set_parameter" for c in plan.calls)
+    assert any("no writable form" in a for a in plan.alerts)
+
+
+def test_push_override_with_malformed_path_alerts(conn):
+    """Defensive: the mutator never writes invalid path JSON, but a hand-edited /
+    migrated row might — push alerts and skips it rather than crashing the plan."""
+    song_id, session, dev = _linked_preset_device(conn)
+    conn.execute(
+        "INSERT INTO device_param_overrides "
+        "(id, device_id, path_json, name, value_display) "
+        "VALUES ('bad1', ?, '{not json', 'P', 'Tempo')", (dev["id"],))
+    plan = push.plan_push_devices(conn, song_id=song_id, session_id=session)
+    assert not any(c.args.get("action") == "set_parameter" for c in plan.calls)
+    assert any("malformed path" in a for a in plan.alerts)

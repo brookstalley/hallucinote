@@ -622,7 +622,7 @@ def replay_capture(
     )
 
     # BAK-3M9T: device sidechain sources, collected during _replay_devices and
-    # applied after the full track loop (resolution needs every track_id_by_name).
+    # applied after the full track loop (resolution needs the full track_ids_by_name).
     sidechain_pending: list[tuple[str, str | None, str | None]] = []
 
     song_block = snapshot.get("song") or {}

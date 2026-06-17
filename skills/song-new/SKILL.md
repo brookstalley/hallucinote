@@ -66,6 +66,8 @@ For each non-trivial decision (especially must-haves), **write a markdown file u
 
 **Phase 2 — Scaffold + first compose**:
 
+**First, confirm you're in a songs workspace** (high-stakes: it decides where the song lives). Run `"$PY" -m hallucinote.cli init-workspace --check` and read `already_workspace`. If it's `false`, the scaffold would land in `./songs/<slug>` relative to cwd — *not* a tracked Hallucinote workspace. Surface it and offer to fix it before scaffolding: *"You're not in a songs workspace — want me to create one here? (writes the `hallucinote.toml` marker, a `.gitignore` for regenerable artifacts, and `git init`s)"* → on yes, `"$PY" -m hallucinote.cli init-workspace`; or let the user `cd` to their existing songs repo and restart. **Never scaffold into a non-workspace silently.**
+
 Given the resolved slug + title + tempo + signature + sections (and optional key + intent from Phase 1), you:
 
 1. Validate the inputs (slug shape, signature shape, non-empty section list).
@@ -141,6 +143,8 @@ Stop after the scaffold + decisions + picks land, so the user can review and dri
 ## Workflow
 
 ```
+0. "$PY" -m hallucinote.cli init-workspace --check
+   → if already_workspace is false, offer to create one (high-stakes: where the song lands).
 1. Validate inputs (slug, signature, sections).
 2. "$PY" -m hallucinote.cli scaffold <slug> --title "..." --tempo N \
        --signature N/D --sections a,b,c [--key K] [--intent "..."]

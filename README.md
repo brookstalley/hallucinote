@@ -103,7 +103,7 @@ You should get back tempo, signature, track counts, and master state. That's the
 
 ## Your first song
 
-Setup is one-time. Day to day: open Live, start Claude Code in your **songs workspace** (a repo with a `hallucinote.toml` marker), and talk. New to it? Run **`/hallucinote:getting-started`** — it checks your setup, says what works with and without Max for Live, and points you at the first step. The [**Quickstart**](docs/quickstart.md) walks the first song end to end in about ten minutes.
+Setup is one-time. Day to day: open Live, start Claude Code in your **songs workspace** (a repo with a `hallucinote.toml` marker), and talk. No workspace yet? In an empty folder, ask Claude to *"set up a songs workspace here"* (or run `hallucinote init-workspace`) — it writes the `hallucinote.toml` marker, a `.gitignore` that excludes the regenerable build artifacts (the SQLite DB, captures, analysis), and `git init`s the folder, so your songs are version-controlled from the start. New to it? Run **`/hallucinote:getting-started`** — it checks your setup, creates the workspace if you need one, says what works with and without Max for Live, and points you at the first step. The [**Quickstart**](docs/quickstart.md) walks the first song end to end in about ten minutes.
 
 ## Troubleshooting
 

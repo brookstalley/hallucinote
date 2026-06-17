@@ -38,6 +38,18 @@ songs_root = "songs"        # monorepo only; relative to the marker's directory
 # slug     = "falling-walking"   # required for layout = "song"
 ```
 
+**Creating a marker (the author side).** `hallucinote init-workspace [DIR]` writes
+this file (default `layout = "monorepo"`, `songs_root = "songs"`), an idempotent
+`.gitignore` managed block covering the regenerable toolchain artifacts (DB,
+`captures/`, `analysis/`, push-state caches — the fresh-workspace half of the filed
+"gitignore misses tool artifacts" bug), and `git init`s the directory; it refuses
+inside an existing workspace unless `--force`, and a `--check` dry-run reports
+workspace status without writing. The onboarding skills
+(`/getting-started`, `/song-new`) run `--check` and offer to create a marker when
+they detect none — so a missing marker is surfaced, not silently degraded to the
+legacy `./songs/<slug>` fallback (precedence step 4). Author lives in
+`hallucinote/tools/init_workspace.py`; the reader is `hallucinote/workspace.py`.
+
 ## Resolution contract
 
 `songs_root` (the value the MCP server, CLI tools, and skills need to map `slug → DB`) is

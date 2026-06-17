@@ -4,6 +4,46 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-17 — Songs-workspace bootstrap (`hallucinote init-workspace`) + two doc-only decisions
+
+<!-- prawduct: type=feat | chunks=WS-BOOTSTRAP | scope=cli,tools,skills,docs,backlog,artifacts,tests | -->
+
+Delivers the **author side** of the project-root contract. The reader
+(`hallucinote.workspace`) already discovered a `hallucinote.toml` marker, but
+nothing *wrote* one — so a song scaffolded outside a workspace silently scattered
+into `./songs/<slug>` (a documented prerequisite with zero authoring tooling and a
+silent-degrade failure mode).
+
+- **`hallucinote init-workspace`** (`src/hallucinote/tools/init_workspace.py` +
+  `cli.py` subcommand) writes the `hallucinote.toml` marker atomically
+  (`os.replace`), seeds an **idempotent** `.gitignore` managed block (BEGIN/END
+  sentinels — re-runs are no-ops), and `git init`s. Refuses to clobber an existing
+  workspace without `--force`; `--check` reports detection without writing;
+  `--no-gitignore` opts out of the managed block. `git init` failure degrades
+  gracefully — the marker is the essential artifact. The written marker keys
+  (`layout`/`songs_root`/`slug`) round-trip cleanly through the existing reader's
+  `_workspace_from_marker`.
+- **`/getting-started` + `/song-new`** now `--check` for a workspace and offer to
+  create one instead of silently scattering a song into `./songs/<slug>`.
+- Closes the **fresh-workspace half** of the filed gitignore bug
+  (`incoming-bugs/2026-06-14-song-workspace-gitignore-misses-tool-generated-artifacts.md`)
+  at the natural moment (workspace creation): the managed block covers the
+  regenerable-artifact set.
+
+Two doc-only decisions ride along (no code):
+
+- **MCP-7F2K** fingerprint over-trigger — approach decided (c→a) in
+  `.prawduct/artifacts/mcp-fingerprint-design.md`; backlog moved research→ready.
+  Root cause: server-side-only handlers (`handlers/analysis.py`,
+  `runs_server_side=True`, never executes in Live) are hashed into the version
+  fingerprint, prompting needless re-vendor.
+- **AUD-8K2N** — split `docs/capability-truth.md` Mix into *authoring* (any edition)
+  vs *measured review* (Max-for-Live only); the anti-hallucination spine had listed
+  the M4L-gated review as "✓ full" for Standard users. Build declined by design.
+
+24 unit tests for init-workspace (`tests/unit/tools/test_init_workspace.py`),
+including CLI-level `--no-gitignore` coverage. Full suite green this session.
+
 ## 2026-06-16 — Analyzer-infra robustness: master device-param re-push + captures-dir recency (sun-zone-done mix pass)
 
 <!-- prawduct: type=fix | chunks=master-device-analyzer-aware,captures-dir-recency | scope=mcp-handlers,sync-push,analysis,tests | status=merged -->

@@ -1,3 +1,9 @@
 """Hallucinote: DB-backed MIDI authoring with Ableton sync via MCP."""
 
-__version__ = "0.1.0"
+# Keep in lockstep with pyproject.toml [project].version and
+# .claude-plugin/plugin.json "version" — pyproject is the canonical source of
+# truth; tests/unit/test_version_parity.py fails if these drift. (NOT the same
+# as the MCP server's hallucinote_mcp.BASE_VERSION, which is a decoupled
+# wire-protocol epoch — bumping it per-release would force every Live user to
+# re-vendor the Remote Script.)
+__version__ = "1.5.0"

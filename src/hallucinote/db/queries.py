@@ -129,11 +129,16 @@ def get_arrangement_for_song(conn: sqlite3.Connection, song_id: str) -> list[sql
     """Return arrangement_clips rows joined with track + clip names. No Ableton
     info — sync-time bindings come from `ableton_links` via `get_ableton_link`.
 
+    Also joins ``c.kind AS clip_kind`` (matching `get_arrangement_for_track` /
+    `get_arrangement_for_clip`) so the push planner can exempt audio-clip
+    placements (no notes; CLP-AUD2 scope) from note propagation without a second
+    query per row.
+
     Ordering: `(track_id, start_bar, id)` — the trailing `id` tiebreaker
     makes the result deterministic when two placements share a position
     (which is rare but valid; see `get_arrangement_for_track`)."""
     return conn.execute(
-        """SELECT a.*, t.name AS track_name, c.name AS clip_name
+        """SELECT a.*, t.name AS track_name, c.name AS clip_name, c.kind AS clip_kind
            FROM arrangement_clips a
            JOIN tracks t ON t.id = a.track_id
            JOIN clips  c ON c.id = a.clip_id

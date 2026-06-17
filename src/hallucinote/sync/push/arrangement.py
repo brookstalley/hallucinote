@@ -27,7 +27,13 @@ def _arrangement_note_refresh_call(
     Returns ``None`` when the refresh can't apply: the placement's track or
     arrangement_clip link isn't recorded yet (it'll be created by the duplicate
     path, not refreshed), or the source clip is audio (no notes; CLP-AUD2 scope).
+
+    ``row`` must carry ``clip_kind`` (both feeding queries —
+    :func:`Q.get_arrangement_for_song` and :func:`Q.get_arrangement_for_clip` —
+    join it), so the audio check costs no extra query.
     """
+    if row["clip_kind"] == "audio":
+        return None
     track_at = Q.get_ableton_link(
         conn, session_id=session_id, db_kind="track", db_id=row["track_id"]
     )
@@ -35,9 +41,6 @@ def _arrangement_note_refresh_call(
         conn, session_id=session_id, db_kind="arrangement_clip", db_id=row["id"]
     )
     if track_at is None or arr_at is None:
-        return None
-    clip_row = Q.get_clip(conn, row["clip_id"])
-    if clip_row is None or clip_row["kind"] == "audio":
         return None
     notes = Q.get_notes_for_clip(conn, row["clip_id"])
     return ToolCall(

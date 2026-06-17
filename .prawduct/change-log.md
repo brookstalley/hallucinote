@@ -6,7 +6,7 @@
 
 ## 2026-06-17 — Durable nested-param overrides on a preset_query device (SNP-2H9F)
 
-<!-- prawduct: type=feat | chunks=SNP-2H9F | scope=capture,db-schema,db-mutations,db-queries,sync-push,docs,tests -->
+<!-- prawduct: type=feat | chunks=SNP-2H9F | scope=capture,db-schema,db-mutations,db-queries,sync-push,docs,tests | status=merged -->
 
 **Silent durability loss, fixed.** A by-ear param tweak NESTED inside a rack loaded
 via `preset_query` reverted on every from-scratch rebuild: a preset device has only

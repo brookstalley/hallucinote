@@ -169,6 +169,28 @@ def get_arrangement_for_track(conn: sqlite3.Connection, track_id: str) -> list[s
     ).fetchall()
 
 
+def get_arrangement_for_clip(conn: sqlite3.Connection, clip_id: str) -> list[sqlite3.Row]:
+    """Return every arrangement placement that copies one session clip.
+
+    An arrangement clip is a distinct Live copy of a session clip; one session
+    clip can be placed at several arrangement positions, so this returns N rows.
+    Used by the note-propagation path (PSH-6W2J): when a session clip's notes
+    change, each linked arrangement copy must be re-synced.
+
+    Joins ``c.kind AS clip_kind`` so the caller can exempt audio-clip
+    placements (no notes to push; CLP-AUD2 scope) without a second query.
+    Ordering ``(track_id, start_bar, id)`` mirrors ``get_arrangement_for_song``
+    for deterministic per-DB results."""
+    return conn.execute(
+        """SELECT a.*, c.kind AS clip_kind
+           FROM arrangement_clips a
+           JOIN clips c ON c.id = a.clip_id
+           WHERE a.clip_id = ?
+           ORDER BY a.track_id, a.start_bar, a.id""",
+        (clip_id,),
+    ).fetchall()
+
+
 def get_arrangement_placements_with_clip_length(
     conn: sqlite3.Connection, track_id: str
 ) -> list[sqlite3.Row]:

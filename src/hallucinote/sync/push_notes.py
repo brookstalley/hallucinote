@@ -218,6 +218,17 @@ def push_notes(
             result.errors.append({"clip_id": cid, "name": name, "error": str(exc)})
             continue
 
+        # PSH-6W2J: a note edit to a session clip must also reach its
+        # arrangement copies (distinct Live clips made by duplicate_to_arrangement).
+        # Append a replace_notes(location='arrangement') refresh per LINKED
+        # placement so the scoped compose loop propagates to the arrangement,
+        # not just the session clip. Unlinked placements (first push, before the
+        # arrangement phase materialized them) and audio sources emit nothing.
+        arr_plan = push.plan_push_arrangement_clip_notes(
+            conn, clip_id=cid, session_id=session_id
+        )
+        plan.calls.extend(arr_plan.calls)
+
         results_payload: list[dict[str, Any]] = []
         clip_ok = True
         for call in plan.calls:

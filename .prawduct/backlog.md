@@ -38,6 +38,11 @@ sections only via explicit `/backlog update` calls.
 
 ## Open
 
+- **[DEV-4P7R]** `param_overrides` can't durably carry a quantized continuous param whose raw range ≠ [0,1] and whose display is non-monotonic
+  `effort: M · impact: M · area: device/sync · source: user · added: 2026-06-17 · status: open · stage: ready · related: SNP-2H9F, DPP-7H2K, DEV-9K7N · refs: incoming-bugs/2026-06-17-param-overrides-cannot-carry-quantized-nonunit-range-param.md`
+
+  Residual facet of SNP-2H9F (PR #176), discovered while applying that fix to the swell `21 Voice Lead` case it was built for — **not a regression.** `param_overrides` (and `params_dialed`) can't durably carry a quantized continuous device-param whose raw range ≠ [0,1] AND whose display is non-monotonic (e.g. Wavetable `LFO S. Rate`: raw `8.0` → display `"1/2"`, range `[0,21]`). All three channels fail: the **display channel is refused at push** (`DisplayValueError`: non-monotonic); `value_normalized` is **clamped to [0,1] at storage** AND is **pushed as a RAW value anyway** (the push handler has no `value_normalized` kwarg — `value_type='continuous'` takes raw `value` in `[param.min, param.max]`), so neither continuous channel can express a raw-`8.0` target. Sibling of DPP-7H2K's non-monotonic-display refusal, but the distinguishing twist here is the **non-unit raw range** — the value lives outside `[0,1]` so the normalized channel can't carry it even unclamped, and the display channel is closed by monotonicity. **Proposed fix:** add an unclamped `value_raw` REAL column to `device_param_overrides` + `device_parameters`; a push branch that emits it as the raw `value`; capture/replay + pull auto-emit for the quantized-non-unit-range param class. **Verifiable signal:** a quantized continuous param with raw range ≠ [0,1] and non-monotonic display (Wavetable `LFO S. Rate` = `8.0`/`"1/2"`) round-trips DB→push→capture→DB durably via `value_raw`, surviving a from-scratch rebuild+push. (swell quantized-non-unit-range dogfood, user, 2026-06-17)
+
 - **[REC-4Z8Q]** Recurrence matcher never matches a zero-interval (repeated-pitch) motif — not even its home
   `effort: M · impact: M · area: recurrence · source: user · added: 2026-06-17 · status: open · stage: ready · related: ARR-9K4T, MEL-1A7K · refs: incoming-bugs/2026-06-14-recurrence-matcher-misses-zero-interval-repeated-pitch-motifs.md`
 

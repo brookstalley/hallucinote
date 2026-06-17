@@ -172,6 +172,55 @@ def test_empty_value_items_rejected(conn, preset_device):
             {"path": DEEP, "name": "X", "value_display": "1", "value_items": []}])
 
 
+# --- DEV-4P7R: the raw channel for a nested override ---
+
+def test_value_raw_override_stored_unclamped(conn, preset_device):
+    """The witness LFO S. Rate (raw 8.0, range [0,21]) stores on the raw channel
+    — value_raw UNCLAMPED, value_normalized NULL, display kept as a hint."""
+    M.replace_device_param_overrides(conn, device_id=preset_device, overrides=[
+        {"path": DEEP, "name": "LFO 1 S. Rate", "value_display": "1/2",
+         "value_raw": 8.0}])
+    row = Q.get_device_param_overrides(conn, preset_device)[0]
+    assert row["value_raw"] == pytest.approx(8.0)
+    assert row["value_normalized"] is None
+    assert row["value_display"] == "1/2"
+
+
+def test_value_raw_override_idempotent_no_new_event(conn, preset_device):
+    """The dedup signature includes value_raw, so re-replacing an identical raw
+    override is a no-op (no second event)."""
+    ov = [{"path": DEEP, "name": "LFO 1 S. Rate", "value_display": "1/2",
+           "value_raw": 8.0}]
+    M.replace_device_param_overrides(conn, device_id=preset_device, overrides=ov)
+    M.replace_device_param_overrides(conn, device_id=preset_device, overrides=ov)
+    assert len(_override_events(conn)) == 1
+
+
+def test_value_raw_change_re_emits(conn, preset_device):
+    """A value_raw change (display unchanged) is a content change → new event."""
+    M.replace_device_param_overrides(conn, device_id=preset_device, overrides=[
+        {"path": DEEP, "name": "LFO 1 S. Rate", "value_display": "1/2",
+         "value_raw": 8.0}])
+    M.replace_device_param_overrides(conn, device_id=preset_device, overrides=[
+        {"path": DEEP, "name": "LFO 1 S. Rate", "value_display": "1/2",
+         "value_raw": 4.0}])
+    assert len(_override_events(conn)) == 2
+
+
+def test_value_raw_override_rejects_normalized_pair(conn, preset_device):
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        M.replace_device_param_overrides(conn, device_id=preset_device, overrides=[
+            {"path": DEEP, "name": "X", "value_display": "1",
+             "value_raw": 8.0, "value_normalized": 0.38}])
+
+
+def test_value_raw_override_rejects_enum_pair(conn, preset_device):
+    with pytest.raises(ValueError, match="continuous"):
+        M.replace_device_param_overrides(conn, device_id=preset_device, overrides=[
+            {"path": DEEP, "name": "X", "value_display": "Tempo",
+             "value_raw": 1.0, "value_items": ["Free", "Tempo"]}])
+
+
 def test_duplicate_path_name_rejected(conn, preset_device):
     with pytest.raises(ValueError, match="duplicate"):
         M.replace_device_param_overrides(conn, device_id=preset_device, overrides=[

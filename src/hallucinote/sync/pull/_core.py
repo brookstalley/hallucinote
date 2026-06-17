@@ -137,6 +137,25 @@ def _normalized_values_match(
     return abs(float(new) - float(existing)) <= _FLOAT_EPS
 
 
+def _raw_values_match(
+    new: float | None, existing: Any,
+) -> bool:
+    """DEV-4P7R: same as :func:`_normalized_values_match` but for the UNCLAMPED
+    raw channel, where values carry native magnitude (a step index, a dB, a raw
+    Hz in the thousands) rather than a pre-scaled [0,1]. A purely absolute
+    ``_FLOAT_EPS`` tolerance would read Live's 4th-significant-digit jitter on a
+    large raw value (18000.0 vs 18000.0012) as a change and churn the row + an
+    event on every drift pull. Use a relative tolerance scaled to the magnitude
+    (floored at ``_FLOAT_EPS`` for small values), which still distinguishes
+    adjacent quantized steps (0.1% of 8 ~ 0.008 << the 1.0 step gap)."""
+    if new is None and existing is None:
+        return True
+    if new is None or existing is None:
+        return False
+    tol = max(_FLOAT_EPS, _FLOAT_EPS * abs(float(existing)))
+    return abs(float(new) - float(existing)) <= tol
+
+
 def _bool_db(v: Any) -> int | None:
     """Normalize an MCP boolean into the DB's 0/1 int convention."""
     if v is None:

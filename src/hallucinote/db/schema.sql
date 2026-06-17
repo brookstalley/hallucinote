@@ -440,6 +440,14 @@ CREATE TABLE IF NOT EXISTS device_parameters (
     value_normalized    REAL CHECK (value_normalized IS NULL
                                   OR (value_normalized >= 0.0 AND value_normalized <= 1.0)),
     value_items_json    TEXT,
+    -- DEV-4P7R: the raw continuous channel. Live's own param.value, UNCLAMPED
+    -- (no [0,1] CHECK) — the only authorable form for a quantized continuous
+    -- param whose raw range != [0,1] and whose display is non-monotonic (e.g.
+    -- Wavetable LFO S. Rate, raw 8.0 -> "1/2", range [0,21]). Pushed via
+    -- set_parameter's raw `value`. NULL for params on the display / normalized /
+    -- enum channels. Mutually exclusive with value_normalized + value_items_json
+    -- (enforced by set_device_parameter).
+    value_raw           REAL,
     UNIQUE(device_id, name)
 );
 
@@ -507,6 +515,10 @@ CREATE TABLE IF NOT EXISTS device_param_overrides (
     value_normalized    REAL CHECK (value_normalized IS NULL
                                   OR (value_normalized >= 0.0 AND value_normalized <= 1.0)),
     value_items_json    TEXT,
+    -- DEV-4P7R: raw continuous channel (see device_parameters.value_raw). The
+    -- whole point of param_overrides is a preset device's nested params, so the
+    -- quantized-non-unit-range class bites hardest here.
+    value_raw           REAL,
     UNIQUE(device_id, path_json, name)
 );
 

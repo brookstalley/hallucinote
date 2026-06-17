@@ -49,7 +49,7 @@ arrangement refresh (no `duplicate_to_arrangement`). Not a weakened test: a cont
 found to be wrong, corrected to match the fixed behavior.
 
 Resolves the report archived under
-`incoming-bugs/2026-06-15-note-changes-never-reach-arrangement-clips.md`.
+`incoming-bugs/archives/2026-06-15-note-changes-never-reach-arrangement-clips.md`.
 
 ## 2026-06-17 — Songs-workspace bootstrap (`hallucinote init-workspace`) + two doc-only decisions
 

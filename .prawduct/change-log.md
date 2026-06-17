@@ -4,6 +4,46 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-17 — Durable nested-param overrides on a preset_query device (SNP-2H9F)
+
+<!-- prawduct: type=feat | chunks=SNP-2H9F | scope=capture,db-schema,db-mutations,db-queries,sync-push,docs,tests -->
+
+**Silent durability loss, fixed.** A by-ear param tweak NESTED inside a rack loaded
+via `preset_query` reverted on every from-scratch rebuild: a preset device has only
+its top-level row in the DB (the preset instantiates the nested tree at push time),
+so the nested delta had no durable home, and capture's full `chains` dump dropped
+`preset_query` + the preset's un-parameterizable timbre (a Wavetable waveform is not
+a `DeviceParameter`) and bloated the snapshot. There was no clean snapshot shape for
+"load X from its portable preset, then override nested param P".
+
+New `param_overrides` representation on a device entry, end-to-end (NODE-ADDR Chunk B
+follow-on; folds into the same uniform-addressing release):
+
+- **Schema** — `device_param_overrides` table keyed `(device_id, path_json, name)`,
+  auto-migrating onto existing song DBs via `init_db`'s `CREATE TABLE IF NOT EXISTS`
+  (mirrors `drum_pad_mappings`); `DEVICE_PARAM_OVERRIDES_REPLACED` event registered
+  under the `device` row-kind so a pulled override protects the preset device from
+  the build sweep.
+- **Mutator + query** — `replace_device_param_overrides` (atomic, idempotent,
+  validating) + `get_device_param_overrides`.
+- **Replay** — `_replay_devices` lands overrides keeping `preset_query`; `chains` +
+  `param_overrides` on one device is a `ValueError` (contradictory representations).
+- **Push** — `_emit_param_override_writes` re-asserts each override via a
+  node-addressed `set_parameter` at its NodeAddr path after the preset loads — no
+  `create_device_chain`, so the preset's waveform/samples survive and nothing
+  duplicates. Shared `_param_value_kv`/`_param_value_fields` helpers so an override
+  dials identically to a top-level `params_dialed`.
+- **Capture** — `preserve_preset_overrides` carries `preset_query` forward and
+  rewrites the fresh `chains` dump into a flat `param_overrides` list; a
+  drum-rack-via-preset with authored per-chain props keeps its `chains` dump + warns
+  (a documented fast-follow).
+
+Verifiable signal met: a preset device's depth-2 override round-trips
+capture→replay→DB→push (fake-probe). 34 new tests; full suite 4037 passed.
+Docs: `docs/snapshot-schema.md`. Plan: `NODE-ADDR/snp-2h9f-slice.md`.
+**Deferred fast-follows** (tracked on SNP-2H9F): pull-symmetry (confirmed
+non-corrupting), drum-rack-chain-props, bounded preset-cache if over-capture bloats.
+
 ## 2026-06-17 — Note edits now propagate to arrangement clips (PSH-6W2J)
 
 <!-- prawduct: type=fix | chunks=PSH-6W2J | scope=sync-push,queries,tests | | status=merged -->

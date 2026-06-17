@@ -39,16 +39,21 @@ Chunk 01's `verify-api` step before any handler is written.
 
 ## Status
 
-- [ ] Chunk 01: Model sidechain source in the snapshot (durable round-trip — keystone)
+- [x] Chunk 01: Model sidechain source in the snapshot (durable round-trip — keystone)
 - [ ] Chunk 02: Capture warns + lists any sidechain it cannot represent (no silent drop)
 - [ ] Chunk 03: Delete `/snapshot-bake-recent-changes` + clean all references
 - [ ] Chunk 04: Reframe `/ableton-pull` as build.py-staging + document the one-bake model
 
-Context: Plan authored 2026-06-17 from the BAK-3M9T requirements pass. Nothing built
-yet. Start with Chunk 01 (thin vertical slice: capture → snapshot JSON → replay →
-existing push half). DB columns (`devices.sidechain_source_track_id` /
-`sidechain_source_channel`) and the push handler already exist (SDC-7K3M); this plan
-adds the snapshot JSON field + capture + replay-resolution, then consolidates skills.
+Context: Built on worktree `feat/snapshot-sidechain` (off develop); gates are worktree-blind
+so Critic runs via an independent Agent. **Chunk 01 DONE** (commit `dcfd16c`): capture probes
+`get_input_routing` → stores source by surface name (+ channel); `replay_capture` resolves
+name→track id in a deferred post-pass + clears on absence (snapshot authoritative). verify-api
+confirmed `_LATEST_ACTOR_EVENTS["device"]` already carries `device_sidechain_set` (no prod
+change) and the DB source is track-only (`REFERENCES tracks(id)`). 13 new tests; full suite
+4070 green. Independent Critic `final`: 0 blocking / 0 warning / 2 note (both accepted —
+idempotent clear-on-absence is safe; non-track-source drop is Chunk 02's warn). Operator
+round-trip queued (acceptance criterion 5). **Next: Chunk 02** — turn the capture-side
+non-track / unrepresentable drop into a `UserWarning` + re-apply list (no silent drop).
 
 ## Scaffolding
 

@@ -735,11 +735,18 @@ re-vendored server. On return, re-vendor then:
 
 ## BAK-3M9T Chunk 01 — sidechain source round-trips through the durable snapshot
 
+> **2026-06-17 — merged with this check PENDING (user-directed).** PR #178 was
+> merged into develop on the user's explicit "please merge" after being told the
+> Live round-trip is the remaining merge gate. This is **operator-accepted by
+> direction, NOT agent-Live-verified** — the round-trip below has **not** been run.
+> Re-verify next time Live is open; the unit tests only exercise a fake
+> `get_input_routing` probe (learning #7), so a Live-shape surprise is still possible.
+
 Visual change: yes (live external integration — a dialed sidechain SOURCE the unit
 tests verify only against a fake `get_input_routing` probe). This IS BAK-3M9T
 **acceptance criterion 5** (the end-to-end trap-category round-trip) for the
 sidechain category; fold the other trap categories in when the later chunks land.
-Branch `feat/snapshot-sidechain` (commit `dcfd16c`). On an attended Live run:
+Branch `feat/snapshot-sidechain` (merged as `90214d3`, PR #178). On an attended Live run:
 
 1. **Dial a real sidechain.** In a built song, add a Compressor to a track (e.g.
    Bass) and set its "Audio From" to ANOTHER track (e.g. Kick), pick a channel

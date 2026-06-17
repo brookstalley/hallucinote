@@ -839,6 +839,178 @@ def replace_drum_pad_mappings(
 
 
 # ---------------------------------------------------------------------------
+# SNP-2H9F: nested-param overrides on a preset_query device
+# ---------------------------------------------------------------------------
+# A preset device has only its top-level row in the DB (the preset instantiates
+# the nested tree at push time), so a by-ear tweak on a descendant can't ride
+# set_device_parameter — there's no nested device row to key on. These overrides
+# live in their own table, keyed by (device_id, descent path, name), and push
+# re-asserts each via a node-addressed set_parameter after the preset loads.
+# Replace-style (atomic full-set replace + one event), mirroring drum_pad_mappings.
+
+
+def _canonical_override_path(path: Any) -> list[dict[str, int]]:
+    """Validate + canonicalize a param override's descent path to a list of
+    ``{chain_index, device_position}`` int steps (1-based, DEEP-RACK-ADDR).
+
+    An override addresses a DESCENDANT of the preset device, so the path must be
+    NON-EMPTY (a top-level param is an ordinary ``params_dialed`` entry, not an
+    override). Extra keys on a step are dropped — the canonical form is exactly
+    the two index keys so ``path_json`` is stable for the UNIQUE constraint and
+    content-equality idempotency.
+    """
+    if not isinstance(path, (list, tuple)) or not path:
+        raise ValueError(
+            "param override path must be a non-empty list of "
+            f"{{chain_index, device_position}} steps, got {path!r}"
+        )
+    out: list[dict[str, int]] = []
+    for step in path:
+        if not isinstance(step, dict) or "chain_index" not in step \
+                or "device_position" not in step:
+            raise ValueError(
+                "param override path step must carry chain_index + "
+                f"device_position, got {step!r}"
+            )
+        ci = step["chain_index"]
+        dp = step["device_position"]
+        if not isinstance(ci, int) or isinstance(ci, bool) or ci < 1:
+            raise ValueError(
+                f"param override chain_index must be an int >= 1, got {ci!r}"
+            )
+        if not isinstance(dp, int) or isinstance(dp, bool) or dp < 1:
+            raise ValueError(
+                f"param override device_position must be an int >= 1, got {dp!r}"
+            )
+        out.append({"chain_index": ci, "device_position": dp})
+    return out
+
+
+def replace_device_param_overrides(
+    conn: sqlite3.Connection,
+    *,
+    device_id: str,
+    overrides: Sequence[dict[str, Any]],
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> list[str]:
+    """Atomic: delete every ``device_param_overrides`` row for ``device_id``,
+    insert the new set. Returns the new override ids in insertion order. One
+    ``DEVICE_PARAM_OVERRIDES_REPLACED`` event. Idempotent — a no-op (no event)
+    when the existing rows already match the incoming set by content (SNP-2H9F).
+
+    Each override dict: ``{path, name, value_display[, value_normalized]
+    [, value_items]}`` where ``path`` is the non-empty NodeAddr descent
+    (``[{chain_index, device_position}, ...]``) to a device nested inside the
+    preset. The value columns mirror ``set_device_parameter`` (value_display
+    always set; value_normalized for continuous params; value_items for enums).
+    """
+    actor, request_id = _resolve_actor_and_request(actor, request_id)
+    # (path_json, name, value_display, value_normalized, value_items_json)
+    incoming: list[tuple[str, str, str, float | None, str | None]] = []
+    seen: set[tuple[str, str]] = set()
+    for o in overrides:
+        path = _canonical_override_path(o.get("path"))
+        path_json = json.dumps(path)
+        name = o.get("name")
+        if not isinstance(name, str) or not name:
+            raise ValueError(
+                f"param override name must be a non-empty str, got {name!r}"
+            )
+        value_display = o.get("value_display")
+        if not isinstance(value_display, str):
+            raise ValueError(
+                f"param override {name!r}: value_display must be a str, "
+                f"got {value_display!r}"
+            )
+        value_normalized = o.get("value_normalized")
+        if value_normalized is not None:
+            if not isinstance(value_normalized, (int, float)) \
+                    or isinstance(value_normalized, bool) \
+                    or not (0.0 <= float(value_normalized) <= 1.0):
+                raise ValueError(
+                    f"param override {name!r}: value_normalized "
+                    f"{value_normalized!r} out of range [0.0, 1.0]"
+                )
+            value_normalized = float(value_normalized)
+        value_items = o.get("value_items")
+        value_items_json: str | None = None
+        if value_items is not None:
+            items_list = [str(item) for item in value_items]
+            if not items_list:
+                raise ValueError(
+                    f"param override {name!r}: value_items=[] is ambiguous — "
+                    "pass None for continuous params or a non-empty list of "
+                    "enum strings"
+                )
+            value_items_json = json.dumps(items_list)
+        key = (path_json, name)
+        if key in seen:
+            raise ValueError(
+                f"param override duplicate (path, name): "
+                f"path={path_json} name={name!r}"
+            )
+        seen.add(key)
+        incoming.append(
+            (path_json, name, value_display, value_normalized, value_items_json)
+        )
+    existing_rows = conn.execute(
+        """SELECT id, path_json, name, value_display, value_normalized,
+                  value_items_json
+             FROM device_param_overrides
+            WHERE device_id = ?""",
+        (device_id,),
+    ).fetchall()
+    existing_sig = {
+        (r["path_json"], r["name"], r["value_display"],
+         r["value_normalized"], r["value_items_json"])
+        for r in existing_rows
+    }
+    # Set equality (tuples carry None for normalized/items, so set membership —
+    # not sorted-list comparison — sidesteps None-vs-value ordering).
+    if existing_sig == set(incoming):
+        _record_touch_if_session("device", device_id)
+        return [r["id"] for r in existing_rows]
+    with transaction(conn):
+        prev_count = len(existing_rows)
+        conn.execute(
+            "DELETE FROM device_param_overrides WHERE device_id = ?",
+            (device_id,),
+        )
+        new_ids: list[str] = []
+        for path_json, name, vd, vn, vi_json in incoming:
+            oid = _uuid()
+            conn.execute(
+                """INSERT INTO device_param_overrides
+                       (id, device_id, path_json, name, value_display,
+                        value_normalized, value_items_json)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (oid, device_id, path_json, name, vd, vn, vi_json),
+            )
+            new_ids.append(oid)
+        song_id = _resolve_device_song(conn, device_id=device_id)
+        _emit(
+            conn,
+            E.DEVICE_PARAM_OVERRIDES_REPLACED,
+            {
+                "device_id": device_id,
+                "prev_count": prev_count,
+                "new_count": len(new_ids),
+                "override_ids": new_ids,
+            },
+            song_id=song_id,
+            actor=actor,
+            request_id=request_id,
+            reason=reason,
+        )
+        if song_id:
+            _touch_song(conn, song_id)
+    _record_touch_if_session("device", device_id)
+    return new_ids
+
+
+# ---------------------------------------------------------------------------
 # Mix: automation envelopes + breakpoints
 # ---------------------------------------------------------------------------
 # Unified shape per target_kind. The mutator validates that the right target

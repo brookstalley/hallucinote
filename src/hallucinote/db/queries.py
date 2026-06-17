@@ -718,6 +718,26 @@ def get_device_parameters(
     ).fetchall()
 
 
+def get_device_param_overrides(
+    conn: sqlite3.Connection,
+    device_id: str,
+) -> list[sqlite3.Row]:
+    """Return a preset device's nested-param overrides (SNP-2H9F), ordered by
+    (path_json, name) for deterministic push emission.
+
+    Each row: ``{id, device_id, path_json, name, value_display,
+    value_normalized, value_items_json}``. ``path_json`` is the JSON-encoded
+    NodeAddr descent (``[{chain_index, device_position}, ...]``) to the nested
+    device the override targets. Empty list for a device with no overrides
+    (the common case — only preset devices with by-ear nested tweaks have any).
+    """
+    return conn.execute(
+        """SELECT * FROM device_param_overrides
+           WHERE device_id = ? ORDER BY path_json, name""",
+        (device_id,),
+    ).fetchall()
+
+
 def get_drum_pad_mappings(
     conn: sqlite3.Connection,
     device_id: str,

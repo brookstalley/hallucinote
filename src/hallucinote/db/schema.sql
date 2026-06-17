@@ -473,6 +473,45 @@ CREATE TABLE IF NOT EXISTS drum_pad_mappings (
 
 CREATE INDEX IF NOT EXISTS idx_drum_pad_mappings_device ON drum_pad_mappings(device_id);
 
+-- SNP-2H9F: nested-param overrides on a `preset_query` (or `preset_uri`) device.
+--
+-- A device loaded from a portable preset has only its TOP-LEVEL row in the DB —
+-- the preset instantiates the whole nested tree at push time, so there is no
+-- nested `devices` row to hang a `device_parameters` row on. A by-ear tweak deep
+-- inside such a rack (e.g. a Wavetable LFO sync two levels down) therefore had no
+-- durable home: dumping the full `chains` tree to capture it drops the preset's
+-- un-parameterizable timbre (the Wavetable waveform is not a DeviceParameter) and
+-- bloats the snapshot. This table is that home: each row is one override applied
+-- to a descendant of the preset device, keyed by the descent `path` (NodeAddr,
+-- relative to the preset device) + the parameter `name`.
+--
+-- `path_json` is a JSON array of `{chain_index, device_position}` steps (1-based,
+-- DEEP-RACK-ADDR), e.g. `[{"chain_index":1,"device_position":1},
+-- {"chain_index":1,"device_position":1}]`. Mirrors `device_parameters`' value
+-- columns (value_display always set; value_normalized for continuous params;
+-- value_items_json for enums). Push re-asserts each override via a node-addressed
+-- `set_parameter` after the preset loads — no `create_device_chain`, so nothing
+-- duplicates and the preset waveform/samples survive (SNP-2H9F).
+--
+-- Replace-style: capture/replay/pull store the full non-default override set per
+-- device atomically (one DEVICE_PARAM_OVERRIDES_REPLACED event), like
+-- drum_pad_mappings. New tables auto-migrate onto existing song DBs via init_db's
+-- CREATE TABLE IF NOT EXISTS (no _ADDED_COLUMNS entry — that is for new columns).
+
+CREATE TABLE IF NOT EXISTS device_param_overrides (
+    id                  TEXT PRIMARY KEY,
+    device_id           TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    path_json           TEXT NOT NULL,
+    name                TEXT NOT NULL,
+    value_display       TEXT NOT NULL,
+    value_normalized    REAL CHECK (value_normalized IS NULL
+                                  OR (value_normalized >= 0.0 AND value_normalized <= 1.0)),
+    value_items_json    TEXT,
+    UNIQUE(device_id, path_json, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_device_param_overrides_device ON device_param_overrides(device_id);
+
 -- =============================================================================
 -- Mix: automation envelopes + breakpoints
 -- =============================================================================

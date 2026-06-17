@@ -165,6 +165,82 @@ def normalize_param_value(
     return max(0.0, min(1.0, norm))
 
 
+def _param_value_fields(
+    p: Any, *, device_name: Any, param_name: Any,
+) -> tuple[str, float | None, list[str] | None]:
+    """Translate one snapshot param spec ``{value, normalized?, value_items?}``
+    into the ``(value_display, value_normalized, value_items)`` the device
+    mutators store. Emits the BUG4 bare-numeric-value warning. Shared by the
+    top-level ``params_dialed`` replay and the nested ``param_overrides`` replay
+    (SNP-2H9F) so both translate identically.
+    """
+    if not isinstance(p, dict) or "value" not in p:
+        raise ValueError(
+            f"snapshot param {param_name!r} on device {device_name!r}: "
+            f"expected dict with 'value' key, got {p!r}"
+        )
+    normalized = p.get("normalized")
+    raw_items = p.get("value_items")
+    value_items = (
+        [str(item) for item in raw_items]
+        if isinstance(raw_items, (list, tuple))
+        else None
+    )
+    # BUG4 (params_dialed authoring trap): a bare numeric `value` with no
+    # `normalized` is stored as the DISPLAY string str(value) and pushed via
+    # the display path (push devices.py branch 2 → the live setter's curve
+    # inversion), which mis-dials a continuous param. The two correct author
+    # forms are an explicit `normalized` (for a 0..1 value) or a display
+    # STRING like "180 Hz" (the live setter inverts the log curve, DPP-7H2K).
+    value = p["value"]
+    if (
+        normalized is None
+        and isinstance(value, (int, float))
+        and not isinstance(value, bool)
+    ):
+        warnings.warn(
+            f"snapshot param {param_name!r} on device {device_name!r}: a bare "
+            f"numeric value {value!r} with no 'normalized' key is stored as "
+            f"the display string {str(value)!r} and pushed as a display value "
+            "(likely mis-dialing a continuous param). To author a NORMALIZED "
+            f'0..1 value add "normalized": {value}; to author a display value '
+            'use a string, e.g. "value": "180 Hz" (the push inverts it via the '
+            "live setter). See docs/snapshot-schema.md 'params_dialed'.",
+            UserWarning,
+            stacklevel=2,
+        )
+    return (
+        str(value),
+        float(normalized) if normalized is not None else None,
+        value_items,
+    )
+
+
+def _override_entry_for_replay(
+    o: Any, *, device_name: Any,
+) -> dict[str, Any]:
+    """Translate one snapshot ``param_overrides`` entry
+    (``{path, name, value[, normalized][, value_items]}``) into the override dict
+    ``replace_device_param_overrides`` stores (SNP-2H9F). The path is validated
+    by the mutator; here we require the entry shape and reuse the shared value
+    translation so an override dials identically to a top-level params_dialed."""
+    if not isinstance(o, dict) or "name" not in o or "path" not in o:
+        raise ValueError(
+            f"snapshot param_override on device {device_name!r}: expected a dict "
+            f"with 'path' and 'name', got {o!r}"
+        )
+    value_display, value_normalized, value_items = _param_value_fields(
+        o, device_name=device_name, param_name=o["name"],
+    )
+    return {
+        "path": o["path"],
+        "name": o["name"],
+        "value_display": value_display,
+        "value_normalized": value_normalized,
+        "value_items": value_items,
+    }
+
+
 def _replay_devices(
     conn: sqlite3.Connection,
     *,
@@ -241,55 +317,48 @@ def _replay_devices(
             reason=reason,
         )
         for name, p in (d.get("params_dialed") or {}).items():
-            if not isinstance(p, dict) or "value" not in p:
-                raise ValueError(
-                    f"snapshot param {name!r} on device {d.get('name')!r}: "
-                    f"expected dict with 'value' key, got {p!r}"
-                )
-            normalized = p.get("normalized")
-            raw_items = p.get("value_items")
-            value_items = (
-                [str(item) for item in raw_items]
-                if isinstance(raw_items, (list, tuple))
-                else None
+            value_display, value_normalized, value_items = _param_value_fields(
+                p, device_name=d.get("name"), param_name=name,
             )
-            # BUG4 (params_dialed authoring trap): a bare numeric `value` with no
-            # `normalized` is stored as the DISPLAY string str(value) and pushed via
-            # the display path (push devices.py branch 2 → the live setter's curve
-            # inversion), which mis-dials a continuous param. The two correct author
-            # forms are an explicit `normalized` (for a 0..1 value) or a display
-            # STRING like "180 Hz" (the live setter inverts the log curve, DPP-7H2K).
-            value = p["value"]
-            if (
-                normalized is None
-                and isinstance(value, (int, float))
-                and not isinstance(value, bool)
-            ):
-                warnings.warn(
-                    f"snapshot param {name!r} on device {d.get('name')!r}: a bare "
-                    f"numeric value {value!r} with no 'normalized' key is stored as "
-                    f"the display string {str(value)!r} and pushed as a display value "
-                    "(likely mis-dialing a continuous param). To author a NORMALIZED "
-                    f'0..1 value add "normalized": {value}; to author a display value '
-                    'use a string, e.g. "value": "180 Hz" (the push inverts it via the '
-                    "live setter). See docs/snapshot-schema.md 'params_dialed'.",
-                    UserWarning,
-                    stacklevel=2,
-                )
             M.set_device_parameter(
                 conn,
                 device_id=device_id,
                 name=name,
-                value_display=str(p["value"]),
-                value_normalized=(
-                    float(normalized) if normalized is not None else None
-                ),
+                value_display=value_display,
+                value_normalized=value_normalized,
                 value_items=value_items,
                 actor=actor,
                 request_id=request_id,
                 reason=reason,
             )
+        # SNP-2H9F: nested-param overrides on a preset-seeded device. A flat list
+        # of {path, name, value[, normalized][, value_items]} that keeps
+        # preset_query intact — push re-asserts each at its NodeAddr path after the
+        # preset loads (no chain creation, so the preset's waveform/samples
+        # survive). Mutually exclusive with `chains`: `chains` authors/dumps the
+        # nested tree, while `param_overrides` overrides params on the
+        # preset-instantiated tree in place — carrying both is contradictory.
+        overrides = d.get("param_overrides")
         nested = d.get("chains")
+        if overrides and nested:
+            raise ValueError(
+                f"snapshot device {d.get('name')!r} carries both `chains` and "
+                "`param_overrides` — they are contradictory representations "
+                "(`param_overrides` overrides params on a preset-loaded nested "
+                "tree in place; `chains` authors/dumps the tree). Author one."
+            )
+        if overrides:
+            M.replace_device_param_overrides(
+                conn,
+                device_id=device_id,
+                overrides=[
+                    _override_entry_for_replay(o, device_name=d.get("name"))
+                    for o in overrides
+                ],
+                actor=actor,
+                request_id=request_id,
+                reason=reason,
+            )
         if nested:
             if d["class"] not in RACK_CLASS_NAMES:
                 raise ValueError(
@@ -1161,7 +1230,11 @@ def assemble_snapshot_via_probes(
     devices) — but reaches device parameters at EVERY depth via NodeAddr `path`,
     closing the read-side acquisition gap. `old_snapshot`, when given, carries
     `browser_path` forward for devices whose identity still matches (capture
-    probes don't surface it), exactly as `/song-snapshot` did by hand.
+    probes don't surface it), exactly as `/song-snapshot` did by hand — and
+    (SNP-2H9F) for a device the prior snapshot loaded via `preset_query`, carries
+    that portable seed forward and rewrites the fresh `chains` dump into a flat
+    `param_overrides` list, so a by-ear nested tweak survives a rebuild without
+    dropping the preset's timbre or bloating the snapshot.
     """
     info = probe("ableton_session", "info")
     master_mixer = info.get("master")
@@ -1231,6 +1304,10 @@ def assemble_snapshot_via_probes(
     )
     if old_snapshot is not None:
         preserve_browser_paths(old_snapshot, snapshot)
+        # SNP-2H9F: a device the prior snapshot loaded via preset_query keeps its
+        # portable seed + by-ear nested deltas (param_overrides) instead of the
+        # fresh full chains dump (which drops the seed + the preset's timbre).
+        preserve_preset_overrides(old_snapshot, snapshot)
     return snapshot
 
 
@@ -1563,6 +1640,146 @@ def preserve_browser_paths(
             key = ("return", ri, int(d["index"]), d.get("class"))
             if key in old_paths:
                 d["browser_path"] = list(old_paths[key])
+
+
+# ---------------------------------------------------------------------------
+# SNP-2H9F: capture a preset device's nested deltas as param_overrides
+# ---------------------------------------------------------------------------
+# `assemble_snapshot_via_probes` dumps a full `chains` tree for EVERY rack and
+# never carries `preset_query` forward (live probes don't surface a device's
+# preset origin). For a device the prior snapshot loaded via `preset_query`, that
+# dump drops the portable seed AND the preset's un-parameterizable timbre (a
+# Wavetable waveform is not a DeviceParameter) and bloats. This post-compile
+# transform — the read-side sibling of the replay/push paths — restores
+# `preset_query` from the old snapshot and rewrites the fresh `chains` dump into a
+# flat `param_overrides` list (the by-ear nested deltas), so the snapshot stays
+# portable + small while the deep tweak survives a from-scratch rebuild.
+
+# Authored per-chain props (NODE-ADDR Chunk C/F: choke/out_note/mixer state) live
+# IN the chains structure and can't ride param_overrides (device params only). A
+# preset device whose dump carries any keeps its full `chains` dump rather than
+# lose them (a drum-rack-via-preset edge; the instrument-rack param case is the
+# SNP-2H9F target).
+_CHAIN_PROP_KEYS = ("choke_group", "out_note", "mute", "solo", "volume", "pan")
+
+
+def _collect_preset_queries(
+    snapshot: dict[str, Any],
+) -> dict[tuple[str, int, int, Any], Any]:
+    """Identity-keyed lookup of every top-level device carrying `preset_query`.
+    Key shape matches `_collect_browser_paths` — (parent_kind, parent_index,
+    device_index, class) — so a re-used slot with a different device doesn't
+    carry forward a stale seed."""
+    out: dict[tuple[str, int, int, Any], Any] = {}
+    for parent_kind, parents in (("track", snapshot.get("tracks")),
+                                 ("return", snapshot.get("returns"))):
+        for p in parents or []:
+            if "index" not in p:
+                continue
+            pidx = int(p["index"])
+            for d in p.get("devices") or []:
+                pq = d.get("preset_query")
+                if pq is None or "index" not in d:
+                    continue
+                out[(parent_kind, pidx, int(d["index"]), d.get("class"))] = pq
+    return out
+
+
+def _chains_carry_props(chains: list[dict[str, Any]] | None) -> bool:
+    """True if any chain (at any depth) in a captured dump carries an authored
+    Chunk C/F per-chain prop — those can't be expressed as param_overrides."""
+    for chain in chains or []:
+        if any(k in chain for k in _CHAIN_PROP_KEYS):
+            return True
+        for dev in chain.get("devices") or []:
+            if dev.get("chains") and _chains_carry_props(dev["chains"]):
+                return True
+    return False
+
+
+def _flatten_chains_to_overrides(
+    chains: list[dict[str, Any]] | None,
+    prefix_path: list[dict[str, int]],
+) -> list[dict[str, Any]]:
+    """Flatten a captured `chains` tree into a `param_overrides` list — one entry
+    per nested device's dialed param, carrying the NodeAddr descent `path` to that
+    device (chain_index from the chain, device_position from the device's 1-based
+    `index`). The params are already non-default-filtered by capture, so this is
+    the by-ear delta set (SNP-2H9F; design §8 — over-captures the preset's own
+    non-defaults until the bounded preset-cache lands)."""
+    out: list[dict[str, Any]] = []
+    for chain in chains or []:
+        ci = chain.get("chain_index")
+        if not isinstance(ci, int):
+            continue
+        for dev in chain.get("devices") or []:
+            dp = dev.get("index")
+            if not isinstance(dp, int):
+                continue
+            path = prefix_path + [{"chain_index": ci, "device_position": dp}]
+            for name, p in (dev.get("params_dialed") or {}).items():
+                entry: dict[str, Any] = {"path": path, "name": name,
+                                         "value": p["value"]}
+                if "normalized" in p:
+                    entry["normalized"] = p["normalized"]
+                if "value_items" in p:
+                    entry["value_items"] = p["value_items"]
+                out.append(entry)
+            if dev.get("chains"):
+                out.extend(_flatten_chains_to_overrides(dev["chains"], path))
+    return out
+
+
+def preserve_preset_overrides(
+    old: dict[str, Any],
+    new: dict[str, Any],
+) -> None:
+    """For each NEW top-level device whose matching OLD device was preset-seeded
+    (carried `preset_query`), carry that seed forward and convert the fresh
+    `chains` dump into a flat `param_overrides` list — dropping `chains` so the
+    snapshot keeps the portable preset + the by-ear nested deltas without the
+    preset's structure/timbre or the dump bloat (SNP-2H9F). Mutates `new`.
+
+    Skips conversion (keeps the full `chains` dump, preset_query NOT carried) when
+    the dump carries authored per-chain props, which can't ride param_overrides —
+    a drum-rack-via-preset edge, flagged via a warning, not silently dropped."""
+    old_presets = _collect_preset_queries(old)
+    if not old_presets:
+        return
+    for parent_kind, parents in (("track", new.get("tracks")),
+                                 ("return", new.get("returns"))):
+        for parent in parents or []:
+            if "index" not in parent:
+                continue
+            pidx = int(parent["index"])
+            for d in parent.get("devices") or []:
+                if "index" not in d:
+                    continue
+                key = (parent_kind, pidx, int(d["index"]), d.get("class"))
+                preset = old_presets.get(key)
+                if preset is None:
+                    continue
+                chains = d.get("chains")
+                if chains and _chains_carry_props(chains):
+                    warnings.warn(
+                        f"capture: preset device {d.get('name')!r} on "
+                        f"{parent_kind} {pidx} carries authored per-chain props "
+                        "(choke/out_note/mixer) that param_overrides can't "
+                        "express — keeping the full chains dump (its preset_query "
+                        "is not carried forward; SNP-2H9F covers preset device "
+                        "PARAMS, not preset drum-chain props).",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                    continue
+                # Carry the portable seed forward (lost by the live walk).
+                if "preset_query" not in d:
+                    d["preset_query"] = preset
+                if chains:
+                    overrides = _flatten_chains_to_overrides(chains, [])
+                    del d["chains"]
+                    if overrides:
+                        d["param_overrides"] = overrides
 
 
 # ---------------------------------------------------------------------------

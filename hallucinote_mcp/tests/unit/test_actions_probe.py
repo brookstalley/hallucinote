@@ -88,6 +88,17 @@ class FakeSong:
     def __init__(self) -> None:
         self.tempo = 120.0
         self.tracks = [FakeTrack(), FakeTrack()]
+        self._back_to_arranger = True
+
+    @property
+    def back_to_arranger(self) -> bool:
+        return self._back_to_arranger
+
+    @back_to_arranger.setter
+    def back_to_arranger(self, value) -> None:
+        # Mirror the real LOM quirk: the setattr is accepted (no exception)
+        # but silently ignored — only Live's GUI button clears the latch.
+        pass
 
 
 class FakeApplication:
@@ -248,10 +259,15 @@ class TestGet:
 
 
 class TestSet:
-    def test_primitive_write_returns_old_and_new(self):
+    def test_primitive_write_returns_old_new_and_changed(self):
         ctx = FakeCtx()
         out = set_handler(ctx, "song.tempo", 140.0)
-        assert out == {"path": "song.tempo", "old": 120.0, "new": 140.0}
+        assert out == {
+            "path": "song.tempo",
+            "old": 120.0,
+            "new": 140.0,
+            "changed": True,
+        }
         assert ctx.song.tempo == 140.0
 
     def test_bool_write(self):
@@ -259,9 +275,37 @@ class TestSet:
         set_handler(ctx, "song.tracks[0].arm", True)
         assert ctx.song.tracks[0].arm is True
 
+    def test_set_to_same_value_reports_unchanged_without_warning(self):
+        # A legitimate no-op (request == current): changed is False, but the
+        # write was NOT silently ignored, so no applied/warning flag.
+        ctx = FakeCtx()
+        out = set_handler(ctx, "song.tempo", 120.0)
+        assert out["changed"] is False
+        assert "applied" not in out
+        assert "warning" not in out
+
+    def test_silently_ignored_write_is_flagged(self):
+        # song.back_to_arranger accepts the setattr but Live drops it; the
+        # caller asked for a different value yet the read-back did not move.
+        ctx = FakeCtx()
+        out = set_handler(ctx, "song.back_to_arranger", False)
+        assert out["old"] is True
+        assert out["new"] is True
+        assert out["changed"] is False
+        assert out["applied"] is False
+        assert "did not land" in out["warning"]
+        assert "back_to_arranger" in out["warning"]
+
+    def test_silently_ignored_write_with_int_coercion_is_flagged(self):
+        # The reported case used value=0 against a bool latch (0 != True).
+        ctx = FakeCtx()
+        out = set_handler(ctx, "song.back_to_arranger", 0)
+        assert out["changed"] is False
+        assert out["applied"] is False
+
     def test_dollar_path_value(self):
         ctx = FakeCtx()
-        set_handler(
+        out = set_handler(
             ctx,
             "song.tracks[0].mixer_device.volume",
             {"$path": "song.tracks[1].mixer_device.volume"},
@@ -270,6 +314,20 @@ class TestSet:
             ctx.song.tracks[0].mixer_device.volume
             is ctx.song.tracks[1].mixer_device.volume
         )
+        # A $path (dict) request must NOT be no-op-flagged: the read-back is a
+        # LOM object, not comparable to the requested marker, so the scalar
+        # no-op guard excludes it. This pins the is_scalar_request exclusion.
+        assert "applied" not in out
+        assert "warning" not in out
+
+    def test_list_request_is_not_no_op_flagged(self):
+        # A list-valued request is likewise excluded from the scalar no-op
+        # check — the guard keys on "not a dict/list", so collection writes
+        # never get an applied/warning flag.
+        ctx = FakeCtx()
+        out = set_handler(ctx, "song.tracks[0].arm", [1, 2])
+        assert "applied" not in out
+        assert "warning" not in out
 
     def test_unknown_attribute_rejected_before_write(self):
         with pytest.raises(AttributeError, match="no attribute 'nonexistent'"):

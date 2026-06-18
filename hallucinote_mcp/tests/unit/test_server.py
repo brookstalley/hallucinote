@@ -214,6 +214,93 @@ def test_handle_tool_call_propagates_allow_version_mismatch_to_remote(
     assert forwarded_request.allow_version_mismatch is True
 
 
+def _register_set_tempo(isolated_registry):
+    from hallucinote_mcp.schema import Action, LiveOp, ParamSpec
+
+    isolated_registry.register(
+        Action(
+            tool="ableton_session",
+            name="set_tempo",
+            description="",
+            params=(ParamSpec(name="value", type="float"),),
+            declarative_op=LiveOp(
+                kind="property_write", target="song", property="tempo"
+            ),
+        )
+    )
+    isolated_registry.register_help_actions()
+
+
+def test_version_mismatch_refusal_refined_to_stale_server_hint(isolated_registry):
+    """A version-mismatch refusal whose ``code`` marks it as the handshake
+    error gets its hint rewritten when the server's OWN process is the stale
+    half — running fingerprint != on-disk fingerprint (MCP-8H4N)."""
+    from hallucinote_mcp.wire import Response, VERSION_MISMATCH_CODE
+
+    _register_set_tempo(isolated_registry)
+    refusal = Response(
+        ok=False,
+        error="Hallucinote MCP version mismatch: server reports X, RS is Y.",
+        hint="If the Remote Script side is stale: run /ableton-mcp-install ...",
+        code=VERSION_MISMATCH_CODE,
+    )
+    # Force the on-disk recompute to differ from the running __version__, i.e.
+    # the package changed under a still-running server process.
+    with patch(
+        "hallucinote_mcp.server.client.send", return_value=refusal
+    ), patch(
+        "hallucinote_mcp._compute_content_fingerprint", return_value="0000deadbeef"
+    ):
+        response = handle_tool_call("ableton_session", "set_tempo", {"value": 132.0})
+
+    assert response["ok"] is False
+    # The real fix (respawn the server) is prescribed...
+    assert "/mcp" in response["hint"]
+    # ...and re-vendoring is explicitly dismissed, not prescribed as the fix.
+    assert "will NOT help" in response["hint"]
+    # The machine code is preserved for any downstream consumer.
+    assert response["code"] == VERSION_MISMATCH_CODE
+
+
+def test_version_mismatch_refusal_kept_when_server_process_current(isolated_registry):
+    """When the server process is current (running fp == on-disk fp), the
+    refusal's original re-vendor hint is preserved — the override fires only
+    when the server side is genuinely the stale half."""
+    from hallucinote_mcp.wire import Response, VERSION_MISMATCH_CODE
+
+    _register_set_tempo(isolated_registry)
+    original_hint = "If the Remote Script side is stale: run /ableton-mcp-install ..."
+    refusal = Response(
+        ok=False,
+        error="Hallucinote MCP version mismatch: server reports X, RS is Y.",
+        hint=original_hint,
+        code=VERSION_MISMATCH_CODE,
+    )
+    # No fingerprint patch: import-time __version__ == fresh recompute, so the
+    # server process is NOT stale and the hint must pass through untouched.
+    with patch("hallucinote_mcp.server.client.send", return_value=refusal):
+        response = handle_tool_call("ableton_session", "set_tempo", {"value": 132.0})
+
+    assert response["hint"] == original_hint
+
+
+def test_non_version_error_is_not_refined(isolated_registry):
+    """An ordinary (non-handshake) error must pass through untouched even when
+    the server process happens to be stale — the override keys on ``code``."""
+    from hallucinote_mcp.wire import Response
+
+    _register_set_tempo(isolated_registry)
+    refusal = Response(ok=False, error="Track index out of range.", hint="check index")
+    with patch(
+        "hallucinote_mcp.server.client.send", return_value=refusal
+    ), patch(
+        "hallucinote_mcp._compute_content_fingerprint", return_value="0000deadbeef"
+    ):
+        response = handle_tool_call("ableton_session", "set_tempo", {"value": 132.0})
+
+    assert response["hint"] == "check index"
+
+
 def test_handle_tool_call_translates_connection_error(isolated_registry):
     """When the Remote Script is unreachable, surface a teaching error rather
     than letting the LiveConnectionError bubble up to the MCP client.

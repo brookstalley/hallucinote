@@ -1,6 +1,6 @@
 """hallucinote-mcp — unified Ableton Live MCP server.
 
-Twelve unified tools with action dispatch, designed for low-context-cost
+Thirteen unified tools with action dispatch, designed for low-context-cost
 agent interaction.
 
 ``__version__`` is composed of a semver-style base (``BASE_VERSION``) plus
@@ -143,8 +143,55 @@ def compute_version_for(pkg_root: Path) -> str | None:
     return f"{m.group(1)}+{_compute_content_fingerprint(pkg_root)}"
 
 
+def stale_server_process_hint(
+    running_version: str | None = None, pkg_root: Path | None = None
+) -> str | None:
+    """Diagnose a version mismatch as a stale *server process*, if it is one.
+
+    The version handshake fires on the Remote Script side, which sees only
+    two facts — the version the server *sent* and its own vendored version —
+    so its hint can only guess "the Remote Script is stale, re-vendor." But
+    there is a third fact only the server side holds: its **on-disk source**.
+    ``running_version`` (the cached ``__version__`` the process sent, frozen
+    at import) is compared to a *fresh* recompute of the on-disk source. When
+    they differ, the package was edited or pulled **after the server process
+    started**, so the process is running stale in-memory code — re-vendoring
+    re-emits source the Remote Script already has, and a Live restart does
+    nothing. The fix is to respawn the server.
+
+    Returns a remediation hint string when the server process is the stale
+    half, else ``None`` (the original "re-vendor the Remote Script" hint
+    stands). Never raises — an unreadable source tree fingerprints as
+    ``"unknown"``, which we treat as "cannot diagnose" rather than asserting
+    staleness on noise.
+    """
+    if running_version is None:
+        running_version = __version__
+    fresh_fp = _compute_content_fingerprint(pkg_root)
+    if fresh_fp == "unknown":
+        return None
+    on_disk = f"{BASE_VERSION}+{fresh_fp}"
+    if running_version == on_disk:
+        return None
+    return (
+        f"This MCP server PROCESS is stale: it is running code fingerprinted "
+        f"{running_version}, but the on-disk source now fingerprints "
+        f"{on_disk} — the hallucinote-mcp package was edited or pulled after "
+        f"the server started. Respawn the server with `/mcp` in Claude Code "
+        f"(or restart Claude Code). Re-vendoring the Remote Script "
+        f"(`/ableton-mcp-install`) and restarting Live will NOT help: the "
+        f"on-disk source already matches the vendored copy — only the running "
+        f"process is behind."
+    )
+
+
 # Re-export the tool registry constants for convenience.
 from . import schema as schema  # noqa: F401, E402  (import after __version__ to avoid cycle)
 
 
-__all__ = ["__version__", "BASE_VERSION", "compute_version_for"]
+__all__ = [
+    "__version__",
+    "BASE_VERSION",
+    "compute_version_for",
+    "stale_server_process_hint",
+]

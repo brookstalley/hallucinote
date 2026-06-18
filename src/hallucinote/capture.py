@@ -366,12 +366,25 @@ def _replay_devices(
             reason=reason,
         )
         # BAK-3M9T: defer sidechain-source resolution (the source may name a
-        # track created later in the replay loop). None → clear on the post-pass.
-        sidechain_pending.append((
-            device_id,
-            d.get("sidechain_source"),
-            d.get("sidechain_source_channel"),
-        ))
+        # track created later in the replay loop) to the post-pass.
+        #
+        # Snapshot SILENCE means "no opinion", not "clear". Only enqueue when the
+        # snapshot ENTRY actually declares `sidechain_source` — a device the
+        # snapshot says nothing about keeps whatever the DB already holds (e.g. a
+        # source authored in build.py via M.set_device_sidechain). Capture only
+        # writes the key when it FINDS a live source (~L1288 below), so an absent
+        # key is genuinely "unspoken"; clobbering it to null re-cleared every
+        # build.py-authored sidechain on every build, breaking converger
+        # idempotency for any song with a mix-pass sidechain.
+        # See incoming-bugs/2026-06-17-replay-capture-nulls-sidechain-source-breaking-converger-idempotency.md
+        # An explicit null value (a future capture that records "no source here")
+        # still clears on the post-pass — this is forward-compatible.
+        if "sidechain_source" in d:
+            sidechain_pending.append((
+                device_id,
+                d.get("sidechain_source"),
+                d.get("sidechain_source_channel"),
+            ))
         for name, p in (d.get("params_dialed") or {}).items():
             value_display, value_normalized, value_items, value_raw = \
                 _param_value_fields(
@@ -809,9 +822,11 @@ def replay_capture(
     # BAK-3M9T: apply each device's sidechain source now that every track exists.
     # The source is stored by surface name (never a per-build UUID), resolved here
     # against this song's tracks (the source is always a track — see
-    # set_device_sidechain / plan_pull_device_sidechain). A device with no
-    # `sidechain_source` clears any prior source (None), idempotently — the
-    # snapshot is authoritative.
+    # set_device_sidechain / plan_pull_device_sidechain). Only devices whose
+    # snapshot entry DECLARED `sidechain_source` reach this list (snapshot silence
+    # is "no opinion", not "clear" — see _replay_devices above); an explicit null
+    # source value DOES clear, idempotently. The snapshot is authoritative for what
+    # it declares, never for what it omits.
     for device_id, source_name, channel in sidechain_pending:
         if source_name is None:
             M.set_device_sidechain(

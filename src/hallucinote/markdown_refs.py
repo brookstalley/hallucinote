@@ -23,6 +23,7 @@ import hashlib
 import json
 import re
 import sqlite3
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -301,6 +302,25 @@ _DECISIONS_GLOB = "decisions/*.md"
 _ANNOTATIONS_GLOB = "annotations/*.md"
 _ATTEMPTS_GLOB = "attempts/*.md"
 
+# Corpus dir name -> kind for a frontmatter-LESS file. ONLY decisions qualify:
+# decisions are conventionally authored as a bare `# NN — Title` body (no `---`
+# header), so a missing header there is a supported shape, not a parse error.
+# annotations and attempts conventionally CARRY frontmatter — and an attempt's
+# REQUIRED `outcome`/`resolution` (enforced by `_build_frontmatter`) can't be
+# inferred from a bare body — so a missing header under those dirs is a genuine
+# authoring error: it falls through to `reindex_corpus`'s skip-and-warn rather
+# than minting a half-valid row the strict authoring path would reject.
+_KIND_BY_CORPUS_DIR = {
+    "decisions": "decision",
+}
+
+
+def _infer_kind_from_corpus_dir(path: Path) -> str | None:
+    """The `kind` for a frontmatter-less file, from its immediate parent dir.
+    None unless the file is directly under a dir where a missing header is a
+    SUPPORTED shape (only `decisions/` today) — see `_KIND_BY_CORPUS_DIR`."""
+    return _KIND_BY_CORPUS_DIR.get(path.parent.name)
+
 
 def discover_corpus(songs_root: Path) -> list[Path]:
     """Walk decisions/, annotations/, and attempts/ `*.md` for every song.
@@ -335,12 +355,35 @@ def discover_song_corpus(song_dir: Path) -> list[Path]:
 
 def load_markdown_doc(path: Path, *, repo_root: Path) -> MarkdownDoc:
     """Read + parse one file. `repo_root` is used to compute the relative
-    path stored in `markdown_refs.path`."""
+    path stored in `markdown_refs.path`.
+
+    Frontmatter is OPTIONAL for DECISIONS ONLY. A `decisions/*.md` that does not
+    open with a `---` header (the conventional bare `# NN — Title` body) is
+    indexed with a default Frontmatter — `kind` 'decision', `scope` 'song' — and
+    its FULL text as the searchable body, so `/song-context` FTS works over
+    frontmatter-less decisions. Every OTHER kind (annotation, attempt) requires
+    frontmatter — a missing header there raises (and `reindex_corpus` turns that
+    into a skip-and-warn). A file that DOES open with `---` is parsed strictly: a
+    malformed header or unknown key still raises (typo detection), and
+    `reindex_corpus` isolates that one bad file rather than aborting the corpus.
+    """
     text = path.read_text(encoding="utf-8")
-    try:
-        fm, body = parse_frontmatter(text)
-    except ValueError as exc:
-        raise ValueError(f"failed to parse {path}: {exc}") from exc
+    lines = text.splitlines()
+    if lines and lines[0].strip() == _FRONTMATTER_DELIM:
+        try:
+            fm, body = parse_frontmatter(text)
+        except ValueError as exc:
+            raise ValueError(f"failed to parse {path}: {exc}") from exc
+    else:
+        kind = _infer_kind_from_corpus_dir(path)
+        if kind is None:
+            raise ValueError(
+                f"failed to parse {path}: file has no '---' frontmatter. Only "
+                "decisions/ may omit it (indexed as a bare body); annotations "
+                "and attempts require frontmatter"
+            )
+        fm = Frontmatter(kind=kind, scope="song")
+        body = text.strip()
     relpath = str(path.relative_to(repo_root))
     return MarkdownDoc(
         path=path,
@@ -449,9 +492,15 @@ def reindex_corpus(
     scoped to that song's path prefix so reindexing one song never tombstones
     another song's rows in a shared DB.
 
-    Returns counts: {'upserted', 'tombstoned', 'unchanged'} for caller
-    logging. Atomic: all writes happen in one transaction; any file-parse
-    error raises before any DB state changes.
+    Returns counts: {'upserted', 'tombstoned', 'unchanged', 'skipped'} for
+    caller logging. A file that fails to parse (a malformed `---` header, an
+    unknown key) is SKIPPED with a `warnings.warn` — one bad doc must not blind
+    search to all the good ones — and is left out of tombstoning (it exists, it
+    is just unparseable, so its stale row stays put rather than being marked
+    deleted). The DB writes for the parseable docs happen atomically in one
+    transaction. (A frontmatter-less DECISION is NOT a skip — it indexes fine;
+    a frontmatter-less annotation/attempt IS a skip, since those kinds require
+    frontmatter. See `load_markdown_doc`.)
     """
     if (songs_root is None) == (song_dir is None):
         raise ValueError("pass exactly one of songs_root / song_dir")
@@ -461,8 +510,23 @@ def reindex_corpus(
     else:
         corpus = discover_corpus(songs_root)  # type: ignore[arg-type]
         tombstone_prefix = None
-    docs = [load_markdown_doc(p, repo_root=repo_root) for p in corpus]
-    on_disk_paths = {doc.relpath for doc in docs}
+    docs: list[MarkdownDoc] = []
+    skipped: list[str] = []
+    for p in corpus:
+        try:
+            docs.append(load_markdown_doc(p, repo_root=repo_root))
+        except ValueError as exc:
+            relpath = str(p.relative_to(repo_root))
+            skipped.append(relpath)
+            warnings.warn(
+                f"reindex_corpus: skipping unparseable corpus file {relpath}: "
+                f"{exc} — search will not cover it until it is fixed "
+                "(the rest of the corpus still indexed)",
+                stacklevel=2,
+            )
+    # A skipped file EXISTS (it is just unparseable), so keep its path in the
+    # on-disk set: it must not be tombstoned as if it had vanished.
+    on_disk_paths = {doc.relpath for doc in docs} | set(skipped)
 
     existing_rows = conn.execute(
         "SELECT path, content_hash, tombstoned_at FROM markdown_refs"
@@ -472,7 +536,7 @@ def reindex_corpus(
         for r in existing_rows
     }
 
-    counts = {"upserted": 0, "tombstoned": 0, "unchanged": 0}
+    counts = {"upserted": 0, "tombstoned": 0, "unchanged": 0, "skipped": len(skipped)}
 
     with transaction(conn):
         for doc in docs:

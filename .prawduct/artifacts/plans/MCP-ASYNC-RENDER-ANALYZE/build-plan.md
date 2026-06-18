@@ -27,8 +27,11 @@ current docs + an open bug, not recalled:
 - MCP **progress notifications are received but do NOT reset/extend** the
   tool-call timeout (Claude Code bug #58687).
 - The tool-call timeout is a **client-side, transport-agnostic wall-clock limit**
-  (`timeout` ms per server in `.mcp.json`; default very large, but the work here
-  is genuinely unbounded). Confirmed identical across **stdio, HTTP+SSE, and
+  (the per-server `timeout`; for this plugin-provided server it is **60s**, set in
+  `.claude-plugin/plugin.json` — NOT "very large"; that 60s is exactly what makes
+  the synchronous render false-fail. A user-configured server would carry it in
+  `.mcp.json` instead). The work here is genuinely unbounded. Confirmed identical
+  across **stdio, HTTP+SSE, and
   Streamable HTTP** — so changing transport changes nothing (HTTP/SSE even
   imposes a 60s first-byte minimum). **Transport is considered & rejected.**
 
@@ -47,7 +50,8 @@ how to poll** (user-confirmed direction):
    returning `running` — so the agent's loop is a handful of calls, not a busy
    spin. A concurrent unrelated call (e.g. `ableton_session(info)`) must **not**
    hang behind a running job.
-3. Raising the per-server `.mcp.json` `timeout` is a **complementary lever** (lets
+3. Raising the per-server `timeout` (here `.claude-plugin/plugin.json`'s 60s; in
+   `.mcp.json` for a user-configured server) is a **complementary lever** (lets
    the long-poll window be generous), **not** the fix — render is unbounded.
 
 This pattern is **transport-agnostic and notification-free**: it depends only on
@@ -104,6 +108,19 @@ Chunk 1's `verify-api` spike picks A or B on evidence. **Analyze has no such ris
 ## Chunks
 
 ### Chunk 1 — Keystone: job substrate + `ableton_render` start/status (de-risk on real Live)
+
+> **Status 2026-06-18 — substrate BUILT (no-Live), on `feat/async-render-analyze`.**
+> Done-when **#0** (verify-api → `api-notes.md`, mechanism **A** selected),
+> **#1** (`handlers/jobs.py` JobRegistry + `render_start_handler` /
+> `render_status_handler` reusing `_wait_for_capture` + `_write_status_json`;
+> `start`/`status` actions registered; server-side absolutize extended to
+> `start`; `status` socket read-timeout raised above the long-poll), and **#3**
+> (25 unit tests via a Live seam; full suite green) are DONE. **#2** is
+> design-confirmed (per-request sockets + thread-agnostic `run_on_main`) but its
+> Live confirmation, plus **#4** (real-Live operator-verify), are QUEUED in
+> `operator-verification.md` (needs an attended Live session + a re-vendor — the
+> wire-shape change flips the fingerprint). **#5** (Critic + commit) in progress.
+> Chunk 2 (analyze) reuses this substrate next.
 
 The thin vertical slice that proves the **entire** architecture (job registry →
 `start` returns immediately → `status` long-poll → agent-instruction text) on the

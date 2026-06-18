@@ -105,6 +105,19 @@ Chunk 1's `verify-api` spike picks A or B on evidence. **Analyze has no such ris
 
 ### Chunk 1 — Keystone: job substrate + `ableton_render` start/status (de-risk on real Live)
 
+> **Status 2026-06-18 — substrate BUILT (no-Live), on `feat/async-render-analyze`.**
+> Done-when **#0** (verify-api → `api-notes.md`, mechanism **A** selected),
+> **#1** (`handlers/jobs.py` JobRegistry + `render_start_handler` /
+> `render_status_handler` reusing `_wait_for_capture` + `_write_status_json`;
+> `start`/`status` actions registered; server-side absolutize extended to
+> `start`; `status` socket read-timeout raised above the long-poll), and **#3**
+> (25 unit tests via a Live seam; full suite green) are DONE. **#2** is
+> design-confirmed (per-request sockets + thread-agnostic `run_on_main`) but its
+> Live confirmation, plus **#4** (real-Live operator-verify), are QUEUED in
+> `operator-verification.md` (needs an attended Live session + a re-vendor — the
+> wire-shape change flips the fingerprint). **#5** (Critic + commit) in progress.
+> Chunk 2 (analyze) reuses this substrate next.
+
 The thin vertical slice that proves the **entire** architecture (job registry →
 `start` returns immediately → `status` long-poll → agent-instruction text) on the
 **hardest** case (render + single-threaded Live).

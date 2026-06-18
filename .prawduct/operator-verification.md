@@ -766,3 +766,45 @@ Branch `feat/snapshot-sidechain` (merged as `90214d3`, PR #178). On an attended 
 4. **Clear-on-absence.** Remove the sidechain in Live (Audio From → own track /
    No Input), `/song-snapshot` (field disappears), rebuild → confirm the sidechain
    is cleared, not stale (snapshot is authoritative).
+
+---
+
+## MCP-9R3T Chunk 1 — async render start/status against real Live
+
+Visual change: yes (agent-facing `start`/`status` result shape + live transport
+behavior). Branch `feat/async-render-analyze`. The substrate (job registry +
+`ableton_render` start/status) is unit-tested with a Live seam; the keystone —
+**mechanism A: a detached worker keeps the render alive after `start` returns** —
+is verify-api-confirmed FROM CODE (`run_on_main` is thread-agnostic; the
+scheduler outlives the request) but the realtime behavior under load needs a live
+session. Requires a re-vendor first (`start`/`status` change `ableton_render`'s
+wire shape → the fingerprint flips → `/ableton-mcp-install` + Live restart).
+
+On an attended Live run with a built multi-minute song:
+
+1. **`start` returns immediately.** `ableton_render(action='start', song_slug=…)`
+   → returns in < ~3 s with `{job_id, captures_dir, eta_seconds,
+   expected_stop_beat, poll}` while the transport is rolling — NOT after the full
+   render. Confirm the render actually started (transport playing, analyzers
+   armed).
+
+2. **`status` long-polls and advances.** `ableton_render(action='status',
+   job_id=…)` returns `state='running'` with `progress.current_beat` advancing
+   across successive polls; each call returns within ~45 s. Terminal poll returns
+   `state='done'` with a well-formed `manifest` (and `manifest_path` on disk) —
+   **no false failure**, where the synchronous `render` would have red-timed-out.
+
+3. **KEYSTONE — concurrency (build-plan Done-when #2).** While a render is
+   running, issue a concurrent `ableton_session(action='info')` → it must RETURN
+   promptly, not hang to timeout behind the render worker. (Per-request sockets +
+   thread-agnostic `run_on_main` say it should interleave; this is the one fact
+   only Live settles. If it DOES hang, fall back to mechanism B — the long-poll
+   `status` is already built, so only the worker spawn is removed.)
+
+4. **Busy + failure shapes.** A second `start` while one is running returns
+   `{busy: true, job_id}` (no second transport pass). A render that captures zero
+   frames lands `state='failed'` with the error in `status`, not a hang.
+
+5. **`status.json` heartbeat still written.** Confirm `<captures_dir>/status.json`
+   updates during the render (the registry progress mirrors it) and lands terminal
+   at the end — the crash-resilient backing for the in-memory registry.

@@ -38,6 +38,16 @@ class Job:
     """One async job. Mutable: the worker thread advances ``state``/``progress``
     while ``status`` polls read it; the registry lock guards every field write.
 
+    **Concurrency invariant.** Readers (``start_result`` / ``status_result``)
+    read these fields WITHOUT the lock. That is safe only because every write is
+    a whole-reference SWAP (``job.progress = dict(...)``, ``job.state = ...``,
+    never an in-place ``job.progress[k] = v`` / ``job.result`` mutation), so a
+    reader sees the old or new object atomically under CPython's GIL — never a
+    torn one. The terminal ``result``/``error`` read is additionally ordered
+    behind ``terminal_event.set()``. Keep it that way: never mutate ``progress``
+    or ``result`` in place. (A free-threaded / no-GIL build would need an
+    explicit per-read lock here.)
+
     The wire-facing state vocabulary is ``running | done | failed`` (NOT the
     on-disk ``status.json`` ``error`` legacy term — the render worker maps
     ``error -> failed`` when it lands the terminal record).

@@ -166,6 +166,32 @@ def test_status_writer_mirrors_progress_to_registry_and_disk(tmp_path):
     assert (tmp_path / "status.json").exists()
 
 
+def test_terminal_heartbeat_does_not_leak_into_progress(tmp_path):
+    # The worker's status writer mirrors only RUNNING heartbeats into
+    # job.progress; the terminal done/error write is reflected via state +
+    # result, so terminal metadata must not contaminate the progress payload.
+    reg = JobRegistry()
+    spawned, spawn = _capturing_spawn()
+
+    def render_with_terminal_write(context, *, output_dir, _status_writer=None, **kw):
+        _status_writer(Path(output_dir), {"state": "running", "current_beat": 8})
+        # The real render writes a terminal status.json before returning.
+        _status_writer(Path(output_dir), {"state": "done", "manifest_path": "x"})
+        return {"captures_dir": output_dir, "manifest_path": "x",
+                "manifest": {"surfaces": 1}, "status": "ok"}
+
+    out = render_start_handler(
+        FakeCtx(), song_slug="s", output_dir=str(tmp_path), stop_at_beat=64,
+        _registry=reg, _render_fn=render_with_terminal_write, _spawn=spawn,
+    )
+    spawned[0]()
+    job = reg.get(out["job_id"])
+    assert job.state == "done"
+    # Progress retains the last RUNNING heartbeat, not the terminal write.
+    assert job.progress == {"state": "running", "current_beat": 8}
+    assert "manifest_path" not in job.progress
+
+
 def test_expected_stop_beat_falls_back_to_content_end(tmp_path):
     reg = JobRegistry()
     spawned, spawn = _capturing_spawn()

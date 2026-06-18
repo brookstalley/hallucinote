@@ -101,17 +101,22 @@ layer; the on-disk `status.json` uses `error` (legacy) — the worker maps
 ```
 { job_id, kind, state,
   progress: {...},
-  captures_dir | report_path,
-  manifest?: {...},     # render, state=done
-  report?:   {...},     # analyze, state=done (summary; full JSON on disk)
-  error?:    str }      # state=failed
+  captures_dir | report_dir,         # the dir, always (symmetric with start)
+  manifest?, manifest_path?,         # render, state=done
+  report?,   report_path?,           # analyze, state=done (summary; full JSON on disk)
+  error?: str }                      # state=failed
 ```
 
-`status` **long-polls**: it waits internally up to ~45s (well under the tool
-timeout) for the state to leave `running` before returning, so the agent loop is
-a handful of calls, not a busy spin. An unknown `job_id` returns a structured
-error naming the most recent known jobs. A concurrent unrelated MCP call must
-not block behind a running job (Done-when #2).
+`status` **long-polls**: it waits internally up to ~45s for the state to leave
+`running` before returning, so the agent loop is a handful of calls, not a busy
+spin. That 45s is sized **under the 60s per-tool-call timeout** set in
+`.claude-plugin/plugin.json` (the very limit that makes the synchronous render
+false-fail), leaving ~15s for forward + serialize round-trip; the `status`
+socket read-timeout (`client._STATUS_READ_TIMEOUT`, 60s) sits just above the
+long-poll so the socket never severs the wait. To widen the window, raise the
+long-poll, the socket timeout, AND plugin.json's `timeout` together. An unknown
+`job_id` returns a structured error naming the most recent known jobs. A
+concurrent unrelated MCP call must not block behind a running job (Done-when #2).
 
 ## Disposition (build-plan open assumptions — building on the stated defaults)
 - **Retire synchronous `render`** in favor of `start`/`status` (no back-compat

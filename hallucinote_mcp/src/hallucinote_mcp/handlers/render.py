@@ -763,6 +763,13 @@ def render_handler(
 # on a detached worker and returns a job handle immediately; `status`
 # long-polls the job registry. See
 # .prawduct/artifacts/plans/MCP-ASYNC-RENDER-ANALYZE/api-notes.md.
+# The status long-poll window. Must stay UNDER the per-tool-call timeout the
+# agent enforces — `.claude-plugin/plugin.json` sets hallucinote-mcp's to 60s
+# (the very limit that makes the synchronous render false-fail). 45s leaves
+# ~15s for forward + serialize overhead. The `status` socket read-timeout
+# (_STATUS_READ_TIMEOUT in client.py) sits just above this so the socket never
+# severs the poll mid-wait. To widen the window, raise BOTH and plugin.json's
+# `timeout` together.
 _DEFAULT_STATUS_LONG_POLL_S = 45.0
 
 RENDER_POLL_INSTRUCTION = (
@@ -822,6 +829,11 @@ def render_start_handler(
     render_fn = _render_fn if _render_fn is not None else render_handler
     spawn = _spawn if _spawn is not None else _spawn_daemon
 
+    # One render at a time. NOTE: active()-then-create() is not atomic, so two
+    # near-simultaneous starts could both pass the check — accepted under the
+    # single-agent start->poll->poll pattern this serves (api-notes
+    # "Disposition"). Make it an atomic registry.create_if_idle if multi-agent
+    # rendering ever lands.
     existing = registry.active("render")
     if existing is not None:
         return {
@@ -866,11 +878,15 @@ def render_start_handler(
 
     def _status_writer(captures_dir: Path, status: dict[str, Any]) -> None:
         # Keep the on-disk heartbeat (crash-resilient / direct dir-watchers)
-        # AND mirror progress into the in-memory registry the status action
-        # reads. Best-effort, never render-affecting (the disk writer already
-        # swallows OSError; the registry update is a plain dict swap).
+        # AND mirror live progress into the in-memory registry the status
+        # action reads. Best-effort, never render-affecting (the disk writer
+        # already swallows OSError; the registry update is a plain dict swap).
+        # Only RUNNING heartbeats become job.progress — the terminal done/error
+        # write is reflected via mark_done/mark_failed (state + result/error),
+        # so it must not leak terminal metadata into the progress payload.
         _write_status_json(captures_dir, status)
-        registry.update_progress(job.job_id, status)
+        if status.get("state") == "running":
+            registry.update_progress(job.job_id, status)
 
     def _worker() -> None:
         try:

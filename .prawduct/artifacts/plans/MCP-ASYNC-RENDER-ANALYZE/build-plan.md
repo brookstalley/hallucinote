@@ -27,8 +27,11 @@ current docs + an open bug, not recalled:
 - MCP **progress notifications are received but do NOT reset/extend** the
   tool-call timeout (Claude Code bug #58687).
 - The tool-call timeout is a **client-side, transport-agnostic wall-clock limit**
-  (`timeout` ms per server in `.mcp.json`; default very large, but the work here
-  is genuinely unbounded). Confirmed identical across **stdio, HTTP+SSE, and
+  (the per-server `timeout`; for this plugin-provided server it is **60s**, set in
+  `.claude-plugin/plugin.json` — NOT "very large"; that 60s is exactly what makes
+  the synchronous render false-fail. A user-configured server would carry it in
+  `.mcp.json` instead). The work here is genuinely unbounded. Confirmed identical
+  across **stdio, HTTP+SSE, and
   Streamable HTTP** — so changing transport changes nothing (HTTP/SSE even
   imposes a 60s first-byte minimum). **Transport is considered & rejected.**
 
@@ -47,7 +50,8 @@ how to poll** (user-confirmed direction):
    returning `running` — so the agent's loop is a handful of calls, not a busy
    spin. A concurrent unrelated call (e.g. `ableton_session(info)`) must **not**
    hang behind a running job.
-3. Raising the per-server `.mcp.json` `timeout` is a **complementary lever** (lets
+3. Raising the per-server `timeout` (here `.claude-plugin/plugin.json`'s 60s; in
+   `.mcp.json` for a user-configured server) is a **complementary lever** (lets
    the long-poll window be generous), **not** the fix — render is unbounded.
 
 This pattern is **transport-agnostic and notification-free**: it depends only on

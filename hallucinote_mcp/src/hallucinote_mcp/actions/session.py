@@ -5,8 +5,9 @@ the arrangement-loop region, and snapshot/revert (deferred — design doc §14.6
 
 Mostly declarative — the dispatcher reads each ``LiveOp`` and walks the
 ``Live.Song.Song`` graph. The handler functions (``info``,
-``set_master_property``, ``seek``, ``set_signature``,
-plus the snapshot trio) live in ``handlers/session.py``.
+``set_master_property``, ``seek``, ``play``, ``continue_playing``,
+``back_to_arrangement``, ``set_signature``, plus the snapshot trio) live in
+``handlers/session.py``.
 
 Importing this module registers all actions; happens once at server boot
 via ``actions/__init__.py``.
@@ -209,12 +210,36 @@ register(
     Action(
         tool="ableton_session",
         name="play",
-        description="Start playback from the current song position.",
-        declarative_op=LiveOp(
-            kind="method_call", target="song", method="start_playing",
-            result_template={"is_playing": True},
+        description=(
+            "Start playback (Live's *Start*) — from the Arrangement Start "
+            "Marker, NOT from a seeked position. Returns started_from."
         ),
+        handler=session_handlers.play_handler,
         example="ableton_session(action='play')",
+        tips=(
+            "play does NOT honor a preceding seek — it restarts at the Start "
+            "Marker. To audition from a specific bar, seek then "
+            "continue_playing.",
+        ),
+    )
+)
+
+register(
+    Action(
+        tool="ableton_session",
+        name="continue_playing",
+        description=(
+            "Resume playback (Live's *Continue*) — from the current playhead. "
+            "This is the play call that honors a preceding seek. Returns "
+            "started_from."
+        ),
+        handler=session_handlers.continue_playing_handler,
+        example="ableton_session(action='continue_playing')",
+        tips=(
+            "seek(bar=X) then continue_playing is the 'locate to bar X and "
+            "play from there' gesture — plain play would jump back to the "
+            "Start Marker.",
+        ),
     )
 )
 
@@ -228,6 +253,30 @@ register(
             result_template={"is_playing": False},
         ),
         example="ableton_session(action='stop')",
+    )
+)
+
+register(
+    Action(
+        tool="ableton_session",
+        name="back_to_arrangement",
+        description=(
+            "Re-engage Arrangement playback after a Session clip overrode a "
+            "track (clears the back_to_arranger latch + re-enables overridden "
+            "automation). Reports whether Live honored the API clear — in Live "
+            "12.x the latch may only clear via the GUI Back to Arrangement "
+            "button, in which case the result teaches that instead of failing "
+            "silently."
+        ),
+        handler=session_handlers.back_to_arrangement_handler,
+        example="ableton_session(action='back_to_arrangement')",
+        tips=(
+            "Use this when a pushed Arrangement clip shows greyed/silent while "
+            "the transport rolls ('transport moving, no audio') — a leftover "
+            "firing Session clip is overriding the Arrangement lane.",
+            "If cleared:false comes back, the API could not clear the latch — "
+            "click Live's Back to Arrangement button in the transport bar.",
+        ),
     )
 )
 

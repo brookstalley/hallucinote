@@ -165,6 +165,58 @@ as `preset_uri`. Display-name matching only works for the built-in roots
 These are pure-math timing transforms. Hallucinote owns the math; push the
 result via `replace_notes`. See `ableton://guides/gaps` for the rationale.
 
+## Transport: Start vs Continue, and "play from bar X"
+
+Live distinguishes two ways to start the transport, and the MCP actions mirror
+them — each result reports `started_from` so you don't have to guess:
+
+| Action | Live verb | Starts from | `started_from` |
+|---|---|---|---|
+| `ableton_session(action='play')` | **Start** | the Arrangement **Start Marker** | `start_marker` |
+| `ableton_session(action='continue_playing')` | **Continue** | the **current playhead** | `playhead` |
+
+**`play` does NOT honor a preceding `seek`.** `seek` moves `current_song_time`,
+but `play` (Start) jumps back to the Start Marker and `continue_playing`
+(Continue) resumes from the playhead. So **to audition from a specific bar**:
+
+```
+ableton_session(action='seek', bar=243)
+ableton_session(action='continue_playing')   # NOT play — play restarts at the Start Marker
+```
+
+(`current_song_time` also cannot be moved via `ableton_probe(action='set')` — that
+write is silently ignored; use `seek`.)
+
+## Recovering from a Session-clip override ("transport moving, no audio")
+
+When a **Session clip fires** on a track whose real content lives in the
+**Arrangement**, Live engages the global **`back_to_arranger`** latch: every
+overridden track ignores its Arrangement lane and goes silent (the lane shows
+**greyed out**), even as the transport rolls. The classic symptom is a healthy
+Arrangement clip sitting under the playhead that won't sound.
+
+Stopping the Session clip is **not** enough — `ableton_clip(action='stop')` and
+`song.stop_all_clips()` stop the clip but leave the latch engaged (they return
+`still_overridden: true` when that's the case). The latch **cannot be cleared
+through the Live API** in Live 12.x — `ableton_probe(action='set',
+path='song.back_to_arranger', value=0)` is accepted without error and silently
+ignored (it returns `applied: false`).
+
+Recovery:
+
+```
+ableton_session(action='back_to_arrangement')
+```
+
+This does what Live's **Back to Arrangement** transport button does (clears the
+latch + re-enables overridden automation) and reports `cleared`. If it comes back
+`cleared: false`, the Live build did not honor the API clear — **click the Back to
+Arrangement button** in Live's transport bar, then `continue_playing`. (To avoid
+the trap entirely, delete or disarm a leftover preview Session clip after you
+duplicate it to the Arrangement.) `ableton_session(action='info')` reports
+`back_to_arranger` and, when latched, an `arrangement_override` block naming the
+recovery.
+
 ## Routing & busses — prefer a PRE-MAIN bus over the master
 
 Live's **master, group, and return tracks are clip-less summing points**: they

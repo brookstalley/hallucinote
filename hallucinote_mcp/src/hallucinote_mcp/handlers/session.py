@@ -27,6 +27,11 @@ import re as _re
 from typing import Any
 
 from ..dispatcher import LiveContext
+from ._arrangement_latch import (
+    CLICK_BACK_TO_ARRANGEMENT,
+    OVERRIDE_DESCRIPTION,
+    is_overridden,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -46,7 +51,8 @@ def info_handler(context: LiveContext) -> dict[str, Any]:
     master = song.master_track
     master_mixer = master.mixer_device
 
-    return {
+    overridden = is_overridden(song)
+    snapshot: dict[str, Any] = {
         "tempo": float(song.tempo),
         "signature": {
             "numerator": int(song.signature_numerator),
@@ -54,6 +60,11 @@ def info_handler(context: LiveContext) -> dict[str, Any]:
         },
         "is_playing": bool(song.is_playing),
         "current_song_time": float(song.current_song_time),
+        # The Arrangement-override latch. A bare ``True`` here is the silent
+        # cause of "transport moving, no audio" — so when it is engaged we
+        # also surface a named, recoverable state rather than leaving the
+        # agent to interpret the bool (MCP-7P3R direction 4).
+        "back_to_arranger": overridden,
         "loop": {
             "enabled": bool(song.loop),
             "start": float(song.loop_start),
@@ -68,6 +79,16 @@ def info_handler(context: LiveContext) -> dict[str, Any]:
         "scene_count": len(song.scenes),
         "focused_view": _focused_view(context),
     }
+    if overridden:
+        snapshot["arrangement_override"] = {
+            "latched": True,
+            "note": (
+                f"{OVERRIDE_DESCRIPTION} {CLICK_BACK_TO_ARRANGEMENT} "
+                f"ableton_session(action='back_to_arrangement') attempts the "
+                f"API clear and reports whether Live honored it."
+            ),
+        }
+    return snapshot
 
 
 def _focused_view(context: LiveContext) -> str:
@@ -195,6 +216,100 @@ def seek_handler(
     with context.live_state_lock:
         song_time = context.run_on_main(_compute_and_seek_on_main)
     return {"bar": bar, "beat": beat, "song_time": song_time}
+
+
+# ---------------------------------------------------------------------------
+# transport: play / continue_playing
+#
+# Both are handler actions (not declarative LiveOps) so they can return a
+# ``started_from`` teaching field. Live distinguishes *Start* (play, from the
+# Arrangement Start Marker) from *Continue* (continue_playing, from the current
+# playhead) — neither honors a ``seek`` the way an agent auditioning a section
+# expects. Surfacing which one happened lets the agent stop fighting it
+# (MCP-7P3R directions 2 + 4). The dispatcher runs these on the main thread.
+# ---------------------------------------------------------------------------
+
+_PLAY_SEMANTICS_NOTE = (
+    "play = Start: playback begins at the Arrangement Start Marker, NOT a "
+    "position you set with seek. continue_playing = Continue: playback resumes "
+    "from the current playhead. To audition from a specific bar, "
+    "ableton_session(action='seek', bar=…) then "
+    "ableton_session(action='continue_playing') — play would jump back to the "
+    "Start Marker."
+)
+
+
+def play_handler(context: LiveContext) -> dict[str, Any]:
+    """Start playback from the Arrangement Start Marker (Live's *Start*)."""
+    context.song.start_playing()
+    return {
+        "is_playing": True,
+        "started_from": "start_marker",
+        "note": _PLAY_SEMANTICS_NOTE,
+    }
+
+
+def continue_playing_handler(context: LiveContext) -> dict[str, Any]:
+    """Resume playback from the current playhead (Live's *Continue*).
+
+    This is the play call that honors a preceding ``seek`` — together they are
+    the "locate to bar X and play from there" gesture that plain ``play`` (which
+    restarts from the Start Marker) cannot provide.
+    """
+    context.song.continue_playing()
+    return {
+        "is_playing": True,
+        "started_from": "playhead",
+        "note": _PLAY_SEMANTICS_NOTE,
+    }
+
+
+# ---------------------------------------------------------------------------
+# back_to_arrangement — recover from a Session-clip override of the Arrangement
+# ---------------------------------------------------------------------------
+
+
+def back_to_arrangement_handler(context: LiveContext) -> dict[str, Any]:
+    """Re-engage Arrangement playback after a Session clip overrode a track.
+
+    Does what Live's **Back to Arrangement** button does — clears the global
+    ``back_to_arranger`` latch and re-enables any overridden automation — then
+    reads the latch back and reports honestly whether Live honored it. In Live
+    12.x the property write is silently ignored (a LOM quirk, not a threading
+    one — this handler already runs on the main thread), so the API clear may
+    not stick; when it doesn't, we return ``cleared: False`` with a teaching
+    ``warning`` naming the GUI button rather than a misleading ``ok``. (Direction
+    1 of MCP-7P3R.)
+    """
+    song = context.song
+    if not is_overridden(song):
+        return {
+            "cleared": True,
+            "was_latched": False,
+            "note": "Arrangement was not overridden — nothing to recover.",
+        }
+
+    # Best-effort, mirroring the GUI button. Both reads/writes are already on
+    # the main thread (this handler is not runs_on_worker).
+    try:
+        song.back_to_arranger = 0
+    except (AttributeError, RuntimeError):
+        pass
+    re_enable = getattr(song, "re_enable_automation", None)
+    if callable(re_enable):
+        re_enable()
+
+    if not is_overridden(song):
+        return {"cleared": True, "was_latched": True}
+    return {
+        "cleared": False,
+        "was_latched": True,
+        "warning": (
+            f"Live did not honor the API clear: back_to_arranger is still "
+            f"latched after setting it to 0 and calling re_enable_automation. "
+            f"{CLICK_BACK_TO_ARRANGEMENT}"
+        ),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -431,6 +546,9 @@ __all__ = [
     "info_handler",
     "set_master_property_handler",
     "seek_handler",
+    "play_handler",
+    "continue_playing_handler",
+    "back_to_arrangement_handler",
     "set_signature_handler",
     "set_view_handler",
     "snapshot_handler",

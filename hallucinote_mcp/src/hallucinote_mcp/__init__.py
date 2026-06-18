@@ -1,6 +1,6 @@
 """hallucinote-mcp — unified Ableton Live MCP server.
 
-Twelve unified tools with action dispatch, designed for low-context-cost
+Thirteen unified tools with action dispatch, designed for low-context-cost
 agent interaction.
 
 ``__version__`` is composed of a semver-style base (``BASE_VERSION``) plus

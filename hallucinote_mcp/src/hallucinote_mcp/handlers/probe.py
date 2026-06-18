@@ -264,13 +264,15 @@ def set_handler(context: LiveContext, path: str, value: Any) -> dict[str, Any]:
     if is_scalar_request and old_s == new_s and value != old:
         result["applied"] = False
         result["warning"] = (
-            f"Write did not land: read-back ({new_s!r}) is unchanged after "
-            f"requesting {value!r}. Live silently ignored this setattr "
-            f"(no exception). Some LOM properties cannot be set this way — "
-            f"e.g. song.back_to_arranger clears only via Live's Back to "
-            f"Arrangement button, and song.current_song_time moves only via "
-            f"ableton_session(action='seek'). Use the dedicated action or "
-            f"the GUI instead of probe set."
+            f"Write did not land as requested: read-back ({new_s!r}) is "
+            f"unchanged and still differs from the requested value "
+            f"({value!r}). Live accepted the setattr without error but did "
+            f"not store the request — it either silently ignored the write "
+            f"or clamped it back to the current value. Some properties cannot "
+            f"be set via probe at all: e.g. song.back_to_arranger clears only "
+            f"via Live's Back to Arrangement button, and song.current_song_time "
+            f"moves only via ableton_session(action='seek'). Prefer the "
+            f"dedicated action or the GUI for those."
         )
     return result
 

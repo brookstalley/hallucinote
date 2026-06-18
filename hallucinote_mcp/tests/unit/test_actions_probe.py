@@ -305,7 +305,7 @@ class TestSet:
 
     def test_dollar_path_value(self):
         ctx = FakeCtx()
-        set_handler(
+        out = set_handler(
             ctx,
             "song.tracks[0].mixer_device.volume",
             {"$path": "song.tracks[1].mixer_device.volume"},
@@ -314,6 +314,20 @@ class TestSet:
             ctx.song.tracks[0].mixer_device.volume
             is ctx.song.tracks[1].mixer_device.volume
         )
+        # A $path (dict) request must NOT be no-op-flagged: the read-back is a
+        # LOM object, not comparable to the requested marker, so the scalar
+        # no-op guard excludes it. This pins the is_scalar_request exclusion.
+        assert "applied" not in out
+        assert "warning" not in out
+
+    def test_list_request_is_not_no_op_flagged(self):
+        # A list-valued request is likewise excluded from the scalar no-op
+        # check — the guard keys on "not a dict/list", so collection writes
+        # never get an applied/warning flag.
+        ctx = FakeCtx()
+        out = set_handler(ctx, "song.tracks[0].arm", [1, 2])
+        assert "applied" not in out
+        assert "warning" not in out
 
     def test_unknown_attribute_rejected_before_write(self):
         with pytest.raises(AttributeError, match="no attribute 'nonexistent'"):

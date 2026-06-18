@@ -1,6 +1,18 @@
 # MCP version fingerprint — design decision (MCP-7F2K)
 
-**Status:** design (research → ready). Decides the *approach*; build plan follows.
+**Status:** BUILT on `fix/mcp-reliability-papercuts` (commit `e9f6dba`, 2026-06-18) —
+approach (c)-in-service-of-(a) implemented; tests green; pending PR/merge + a
+one-time Live re-vendor to verify the handshake end-to-end. **Two ways the build
+strengthened the sketch:** (1) the server-side surface went into a **top-level**
+`hallucinote_mcp.server_side` package (not `handlers/server_side/`), so the
+fingerprint exclusion needed **zero new walk logic** — it is excluded by simply
+not being listed, the existing `node_features`/`resources` pattern; (2) the
+**action spec was relocated too** (`actions/analysis.py` → `server_side/
+analysis_actions.py`), which **closes open question §"`actions/` granularity"** —
+analysis param-schema changes also stop flipping the fingerprint, not just handler
+bodies. The (b) hard/soft contract-hash refinement remains deferred. Isolation is
+locked by `hallucinote_mcp/tests/unit/test_server_side_isolation.py` and the
+extended `test_remote_script_import_safety.py` load-chain scan.
 **Backlog:** `MCP-7F2K` (mcp · M/M · related INS-3W8P, INS-4H8M, MCP-4T6Y).
 **Grounded in code, 2026-06-17.** All file refs are `hallucinote_mcp/src/hallucinote_mcp/…`.
 

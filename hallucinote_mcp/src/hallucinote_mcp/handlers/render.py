@@ -34,10 +34,13 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
+
+from .jobs import JobRegistry, default_registry
 
 from ..analyzer import (
     AnalyzerInstance,
@@ -750,6 +753,185 @@ def render_handler(
         )
         write_status(captures_dir, {"state": "error", "error": str(e)})
         raise
+
+
+# --- async start / status (MCP-9R3T) ---------------------------------
+
+# A render runs for minutes; the Claude Code tool-call timeout is a
+# transport-agnostic wall-clock limit, so the synchronous `render` action
+# false-fails long before the audio is written. `start` backgrounds the render
+# on a detached worker and returns a job handle immediately; `status`
+# long-polls the job registry. See
+# .prawduct/artifacts/plans/MCP-ASYNC-RENDER-ANALYZE/api-notes.md.
+_DEFAULT_STATUS_LONG_POLL_S = 45.0
+
+RENDER_POLL_INSTRUCTION = (
+    "Render running in the background. Poll ableton_render(action='status', "
+    "job_id='{job_id}'); each status call long-polls ~45s and returns "
+    "{{state}} — repeat until state is 'done' or 'failed'. One render at a "
+    "time: don't call start again while this is running."
+)
+
+
+def _estimate_render_eta_s(
+    context: LiveContext,
+    *,
+    start_at_beat: int,
+    stop_beat: int,
+    ring_out_beats: float,
+) -> int | None:
+    """Rough wall-clock estimate for the handle: render is realtime, so the
+    captured span in beats / tempo gives the bulk of the time. Returns None
+    when tempo can't be read (the handle just omits the eta)."""
+    def _read_tempo() -> float:
+        return float(getattr(context.song, "tempo", 0.0))
+
+    tempo = float(context.run_on_main(_read_tempo))
+    if tempo <= 0.0:
+        return None
+    beats = max(0.0, float(stop_beat) - float(start_at_beat)) + max(
+        0.0, float(ring_out_beats)
+    )
+    return int(round(beats / tempo * 60.0))
+
+
+def render_start_handler(
+    context: LiveContext,
+    *,
+    song_slug: str,
+    output_dir: str | None = None,
+    post_roll_beats: float = _DEFAULT_POST_ROLL_BEATS,
+    pre_roll_beats: float = _DEFAULT_PRE_ROLL_BEATS,
+    ring_out_beats: float = _DEFAULT_RING_OUT_BEATS,
+    start_at_beat: int = 0,
+    stop_at_beat: int | None = None,
+    db_seq: int | None = None,
+    _registry: JobRegistry | None = None,
+    _render_fn: Callable[..., dict[str, Any]] | None = None,
+    _spawn: Callable[[Callable[[], None]], None] | None = None,
+) -> dict[str, Any]:
+    """Background a render and return its job handle immediately.
+
+    The handle (``job_id`` + ``captures_dir`` + ``eta_seconds`` +
+    ``expected_stop_beat`` + a poll instruction) lets the agent poll
+    ``status`` without holding the tool-call socket for the render's duration.
+    One render at a time: a ``start`` while another render is running returns
+    ``{busy: True, job_id}`` rather than launching a second transport pass.
+    """
+    registry = _registry if _registry is not None else default_registry()
+    render_fn = _render_fn if _render_fn is not None else render_handler
+    spawn = _spawn if _spawn is not None else _spawn_daemon
+
+    existing = registry.active("render")
+    if existing is not None:
+        return {
+            "busy": True,
+            "job_id": existing.job_id,
+            "state": existing.state,
+            "captures_dir": existing.dir,
+            "message": (
+                "A render is already running (one at a time). Poll it with "
+                f"ableton_render(action='status', job_id='{existing.job_id}'), "
+                "or wait for it to finish before starting another."
+            ),
+        }
+
+    # The MCP server's _absolutize_render_output_dir resolves output_dir before
+    # forwarding (same as the synchronous render); direct callers must supply
+    # it because Live's process cwd is read-only.
+    if not output_dir:
+        raise ValueError(
+            "render start: output_dir is required. The MCP server's "
+            "_absolutize_render_output_dir resolves it for forwarded calls; "
+            "direct in-process callers must supply it explicitly."
+        )
+
+    expected_stop_beat = (
+        int(stop_at_beat)
+        if stop_at_beat is not None
+        else int(_content_end_beats(context))
+    )
+    eta_seconds = _estimate_render_eta_s(
+        context,
+        start_at_beat=start_at_beat,
+        stop_beat=expected_stop_beat,
+        ring_out_beats=ring_out_beats,
+    )
+    job = registry.create(
+        kind="render",
+        dir=output_dir,
+        eta_seconds=eta_seconds,
+        expected_stop_beat=expected_stop_beat,
+    )
+
+    def _status_writer(captures_dir: Path, status: dict[str, Any]) -> None:
+        # Keep the on-disk heartbeat (crash-resilient / direct dir-watchers)
+        # AND mirror progress into the in-memory registry the status action
+        # reads. Best-effort, never render-affecting (the disk writer already
+        # swallows OSError; the registry update is a plain dict swap).
+        _write_status_json(captures_dir, status)
+        registry.update_progress(job.job_id, status)
+
+    def _worker() -> None:
+        try:
+            result = render_fn(
+                context,
+                song_slug=song_slug,
+                output_dir=output_dir,
+                post_roll_beats=post_roll_beats,
+                pre_roll_beats=pre_roll_beats,
+                ring_out_beats=ring_out_beats,
+                start_at_beat=start_at_beat,
+                stop_at_beat=stop_at_beat,
+                db_seq=db_seq,
+                _status_writer=_status_writer,
+            )
+            registry.mark_done(job.job_id, result)
+        except Exception as e:  # prawduct:allow prawduct/broad-except -- detached render worker: any failure must land as job state=failed (else status long-polls forever); the render handler already logged + wrote status.json=error before re-raising
+            logger.exception(
+                "render worker failed for job %s (song_slug=%s)",
+                job.job_id, song_slug,
+            )
+            registry.mark_failed(job.job_id, str(e))
+
+    spawn(_worker)
+    return job.start_result(RENDER_POLL_INSTRUCTION.format(job_id=job.job_id))
+
+
+def render_status_handler(
+    context: LiveContext,
+    *,
+    job_id: str,
+    _registry: JobRegistry | None = None,
+    _long_poll_s: float = _DEFAULT_STATUS_LONG_POLL_S,
+) -> dict[str, Any]:
+    """Long-poll a render job: wait up to ``_long_poll_s`` for it to finish,
+    then return its current state + progress (and manifest/error if terminal).
+
+    Returns ``state='running'`` if still in flight after the wait — the agent
+    simply calls again. ``context`` is unused (status reads in-process job
+    state, no Live touch) but kept for the uniform handler signature.
+    """
+    registry = _registry if _registry is not None else default_registry()
+    job = registry.get(job_id)
+    if job is None:
+        recent = registry.recent_ids(kind="render")
+        hint = (
+            f"recent render jobs: {', '.join(recent)}"
+            if recent
+            else "no render jobs have been started in this server process"
+        )
+        raise ValueError(f"render status: unknown job_id {job_id!r} ({hint})")
+    job.wait_terminal(_long_poll_s)
+    return job.status_result()
+
+
+def _spawn_daemon(fn: Callable[[], None]) -> None:
+    """Default worker spawn: a detached daemon thread. Live's main-thread
+    scheduler (run_on_main) is reachable from any thread and outlives the
+    originating request, so the worker keeps driving the render after `start`
+    returns (verify-api: mechanism A)."""
+    threading.Thread(target=fn, name="hallucinote-render-worker", daemon=True).start()
 
 
 # --- internals -------------------------------------------------------

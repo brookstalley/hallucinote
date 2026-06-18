@@ -17,8 +17,8 @@ import soundfile as sf
 
 from hallucinote.db import mutations as M
 from hallucinote.db.connection import init_db
-from hallucinote_mcp.handlers import analysis as analysis_handlers
-from hallucinote_mcp.handlers.analysis import ANALYSIS_STATUS_FILENAME
+from hallucinote_mcp.server_side import analysis as analysis_handlers
+from hallucinote_mcp.server_side.analysis import ANALYSIS_STATUS_FILENAME
 
 
 SAMPLE_RATE = 48_000

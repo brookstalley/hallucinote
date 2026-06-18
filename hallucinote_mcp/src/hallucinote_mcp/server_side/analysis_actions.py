@@ -19,7 +19,7 @@ DB only, never the Live API.
 """
 from __future__ import annotations
 
-from ..handlers import analysis as analysis_handlers
+from . import analysis as analysis_handlers
 from ..schema import Action, ParamSpec, register
 
 

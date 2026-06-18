@@ -685,6 +685,47 @@ def test_apply_push_results_accepts_device_parameter_as_ack(
     assert kinds == ["device", "track"]
 
 
+def test_apply_push_results_accepts_device_param_override_as_ack(
+    conn, song, session, linked_track,
+):
+    """A nested preset param override (DEV-4P7R `param_overrides`, e.g. a
+    `value_raw` on a rack's nested Wavetable LFO) is emitted by the planner as a
+    `device_param_override:` result key whose tail carries the NodeAddr path +
+    param name. apply_push_results must ACK it (no DB write, no raise): its value
+    ORIGINATES in the snapshot/DB, exactly like `device_parameter`.
+
+    Regression: the kind had no case, so apply_push_results raised
+    `ValueError: unknown push result key kind 'device_param_override'`, which
+    HALTED the devices phase mid-run — a full from-scratch push of any song with
+    such an override never finished (no routing/envelopes/automation/arrangement).
+    See incoming-bugs/2026-06-18-push-apply-unknown-device_param_override-result-kind-halts-devices-phase.md
+    """
+    cid = M.create_device_chain(conn, parent_track_id=linked_track)
+    did = M.create_device(
+        conn, chain_id=cid, position=1, kind="Instrument Rack",
+        display_name="Synth Vox Ai",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=did, ableton_index=2,
+    )
+    key = (
+        f'device_param_override:{did}:'
+        '[{"chain_index": 1, "device_position": 1}]:LFO 1 S. Rate'
+    )
+    warnings = push.apply_push_results(
+        conn,
+        [
+            {"key": key, "ok": True, "tool": "ableton_device", "result": {}},
+        ],
+        session_id=session,
+    )
+    assert warnings == []
+    # Existing device + track links survive; nothing else added (ack-only).
+    links = Q.get_ableton_links_for_session(conn, session)
+    kinds = sorted(l["db_kind"] for l in links)
+    assert kinds == ["device", "track"]
+
+
 # ---------- end-to-end: falling-walking-shaped fixture ----------
 
 

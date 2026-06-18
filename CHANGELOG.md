@@ -6,6 +6,37 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed — swell rebuild-reliability cluster (dogfood)
+
+- **Full push no longer halts on a `value_raw` device-param override.**
+  `apply_push_results` had no case for the `device_param_override` result kind the
+  devices phase emits for a nested preset override (DEV-4P7R), so a from-scratch
+  push of any song carrying one died mid-`devices` (no routing / envelopes /
+  automation / arrangement / cues followed). It is now ack-only, like
+  `device_parameter` — the value originates in the snapshot/DB, with no Live-side
+  index to record back.
+  (`incoming-bugs/2026-06-18-push-apply-unknown-device_param_override-result-kind-halts-devices-phase.md`)
+- **Converger idempotency restored for any song with sidechains.**
+  `replay_capture` enqueued every device's `sidechain_source` and cleared it when
+  the snapshot was silent, clobbering a `build.py`-authored source on every build
+  (real → null → real = 2 spurious events per sidechain, forever). Replay now
+  treats snapshot *silence* as "no opinion" and acts only when the snapshot
+  declares the key; an explicit null still clears.
+  (`incoming-bugs/2026-06-17-replay-capture-nulls-sidechain-source-breaking-converger-idempotency.md`)
+- **`reindex_markdown` no longer dies on a frontmatter-less decision.** A decision
+  authored as a bare `# Title` body is now indexed (kind inferred from the corpus
+  dir, full text searchable) instead of aborting the corpus; a genuinely
+  unparseable file is skipped with a warning so one bad doc can't blind
+  `/song-context` search to all the good ones.
+  (`incoming-bugs/2026-06-17-reindex-markdown-hard-fails-corpus-on-frontmatterless-decisions.md`)
+
+### Changed
+
+- Snapshot semantics for device **sidechain sources**: a snapshot is authoritative
+  for what it *declares*, never for what it *omits* (was "absent → clear"). This is
+  what lets a `build.py`-authored sidechain survive a rebuild; see *Known
+  limitations* for the accepted cost.
+
 ## [1.5.0] — 2026-06-17
 
 **Version-track unification + the develop→main catch-up release.** The product
@@ -812,6 +843,12 @@ be informed by real user friction.
 - Some Live device-parameter enums have no normalized form on the MCP
   wire and are skipped with a warn. Continuous params round-trip
   cleanly.
+- Removing a device **sidechain source in Live** needs a full (fresh-DB)
+  rebuild, not an incremental one: replay treats a snapshot that omits a
+  device's sidechain source as "no opinion" (so a `build.py`-authored
+  source survives), so it will not clear a source you deleted in Live.
+  Clear it via a fresh-DB rebuild, `set_device_sidechain(None)` in
+  `build.py`, or an explicit null source in the snapshot.
 - Linux is documented as unsupported for v0.9 (Live itself doesn't
   ship a Linux build). Wine/CrossOver paths get a best-effort install
   candidate with warn-and-confirm.

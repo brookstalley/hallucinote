@@ -51,7 +51,7 @@ def test_reindex_creates_rows_for_corpus(repo):
 
     counts = reindex_corpus(conn, songs_root=root / "songs", repo_root=root)
 
-    assert counts == {"upserted": 2, "tombstoned": 0, "unchanged": 0}
+    assert counts == {"upserted": 2, "tombstoned": 0, "unchanged": 0, "skipped": 0}
     rows = conn.execute(
         "SELECT path, kind, song_id FROM markdown_refs ORDER BY kind"
     ).fetchall()
@@ -81,7 +81,7 @@ def test_single_song_reindex_scopes_to_that_song(repo):
     counts = reindex_corpus(
         conn, song_dir=root / "songs/alpha", repo_root=root
     )
-    assert counts == {"upserted": 1, "tombstoned": 0, "unchanged": 0}
+    assert counts == {"upserted": 1, "tombstoned": 0, "unchanged": 0, "skipped": 0}
     paths = [r["path"] for r in conn.execute("SELECT path FROM markdown_refs")]
     assert paths == ["songs/alpha/annotations/a.md"]
 
@@ -125,7 +125,7 @@ def test_reindex_is_idempotent(repo):
     )
     reindex_corpus(conn, songs_root=root / "songs", repo_root=root)
     counts = reindex_corpus(conn, songs_root=root / "songs", repo_root=root)
-    assert counts == {"upserted": 0, "tombstoned": 0, "unchanged": 1}
+    assert counts == {"upserted": 0, "tombstoned": 0, "unchanged": 1, "skipped": 0}
 
 
 def test_reindex_updates_changed_file(repo):
@@ -222,7 +222,13 @@ def test_reindex_leaves_track_id_null_when_track_not_found(repo):
     assert row["track_id"] is None
 
 
-def test_reindex_parse_error_raises_before_writes(repo):
+def test_reindex_skips_unparseable_file_and_indexes_the_rest(repo):
+    """CONTRACT CHANGE (replaces test_reindex_parse_error_raises_before_writes):
+    one unparseable corpus file (here a disallowed `feeling` key) is SKIPPED with
+    a warning, and every GOOD file still indexes — one bad doc must not blind
+    `/song-context` search to all the good ones.
+    See incoming-bugs/2026-06-17-reindex-markdown-hard-fails-corpus-on-frontmatterless-decisions.md
+    """
     conn, root = repo
     _seed_song(conn)
     _write(
@@ -233,11 +239,94 @@ def test_reindex_parse_error_raises_before_writes(repo):
         root / "songs/tunesong/annotations/broken.md",
         "---\nkind: annotation\nfeeling: sad\n---\nbody\n",
     )
-    with pytest.raises(ValueError, match="failed to parse"):
-        reindex_corpus(conn, songs_root=root / "songs", repo_root=root)
-    # No writes happened
-    count = conn.execute("SELECT COUNT(*) FROM markdown_refs").fetchone()[0]
-    assert count == 0
+    with pytest.warns(UserWarning, match=r"skipping unparseable corpus file.*broken\.md"):
+        counts = reindex_corpus(conn, songs_root=root / "songs", repo_root=root)
+    assert counts == {"upserted": 1, "tombstoned": 0, "unchanged": 0, "skipped": 1}
+    # The good file indexed; the broken one did not.
+    paths = [r["path"] for r in conn.execute("SELECT path FROM markdown_refs")]
+    assert paths == ["songs/tunesong/annotations/good.md"]
+
+
+def test_reindex_indexes_frontmatterless_decision(repo):
+    """Tolerance (the swell case): a decision authored as a bare `# NN — Title`
+    body with NO `---` frontmatter is indexed — kind inferred from the decisions/
+    dir, full text searchable — rather than aborting the corpus. Before the fix,
+    `/song-context` decisions search was silently dead for any song whose
+    decisions (conventionally) carried no frontmatter.
+    See incoming-bugs/2026-06-17-reindex-markdown-hard-fails-corpus-on-frontmatterless-decisions.md
+    """
+    conn, root = repo
+    _seed_song(conn)
+    _write(
+        root / "songs/tunesong/decisions/01-intent-and-theme.md",
+        "# 01 — Intent and theme\n\nThe song blooms on the final chorus.\n",
+    )
+    counts = reindex_corpus(conn, songs_root=root / "songs", repo_root=root)
+    assert counts == {"upserted": 1, "tombstoned": 0, "unchanged": 0, "skipped": 0}
+    row = conn.execute(
+        "SELECT kind, scope, frontmatter_date FROM markdown_refs"
+    ).fetchone()
+    assert row["kind"] == "decision"   # inferred from the decisions/ dir
+    assert row["scope"] == "song"
+    assert row["frontmatter_date"] is None
+    # The body (incl. the heading) is full-text searchable.
+    hits = Q.find_markdown_refs(conn, fulltext="bloom")
+    assert len(hits) == 1
+    assert hits[0]["path"].endswith("01-intent-and-theme.md")
+
+
+def test_reindex_skips_frontmatterless_non_decision(repo):
+    """Only decisions/ may omit frontmatter. A bare-body file under attempts/
+    must NOT be minted as a half-valid row — an attempt REQUIRES
+    outcome/resolution (enforced by `_build_frontmatter`), which can't be
+    inferred from a bare body — so it falls through to skip-and-warn instead.
+    (Critic finding on the IDX-5W2P fix: never silently produce a shape the
+    strict authoring path rejects.)
+    """
+    conn, root = repo
+    _seed_song(conn)
+    # Frontmatter-less under attempts/ — would have inferred kind='attempt' with
+    # outcome/resolution NULL, a shape the strict path forbids.
+    _write(
+        root / "songs/tunesong/attempts/01-tried-a-notch.md",
+        "# Tried a notch on the bagpipes\n\nDidn't help.\n",
+    )
+    # A good frontmatter-less decision alongside, to prove the skip is isolated.
+    _write(
+        root / "songs/tunesong/decisions/01-intent.md",
+        "# 01 — Intent\n\nThe theme blooms.\n",
+    )
+    with pytest.warns(UserWarning, match=r"skipping unparseable corpus file.*01-tried-a-notch"):
+        counts = reindex_corpus(conn, songs_root=root / "songs", repo_root=root)
+    assert counts == {"upserted": 1, "tombstoned": 0, "unchanged": 0, "skipped": 1}
+    # Only the decision indexed; zero (invalid) attempt rows minted.
+    rows = conn.execute("SELECT path, kind FROM markdown_refs").fetchall()
+    assert [r["path"] for r in rows] == ["songs/tunesong/decisions/01-intent.md"]
+    assert rows[0]["kind"] == "decision"
+    n_attempts = conn.execute(
+        "SELECT COUNT(*) FROM markdown_refs WHERE kind='attempt'"
+    ).fetchone()[0]
+    assert n_attempts == 0
+
+
+def test_reindex_skipped_file_is_not_tombstoned(repo):
+    """A file that EXISTS but fails to parse must NOT be tombstoned as if it had
+    vanished — its prior (good) index row stays put until the file is fixed."""
+    conn, root = repo
+    _seed_song(conn)
+    path = root / "songs/tunesong/annotations/x.md"
+    _write(path, _doc("annotation", "song", body="first good version"))
+    reindex_corpus(conn, songs_root=root / "songs", repo_root=root)
+    # The file is edited into an unparseable state (disallowed key).
+    _write(path, "---\nkind: annotation\nbogus: 1\n---\nnow broken\n")
+    with pytest.warns(UserWarning, match="skipping unparseable corpus file"):
+        counts = reindex_corpus(conn, songs_root=root / "songs", repo_root=root)
+    assert counts["skipped"] == 1
+    assert counts["tombstoned"] == 0
+    row = conn.execute(
+        "SELECT tombstoned_at FROM markdown_refs WHERE path LIKE '%/x.md'"
+    ).fetchone()
+    assert row["tombstoned_at"] is None  # stale-but-live, not deleted
 
 
 def test_reindex_handles_song_id_resolution_for_unknown_song(repo):

@@ -56,8 +56,15 @@ def main(argv: list[str] | None = None) -> int:
         f"reindex {db_path.name}: "
         f"upserted={counts['upserted']} "
         f"tombstoned={counts['tombstoned']} "
-        f"unchanged={counts['unchanged']}"
+        f"unchanged={counts['unchanged']} "
+        f"skipped={counts['skipped']}"
     )
+    if counts["skipped"]:
+        print(
+            f"  WARNING: {counts['skipped']} corpus file(s) were unparseable "
+            "and excluded from the index (see warnings above).",
+            file=sys.stderr,
+        )
     return 0
 
 

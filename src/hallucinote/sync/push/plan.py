@@ -346,6 +346,15 @@ _ACK_ONLY_KINDS: frozenset[str] = frozenset({
     "device_sidechain",
     # Chunk 4a (devices)
     "device_parameter",      # ableton_device(action='set_parameter') for tracks + returns (Wave M-4)
+    # Nested preset param override (DEV-4P7R `param_overrides`, e.g. a `value_raw`
+    # on a rack's nested Wavetable LFO). The push planner emits this kind once the
+    # override is applied; ack-only because the intended value ORIGINATES in the
+    # snapshot/DB (same rationale as `device_parameter` above) — there is no
+    # Live-side index to record back. Without this case the devices phase HALTS
+    # mid-run on any song whose snapshot carries a `value_raw` override, so the
+    # full push never finishes (no routing/envelopes/automation/arrangement/cues).
+    # See incoming-bugs/2026-06-18-push-apply-unknown-device_param_override-result-kind-halts-devices-phase.md
+    "device_param_override",
     # SYN-4P2D (scenes): ableton_scene(action='ensure_count') provisions
     # session clip slots before the clips phase. Scenes are a Live-set
     # structural property, not a Hallucinote entity — there's no per-scene DB

@@ -251,7 +251,27 @@ def handle_tool_call(
             ),
         ).to_dict()
 
-    return remote_response.to_dict()
+    return _refine_version_mismatch(remote_response).to_dict()
+
+
+def _refine_version_mismatch(response: "client.Response") -> "client.Response":
+    """Refine a Remote-Script version-mismatch refusal with the server side's
+    own staleness diagnosis.
+
+    The Remote Script can only guess "re-vendor"; the server side can check
+    whether its *own process* is the stale half (running code vs. on-disk
+    source) — the case the generic hint misdiagnoses. When it is, swap in the
+    "respawn the server" remediation; otherwise leave the refusal untouched.
+    """
+    from . import stale_server_process_hint
+    from .wire import VERSION_MISMATCH_CODE
+
+    if response.code != VERSION_MISMATCH_CODE:
+        return response
+    hint = stale_server_process_hint()
+    if hint is None:
+        return response
+    return dataclasses.replace(response, hint=hint)
 
 
 def _absolutize_render_output_dir(request: Request) -> Request:

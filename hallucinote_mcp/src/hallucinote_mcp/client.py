@@ -141,6 +141,7 @@ def _response_from_dict(obj: dict[str, Any]) -> Response:
         example=obj.get("example"),
         hint=obj.get("hint"),
         warnings=warnings,
+        code=obj.get("code"),
     )
 
 

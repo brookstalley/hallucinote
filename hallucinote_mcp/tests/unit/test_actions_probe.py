@@ -7,6 +7,7 @@ from hallucinote_mcp.dispatcher import dispatch
 from hallucinote_mcp.handlers import probe as probe_handlers
 from hallucinote_mcp.handlers.probe import (
     MAX_VECTOR_ITEMS,
+    _request_differs,
     call_handler,
     describe_handler,
     get_handler,
@@ -302,6 +303,17 @@ class TestSet:
         out = set_handler(ctx, "song.back_to_arranger", 0)
         assert out["changed"] is False
         assert out["applied"] is False
+
+    def test_request_differs_tolerates_float_repr_noise(self):
+        # The no-op guard must not flag a float request as "silently ignored"
+        # just because its repr differs from the stored value by epsilon.
+        assert _request_differs(0.1 + 0.2, 0.3) is False  # numerically equal
+        assert _request_differs(120, 120.0) is False  # int/float cross-type
+        assert _request_differs(140.0, 120.0) is True  # genuinely different
+        # bool stays exact (an int subclass, but not a numeric near-miss).
+        assert _request_differs(0, True) is True
+        assert _request_differs(True, True) is False
+        assert _request_differs("a", "b") is True
 
     def test_dollar_path_value(self):
         ctx = FakeCtx()

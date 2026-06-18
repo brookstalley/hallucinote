@@ -168,24 +168,31 @@ result via `replace_notes`. See `ableton://guides/gaps` for the rationale.
 ## Transport: Start vs Continue, and "play from bar X"
 
 Live distinguishes two ways to start the transport, and the MCP actions mirror
-them — each result reports `started_from` so you don't have to guess:
+them — each result reports the `verb` it invoked:
 
-| Action | Live verb | Starts from | `started_from` |
+| Action | Live verb | `verb` | What it does |
 |---|---|---|---|
-| `ableton_session(action='play')` | **Start** | the Arrangement **Start Marker** | `start_marker` |
-| `ableton_session(action='continue_playing')` | **Continue** | the **current playhead** | `playhead` |
+| `ableton_session(action='play')` | **Start** | `start` | start the transport |
+| `ableton_session(action='continue_playing')` | **Continue** | `continue` | resume from the last-stopped position |
 
-**`play` does NOT honor a preceding `seek`.** `seek` moves `current_song_time`,
-but `play` (Start) jumps back to the Start Marker and `continue_playing`
-(Continue) resumes from the playhead. So **to audition from a specific bar**:
+These results report the **verb invoked**, **not** a read-back of where Live
+actually began — a handler can't reliably read the realized start position back
+(`current_song_time` settles on a delayed schedule).
+
+**To audition from a specific bar** in a clean transport state, `seek` then
+`play` locates-and-plays — this is exactly what the render capture path does
+(set `current_song_time`, then `start_playing`):
 
 ```
 ableton_session(action='seek', bar=243)
-ableton_session(action='continue_playing')   # NOT play — play restarts at the Start Marker
+ableton_session(action='play')
 ```
 
-(`current_song_time` also cannot be moved via `ableton_probe(action='set')` — that
-write is silently ignored; use `seek`.)
+If a seek "doesn't take" — the playhead rolls but you hear **no audio** — the
+usual cause is **not** the transport verb but the `back_to_arranger` override
+latch (next section), which suppresses Arrangement playback regardless of where
+you start. (`current_song_time` also cannot be moved via
+`ableton_probe(action='set')` — that write is silently ignored; use `seek`.)
 
 ## Recovering from a Session-clip override ("transport moving, no audio")
 

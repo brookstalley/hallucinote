@@ -189,9 +189,11 @@ def stale_server_process_hint(
         f"{on_disk} — the hallucinote-mcp package was edited or pulled after "
         f"the server started. Respawn the server with `/mcp` in Claude Code "
         f"(or restart Claude Code). Re-vendoring the Remote Script "
-        f"(`/ableton-mcp-install`) and restarting Live will NOT help: the "
-        f"on-disk source already matches the vendored copy — only the running "
-        f"process is behind."
+        f"(`/ableton-mcp-install`) and restarting Live will NOT help a stale "
+        f"*process* — that refreshes the Remote Script copy, not the running "
+        f"server. (If a version mismatch persists after respawn, the Remote "
+        f"Script may also be behind — then run `/ableton-mcp-install` and "
+        f"restart Live.)"
     )
 
 

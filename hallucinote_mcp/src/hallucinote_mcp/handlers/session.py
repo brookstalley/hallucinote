@@ -222,44 +222,51 @@ def seek_handler(
 # transport: play / continue_playing
 #
 # Both are handler actions (not declarative LiveOps) so they can return a
-# ``started_from`` teaching field. Live distinguishes *Start* (play, from the
-# Arrangement Start Marker) from *Continue* (continue_playing, from the current
-# playhead) — neither honors a ``seek`` the way an agent auditioning a section
-# expects. Surfacing which one happened lets the agent stop fighting it
-# (MCP-7P3R directions 2 + 4). The dispatcher runs these on the main thread.
+# ``verb`` teaching field naming which Live transport verb fired — *Start*
+# (play) vs *Continue* (continue_playing). We report the VERB invoked, not a
+# read-back of where Live actually began: a handler can't reliably read the
+# realized start position back (the audio thread settles ``current_song_time``
+# on a delayed schedule — see ``seek_handler``). The common reason a ``seek``
+# "doesn't take" is not the transport verb at all but the ``back_to_arranger``
+# override latch suppressing Arrangement playback (MCP-7P3R directions 2 + 4 —
+# the recovery is ``back_to_arrangement``). The dispatcher runs these on the
+# main thread.
 # ---------------------------------------------------------------------------
 
 _PLAY_SEMANTICS_NOTE = (
-    "play = Start: playback begins at the Arrangement Start Marker, NOT a "
-    "position you set with seek. continue_playing = Continue: playback resumes "
-    "from the current playhead. To audition from a specific bar, "
-    "ableton_session(action='seek', bar=…) then "
-    "ableton_session(action='continue_playing') — play would jump back to the "
-    "Start Marker."
+    "play invokes Live's *Start*; continue_playing invokes *Continue* (resume "
+    "from the last-stopped position). This result reports the verb invoked, NOT "
+    "a read-back of where Live actually began — the realized start position is "
+    "Live-state-dependent and a handler can't reliably read it back. In a clean "
+    "transport state, seek then play locates-and-plays: the render capture path "
+    "relies on exactly that (current_song_time set, then start_playing). If you "
+    "seeked and playback didn't begin there — or the transport moves but you "
+    "hear no audio — the usual cause is the back_to_arranger override latch "
+    "suppressing Arrangement playback, not the seek; clear it with "
+    "ableton_session(action='back_to_arrangement')."
 )
 
 
 def play_handler(context: LiveContext) -> dict[str, Any]:
-    """Start playback from the Arrangement Start Marker (Live's *Start*)."""
+    """Start playback (Live's *Start* transport verb)."""
     context.song.start_playing()
     return {
         "is_playing": True,
-        "started_from": "start_marker",
+        "verb": "start",
         "note": _PLAY_SEMANTICS_NOTE,
     }
 
 
 def continue_playing_handler(context: LiveContext) -> dict[str, Any]:
-    """Resume playback from the current playhead (Live's *Continue*).
+    """Resume playback (Live's *Continue* transport verb).
 
-    This is the play call that honors a preceding ``seek`` — together they are
-    the "locate to bar X and play from there" gesture that plain ``play`` (which
-    restarts from the Start Marker) cannot provide.
+    *Continue* resumes from the last-stopped position. The result names the
+    verb invoked, not the realized start position (see ``_PLAY_SEMANTICS_NOTE``).
     """
     context.song.continue_playing()
     return {
         "is_playing": True,
-        "started_from": "playhead",
+        "verb": "continue",
         "note": _PLAY_SEMANTICS_NOTE,
     }
 

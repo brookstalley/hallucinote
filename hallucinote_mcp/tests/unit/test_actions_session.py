@@ -127,6 +127,19 @@ class LatchStuckSong(FakeSong):
         pass
 
 
+class HonoredLatchNoReEnableSong(FakeSong):
+    """A latched Song that HONORS the API clear but exposes no callable
+    ``re_enable_automation`` — mirrors an older Live build / minimal surface.
+    Exercises the handler's ``callable()`` guard so a missing method does not
+    crash the recovery.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.back_to_arranger = 1  # latched; plain attr setter honors the clear
+        self.re_enable_automation = None  # not callable → guard must skip it
+
+
 class FakeLiveContext:
     """Synchronous LiveContext stub for tests.
 
@@ -438,24 +451,28 @@ def test_play_invokes_song_start_playing(loaded_session_actions):
     assert resp.ok is True
     assert ctx.song.play_called == 1
     assert ctx.song.is_playing is True
-    # play = Live's *Start*: from the Arrangement Start Marker, and it says so.
+    # play = Live's *Start* verb; we report the verb invoked, not a claimed
+    # start position (the realized position isn't reliably read back).
     assert resp.result["is_playing"] is True
-    assert resp.result["started_from"] == "start_marker"
-    assert "continue_playing" in resp.result["note"]
+    assert resp.result["verb"] == "start"
+    assert "started_from" not in resp.result  # no fabricated position field
+    # the note teaches the override latch as the real cause of "no audio".
+    assert "back_to_arrangement" in resp.result["note"]
 
 
-def test_continue_playing_resumes_from_playhead(loaded_session_actions):
+def test_continue_playing_reports_continue_verb(loaded_session_actions):
     ctx = FakeLiveContext()
     resp = dispatch(
         Request(tool="ableton_session", action="continue_playing"), context=ctx
     )
     assert resp.ok is True
-    # *Continue*: the play call that honors a preceding seek.
+    # *Continue*: resume from the last-stopped position.
     assert ctx.song.continue_called == 1
     assert ctx.song.play_called == 0
     assert ctx.song.is_playing is True
     assert resp.result["is_playing"] is True
-    assert resp.result["started_from"] == "playhead"
+    assert resp.result["verb"] == "continue"
+    assert "started_from" not in resp.result
     assert "seek" in resp.result["note"]
 
 
@@ -606,6 +623,22 @@ def test_back_to_arrangement_teaches_when_live_ignores_the_clear(
     # It still tried (re_enable_automation is the GUI button's other half).
     assert song.re_enable_automation_called == 1
     assert "Back to Arrangement" in resp.result["warning"]
+
+
+def test_back_to_arrangement_tolerates_missing_re_enable_automation(
+    loaded_session_actions,
+):
+    """The callable() guard skips a non-callable/absent re_enable_automation
+    (older Live build) without crashing — the latch still clears."""
+    song = HonoredLatchNoReEnableSong()
+    ctx = FakeLiveContext(song=song)
+    resp = dispatch(
+        Request(tool="ableton_session", action="back_to_arrangement"), context=ctx
+    )
+    assert resp.ok is True
+    assert resp.result["cleared"] is True
+    assert resp.result["was_latched"] is True
+    assert song.back_to_arranger == 0  # the plain setter honored the clear
 
 
 def test_back_to_arrangement_runs_once_on_main(loaded_session_actions):

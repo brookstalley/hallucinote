@@ -211,15 +211,16 @@ register(
         tool="ableton_session",
         name="play",
         description=(
-            "Start playback (Live's *Start*) — from the Arrangement Start "
-            "Marker, NOT from a seeked position. Returns started_from."
+            "Start playback — Live's *Start* transport verb. In a clean "
+            "transport state, seek then play locates-and-plays. Returns the "
+            "verb invoked (not a read-back of the realized start position)."
         ),
         handler=session_handlers.play_handler,
         example="ableton_session(action='play')",
         tips=(
-            "play does NOT honor a preceding seek — it restarts at the Start "
-            "Marker. To audition from a specific bar, seek then "
-            "continue_playing.",
+            "If a seek didn't take — the playhead rolls but you hear no audio — "
+            "the usual cause is the back_to_arranger override latch, not the "
+            "play verb; clear it with action='back_to_arrangement'.",
         ),
     )
 )
@@ -229,16 +230,15 @@ register(
         tool="ableton_session",
         name="continue_playing",
         description=(
-            "Resume playback (Live's *Continue*) — from the current playhead. "
-            "This is the play call that honors a preceding seek. Returns "
-            "started_from."
+            "Resume playback — Live's *Continue* transport verb (resumes from "
+            "the last-stopped position). Returns the verb invoked."
         ),
         handler=session_handlers.continue_playing_handler,
         example="ableton_session(action='continue_playing')",
         tips=(
-            "seek(bar=X) then continue_playing is the 'locate to bar X and "
-            "play from there' gesture — plain play would jump back to the "
-            "Start Marker.",
+            "Use continue_playing to resume after a stop without restarting; "
+            "if Arrangement audio is silent despite a moving transport, check "
+            "the back_to_arranger latch (action='back_to_arrangement').",
         ),
     )
 )

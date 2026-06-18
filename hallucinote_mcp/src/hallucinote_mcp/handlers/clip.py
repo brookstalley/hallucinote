@@ -25,6 +25,11 @@ from __future__ import annotations
 from typing import Any, Iterable
 
 from ..dispatcher import LiveContext
+from ._arrangement_latch import (
+    CLICK_BACK_TO_ARRANGEMENT,
+    OVERRIDE_DESCRIPTION,
+    is_overridden,
+)
 
 
 _LOCATION_ENUM = ("session", "arrangement")
@@ -564,7 +569,23 @@ def stop_handler(
         stop_fn()
     else:
         track.stop_all_clips()
-    return {"track_index": track_index, "clip_index": clip_index, "stopped": True}
+    result: dict[str, Any] = {
+        "track_index": track_index,
+        "clip_index": clip_index,
+        "stopped": True,
+    }
+    # Stopping the Session clip does NOT auto-resume the Arrangement on a track
+    # whose lane was overridden — the global latch survives the stop, so the
+    # track stays silent (greyed Arrangement lane). Surface that instead of a
+    # bare ``stopped: True`` that reads as "fixed" (MCP-7P3R direction 4).
+    if is_overridden(context.song):
+        result["still_overridden"] = True
+        result["note"] = (
+            f"Stopping the Session clip did not re-engage the Arrangement. "
+            f"{OVERRIDE_DESCRIPTION} {CLICK_BACK_TO_ARRANGEMENT} "
+            f"ableton_session(action='back_to_arrangement') attempts the API clear."
+        )
+    return result
 
 
 # ---------------------------------------------------------------------------

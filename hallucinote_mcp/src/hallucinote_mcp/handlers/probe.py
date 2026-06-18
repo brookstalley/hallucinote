@@ -35,6 +35,7 @@ Handlers run on Live's main thread (the dispatcher marshals via
 """
 from __future__ import annotations
 
+import math
 import re
 from typing import Any
 
@@ -216,6 +217,26 @@ def get_handler(context: LiveContext, path: str) -> dict[str, Any]:
     }
 
 
+def _request_differs(requested: Any, current: Any) -> bool:
+    """True when a scalar ``set`` request is genuinely different from the
+    current value — used to decide whether an unmoved read-back means Live
+    silently ignored the write.
+
+    Numbers compare numerically with a small tolerance so float-repr noise
+    (e.g. ``0.1 + 0.2`` requested against a stored ``0.3``) is not misread as
+    an ignored write; everything else compares by equality (Python's ``==``
+    already treats ``120 == 120.0`` as equal). ``bool`` stays exact — it is an
+    ``int`` subclass, but ``True``/``False`` are not numeric near-misses.
+    """
+    if isinstance(requested, bool) or isinstance(current, bool):
+        return requested != current
+    if isinstance(requested, (int, float)) and isinstance(current, (int, float)):
+        return not math.isclose(
+            float(requested), float(current), rel_tol=1e-9, abs_tol=1e-12
+        )
+    return requested != current
+
+
 def set_handler(context: LiveContext, path: str, value: Any) -> dict[str, Any]:
     """Write a property at ``path``; return old + read-back + a ``changed`` flag.
 
@@ -261,7 +282,7 @@ def set_handler(context: LiveContext, path: str, value: Any) -> dict[str, Any]:
     # collection writes are skipped — a meaningful "did it change?" compare
     # needs scalars (a set-to-the-same-value legitimately reports old==new).
     is_scalar_request = not isinstance(value, (dict, list))
-    if is_scalar_request and old_s == new_s and value != old:
+    if is_scalar_request and old_s == new_s and _request_differs(value, old):
         result["applied"] = False
         result["warning"] = (
             f"Write did not land as requested: read-back ({new_s!r}) is "

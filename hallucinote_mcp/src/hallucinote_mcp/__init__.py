@@ -25,6 +25,16 @@ BASE_VERSION = "0.1.0"
 # package's root (``<pkg>/hallucinote_mcp/``). Direct-file entries and
 # whole-directory entries are both supported — directories are walked
 # recursively (sorted for determinism), skipping `.pyc` and `__pycache__`.
+#
+# The set must equal the code that is *both* vendored into Live AND executed
+# in Live — that is the only thing the server↔Remote-Script handshake guards
+# (MCP-7F2K). Deliberately EXCLUDED, by simply not being listed (path-based,
+# import-free — like ``node_features`` and ``resources``):
+#   - ``server_side/`` — actions declared ``runs_server_side=True`` run in the
+#     MCP server process and never in Live, so their (high-churn) changes must
+#     not flip the handshake and force a needless re-vendor. Isolation is
+#     enforced by ``tests/unit/test_server_side_isolation.py``: no Live-side
+#     handler may import from ``server_side``.
 _FINGERPRINT_PATHS: tuple[str, ...] = (
     "wire.py",
     "schema.py",
@@ -179,9 +189,11 @@ def stale_server_process_hint(
         f"{on_disk} — the hallucinote-mcp package was edited or pulled after "
         f"the server started. Respawn the server with `/mcp` in Claude Code "
         f"(or restart Claude Code). Re-vendoring the Remote Script "
-        f"(`/ableton-mcp-install`) and restarting Live will NOT help: the "
-        f"on-disk source already matches the vendored copy — only the running "
-        f"process is behind."
+        f"(`/ableton-mcp-install`) and restarting Live will NOT help a stale "
+        f"*process* — that refreshes the Remote Script copy, not the running "
+        f"server. (If a version mismatch persists after respawn, the Remote "
+        f"Script may also be behind — then run `/ableton-mcp-install` and "
+        f"restart Live.)"
     )
 
 

@@ -25,9 +25,13 @@ def isolated_actions() -> Iterator[None]:
     Pattern:
       - Save the current registry contents.
       - Clear the registry.
-      - Pop any cached ``hallucinote_mcp.actions.*`` modules so the next
-        import re-executes the ``register(...)`` side effects.
-      - Re-import the actions package (registers everything).
+      - Pop any cached ``hallucinote_mcp.actions.*`` and
+        ``hallucinote_mcp.server_side.*`` modules so the next import
+        re-executes the ``register(...)`` side effects. (Server-side actions
+        live in ``server_side`` — kept outside the version fingerprint — but
+        still register through the ``actions`` package import; popping both lets
+        the re-import re-trigger them. See MCP-7F2K.)
+      - Re-import the actions package (registers everything, server_side too).
       - Register help actions for any tool without one.
       - Yield. On exit: restore the saved registry.
     """
@@ -35,7 +39,9 @@ def isolated_actions() -> Iterator[None]:
     try:
         schema._REGISTRY.clear()
         for mod_name in list(sys.modules):
-            if mod_name.startswith("hallucinote_mcp.actions"):
+            if mod_name.startswith(
+                "hallucinote_mcp.actions"
+            ) or mod_name.startswith("hallucinote_mcp.server_side"):
                 sys.modules.pop(mod_name)
         import hallucinote_mcp.actions  # noqa: F401 — registration side-effect
         schema.register_help_actions()

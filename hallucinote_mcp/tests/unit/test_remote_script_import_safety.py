@@ -80,15 +80,19 @@ def _modules_in_remote_script_load_chain() -> list[Path]:
     its ``create_instance`` imports ``_control_surface.py`` which does
     ``from .. import actions as _actions`` at module load — that walks
     ``actions/__init__.py``, which `from . import each_action`, which
-    each `from ..handlers import counterpart_handler`. So the load
+    each `from ..handlers import counterpart_handler`. ``actions/__init__.py``
+    also does ``from .. import server_side`` (the registration trigger for
+    server-side-only actions, MCP-7F2K), so its modules are imported on Live
+    too — never *dispatched* there, but their top-level code still runs at
+    load, so they must satisfy the same import-safety contract. So the load
     chain is:
 
-      remote_script/  →  actions/  →  handlers/  →  top-level modules
-                                                    (schema, wire,
-                                                    dispatcher,
-                                                    device_names)
+      remote_script/  →  actions/  →  handlers/      →  top-level modules
+                                  ↘  server_side/   ↗     (schema, wire,
+                                                          dispatcher,
+                                                          device_names)
 
-    All four layers are scanned. ``remote_script/`` is the only layer
+    All layers are scanned. ``remote_script/`` is the only layer
     that LIVE itself imports first (the others are pulled in
     transitively), but a top-level forbidden import anywhere in the
     chain aborts the whole load with the same symptom — Control
@@ -102,6 +106,10 @@ def _modules_in_remote_script_load_chain() -> list[Path]:
         *sorted((_PACKAGE_ROOT / "remote_script").glob("*.py")),
         *sorted((_PACKAGE_ROOT / "actions").glob("*.py")),
         *sorted((_PACKAGE_ROOT / "handlers").glob("*.py")),
+        # Imported on Live via actions/__init__ → server_side registration
+        # trigger; never dispatched in Live, but its module bodies still load
+        # there, so the same import-safety contract applies (MCP-7F2K).
+        *sorted((_PACKAGE_ROOT / "server_side").glob("*.py")),
         # Top-level modules transitively imported by the actions chain.
         _PACKAGE_ROOT / "schema.py",
         _PACKAGE_ROOT / "wire.py",

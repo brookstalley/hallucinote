@@ -10,6 +10,10 @@ only, never Live. The handler follows the standard server-side DB
 shape: DB resolution via ``hallucinote.db.connection.resolve_db_path``
 and a teaching error when the song dir or DB row is missing.
 
+This module lives in ``hallucinote_mcp.server_side`` (not ``handlers/``)
+so its changes stay out of the version fingerprint — see that package's
+docstring and ``hallucinote_mcp/__init__.py`` ``_FINGERPRINT_PATHS`` (MCP-7F2K).
+
 Why not declare ``db_writes=True``? The MVP doesn't emit events — the
 MixReport is a pure read-side artifact. When ``AUDIO_ANALYZED`` becomes
 an event kind (P3 backlog), this handler flips on ``db_writes`` and

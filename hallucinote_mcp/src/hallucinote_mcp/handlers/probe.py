@@ -217,12 +217,21 @@ def get_handler(context: LiveContext, path: str) -> dict[str, Any]:
 
 
 def set_handler(context: LiveContext, path: str, value: Any) -> dict[str, Any]:
-    """Write a property at ``path``; return old + read-back values.
+    """Write a property at ``path``; return old + read-back + a ``changed`` flag.
 
     Settability is itself a probe finding (e.g. "is ``count_in_duration``
     read-only?") — a refusal from Live propagates as a structured error,
     which IS the result. ``value`` may be ``{"$path": ...}`` for LOM-object
     properties (e.g. ``song.view.highlighted_clip_slot``).
+
+    Some LOM properties accept a ``setattr`` without raising yet **silently
+    ignore it** (``song.back_to_arranger`` can only be cleared by Live's GUI
+    button; ``song.current_song_time`` only moves via the transport). Those
+    writes used to return a bare ``old==new`` that was indistinguishable from
+    a successful set-to-the-same-value. We now always report ``changed``
+    (``old != new``), and when a *scalar* write asked for a value different
+    from the current one but the read-back did not move, we flag
+    ``applied: False`` with a teaching ``warning`` so the no-op is observable.
     """
     parent_path, sep, attr = path.strip().rpartition(".")
     if not sep or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", attr):
@@ -238,11 +247,32 @@ def set_handler(context: LiveContext, path: str, value: Any) -> dict[str, Any]:
             f"{parent_path} ({type(parent).__name__}) has no attribute {attr!r}"
         ) from None
     setattr(parent, attr, _resolve_arg(context, value))
-    return {
+    new = getattr(parent, attr)
+    old_s, new_s = serialize(old), serialize(new)
+    result: dict[str, Any] = {
         "path": path,
-        "old": serialize(old),
-        "new": serialize(getattr(parent, attr)),
+        "old": old_s,
+        "new": new_s,
+        "changed": old_s != new_s,
     }
+    # A silently-ignored write: the caller asked for a scalar value that
+    # differs from the current one, but the read-back did not move. Live
+    # accepted the setattr without raising and then dropped it. ``$path`` /
+    # collection writes are skipped — a meaningful "did it change?" compare
+    # needs scalars (a set-to-the-same-value legitimately reports old==new).
+    is_scalar_request = not isinstance(value, (dict, list))
+    if is_scalar_request and old_s == new_s and value != old:
+        result["applied"] = False
+        result["warning"] = (
+            f"Write did not land: read-back ({new_s!r}) is unchanged after "
+            f"requesting {value!r}. Live silently ignored this setattr "
+            f"(no exception). Some LOM properties cannot be set this way — "
+            f"e.g. song.back_to_arranger clears only via Live's Back to "
+            f"Arrangement button, and song.current_song_time moves only via "
+            f"ableton_session(action='seek'). Use the dedicated action or "
+            f"the GUI instead of probe set."
+        )
+    return result
 
 
 def call_handler(

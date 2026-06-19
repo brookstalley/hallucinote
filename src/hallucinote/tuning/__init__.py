@@ -11,8 +11,8 @@ The flow:
 
 1. **read** (``read.py``) — pull ``song.tuning_system`` off the Live LOM and
    derive a :class:`~hallucinote.tuning.model.TuningData`. ``tuning_system is
-   None`` → 12-TET no-op. *Loaded-tuning extraction is a marked stub pending the
-   verify-api dict shapes — see the module.*
+   None`` → 12-TET no-op; a loaded tuning is mapped against the verify-api
+   shapes captured live (Wendy Carlos gamma, 2026-06-19).
 2. **cache** (``ascl.py`` + ``cache.py``) — synthesize a re-draggable ``.ascl``
    from the derived data and write it under ``songs/<slug>/tunings/``.
 3. **persist / load** (``store.py``) — record the cached ref + the derived blob
@@ -30,7 +30,7 @@ from .ascl import write_ascl
 from .cache import cache_ascl
 from .mapper import degree_to_midi
 from .model import TuningData
-from .read import TuningExtractionNotReady, read_tuning_system
+from .read import TuningReadError, read_tuning_system
 from .store import load_song_tuning, persist_tuning
 
 __all__ = [
@@ -39,7 +39,7 @@ __all__ = [
     "cache_ascl",
     "degree_to_midi",
     "read_tuning_system",
-    "TuningExtractionNotReady",
+    "TuningReadError",
     "load_song_tuning",
     "persist_tuning",
 ]

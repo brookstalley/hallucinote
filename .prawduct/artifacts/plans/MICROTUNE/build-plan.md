@@ -20,7 +20,7 @@ isolation seam, and the LOM acquisition path everything else depends on).
 
 ---
 
-## Requirements Confidence: **Medium** → High after Chunk 1's verify-api
+## Requirements Confidence: **High** (verify-api closed 2026-06-19)
 
 Problem, success, and scope each state in a sentence (below), and all four steering
 decisions are settled. The one open unknown is the **exact LOM dict shapes** of
@@ -173,6 +173,43 @@ generators, `theory/`, and 12-TET lens math are deliberately **absent** from thi
   5. `/prawduct:critic final` (or `cumulative` if one PR); operator-verification entry for the
      instruction copy; committed; `[x]`. **← governance checkpoint (before completion).**
 
+### Chunk 4: Pull-from-Live acquisition command (the capture flow)  *(LIVE-GATED — closes v1)*
+
+**Type:** code · **Critic mode:** chunk · **Foreign API:** ableton-live-mcp (read `song.tuning_system`)
+**Hard precondition:** a Live session with an alternate tuning **actually loaded** in the
+browser's Tuning section (the constraint that has blocked verify-api throughout).
+
+> **Decision 2026-06-19 (Brooks):** ship v1 *with* acquisition, not the bolt-on alone — so the
+> three Live-gated remainders become this final chunk rather than post-merge backlog. Merge to
+> `develop` only after this chunk is `[x]`. The pull command is mostly orchestration over pieces
+> already built in Chunks 1–3, so the chunk is small; its crux is the verify-api shape capture.
+
+- **Done when:**
+  0. **verify-api (closes Chunk 1 step 0):** with the tuning loaded, read
+     `song.tuning_system.{name, note_tunings, pseudo_octave_in_cents, reference_pitch,
+     lowest_note, highest_note}` via `ableton_probe(action='get',
+     path='song.tuning_system', allow_version_mismatch=true)`; record the **actual** dict/array
+     shapes in `api-notes-tuning.md`.
+  1. Close `read.py`'s `_extract_loaded_tuning` stub against those shapes (map
+     `note_tunings`→`step_cents`, `pseudo_octave_in_cents`→`period_cents`,
+     `reference_pitch`/`lowest_note`→`reference_note`); replace the stub-raises test with a
+     real captured-shape fixture. **Flips Chunk 1 to High confidence.**
+  2. A user-invocable command — `[ASSUMPTION: a dedicated tiny skill (e.g. `/tuning-pull`),
+     sibling to `/ableton-pull`, kept separate so the 99.99% `/ableton-pull` path stays
+     unpolluted (isolation ethos) | LOW impact | override: fold as a `--tuning` mode of
+     `/ableton-pull`]` — assembles the spine for a given song slug: probe Live →
+     `read_tuning_system` → `cache_ascl` (writes `songs/<slug>/tunings/<name>.ascl`) →
+     `set_song_tuning` (persists `tuning_ref`+`tuning_data`); reports the captured tuning + the
+     push re-load instruction. Clear no-op message when no tuning is loaded (None branch).
+  3. Tests: orchestration over the built pieces (None-branch no-op; loaded → cache+persist
+     round-trip using the captured-shape fixture); re-pull is idempotent (immutable cache
+     overwrites deterministically).
+  4. **Wire discoverability** (see learnings — a new song skill is undiscoverable otherwise):
+     primer + `CLAUDE.md` + `/song-workflow` + handoffs, per the song-workflow spine.
+  5. **Operator-verify** (rolls in Chunk 3's queued entry): pull against a real loaded tuning
+     end-to-end; verify the 3 drift cases + the push instruction copy live.
+  6. Critic `chunk`; committed; `[x]`. **← then the merge to `develop` is unblocked.**
+
 ---
 
 ## Out of scope (explicit boundaries)
@@ -189,11 +226,14 @@ generators, `theory/`, and 12-TET lens math are deliberately **absent** from thi
 
 ## Status
 
-- [x] Chunk 1: `tuning/` — LOM read + store + `.ascl` writer + cache + mapper + `tuning_ref`
-      (shape-independent spine; loaded-tuning extraction is a clearly-marked, loud stub
-      pending verify-api dict shapes — the sole Medium→High remainder). Critic `final`: no
-      blocking findings (1 warning + 2 coherence notes resolved). 4019 tests green; core
-      12-TET suite untouched; isolation grep-asserted.
+- [x] Chunk 1: `tuning/` — LOM read + store + `.ascl` writer + cache + mapper + `tuning_ref`.
+      **Now High confidence (2026-06-19):** verify-api closed against a real loaded tuning
+      (Wendy Carlos gamma) — `read.py`'s `_extract_loaded_tuning` stub replaced with the
+      confirmed-shape extraction (flat `list[float]` `note_tunings`; standard 12-key
+      `reference_pitch` → `reference_note=(octave+2)*12+index`); `TuningExtractionNotReady`
+      retired for `TuningReadError`; stub-raises test replaced with the captured-shape
+      fixture (`GAMMA_LOADED_RAW`). Critic `final`: no blocking findings. Core 12-TET suite
+      untouched; isolation grep-asserted.
 - [x] Chunk 2: worked authoring example (core untouched) — `test_authoring_example.py`'s
       `author_cadence` is the worked `build.py` compose step; a 19-EDO I–V–I authored via
       `tuning.mapper` flows through the UNCHANGED `chord_tones`/`chord_pad` + the real
@@ -214,6 +254,18 @@ generators, `theory/`, and 12-TET lens math are deliberately **absent** from thi
       Live-availability gate as `read.py`'s stub); the nothing-loaded branch rests on the
       confirmed None shape; the compare is name+period only (coarse, not the cents array).
       Operator-verification entry queued (instruction copy + the 3 drift cases).
+- [x] Chunk 4: pull-from-Live acquisition command (LIVE-GATED) — **done 2026-06-19** once a
+      tuning could finally be loaded. (0) verify-api closed (`api-notes-tuning.md`); (1)
+      `read.py` extraction stub closed against the confirmed shapes (Chunk 1 → High);
+      (2) `/tuning-pull` skill + `hallucinote.tuning.pull_cli` (`tuning-pull apply`,
+      registered in `cli.py` by lazy string — isolation preserved) assemble probe →
+      `read_tuning_system` → `cache_ascl` → `persist_tuning`, with a clean None no-op that
+      won't clobber an existing tuning; (3) tests: `test_pull_cli.py` (cache+persist
+      round-trip on the captured shape, idempotent re-pull, no-op, unknown-song, malformed
+      probe); (4) discoverability wired (`docs/alternate-tunings.md` capture section,
+      `docs/song-workflow.md` + `/song-workflow` side-paths, both off the 99.99% mainline);
+      (5) operator-verified LIVE (end-to-end pull + all 3 drift cases + push copy — see
+      `operator-verification.md`). **Merge to `develop` now unblocked.**
 
 ## Context
 
@@ -240,5 +292,12 @@ pull-from-Live flow); it depends on (1) and can't be exercised until a tuning is
 (3) operator-verify Chunk 3's drift live re-read + instruction copy (entry queued in
 `operator-verification.md`). The worked example (Chunk 2) sidesteps (1)/(2) by constructing
 `TuningData` directly, which is why authoring + push + caveat all work today without them.
-**Next:** PR into `develop` when the user asks; close (1)+(2) and operator-verify (3) on the
-next session with Live + a loadable tuning.
+
+**DECISION 2026-06-19 (Brooks): finish acquisition first** — do NOT merge the bolt-on alone.
+The three remaining items are now **Chunk 4** (pull-from-Live command), which must be `[x]`
+before the merge to `develop`. **Next session (Live + a loadable tuning required):** load a
+tuning → run Chunk 4 (verify-api → close stub → build the command → wire discoverability →
+operator-verify) → resolve the merge conflicts (the real one is the additive migration in
+`db/connection.py`, which `develop` has moved under since branch point — resolve at final
+merge, re-run migration round-trip tests) → `/prawduct:pr` into `develop`. Nothing further can
+land without Live; the branch otherwise sits at 4068 green, Critic `final` clean.

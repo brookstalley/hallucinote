@@ -21,7 +21,7 @@ _TUNING_DIR = _PKG_ROOT / "tuning"
 # relative (`from .tuning`, `from . import tuning`, `from ..tuning`).
 _TUNING_IMPORT = re.compile(
     r"^\s*(?:"
-    r"import\s+hallucinote\.tuning"
+    r"import\s+hallucinote\.tuning\b"
     r"|from\s+hallucinote\.tuning\b"
     r"|from\s+hallucinote\s+import\s+(?:[^\n]*\b)?tuning\b"
     r"|from\s+\.+tuning\b"

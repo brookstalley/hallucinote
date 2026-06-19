@@ -24,15 +24,15 @@ format is locked in ``hallucinote.tuning.model.TuningData`` /
 ``alternate-tunings.md`` §6). That tiny restatement is the deliberate cost of the
 core never importing the bolt-on.
 
-**Honest confidence — the loaded-tuning read.** The "nothing loaded" branch rests
-on the live-confirmed ``song.tuning_system → {"type":"NoneType",...}`` shape
-(``api-notes-tuning.md``). The "different tuning loaded" branch compares the
-loaded tuning's **scalar** ``name`` + ``pseudo_octave_in_cents`` (the api-notes
-call these straightforward, but they are not yet live-exercised — no tuning could
-be loaded during verify-api). The compare is name+period only — a coarse but real
-drift signal — NOT the full cents array (that needs the still-PENDING LOM dict
-shapes). When the scalars can't be read, the notice says so rather than faking a
-verdict. Closing the verify-api gate upgrades this from coarse to exact.
+**Confidence — the loaded-tuning read (verify-api closed 2026-06-19).** Both the
+"nothing loaded" shape (``song.tuning_system → {"type":"NoneType",...}``) and the
+loaded-tuning **scalar** reads — ``name`` (str) + ``pseudo_octave_in_cents``
+(float) — are now **live-confirmed** off a real loaded tuning (Wendy Carlos
+gamma; ``api-notes-tuning.md``). The remaining limit is a deliberate *scope*
+choice, not an unverified one: the compare is name+period only — a coarse but
+real drift signal — NOT the full cents array (full-cents drift is out of v1
+scope). When the scalars can't be read, the notice still says so rather than
+faking a verdict.
 """
 from __future__ import annotations
 
@@ -63,8 +63,8 @@ class LoadedTuning:
     """The scalar fields of the tuning currently loaded in Live, as re-read.
 
     ``name`` / ``period_cents`` are ``None`` when a tuning *is* loaded but its
-    scalars could not be read (the loaded-tuning read is unverified pending
-    verify-api) — distinct from ``loaded=None`` at the call site, which means
+    scalars could not be read (a sub-read of ``name`` / ``pseudo_octave_in_cents``
+    returned nothing) — distinct from ``loaded=None`` at the call site, which means
     *nothing* is loaded.
     """
 
@@ -131,7 +131,7 @@ def drift_warning(stored_blob: str, loaded: LoadedTuning | None) -> str | None:
         return (
             f"tuning: a tuning is loaded in Live, but Hallucinote could not read "
             f"its name/period to confirm it matches {stored_name!r} "
-            "(loaded-tuning read pending verify-api) — confirm by ear."
+            "(the scalar read returned nothing) — confirm by ear."
         )
 
     name_matches = loaded.name == stored_name
@@ -171,7 +171,7 @@ def _read_loaded_tuning(send_fn: Callable[..., Any], request_cls: Any) -> Loaded
 
     The ``{"type": "NoneType", ...}`` shape (12-TET / no tuning) is the
     live-confirmed signal for "nothing loaded". When a tuning IS loaded, read its
-    scalar ``name`` + ``pseudo_octave_in_cents`` sub-paths (unverified pending
+    scalar ``name`` + ``pseudo_octave_in_cents`` sub-paths (both live-confirmed by
     verify-api); a sub-read miss yields ``LoadedTuning(None, None)`` so the caller
     reports "couldn't verify" instead of a false match.
     """

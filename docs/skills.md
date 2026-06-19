@@ -46,6 +46,7 @@ are the same.)
 |---|---|
 | `/hallucinote:ableton-push` | Push the DB into Live through fourteen ordered phases (tempo → meter → tracks → returns → scenes → clips → mix → devices → routing → device-sidechain → envelopes → performed-automation → arrangement → cues). Materializes a song from scratch or converges an existing set. |
 | `/hallucinote:ableton-pull` | Pull manual Live edits (faders, mutes, sends, notes) back into the DB through the mutator path. |
+| `/hallucinote:tuning-pull` | Capture the alternate tuning loaded in Live onto a song (rare — non-12-TET songs only). Reads `song.tuning_system`, caches a re-draggable `.ascl`, records it on the song. See `docs/alternate-tunings.md`. |
 | `/hallucinote:song-snapshot` | Refresh a song's `captured_session.json` against the open set — instrument params, sends, device chains. (Not for clips/notes/automation.) |
 | `/hallucinote:snapshot-bake-recent-changes` | Bake mid-session device-parameter tweaks back into the DB so they survive the next push. Lighter than a full snapshot. |
 

@@ -52,6 +52,44 @@ BOHLEN_PIERCE = _bohlen_pierce()
 ALL_TUNINGS = (EDO_12, EDO_19, JI_MAJOR, BOHLEN_PIERCE)
 
 
+# --- Captured live LOM read (verify-api, 2026-06-19) -----------------------
+#
+# The exact ``song.tuning_system`` shapes probed off a real loaded tuning —
+# **Wendy Carlos gamma** (20 equal divisions of the 3/2 fifth; a genuine
+# *non-octave* tuning) — via ``ableton_probe(action='get', ...)``. Verbatim from
+# the probe ``value`` fields; see ``api-notes-tuning.md``. This is the assembled
+# dict the ``/tuning-pull`` skill hands ``read_tuning_system`` (each scalar/list
+# is one probe; ``reference_pitch`` is two nested ``.octave`` / ``.index_in_octave``
+# gets). It grounds ``read.py``'s loaded-tuning extraction in a real reading, not
+# a guessed shape.
+GAMMA_LOADED_RAW = {
+    "name": "Wendy Carlos gamma",
+    "note_tunings": [
+        0.0, 35.09775161743164, 70.19550323486328, 105.29325103759766,
+        140.39100646972656, 175.48875427246094, 210.5865020751953,
+        245.6842498779297, 280.7820129394531, 315.8797607421875,
+        350.9775085449219, 386.07525634765625, 421.1730041503906,
+        456.270751953125, 491.3684997558594, 526.4662475585938,
+        561.5640258789062, 596.6617431640625, 631.759521484375,
+        666.8572387695312,
+    ],
+    "number_of_notes_in_pseudo_octave": 20,
+    "pseudo_octave_in_cents": 701.9550170898438,
+    "reference_pitch": {"octave": 3, "index_in_octave": 0},
+}
+
+# The TuningData ``read_tuning_system`` must derive from GAMMA_LOADED_RAW: drop
+# the implicit unison (note_tunings[0] == 0.0), append the period as the final
+# degree, and resolve reference_note = (3+2)*12 + 0 = 60 (Ableton C3=60).
+GAMMA_EXPECTED = TuningData(
+    name="Wendy Carlos gamma",
+    step_count=20,
+    period_cents=701.9550170898438,
+    reference_note=60,
+    step_cents=tuple(GAMMA_LOADED_RAW["note_tunings"][1:]) + (701.9550170898438,),
+)
+
+
 def parse_scl(text: str) -> tuple[str, int, list[float]]:
     """Minimal spec-faithful Scala reader → (description, count, cents list).
 

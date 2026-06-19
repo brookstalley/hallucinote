@@ -24,6 +24,21 @@ for non-octave tunings like Bohlen-Pierce — never assume 1200 cents).
 So authoring in a tuning is just: *think in scale-degree indices, convert each to
 a MIDI integer, and write that integer.* That conversion is the mapper.
 
+## Capturing the tuning: `/tuning-pull`
+
+Once you've dragged a `.ascl` into Live's Tuning section (the **Tuning toggle in
+the Control Bar** lights up with its name), run **`/tuning-pull <song-slug>`** to
+record it on the song. The skill reads `song.tuning_system` off the LOM
+(read-only), reconstructs a re-draggable `.ascl` under `songs/<slug>/tunings/`,
+and sets `tuning_ref` + `tuning_data` on the song row. After that the mapper,
+lens caveat, and push instruction all key off the stored tuning automatically.
+
+Acquisition is **pull-from-Live only** — there's no supply-a-path ingest and no
+`.ascl` *parser* (Hallucinote only ever *writes* `.ascl`). The LOM exposes no
+source file path, so the cached `.ascl` is a faithful **reconstruction** of the
+tuning's interval structure, not the byte-original. If no tuning is loaded when
+you run it, `/tuning-pull` reports a no-op (it won't clobber an existing one).
+
 ## Authoring: the mapper feeds the unchanged generators
 
 `hallucinote.tuning.mapper.degree_to_midi` turns a scale-degree index into a MIDI
@@ -77,15 +92,10 @@ rather than scale-degree distances.
 
 ## Limitations (v1, honest)
 
-- **Acquisition is pull-from-Live only** — you load the tuning in Live; there's no
-  supply-a-`.ascl`-path ingest and no `.ascl` *parser* (Hallucinote only ever
-  *writes* `.ascl`). **The pull-from-Live read of a *loaded* tuning is not wired
-  yet** — it's a clearly-marked stub pending a one-time API-shape capture against a
-  real loaded tuning (`verify-api`, see
-  `.prawduct/artifacts/plans/MICROTUNE/api-notes-tuning.md`). Until then you supply
-  the derived `tuning_data`/`.ascl` via the tuning model directly (as the worked
-  example does); the authoring, cache, push instruction, and lens caveat all work
-  now.
+- **Acquisition is pull-from-Live only** — you load the tuning in Live and run
+  `/tuning-pull` (above); there's no supply-a-`.ascl`-path ingest and no `.ascl`
+  *parser* (Hallucinote only ever *writes* `.ascl`). The LOM tuning surface is
+  read-only, so there's no programmatic set-tuning either — the manual drag stays.
 - **The reconstruction preserves interval structure, not the absolute pitch
   anchor** — the cached `.ascl` reproduces the tuning's character; Live auto-assigns
   the reference pitch (no reference-frequency field in v1).
@@ -96,8 +106,9 @@ rather than scale-degree distances.
 ## Where the code lives
 
 - `hallucinote/tuning/` — the isolated bolt-on (`mapper`, `ascl` writer, `cache`,
-  `read` (loaded-tuning extraction stubbed), `store`, `model`). The core path
-  imports none of it (grep-asserted by `tests/unit/tuning/test_isolation.py`).
+  `read` (loaded-tuning LOM extraction), `store`, `model`, `pull_cli` (the
+  `/tuning-pull` apply step)). The core path imports none of it (grep-asserted by
+  `tests/unit/tuning/test_isolation.py`).
 - `hallucinote/tools/tuning_caveat.py` — the gated lens caveat (core side).
 - `hallucinote/sync/push/tuning_notice.py` — the gated push instruction + drift-warn
   (core side).

@@ -202,6 +202,14 @@ art demands.
    a ceiling; a gap in the helpers is never a reason to scope the art down. Probe
    the platform, then build the capability or hand-build the result.
 
+**Specialized side-paths** (rare; off the mainline so the common case stays
+simple):
+
+- **Alternate tunings** (19-EDO, just intonation, Bohlen-Pierce, …) — load the
+  `.ascl` in Live, run `/tuning-pull <slug>` to capture it onto the song, then
+  author in scale degrees via `hallucinote.tuning.mapper`. The 12-TET path is
+  untouched. → [docs/alternate-tunings.md](alternate-tunings.md).
+
 ---
 
 ## Where things live (the authoring model)

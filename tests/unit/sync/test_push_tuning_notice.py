@@ -3,8 +3,8 @@
 Three layers:
 - :func:`reload_instruction` — the operator load-the-.ascl copy (Part 2).
 - :func:`drift_warning` — the PURE warn/silent decision (Part 3), fully tested
-  here without Live (the loaded-tuning live *read* is unverified pending
-  verify-api; this pins the decision contract regardless).
+  here without Live (the live *read* shapes it consumes are verify-api-confirmed;
+  this pins the decision contract independently of the read).
 - :func:`collect_tuning_notices` — the DB-read + live-read wiring, exercised with
   a fake ``send_fn`` (12-TET inert · nothing-loaded · match · drift · probe-fail).
 
@@ -84,7 +84,7 @@ def test_drift_warning_fires_on_period_mismatch():
 def test_drift_warning_soft_note_when_scalars_unreadable():
     out = drift_warning(_blob(), LoadedTuning(name=None, period_cents=None))
     assert out is not None
-    assert "pending verify-api" in out
+    assert "could not read" in out and "confirm by ear" in out
     assert "DRIFT" not in out  # honest: not asserting a mismatch we can't see
 
 
@@ -248,4 +248,4 @@ def test_collect_soft_note_when_scalar_subread_fails(conn):
         request_cls=_FakeRequest,
     )
     assert len(notices) == 2
-    assert "pending verify-api" in notices[1]
+    assert "could not read" in notices[1] and "confirm by ear" in notices[1]

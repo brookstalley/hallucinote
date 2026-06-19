@@ -5,6 +5,10 @@
 **Branch:** `fix/push-devices-diff` (worktree, off `develop`)
 **Critic mode:** cumulative (gates the PR); chunk review per chunk.
 
+**Status (2026-06-19):** Chunk 1 DONE (committed `9e6c980`, independent review
+SOUND — no false-skip path). Chunk 2 DONE (heartbeat). Full suite green (4291).
+Operator-verification enqueued. Not yet PR'd. Cumulative review pending at PR time.
+
 ## Problem (observable)
 
 The push `devices` phase re-issues a `set_parameter` for **every** dialed
@@ -154,14 +158,15 @@ case (the reported bug) and is inert elsewhere.
 
 ## Acceptance criteria
 
-- [ ] An already-loaded/linked/correct chain set → `devices` phase issues ~0
+- [x] An already-loaded/linked/correct chain set → `devices` phase issues ~0
       `set_parameter` calls and completes in seconds (was 1227 / minutes).
-- [ ] A genuinely-changed dialed param IS still written (no false-skip).
-- [ ] Fresh-set first push unchanged: loads + convergence params still applied;
+      *(unit-proven; live check enqueued in operator-verification)*
+- [x] A genuinely-changed dialed param IS still written (no false-skip).
+- [x] Fresh-set first push unchanged: loads + convergence params still applied;
       diff fires no reads on that path.
-- [ ] `device_param_override` / `set_chain_property` / load calls unaffected.
-- [ ] (Chunk 2) a long phase reports mid-phase progress to stderr + state file.
-- [ ] Full suite green; cumulative Critic clean before PR.
+- [x] `device_param_override` / `set_chain_property` / load calls unaffected.
+- [x] (Chunk 2) a long phase reports mid-phase progress to stderr + state file.
+- [x] Full suite green (4291). [ ] cumulative Critic clean before PR (pending).
 
 ## Operator verification (live, post-merge — F10)
 

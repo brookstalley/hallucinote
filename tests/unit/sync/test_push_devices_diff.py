@@ -10,6 +10,7 @@ Three layers:
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 import pytest
@@ -364,6 +365,110 @@ def test_execute_devices_skips_all_when_live_matches(conn, linked_device, state_
     get_param_calls = [c for c in send.call_log if c["action"] == "get_parameters"]
     assert len(get_param_calls) == 1  # one batched read for the device
     assert any("already current" in w for w in result.warnings)
+
+
+# ---------------------------------------------------------------------------
+# PSH-3K9D chunk 2 — mid-phase heartbeat
+# ---------------------------------------------------------------------------
+
+
+def test_execute_emits_midphase_progress_then_clears(conn, state_dir, monkeypatch):
+    """A phase dispatching several calls flushes ``phase_progress`` mid-flight
+    (so a poller sees forward motion) and clears it at the terminal write."""
+    monkeypatch.setattr(push_execute, "_HEARTBEAT_EVERY", 2)
+
+    song = M.create_song(conn, name="t", key="Dm")
+    session = M.create_ableton_session(conn, song_id=song, name="draft")
+    track = M.create_track(conn, song_id=song, track_index=1, name="Synth")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=5,
+    )
+    cid = M.create_device_chain(conn, parent_track_id=track)
+    did = M.create_device(conn, chain_id=cid, position=1, kind="EQ Eight",
+                          display_name="EQ")
+    for name, disp, norm in [("Freq", "1.0 kHz", 0.3), ("Q", "2.0", 0.4),
+                             ("Gain", "3.0 dB", 0.5)]:
+        M.set_device_parameter(conn, device_id=did, name=name,
+                               value_display=disp, value_normalized=norm)
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=did, ableton_index=2,
+    )
+
+    sf = state_dir / ".last-push-state.json"
+    seen_progress: list = []
+
+    def send(req, *, read_timeout=None):
+        # All three params read back DIFFERENT from the DB -> none skipped -> 3
+        # set_parameter calls dispatched, so the heartbeat (every 2) fires once.
+        if req.tool == "ableton_device" and req.action == "get_parameters":
+            return _Resp(ok=True, result={"parameters": [
+                {"name": "Freq", "value_display": "9.9 kHz"},
+                {"name": "Q", "value_display": "9.9"},
+                {"name": "Gain", "value_display": "9.9 dB"},
+            ]})
+        if sf.exists():
+            data = json.loads(sf.read_text())
+            if data.get("phase_progress"):
+                seen_progress.append(data["phase_progress"])
+        return _Resp(ok=True, result={})
+
+    lines: list = []
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session, state_dir=state_dir,
+        send_fn=send, only="devices", progress_fn=lines.append,
+    )
+    assert result.outcome == "ok"
+    # Mid-phase progress was observed (after the 2nd of 3 calls) ...
+    assert {"phase": "devices", "done": 2, "total": 3} in seen_progress
+    assert any("2/3" in line for line in lines)
+    # ... and the terminal state file is clean (no stale progress).
+    assert "phase_progress" not in json.loads(sf.read_text())
+
+
+def test_execute_heartbeat_fires_in_convergence_pass(conn, state_dir, monkeypatch):
+    """The SYN-9F2L convergence pass (params of a device LOADED this push) also
+    passes phase_name, so its dispatch heartbeats too. Drives a fresh (unlinked)
+    device: main plan = one load; convergence then dispatches its 3 params —
+    where the heartbeat (every 2) fires. The diff never touches convergence
+    calls, so all 3 land."""
+    monkeypatch.setattr(push_execute, "_HEARTBEAT_EVERY", 2)
+
+    song = M.create_song(conn, name="t", key="Dm")
+    session = M.create_ableton_session(conn, song_id=song, name="draft")
+    track = M.create_track(conn, song_id=song, track_index=1, name="Synth")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=5,
+    )
+    cid = M.create_device_chain(conn, parent_track_id=track)
+    did = M.create_device(conn, chain_id=cid, position=1, kind="EQ Eight",
+                          display_name="EQ")
+    for name, disp, norm in [("Freq", "1.0 kHz", 0.3), ("Q", "2.0", 0.4),
+                             ("Gain", "3.0 dB", 0.5)]:
+        M.set_device_parameter(conn, device_id=did, name=name,
+                               value_display=disp, value_normalized=norm)
+    # NOTE: device is NOT linked — push must load it, then converge its params.
+
+    sf = state_dir / ".last-push-state.json"
+    seen_progress: list = []
+
+    def send(req, *, read_timeout=None):
+        if req.tool == "ableton_device" and req.action == "load":
+            return _Resp(ok=True, result={"device_index": 1})  # link lands
+        if req.tool == "ableton_device" and req.action == "set_parameter":
+            if sf.exists():
+                data = json.loads(sf.read_text())
+                if data.get("phase_progress"):
+                    seen_progress.append(data["phase_progress"])
+        return _Resp(ok=True, result={})
+
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session, state_dir=state_dir,
+        send_fn=send, only="devices",
+    )
+    assert result.outcome == "ok"
+    # The heartbeat fired during the convergence pass (3 params, every-2 cadence).
+    assert {"phase": "devices", "done": 2, "total": 3} in seen_progress
+    assert "phase_progress" not in json.loads(sf.read_text())
 
 
 def test_execute_devices_writes_only_changed_param(conn, linked_device, state_dir):

@@ -230,6 +230,40 @@ no Live threading).
 
 ### Chunk 3 — Disposition, deploy (fingerprint), in-band teaching
 
+> **Status 2026-06-19 — BUILT (no-Live), on `feat/mcp-render-analyze` (PR 2).**
+> **#1 disposition DONE.** Synchronous `render` action HARD-DELETED (not a
+> redirect stub — honors "delete, don't keep dead surfaces"); `start` is the sole
+> render entry, `render_handler` (the worker) stays. An agent calling the retired
+> action gets the dispatcher's unknown-action teaching error, whose
+> `valid_actions` name start/status (contract-tested). The `start` action absorbed
+> render's params + the server-side absolutize/db_seq preprocessing (server.py
+> guard `action == "start"`); the dead `("ableton_render","render"): None` read-
+> timeout entry was removed (perform_batch is now the canonical None case).
+> **Analyze disposition finalized: KEEP the synchronous `analyze` fast path +
+> documented guidance; decided AGAINST an auto-redirect** — analyze has no
+> realtime anchor to predict >60s (the same reason `eta_seconds=None`), so a
+> sync-refuses-and-redirects cutoff would be false precision; the agent picks
+> start/status from the documented surface-count/section-count guidance instead.
+>
+> **#2 fingerprint DONE (code) — Live-gated verify queued.** Deleting the render
+> action edits `actions/render.py` (in `_FINGERPRINT_PATHS`), so the fingerprint
+> flips again. No code/preflight change needed — the version is content-computed
+> and the handshake already detects drift; no test hardcodes it (full suite
+> green). Net deploy effect: PR 2 (with PR #185's `handlers/` edits) needs ONE
+> re-vendor + `/ableton-mcp-install` + operator re-verify after merge (entry in
+> `operator-verification.md`).
+>
+> **#3 in-band teaching DONE** (conventions guide gained "Long-running actions =
+> start + poll"; render `start` help + analyze tips teach the pattern;
+> `/mix-review` "Refreshing the analysis" + `error-recovery.md` rewritten off the
+> retired sync flow). The `/song-workflow` + getting-started + CLAUDE.md + PRIMER
+> spine pointers are **consolidated into Chunk 4**, where they can point at the
+> `/render-analyze` skill rather than the bare actions.
+>
+> **#4** tests added (sync-render-retired + teaches-start contract tests;
+> test_client/test_server re-pointed render→start). Chunk 4 (the skill) next; the
+> cumulative Critic is the PR-create gate for both chunks.
+
 - **Type:** code · **Critic mode:** chunk
 - **Done when:**
   1. Synchronous-action disposition finalized: retire the false-failure synchronous

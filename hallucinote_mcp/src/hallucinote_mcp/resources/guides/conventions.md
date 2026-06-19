@@ -165,6 +165,37 @@ as `preset_uri`. Display-name matching only works for the built-in roots
 These are pure-math timing transforms. Hallucinote owns the math; push the
 result via `replace_notes`. See `ableton://guides/gaps` for the rationale.
 
+## Long-running actions = start + poll
+
+`ableton_render` (realtime arrangement playback, multi-minute) and a large
+`ableton_analysis` (unbounded DSP — grows with track + section count) **cannot
+fit a single tool-call**: Claude Code's per-tool-call timeout is a wall-clock
+limit (60s for this server), it is transport-agnostic, and there is **no
+wake-on-done** for MCP tools. A synchronous call that outruns it returns a
+**false failure** — the agent sees an error while the work actually finished
+server-side. So these surfaces use a **start + poll** pattern:
+
+1. `action='start'` runs the work in the background and returns **immediately**
+   with a job handle — `{job_id, captures_dir|report_dir, eta_seconds, poll}` —
+   where `poll` is the instruction text telling you how to poll.
+2. `action='status', job_id=…` **long-polls** ~45s, then returns
+   `{state: running|done|failed, progress, …}` (plus `manifest`/`report` +
+   path on `done`, `error` on `failed`). Repeat until `state` is `done` or
+   `failed` — it's a handful of calls, not a busy spin.
+
+Dispositions:
+
+- **`ableton_render`** — synchronous `render` was **retired** (it always
+  exceeded the timeout). `start` + `status` is the **only** render entry.
+- **`ableton_analysis`** — synchronous `analyze` is **kept** as the one-call
+  fast path for a quick few-surface capture; use `start` + `status` for a
+  full-band song or one with many declared sections (the `analyze` tips say
+  when to switch).
+
+The **`/render-analyze`** skill orchestrates render-`start`→poll→analyze-`start`
+→poll out of the agent's main context and returns just the MixReport summary —
+prefer it over driving the poll loops by hand.
+
 ## Transport: Start vs Continue, and "play from bar X"
 
 Live distinguishes two ways to start the transport, and the MCP actions mirror

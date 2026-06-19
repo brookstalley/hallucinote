@@ -14,6 +14,35 @@ from hallucinote_mcp.handlers import render as render_handlers
 from hallucinote_mcp.wire import Request
 
 
+# --- disposition: synchronous `render` action retired (MCP-9R3T) -----
+
+
+def test_synchronous_render_action_is_retired():
+    """The synchronous `render` action was retired: a full render is realtime /
+    multi-minute and ALWAYS exceeded the 60s tool-call timeout, so it false-
+    failed (the agent saw an error while the render finished server-side).
+    `start` + `status` is the only render entry now. The worker function
+    `render_handler` STAYS — `start` backgrounds it."""
+    from hallucinote_mcp import schema
+
+    names = {a.name for a in schema.actions_for("ableton_render")}
+    assert "render" not in names, "synchronous render action must be retired"
+    assert {"start", "status"} <= names, "start/status are the render entry"
+    # The worker function is NOT removed — `start` spawns it on a detached worker.
+    assert hasattr(render_handlers, "render_handler")
+
+
+def test_retired_render_action_teaches_start():
+    """Calling the retired action returns a teaching unknown-action error whose
+    valid_actions name the live entry (so an agent with the old habit is
+    redirected to start/status, not left guessing)."""
+    resp = dispatch(Request(tool="ableton_render", action="render", params={}))
+    assert resp.ok is False
+    assert resp.valid_actions is not None
+    assert "start" in resp.valid_actions and "status" in resp.valid_actions
+    assert "render" not in resp.valid_actions
+
+
 # --- fakes (mirror test_analyzer_setup.py) ---------------------------
 
 

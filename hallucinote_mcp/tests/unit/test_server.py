@@ -332,17 +332,18 @@ def test_handle_tool_call_translates_connection_error(isolated_registry):
 
 
 # ---------------------------------------------------------------------------
-# Server-side path resolution for ableton_render(render).
+# Server-side path resolution for ableton_render(start).
 #
-# The render handler runs inside Live's process (cwd = "/" on macOS,
+# The render worker runs inside Live's process (cwd = "/" on macOS,
 # read-only). A relative output_dir like "songs/<slug>/captures/<ts>"
 # resolves against Live's cwd and the mkdir raises OSError [Errno 30].
 # handle_tool_call must absolutize the path BEFORE forwarding so the
-# Remote Script sees only absolute paths.
+# Remote Script sees only absolute paths. (The synchronous `render` action
+# this preprocessing once served was retired — `start` is the entry now.)
 # ---------------------------------------------------------------------------
 
 
-def test_render_call_absolutizes_relative_output_dir_before_forward(
+def test_start_call_absolutizes_relative_output_dir_before_forward(
     tmp_path, monkeypatch,
 ):
     """A relative output_dir gets absolutized against the MCP server's
@@ -356,7 +357,7 @@ def test_render_call_absolutizes_relative_output_dir_before_forward(
     with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
         handle_tool_call(
             "ableton_render",
-            "render",
+            "start",
             {"song_slug": "demo", "output_dir": "songs/demo/captures/x"},
         )
     forwarded_request = send.call_args.args[0]
@@ -373,7 +374,7 @@ def test_render_call_absolutizes_relative_output_dir_before_forward(
     assert output_dir.endswith("songs/demo/captures/x")
 
 
-def test_render_call_computes_default_output_dir_when_missing(
+def test_start_call_computes_default_output_dir_when_missing(
     tmp_path, monkeypatch,
 ):
     """When output_dir is omitted, the server fills in
@@ -387,7 +388,7 @@ def test_render_call_computes_default_output_dir_when_missing(
 
     forwarded = Response(ok=True, result={"status": "ok"})
     with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
-        handle_tool_call("ableton_render", "render", {"song_slug": "demo"})
+        handle_tool_call("ableton_render", "start", {"song_slug": "demo"})
     forwarded_request = send.call_args.args[0]
     output_dir = forwarded_request.params.get("output_dir")
     assert output_dir is not None, (
@@ -403,7 +404,7 @@ def test_render_call_computes_default_output_dir_when_missing(
     )
 
 
-def test_render_call_passes_through_absolute_output_dir(
+def test_start_call_passes_through_absolute_output_dir(
     tmp_path, monkeypatch,
 ):
     """An already-absolute output_dir is passed through unchanged."""
@@ -415,7 +416,7 @@ def test_render_call_passes_through_absolute_output_dir(
     forwarded = Response(ok=True, result={"status": "ok"})
     with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
         handle_tool_call(
-            "ableton_render", "render",
+            "ableton_render", "start",
             {"song_slug": "demo", "output_dir": absolute_dir},
         )
     forwarded_request = send.call_args.args[0]
@@ -442,10 +443,12 @@ def test_render_ensure_loaded_call_does_not_touch_output_dir(
 # MCP-4T6Y: per-action socket read-timeout policy.
 #
 # The default 15s window fits actions that return within Live's main-thread
-# budget. Two ableton_render actions break it: render (full playback) needs no
-# bound; ensure_loaded loads the analyzer onto 25+ surfaces and routinely
-# outruns 15s while the work continues server-side — it needs a generous but
-# bounded window so a genuinely-stuck load still surfaces as a timeout.
+# budget. ableton_render(ensure_loaded) breaks it: it loads the analyzer onto
+# 25+ surfaces and routinely outruns 15s while the work continues server-side —
+# it needs a generous but bounded window so a genuinely-stuck load still
+# surfaces as a timeout. (The synchronous `render` — formerly THE unbounded
+# case — was retired; `start` returns fast so the default suits it. The
+# remaining None entry is automation perform_batch, MCP-9R3T.)
 # ---------------------------------------------------------------------------
 
 
@@ -461,7 +464,8 @@ def test_render_ensure_loaded_call_does_not_touch_output_dir(
 @pytest.mark.parametrize(
     "tool, action, params",
     [
-        ("ableton_render", "render", {"song_slug": "demo"}),  # unbounded (None)
+        ("ableton_render", "start", {"song_slug": "demo"}),   # returns fast → default
+        ("ableton_automation", "perform_batch", {"arcs": []}),  # unbounded (None)
         ("ableton_render", "ensure_loaded", {}),              # generous bounded
         ("ableton_session", "set_tempo", {"bpm": 132.0}),     # default bounded
     ],
@@ -471,10 +475,11 @@ def test_handle_tool_call_forwards_policy_read_timeout(
 ):
     """The read_timeout ``handle_tool_call`` forwards to ``client.send`` is
     EXACTLY what the policy returns for that (tool, action) — pinning the wiring,
-    not re-asserting the policy table. render forwards the unbounded ``None`` (a
-    bounded socket timeout would sever its only verification — automation_state);
-    ensure_loaded forwards the generous window (MCP-4T6Y); a normal action
-    forwards the bounded default."""
+    not re-asserting the policy table. start forwards the bounded default (it
+    returns immediately — the realtime render runs on the worker, MCP-9R3T);
+    perform_batch forwards the unbounded ``None`` (a bounded socket timeout would
+    sever its only verification); ensure_loaded forwards the generous window
+    (MCP-4T6Y); a normal action forwards the bounded default."""
     from hallucinote_mcp import client
     from hallucinote_mcp.wire import Response
 
@@ -762,7 +767,7 @@ def test_register_tool_detects_param_type_conflicts(isolated_registry):
         _collect_tool_params("ableton_session")
 
 
-def test_render_call_attaches_db_seq_from_song_db(tmp_path, monkeypatch):
+def test_start_call_attaches_db_seq_from_song_db(tmp_path, monkeypatch):
     """AUD-4W7K: the server reads the song's latest audit-log seq at
     forward time and attaches it as db_seq — the render handler (inside
     Live's hallucinote-less env) just writes it into the manifest."""
@@ -791,14 +796,14 @@ def test_render_call_attaches_db_seq_from_song_db(tmp_path, monkeypatch):
     forwarded = Response(ok=True, result={"status": "ok"})
     with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
         handle_tool_call(
-            "ableton_render", "render",
+            "ableton_render", "start",
             {"song_slug": "demo", "output_dir": str(tmp_path / "captures")},
         )
     forwarded_request = send.call_args.args[0]
     assert forwarded_request.params["db_seq"] == expected_seq
 
 
-def test_render_call_omits_db_seq_when_song_db_missing(tmp_path, monkeypatch):
+def test_start_call_omits_db_seq_when_song_db_missing(tmp_path, monkeypatch):
     """Provenance is best-effort: no song DB → the param simply isn't
     attached (manifest.db_seq null); the render itself proceeds."""
     from hallucinote_mcp.wire import Response
@@ -811,14 +816,14 @@ def test_render_call_omits_db_seq_when_song_db_missing(tmp_path, monkeypatch):
     forwarded = Response(ok=True, result={"status": "ok"})
     with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
         handle_tool_call(
-            "ableton_render", "render",
+            "ableton_render", "start",
             {"song_slug": "nope", "output_dir": str(tmp_path / "captures")},
         )
     forwarded_request = send.call_args.args[0]
     assert "db_seq" not in forwarded_request.params
 
 
-def test_render_call_respects_explicit_db_seq(tmp_path, monkeypatch):
+def test_start_call_respects_explicit_db_seq(tmp_path, monkeypatch):
     """An explicitly-supplied db_seq is passed through untouched — the
     server only fills the gap, it never overrides the caller."""
     from hallucinote_mcp.wire import Response
@@ -826,13 +831,13 @@ def test_render_call_respects_explicit_db_seq(tmp_path, monkeypatch):
     forwarded = Response(ok=True, result={"status": "ok"})
     with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
         handle_tool_call(
-            "ableton_render", "render",
+            "ableton_render", "start",
             {"song_slug": "demo", "output_dir": str(tmp_path), "db_seq": 99},
         )
     assert send.call_args.args[0].params["db_seq"] == 99
 
 
-def test_render_call_omits_db_seq_when_song_row_missing(tmp_path, monkeypatch):
+def test_start_call_omits_db_seq_when_song_row_missing(tmp_path, monkeypatch):
     """A DB that exists but has no row for the slug degrades to no tag
     (the get_song_by_name -> None branch), never an error."""
     from hallucinote.db.connection import init_db
@@ -852,13 +857,13 @@ def test_render_call_omits_db_seq_when_song_row_missing(tmp_path, monkeypatch):
     forwarded = Response(ok=True, result={"status": "ok"})
     with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
         handle_tool_call(
-            "ableton_render", "render",
+            "ableton_render", "start",
             {"song_slug": "demo", "output_dir": str(tmp_path / "captures")},
         )
     assert "db_seq" not in send.call_args.args[0].params
 
 
-def test_render_call_swallows_seq_read_errors(tmp_path, monkeypatch, caplog):
+def test_start_call_swallows_seq_read_errors(tmp_path, monkeypatch, caplog):
     """The waivered broad catch: a corrupt song DB logs a warning and
     degrades to no tag — a render is never blocked over provenance."""
     import logging
@@ -879,7 +884,7 @@ def test_render_call_swallows_seq_read_errors(tmp_path, monkeypatch, caplog):
             "hallucinote_mcp.server.client.send", return_value=forwarded
         ) as send:
             handle_tool_call(
-                "ableton_render", "render",
+                "ableton_render", "start",
                 {"song_slug": "demo", "output_dir": str(tmp_path / "captures")},
             )
     assert "db_seq" not in send.call_args.args[0].params

@@ -89,9 +89,12 @@ footer when it detects the handshake refusal.
 
 ## Render capture errors (recorder won't arm)
 
-`ableton_render` can return **`render: the HallucinoteAnalyzer received 0
-frames after transport reached beat N`**. The transport played but the M4L
-analyzer's `sfrecord~` never captured, so no WAVs were written. This is almost
+A render can fail with **`render: the HallucinoteAnalyzer received 0
+frames after transport reached beat N`** — surfaced through
+`ableton_render(action='status', job_id=…)` as `state='failed'` (render is a
+start+poll action now; the synchronous `render` was retired). The transport
+played but the M4L analyzer's `sfrecord~` never captured, so no WAVs were
+written. This is almost
 always a stale Control-Surface/server subprocess or an **open analyzer M4L
 device-editor window** — either one steals the `udpreceive` port the analyzer
 listens on for its OSC path/arm messages.

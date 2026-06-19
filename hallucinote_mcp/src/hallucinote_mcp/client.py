@@ -31,8 +31,11 @@ class LiveConnectionError(Exception):
 # server route but the push route hit the 15s default and severed verification).
 # The default suits actions that return within Live's main-thread budget; a few
 # break it by design and need a wider (or no) window:
-#   - ableton_render(render): full-arrangement playback before responding
-#     (minutes) → unbounded; only the operator stopping playback ends it.
+#   - ableton_render(start): mints a job handle + spawns the detached render
+#     worker, then returns immediately (< ~3s) → the default suits it; the
+#     realtime full-arrangement playback runs on the worker, NOT on this
+#     forwarded call. (The synchronous `render` action that DID block here for
+#     minutes — needing an unbounded socket — was retired, MCP-9R3T.)
 #   - ableton_automation(perform_batch): plays the union span of all changed
 #     arcs in record (minutes at mix scale) → unbounded; the HANDLER owns the
 #     timeout via its own ramp deadline + finally-restore, so a socket cutoff
@@ -50,7 +53,6 @@ _DEFAULT_READ_TIMEOUT: float = 15.0
 _ENSURE_LOADED_READ_TIMEOUT: float = 180.0
 _STATUS_READ_TIMEOUT: float = 60.0
 _READ_TIMEOUTS: dict[tuple[str, str], float | None] = {
-    ("ableton_render", "render"): None,
     ("ableton_automation", "perform_batch"): None,
     ("ableton_render", "ensure_loaded"): _ENSURE_LOADED_READ_TIMEOUT,
     ("ableton_render", "status"): _STATUS_READ_TIMEOUT,

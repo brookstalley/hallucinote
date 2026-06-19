@@ -221,14 +221,14 @@ def handle_tool_call(
     if not server_response.needs_remote:
         return server_response.to_dict()
 
-    # Server-side path resolution for ableton_render(render|start). The render
-    # handler runs inside Live's process whose cwd is ``/`` (read-only on
-    # macOS), so relative paths like ``songs/<slug>/captures/<ts>`` fail
-    # with OSError. The MCP server's cwd IS the agent's repo root, so
-    # resolve the default + any relative output_dir to absolute HERE
-    # before forwarding. ``start`` backgrounds the same render and takes the
-    # same output_dir/db_seq, so it needs the identical preprocessing.
-    if request.tool == "ableton_render" and request.action in ("render", "start"):
+    # Server-side path resolution for ableton_render(start). The render worker
+    # runs inside Live's process whose cwd is ``/`` (read-only on macOS), so
+    # relative paths like ``songs/<slug>/captures/<ts>`` fail with OSError. The
+    # MCP server's cwd IS the agent's repo root, so resolve the default + any
+    # relative output_dir to absolute HERE before forwarding. (``start`` is the
+    # only render entry now — the synchronous ``render`` action was retired,
+    # MCP-9R3T; it took the same output_dir/db_seq preprocessing.)
+    if request.tool == "ableton_render" and request.action == "start":
         request = _absolutize_render_output_dir(request)
         request = _attach_render_db_seq(request)
 

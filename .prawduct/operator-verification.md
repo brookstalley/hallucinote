@@ -733,6 +733,68 @@ re-vendored server. On return, re-vendor then:
 
 ---
 
+## MICROTUNE Chunk 4 — verify-api close + `/tuning-pull` + drift live-read (2026-06-19)
+
+**Status:** VERIFIED LIVE (Wendy Carlos gamma loaded in Live this session). The
+Live-availability gate that blocked verify-api throughout is finally open, so the
+whole chain was exercised against real LOM shapes:
+
+1. **verify-api closed.** Probed `song.tuning_system` + sub-fields off the loaded
+   gamma tuning; recorded the real shapes in `api-notes-tuning.md` (a flat
+   `list[float]` `note_tunings`, not the typed-as-"dictionary" guess; standard
+   12-key `reference_pitch`). `read.py`'s `_extract_loaded_tuning` stub closed
+   against them → Chunk 1 is now **High confidence**.
+2. **`/tuning-pull` end-to-end (live).** Ran `hallucinote tuning-pull apply`
+   against a throwaway song DB fed the *real* live probe values → `status:pulled`,
+   `step_count:20`, `period_cents:701.955`, `reference_note:60`, cached
+   `tunings/wendy-carlos-gamma.ascl` written (20 pitch lines, non-octave period
+   `701.955017` as the last degree, unison unlisted), report carries the re-load
+   instruction.
+3. **Drift-warn — all 3 cases against real shapes.** Fed the captured live probe
+   responses through `tuning_notice._read_loaded_tuning` → `LoadedTuning('Wendy
+   Carlos gamma', 701.955…)`, then `drift_warning`: **match** (stored gamma) →
+   silent; **different** (stored JI, loaded gamma) → `"tuning DRIFT: Live has
+   'Wendy Carlos gamma' (period 701.96¢) … authored against 'JI 5-limit major' …"`;
+   **nothing-loaded** → `"tuning DRIFT: … expects 'Wendy Carlos gamma' but Live has
+   NO tuning loaded …"`. Push re-load instruction copy reads clearly.
+
+**Remaining (LOW, optional):** the drift-warn was exercised via a replay of the
+real probe responses (deterministic), not through a full `push_cli execute` over
+the live bridge — the live bridge read path itself is the same `ableton_probe`
+surface, separately confirmed `ok`. A future attended push of a real alt-tuned
+song would close that last cosmetic gap (the "Warnings (push still OK)" section in
+a real push summary), but the logic + live shapes are verified.
+
+---
+
+## MICROTUNE Chunk 3 — push tuning instruction + drift-warn (copy + live re-read)
+
+**Status:** SUPERSEDED by the Chunk 4 entry above (VERIFIED LIVE 2026-06-19). The
+two parts below were the queued items; both are now exercised against the loaded
+gamma tuning — drift copy + all 3 drift cases confirmed. Retained for history.
+
+Two parts needed an attended run, both gated on the **same
+Live-availability constraint as verify-api** (a tuning must be *loaded* in a
+readable Set — not available when this landed):
+
+1. **Instruction + drift copy (visual change).** On a real alt-tuned song's
+   `push_cli execute`, confirm the summary's "Warnings (push still OK)" section
+   carries the load instruction (`load songs/<slug>/tunings/<file>.ascl …`) and
+   that it reads clearly to an operator. A 12-TET push shows none of it.
+
+2. **Drift live re-read (the one unverified path).** The drift-warn re-reads
+   `song.tuning_system` live. The **nothing-loaded** branch rests on the
+   live-confirmed `{"type":"NoneType",…}` shape; the **different-tuning** branch
+   reads the scalar `name` + `pseudo_octave_in_cents` sub-paths, which are NOT yet
+   live-exercised. To verify: (a) push with NO tuning loaded → expect the "NO
+   tuning loaded" drift warning; (b) load the *correct* `.ascl` → expect silence;
+   (c) load a *different* tuning → expect the "DRIFT" warning naming both. If the
+   scalar sub-reads behave differently than assumed, this closes the same
+   verify-api gap as `read.py`'s loaded-tuning stub — capture the real shapes in
+   `api-notes-tuning.md` and adjust `tuning_notice._read_loaded_tuning`.
+
+---
+
 ## BAK-3M9T Chunk 01 — sidechain source round-trips through the durable snapshot
 
 > **2026-06-17 — merged with this check PENDING (user-directed).** PR #178 was

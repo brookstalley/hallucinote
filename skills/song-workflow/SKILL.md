@@ -75,3 +75,7 @@ the **five expertise layers**, and links into the research corpus
 (arrangement · melody · performance · masking · intent). The depth ladder:
 helpers → review lenses → the research → hand-author. Go as far down as the art
 demands.
+
+Rare side-paths live off the mainline so the common case stays simple — e.g.
+**alternate tunings** (non-12-TET songs): load the `.ascl` in Live, `/tuning-pull`
+to capture it, author in scale degrees. → [docs/alternate-tunings.md](../../docs/alternate-tunings.md).

@@ -18,6 +18,15 @@ CREATE TABLE IF NOT EXISTS songs (
     key             TEXT,
     timing_mode     TEXT NOT NULL DEFAULT 'native'
                         CHECK (timing_mode IN ('native', 'grid')),
+    -- MICROTUNE (TUN-4Q7W): alternate-tuning bolt-on. Both NULL = 12-TET (every
+    -- existing + future song's default, the 99.99%) — the core path reads neither.
+    -- `tuning_ref` is the song-relative POSIX path to the cached, re-draggable
+    -- `.ascl` (songs/<slug>/tunings/<name>.ascl); `tuning_data` is the derived
+    -- JSON blob {name, step_count, period_cents, reference_note, step_cents} the
+    -- mapper / writer / drift-verify read (no `.ascl` parser ships). Set together
+    -- by `set_song_tuning`; see hallucinote.tuning.
+    tuning_ref      TEXT,
+    tuning_data     TEXT,
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );

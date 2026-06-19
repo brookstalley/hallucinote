@@ -943,6 +943,19 @@ def execute_push(
             ))
         _emit_progress(f"[{phase_name}] HALTED — {outcome_label}")
 
+    # MICROTUNE Chunk 3: before the phase loop, emit the gated tuning notices —
+    # the re-load instruction + a non-blocking drift warning — for an alt-tuned
+    # song. Inert (returns []) for the 99.99% with tuning_ref NULL, with NO extra
+    # Live round-trip. Routed through the benign warnings channel so they ride
+    # the summary + state file; emitted early so the operator sees them up front.
+    from hallucinote.sync.push.tuning_notice import collect_tuning_notices
+    for notice in collect_tuning_notices(
+        conn, song_id=song_id, send_fn=send_fn, request_cls=Request,
+    ):
+        if notice not in warning_messages:
+            warning_messages.append(notice)
+        _emit_progress(notice)
+
     for idx, phase in enumerate(phases):
         # PSH-5T9D: flush at the START of each phase so a poller of
         # .last-push-state.json sees the current phase before it runs (the

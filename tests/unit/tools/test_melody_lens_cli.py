@@ -159,3 +159,52 @@ def test_main_unwired_song_exit_3(capsys, synth_songs):
     rc = main(["synth-unwired"])
     assert rc == 3
     assert "has not wired the melody lens" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# MICROTUNE Chunk 3: the gated non-12-tuning caveat
+# ---------------------------------------------------------------------------
+def _set_song_tuning_db(songs_root, slug: str) -> None:
+    """Give the synth song a DB (named slug) carrying a tuning_ref, so the
+    lens's caveat lookup fires. Legacy bare-DB name (tmp isn't a git repo)."""
+    from hallucinote.db import init_db, mutations as M
+    from hallucinote.tuning.model import TuningData
+
+    conn = init_db(songs_root / slug / f"{slug}.db")
+    try:
+        sid = M.create_song(conn, name=slug, key="C")
+        tuning = TuningData(
+            name="19-EDO", step_count=19, period_cents=1200.0, reference_note=60,
+            step_cents=tuple(round(1200.0 * i / 19, 6) for i in range(1, 20)),
+        )
+        M.set_song_tuning(
+            conn, song_id=sid,
+            tuning_ref="tunings/19-edo.ascl", tuning_data=tuning.to_blob(),
+        )
+    finally:
+        conn.close()
+
+
+def test_main_emits_tuning_caveat_for_alt_tuned_song(capsys, synth_songs):
+    _set_song_tuning_db(synth_songs, "synth-wired")
+    rc = main(["synth-wired"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "12-TET-relative" in out
+    assert "tunings/19-edo.ascl" in out
+
+
+def test_main_no_caveat_for_12tet_song(capsys, synth_songs):
+    # synth-wired has no DB at all -> resolver returns None -> no caveat.
+    rc = main(["synth-wired"])
+    assert rc == 0
+    assert "12-TET-relative" not in capsys.readouterr().out
+
+
+def test_main_json_carries_tuning_caveat_field(capsys, synth_songs):
+    _set_song_tuning_db(synth_songs, "synth-wired")
+    rc = main(["synth-wired", "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert "tuning_caveat" in payload
+    assert "tunings/19-edo.ascl" in payload["tuning_caveat"]

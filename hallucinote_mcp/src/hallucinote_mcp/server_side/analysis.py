@@ -150,8 +150,9 @@ def _latest_captures_dir(song_slug: str) -> Path:
     if not captures_root.exists():
         raise _AnalysisError(
             f"no captures directory at {captures_root} — has "
-            f"ableton_render(action='render', song_slug={song_slug!r}) "
-            f"been called yet? Captures are written to "
+            f"ableton_render(action='start', song_slug={song_slug!r}) "
+            f"been called yet? (Then poll action='status' to completion.) "
+            f"Captures are written to "
             f"songs/{song_slug}/captures/<iso-ts>/."
         )
     candidates = [
@@ -161,7 +162,7 @@ def _latest_captures_dir(song_slug: str) -> Path:
     if not candidates:
         raise _AnalysisError(
             f"{captures_root} has no captures dirs with a manifest.json — "
-            f"each ableton_render(render) call writes one; if you see "
+            f"each ableton_render(action='start') render writes one; if you see "
             f"WAVs but no manifest the render didn't complete cleanly."
         )
     return max(candidates, key=_capture_recency_key)
@@ -532,7 +533,7 @@ def analyze_handler(
     if not manifest.exists():
         raise _AnalysisError(
             f"no manifest.json at {captures_path} — captures dirs are "
-            f"produced by ableton_render(render) and always include "
+            f"produced by ableton_render(action='start') and always include "
             f"manifest.json next to the WAVs."
         )
 

@@ -920,3 +920,27 @@ synchronous `analyze`). Render it first (Chunk-1 `start`/`status`), then:
 
 5. **Synchronous `analyze` still works** as the fast path for a quick
    few-surface capture (the disposition keeps it).
+
+---
+
+## MCP-9R3T Chunk 3 — sync-render retirement + re-vendor handshake (PR 2)
+
+Visual change: yes (the `ableton_render` action surface changed — `render` is
+gone). Branch `feat/mcp-render-analyze`. PR 2 edits `actions/render.py` +
+`handlers/render.py` + `handlers/jobs.py` (all in `_FINGERPRINT_PATHS`), so the
+server fingerprint flips → the running server reports a version mismatch against
+the previously-vendored Remote Script until re-vendored.
+
+1. **Re-vendor handshake.** After merging PR 2, run `/ableton-mcp-install` (or
+   relaunch the dev-mode plugin, then install) to re-vendor, then reconnect. A
+   call should NOT report a version mismatch once the vendored RS matches the
+   running server. (Same handshake the PR #185 / Chunk-1 entries need — one
+   re-vendor covers the whole async render/analyze surface.)
+
+2. **Retired `render` action.** `ableton_render(action='render', song_slug=…)`
+   returns a teaching unknown-action error whose `valid_actions` include `start`
+   and `status` (verified headless; confirm the deployed surface matches).
+
+3. **`start`/`status` are the render entry** and behave as in the Chunk-1 entry
+   above (start returns fast; status long-polls to a terminal state with a
+   well-formed manifest; no false failure).

@@ -1,6 +1,6 @@
 """``ableton_render`` action schema.
 
-Two actions:
+Actions:
 
   - ``ensure_loaded`` — idempotent silent sweep that places a
     HallucinoteAnalyzer on every audio track + return + master.
@@ -8,13 +8,19 @@ Two actions:
     ``/return-new`` skill postludes so analyzer placement keeps up
     with structural changes silently.
 
-  - ``render`` — full end-to-end capture pass: ensure → deliver
-    paths + windows over OSC → arm → play → wait → stop → write
-    manifest. Produces one WAV per surface plus ``manifest.json``
-    in the captures directory.
+  - ``strip`` — the inverse: bulk-remove the analyzer from every surface.
 
-Both actions live behind one tool because they share lifecycle:
-``render`` always calls ``ensure_loaded`` in its preamble, and the
+  - ``start`` — kick off a full end-to-end capture pass on a detached
+    worker (ensure → deliver paths + windows over OSC → arm → play →
+    record ring-out → stop → write manifest) and return a job handle
+    immediately. Produces one WAV per surface plus ``manifest.json``.
+    ``status`` long-polls the job to completion. This start+poll pair
+    replaced the synchronous ``render`` action, which always exceeded the
+    60s tool-call timeout and false-failed (MCP-9R3T) — see
+    ``ableton://guides/conventions`` "Long-running actions = start + poll".
+
+The capture actions live behind one tool because they share lifecycle:
+``start`` always calls ``ensure_loaded`` in its preamble, and the
 ``ensure_loaded`` surface gives callers a side door for "place the
 analyzers without rendering yet" workflows (e.g. a `/song-new`
 postlude that runs before any composition exists).
@@ -92,17 +98,29 @@ register(
 )
 
 
-_render_action = register(
+# Synchronous `render` was RETIRED (MCP-9R3T Chunk 3): a full arrangement
+# render is realtime / multi-minute, so it ALWAYS exceeded the 60s tool-call
+# timeout and false-failed — the agent saw an error while the render actually
+# finished server-side and wrote its manifest. `start` + `status` is the only
+# render entry now; no back-compat to that false-failure path. `render_handler`
+# (the worker) stays — `start` backgrounds it on a detached worker.
+register(
     Action(
         tool="ableton_render",
-        name="render",
+        name="start",
         description=(
-            "End-to-end capture pass. Ensure analyzers are present, deliver "
-            "per-instance WAV paths + transport-position windows via OSC, "
-            "arm, play the arrangement, record a reverb ring-out past the "
-            "arrangement end (ring_out_beats), stop, disarm, and write the "
-            "captures manifest. Produces one WAV per surface plus "
-            "manifest.json in the captures directory."
+            "Start a render in the BACKGROUND and return a job handle "
+            "immediately. A full arrangement render is realtime / multi-minute, "
+            "so it can never fit the tool-call timeout — this is the ONLY render "
+            "entry (the old synchronous 'render' was retired). Ensures analyzers "
+            "are present, delivers per-instance WAV paths + transport windows "
+            "via OSC, arms, plays the arrangement, records a reverb ring-out "
+            "past the end (ring_out_beats), stops, and writes the captures "
+            "manifest — all on the worker. Returns {job_id, captures_dir, "
+            "eta_seconds, expected_stop_beat, poll}; the 'poll' text tells you "
+            "to call status(job_id) until state is 'done' or 'failed'. One "
+            "render at a time — a start while another is running returns "
+            "{busy: true, job_id} instead of launching a second pass."
         ),
         params=(
             ParamSpec(
@@ -205,59 +223,25 @@ _render_action = register(
                 ),
             ),
         ),
-        handler=render_handlers.render_handler,
-        runs_on_worker=True,
-        example=(
-            "ableton_render(action='render', song_slug='falling-walking')"
-        ),
-        tips=(
-            "Per analyzer instance: WAV path + track_id + start/stop "
-            "beats are delivered out-of-band via OSC (Live params can't "
-            "carry strings); Arm is the gate (Live param), the patch's "
-            "beat observer is the boundary. See "
-            "m4l/HallucinoteAnalyzer.amxd.spec.md.",
-            "Returns {captures_dir, manifest_path, manifest, status}. "
-            "status='ok' on clean exit, 'incomplete' if transport "
-            "didn't reach stop_at_beat within the wait window (Live's "
-            "audio thread may have stalled; the partial WAVs are still "
-            "on disk).",
-            "A full-arrangement render takes minutes and exceeds the MCP "
-            "tool-call timeout — prefer start/status (below) for anything "
-            "but a short window.",
-        ),
-    )
-)
-
-
-# `start` takes the SAME params as `render` (shared, not duplicated) but runs the
-# capture on a detached worker and returns a job handle immediately — the
-# synchronous `render` false-fails on the tool-call timeout for a multi-minute
-# capture. The agent then polls `status`.
-register(
-    Action(
-        tool="ableton_render",
-        name="start",
-        description=(
-            "Start a render in the BACKGROUND and return a job handle "
-            "immediately, so a multi-minute capture never hits the tool-call "
-            "timeout. Same params as 'render'. Returns {job_id, captures_dir, "
-            "eta_seconds, expected_stop_beat, poll}; the 'poll' text tells you "
-            "to call status(job_id) until state is 'done' or 'failed'. One "
-            "render at a time — a start while another is running returns "
-            "{busy: true, job_id} instead of launching a second pass."
-        ),
-        params=_render_action.params,
         handler=render_handlers.render_start_handler,
         runs_on_worker=True,
         example=(
             "ableton_render(action='start', song_slug='falling-walking')"
         ),
         tips=(
-            "Use start/status instead of the synchronous 'render' for any "
-            "full-arrangement capture — render holds the tool-call socket for "
-            "the whole realtime pass and red-times-out before the WAVs land.",
+            "This is the ONLY render entry — the synchronous 'render' action "
+            "was retired because it held the tool-call socket for the whole "
+            "realtime pass and red-timed-out before the WAVs landed.",
             "status long-polls ~45s per call, so the poll loop is a handful of "
             "calls, not a busy spin.",
+            "Per analyzer instance: WAV path + track_id + start/stop beats are "
+            "delivered out-of-band via OSC (Live params can't carry strings); "
+            "Arm is the gate (Live param), the patch's beat observer is the "
+            "boundary. See m4l/HallucinoteAnalyzer.amxd.spec.md.",
+            "On 'done', status carries {manifest, manifest_path, render_status}: "
+            "render_status='ok' on a clean exit, 'incomplete' if transport "
+            "didn't reach stop_at_beat within the wait window (Live's audio "
+            "thread may have stalled; the partial WAVs are still on disk).",
         ),
     )
 )

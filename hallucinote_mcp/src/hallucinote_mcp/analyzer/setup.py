@@ -256,7 +256,7 @@ def ensure_analyzers_loaded(
 
     Worker-thread caller invariant. The two registered actions that
     invoke this (``ableton_render(action='ensure_loaded')`` and
-    ``ableton_render(action='render')``) both run with
+    ``ableton_render(action='start')``) both run with
     ``runs_on_worker=True``. Each per-surface load + 2× set_parameter
     bout marshals onto Live's main thread via ``context.run_on_main``;
     between surfaces, we sleep on the worker thread to let Live's main

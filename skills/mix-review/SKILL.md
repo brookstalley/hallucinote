@@ -328,43 +328,33 @@ annotation.
 
 ## Refreshing the analysis
 
-If there's no recent report (or the mix changed), render + analyze first:
-`ableton_render(action='render', song_slug=...)` then
-`ableton_analysis(action='analyze', song_slug=...)`. Masking runs automatically
-when the song declares sections. (If `ableton_analysis` returns a report with no
-`masking`/`attribution` keys, the MCP server is running stale code — tell the
-user to run `/mcp` to respawn it.)
+If there's no recent report (or the mix changed), render + analyze first. Both
+are **long-running start+poll actions** — a full render is realtime / multi-
+minute, and a many-surface analyze can exceed the 60 s tool-call timeout — so
+neither fits a single synchronous call (Claude Code has no wake-on-done; the
+timeout is a transport-agnostic wall-clock limit). See
+`ableton://guides/conventions` "Long-running actions = start + poll".
 
-**Expect a "timed out after 60 s" error on both — it is NOT a failure.** A render
-or analyze routinely runs several minutes, but the Claude Code MCP tool-call
-*wrapper* caps a single call at 60 s and returns a red timeout WHILE THE JOB
-CONTINUES server-side (the framework already sets an unbounded socket read; the
-60 s cap is the wrapper, a layer the server can't widen). Do not retry or report a
-failure — poll the filesystem for the completion artifact.
+**Easiest — `/render-analyze`.** It orchestrates render-`start`→poll→analyze-
+`start`→poll entirely out of this context and hands back just the MixReport
+summary + `report_path`. Prefer it over driving the poll loops by hand.
 
-**Primary signal — `status.json`.** Both actions now write a sibling
-`status.json` (`{state: running|done|error}`) the instant the work starts,
-refreshed mid-flight and made terminal at the end (carrying the report/manifest
-path on `done`, the message on `error`). Poll that single stable file — no dir
-scan, and a raised job lands a terminal `error` instead of hanging forever. Its
-two locations:
-- **render** — `<captures_dir>/status.json` (`done` also carries `manifest_path`
-  + `render_status`: `ok`/`incomplete`).
-- **analyze** — `songs/<slug>/analysis/status.json` (`done` also carries
-  `report_path`).
+**By hand**, if you'd rather drive it:
+- `ableton_render(action='start', song_slug=...)` returns a `{job_id, poll}`
+  handle immediately; poll `ableton_render(action='status', job_id=...)` (each
+  call long-polls ~45 s) until `state` is `done` or `failed`. `done` carries
+  `manifest_path` + `render_status` (`ok`/`incomplete`).
+- then `ableton_analysis(action='start', song_slug=...)` → poll
+  `ableton_analysis(action='status', job_id=...)` until `done` (carries
+  `report` + `report_path`). For a quick few-surface capture the synchronous
+  `ableton_analysis(action='analyze', ...)` is the one-call fast path.
 
-**Fallback — artifact poll (for a stale server).** `status.json` only appears
-once the *running* MCP server carries this change, and it appears only after the
-user re-installs: the chunks that ship it flip the server fingerprint, so the
-plugin re-vendors on the next `/ableton-mcp-install` (a server started before
-that still writes no `status.json`). If `status.json` never shows up, fall back
-to watching for the completion artifact directly:
-- **render** — watch `<captures_dir>` for `manifest.json` (written as the render's
-  final act).
-- **analyze** — watch `songs/<slug>/analysis/` for a JSON newer than the newest one
-  from before the call (the MixReport).
-Fire the call, ignore the 60 s error, poll for `status.json` (artifact as
-fallback), then proceed.
+There is **no more "ignore the 60 s timeout" workaround** — start+poll never
+false-fails. (The worker still writes a sibling `status.json` heartbeat as a
+crash-resilient backing, but the agent's signal is the `status` action, not a
+filesystem poll.) Masking runs automatically when the song declares sections.
+(If the report has no `masking`/`attribution` keys, the MCP server is running
+stale code — tell the user to run `/mcp` to respawn it.)
 
 **Verifying a mix change (A/B):** after applying a fix, PUSH the change to
 Live before re-rendering (fixes land DB-first through mutators; `db_seq`

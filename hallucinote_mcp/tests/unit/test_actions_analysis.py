@@ -31,9 +31,44 @@ def test_ableton_analysis_in_tools_tuple():
     assert "ableton_analysis" in TOOLS
 
 
-def test_ableton_analysis_has_help_analyze_get_latest_report():
+def test_ableton_analysis_action_surface():
     action_names = {a.name for a in actions_for("ableton_analysis")}
-    assert action_names == {"help", "analyze", "get_latest_report", "extract"}
+    assert action_names == {
+        "help", "analyze", "start", "status", "get_latest_report", "extract",
+    }
+
+
+def test_start_action_is_server_side_sharing_analyze_params():
+    start = get("ableton_analysis", "start")
+    assert start is not None
+    assert start.runs_server_side is True
+    assert start.runs_on_worker is False
+    # No events — async start is a read-side DSP background, like analyze.
+    assert start.db_writes is False
+    # `start` shares analyze's params (it backgrounds the same work).
+    analyze = get("ableton_analysis", "analyze")
+    assert {p.name for p in start.params} == {p.name for p in analyze.params}
+    song_slug = next(p for p in start.params if p.name == "song_slug")
+    assert song_slug.required is True
+
+
+def test_status_action_is_server_side_with_job_id():
+    status = get("ableton_analysis", "status")
+    assert status is not None
+    assert status.runs_server_side is True
+    assert status.runs_on_worker is False
+    assert {p.name for p in status.params} == {"job_id"}
+    job_id = next(p for p in status.params if p.name == "job_id")
+    assert job_id.required is True
+
+
+def test_analyze_tips_point_to_async_for_large_captures():
+    """The sync-vs-async trigger is documented on the synchronous action so the
+    agent learns when to reach for start/status (Chunk 2 disposition)."""
+    analyze = get("ableton_analysis", "analyze")
+    joined = " ".join(analyze.tips).lower()
+    assert "start" in joined and "status" in joined
+    assert "60s" in joined or "timeout" in joined
 
 
 def test_analyze_action_is_server_side_with_song_slug_param():

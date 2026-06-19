@@ -639,6 +639,80 @@ def test_tool_call_via_fastmcp_drops_unsupplied_optional_kwargs():
     )
 
 
+def test_tool_wrappers_are_async_to_keep_event_loop_free():
+    """MCP-9R3T/MCP-5N8K dispatch fix. FastMCP runs a SYNC tool INLINE on the
+    event loop but AWAITS an async one (mcp func_metadata: `return fn(**args)`
+    vs `await fn(**args)`). Our dispatch can BLOCK for ~45-60s — a `status`
+    long-poll parks on threading.Event.wait / a socket read — so a sync wrapper
+    would freeze the whole server for that window. Every tool wrapper MUST be
+    async (it offloads the sync dispatch via anyio.to_thread); guard against a
+    regression to a plain `def wrapper`."""
+    import inspect as _inspect
+
+    mcp = create_server()
+    for name in registered_tool_names(mcp):
+        fn = get_registered_tool(mcp, name).fn
+        assert _inspect.iscoroutinefunction(fn), (
+            f"{name}'s tool wrapper is sync; a sync tool runs inline on the MCP "
+            "event loop, so a status long-poll would freeze every concurrent call"
+        )
+
+
+def test_status_longpoll_does_not_block_concurrent_tool_calls():
+    """The load-bearing behavior of the dispatch fix: while one tool call
+    long-polls (blocking off-thread), a concurrent call is still served.
+
+    Seed a running analyze job, then fire a `status` long-poll (it blocks until
+    the job finishes) AND a quick `help` call concurrently; a finisher marks the
+    job done after a delay. With the async wrapper + anyio.to_thread the loop
+    stays free, so `help` completes DURING the long-poll. With a sync wrapper the
+    long-poll would run inline and `help` could not be served until it returned —
+    the order would invert. We assert `help` finishes before `status`.
+    """
+    import anyio
+
+    from hallucinote_mcp.handlers.jobs import default_registry
+
+    mcp = create_server()
+    analysis = get_registered_tool(mcp, "ableton_analysis")
+    reg = default_registry()
+    job = reg.create(kind="analyze", dir="/tmp/x")  # running; won't self-finish
+    order: list[str] = []
+
+    async def main():
+        async def poll():
+            # default long-poll is 45s; the finisher releases it at ~0.6s
+            await analysis.run({"action": "status", "job_id": job.job_id})
+            order.append("status")
+
+        async def quick():
+            await anyio.sleep(0.1)  # ensure `poll` is in its blocking wait first
+            await analysis.run({"action": "help"})
+            order.append("help")
+
+        async def finish():
+            await anyio.sleep(0.6)  # well after `quick` would complete if served
+            reg.mark_done(job.job_id, {"report": {}, "report_path": None})
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(poll)
+            tg.start_soon(quick)
+            tg.start_soon(finish)
+
+    try:
+        anyio.run(main)
+        assert order == ["help", "status"], (
+            f"help must be served during the status long-poll; got {order}. "
+            "An inverted order means the long-poll froze the event loop "
+            "(regression to a synchronous tool wrapper)."
+        )
+    finally:
+        # The job lives in the process-default registry — clear it so the
+        # leftover doesn't colour another test's recent-jobs error message.
+        reg._jobs.clear()  # noqa: SLF001 - test cleanup of the singleton
+        reg._order.clear()  # noqa: SLF001
+
+
 def test_help_action_works_via_fastmcp_with_no_kwargs():
     """The most common discovery call — ``action='help'`` with no other args
     — must succeed end-to-end through the FastMCP wrapper.

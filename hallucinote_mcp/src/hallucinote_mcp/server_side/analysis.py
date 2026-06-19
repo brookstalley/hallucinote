@@ -25,9 +25,21 @@ import datetime as dt
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from ..dispatcher import LiveContext  # noqa: F401  (used in type hints)
+# jobs.py lives in the FINGERPRINTED handlers/ set (it runs in BOTH processes —
+# render's worker uses it Live-side, analyze's uses it here server-side), so the
+# server-side analyze handlers reach UP into it. This is server_side → handlers,
+# the allowed direction; the isolation invariant only forbids handlers/ →
+# server_side/ (a Live-side change must never hinge on server-side code). See
+# the package docstring + test_server_side_isolation.py.
+from ..handlers.jobs import (
+    DEFAULT_STATUS_LONG_POLL_S,
+    JobRegistry,
+    default_registry,
+    spawn_daemon,
+)
 
 logger = logging.getLogger("hallucinote_mcp.analysis")
 
@@ -652,6 +664,160 @@ def analyze_handler(
     }
 
 
+# --- async start / status (MCP-5N8K) ---------------------------------
+
+# A many-surface / many-section analysis runs the full DSP pipeline (per-stem
+# loudness, masking, timing, cross-rhythm, reverb verification) and can exceed
+# the 60s per-tool-call timeout, false-failing the synchronous `analyze` long
+# after the report is actually written. `start` backgrounds the DSP on a
+# detached SERVER-PROCESS thread (analyze is pure DSP — no Live, so unlike
+# render's worker it needs no main-thread marshaling) and returns a job handle
+# immediately; `status` long-polls the registry. The synchronous `analyze`
+# stays as the one-call fast path for a quick few-surface capture — the action
+# help documents when to use which. See
+# .prawduct/artifacts/plans/MCP-ASYNC-RENDER-ANALYZE/api-notes.md.
+
+ANALYZE_POLL_INSTRUCTION = (
+    "Analysis running in the background. Poll ableton_analysis(action='status', "
+    "job_id='{job_id}'); each status call long-polls ~45s and returns "
+    "{{state}} — repeat until state is 'done' or 'failed'. One analysis at a "
+    "time: don't call start again while this is running."
+)
+
+
+def analyze_start_handler(
+    _context: LiveContext,
+    *,
+    song_slug: str,
+    captures_dir: str | None = None,
+    compare_to: int | None = None,
+    _registry: JobRegistry | None = None,
+    _analyze_fn: Callable[..., dict[str, Any]] | None = None,
+    _spawn: Callable[[Callable[[], None]], None] | None = None,
+    _resolve_report_dir: Callable[[str], Path] | None = None,
+) -> dict[str, Any]:
+    """Background an analysis and return its job handle immediately.
+
+    The handle (``job_id`` + ``report_dir`` + a poll instruction) lets the agent
+    poll ``status`` without holding the tool-call socket for the DSP's duration —
+    a many-surface / many-section report can exceed the 60s tool-call timeout the
+    synchronous ``analyze`` false-fails on. One analysis at a time: a ``start``
+    while another is running returns ``{busy: True, job_id}`` rather than
+    launching a second DSP pass (the pipeline is CPU-heavy; concurrent passes
+    would only contend).
+
+    ``eta_seconds`` is deliberately omitted (None): analyze runtime depends on
+    surface count × audio length × which per-section passes the song's declared
+    sections enable, with no realtime anchor like render's beats/tempo — any
+    single number would be a guess, so we report none rather than a misleading
+    one. Input errors (typo'd slug, no captures dir) surface via ``status`` as
+    ``state='failed'`` with the teaching error, the same path as a DSP failure —
+    ``start`` validates only what it needs to mint the handle (mirrors
+    render_start, whose render-time failures also surface through ``status``).
+    """
+    if not _HAS_HALLUCINOTE:  # pragma: no cover - exercised in Live's vendored env
+        raise _AnalysisError(
+            "ableton_analysis requires the hallucinote package — this handler "
+            "must run server-side, not from Live's Remote Script vendored env "
+            "(which doesn't ship hallucinote). Check the action's "
+            "runs_server_side flag."
+        )
+    registry = _registry if _registry is not None else default_registry()
+    analyze_fn = _analyze_fn if _analyze_fn is not None else analyze_handler
+    spawn = _spawn if _spawn is not None else (
+        lambda worker: spawn_daemon(worker, name="hallucinote-analyze-worker")
+    )
+    resolve_report_dir = (
+        _resolve_report_dir
+        if _resolve_report_dir is not None
+        else (lambda slug: _resolve_song_dir(slug) / "analysis")
+    )
+
+    # One analysis at a time — atomically claim the slot. The async dispatch
+    # wrapper (server.py) lets two starts run on different threads, so the claim
+    # must be atomic; create_if_idle closes the check-then-create TOCTOU. A
+    # start while one runs returns a busy handle pointing at the live job.
+    report_dir = resolve_report_dir(song_slug)
+    job, created = registry.create_if_idle(kind="analyze", dir=str(report_dir))
+    if not created:
+        return {
+            "busy": True,
+            "job_id": job.job_id,
+            "state": job.state,
+            "report_dir": job.dir,
+            "message": (
+                "An analysis is already running (one at a time). Poll it with "
+                f"ableton_analysis(action='status', job_id='{job.job_id}'), "
+                "or wait for it to finish before starting another."
+            ),
+        }
+    # Analyze has no fine-grained progress — analyze_mix is one blocking call
+    # with no progress callback (the spec is not to plumb one in) — so progress
+    # stays a coarse stage marker, the shape the api-notes job record reserves
+    # for analyze (``progress: {stage, ...} (coarse)``).
+    registry.update_progress(job.job_id, {"stage": "analyzing"})
+
+    def _worker() -> None:
+        try:
+            result = analyze_fn(
+                None,
+                song_slug=song_slug,
+                captures_dir=captures_dir,
+                compare_to=compare_to,
+            )
+            # Map analyze_handler's return into the locked-in {report,
+            # report_path} status shape (api-notes): ``report`` is the same
+            # lightweight bundle the synchronous ``analyze`` returns (summary +
+            # finding_count + schema_version + analysis_code); the full per-stem
+            # MixReport JSON stays on disk at ``report_path`` (the convenient
+            # accessor, symmetric with render's manifest_path).
+            registry.mark_done(job.job_id, {
+                "report": result,
+                "report_path": result.get("report_path"),
+            })
+        except Exception as e:  # prawduct:allow prawduct/broad-except -- detached analyze worker: any failure must land as job state=failed (else status long-polls forever); analyze_handler already logged + wrote status.json=error before re-raising — the worker's job is only to record the terminal state
+            logger.exception(
+                "analyze worker failed for job %s (song_slug=%s)",
+                job.job_id, song_slug,
+            )
+            registry.mark_failed(job.job_id, str(e))
+
+    spawn(_worker)
+    return job.start_result(ANALYZE_POLL_INSTRUCTION.format(job_id=job.job_id))
+
+
+def analyze_status_handler(
+    _context: LiveContext,
+    *,
+    job_id: str,
+    _registry: JobRegistry | None = None,
+    _long_poll_s: float = DEFAULT_STATUS_LONG_POLL_S,
+) -> dict[str, Any]:
+    """Long-poll an analyze job: wait up to ``_long_poll_s`` for it to finish,
+    then return its current state + progress (and report/error if terminal).
+
+    Returns ``state='running'`` if still in flight after the wait — the agent
+    simply calls again. Reads in-process job state only (no Live, no disk
+    re-glob), so ``_context`` is unused but kept for the uniform handler
+    signature. An unknown ``job_id`` raises a teaching ``_AnalysisError`` naming
+    recent analyze jobs (job state lives in the server process — it resets when
+    the MCP server restarts)."""
+    registry = _registry if _registry is not None else default_registry()
+    job = registry.get(job_id)
+    if job is None:
+        recent = registry.recent_ids(kind="analyze")
+        hint = (
+            f"recent analyze jobs: {', '.join(recent)}"
+            if recent
+            else "no analyze jobs have been started in this server process"
+        )
+        raise _AnalysisError(
+            f"analyze status: unknown job_id {job_id!r} ({hint})"
+        )
+    job.wait_terminal(_long_poll_s)
+    return job.status_result()
+
+
 def get_latest_report_handler(
     _context: LiveContext,
     *,
@@ -803,6 +969,8 @@ def extract_structure_handler(
 
 __all__ = [
     "analyze_handler",
+    "analyze_start_handler",
+    "analyze_status_handler",
     "get_latest_report_handler",
     "extract_structure_handler",
 ]

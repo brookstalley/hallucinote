@@ -16,7 +16,15 @@ build plan's Chunk-1 Done-when #0. Read before coding the substrate.
   is the **outer Claude Code↔server tool timeout**, not the inner socket.
 - **`ableton_analysis(analyze)` runs in the MCP server process** (pure DSP,
   numpy, lazy-imported engine; `runs_server_side=True`, dispatched at
-  `dispatcher.py` with `context=None`, never sent to Live).
+  `dispatcher.py` with `context=None`, never sent to Live). Its handlers +
+  action registrations live in the **`server_side/`** package
+  (`server_side/analysis.py`, `server_side/analysis_actions.py`) — moved there by
+  #183 (MCP-7F2K) to stay out of `_FINGERPRINT_PATHS`. So the analyze
+  `start`/`status` actions added here do NOT flip the server fingerprint or force
+  a re-vendor (unlike render's Live-side `start`/`status`). The handlers reach UP
+  into the fingerprinted `handlers/jobs.py` for the shared registry — the allowed
+  `server_side → handlers` import direction (the isolation invariant only forbids
+  the reverse).
 
 ⇒ **Two registries, one per process.** render-job state must live in the RS
 process; analyze-job state in the server process. They share the same
@@ -49,14 +57,17 @@ main loop drains the queue. So:
 long-poll `status` action is built either way, so selecting B later needs no
 redesign, only deleting the worker spawn.
 
-### The ONE residual Live-gated check (build-plan Done-when #2)
+### The residual Live-gated check (build-plan Done-when #2)
 
-Confirm on real Live that a detached render worker holding the transport does
-**not** block a concurrent unrelated call: `ableton_session(action='info')`
-issued mid-render must return promptly, not hang to timeout. `run_on_main` is a
-FIFO onto the main-thread queue, so an `info` read should interleave between the
-worker's polls — but the realtime render load is the unknown only Live settles.
-Queued in `operator-verification.md`.
+Done-when #2 has two axes. The **server-event-loop** axis (a `status` long-poll
+freezing the server) is closed in code by the Chunk-2 dispatch fix (async tool
+wrapper + `anyio.to_thread`; see "Dispatch fix" below). What remains Live-gated
+is the **Live-main-thread** axis: confirm on real Live that a detached render
+worker holding the transport does **not** block a concurrent unrelated call —
+`ableton_session(action='info')` issued mid-render must return promptly, not hang
+to timeout. `run_on_main` is a FIFO onto the main-thread queue, so an `info` read
+should interleave between the worker's polls — but the realtime render load is
+the unknown only Live settles. Queued in `operator-verification.md`.
 
 ## Persisted shape — LOCK-IN (every future poller depends on this)
 
@@ -122,6 +133,75 @@ concurrent unrelated MCP call must not block behind a running job (Done-when #2)
 - **Retire synchronous `render`** in favor of `start`/`status` (no back-compat
   to the false-failure path) — finalized in Chunk 3.
 - **Keep synchronous `analyze`** as a fast path for small captures; add
-  `start`/`status` for large ones — Chunk 2 sets the threshold.
+  `start`/`status` for large ones — **Chunk 2 set the threshold (below)**.
 - Single job at a time per kind is sufficient for Chunk 1; a concurrent `start`
   returns `{busy, job_id}` rather than queueing.
+
+### Chunk 2 — analyze threshold + eta + substrate centralization (resolved 2026-06-18)
+- **Threshold = documented GUIDANCE, not an auto-cutoff.** The synchronous
+  `analyze` stays the one-call fast path; the agent picks `start`/`status` when
+  the captures dir has many surfaces (full-band: lots of tracks + returns) or
+  the song declares many sections (each adds masking/timing/cross-rhythm
+  passes) — i.e. anytime the pipeline might exceed the 60s tool-call timeout.
+  Surface-count and declared-section-count are the two real cost drivers (NOT a
+  single wall-clock SLA — that would be false precision without profiling). The
+  guidance lives in the `analyze` + `start` action help/tips (the in-band
+  teaching surface). An auto-detecting threshold (sync refuses + redirects when
+  it predicts >60s) was considered and deferred to Chunk 3's disposition step —
+  Chunk 2 ships both paths + the guidance.
+- **`eta_seconds` is None for analyze** — runtime is surface-count × audio-length
+  × enabled-passes, with no realtime anchor like render's beats/tempo; reporting
+  a fabricated number would be a guess, so the handle omits it honestly.
+- **`status` done payload maps analyze_handler's native return into the
+  locked-in `{report, report_path}` shape**: `report` is the same lightweight
+  bundle the synchronous `analyze` returns (summary + finding_count +
+  schema_version + analysis_code, incl. the `stale` flag); the full per-stem
+  MixReport JSON stays on disk at `report_path`. (The `status_result` analyze
+  branch was unexercised after Chunk 1 — no analyze jobs existed — so Chunk 2 is
+  the first to lock it.)
+- **Substrate centralized in `jobs.py`**: the 45s long-poll window
+  (`DEFAULT_STATUS_LONG_POLL_S`) and the daemon-worker spawn (`spawn_daemon(fn,
+  *, name)`) moved out of render.py so render + analyze share one definition —
+  the long-poll is "one knob, not two that drift". render's worker still
+  marshals onto Live's main thread; analyze's is a plain server-process thread
+  (pure DSP, no Live), the keystone-risk-free half.
+
+### Dispatch fix — async tool wrapper (resolved 2026-06-18, Chunk-2 Critic finding)
+
+**The long-poll froze the whole server.** A Chunk-2 Critic review found (and we
+verified in `mcp==1.26.0`) that FastMCP runs a **synchronous** tool function
+INLINE on the event-loop thread — `func_metadata.call_fn_with_arg_validation`
+does `return fn(**args)` for a sync fn, no `to_thread`. Our `server.py` tool
+`wrapper` was sync, so a `status` long-poll (`terminal_event.wait(45)`, or
+render's 60s socket read) **blocked the entire MCP event loop** for the wait
+window — every concurrent tool call queued behind it. This violated the design's
+hard requirement (api-notes / build-plan Done-when #2: *a concurrent unrelated
+call must not hang behind a running job*). The single-agent `start→poll→poll`
+flow never noticed (the polling agent is the sole caller and intends to wait),
+but the guarantee was hollow.
+
+**Fix:** make the `server.py` tool wrapper `async def` and run the synchronous
+`handle_tool_call` under `anyio.to_thread.run_sync` (FastMCP **awaits** an async
+tool, keeping the loop free). It covers ALL 13 tools, so it also fixes render's
+`status` (Chunk 1) — the loop no longer blocks on its socket read. De-risked
+before adopting: `client.send` opens a **fresh socket per call** (no shared-socket
+race under true concurrency) and Live's `run_on_main` already FIFO-serializes
+main-thread touches, so concurrent forwarded calls stay correct. The busy guard
+became a real race once dispatch is concurrent, so the `active()`-then-`create()`
+check was replaced with an atomic `JobRegistry.create_if_idle()` (one lock
+acquisition; exactly one of N concurrent starts claims the slot). Proven headless:
+`test_status_longpoll_does_not_block_concurrent_tool_calls` (help served *during*
+a status long-poll), `test_tool_wrappers_are_async_*`, and a 32-thread
+`create_if_idle` atomicity test.
+
+**Forward-note — the next ceiling is `anyio`'s thread limiter, not the event
+loop.** `anyio.to_thread.run_sync` draws from a default capacity of **40**
+worker threads. Each in-flight `status` long-poll occupies one thread for up to
+~45s, so the 41st *concurrent* tool call would queue behind the busy threads
+(the loop itself stays free — this is a thread-pool bound, not the inline-block
+bug this section fixes). Irrelevant under the single-agent
+`start`→poll→poll pattern these actions serve (concurrency ~2–3), but if
+multi-agent rendering/analysis ever lands, raise the limiter
+(`anyio.to_thread.current_default_thread_limiter().total_tokens`) rather than
+re-architecting — consistent with keeping concurrency at the app/server layer,
+not baked into the wire shape.

@@ -22,11 +22,24 @@ from __future__ import annotations
 import datetime as dt
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 from uuid import uuid4
 
 JobState = Literal["running", "done", "failed"]
 JobKind = Literal["render", "analyze"]
+
+# The status long-poll window — how long a ``status`` call waits for a job to
+# leave ``running`` before returning, so the agent's poll loop is a handful of
+# calls, not a busy spin. Sized UNDER the 60s per-tool-call timeout in
+# ``.claude-plugin/plugin.json`` (the very limit that makes a synchronous
+# render/analyze false-fail), leaving ~15s for forward + serialize. Shared by
+# EVERY async ``status`` handler (render + analyze) so the window is one knob,
+# not two that drift — the api-notes "(raise the long-poll, the socket timeout,
+# AND plugin.json's timeout together)" treats it as a single lever. Render's
+# status additionally rides a socket (``client._STATUS_READ_TIMEOUT``, sized
+# just above this); analyze's status is in-process (no socket) so this is its
+# only ceiling.
+DEFAULT_STATUS_LONG_POLL_S: float = 45.0
 
 
 def _utc_now_iso() -> str:
@@ -123,8 +136,8 @@ class Job:
 class JobRegistry:
     """Thread-safe map of ``job_id -> Job`` with insertion order retained.
 
-    Order is kept so ``active`` can find the most recent running job (for the
-    one-at-a-time busy check) and ``recent_ids`` can name recent jobs in an
+    Order is kept so ``create_if_idle`` can find the most recent running job (the
+    one-at-a-time busy guard) and ``recent_ids`` can name recent jobs in an
     unknown-job error.
     """
 
@@ -132,6 +145,22 @@ class JobRegistry:
         self._jobs: dict[str, Job] = {}
         self._order: list[str] = []
         self._lock = threading.Lock()
+
+    def _build_job(
+        self,
+        *,
+        kind: JobKind,
+        dir: str,
+        eta_seconds: int | None,
+        expected_stop_beat: int | None,
+    ) -> Job:
+        return Job(
+            job_id=f"{kind}-{uuid4().hex[:12]}",
+            kind=kind,
+            dir=dir,
+            eta_seconds=eta_seconds,
+            expected_stop_beat=expected_stop_beat,
+        )
 
     def create(
         self,
@@ -141,11 +170,8 @@ class JobRegistry:
         eta_seconds: int | None = None,
         expected_stop_beat: int | None = None,
     ) -> Job:
-        job = Job(
-            job_id=f"{kind}-{uuid4().hex[:12]}",
-            kind=kind,
-            dir=dir,
-            eta_seconds=eta_seconds,
+        job = self._build_job(
+            kind=kind, dir=dir, eta_seconds=eta_seconds,
             expected_stop_beat=expected_stop_beat,
         )
         with self._lock:
@@ -153,18 +179,41 @@ class JobRegistry:
             self._order.append(job.job_id)
         return job
 
+    def create_if_idle(
+        self,
+        *,
+        kind: JobKind,
+        dir: str,
+        eta_seconds: int | None = None,
+        expected_stop_beat: int | None = None,
+    ) -> "tuple[Job, bool]":
+        """Atomic one-at-a-time-per-kind claim. Returns ``(job, created)``:
+
+          - ``(existing, False)`` if an active (``running``) job of ``kind``
+            already holds the slot — the caller returns a ``busy`` handle.
+          - ``(new_job, True)`` otherwise — the slot is claimed under the lock.
+
+        The check + insert happen under ONE lock acquisition, closing the
+        ``active()``-then-``create()`` TOCTOU: with the async dispatch wrapper
+        (server.py) two ``start`` calls can run on different threads
+        concurrently, so a non-atomic check could let both pass and launch two
+        workers. This is the start handlers' busy guard."""
+        with self._lock:
+            for job_id in reversed(self._order):
+                existing = self._jobs[job_id]
+                if existing.kind == kind and existing.state == "running":
+                    return existing, False
+            job = self._build_job(
+                kind=kind, dir=dir, eta_seconds=eta_seconds,
+                expected_stop_beat=expected_stop_beat,
+            )
+            self._jobs[job.job_id] = job
+            self._order.append(job.job_id)
+            return job, True
+
     def get(self, job_id: str) -> Job | None:
         with self._lock:
             return self._jobs.get(job_id)
-
-    def active(self, kind: JobKind) -> Job | None:
-        """The most-recent still-running job of ``kind``, or None."""
-        with self._lock:
-            for job_id in reversed(self._order):
-                job = self._jobs[job_id]
-                if job.kind == kind and job.state == "running":
-                    return job
-        return None
 
     def recent_ids(self, kind: JobKind | None = None, limit: int = 5) -> list[str]:
         with self._lock:
@@ -217,4 +266,27 @@ def default_registry() -> JobRegistry:
     return _REGISTRY
 
 
-__all__ = ["Job", "JobRegistry", "JobKind", "JobState", "default_registry"]
+def spawn_daemon(fn: Callable[[], None], *, name: str) -> None:
+    """Run ``fn`` on a detached daemon thread — the default worker spawn for
+    async ``start`` actions.
+
+    Detached + daemon so the worker outlives the originating ``start`` request
+    (the job keeps advancing after ``start`` returns) yet never blocks process
+    exit. Render's worker additionally marshals onto Live's main thread via
+    ``run_on_main``, which is reachable from any thread and outlives the request
+    (verify-api: mechanism A); analyze's worker is pure server-process DSP, so
+    it needs no main-thread marshaling at all. ``name`` labels the thread for
+    server-log postmortems.
+    """
+    threading.Thread(target=fn, name=name, daemon=True).start()
+
+
+__all__ = [
+    "Job",
+    "JobRegistry",
+    "JobKind",
+    "JobState",
+    "default_registry",
+    "spawn_daemon",
+    "DEFAULT_STATUS_LONG_POLL_S",
+]

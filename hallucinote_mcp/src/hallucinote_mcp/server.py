@@ -19,12 +19,14 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as _dt
+import functools
 import inspect
 import logging
 import os
 import pathlib
 from typing import Annotated, Any, Optional
 
+import anyio
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
@@ -467,15 +469,34 @@ def _register_tool(mcp: FastMCP, tool_name: str, summary: str) -> None:
     )
     annotations["allow_version_mismatch"] = Optional[bool]
 
-    def wrapper(**kwargs: Any) -> dict[str, Any]:
+    async def wrapper(**kwargs: Any) -> dict[str, Any]:
         action = kwargs.pop("action")
         allow_version_mismatch = bool(kwargs.pop("allow_version_mismatch", None) or False)
         # Drop None-valued kwargs — they represent "not supplied" by the
         # MCP client. Real None payloads aren't a thing in our action
         # surface (the dispatcher validates required fields below).
         passed = {k: v for k, v in kwargs.items() if v is not None}
-        return handle_tool_call(
-            tool_name, action, passed, allow_version_mismatch=allow_version_mismatch
+        # Offload the SYNCHRONOUS, possibly long-BLOCKING dispatch onto a worker
+        # thread so the MCP event loop stays free. handle_tool_call blocks for
+        # the whole call: a `status` long-poll parks on threading.Event.wait /
+        # a socket read for ~45-60s, and render/analyze are unbounded. FastMCP
+        # runs a SYNC tool INLINE on the loop thread (mcp func_metadata:
+        # `return fn(**args)` — verified, no internal to_thread), so a sync
+        # wrapper would freeze the entire server (every other in-flight tool
+        # call) for that window — violating "a concurrent call must not hang
+        # behind a running job". FastMCP AWAITS an async tool, so offloading via
+        # anyio.to_thread keeps the loop responsive while one call long-polls.
+        # Concurrency is safe: client.send opens a fresh socket per call and
+        # Live's run_on_main FIFO-serializes main-thread touches. (MCP-9R3T /
+        # MCP-5N8K async render+analyze.)
+        return await anyio.to_thread.run_sync(
+            functools.partial(
+                handle_tool_call,
+                tool_name,
+                action,
+                passed,
+                allow_version_mismatch=allow_version_mismatch,
+            )
         )
 
     wrapper.__signature__ = inspect.Signature(  # type: ignore[attr-defined]

@@ -19,22 +19,6 @@ class TestJobRegistry:
     def test_get_unknown_returns_none(self):
         assert JobRegistry().get("nope") is None
 
-    def test_active_returns_most_recent_running_of_kind(self):
-        reg = JobRegistry()
-        r1 = reg.create(kind="render", dir="/tmp/1")
-        an = reg.create(kind="analyze", dir="/tmp/a")
-        r2 = reg.create(kind="render", dir="/tmp/2")
-        assert reg.active("render") is r2  # most recent running render
-        assert reg.active("analyze") is an
-        reg.mark_done(r2.job_id, {"manifest": {}})
-        assert reg.active("render") is r1  # r2 no longer running
-
-    def test_active_none_when_all_terminal(self):
-        reg = JobRegistry()
-        j = reg.create(kind="render", dir="/tmp/1")
-        reg.mark_failed(j.job_id, "boom")
-        assert reg.active("render") is None
-
     def test_recent_ids_newest_first_filtered_by_kind(self):
         reg = JobRegistry()
         r1 = reg.create(kind="render", dir="/1")
@@ -75,6 +59,64 @@ class TestJobRegistry:
         reg.mark_done("nope", {})
         reg.mark_failed("nope", "x")
         reg.update_progress("nope", {"a": 1})
+
+    def test_create_if_idle_creates_when_slot_free(self):
+        reg = JobRegistry()
+        job, created = reg.create_if_idle(kind="analyze", dir="/rep")
+        assert created is True
+        assert job.kind == "analyze" and job.state == "running"
+        assert reg.get(job.job_id) is job
+
+    def test_create_if_idle_returns_existing_when_busy(self):
+        reg = JobRegistry()
+        first, c1 = reg.create_if_idle(kind="render", dir="/a", eta_seconds=10)
+        second, c2 = reg.create_if_idle(kind="render", dir="/b")
+        assert c1 is True and c2 is False
+        assert second is first  # the live job, not a new one
+        assert reg.recent_ids(kind="render") == [first.job_id]  # only one created
+
+    def test_create_if_idle_is_per_kind(self):
+        reg = JobRegistry()
+        r, _ = reg.create_if_idle(kind="render", dir="/r")
+        a, created = reg.create_if_idle(kind="analyze", dir="/a")
+        # A running render does NOT block claiming the analyze slot.
+        assert created is True and a is not r
+
+    def test_create_if_idle_reclaims_after_terminal(self):
+        reg = JobRegistry()
+        first, _ = reg.create_if_idle(kind="analyze", dir="/a")
+        reg.mark_done(first.job_id, {"report": {}, "report_path": None})
+        second, created = reg.create_if_idle(kind="analyze", dir="/b")
+        assert created is True and second is not first  # slot freed on terminal
+
+    def test_create_if_idle_is_atomic_under_concurrent_starts(self):
+        """The async dispatch wrapper lets two `start` calls run on different
+        threads at once; the busy guard must let EXACTLY ONE claim the slot (no
+        two concurrent renders). A barrier maximizes the contention window."""
+        reg = JobRegistry()
+        n = 32
+        barrier = threading.Barrier(n)
+        results: list = [None] * n
+
+        def worker(i: int) -> None:
+            barrier.wait()  # release all threads into create_if_idle together
+            results[i] = reg.create_if_idle(kind="render", dir=f"/tmp/{i}")
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(n)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        created = [r for r in results if r[1] is True]
+        assert len(created) == 1, "exactly one start must claim the slot"
+        winner = created[0][0]
+        # Every loser got the SAME live job back (a busy handle pointing at it).
+        for job, was_created in results:
+            if not was_created:
+                assert job.job_id == winner.job_id
+        # And the registry holds exactly one render job, not 32.
+        assert reg.recent_ids(kind="render") == [winner.job_id]
 
 
 class TestJobWaitTerminal:

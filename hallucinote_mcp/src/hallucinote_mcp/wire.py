@@ -387,9 +387,9 @@ def recv_message(sock: _socket.socket, timeout: float | None = None) -> dict[str
         ``FrameError`` with the elapsed budget.
       - ``None`` — explicitly clear any prior socket timeout and block
         indefinitely. The caller is asserting "this read may take as
-        long as the handler needs" (e.g. ``ableton_render(render)``
-        plays the full arrangement before responding — minutes for a
-        long song). Without the explicit clear, ``socket.create_connection``'s
+        long as the handler needs" (e.g. ``ableton_automation(perform_batch)``
+        plays the union span of all changed arcs in record before responding —
+        minutes at mix scale). Without the explicit clear, ``socket.create_connection``'s
         connect timeout would carry over and bound the read at 15 s
         even when the caller intends to wait.
     """

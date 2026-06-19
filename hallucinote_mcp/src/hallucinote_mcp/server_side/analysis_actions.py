@@ -43,7 +43,7 @@ _analyze_action = register(
         description=(
             "Run the audio-analysis MVP pipeline against a captures dir. "
             "Reads captures/<ts>/manifest.json + WAVs produced by "
-            "ableton_render(render), measures per-stem loudness (LUFS-I/S/M "
+            "ableton_render(start), measures per-stem loudness (LUFS-I/S/M "
             "+ true peak), detects master-bus overshoots and attributes "
             "each to top contributors per band, verifies reverb RT60 "
             "per-return from each return's captured ring-out (one result per "

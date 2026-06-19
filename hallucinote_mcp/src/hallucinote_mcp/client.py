@@ -97,10 +97,13 @@ def send(
         to accept. The Remote Script is either up or it isn't; if it can't
         accept within 15 s it's not coming back this call.
       - ``read_timeout`` bounds how long we wait for the response after the
-        request lands on the wire. Long-running handlers (``ableton_render``
-        plays the entire arrangement; ``ableton_automation(perform_batch)``
-        records the union span in realtime — minutes for either) require a
-        generous (or no) ceiling. **When the caller doesn't specify, it is
+        request lands on the wire. Long-running handlers (e.g.
+        ``ableton_automation(perform_batch)`` records the union span in realtime
+        — minutes) require a generous (or no) ceiling. (``ableton_render`` is no
+        longer one of these on the forwarded call: its ``start`` returns a job
+        handle in ~3s — the realtime playback runs on a detached worker — and
+        ``status`` long-polls under a bounded ceiling.) **When the caller doesn't
+        specify, it is
         resolved from the (tool, action) policy** (``read_timeout_for``) so
         BOTH wire-recv routes — the server's agent-forward and push_cli's
         direct dispatch — get the same window without each caller re-deriving

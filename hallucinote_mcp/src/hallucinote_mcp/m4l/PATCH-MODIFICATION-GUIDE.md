@@ -108,8 +108,9 @@ where `$f1` = current_beat, `$f2` = prev_beat, `$i3` = target-beat,
    reload hangs.
 4. **Drive a render:**
    ```
-   ableton_render(action='render', song_slug='reggae-metal',
+   ableton_render(action='start', song_slug='reggae-metal',
                   start_at_beat=8, stop_at_beat=24)
+   # then poll: ableton_render(action='status', job_id=…) until state=done
    ```
 5. **Inspect the captures dir.** Each WAV is FLOAT/stereo/Live's SR;
    duration matches the beat window within one buffer.

@@ -282,6 +282,21 @@ no Live threading).
 
 ### Chunk 4 — `/render-analyze` skill (the least-context payoff)
 
+> **Status 2026-06-19 — BUILT (no-Live), on `feat/mcp-render-analyze` (PR 2).**
+> **#1 skill DONE** — `skills/render-analyze/SKILL.md`. Mechanism: it **delegates
+> the render→poll→analyze→poll orchestration to a subagent** (the methodology's
+> "heavy work in a clean context" pattern), which returns ONLY the MixReport
+> summary + `report_path` (+ a one-line `--compare` delta). Chosen over a
+> deterministic CLI because the orchestration must *react* to the actions'
+> teaching errors (busy / failed-with-diagnosis / unknown-job), which an LLM
+> subagent does and a rigid script can't; and the plan specs a "skill". Args:
+> `<song-slug> [start_beat] [stop_beat] [--compare <seq>]`. **#2 spine wiring
+> DONE** — PRIMER (server.py), `/song-workflow` skill + `docs/song-workflow.md`
+> step 6, and `CLAUDE.md`'s chain all now point at `/render-analyze`; the skill
+> is auto-discovered (no manifest entry) and passes `test_skills_well_formed` +
+> `test_install_skill_consistency`. Full MCP suite green (1400). **#3 cumulative
+> Critic (the PR-create gate over both PR-2 chunks) next.**
+
 - **Type:** code  *(skill + docs)* · **Critic mode:** cumulative-final
   *(last chunk; the cumulative review is the PR-create gate)*
 - **Done when:**

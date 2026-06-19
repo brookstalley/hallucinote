@@ -54,7 +54,7 @@ and mix many times. But the arc has a natural order, and two of its phases are
 | 3 | Compose the parts | `/compose-part` | [melody-model.md](../.prawduct/artifacts/melody-model.md), [performance-model.md](../.prawduct/artifacts/performance-model.md), [arrangement-model.md](../.prawduct/artifacts/arrangement-model.md) |
 | 4 | **Read the composition** ⭐ | **`/compose-review`** | melody + recurrence lenses vs declared intent |
 | 5 | Materialize in Live | `/ableton-push` | [push-execute-design.md](../.prawduct/artifacts/push-execute-design.md) |
-| 6 | Capture + analyze | `ableton_render` → `ableton_analysis` | [masking-analyzer-goals.md](../.prawduct/artifacts/masking-analyzer-goals.md) |
+| 6 | Capture + analyze | **`/render-analyze`** (`ableton_render` → `ableton_analysis`, poll loops kept out of context) | [masking-analyzer-goals.md](../.prawduct/artifacts/masking-analyzer-goals.md) |
 | 7 | **Read the mix** ⭐ | **`/mix-review`** | masking · loudness · feel · energy vs intent — *needs Max for Live* |
 | 8 | Snapshot + iterate | `/song-snapshot` (durable mix bake), `/ableton-pull` (build.py-staging) | — |
 
@@ -113,11 +113,16 @@ compositional sibling of `/mix-review`, and it runs **before** the mix stage.
 performed automation → arrangement → cues) against a fresh or partial Live set —
 idempotent, with preflight and rollback. → [push-execute-design.md](../.prawduct/artifacts/push-execute-design.md)
 
-### 6 — Capture + analyze
-`ableton_render` auto-loads the HallucinoteAnalyzer and runs a WAV capture pass;
-`ableton_analysis` builds a **MixReport** from the captures (loudness, master
-attribution, reverb verification, per-part timing/feel, masking, energy
-realization). This is the expensive real-time step — it feeds the next checkpoint.
+### 6 — Capture + analyze `/render-analyze`
+`/render-analyze` runs the capture + analysis in one step: `ableton_render`
+auto-loads the HallucinoteAnalyzer and runs a WAV capture pass; `ableton_analysis`
+builds a **MixReport** from the captures (loudness, master attribution, reverb
+verification, per-part timing/feel, masking, energy realization). Both are
+realtime / long-running **start + poll** actions (they exceed the 60 s tool-call
+timeout — see `ableton://guides/conventions` "Long-running actions = start +
+poll"), so `/render-analyze` delegates their poll loops to a subagent and hands
+back only the MixReport summary + `report_path` — keeping the plumbing out of
+your context. This is the expensive real-time step — it feeds the next checkpoint.
 
 ### 7 — Read the mix ⭐ `/mix-review`
 The single read-side surface over all audio analyses. It reads rendered audio, so

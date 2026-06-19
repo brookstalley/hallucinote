@@ -44,8 +44,11 @@ hand-authored notes if that's what the art needs.
    the composition + the melody and recurrence lenses *against intent*. Runs
    **before** the mix.
 5. **Materialize in Live** — `/ableton-push` (the 14-phase push).
-6. **Capture + analyze** — `ableton_render` → `ableton_analysis` builds the
-   MixReport (the expensive real-time step).
+6. **Capture + analyze** — **`/render-analyze`** runs `ableton_render` →
+   `ableton_analysis` in one step and hands back just the MixReport summary
+   (the render + analyze are realtime/long start+poll actions, so it delegates
+   their poll loops to a subagent — keeping the plumbing out of your context).
+   The MixReport it builds is what step 7 reads.
 7. ⭐ **Read the mix** — **`/mix-review`** (needs Max for Live — Suite or the
    M4L add-on; `/compose-review` is the any-edition alternative). Interpret the
    MixReport against intent — masking, loudness, feel, energy per section.

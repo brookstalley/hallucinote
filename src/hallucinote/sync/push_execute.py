@@ -743,6 +743,25 @@ def execute_push(
             reason=reason or f"push_cli execute pad-probe (session={session_id})",
         )
 
+    def _read_device_params(node: dict[str, Any]) -> dict[str, Any] | None:
+        """PSH-3K9D: read one device's current Live parameters for the
+        devices-phase diff-reconcile. Returns the ``get_parameters`` result
+        payload, or ``None`` on ANY failure — the diff then keeps that device's
+        writes (skip-on-confident-equal). Auxiliary like the pad-probe: a read
+        hiccup must never derail an otherwise-fine push, only forgo the skip."""
+        try:
+            resp = send_fn(Request(
+                tool="ableton_device",
+                action="get_parameters",
+                params={"node": node, "detail": "full"},
+            ))
+        except Exception:  # prawduct:allow prawduct/broad-except -- best-effort pre-dispatch read; any failure just forgoes the skip (keeps the write), never halts the push
+            logger.debug("devices-diff get_parameters read failed — keeping writes", exc_info=True)
+            return None
+        if not bool(getattr(resp, "ok", False)):
+            return None
+        return getattr(resp, "result", None)
+
     def _dispatch_calls(calls) -> tuple[list[dict[str, Any]], bool]:
         """Dispatch ToolCalls via ``send_fn`` → (results, connection_lost).
 
@@ -1000,6 +1019,33 @@ def execute_push(
             _emit_progress(f"[{phase.name}] skipped (nothing to push)")
             continue
 
+        # PSH-3K9D: make the devices phase a true diff-reconcile. Read each
+        # device's current Live params once and drop the set_parameter calls
+        # already equal to Live — the just-captured set used to re-apply ~1200
+        # redundant params and stall for minutes. Skip-on-confident-equal: any
+        # doubt keeps the write, so this can only ever degrade to today's
+        # re-write-everything behavior, never to a wrong mix. Loaded-this-pass
+        # devices land their params via the convergence re-plan below (NOT
+        # diffed — a fresh device is at factory defaults, so every param
+        # genuinely differs); on a fresh-set push the main plan has only loads,
+        # so this fires no reads at all.
+        calls_to_dispatch = plan.calls
+        if phase.name == "devices":
+            from hallucinote.sync.push.device_param_diff import (
+                partition_unchanged_device_params,
+            )
+            calls_to_dispatch, skipped_params = partition_unchanged_device_params(
+                plan.calls, conn=conn, read_fn=_read_device_params,
+            )
+            if skipped_params:
+                msg = (
+                    f"devices: {len(skipped_params)} param(s) already current in "
+                    f"Live — skipped; dispatching {len(calls_to_dispatch)} call(s)"
+                )
+                _emit_progress(f"[{phase.name}] {msg}")
+                if msg not in warning_messages:
+                    warning_messages.append(msg)
+
         # PSH-5T9D: announce a phase that actually dispatches. The realtime
         # perform gets a distinctive heads-up + ETA framing so a multi-minute
         # phase isn't mistaken for a hang (the worst-case the bug named).
@@ -1009,9 +1055,9 @@ def execute_push(
                 "this can take several minutes…"
             )
         else:
-            _emit_progress(f"[{phase.name}] running ({len(plan.calls)} call(s))…")
+            _emit_progress(f"[{phase.name}] running ({len(calls_to_dispatch)} call(s))…")
 
-        results, connection_lost = _dispatch_calls(plan.calls)
+        results, connection_lost = _dispatch_calls(calls_to_dispatch)
 
         # For connection-lost the dispatch stopped before any subsequent ok
         # rows could accumulate, so applying what we have is safe.

@@ -799,7 +799,12 @@ On an attended Live run with a built multi-minute song:
    promptly, not hang to timeout behind the render worker. (Per-request sockets +
    thread-agnostic `run_on_main` say it should interleave; this is the one fact
    only Live settles. If it DOES hang, fall back to mechanism B — the long-poll
-   `status` is already built, so only the worker spawn is removed.)
+   `status` is already built, so only the worker spawn is removed.) NOTE: this
+   isolates the **Live main-thread** axis. The separate **server-event-loop**
+   axis — a `status` long-poll freezing the server — was fixed at the dispatch
+   layer in Chunk 2 (async tool wrapper + `anyio.to_thread`), which also covers
+   render's `status` (its 60 s socket read no longer blocks the loop). So here
+   you're verifying only that Live interleaves the worker's polls.
 
 4. **Busy + failure shapes.** A second `start` while one is running returns
    `{busy: true, job_id}` (no second transport pass). A render that captures zero
@@ -808,3 +813,48 @@ On an attended Live run with a built multi-minute song:
 5. **`status.json` heartbeat still written.** Confirm `<captures_dir>/status.json`
    updates during the render (the registry progress mirrors it) and lands terminal
    at the end — the crash-resilient backing for the in-memory registry.
+
+---
+
+## MCP-5N8K Chunk 2 — async analyze start/status against a real >60s capture
+
+Visual change: yes (agent-facing `ableton_analysis` `start`/`status` result
+shape). Branch `feat/async-render-analyze`. Lower risk than Chunk 1 — analyze
+runs in the MCP SERVER process (pure DSP, no Live threading), so the worker is a
+plain server-thread and there's no keystone. Fully unit-tested with fakes; what a
+live run adds is exercising the actual >60s case end-to-end. Requires the same
+re-vendor as Chunk 1 (`start`/`status` change `ableton_analysis`'s wire shape →
+fingerprint flips → `/ableton-mcp-install`).
+
+Needs a **many-surface song** (a full-band capture with several declared
+sections — the case whose DSP exceeds 60s today and red-times-out the
+synchronous `analyze`). Render it first (Chunk-1 `start`/`status`), then:
+
+1. **`start` returns immediately.** `ableton_analysis(action='start',
+   song_slug=…)` → returns fast with `{job_id, report_dir, eta_seconds=null,
+   poll}` while the DSP runs in the background — NOT after the full analysis.
+
+2. **`status` long-polls to done.** `ableton_analysis(action='status', job_id=…)`
+   returns `state='running'` (coarse `progress.stage`) within ~45 s per call,
+   then a terminal `state='done'` carrying `report` (the lightweight summary +
+   `analysis_code.stale`) and `report_path` — with the full MixReport JSON on
+   disk at that path. **No false failure**, where the synchronous `analyze`
+   red-times-out on the same capture.
+
+3. **Concurrency.** While the analysis runs, a concurrent unrelated MCP call
+   (e.g. `ableton_session(action='info')`) must RETURN promptly, not hang behind
+   the analyze long-poll. This is delivered at the **dispatch layer**: the
+   server's tool wrapper is `async` and offloads the blocking dispatch via
+   `anyio.to_thread.run_sync` (server.py), so a 45 s `status` wait occupies only
+   its worker thread, not the event loop. (FastMCP runs a *sync* tool INLINE on
+   the loop — that would freeze the server, which is why the wrapper is async;
+   proven headless by `test_status_longpoll_does_not_block_concurrent_tool_calls`.
+   Confirm it holds under real concurrent load.)
+
+4. **Busy + failure shapes.** A second `start` while one is running returns
+   `{busy: true, job_id}`. A `start` for a typo'd slug / missing captures lands
+   `state='failed'` with the teaching error surfaced through `status` (not a
+   hang).
+
+5. **Synchronous `analyze` still works** as the fast path for a quick
+   few-surface capture (the disposition keeps it).

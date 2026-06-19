@@ -161,6 +161,54 @@ The thin vertical slice that proves the **entire** architecture (job registry �
 
 ### Chunk 2 — `ableton_analysis(analyze)` start/status on the same substrate
 
+> **Status 2026-06-18 — BUILT (no-Live), on `feat/async-render-analyze`.**
+> Done-when **#1** (`analyze_start_handler` / `analyze_status_handler` reusing
+> the Chunk-1 JobRegistry + a SERVER-PROCESS daemon worker; `start`/`status`
+> actions registered `runs_server_side`; busy + unknown-job teaching; coarse
+> `{stage}` progress; `eta_seconds=None`; native return mapped into the
+> `{report, report_path}` status shape), **#2** (disposition SET — keep
+> synchronous `analyze` as the fast path + documented sync-vs-async guidance in
+> the action tips; see api-notes "Chunk 2"), and **#3** (unit tests via fakes +
+> a dispatch wiring test; centralized the long-poll window + daemon-spawn into
+> jobs.py) are DONE.
+>
+> **Critic (chunk) found a BLOCKING dispatch bug — FIXED in this chunk.** The
+> `status` long-poll froze the whole MCP server event loop (FastMCP runs a sync
+> tool inline; verified in mcp 1.26.0), so Done-when #2's "concurrent call must
+> not hang" was unmet for BOTH render (Chunk 1) and analyze. Fix (user-approved):
+> the `server.py` tool wrapper is now `async` + offloads the blocking dispatch
+> via `anyio.to_thread`, and the busy guard is the atomic
+> `JobRegistry.create_if_idle` (the now-concurrent dispatch makes the old
+> check-then-create a real race). Covers all 13 tools → also fixes render's
+> `status`. Proven headless (help served during a status long-poll; 32-thread
+> atomicity). **Full MCP suite green** (1370 at Chunk-2 build-time; **1397**
+> after the PR-1 re-home below) — dead `JobRegistry.active()` + its 2 self-tests
+> removed, its scan now lives only in `create_if_idle`. See api-notes
+> "Dispatch fix".
+>
+> Done-when #2's **server-event-loop axis is now closed in code**; its
+> **Live-main-thread axis** (a render worker interleaving with concurrent Live
+> reads) + the **Verification** below (a real >60s many-surface analysis) stay
+> queued in `operator-verification.md`. Chunk 3 finalizes the disposition
+> (optional sync auto-redirect) + the fingerprint deploy (these actions flip the
+> wire shape).
+>
+> **Re-sequenced 2026-06-19 — Chunk 2 + the dispatch fix landed as a STANDALONE
+> PR onto `develop`, re-homed.** Between Chunk 2's build and its merge, `develop`
+> shipped **#183 (MCP-7F2K)**, which relocated the server-side analysis surface
+> out of the fingerprint into the new **`server_side/`** package
+> (`server_side/analysis.py` handlers + `server_side/analysis_actions.py`
+> registrations; `handlers/analysis.py` + `actions/analysis.py` deleted). So the
+> analyze `start`/`status` handlers + actions were ported into `server_side/`
+> (the dispatch fix to `server.py` + the `jobs.py` substrate were structurally
+> unchanged and applied cleanly). A welcome consequence of the relocation:
+> analyze `start`/`status` now live OUTSIDE `_FINGERPRINT_PATHS`, so adding them
+> does **not** flip the server fingerprint or force a re-vendor — only render's
+> Live-side `start`/`status` (Chunk 1, already shipped) does. The dispatch fix
+> additionally **repairs a latent bug `develop` already shipped**: #182 landed
+> render `start`/`status` on the still-synchronous tool wrapper, so develop's
+> render `status` long-poll was blocking the whole MCP event loop until this PR.
+
 Widen the proven pattern to analysis (low risk — pure DSP in the server process,
 no Live threading).
 

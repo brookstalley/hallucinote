@@ -34,13 +34,17 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
-import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from .jobs import JobRegistry, default_registry
+from .jobs import (
+    DEFAULT_STATUS_LONG_POLL_S,
+    JobRegistry,
+    default_registry,
+    spawn_daemon,
+)
 
 from ..analyzer import (
     AnalyzerInstance,
@@ -761,16 +765,10 @@ def render_handler(
 # transport-agnostic wall-clock limit, so the synchronous `render` action
 # false-fails long before the audio is written. `start` backgrounds the render
 # on a detached worker and returns a job handle immediately; `status`
-# long-polls the job registry. See
+# long-polls the job registry. The long-poll window + the daemon-worker spawn
+# are shared with analyze's start/status, so they live in jobs.py
+# (DEFAULT_STATUS_LONG_POLL_S, spawn_daemon) — one knob, not two that drift. See
 # .prawduct/artifacts/plans/MCP-ASYNC-RENDER-ANALYZE/api-notes.md.
-# The status long-poll window. Must stay UNDER the per-tool-call timeout the
-# agent enforces — `.claude-plugin/plugin.json` sets hallucinote-mcp's to 60s
-# (the very limit that makes the synchronous render false-fail). 45s leaves
-# ~15s for forward + serialize overhead. The `status` socket read-timeout
-# (_STATUS_READ_TIMEOUT in client.py) sits just above this so the socket never
-# severs the poll mid-wait. To widen the window, raise BOTH and plugin.json's
-# `timeout` together.
-_DEFAULT_STATUS_LONG_POLL_S = 45.0
 
 RENDER_POLL_INSTRUCTION = (
     "Render running in the background. Poll ableton_render(action='status', "
@@ -827,26 +825,9 @@ def render_start_handler(
     """
     registry = _registry if _registry is not None else default_registry()
     render_fn = _render_fn if _render_fn is not None else render_handler
-    spawn = _spawn if _spawn is not None else _spawn_daemon
-
-    # One render at a time. NOTE: active()-then-create() is not atomic, so two
-    # near-simultaneous starts could both pass the check — accepted under the
-    # single-agent start->poll->poll pattern this serves (api-notes
-    # "Disposition"). Make it an atomic registry.create_if_idle if multi-agent
-    # rendering ever lands.
-    existing = registry.active("render")
-    if existing is not None:
-        return {
-            "busy": True,
-            "job_id": existing.job_id,
-            "state": existing.state,
-            "captures_dir": existing.dir,
-            "message": (
-                "A render is already running (one at a time). Poll it with "
-                f"ableton_render(action='status', job_id='{existing.job_id}'), "
-                "or wait for it to finish before starting another."
-            ),
-        }
+    spawn = _spawn if _spawn is not None else (
+        lambda worker: spawn_daemon(worker, name="hallucinote-render-worker")
+    )
 
     # The MCP server's _absolutize_render_output_dir resolves output_dir before
     # forwarding (same as the synchronous render); direct callers must supply
@@ -869,12 +850,28 @@ def render_start_handler(
         stop_beat=expected_stop_beat,
         ring_out_beats=ring_out_beats,
     )
-    job = registry.create(
+    # One render at a time — atomically claim the slot. The async dispatch
+    # wrapper (server.py) lets two starts run on different threads, so the claim
+    # must be atomic; create_if_idle closes the check-then-create TOCTOU. A
+    # start while one runs returns a busy handle pointing at the live job.
+    job, created = registry.create_if_idle(
         kind="render",
         dir=output_dir,
         eta_seconds=eta_seconds,
         expected_stop_beat=expected_stop_beat,
     )
+    if not created:
+        return {
+            "busy": True,
+            "job_id": job.job_id,
+            "state": job.state,
+            "captures_dir": job.dir,
+            "message": (
+                "A render is already running (one at a time). Poll it with "
+                f"ableton_render(action='status', job_id='{job.job_id}'), "
+                "or wait for it to finish before starting another."
+            ),
+        }
 
     def _status_writer(captures_dir: Path, status: dict[str, Any]) -> None:
         # Keep the on-disk heartbeat (crash-resilient / direct dir-watchers)
@@ -919,7 +916,7 @@ def render_status_handler(
     *,
     job_id: str,
     _registry: JobRegistry | None = None,
-    _long_poll_s: float = _DEFAULT_STATUS_LONG_POLL_S,
+    _long_poll_s: float = DEFAULT_STATUS_LONG_POLL_S,
 ) -> dict[str, Any]:
     """Long-poll a render job: wait up to ``_long_poll_s`` for it to finish,
     then return its current state + progress (and manifest/error if terminal).
@@ -940,14 +937,6 @@ def render_status_handler(
         raise ValueError(f"render status: unknown job_id {job_id!r} ({hint})")
     job.wait_terminal(_long_poll_s)
     return job.status_result()
-
-
-def _spawn_daemon(fn: Callable[[], None]) -> None:
-    """Default worker spawn: a detached daemon thread. Live's main-thread
-    scheduler (run_on_main) is reachable from any thread and outlives the
-    originating request, so the worker keeps driving the render after `start`
-    returns (verify-api: mechanism A)."""
-    threading.Thread(target=fn, name="hallucinote-render-worker", daemon=True).start()
 
 
 # --- internals -------------------------------------------------------

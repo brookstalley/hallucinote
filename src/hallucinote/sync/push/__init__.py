@@ -67,6 +67,7 @@ from .scenes import (
 )
 from .arrangement import (
     plan_push_arrangement,
+    plan_push_arrangement_clip_notes,
     plan_push_cue_points,
     plan_push_sections,
 )
@@ -161,6 +162,7 @@ __all__ = [
     "plan_push_scenes",
     # Arrangement / cues / sections
     "plan_push_arrangement",
+    "plan_push_arrangement_clip_notes",
     "plan_push_cue_points",
     "plan_push_sections",
     # Mix

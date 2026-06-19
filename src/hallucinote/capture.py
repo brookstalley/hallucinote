@@ -165,6 +165,123 @@ def normalize_param_value(
     return max(0.0, min(1.0, norm))
 
 
+def param_needs_raw_channel(
+    min_val: float, max_val: float, is_enum: bool,
+) -> bool:
+    """DEV-4P7R: True when a CONTINUOUS (non-enum) param must ride the raw
+    ``value_raw`` channel — i.e. it is not an enum AND its raw range is not
+    ``[0,1]``.
+
+    Raw range != [0,1] is the principled discriminator, NOT ``is_quantized``
+    (probed False on the witness ``Wavetable LFO S. Rate``: raw ``8.0`` ->
+    "1/2", range ``[0,21]``, is_quantized False). For ANY non-[0,1] continuous
+    param both other channels are unsafe: the normalized form is pushed AS raw
+    (the handler has no value_normalized kwarg) so it mis-dials, and the display
+    is non-monotonic for the step-list class ("8,6,4,...,1/64") so the live
+    setter refuses to invert it. ``value_raw`` stores Live's own ``param.value``
+    and pushes it straight through — always exact, so this rule can never
+    mis-dial; it just routes the lossless channel for the affected class.
+
+    Single source shared by the capture path (``_snapshot_param_entry``) and the
+    pull apply path, mirroring ``normalize_param_value``."""
+    if is_enum:
+        return False
+    if abs(max_val - min_val) < 1e-9:
+        return False  # constant-range (min == max): nothing to dial, no channel
+    return abs(min_val) > 1e-9 or abs(max_val - 1.0) > 1e-9
+
+
+def _param_value_fields(
+    p: Any, *, device_name: Any, param_name: Any,
+) -> tuple[str, float | None, list[str] | None, float | None]:
+    """Translate one snapshot param spec
+    ``{value, normalized?, value_items?, value_raw?}`` into the
+    ``(value_display, value_normalized, value_items, value_raw)`` the device
+    mutators store. Emits the BUG4 bare-numeric-value warning. Shared by the
+    top-level ``params_dialed`` replay and the nested ``param_overrides`` replay
+    (SNP-2H9F) so both translate identically.
+
+    ``value_raw`` (DEV-4P7R) is the UNCLAMPED raw channel for a quantized
+    continuous param whose range != [0,1]. When present, ``value`` is optional
+    (a readable display HINT only — push uses the raw); the mutator rejects
+    pairing it with ``normalized`` / ``value_items``.
+    """
+    if not isinstance(p, dict) or ("value" not in p and "value_raw" not in p):
+        raise ValueError(
+            f"snapshot param {param_name!r} on device {device_name!r}: "
+            f"expected dict with a 'value' or 'value_raw' key, got {p!r}"
+        )
+    normalized = p.get("normalized")
+    value_raw = p.get("value_raw")
+    raw_items = p.get("value_items")
+    value_items = (
+        [str(item) for item in raw_items]
+        if isinstance(raw_items, (list, tuple))
+        else None
+    )
+    # `value` is the display string (or a readable hint when value_raw drives).
+    # Absent only in a raw-only entry, where it defaults to "" (push ignores it).
+    value = p.get("value", "")
+    # BUG4 (params_dialed authoring trap): a bare numeric `value` with no
+    # `normalized` is stored as the DISPLAY string str(value) and pushed via
+    # the display path (push devices.py branch 2 → the live setter's curve
+    # inversion), which mis-dials a continuous param. The two correct author
+    # forms are an explicit `normalized` (for a 0..1 value) or a display
+    # STRING like "180 Hz" (the live setter inverts the log curve, DPP-7H2K).
+    # value_raw is the third correct form, so a numeric `value` riding alongside
+    # it is a readable hint, not the bare-numeric trap — don't warn there.
+    if (
+        value_raw is None
+        and normalized is None
+        and isinstance(value, (int, float))
+        and not isinstance(value, bool)
+    ):
+        warnings.warn(
+            f"snapshot param {param_name!r} on device {device_name!r}: a bare "
+            f"numeric value {value!r} with no 'normalized' key is stored as "
+            f"the display string {str(value)!r} and pushed as a display value "
+            "(likely mis-dialing a continuous param). To author a NORMALIZED "
+            f'0..1 value add "normalized": {value}; to author a display value '
+            'use a string, e.g. "value": "180 Hz" (the push inverts it via the '
+            "live setter); for a quantized non-[0,1] param use "
+            f'"value_raw": {value}. See docs/snapshot-schema.md.',
+            UserWarning,
+            stacklevel=2,
+        )
+    return (
+        str(value),
+        float(normalized) if normalized is not None else None,
+        value_items,
+        float(value_raw) if value_raw is not None else None,
+    )
+
+
+def _override_entry_for_replay(
+    o: Any, *, device_name: Any,
+) -> dict[str, Any]:
+    """Translate one snapshot ``param_overrides`` entry
+    (``{path, name, value[, normalized][, value_items]}``) into the override dict
+    ``replace_device_param_overrides`` stores (SNP-2H9F). The path is validated
+    by the mutator; here we require the entry shape and reuse the shared value
+    translation so an override dials identically to a top-level params_dialed."""
+    if not isinstance(o, dict) or "name" not in o or "path" not in o:
+        raise ValueError(
+            f"snapshot param_override on device {device_name!r}: expected a dict "
+            f"with 'path' and 'name', got {o!r}"
+        )
+    value_display, value_normalized, value_items, value_raw = _param_value_fields(
+        o, device_name=device_name, param_name=o["name"],
+    )
+    return {
+        "path": o["path"],
+        "name": o["name"],
+        "value_display": value_display,
+        "value_normalized": value_normalized,
+        "value_items": value_items,
+        "value_raw": value_raw,
+    }
+
+
 def _replay_devices(
     conn: sqlite3.Connection,
     *,
@@ -173,6 +290,7 @@ def _replay_devices(
     actor: str,
     request_id: str | None,
     reason: str | None,
+    sidechain_pending: list[tuple[str, str | None, str | None]],
 ) -> None:
     """Insert each entry of `devices_array` into the given chain, plus any
     dialed parameters and any nested rack chains — recursively, to arbitrary
@@ -180,6 +298,13 @@ def _replay_devices(
     `_replay_rack_chains` the same way a top-level rack does; `device_chains`
     and `device_parameters` are depth-agnostic in the DB, so no per-depth
     special-casing is needed.
+
+    BAK-3M9T — every device's sidechain source is appended to `sidechain_pending`
+    as ``(device_id, sidechain_source_name | None, channel | None)``. Resolution
+    is deferred to `replay_capture` (a source may name a track created later in
+    the loop); the snapshot is authoritative, so an absent source clears any
+    prior one (idempotent) — the same drop-clears-stale idiom as the per-chain
+    properties in `_replay_rack_chains`.
 
     SNP-8R4K — defensive analyzer exclusion: capture filters the analyzer at
     `compile_snapshot`, but a legacy-polluted snapshot on disk may still carry
@@ -240,56 +365,71 @@ def _replay_devices(
             request_id=request_id,
             reason=reason,
         )
+        # BAK-3M9T: defer sidechain-source resolution (the source may name a
+        # track created later in the replay loop) to the post-pass.
+        #
+        # Snapshot SILENCE means "no opinion", not "clear". Only enqueue when the
+        # snapshot ENTRY actually declares `sidechain_source` — a device the
+        # snapshot says nothing about keeps whatever the DB already holds (e.g. a
+        # source authored in build.py via M.set_device_sidechain). Capture only
+        # writes the key when it FINDS a live source (~L1288 below), so an absent
+        # key is genuinely "unspoken"; clobbering it to null re-cleared every
+        # build.py-authored sidechain on every build, breaking converger
+        # idempotency for any song with a mix-pass sidechain.
+        # See incoming-bugs/2026-06-17-replay-capture-nulls-sidechain-source-breaking-converger-idempotency.md
+        # An explicit null value (a future capture that records "no source here")
+        # still clears on the post-pass — this is forward-compatible.
+        if "sidechain_source" in d:
+            sidechain_pending.append((
+                device_id,
+                d.get("sidechain_source"),
+                d.get("sidechain_source_channel"),
+            ))
         for name, p in (d.get("params_dialed") or {}).items():
-            if not isinstance(p, dict) or "value" not in p:
-                raise ValueError(
-                    f"snapshot param {name!r} on device {d.get('name')!r}: "
-                    f"expected dict with 'value' key, got {p!r}"
-                )
-            normalized = p.get("normalized")
-            raw_items = p.get("value_items")
-            value_items = (
-                [str(item) for item in raw_items]
-                if isinstance(raw_items, (list, tuple))
-                else None
-            )
-            # BUG4 (params_dialed authoring trap): a bare numeric `value` with no
-            # `normalized` is stored as the DISPLAY string str(value) and pushed via
-            # the display path (push devices.py branch 2 → the live setter's curve
-            # inversion), which mis-dials a continuous param. The two correct author
-            # forms are an explicit `normalized` (for a 0..1 value) or a display
-            # STRING like "180 Hz" (the live setter inverts the log curve, DPP-7H2K).
-            value = p["value"]
-            if (
-                normalized is None
-                and isinstance(value, (int, float))
-                and not isinstance(value, bool)
-            ):
-                warnings.warn(
-                    f"snapshot param {name!r} on device {d.get('name')!r}: a bare "
-                    f"numeric value {value!r} with no 'normalized' key is stored as "
-                    f"the display string {str(value)!r} and pushed as a display value "
-                    "(likely mis-dialing a continuous param). To author a NORMALIZED "
-                    f'0..1 value add "normalized": {value}; to author a display value '
-                    'use a string, e.g. "value": "180 Hz" (the push inverts it via the '
-                    "live setter). See docs/snapshot-schema.md 'params_dialed'.",
-                    UserWarning,
-                    stacklevel=2,
+            value_display, value_normalized, value_items, value_raw = \
+                _param_value_fields(
+                    p, device_name=d.get("name"), param_name=name,
                 )
             M.set_device_parameter(
                 conn,
                 device_id=device_id,
                 name=name,
-                value_display=str(p["value"]),
-                value_normalized=(
-                    float(normalized) if normalized is not None else None
-                ),
+                value_display=value_display,
+                value_normalized=value_normalized,
                 value_items=value_items,
+                value_raw=value_raw,
                 actor=actor,
                 request_id=request_id,
                 reason=reason,
             )
+        # SNP-2H9F: nested-param overrides on a preset-seeded device. A flat list
+        # of {path, name, value[, normalized][, value_items]} that keeps
+        # preset_query intact — push re-asserts each at its NodeAddr path after the
+        # preset loads (no chain creation, so the preset's waveform/samples
+        # survive). Mutually exclusive with `chains`: `chains` authors/dumps the
+        # nested tree, while `param_overrides` overrides params on the
+        # preset-instantiated tree in place — carrying both is contradictory.
+        overrides = d.get("param_overrides")
         nested = d.get("chains")
+        if overrides and nested:
+            raise ValueError(
+                f"snapshot device {d.get('name')!r} carries both `chains` and "
+                "`param_overrides` — they are contradictory representations "
+                "(`param_overrides` overrides params on a preset-loaded nested "
+                "tree in place; `chains` authors/dumps the tree). Author one."
+            )
+        if overrides:
+            M.replace_device_param_overrides(
+                conn,
+                device_id=device_id,
+                overrides=[
+                    _override_entry_for_replay(o, device_name=d.get("name"))
+                    for o in overrides
+                ],
+                actor=actor,
+                request_id=request_id,
+                reason=reason,
+            )
         if nested:
             if d["class"] not in RACK_CLASS_NAMES:
                 raise ValueError(
@@ -304,6 +444,7 @@ def _replay_devices(
                 actor=actor,
                 request_id=request_id,
                 reason=reason,
+                sidechain_pending=sidechain_pending,
             )
         # M1-C: Drum Rack pad mapping. Each Drum Rack may carry a
         # `drum_pads` array captured via `ableton_device(action='pad_info')`:
@@ -344,10 +485,12 @@ def _replay_rack_chains(
     actor: str,
     request_id: str | None,
     reason: str | None,
+    sidechain_pending: list[tuple[str, str | None, str | None]],
 ) -> None:
     """Insert each nested chain under `rack_device_id` and recurse into the
     chain's devices — which may themselves be racks, recursing again to
-    arbitrary depth (DEEP-RACK-ADDR).
+    arbitrary depth (DEEP-RACK-ADDR). `sidechain_pending` threads through the
+    recursion so a nested device's sidechain source is collected too (BAK-3M9T).
 
     Each entry: ``{chain_index: int>=1, name: str (optional), devices: [...]}``.
     The chain row's `position` matches W6-I/J's 1-based `chain_index` on the
@@ -397,6 +540,7 @@ def _replay_rack_chains(
             actor=actor,
             request_id=request_id,
             reason=reason,
+            sidechain_pending=sidechain_pending,
         )
 
 
@@ -490,6 +634,10 @@ def replay_capture(
         reason=reason,
     )
 
+    # BAK-3M9T: device sidechain sources, collected during _replay_devices and
+    # applied after the full track loop (resolution needs the full track_ids_by_name).
+    sidechain_pending: list[tuple[str, str | None, str | None]] = []
+
     song_block = snapshot.get("song") or {}
     master = song_block.get("master")
     if master:
@@ -539,6 +687,7 @@ def replay_capture(
                 actor=actor,
                 request_id=request_id,
                 reason=reason,
+                sidechain_pending=sidechain_pending,
             )
 
     return_ids_by_name: dict[str, str] = {}
@@ -578,6 +727,7 @@ def replay_capture(
                 actor=actor,
                 request_id=request_id,
                 reason=reason,
+                sidechain_pending=sidechain_pending,
             )
 
     if stripped_pairs:
@@ -666,7 +816,35 @@ def replay_capture(
                 actor=actor,
                 request_id=request_id,
                 reason=reason,
+                sidechain_pending=sidechain_pending,
             )
+
+    # BAK-3M9T: apply each device's sidechain source now that every track exists.
+    # The source is stored by surface name (never a per-build UUID), resolved here
+    # against this song's tracks (the source is always a track — see
+    # set_device_sidechain / plan_pull_device_sidechain). Only devices whose
+    # snapshot entry DECLARED `sidechain_source` reach this list (snapshot silence
+    # is "no opinion", not "clear" — see _replay_devices above); an explicit null
+    # source value DOES clear, idempotently. The snapshot is authoritative for what
+    # it declares, never for what it omits.
+    for device_id, source_name, channel in sidechain_pending:
+        if source_name is None:
+            M.set_device_sidechain(
+                conn, device_id=device_id, source_track_id=None, channel=None,
+                actor=actor, request_id=request_id, reason=reason,
+            )
+            continue
+        source_track_id = track_ids_by_name.get(source_name)
+        if source_track_id is None:
+            raise ValueError(
+                f"device sidechain source {source_name!r} is not a track defined "
+                "in snapshot['tracks'] — cannot resolve the reference (capture "
+                "filters unresolvable sources; check a hand-authored source name)"
+            )
+        M.set_device_sidechain(
+            conn, device_id=device_id, source_track_id=source_track_id,
+            channel=channel, actor=actor, request_id=request_id, reason=reason,
+        )
 
     return song_id
 
@@ -881,6 +1059,12 @@ def _snapshot_param_entry(p: dict[str, Any]) -> dict[str, Any] | None:
     continuous form — replay then stores ``value_normalized = NULL``). Computed
     via the single-source `normalize_param_value`, so a captured-then-replayed
     param lands the same DB row a pull would write.
+
+    DEV-4P7R: a non-enum param whose raw range != [0,1] instead gets
+    ``value_raw`` (Live's own ``param.value``) — the only channel that round-trips
+    for it (normalized is pushed AS raw so it mis-dials, and a step-list display
+    like LFO S. Rate's "8..1/64" is non-monotonic so push refuses it). ``value``
+    keeps the display string as a readable HINT; push prefers the raw.
     """
     raw = p.get("value")
     if not isinstance(raw, (int, float)) or isinstance(raw, bool):
@@ -892,7 +1076,6 @@ def _snapshot_param_entry(p: dict[str, Any]) -> dict[str, Any] | None:
     is_enum = bool(p.get("is_enum", False))
     min_val = float(p.get("min", 0.0))
     max_val = float(p.get("max", 1.0))
-    normalized = normalize_param_value(float(raw), min_val, max_val, is_enum)
     value_display = p.get("value_display")
     if not isinstance(value_display, str):
         # Probe omitted a display string (rare — a param with no str_for_value).
@@ -903,6 +1086,11 @@ def _snapshot_param_entry(p: dict[str, Any]) -> dict[str, Any] | None:
         # land the same DB row.
         value_display = ""
     entry: dict[str, Any] = {"value": value_display}
+    if param_needs_raw_channel(min_val, max_val, is_enum):
+        # The display string stays as a readable hint; value_raw is authoritative.
+        entry["value_raw"] = float(raw)
+        return entry
+    normalized = normalize_param_value(float(raw), min_val, max_val, is_enum)
     if normalized is not None:
         entry["normalized"] = normalized
     if is_enum:
@@ -1101,6 +1289,22 @@ def _capture_devices_for_parent(
         params = _params_dialed_via_probe(probe, node=node)
         if params:
             entry["params_dialed"] = params
+        # BAK-3M9T: a top-level device's sidechain SOURCE — the one piece the
+        # S/C On/Gain/Mix params can't carry (see set_device_sidechain). Probe the
+        # input-routing surface (cheap: has_input_routing=False on non-capable
+        # devices); `current_type` is the source track's display name. Stored raw
+        # by surface name (+ channel) here; `_resolve_captured_sidechain_sources`
+        # drops the own-track default and unrepresentable sources once every track
+        # name is known. Top-level only, matching plan_pull_device_sidechain.
+        routing = probe(
+            "ableton_device", "get_input_routing",
+            device_index=di, **_parent_flat_args(parent_kind, parent_index),
+        )
+        if routing.get("has_input_routing") and routing.get("current_type"):
+            entry["sidechain_source"] = routing["current_type"]
+            channel = routing.get("current_channel")
+            if channel:
+                entry["sidechain_source_channel"] = channel
         if cls_display in RACK_CLASS_NAMES:
             chains_resp = probe(
                 "ableton_device", "get_device_chains",
@@ -1126,6 +1330,67 @@ def _capture_devices_for_parent(
                 entry["drum_pads"] = pads
         out.append(entry)
     return out
+
+
+def _resolve_captured_sidechain_sources(snapshot: dict[str, Any]) -> None:
+    """Filter the raw per-device ``sidechain_source`` references captured by
+    `_capture_devices_for_parent`, in place, now that every track name is known.
+
+    Three cases:
+      * source == the device's OWN host track — Live's default input, not a
+        sidechain. Dropped QUIETLY (there is nothing to re-apply).
+      * source resolves to a real OTHER track in the snapshot — KEPT.
+      * a genuine sidechain whose source is NOT a track in the snapshot (a return /
+        master / external input, or a track absent from the capture) — cannot be
+        represented as a surface-stable reference. Rather than drop it silently
+        (the umbrella's anti-pattern, BAK-3M9T), it is dropped WITH a UserWarning
+        that lists each dropped source so the operator can re-apply it in Live.
+
+    Top-level devices only, matching what `_capture_devices_for_parent` emits.
+    Scope (deliberate): this is the *sidechain* re-apply guarantee — a general
+    "diff everything probed vs everything the schema represents" sweep is out of
+    scope (open-ended; rule-of-three not met).
+    """
+    track_names = {t.get("name") for t in (snapshot.get("tracks") or [])}
+    unrepresentable: list[str] = []
+
+    def _filter(
+        parent: dict[str, Any], *, own_track_name: str | None, parent_label: str,
+    ) -> None:
+        for d in parent.get("devices") or []:
+            src = d.get("sidechain_source")
+            if src is None:
+                continue
+            if src == own_track_name:
+                d.pop("sidechain_source", None)  # own-track default, not a sidechain
+                d.pop("sidechain_source_channel", None)
+            elif src not in track_names:
+                name = d.get("name") or d.get("class") or "device"
+                unrepresentable.append(f"{name!r} on {parent_label} → {src!r}")
+                d.pop("sidechain_source", None)
+                d.pop("sidechain_source_channel", None)
+            # else: a real cross-track sidechain — keep it.
+
+    for t in snapshot.get("tracks") or []:
+        _filter(t, own_track_name=t.get("name"),
+                parent_label=f"track {t.get('name')!r}")
+    for r in snapshot.get("returns") or []:
+        _filter(r, own_track_name=None, parent_label=f"return {r.get('name')!r}")
+    master = (snapshot.get("song") or {}).get("master")
+    if master:
+        _filter(master, own_track_name=None, parent_label="master")
+
+    if unrepresentable:
+        pretty = "; ".join(unrepresentable)
+        warnings.warn(
+            "capture: dropped sidechain source(s) that don't resolve to a track in "
+            f"the snapshot — RE-APPLY MANUALLY in Live: {pretty}. Only a track can "
+            "be a snapshot-stable sidechain source (the DB models the source as a "
+            "track FK); a return / master / external source isn't carried. See "
+            "docs/snapshot-schema.md ('sidechain_source').",
+            UserWarning,
+            stacklevel=2,
+        )
 
 
 def _capture_sends(probe, *, track_index: int) -> dict[str, Any]:
@@ -1161,7 +1426,11 @@ def assemble_snapshot_via_probes(
     devices) — but reaches device parameters at EVERY depth via NodeAddr `path`,
     closing the read-side acquisition gap. `old_snapshot`, when given, carries
     `browser_path` forward for devices whose identity still matches (capture
-    probes don't surface it), exactly as `/song-snapshot` did by hand.
+    probes don't surface it), exactly as `/song-snapshot` did by hand — and
+    (SNP-2H9F) for a device the prior snapshot loaded via `preset_query`, carries
+    that portable seed forward and rewrites the fresh `chains` dump into a flat
+    `param_overrides` list, so a by-ear nested tweak survives a rebuild without
+    dropping the preset's timbre or bloating the snapshot.
     """
     info = probe("ableton_session", "info")
     master_mixer = info.get("master")
@@ -1229,8 +1498,13 @@ def assemble_snapshot_via_probes(
     snapshot = compile_snapshot(
         session_info=session_info, returns=returns_out, tracks=tracks_out,
     )
+    _resolve_captured_sidechain_sources(snapshot)
     if old_snapshot is not None:
         preserve_browser_paths(old_snapshot, snapshot)
+        # SNP-2H9F: a device the prior snapshot loaded via preset_query keeps its
+        # portable seed + by-ear nested deltas (param_overrides) instead of the
+        # fresh full chains dump (which drops the seed + the preset's timbre).
+        preserve_preset_overrides(old_snapshot, snapshot)
     return snapshot
 
 
@@ -1563,6 +1837,152 @@ def preserve_browser_paths(
             key = ("return", ri, int(d["index"]), d.get("class"))
             if key in old_paths:
                 d["browser_path"] = list(old_paths[key])
+
+
+# ---------------------------------------------------------------------------
+# SNP-2H9F: capture a preset device's nested deltas as param_overrides
+# ---------------------------------------------------------------------------
+# `assemble_snapshot_via_probes` dumps a full `chains` tree for EVERY rack and
+# never carries `preset_query` forward (live probes don't surface a device's
+# preset origin). For a device the prior snapshot loaded via `preset_query`, that
+# dump drops the portable seed AND the preset's un-parameterizable timbre (a
+# Wavetable waveform is not a DeviceParameter) and bloats. This post-compile
+# transform — the read-side sibling of the replay/push paths — restores
+# `preset_query` from the old snapshot and rewrites the fresh `chains` dump into a
+# flat `param_overrides` list (the by-ear nested deltas), so the snapshot stays
+# portable + small while the deep tweak survives a from-scratch rebuild.
+
+# Authored per-chain props (NODE-ADDR Chunk C/F: choke/out_note/mixer state) live
+# IN the chains structure and can't ride param_overrides (device params only). A
+# preset device whose dump carries any keeps its full `chains` dump rather than
+# lose them (a drum-rack-via-preset edge; the instrument-rack param case is the
+# SNP-2H9F target).
+_CHAIN_PROP_KEYS = ("choke_group", "out_note", "mute", "solo", "volume", "pan")
+
+
+def _collect_preset_queries(
+    snapshot: dict[str, Any],
+) -> dict[tuple[str, int, int, Any], Any]:
+    """Identity-keyed lookup of every top-level device carrying `preset_query`.
+    Key shape matches `_collect_browser_paths` — (parent_kind, parent_index,
+    device_index, class) — so a re-used slot with a different device doesn't
+    carry forward a stale seed."""
+    out: dict[tuple[str, int, int, Any], Any] = {}
+    for parent_kind, parents in (("track", snapshot.get("tracks")),
+                                 ("return", snapshot.get("returns"))):
+        for p in parents or []:
+            if "index" not in p:
+                continue
+            pidx = int(p["index"])
+            for d in p.get("devices") or []:
+                pq = d.get("preset_query")
+                if pq is None or "index" not in d:
+                    continue
+                out[(parent_kind, pidx, int(d["index"]), d.get("class"))] = pq
+    return out
+
+
+def _chains_carry_props(chains: list[dict[str, Any]] | None) -> bool:
+    """True if any chain (at any depth) in a captured dump carries an authored
+    Chunk C/F per-chain prop — those can't be expressed as param_overrides."""
+    for chain in chains or []:
+        if any(k in chain for k in _CHAIN_PROP_KEYS):
+            return True
+        for dev in chain.get("devices") or []:
+            if dev.get("chains") and _chains_carry_props(dev["chains"]):
+                return True
+    return False
+
+
+def _flatten_chains_to_overrides(
+    chains: list[dict[str, Any]] | None,
+    prefix_path: list[dict[str, int]],
+) -> list[dict[str, Any]]:
+    """Flatten a captured `chains` tree into a `param_overrides` list — one entry
+    per nested device's dialed param, carrying the NodeAddr descent `path` to that
+    device (chain_index from the chain, device_position from the device's 1-based
+    `index`). The params are already non-default-filtered by capture, so this is
+    the by-ear delta set (SNP-2H9F; design §8 — over-captures the preset's own
+    non-defaults until the bounded preset-cache lands)."""
+    out: list[dict[str, Any]] = []
+    for chain in chains or []:
+        ci = chain.get("chain_index")
+        if not isinstance(ci, int):
+            continue
+        for dev in chain.get("devices") or []:
+            dp = dev.get("index")
+            if not isinstance(dp, int):
+                continue
+            path = prefix_path + [{"chain_index": ci, "device_position": dp}]
+            for name, p in (dev.get("params_dialed") or {}).items():
+                entry: dict[str, Any] = {"path": path, "name": name,
+                                         "value": p["value"]}
+                if "normalized" in p:
+                    entry["normalized"] = p["normalized"]
+                if "value_items" in p:
+                    entry["value_items"] = p["value_items"]
+                # DEV-4P7R: carry the raw channel — a preset device's nested
+                # quantized non-[0,1] param (the witness LFO S. Rate) is exactly
+                # what param_overrides exists for; dropping it here would silently
+                # revert the fix on the next /song-snapshot refresh.
+                if "value_raw" in p:
+                    entry["value_raw"] = p["value_raw"]
+                out.append(entry)
+            if dev.get("chains"):
+                out.extend(_flatten_chains_to_overrides(dev["chains"], path))
+    return out
+
+
+def preserve_preset_overrides(
+    old: dict[str, Any],
+    new: dict[str, Any],
+) -> None:
+    """For each NEW top-level device whose matching OLD device was preset-seeded
+    (carried `preset_query`), carry that seed forward and convert the fresh
+    `chains` dump into a flat `param_overrides` list — dropping `chains` so the
+    snapshot keeps the portable preset + the by-ear nested deltas without the
+    preset's structure/timbre or the dump bloat (SNP-2H9F). Mutates `new`.
+
+    Skips conversion (keeps the full `chains` dump, preset_query NOT carried) when
+    the dump carries authored per-chain props, which can't ride param_overrides —
+    a drum-rack-via-preset edge, flagged via a warning, not silently dropped."""
+    old_presets = _collect_preset_queries(old)
+    if not old_presets:
+        return
+    for parent_kind, parents in (("track", new.get("tracks")),
+                                 ("return", new.get("returns"))):
+        for parent in parents or []:
+            if "index" not in parent:
+                continue
+            pidx = int(parent["index"])
+            for d in parent.get("devices") or []:
+                if "index" not in d:
+                    continue
+                key = (parent_kind, pidx, int(d["index"]), d.get("class"))
+                preset = old_presets.get(key)
+                if preset is None:
+                    continue
+                chains = d.get("chains")
+                if chains and _chains_carry_props(chains):
+                    warnings.warn(
+                        f"capture: preset device {d.get('name')!r} on "
+                        f"{parent_kind} {pidx} carries authored per-chain props "
+                        "(choke/out_note/mixer) that param_overrides can't "
+                        "express — keeping the full chains dump (its preset_query "
+                        "is not carried forward; SNP-2H9F covers preset device "
+                        "PARAMS, not preset drum-chain props).",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                    continue
+                # Carry the portable seed forward (lost by the live walk).
+                if "preset_query" not in d:
+                    d["preset_query"] = preset
+                if chains:
+                    overrides = _flatten_chains_to_overrides(chains, [])
+                    del d["chains"]
+                    if overrides:
+                        d["param_overrides"] = overrides
 
 
 # ---------------------------------------------------------------------------

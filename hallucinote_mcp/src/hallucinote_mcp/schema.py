@@ -76,7 +76,7 @@ class LiveOp:
     — ``start_playing`` / ``stop_playing`` / etc). Values starting with
     ``$`` are param references — ``"$bpm"`` means "look up the validated
     'bpm' param and use its value". Other values are literals. Example:
-    ``{"is_playing": True}`` for ``play``, ``{"tempo": "$bpm"}`` for
+    ``{"is_playing": False}`` for ``stop``, ``{"tempo": "$bpm"}`` for
     ``set_tempo``. When ``result_template`` is ``None`` the executor
     returns the op's natural value (``None`` for ``property_write``;
     whatever the method returned for ``method_call``). Avoid setting

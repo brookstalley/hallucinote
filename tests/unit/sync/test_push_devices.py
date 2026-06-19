@@ -489,6 +489,48 @@ def test_plan_push_devices_falls_back_to_normalized_without_display(
     assert call.args["value_type"] == "continuous"
 
 
+def test_plan_push_devices_writes_value_raw_as_raw_continuous(
+    conn, song, session, linked_track,
+):
+    """DEV-4P7R: a param stored on the raw channel emits its UNCLAMPED raw value
+    on the wire as a continuous `value` (the witness LFO S. Rate: raw 8.0 in
+    [0,21]) — never value_display (which the live setter refuses) nor the
+    normalized-as-raw form (which mis-dials a non-[0,1] param)."""
+    cid = M.create_device_chain(conn, parent_track_id=linked_track)
+    did = M.create_device(conn, chain_id=cid, position=1, kind="Wavetable",
+                          display_name="WT")
+    M.set_device_parameter(conn, device_id=did, name="LFO 1 S. Rate",
+                           value_display="1/2", value_raw=8.0)
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=did, ableton_index=1,
+    )
+    plan = push.plan_push_devices(conn, song_id=song, session_id=session)
+    call = _calls_by_action(plan)["set_parameter"][0]
+    assert float(call.args["value"]) == pytest.approx(8.0)
+    assert call.args["value_type"] == "continuous"
+    assert "value_display" not in call.args
+
+
+def test_plan_push_devices_value_raw_beats_display_hint(
+    conn, song, session, linked_track,
+):
+    """Channel precedence: an explicit value_raw wins over a stored display
+    string, so a readable hint can ride alongside the authoritative raw."""
+    cid = M.create_device_chain(conn, parent_track_id=linked_track)
+    did = M.create_device(conn, chain_id=cid, position=1, kind="Wavetable",
+                          display_name="WT")
+    # Both stored: display is a hint; raw is authoritative.
+    M.set_device_parameter(conn, device_id=did, name="LFO 1 S. Rate",
+                           value_display="1/2", value_raw=8.0)
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=did, ableton_index=1,
+    )
+    plan = push.plan_push_devices(conn, song_id=song, session_id=session)
+    call = _calls_by_action(plan)["set_parameter"][0]
+    assert float(call.args["value"]) == pytest.approx(8.0)
+    assert "value_display" not in call.args
+
+
 def test_plan_push_devices_writes_known_enums_as_enum(
     conn, song, session, linked_track,
 ):
@@ -638,6 +680,47 @@ def test_apply_push_results_accepts_device_parameter_as_ack(
         session_id=session,
     )
     # Existing device + track links survive; nothing else added.
+    links = Q.get_ableton_links_for_session(conn, session)
+    kinds = sorted(l["db_kind"] for l in links)
+    assert kinds == ["device", "track"]
+
+
+def test_apply_push_results_accepts_device_param_override_as_ack(
+    conn, song, session, linked_track,
+):
+    """A nested preset param override (DEV-4P7R `param_overrides`, e.g. a
+    `value_raw` on a rack's nested Wavetable LFO) is emitted by the planner as a
+    `device_param_override:` result key whose tail carries the NodeAddr path +
+    param name. apply_push_results must ACK it (no DB write, no raise): its value
+    ORIGINATES in the snapshot/DB, exactly like `device_parameter`.
+
+    Regression: the kind had no case, so apply_push_results raised
+    `ValueError: unknown push result key kind 'device_param_override'`, which
+    HALTED the devices phase mid-run — a full from-scratch push of any song with
+    such an override never finished (no routing/envelopes/automation/arrangement).
+    See incoming-bugs/2026-06-18-push-apply-unknown-device_param_override-result-kind-halts-devices-phase.md
+    """
+    cid = M.create_device_chain(conn, parent_track_id=linked_track)
+    did = M.create_device(
+        conn, chain_id=cid, position=1, kind="Instrument Rack",
+        display_name="Synth Vox Ai",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=did, ableton_index=2,
+    )
+    key = (
+        f'device_param_override:{did}:'
+        '[{"chain_index": 1, "device_position": 1}]:LFO 1 S. Rate'
+    )
+    warnings = push.apply_push_results(
+        conn,
+        [
+            {"key": key, "ok": True, "tool": "ableton_device", "result": {}},
+        ],
+        session_id=session,
+    )
+    assert warnings == []
+    # Existing device + track links survive; nothing else added (ack-only).
     links = Q.get_ableton_links_for_session(conn, session)
     kinds = sorted(l["db_kind"] for l in links)
     assert kinds == ["device", "track"]

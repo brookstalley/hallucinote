@@ -136,6 +136,30 @@ def test_param_entry_constant_range_stores_display_only():
     assert entry == {"value": "fixed"}
 
 
+def test_param_entry_nonunit_range_emits_value_raw():
+    """DEV-4P7R: a non-enum param whose raw range != [0,1] (the witness
+    LFO S. Rate: raw 8.0 in [0,21], display "1/2") rides the raw channel —
+    value_raw carries Live's own value, the display string stays as a hint, and
+    `normalized` is OMITTED (it would be pushed as raw and mis-dial)."""
+    entry = _snapshot_param_entry({
+        "name": "LFO 1 S. Rate", "value": 8.0, "value_display": "1/2",
+        "default_value": 15.0, "min": 0.0, "max": 21.0, "is_enum": False,
+    })
+    assert entry == {"value": "1/2", "value_raw": 8.0}
+
+
+def test_param_entry_nonunit_range_negative_min_emits_value_raw():
+    """A monotonic-display non-[0,1] param (a transpose, raw -12 in [-24,24])
+    also rides the raw channel — lossless, robust regardless of display
+    addressability; the display stays as a readable hint."""
+    entry = _snapshot_param_entry({
+        "name": "Osc 1 Transp", "value": -12.0, "value_display": "-12 st",
+        "default_value": 0.0, "min": -24.0, "max": 24.0, "is_enum": False,
+    })
+    assert entry == {"value": "-12 st", "value_raw": -12.0}
+    assert "normalized" not in entry
+
+
 # --------------------------------------------------------------------------
 # A fake `probe` that models a small live set with a depth-2 nested dialed param
 # --------------------------------------------------------------------------
@@ -197,6 +221,8 @@ class _FakeProbe:
             node = params["node"]
             depth = len(node.get("path") or [])
             return {"parameters": self._nested_params.get(depth, [])}
+        if (tool, action) == ("ableton_device", "get_input_routing"):
+            return {"has_input_routing": False}
         raise AssertionError(f"unrouted probe {tool}.{action} {params}")
 
 
@@ -306,6 +332,8 @@ def test_assemble_captures_master_and_returns():
                 {"name": "Ceiling", "value": 0.95, "value_display": "-0.3 dB",
                  "default_value": 1.0, "min": 0.0, "max": 1.0, "is_enum": False},
             ]}
+        if (tool, action) == ("ableton_device", "get_input_routing"):
+            return {"has_input_routing": False}
         raise AssertionError(f"unrouted {tool}.{action}")
 
     snap = assemble_snapshot_via_probes(probe)

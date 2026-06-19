@@ -41,8 +41,10 @@ The DB is the source of truth, so a fresh push converges Live to the DB. Before
 re-pushing, fold your manual edits back into the DB:
 
 - Faders / mutes / sends / notes → `/hallucinote:ableton-pull`.
-- Device-parameter knob tweaks → `/hallucinote:snapshot-bake-recent-changes` (lighter), or
-  `/hallucinote:song-snapshot` for the full mix layout.
+- Device-parameter knob tweaks (and the full mix layout — params, sends, chains,
+  sidechain) → `/hallucinote:song-snapshot`, the single durable mix bake. It writes
+  the git-tracked `captured_session.json`, so the next `build.py` reproduces them
+  (a DB-only bake would revert on rebuild).
 
 See the [Quickstart](quickstart.md#4-pull-manual-edits-back-optional).
 

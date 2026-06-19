@@ -4,7 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hallucinote"
-version = "0.9.0"
+# CANONICAL VERSION — the single source of truth for the product version.
+# Keep .claude-plugin/plugin.json and src/hallucinote/__init__.py in lockstep;
+# tests/unit/test_version_parity.py FAILS if any drifts. (The MCP server's
+# hallucinote_mcp.BASE_VERSION is a SEPARATE wire-protocol axis — see that file.)
+version = "1.5.0"
 description = "DB-backed MIDI authoring with Ableton sync via MCP"
 requires-python = ">=3.10"
 dependencies = [

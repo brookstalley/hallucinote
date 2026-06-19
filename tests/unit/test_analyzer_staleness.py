@@ -142,7 +142,7 @@ def test_rollup_empty_when_all_surfaces_clean():
     probed = {
         ("track", 1): [_device(1, "Operator"), _analyzer(2)],
         ("return", 1): [_device(1, "Reverb"), _analyzer(2)],
-        ("master", None): [_device(1, "Limiter"), _analyzer(2)],
+        ("master", 0): [_device(1, "Limiter"), _analyzer(2)],
     }
     assert detect_stale_analyzer_surfaces(probed) == []
 
@@ -165,14 +165,17 @@ def test_rollup_flags_stale_return_surface():
     ]
 
 
-def test_rollup_flags_stale_master_surface_no_id():
-    """Master surface keyed with id None labels without a '#N' suffix."""
-    probed = {
-        ("master", None): [_analyzer(1), _device(2, "Ceiling")],
-    }
-    assert detect_stale_analyzer_surfaces(probed) == [
-        "master: Ceiling after the analyzer",
-    ]
+def test_rollup_flags_stale_master_surface_labels_without_suffix():
+    """The master is a singleton, so it labels as "master" (never "master #0")
+    regardless of which id sentinel the caller used — the push-preflight probe
+    map keys it ("master", 0); an older/None sentinel labels the same way."""
+    for sentinel in (0, None):
+        probed = {
+            ("master", sentinel): [_analyzer(1), _device(2, "Ceiling")],
+        }
+        assert detect_stale_analyzer_surfaces(probed) == [
+            "master: Ceiling after the analyzer",
+        ], sentinel
 
 
 def test_rollup_across_track_return_and_master():
@@ -182,7 +185,7 @@ def test_rollup_across_track_return_and_master():
         ("track", 4): [_device(1, "Operator"), _analyzer(2), _device(3, "Saturator")],
         ("track", 1): [_device(1, "Bass"), _analyzer(2)],  # clean
         ("return", 1): [_analyzer(1), _device(2, "Delay")],
-        ("master", None): [_analyzer(1), _device(2, "Limiter"), _device(3, "Ceiling")],
+        ("master", 0): [_analyzer(1), _device(2, "Limiter"), _device(3, "Ceiling")],
     }
     assert detect_stale_analyzer_surfaces(probed) == [
         "master: Limiter, Ceiling after the analyzer",

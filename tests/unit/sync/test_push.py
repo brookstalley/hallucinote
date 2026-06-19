@@ -477,17 +477,19 @@ def test_plan_push_arrangement_multiple_clips_emit_separate_calls(
 # --- arrangement idempotency (W10-A) ---
 
 
-def test_plan_push_arrangement_skips_already_linked_placements(
+def test_plan_push_arrangement_refreshes_notes_on_already_linked_placements(
     conn, song, session, track, clip
 ):
-    """W10-A: arrangement_clip placements that are already linked in
-    `ableton_links` must NOT re-emit on subsequent plans.
+    """PSH-6W2J: a re-push must NOT re-duplicate an already-linked placement
+    (W10-A's idempotency intent), but it MUST refresh the placement's notes.
 
-    Pre-W10-A behavior: the planner read track + clip links but ignored
-    the arrangement_clip link the apply layer wrote back. Re-running
-    push.plan_push_arrangement after a successful first push therefore
-    re-emitted the same `duplicate_to_arrangement` calls, doubling
-    every arrangement placement on each re-run.
+    The pre-PSH-6W2J behavior `assert plan.calls == []` ENCODED THE BUG: an
+    arrangement clip is a distinct Live copy, so skipping the linked placement
+    entirely left it frozen at first-materialization — a later note edit to the
+    session clip never reached the arrangement (silent stale render/playback).
+    The corrected contract: emit exactly one `replace_notes`/`location=arrangement`
+    refresh (idempotent on placement — no `duplicate_to_arrangement`), keyed
+    `arrangement_clip_notes:` so apply records no new binding.
     """
     M.add_time_signature_point(
         conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
@@ -509,21 +511,33 @@ def test_plan_push_arrangement_skips_already_linked_placements(
             "key": f"arrangement_clip:{aid}",
             "ok": True,
             "tool": "ableton_clip",
-            "result": {"arrangement_clip_index": 0},
+            "result": {"arrangement_clip_index": 3},
         }],
         session_id=session,
     )
-    # Re-run the planner — it must skip the now-linked placement.
+    # Re-run the planner — it must refresh (not re-duplicate) the linked placement.
     plan = push.plan_push_arrangement(conn, song_id=song, session_id=session)
-    assert plan.calls == [], (
-        f"re-push should be idempotent but emitted: "
+    assert len(plan.calls) == 1, (
+        f"re-push should emit exactly one note-refresh call, got: "
         f"{[c.args for c in plan.calls]}"
     )
-    # Tracking note so the agent/UI can show "nothing to do".
+    call = plan.calls[0]
+    assert call.key == f"arrangement_clip_notes:{aid}"
+    assert call.tool == "ableton_clip"
+    assert call.args["action"] == "replace_notes"
+    assert call.args["location"] == "arrangement"
+    assert call.args["track_index"] == 2
+    assert call.args["clip_index"] == 3  # the recorded arrangement_clip_index
+    assert len(call.args["notes"]) == 2  # the `clip` fixture's two notes
+    # No re-duplication.
+    assert all(
+        c.args.get("action") != "duplicate_to_arrangement" for c in plan.calls
+    ), "must not re-duplicate an already-linked placement"
+    # Idempotency note reflects the refresh, not a silent skip.
     assert any(
-        "already in the arrangement" in n or "already linked" in n
+        "refreshed notes" in n and "no re-duplication" in n
         for n in plan.notes
-    ), f"expected an idempotency note, got: {plan.notes}"
+    ), f"expected a refresh idempotency note, got: {plan.notes}"
 
 
 def test_plan_push_arrangement_partial_state_emits_unlinked_only(
@@ -563,8 +577,15 @@ def test_plan_push_arrangement_partial_state_emits_unlinked_only(
         session_id=session,
     )
     plan = push.plan_push_arrangement(conn, song_id=song, session_id=session)
-    assert len(plan.calls) == 1
-    assert plan.calls[0].key == f"arrangement_clip:{aids[2]}"
+    # PSH-6W2J: the two linked placements now emit note-refresh calls, and the
+    # third (unlinked) emits a duplicate. Exactly one duplicate; two refreshes.
+    dup_calls = [c for c in plan.calls if c.args["action"] == "duplicate_to_arrangement"]
+    refresh_calls = [c for c in plan.calls if c.args["action"] == "replace_notes"]
+    assert len(dup_calls) == 1
+    assert dup_calls[0].key == f"arrangement_clip:{aids[2]}"
+    assert sorted(c.key for c in refresh_calls) == sorted(
+        f"arrangement_clip_notes:{aids[i]}" for i in (0, 1)
+    )
 
 
 def test_plan_push_arrangement_clear_warn_only_for_unlinked_placements(
@@ -629,6 +650,136 @@ def test_plan_push_arrangement_clear_warn_still_fires_on_truly_new_push(
     assert len(plan.calls) == 1
     assert any(
         "clear existing arrangement clips" in n for n in plan.notes
+    )
+
+
+# --- PSH-6W2J: arrangement-copy note propagation ---
+
+
+def _link_and_place(conn, *, song, session, track, clip, start_bar, arr_index):
+    """Add an arrangement placement and record its (track, arrangement_clip)
+    links as if a first push had materialized it. Returns the placement id."""
+    aid = M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip,
+        start_bar=start_bar, end_bar=start_bar + 16.0,
+    )
+    push.apply_push_results(
+        conn,
+        [{"key": f"arrangement_clip:{aid}", "ok": True, "tool": "ableton_clip",
+          "result": {"arrangement_clip_index": arr_index}}],
+        session_id=session,
+    )
+    return aid
+
+
+def test_plan_push_arrangement_clip_notes_one_call_per_linked_placement(
+    conn, song, session, track, clip
+):
+    """A session clip placed at three arrangement positions refreshes all three
+    copies — one replace_notes(location='arrangement') per linked placement."""
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=2,
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="clip", db_id=clip, ableton_index=1,
+    )
+    aids = [
+        _link_and_place(
+            conn, song=song, session=session, track=track, clip=clip,
+            start_bar=bar, arr_index=idx,
+        )
+        for bar, idx in ((1.0, 0), (17.0, 1), (33.0, 2))
+    ]
+    plan = push.plan_push_arrangement_clip_notes(
+        conn, clip_id=clip, session_id=session
+    )
+    assert sorted(c.key for c in plan.calls) == sorted(
+        f"arrangement_clip_notes:{aid}" for aid in aids
+    )
+    for c in plan.calls:
+        assert c.args["action"] == "replace_notes"
+        assert c.args["location"] == "arrangement"
+        assert c.args["track_index"] == 2
+        assert len(c.args["notes"]) == 2
+
+
+def test_plan_push_arrangement_clip_notes_skips_unlinked_placement(
+    conn, song, session, track, clip
+):
+    """An arrangement placement with no recorded link is NOT refreshed — it will
+    be created by the duplicate path, not refreshed in place."""
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=2,
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="clip", db_id=clip, ableton_index=1,
+    )
+    # Placement exists in the DB but was never materialized/linked.
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip,
+        start_bar=1.0, end_bar=16.0,
+    )
+    plan = push.plan_push_arrangement_clip_notes(
+        conn, clip_id=clip, session_id=session
+    )
+    assert plan.calls == []
+
+
+def test_plan_push_arrangement_clip_notes_skips_audio_source(
+    conn, song, session
+):
+    """An audio source clip has no notes — its arrangement copy is not
+    refreshed (audio-clip sync is CLP-AUD2 scope)."""
+    atrack = M.create_track(
+        conn, song_id=song, track_index=2, name="Stems", kind="audio",
+    )
+    aclip = M.create_audio_clip(
+        conn, track_id=atrack, slot=1, length_beats=16.0,
+        audio_file="assets/stab.wav", name="stab",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=atrack, ableton_index=2,
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="clip", db_id=aclip, ableton_index=1,
+    )
+    _link_and_place(
+        conn, song=song, session=session, track=atrack, clip=aclip,
+        start_bar=1.0, arr_index=0,
+    )
+    plan = push.plan_push_arrangement_clip_notes(
+        conn, clip_id=aclip, session_id=session
+    )
+    assert plan.calls == []
+
+
+def test_plan_push_arrangement_unrefreshable_linked_placement_named_in_note(
+    conn, song, session, track, clip
+):
+    """A linked placement whose TRACK link is missing can't be refreshed; the
+    idempotency note must name the gap rather than claim everything was refreshed
+    (a silent stale copy is the whole bug PSH-6W2J fixes)."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="clip", db_id=clip, ableton_index=1,
+    )
+    aid = M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip,
+        start_bar=1.0, end_bar=16.0,
+    )
+    # Record the arrangement_clip link but NOT the track link.
+    push.apply_push_results(
+        conn,
+        [{"key": f"arrangement_clip:{aid}", "ok": True, "tool": "ableton_clip",
+          "result": {"arrangement_clip_index": 0}}],
+        session_id=session,
+    )
+    plan = push.plan_push_arrangement(conn, song_id=song, session_id=session)
+    assert plan.calls == [], "no refresh emitted when the track link is missing"
+    assert any("not refreshed" in n for n in plan.notes), (
+        f"expected the note to name the unrefreshed placement, got: {plan.notes}"
     )
 
 

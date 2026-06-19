@@ -1,11 +1,14 @@
 """Drift guard: every song's decisions/ + annotations/ markdown must parse.
 
 `/song-context` reindexes the markdown corpus into the song DB via
-`reindex_corpus`, which calls `load_markdown_doc` on every file and raises on
-the first one with malformed/missing frontmatter or a disallowed key. Because
-the reindex is atomic, ONE bad file silently breaks `/song-context` for the
-whole repo — exactly what happened (sun-zone-done's decision files shipped with
-no frontmatter; punk-fate carried `decided_by`/`topic` keys outside the schema).
+`reindex_corpus`, which calls `load_markdown_doc` on every file. A file with NO
+`---` frontmatter is tolerated (decisions are conventionally a bare `# Title`
+body — indexed with an inferred kind), but a file that DOES open with `---` and
+then carries malformed YAML or a disallowed key still raises. `reindex_corpus`
+itself isolates such a bad file (skip-and-warn) so one doc can't blind the whole
+corpus; this guard calls `load_markdown_doc` DIRECTLY, so it still fails loudly
+on a genuinely malformed file (e.g. punk-fate's out-of-schema `decided_by`/`topic`
+keys) — frontmatter-less decisions (sun-zone-done) now pass, as intended.
 
 This is Living Documentation as a test: the corpus is the deliverable that
 `/song-context` reads, so we lock its parseability the same way

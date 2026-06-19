@@ -142,11 +142,16 @@ def get_arrangement_for_song(conn: sqlite3.Connection, song_id: str) -> list[sql
     """Return arrangement_clips rows joined with track + clip names. No Ableton
     info — sync-time bindings come from `ableton_links` via `get_ableton_link`.
 
+    Also joins ``c.kind AS clip_kind`` (matching `get_arrangement_for_track` /
+    `get_arrangement_for_clip`) so the push planner can exempt audio-clip
+    placements (no notes; CLP-AUD2 scope) from note propagation without a second
+    query per row.
+
     Ordering: `(track_id, start_bar, id)` — the trailing `id` tiebreaker
     makes the result deterministic when two placements share a position
     (which is rare but valid; see `get_arrangement_for_track`)."""
     return conn.execute(
-        """SELECT a.*, t.name AS track_name, c.name AS clip_name
+        """SELECT a.*, t.name AS track_name, c.name AS clip_name, c.kind AS clip_kind
            FROM arrangement_clips a
            JOIN tracks t ON t.id = a.track_id
            JOIN clips  c ON c.id = a.clip_id
@@ -179,6 +184,28 @@ def get_arrangement_for_track(conn: sqlite3.Connection, track_id: str) -> list[s
            WHERE a.track_id = ?
            ORDER BY a.start_bar, a.id""",
         (track_id,),
+    ).fetchall()
+
+
+def get_arrangement_for_clip(conn: sqlite3.Connection, clip_id: str) -> list[sqlite3.Row]:
+    """Return every arrangement placement that copies one session clip.
+
+    An arrangement clip is a distinct Live copy of a session clip; one session
+    clip can be placed at several arrangement positions, so this returns N rows.
+    Used by the note-propagation path (PSH-6W2J): when a session clip's notes
+    change, each linked arrangement copy must be re-synced.
+
+    Joins ``c.kind AS clip_kind`` so the caller can exempt audio-clip
+    placements (no notes to push; CLP-AUD2 scope) without a second query.
+    Ordering ``(track_id, start_bar, id)`` mirrors ``get_arrangement_for_song``
+    for deterministic per-DB results."""
+    return conn.execute(
+        """SELECT a.*, c.kind AS clip_kind
+           FROM arrangement_clips a
+           JOIN clips c ON c.id = a.clip_id
+           WHERE a.clip_id = ?
+           ORDER BY a.track_id, a.start_bar, a.id""",
+        (clip_id,),
     ).fetchall()
 
 
@@ -700,6 +727,26 @@ def get_device_parameters(
     return conn.execute(
         """SELECT * FROM device_parameters
            WHERE device_id = ? ORDER BY name""",
+        (device_id,),
+    ).fetchall()
+
+
+def get_device_param_overrides(
+    conn: sqlite3.Connection,
+    device_id: str,
+) -> list[sqlite3.Row]:
+    """Return a preset device's nested-param overrides (SNP-2H9F), ordered by
+    (path_json, name) for deterministic push emission.
+
+    Each row: ``{id, device_id, path_json, name, value_display,
+    value_normalized, value_items_json}``. ``path_json`` is the JSON-encoded
+    NodeAddr descent (``[{chain_index, device_position}, ...]``) to the nested
+    device the override targets. Empty list for a device with no overrides
+    (the common case — only preset devices with by-ear nested tweaks have any).
+    """
+    return conn.execute(
+        """SELECT * FROM device_param_overrides
+           WHERE device_id = ? ORDER BY path_json, name""",
         (device_id,),
     ).fetchall()
 

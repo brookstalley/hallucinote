@@ -92,7 +92,7 @@ register(
 )
 
 
-register(
+_render_action = register(
     Action(
         tool="ableton_render",
         name="render",
@@ -221,6 +221,79 @@ register(
             "didn't reach stop_at_beat within the wait window (Live's "
             "audio thread may have stalled; the partial WAVs are still "
             "on disk).",
+            "A full-arrangement render takes minutes and exceeds the MCP "
+            "tool-call timeout — prefer start/status (below) for anything "
+            "but a short window.",
         ),
     )
 )
+
+
+# `start` takes the SAME params as `render` (shared, not duplicated) but runs the
+# capture on a detached worker and returns a job handle immediately — the
+# synchronous `render` false-fails on the tool-call timeout for a multi-minute
+# capture. The agent then polls `status`.
+register(
+    Action(
+        tool="ableton_render",
+        name="start",
+        description=(
+            "Start a render in the BACKGROUND and return a job handle "
+            "immediately, so a multi-minute capture never hits the tool-call "
+            "timeout. Same params as 'render'. Returns {job_id, captures_dir, "
+            "eta_seconds, expected_stop_beat, poll}; the 'poll' text tells you "
+            "to call status(job_id) until state is 'done' or 'failed'. One "
+            "render at a time — a start while another is running returns "
+            "{busy: true, job_id} instead of launching a second pass."
+        ),
+        params=_render_action.params,
+        handler=render_handlers.render_start_handler,
+        runs_on_worker=True,
+        example=(
+            "ableton_render(action='start', song_slug='falling-walking')"
+        ),
+        tips=(
+            "Use start/status instead of the synchronous 'render' for any "
+            "full-arrangement capture — render holds the tool-call socket for "
+            "the whole realtime pass and red-times-out before the WAVs land.",
+            "status long-polls ~45s per call, so the poll loop is a handful of "
+            "calls, not a busy spin.",
+        ),
+    )
+)
+
+
+register(
+    Action(
+        tool="ableton_render",
+        name="status",
+        description=(
+            "Poll a background render started with 'start'. Long-polls ~45s "
+            "for the job to finish, then returns {job_id, state, progress, "
+            "captures_dir} plus {manifest, manifest_path, render_status} on "
+            "state='done' or {error} on state='failed'. Repeat until state is "
+            "'done' or 'failed'. A running render returns state='running' with "
+            "live progress (current_beat / target_beat / frames_received)."
+        ),
+        params=(
+            ParamSpec(
+                name="job_id",
+                type="str",
+                description=(
+                    "The job_id returned by ableton_render(action='start')."
+                ),
+            ),
+        ),
+        handler=render_handlers.render_status_handler,
+        runs_on_worker=True,
+        example=(
+            "ableton_render(action='status', job_id='render-ab12cd34ef56')"
+        ),
+        tips=(
+            "Unknown job_id returns a structured error naming recent render "
+            "jobs — job state lives in the server process, so it resets when "
+            "the MCP server restarts.",
+        ),
+    )
+)
+

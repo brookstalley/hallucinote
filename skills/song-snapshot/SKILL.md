@@ -1,17 +1,17 @@
 ---
 name: song-snapshot
-description: Refresh a song's `captured_session.json` against the currently open Ableton set. Re-runs the capture probes (`ableton_session(action='info')`, `ableton_return(action='list')`, per-track `ableton_track(action='info')` + `ableton_track(action='get_sends')`, per-device parameter probes, nested rack-chain walks), writes a `captured_session.refresh.json` side-by-side, diffs against the existing snapshot, and asks the user to confirm before overwriting. Use when you've changed instrument params / sends / device chains in Live and want the on-disk snapshot to reflect the new mix layout. Do NOT use to capture clips, notes, automation, arrangement, or cue points — those live in `build.py`, not the snapshot.
+description: Refresh a song's `captured_session.json` against the currently open Ableton set — the single DURABLE mix bake (what it writes survives a `build.py` rebuild, unlike a DB-only `/ableton-pull`). Re-runs the capture probes (`ableton_session(action='info')`, `ableton_return(action='list')`, per-track `ableton_track(action='info')` + `ableton_track(action='get_sends')`, per-device parameter + sidechain-source probes, nested rack-chain walks), writes a `captured_session.refresh.json` side-by-side, diffs against the existing snapshot, and asks the user to confirm before overwriting. Use when you've changed instrument params / sends / device chains / a device's sidechain source in Live and want the on-disk snapshot to reflect the new mix layout. Do NOT use to capture clips, notes, automation, arrangement, or cue points — those live in `build.py`, not the snapshot.
 ---
 
 # /song-snapshot
 
 > **Running engine commands.** The engine ships in the plugin's uv env. Resolve `$PY` once from `ableton://server/info`'s `python`; the `hallucinote …` commands below run as `"$PY" -m hallucinote.cli …`. See [`docs/running-the-engine.md`](../../docs/running-the-engine.md).
 
-You refresh `songs/<slug>/captured_session.json` from the currently open Ableton set, with a diff confirmation before overwrite. The snapshot is the seed for `build.py`'s `replay_capture(...)` — it captures the **mix layout** (tracks, returns, sends, device chains, dialed instrument parameters, and nested rack chains to any depth). Everything else (clips, notes, envelopes, arrangement, cues) is owned by `build.py` and is intentionally NOT touched.
+You refresh `songs/<slug>/captured_session.json` from the currently open Ableton set, with a diff confirmation before overwrite. The snapshot is the seed for `build.py`'s `replay_capture(...)` — it captures the **mix layout** (tracks, returns, sends, device chains, dialed instrument parameters, **device sidechain sources**, and nested rack chains to any depth). This is the **single durable mix bake**: what it captures lands in the git-tracked `captured_session.json` and reproduces on the next `build.py` — unlike `/ableton-pull`, which writes only the regenerable DB (a DB-only mix pull reverts on the next build). Everything else (clips, notes, envelopes, arrangement, cues) is owned by `build.py` and is intentionally NOT touched.
 
 ## When to run this
 
-Run after the user has manually edited the live Ableton set in ways that change what `replay_capture(...)` would produce: dialed an instrument param, added/removed a device, changed a send level, renamed or reordered tracks, tweaked the master strip. **Don't** run this for clip edits (use `/ableton-pull` for those).
+Run after the user has manually edited the live Ableton set in ways that change what `replay_capture(...)` would produce: dialed an instrument param, added/removed a device, changed a send level, set a device's sidechain source ("Audio From" on a Compressor/Gate), renamed or reordered tracks, tweaked the master strip. **Don't** run this for clip edits (use `/ableton-pull` for those).
 
 ## When NOT to run this
 

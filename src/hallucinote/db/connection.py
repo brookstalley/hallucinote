@@ -279,6 +279,14 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("device_chains", "solo", "INTEGER"),
     ("device_chains", "volume", "REAL"),
     ("device_chains", "pan", "REAL"),
+    # DEV-4P7R: the raw continuous channel on device params + nested overrides.
+    # UNCLAMPED (no [0,1] CHECK, unlike value_normalized) — the only authorable
+    # form for a quantized continuous param whose raw range != [0,1] and whose
+    # display is non-monotonic (Wavetable LFO S. Rate). Existing rows get NULL.
+    # Set by set_device_parameter / replace_device_param_overrides; pushed via
+    # set_parameter's raw `value`. Keep in sync with schema.sql's CREATE TABLEs.
+    ("device_parameters", "value_raw", "REAL"),
+    ("device_param_overrides", "value_raw", "REAL"),
     # MICROTUNE (TUN-4Q7W): songs gain the alternate-tuning bolt-on columns. Both
     # nullable, NULL = 12-TET (every existing song migrates to NULL, untouched).
     # `tuning_ref` = song-relative path to the cached `.ascl`; `tuning_data` = the

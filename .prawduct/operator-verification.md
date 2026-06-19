@@ -792,3 +792,131 @@ readable Set — not available when this landed):
    scalar sub-reads behave differently than assumed, this closes the same
    verify-api gap as `read.py`'s loaded-tuning stub — capture the real shapes in
    `api-notes-tuning.md` and adjust `tuning_notice._read_loaded_tuning`.
+
+---
+
+## BAK-3M9T Chunk 01 — sidechain source round-trips through the durable snapshot
+
+> **2026-06-17 — merged with this check PENDING (user-directed).** PR #178 was
+> merged into develop on the user's explicit "please merge" after being told the
+> Live round-trip is the remaining merge gate. This is **operator-accepted by
+> direction, NOT agent-Live-verified** — the round-trip below has **not** been run.
+> Re-verify next time Live is open; the unit tests only exercise a fake
+> `get_input_routing` probe (learning #7), so a Live-shape surprise is still possible.
+
+Visual change: yes (live external integration — a dialed sidechain SOURCE the unit
+tests verify only against a fake `get_input_routing` probe). This IS BAK-3M9T
+**acceptance criterion 5** (the end-to-end trap-category round-trip) for the
+sidechain category; fold the other trap categories in when the later chunks land.
+Branch `feat/snapshot-sidechain` (merged as `90214d3`, PR #178). On an attended Live run:
+
+1. **Dial a real sidechain.** In a built song, add a Compressor to a track (e.g.
+   Bass) and set its "Audio From" to ANOTHER track (e.g. Kick), pick a channel
+   (Post FX). Confirm it pumps.
+
+2. **Bake via `/song-snapshot` (the single durable bake).** Run `/song-snapshot`
+   → confirm the refreshed `captured_session.json` shows the Bass Compressor entry
+   carrying `"sidechain_source": "Kick"` (the source track's surface NAME, not a
+   UUID) and `"sidechain_source_channel": "Post FX"`. Confirm a Compressor whose
+   input is left at its OWN track default does NOT get a `sidechain_source`.
+
+3. **Rebuild + push reproduces it.** `build.py --reset` + `push_cli execute` (or
+   `/ableton-push`) into a fresh set → confirm the Bass Compressor's Audio From is
+   Kick again, analyzer-free. The durable round-trip is the keystone claim:
+   the sidechain survives a rebuild **without saving the `.als`**.
+
+4. **Clear-on-absence.** Remove the sidechain in Live (Audio From → own track /
+   No Input), `/song-snapshot` (field disappears), rebuild → confirm the sidechain
+   is cleared, not stale (snapshot is authoritative).
+
+---
+
+## MCP-9R3T Chunk 1 — async render start/status against real Live
+
+Visual change: yes (agent-facing `start`/`status` result shape + live transport
+behavior). Branch `feat/async-render-analyze`. The substrate (job registry +
+`ableton_render` start/status) is unit-tested with a Live seam; the keystone —
+**mechanism A: a detached worker keeps the render alive after `start` returns** —
+is verify-api-confirmed FROM CODE (`run_on_main` is thread-agnostic; the
+scheduler outlives the request) but the realtime behavior under load needs a live
+session. Requires a re-vendor first (`start`/`status` change `ableton_render`'s
+wire shape → the fingerprint flips → `/ableton-mcp-install` + Live restart).
+
+On an attended Live run with a built multi-minute song:
+
+1. **`start` returns immediately.** `ableton_render(action='start', song_slug=…)`
+   → returns in < ~3 s with `{job_id, captures_dir, eta_seconds,
+   expected_stop_beat, poll}` while the transport is rolling — NOT after the full
+   render. Confirm the render actually started (transport playing, analyzers
+   armed).
+
+2. **`status` long-polls and advances.** `ableton_render(action='status',
+   job_id=…)` returns `state='running'` with `progress.current_beat` advancing
+   across successive polls; each call returns within ~45 s. Terminal poll returns
+   `state='done'` with a well-formed `manifest` (and `manifest_path` on disk) —
+   **no false failure**, where the synchronous `render` would have red-timed-out.
+
+3. **KEYSTONE — concurrency (build-plan Done-when #2).** While a render is
+   running, issue a concurrent `ableton_session(action='info')` → it must RETURN
+   promptly, not hang to timeout behind the render worker. (Per-request sockets +
+   thread-agnostic `run_on_main` say it should interleave; this is the one fact
+   only Live settles. If it DOES hang, fall back to mechanism B — the long-poll
+   `status` is already built, so only the worker spawn is removed.) NOTE: this
+   isolates the **Live main-thread** axis. The separate **server-event-loop**
+   axis — a `status` long-poll freezing the server — was fixed at the dispatch
+   layer in Chunk 2 (async tool wrapper + `anyio.to_thread`), which also covers
+   render's `status` (its 60 s socket read no longer blocks the loop). So here
+   you're verifying only that Live interleaves the worker's polls.
+
+4. **Busy + failure shapes.** A second `start` while one is running returns
+   `{busy: true, job_id}` (no second transport pass). A render that captures zero
+   frames lands `state='failed'` with the error in `status`, not a hang.
+
+5. **`status.json` heartbeat still written.** Confirm `<captures_dir>/status.json`
+   updates during the render (the registry progress mirrors it) and lands terminal
+   at the end — the crash-resilient backing for the in-memory registry.
+
+---
+
+## MCP-5N8K Chunk 2 — async analyze start/status against a real >60s capture
+
+Visual change: yes (agent-facing `ableton_analysis` `start`/`status` result
+shape). Branch `feat/async-render-analyze`. Lower risk than Chunk 1 — analyze
+runs in the MCP SERVER process (pure DSP, no Live threading), so the worker is a
+plain server-thread and there's no keystone. Fully unit-tested with fakes; what a
+live run adds is exercising the actual >60s case end-to-end. Requires the same
+re-vendor as Chunk 1 (`start`/`status` change `ableton_analysis`'s wire shape →
+fingerprint flips → `/ableton-mcp-install`).
+
+Needs a **many-surface song** (a full-band capture with several declared
+sections — the case whose DSP exceeds 60s today and red-times-out the
+synchronous `analyze`). Render it first (Chunk-1 `start`/`status`), then:
+
+1. **`start` returns immediately.** `ableton_analysis(action='start',
+   song_slug=…)` → returns fast with `{job_id, report_dir, eta_seconds=null,
+   poll}` while the DSP runs in the background — NOT after the full analysis.
+
+2. **`status` long-polls to done.** `ableton_analysis(action='status', job_id=…)`
+   returns `state='running'` (coarse `progress.stage`) within ~45 s per call,
+   then a terminal `state='done'` carrying `report` (the lightweight summary +
+   `analysis_code.stale`) and `report_path` — with the full MixReport JSON on
+   disk at that path. **No false failure**, where the synchronous `analyze`
+   red-times-out on the same capture.
+
+3. **Concurrency.** While the analysis runs, a concurrent unrelated MCP call
+   (e.g. `ableton_session(action='info')`) must RETURN promptly, not hang behind
+   the analyze long-poll. This is delivered at the **dispatch layer**: the
+   server's tool wrapper is `async` and offloads the blocking dispatch via
+   `anyio.to_thread.run_sync` (server.py), so a 45 s `status` wait occupies only
+   its worker thread, not the event loop. (FastMCP runs a *sync* tool INLINE on
+   the loop — that would freeze the server, which is why the wrapper is async;
+   proven headless by `test_status_longpoll_does_not_block_concurrent_tool_calls`.
+   Confirm it holds under real concurrent load.)
+
+4. **Busy + failure shapes.** A second `start` while one is running returns
+   `{busy: true, job_id}`. A `start` for a typo'd slug / missing captures lands
+   `state='failed'` with the teaching error surfaced through `status` (not a
+   hang).
+
+5. **Synchronous `analyze` still works** as the fast path for a quick
+   few-surface capture (the disposition keeps it).

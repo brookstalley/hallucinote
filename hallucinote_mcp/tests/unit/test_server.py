@@ -214,6 +214,93 @@ def test_handle_tool_call_propagates_allow_version_mismatch_to_remote(
     assert forwarded_request.allow_version_mismatch is True
 
 
+def _register_set_tempo(isolated_registry):
+    from hallucinote_mcp.schema import Action, LiveOp, ParamSpec
+
+    isolated_registry.register(
+        Action(
+            tool="ableton_session",
+            name="set_tempo",
+            description="",
+            params=(ParamSpec(name="value", type="float"),),
+            declarative_op=LiveOp(
+                kind="property_write", target="song", property="tempo"
+            ),
+        )
+    )
+    isolated_registry.register_help_actions()
+
+
+def test_version_mismatch_refusal_refined_to_stale_server_hint(isolated_registry):
+    """A version-mismatch refusal whose ``code`` marks it as the handshake
+    error gets its hint rewritten when the server's OWN process is the stale
+    half — running fingerprint != on-disk fingerprint (MCP-8H4N)."""
+    from hallucinote_mcp.wire import Response, VERSION_MISMATCH_CODE
+
+    _register_set_tempo(isolated_registry)
+    refusal = Response(
+        ok=False,
+        error="Hallucinote MCP version mismatch: server reports X, RS is Y.",
+        hint="If the Remote Script side is stale: run /ableton-mcp-install ...",
+        code=VERSION_MISMATCH_CODE,
+    )
+    # Force the on-disk recompute to differ from the running __version__, i.e.
+    # the package changed under a still-running server process.
+    with patch(
+        "hallucinote_mcp.server.client.send", return_value=refusal
+    ), patch(
+        "hallucinote_mcp._compute_content_fingerprint", return_value="0000deadbeef"
+    ):
+        response = handle_tool_call("ableton_session", "set_tempo", {"value": 132.0})
+
+    assert response["ok"] is False
+    # The real fix (respawn the server) is prescribed...
+    assert "/mcp" in response["hint"]
+    # ...and re-vendoring is explicitly dismissed, not prescribed as the fix.
+    assert "will NOT help" in response["hint"]
+    # The machine code is preserved for any downstream consumer.
+    assert response["code"] == VERSION_MISMATCH_CODE
+
+
+def test_version_mismatch_refusal_kept_when_server_process_current(isolated_registry):
+    """When the server process is current (running fp == on-disk fp), the
+    refusal's original re-vendor hint is preserved — the override fires only
+    when the server side is genuinely the stale half."""
+    from hallucinote_mcp.wire import Response, VERSION_MISMATCH_CODE
+
+    _register_set_tempo(isolated_registry)
+    original_hint = "If the Remote Script side is stale: run /ableton-mcp-install ..."
+    refusal = Response(
+        ok=False,
+        error="Hallucinote MCP version mismatch: server reports X, RS is Y.",
+        hint=original_hint,
+        code=VERSION_MISMATCH_CODE,
+    )
+    # No fingerprint patch: import-time __version__ == fresh recompute, so the
+    # server process is NOT stale and the hint must pass through untouched.
+    with patch("hallucinote_mcp.server.client.send", return_value=refusal):
+        response = handle_tool_call("ableton_session", "set_tempo", {"value": 132.0})
+
+    assert response["hint"] == original_hint
+
+
+def test_non_version_error_is_not_refined(isolated_registry):
+    """An ordinary (non-handshake) error must pass through untouched even when
+    the server process happens to be stale — the override keys on ``code``."""
+    from hallucinote_mcp.wire import Response
+
+    _register_set_tempo(isolated_registry)
+    refusal = Response(ok=False, error="Track index out of range.", hint="check index")
+    with patch(
+        "hallucinote_mcp.server.client.send", return_value=refusal
+    ), patch(
+        "hallucinote_mcp._compute_content_fingerprint", return_value="0000deadbeef"
+    ):
+        response = handle_tool_call("ableton_session", "set_tempo", {"value": 132.0})
+
+    assert response["hint"] == "check index"
+
+
 def test_handle_tool_call_translates_connection_error(isolated_registry):
     """When the Remote Script is unreachable, surface a teaching error rather
     than letting the LiveConnectionError bubble up to the MCP client.
@@ -550,6 +637,80 @@ def test_tool_call_via_fastmcp_drops_unsupplied_optional_kwargs():
         f"Optional kwarg leak: forwarded params={forwarded_req.params}; "
         "expected just {'bar': 5} with no implicit beat=None."
     )
+
+
+def test_tool_wrappers_are_async_to_keep_event_loop_free():
+    """MCP-9R3T/MCP-5N8K dispatch fix. FastMCP runs a SYNC tool INLINE on the
+    event loop but AWAITS an async one (mcp func_metadata: `return fn(**args)`
+    vs `await fn(**args)`). Our dispatch can BLOCK for ~45-60s — a `status`
+    long-poll parks on threading.Event.wait / a socket read — so a sync wrapper
+    would freeze the whole server for that window. Every tool wrapper MUST be
+    async (it offloads the sync dispatch via anyio.to_thread); guard against a
+    regression to a plain `def wrapper`."""
+    import inspect as _inspect
+
+    mcp = create_server()
+    for name in registered_tool_names(mcp):
+        fn = get_registered_tool(mcp, name).fn
+        assert _inspect.iscoroutinefunction(fn), (
+            f"{name}'s tool wrapper is sync; a sync tool runs inline on the MCP "
+            "event loop, so a status long-poll would freeze every concurrent call"
+        )
+
+
+def test_status_longpoll_does_not_block_concurrent_tool_calls():
+    """The load-bearing behavior of the dispatch fix: while one tool call
+    long-polls (blocking off-thread), a concurrent call is still served.
+
+    Seed a running analyze job, then fire a `status` long-poll (it blocks until
+    the job finishes) AND a quick `help` call concurrently; a finisher marks the
+    job done after a delay. With the async wrapper + anyio.to_thread the loop
+    stays free, so `help` completes DURING the long-poll. With a sync wrapper the
+    long-poll would run inline and `help` could not be served until it returned —
+    the order would invert. We assert `help` finishes before `status`.
+    """
+    import anyio
+
+    from hallucinote_mcp.handlers.jobs import default_registry
+
+    mcp = create_server()
+    analysis = get_registered_tool(mcp, "ableton_analysis")
+    reg = default_registry()
+    job = reg.create(kind="analyze", dir="/tmp/x")  # running; won't self-finish
+    order: list[str] = []
+
+    async def main():
+        async def poll():
+            # default long-poll is 45s; the finisher releases it at ~0.6s
+            await analysis.run({"action": "status", "job_id": job.job_id})
+            order.append("status")
+
+        async def quick():
+            await anyio.sleep(0.1)  # ensure `poll` is in its blocking wait first
+            await analysis.run({"action": "help"})
+            order.append("help")
+
+        async def finish():
+            await anyio.sleep(0.6)  # well after `quick` would complete if served
+            reg.mark_done(job.job_id, {"report": {}, "report_path": None})
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(poll)
+            tg.start_soon(quick)
+            tg.start_soon(finish)
+
+    try:
+        anyio.run(main)
+        assert order == ["help", "status"], (
+            f"help must be served during the status long-poll; got {order}. "
+            "An inverted order means the long-poll froze the event loop "
+            "(regression to a synchronous tool wrapper)."
+        )
+    finally:
+        # The job lives in the process-default registry — clear it so the
+        # leftover doesn't colour another test's recent-jobs error message.
+        reg._jobs.clear()  # noqa: SLF001 - test cleanup of the singleton
+        reg._order.clear()  # noqa: SLF001
 
 
 def test_help_action_works_via_fastmcp_with_no_kwargs():

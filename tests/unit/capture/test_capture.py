@@ -466,7 +466,7 @@ def test_replay_rejects_param_bad_shape(conn):
             }],
         }],
     }
-    with pytest.raises(ValueError, match="expected dict with 'value' key"):
+    with pytest.raises(ValueError, match="expected dict with a 'value'"):
         replay_capture(conn, snap, song_name="t")
 
 
@@ -511,6 +511,54 @@ def test_replay_bare_float_param_no_normalized_warns(conn):
     track = next(t for t in Q.get_tracks_for_song(conn, sid) if t["name"] == "t")
     param = Q.get_device_parameters(conn, Q.get_devices_for_track(conn, track["id"])[0]["id"])[0]
     assert param["value_display"] == "0.71"
+    assert param["value_normalized"] is None
+
+
+def test_replay_value_raw_param_stores_raw_with_display_hint(conn, recwarn):
+    """DEV-4P7R: a params_dialed entry authored on the raw channel
+    ({value: hint, value_raw: 8.0}) stores value_raw + the display as a hint,
+    value_normalized NULL — and does NOT trip the bare-numeric warning."""
+    snap = {
+        "song": {}, "returns": [],
+        "tracks": [{
+            "index": 1, "name": "t", "type": "midi",
+            "devices": [{
+                "index": 1, "name": "WT", "class": "Wavetable",
+                "params_dialed": {
+                    "LFO 1 S. Rate": {"value": "1/2", "value_raw": 8.0},
+                },
+            }],
+        }],
+    }
+    sid = replay_capture(conn, snap, song_name="t")
+    assert not [w for w in recwarn if "bare numeric" in str(w.message)]
+    track = next(t for t in Q.get_tracks_for_song(conn, sid) if t["name"] == "t")
+    param = Q.get_device_parameters(
+        conn, Q.get_devices_for_track(conn, track["id"])[0]["id"])[0]
+    assert param["value_raw"] == pytest.approx(8.0)
+    assert param["value_normalized"] is None
+    assert param["value_display"] == "1/2"
+
+
+def test_replay_value_raw_only_no_value_key(conn):
+    """A raw-only entry ({value_raw: 8.0}, no `value`) is accepted — `value`
+    becomes an empty display string; push then rides the raw channel."""
+    snap = {
+        "song": {}, "returns": [],
+        "tracks": [{
+            "index": 1, "name": "t", "type": "midi",
+            "devices": [{
+                "index": 1, "name": "WT", "class": "Wavetable",
+                "params_dialed": {"LFO 1 S. Rate": {"value_raw": 8.0}},
+            }],
+        }],
+    }
+    sid = replay_capture(conn, snap, song_name="t")
+    track = next(t for t in Q.get_tracks_for_song(conn, sid) if t["name"] == "t")
+    param = Q.get_device_parameters(
+        conn, Q.get_devices_for_track(conn, track["id"])[0]["id"])[0]
+    assert param["value_raw"] == pytest.approx(8.0)
+    assert param["value_display"] == ""
     assert param["value_normalized"] is None
 
 

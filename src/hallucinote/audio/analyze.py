@@ -5,7 +5,7 @@ Reads a captures directory + a song's DB intent, runs the analyses
 reverb verification, and per-section loudness windowing) and returns a
 populated ``MixReport``.
 
-The MCP handler (``hallucinote_mcp.handlers.analysis``) is a thin
+The MCP handler (``hallucinote_mcp.server_side.analysis``) is a thin
 wrapper that resolves the song DB connection, calls this function,
 serializes the report to JSON at
 ``songs/<slug>/analysis/<iso-ts>.json``, and returns the path.

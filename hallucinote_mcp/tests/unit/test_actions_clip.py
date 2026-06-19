@@ -846,6 +846,28 @@ def test_stop_session_clip_uses_slot_stop(loaded_actions):
     )
     assert resp.ok is True
     assert ctx.song.tracks[0].clip_slots[0].stop_calls == 1
+    # Nothing overridden → no teaching block on the result.
+    assert "still_overridden" not in resp.result
+
+
+def test_stop_session_clip_teaches_when_arrangement_still_overridden(loaded_actions):
+    """Stopping the Session clip does not clear the global override latch, so
+    the track stays silent. The result must say so (still_overridden + a note
+    naming the recovery) instead of a bare stopped:true (MCP-7P3R direction 4)."""
+    ctx = FakeCtx()
+    ctx.song.back_to_arranger = 1  # a leftover firing clip elsewhere keeps it latched
+    ctx.song.tracks[0].clip_slots[0].clip = FakeClip()
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="stop",
+            params={"track_index": 1, "clip_index": 1},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert resp.result["stopped"] is True
+    assert resp.result["still_overridden"] is True
+    assert "Back to Arrangement" in resp.result["note"]
 
 
 # ---------- set_property ----------

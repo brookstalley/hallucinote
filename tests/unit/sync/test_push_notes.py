@@ -374,3 +374,124 @@ def test_prune_planner_to_dict_shape():
     assert d["prunable"] == [{"track_index": 1, "track_name": "T",
                               "clip_index": 5, "name": "z"}]
     assert d["refusals"] == []
+
+
+# ---------------------------------------------------------------------------
+# PSH-6W2J — scoped push propagates note edits to arrangement copies
+# ---------------------------------------------------------------------------
+
+
+def _make_recording_send():
+    """Like `_make_send_fn` but records each call's `location` VALUE, so a
+    session replace_notes (location='session') is distinguishable from an
+    arrangement refresh (location='arrangement') — both carry the same param
+    KEYS, so key-only logging can't tell them apart."""
+    counter = {"n": 0}
+    call_log: list[dict] = []
+
+    def send(req):
+        call_log.append({
+            "tool": req.tool, "action": req.action,
+            "location": req.params.get("location"),
+        })
+        if req.tool == "ableton_clip" and req.action == "create":
+            counter["n"] += 1
+            return FakeResponse(ok=True, result={"clip_index": counter["n"]})
+        return FakeResponse(ok=True, result={})
+
+    send.call_log = call_log  # type: ignore[attr-defined]
+    return send
+
+
+def _place_and_link_arrangement(conn, *, session, song, track_id, clip_id, arr_index):
+    """Materialize+link an arrangement copy of a session clip, as a prior full
+    push would have. Returns the arrangement_clip id."""
+    aid = M.add_arrangement_clip(
+        conn, song_id=song, track_id=track_id, clip_id=clip_id,
+        start_bar=1.0, end_bar=5.0,
+    )
+    push.apply_push_results(
+        conn,
+        [{"key": f"arrangement_clip:{aid}", "ok": True, "tool": "ableton_clip",
+          "result": {"arrangement_clip_index": arr_index}}],
+        session_id=session,
+    )
+    return aid
+
+
+def test_scoped_push_refreshes_linked_arrangement_copy(
+    conn, session, linked_song, state_dir
+):
+    """The bug: a scoped note push updated the session clip but not its
+    arrangement copy (silent stale render). Now pushing a clip with a linked
+    arrangement placement dispatches a replace_notes(location='arrangement') too.
+    """
+    a = linked_song["clip_a"]
+    # Link the session clip (so the session push is replace_notes), then
+    # materialize+link one arrangement copy of it.
+    M.link_db_to_ableton(conn, session_id=session, db_kind="clip", db_id=a,
+                         ableton_index=1, actor="sync")
+    _place_and_link_arrangement(
+        conn, session=session, song=linked_song["song_id"],
+        track_id=linked_song["track_id"], clip_id=a, arr_index=2,
+    )
+    send = _make_recording_send()
+    res = push_notes.push_notes(
+        conn, song_id=linked_song["song_id"], session_id=session,
+        state_dir=state_dir, clip_ids=[a], send_fn=send,
+    )
+    assert [p["clip_id"] for p in res.pushed] == [a]
+    assert res.errors == []
+    # Two replace_notes calls: the session clip + the arrangement copy refresh.
+    locations = [
+        c["location"] for c in send.call_log
+        if c["tool"] == "ableton_clip" and c["action"] == "replace_notes"
+    ]
+    assert sorted(locations) == ["arrangement", "session"], (
+        f"expected one session + one arrangement refresh, got: {send.call_log}"
+    )
+
+
+def test_scoped_push_no_arrangement_call_when_clip_has_no_placement(
+    conn, session, linked_song, state_dir
+):
+    """A clip with no arrangement copy dispatches only the session push — the
+    propagation is additive, not a blanket extra round-trip."""
+    a = linked_song["clip_a"]
+    M.link_db_to_ableton(conn, session_id=session, db_kind="clip", db_id=a,
+                         ableton_index=1, actor="sync")
+    send = _make_recording_send()
+    push_notes.push_notes(
+        conn, song_id=linked_song["song_id"], session_id=session,
+        state_dir=state_dir, clip_ids=[a], send_fn=send,
+    )
+    assert len(send.call_log) == 1
+    assert send.call_log[0]["action"] == "replace_notes"
+    assert send.call_log[0]["location"] == "session"  # session form only
+
+
+def test_scoped_changed_only_unchanged_clip_skips_arrangement_too(
+    conn, session, linked_song, state_dir
+):
+    """When changed_only skips an unchanged session clip, its arrangement copy
+    is skipped too — an unchanged session clip means an unchanged copy."""
+    a = linked_song["clip_a"]
+    M.link_db_to_ableton(conn, session_id=session, db_kind="clip", db_id=a,
+                         ableton_index=1, actor="sync")
+    _place_and_link_arrangement(
+        conn, session=session, song=linked_song["song_id"],
+        track_id=linked_song["track_id"], clip_id=a, arr_index=2,
+    )
+    # First push records the fingerprint (session + arrangement dispatched).
+    push_notes.push_notes(
+        conn, song_id=linked_song["song_id"], session_id=session,
+        state_dir=state_dir, clip_ids=[a], send_fn=_make_send_fn(),
+    )
+    # Second push, unchanged + changed_only: nothing dispatched at all.
+    send2 = _make_send_fn()
+    res = push_notes.push_notes(
+        conn, song_id=linked_song["song_id"], session_id=session,
+        state_dir=state_dir, clip_ids=[a], changed_only=True, send_fn=send2,
+    )
+    assert res.pushed == []
+    assert send2.call_log == []

@@ -6,29 +6,108 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-**Track routing + the PRE-MAIN submaster bus (RTE-1K9T).** First-class track signal routing end-to-end (MCP → DB → push → pull), plus the convention it unlocks: a plain audio "PRE-MAIN" bus you route everything through for master-like automation and sub-mixing — the no-`.als` path to an automatable master that Live's clip-less master/group/return strips can't provide. The push pipeline grows from twelve to thirteen phases.
+### Fixed — swell rebuild-reliability cluster (dogfood)
 
-### Added — track input/output routing + monitor state
+- **Full push no longer halts on a `value_raw` device-param override.**
+  `apply_push_results` had no case for the `device_param_override` result kind the
+  devices phase emits for a nested preset override (DEV-4P7R), so a from-scratch
+  push of any song carrying one died mid-`devices` (no routing / envelopes /
+  automation / arrangement / cues followed). It is now ack-only, like
+  `device_parameter` — the value originates in the snapshot/DB, with no Live-side
+  index to record back.
+  (`incoming-bugs/2026-06-18-push-apply-unknown-device_param_override-result-kind-halts-devices-phase.md`)
+- **Converger idempotency restored for any song with sidechains.**
+  `replay_capture` enqueued every device's `sidechain_source` and cleared it when
+  the snapshot was silent, clobbering a `build.py`-authored source on every build
+  (real → null → real = 2 spurious events per sidechain, forever). Replay now
+  treats snapshot *silence* as "no opinion" and acts only when the snapshot
+  declares the key; an explicit null still clears.
+  (`incoming-bugs/2026-06-17-replay-capture-nulls-sidechain-source-breaking-converger-idempotency.md`)
+- **`reindex_markdown` no longer dies on a frontmatter-less decision.** A decision
+  authored as a bare `# Title` body is now indexed (kind inferred from the corpus
+  dir, full text searchable) instead of aborting the corpus; a genuinely
+  unparseable file is skipped with a warning so one bad doc can't blind
+  `/song-context` search to all the good ones.
+  (`incoming-bugs/2026-06-17-reindex-markdown-hard-fails-corpus-on-frontmatterless-decisions.md`)
 
-- **MCP** — `ableton_track` gains `set_output_routing` / `get_output_routing` / `set_input_routing` / `get_input_routing` / `set_monitoring_state` / `get_monitoring_state`, on a shared capability-probing helper (`handlers/_routing.py`). Targets resolve by Live `display_name` against the source track's own available set (source-dependent), with teaching errors that list the real options; the set handlers echo the requested name (same-callback readback is unreliable).
-- **DB** — routing is modeled on `tracks` as seven nullable columns (output/input routing `kind` + FK `target_id` + `channel`, plus `monitoring_state`) written through the new `set_track_routing` mutator (one `TRACK_ROUTING_SET` event). The routing target is a **semantic reference** (`kind` + FK to `tracks.id` when `kind='track'`), never Live's `display_name`, so a submaster link survives renames + re-pushes. CHECK asymmetry (D6): output + monitor domains are schema-CHECK-constrained; the open, hardware-bound input domain is mutator-validated (extensible without a destructive migration).
-- **Push** — a new `routing` phase materializes the DB routing in Live (after `mix`, before `devices`), resolving each semantic reference to the Live `display_name` the routing actions expect; a dangling target (the FK's `ON DELETE SET NULL` state) alerts and is skipped, never silently dropped.
-- **Pull** — a manual reroute in Live ingests back through the mutator (output routing, a track→track input, and monitor state). `DB-NULL ≡ Live-default` so a first pull of an unrouted track is a no-op, not a churn of every default into explicit state.
+### Changed
 
-### Added — the PRE-MAIN submaster convention + agent guidance
+- Snapshot semantics for device **sidechain sources**: a snapshot is authoritative
+  for what it *declares*, never for what it *omits* (was "absent → clear"). This is
+  what lets a `build.py`-authored sidechain survive a rebuild; see *Known
+  limitations* for the accepted cost.
 
-- **`docs/song-authoring-conventions.md`** documents authoring the bus (create audio bus → route instrument outputs to it → bus → master → Monitor='In'), when to reach for it instead of the master, and the other patterns it unlocks (sub-mix/group replacement — Live groups aren't LOM-creatable — parallel compression, FX pre-busses). The **automation-fidelity caveat** (perform-fidelity today; lossless gated on CLP-AUD2) is linked, not restated.
-- **MCP conventions guide** (`ableton://guides/conventions`) carries the same steering for agents driving Live directly.
+## [1.5.0] — 2026-06-17
+
+**Version-track unification + the develop→main catch-up release.** The product
+version is normalized to a single source of truth at **1.5.0** across
+`pyproject.toml`, `.claude-plugin/plugin.json`, and `hallucinote.__version__`,
+ending a silent drift where those three read 0.9.0 / 0.9.8 / 0.1.0 independently.
+(History: an early 1.x git-tag/CHANGELOG track — last at 1.3.2 — was abandoned for
+a 0.9.x reset that the package files never consistently followed; 1.5.0 steps
+forward of the old `v1.4.0` high-water mark and re-unifies every track.) A new
+`tests/unit/test_version_parity.py` locks the three product-version literals to
+`pyproject` so they can't diverge again; the MCP server's
+`hallucinote_mcp.BASE_VERSION` stays a deliberately separate wire-protocol axis
+(bumping it per release would force every Live install to re-vendor the Remote
+Script). This entry consolidates the work landed since 1.3.2 — the CHANGELOG was
+not stamped through the 0.9.x line.
+
+### Added — uniform node addressing (NODE-ADDR / DEV-9K7N)
+
+- One `NodeAddr` object replaces flat device addressing on the MCP wire; read-side
+  acquisition reaches device parameters at **every nesting depth** (`capture
+  execute` + depth-N pull + a `default_value` capture filter).
+- Per-DrumChain authorship (`choke_group` / `out_note`) and per-chain mixer state
+  (mute / solo / volume / pan) via the `chain` terminal; rack macro authorship
+  with an honest capability matrix (zones surfaced as `UNSUPPORTED_IN_LIVE`).
+- Chain-terminal device load uses the real Live API (`Chain.insert_device`).
+
+### Added — self-contained plugin + onboarding
+
+- The engine runs in the plugin's own uv env — unified CLI + server-python +
+  Python hooks, no separate install. Skills invoke the engine via that env.
+- `hallucinote init-workspace` bootstraps a songs workspace; `/getting-started`
+  and `ableton_render` teach when the Max-for-Live analyzer isn't installed
+  (ONBOARD-M4L).
+
+### Added — durable authoring round-trips
+
+- **Sidechain sources** round-trip through the durable snapshot, and the mix bake
+  is consolidated to one command (`/song-snapshot`): the redundant DB-only
+  `/snapshot-bake-recent-changes` alias is removed and `/ableton-pull` is reframed
+  as the build.py-staging primitive (BAK-3M9T).
+- **Nested-param overrides** on a `preset_query` device persist durably without
+  dropping the preset's timbre (SNP-2H9F); a **`value_raw`** channel carries
+  quantized non-`[0,1]` device params that neither the display string nor the
+  normalized channel could express (DEV-4P7R).
+- Note edits propagate to arrangement clips (PSH-6W2J).
+
+### Added — track routing + the PRE-MAIN submaster bus (RTE-1K9T)
+
+- First-class track signal routing end-to-end (MCP → DB → push → pull) and the
+  PRE-MAIN audio-bus convention it unlocks — a no-`.als` automatable master /
+  sub-mix path. The routing target is a **semantic FK reference** that survives
+  renames and re-pushes; the push gains a `routing` phase. Documented in
+  `docs/song-authoring-conventions.md` and the MCP conventions guide.
+
+### Added — per-song attempt ledger (ATL-7K3M)
+
+- `kind: attempt` entries + `/song-attempts` record what was tried on a part and
+  how it turned out (including reverted dead ends), so each iteration starts
+  smarter instead of re-running a move that already failed.
+
+### Fixed
+
+- Analyzer-infra robustness (MCP-7F2K): master device-link reconcile is
+  analyzer-aware (stops re-pushing params at the analyzer), and analysis picks the
+  latest captures dir by manifest `captured_at`, not directory name.
 
 ### Verified
 
-- Suite green (3472 passing / 2 skipped). New coverage spans the MCP routing actions, the DB mutator + routing invariants, the push planner + phase order, the pull apply + round-trip, a pre-routing-DB migration + a four-site vocabulary parity lock, and a doc-drift-locked worked example of the convention.
-- Per-chunk Critic across the build, plus a whole-plan `final`-mode review (0 blocking; 4 warnings resolved, two of them real silent-drop bugs the cross-cutting review surfaced).
-
-### Notes
-
-- Group-track support (TRK-2H6K) remains deferred — group *creation* is LOM-blocked and a group offers no automation advantage over the routing bus.
-- One operator Live-smoke is enqueued (`.prawduct/operator-verification.md`): the push materialization + manual-reroute round-trip in a real set, plus a probe of Live's non-track input default (V1 pull persists only track→track input until that's pinned).
+- Full suite green (4071 passing / 2 skipped), including the new version-parity
+  guard. Each feature landed on develop via its own PR with independent Critic
+  review; this release is the develop→main promotion.
 
 ## [1.3.2] — 2026-05-23
 
@@ -764,6 +843,12 @@ be informed by real user friction.
 - Some Live device-parameter enums have no normalized form on the MCP
   wire and are skipped with a warn. Continuous params round-trip
   cleanly.
+- Removing a device **sidechain source in Live** needs a full (fresh-DB)
+  rebuild, not an incremental one: replay treats a snapshot that omits a
+  device's sidechain source as "no opinion" (so a `build.py`-authored
+  source survives), so it will not clear a source you deleted in Live.
+  Clear it via a fresh-DB rebuild, `set_device_sidechain(None)` in
+  `build.py`, or an explicit null source in the snapshot.
 - Linux is documented as unsupported for v0.9 (Live itself doesn't
   ship a Linux build). Wine/CrossOver paths get a best-effort install
   candidate with warn-and-confirm.

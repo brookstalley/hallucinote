@@ -17,8 +17,8 @@ import soundfile as sf
 
 from hallucinote.db import mutations as M
 from hallucinote.db.connection import init_db
-from hallucinote_mcp.handlers import analysis as analysis_handlers
-from hallucinote_mcp.handlers.analysis import ANALYSIS_STATUS_FILENAME
+from hallucinote_mcp.server_side import analysis as analysis_handlers
+from hallucinote_mcp.server_side.analysis import ANALYSIS_STATUS_FILENAME
 
 
 SAMPLE_RATE = 48_000
@@ -126,6 +126,37 @@ def synthetic_song(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(analysis_handlers, "resolve_db_path", _fake_resolve_db_path)
     # init_db is fine to leave as-is — it just opens the (real) DB path.
     return song_dir
+
+
+def test_latest_captures_dir_keys_on_captured_at_not_dir_name(tmp_path, monkeypatch):
+    """A hand-named focused-capture dir must NOT shadow a newer timestamped render.
+
+    Regression: ``_latest_captures_dir`` used to ``max()`` by dir NAME, assuming
+    ISO-8601-only naming. A hand-named dir like ``v4-seam-verse2-chorus2`` sorts
+    ABOVE every ``2026…`` timestamp (``'v'`` 0x76 > ``'2'`` 0x32), so the stale
+    seam capture silently shadowed every full-song render — the analysis then read
+    the wrong (tiny, single-section) audio. Selection now keys on the manifest's
+    ``captured_at`` (the true capture time), so the genuinely-newest render wins
+    regardless of dir name."""
+    song_dir = tmp_path / "songs" / "test-song"
+    captures = song_dir / "captures"
+    captures.mkdir(parents=True)
+
+    def _mk(name: str, captured_at: str) -> Path:
+        d = captures / name
+        d.mkdir()
+        (d / "manifest.json").write_text(
+            json.dumps({"captured_at": captured_at}), encoding="utf-8"
+        )
+        return d
+
+    # Hand-named seam capture: lexically above '2026…', but an OLD captured_at.
+    _mk("v4-seam-verse2-chorus2", "20260602T145327Z")
+    _mk("20260616T184709Z", "20260616T185203Z")
+    fresh = _mk("20260616T185647Z", "20260616T190134Z")  # newest captured_at
+
+    monkeypatch.setattr(analysis_handlers, "_resolve_song_dir", lambda slug: song_dir)
+    assert analysis_handlers._latest_captures_dir("test-song") == fresh
 
 
 def test_analyze_handler_produces_mixreport_json(synthetic_song: Path):

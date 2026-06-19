@@ -40,12 +40,20 @@ class LiveConnectionError(Exception):
 #   - ableton_render(ensure_loaded): loads the analyzer onto 25+ surfaces, each
 #     a few seconds on the main thread → a generous BOUNDED ceiling so a stuck
 #     load still surfaces as a timeout (MCP-4T6Y).
+#   - ableton_render(status): long-polls the render job ~45s before returning, so
+#     the socket read window must exceed that long-poll (else the socket severs
+#     the poll mid-wait). Bounded just above the handler's long-poll; the
+#     long-poll itself must stay under the Claude Code tool-call timeout (raise
+#     .mcp.json `timeout` if you widen it). NOTE: start (not listed) returns
+#     immediately, so the default suits it. (MCP-9R3T async render.)
 _DEFAULT_READ_TIMEOUT: float = 15.0
 _ENSURE_LOADED_READ_TIMEOUT: float = 180.0
+_STATUS_READ_TIMEOUT: float = 60.0
 _READ_TIMEOUTS: dict[tuple[str, str], float | None] = {
     ("ableton_render", "render"): None,
     ("ableton_automation", "perform_batch"): None,
     ("ableton_render", "ensure_loaded"): _ENSURE_LOADED_READ_TIMEOUT,
+    ("ableton_render", "status"): _STATUS_READ_TIMEOUT,
 }
 
 
@@ -141,6 +149,7 @@ def _response_from_dict(obj: dict[str, Any]) -> Response:
         example=obj.get("example"),
         hint=obj.get("hint"),
         warnings=warnings,
+        code=obj.get("code"),
     )
 
 

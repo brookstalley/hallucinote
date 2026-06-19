@@ -5,7 +5,85 @@ import sqlite3
 
 from hallucinote.db import queries as Q
 
-from ._core import PushPlan, ToolCall, _position_bar_to_beats
+from ._core import PushPlan, ToolCall, _notes_for_mcp, _position_bar_to_beats
+
+
+def _arrangement_note_refresh_call(
+    conn: sqlite3.Connection,
+    *,
+    row: sqlite3.Row,
+    session_id: str,
+) -> ToolCall | None:
+    """Build a ``replace_notes(location='arrangement')`` call that re-syncs one
+    already-materialized arrangement clip's notes from its source session clip.
+
+    PSH-6W2J: an arrangement clip is a distinct Live copy made once by
+    ``duplicate_to_arrangement``; a later note edit to the session clip never
+    reaches the copy. Refreshing the copy's notes in place (the MCP
+    ``replace_notes`` handler accepts ``location='arrangement'`` with
+    ``clip_index = arrangement_clip_index``) keeps the two in sync WITHOUT
+    re-duplicating the placement.
+
+    Returns ``None`` when the refresh can't apply: the placement's track or
+    arrangement_clip link isn't recorded yet (it'll be created by the duplicate
+    path, not refreshed), or the source clip is audio (no notes; CLP-AUD2 scope).
+
+    ``row`` must carry ``clip_kind`` (both feeding queries —
+    :func:`Q.get_arrangement_for_song` and :func:`Q.get_arrangement_for_clip` —
+    join it), so the audio check costs no extra query.
+    """
+    if row["clip_kind"] == "audio":
+        return None
+    track_at = Q.get_ableton_link(
+        conn, session_id=session_id, db_kind="track", db_id=row["track_id"]
+    )
+    arr_at = Q.get_ableton_link(
+        conn, session_id=session_id, db_kind="arrangement_clip", db_id=row["id"]
+    )
+    if track_at is None or arr_at is None:
+        return None
+    notes = Q.get_notes_for_clip(conn, row["clip_id"])
+    return ToolCall(
+        tool="ableton_clip",
+        args={
+            "action": "replace_notes",
+            "location": "arrangement",
+            "track_index": track_at,
+            "clip_index": arr_at,
+            "notes": _notes_for_mcp(notes),
+        },
+        # Distinct key kind from `arrangement_clip:` (the duplicate/link op):
+        # this refreshes content on an already-linked placement and records no
+        # binding — declared ack-only in apply_push_results._ACK_ONLY_KINDS.
+        key=f"arrangement_clip_notes:{row['id']}",
+        purpose=(
+            f"refresh notes in already-placed arrangement clip {row['id']!r} "
+            f"({len(notes)} notes) from session clip {row['clip_id']!r}"
+        ),
+    )
+
+
+def plan_push_arrangement_clip_notes(
+    conn: sqlite3.Connection,
+    *,
+    clip_id: str,
+    session_id: str,
+) -> PushPlan:
+    """Plan note refreshes for every arrangement copy of one session clip.
+
+    PSH-6W2J: the scoped note-push path (:func:`push_notes`) replaces notes on a
+    session clip but not on its arrangement copies. This planner emits one
+    ``replace_notes(location='arrangement')`` per *linked* placement of the clip
+    so the compose loop's scoped push propagates to the arrangement too. Unlinked
+    placements (not yet materialized) and audio sources are skipped — see
+    :func:`_arrangement_note_refresh_call`.
+    """
+    plan = PushPlan()
+    for row in Q.get_arrangement_for_clip(conn, clip_id):
+        call = _arrangement_note_refresh_call(conn, row=row, session_id=session_id)
+        if call is not None:
+            plan.add(call)
+    return plan
 
 
 def plan_push_arrangement(
@@ -73,17 +151,28 @@ def plan_push_arrangement(
         )
 
     already_linked = 0
+    refreshed = 0
+    new_placements = 0
     for row in arr_rows:
-        # W10-A: re-pushes must be idempotent. apply_push_results writes
-        # an `arrangement_clip` link after a successful duplicate; if it
-        # exists, the placement is already in Live and re-emitting would
-        # silently double the clip on every re-run.
+        # W10-A / PSH-6W2J: re-pushes must NOT re-duplicate an already-placed
+        # clip (that silently doubled the placement on every re-run). But the
+        # original "skip entirely" was too aggressive — it also suppressed note
+        # propagation, so a later note edit never reached the arrangement copy
+        # (silent stale render/playback). Now an already-linked placement emits
+        # a `replace_notes(location='arrangement')` REFRESH instead: idempotent
+        # on placement (no doubling), notes kept in sync.
         arr_at = Q.get_ableton_link(
             conn, session_id=session_id, db_kind="arrangement_clip",
             db_id=row["id"],
         )
         if arr_at is not None:
             already_linked += 1
+            refresh_call = _arrangement_note_refresh_call(
+                conn, row=row, session_id=session_id
+            )
+            if refresh_call is not None:
+                plan.add(refresh_call)
+                refreshed += 1
             continue
         track_at = Q.get_ableton_link(
             conn, session_id=session_id, db_kind="track", db_id=row["track_id"]
@@ -135,24 +224,33 @@ def plan_push_arrangement(
                 f"arrangement bar {row['start_bar']:g}"
             ),
         ))
+        new_placements += 1
 
     if already_linked:
-        # Surface the idempotent skip so the agent/UI can show
-        # "nothing to do" instead of going silent.
-        plan.warn(
+        # Surface the idempotent re-push so the agent/UI sees what happened.
+        # PSH-6W2J: already-linked placements aren't silently skipped anymore —
+        # their notes are refreshed from the session clip (no re-duplication).
+        note = (
             f"{already_linked} arrangement placement(s) already linked "
-            f"in session {session_id!r} — already in the arrangement, "
-            "skipping (idempotent re-push)"
+            f"in session {session_id!r} — refreshed notes from their session "
+            "clips, no re-duplication (idempotent re-push)"
         )
-    if plan.calls:
-        # Post-W10-A this warn fires for the unlinked-placements path
-        # only — first push, or a partial-apply recovery where some
-        # placements landed in Live but apply_push_results hadn't yet
-        # written their bindings. The agent should ensure those slots
-        # are empty in Live before running the duplicates (the planner
-        # can't emit a pre-clear: no MCP `arrangement_clip_delete`
-        # action exists, and the planner has no DB knowledge of Live's
-        # current arrangement state regardless).
+        if refreshed != already_linked:
+            # Some linked placements couldn't be refreshed (unresolved track
+            # link, or audio source — no notes to push). Name the gap so a
+            # stale arrangement copy can't hide behind the "refreshed" claim.
+            note += (
+                f"; {already_linked - refreshed} of them not refreshed "
+                "(track link unresolved or audio source)"
+            )
+        plan.warn(note)
+    if new_placements:
+        # Fires for genuine NEW duplicates only (first push, or partial-apply
+        # recovery) — NOT for note refreshes of already-placed clips, which add
+        # nothing to clear. The agent should ensure those slots are empty in
+        # Live before running the duplicates (the planner emits no pre-clear:
+        # no MCP `arrangement_clip_delete` action exists, and the planner has no
+        # DB knowledge of Live's current arrangement state regardless).
         plan.warn(
             "agent must clear existing arrangement clips on the involved tracks "
             "before running these duplicates (planner emits no pre-clear ops "

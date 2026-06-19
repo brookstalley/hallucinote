@@ -29,13 +29,28 @@ Surface in Live's Preferences. This quickstart assumes that's done.
 
 1. Open **Ableton Live** with an **empty set**. (Hallucinote should already be
    selected as a Control Surface from setup — Preferences → Link, Tempo & MIDI.)
-2. In a terminal, `cd` into your **song workspace** (a repo with a
-   `hallucinote.toml` marker — create one by `git init`-ing a folder and adding
-   the two-line marker, or clone your existing songs repo), then run:
+2. In a terminal, `cd` into your **song workspace** — a repo with a
+   `hallucinote.toml` marker at its root. Don't have one yet? Make an empty
+   folder, `cd` into it, and run `hallucinote init-workspace` — it writes the
+   marker, a `.gitignore` for the regenerable build artifacts (DB, captures,
+   analysis), and `git init`s for you. (Or clone your existing songs repo.) The
+   marker is just:
+
+   ```toml
+   # hallucinote.toml
+   [workspace]
+   layout     = "monorepo"
+   songs_root = "songs"
+   ```
+
+   Then start Claude Code from the workspace:
 
    ```bash
    claude
    ```
+
+   > New to all this? Run `/hallucinote:getting-started` instead — it detects a
+   > missing workspace and offers to create one before you make your first song.
 
 ## 2. Compose a song from a prompt
 

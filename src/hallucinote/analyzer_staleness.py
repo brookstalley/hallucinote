@@ -88,13 +88,13 @@ def detect_stale_analyzer_surfaces(
 
     ``probed_surfaces`` is the per-chain ORDERED probe map the push preflight
     already assembles — keyed by ``(surface_kind, surface_id)`` (e.g.
-    ``("track", 4)``, ``("return", 1)``, ``("master", None)``) with each value
+    ``("track", 4)``, ``("return", 1)``, ``("master", 0)``) with each value
     a chain's ordered device entries. This is the same shape
-    ``probe_and_link`` receives as ``live_devices_by_parent`` (tracks +
-    returns today). SNP-4K7M shipped the *snapshot* master device path
-    (capture/replay/migrate); extending THIS push-preflight stale-set detector
-    to the master needs ``probe_and_link`` to also probe the master chain into
-    ``live_devices_by_parent`` — a separate, still-open piece.
+    ``probe_and_link`` receives as ``live_devices_by_parent``. ANALYZER-INDEX
+    extended ``_probe_live_devices_via_mcp`` to probe the master chain into the
+    map as ``("master", 0)`` (so the master device links reconcile against
+    analyzer drift), which also feeds this detector — so the master surface is
+    now covered here for free.
 
     Returns a sorted list of human-readable surface labels that are stale,
     each naming the offending trailing devices, e.g.::
@@ -119,7 +119,10 @@ def detect_stale_analyzer_surfaces(
     for surface_key, offending in stale:
         kind, surface_id = surface_key
         names = ", ".join(offending)
-        if surface_id is None:
+        if surface_id is None or kind == "master":
+            # The master is a singleton: its id is a sentinel (0 from the
+            # push-preflight probe map's ("master", 0) key, or None), not a
+            # meaningful index — so it labels as "master", never "master #0".
             location = str(kind)
         else:
             location = f"{kind} #{surface_id}"

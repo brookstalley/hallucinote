@@ -23,14 +23,20 @@ from . import arrangement as arrangement  # noqa: F401
 from . import scene as scene  # noqa: F401
 from . import browser as browser  # noqa: F401
 from . import render as render  # noqa: F401
-from . import analysis as analysis  # noqa: F401
 from . import probe as probe  # noqa: F401
+
+# Server-side-only actions (ableton_analysis) live OUTSIDE actions/ + handlers/
+# so they stay out of the version fingerprint (MCP-7F2K) — see the
+# hallucinote_mcp.server_side package. Importing it here preserves the
+# "import the actions package → every action is registered" invariant that
+# create_server and the isolated_actions test helper rely on.
+from .. import server_side as server_side  # noqa: F401
 
 
 __all__ = [
     "session", "track", "return_", "clip", "note",
     "device", "automation", "arrangement", "scene", "browser",
     "render",
-    "analysis",
     "probe",
+    "server_side",
 ]

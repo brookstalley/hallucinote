@@ -65,8 +65,12 @@ def list_handler(
 
     Arrangement: returns every placed clip with ``arrangement_clip_index``
     (1-based, ordered by ``track.arrangement_clips`` — Live's ordering),
-    plus ``name``, ``start_beats``, and ``length``. There are no "empty"
-    arrangement positions — ``arrangement_clips`` is dense.
+    plus ``name``, ``start_beats``, ``length``, ``muted``, and ``note_count``.
+    ``note_count`` distinguishes an empty placement from a full one (a long clip
+    spanning the song looks identical to an empty one on name/length alone — the
+    "track shows no events" debugging question); it is ``None`` for audio clips
+    (notes are MIDI-only). There are no "empty" arrangement positions —
+    ``arrangement_clips`` is dense.
 
     Index naming follows ``docs/terminology.md``: session uses
     ``clip_index`` (slot), arrangement uses the fully-qualified
@@ -93,11 +97,22 @@ def list_handler(
                 })
     else:
         for i, clip in enumerate(track.arrangement_clips, start=1):
+            # note_count answers the "no events" debugging question that a
+            # bare name/length can't (an empty long clip looks like a full one).
+            # MIDI-only — get_notes_extended raises on audio clips, so guard on
+            # is_midi_clip and report None for audio (mirrors note.py's reader).
+            note_count = (
+                len(clip.get_notes_extended(0, 128, 0.0, float(clip.length)))
+                if clip.is_midi_clip
+                else None
+            )
             clips_out.append({
                 "arrangement_clip_index": i,
                 "name": clip.name,
                 "start_beats": float(clip.start_time),
                 "length": float(clip.length),
+                "muted": bool(clip.muted),
+                "note_count": note_count,
             })
     return {
         "track_index": track_index,

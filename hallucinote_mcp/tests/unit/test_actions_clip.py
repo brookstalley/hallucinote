@@ -50,6 +50,12 @@ class FakeClip:
     def set_notes(self, notes_tuple: tuple[tuple[int, float, float, int, bool], ...]) -> None:
         self.notes = tuple(notes_tuple)
 
+    def get_notes_extended(self, from_pitch, pitch_span, from_time, time_span):
+        # Count-only stand-in: the arrangement list reads len(...) for
+        # note_count. Returns one item per stored note (real Live windows by
+        # the args; the full-range list-read passes the whole clip span).
+        return list(self.notes)
+
     def fire(self) -> None:  # not used directly on clip; clip_slot.fire fires
         pass
 
@@ -282,7 +288,8 @@ def test_list_session_all_empty_track(loaded_actions):
 
 def test_list_arrangement_returns_placements_with_indices(loaded_actions):
     """Arrangement list returns 1-based arrangement_clip_index, name,
-    start_beats, length — preserves order from track.arrangement_clips."""
+    start_beats, length, muted, note_count — preserves order from
+    track.arrangement_clips."""
     arr = [
         FakeArrangementClip(name="A", start_time=0.0, length=8.0),
         FakeArrangementClip(name="B", start_time=8.0, length=8.0),
@@ -304,16 +311,68 @@ def test_list_arrangement_returns_placements_with_indices(loaded_actions):
     assert len(clips) == 3
     assert clips[0] == {
         "arrangement_clip_index": 1, "name": "A",
-        "start_beats": 0.0, "length": 8.0,
+        "start_beats": 0.0, "length": 8.0, "muted": False, "note_count": 0,
     }
     assert clips[1] == {
         "arrangement_clip_index": 2, "name": "B",
-        "start_beats": 8.0, "length": 8.0,
+        "start_beats": 8.0, "length": 8.0, "muted": False, "note_count": 0,
     }
     assert clips[2] == {
         "arrangement_clip_index": 3, "name": "C",
-        "start_beats": 24.5, "length": 16.5,
+        "start_beats": 24.5, "length": 16.5, "muted": False, "note_count": 0,
     }
+
+
+def test_list_arrangement_reports_note_count_and_muted(loaded_actions):
+    """note_count distinguishes a full placement from an empty one (the 'track
+    shows no events' question a bare name/length can't answer); muted surfaces a
+    silenced placement. A MIDI clip with notes reports their count."""
+    full = FakeArrangementClip(name="Full", start_time=0.0, length=8.0)
+    full.set_notes((
+        (60, 0.0, 1.0, 100, False),
+        (62, 1.0, 1.0, 100, False),
+        (64, 2.0, 1.0, 100, False),
+    ))
+    empty = FakeArrangementClip(name="Empty", start_time=8.0, length=400.0)
+    empty.muted = True
+    track = FakeTrack(name="T1", arrangement_clips=[full, empty])
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="list",
+            params={"track_index": 1, "location": "arrangement"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    clips = resp.result["clips"]
+    assert clips[0]["name"] == "Full"
+    assert clips[0]["note_count"] == 3
+    assert clips[0]["muted"] is False
+    # A long but empty clip is indistinguishable from a full one on name/length
+    # alone — note_count is what reveals it.
+    assert clips[1]["name"] == "Empty"
+    assert clips[1]["note_count"] == 0
+    assert clips[1]["muted"] is True
+
+
+def test_list_arrangement_audio_clip_note_count_is_none(loaded_actions):
+    """note_count is MIDI-only (get_notes_extended raises on audio clips), so an
+    audio arrangement clip reports note_count=None rather than crashing."""
+    audio = FakeArrangementClip(name="Stem", start_time=0.0, length=16.0, kind="audio")
+    track = FakeTrack(name="Audio", kind="audio", arrangement_clips=[audio])
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="list",
+            params={"track_index": 1, "location": "arrangement"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    entry = resp.result["clips"][0]
+    assert entry["note_count"] is None
+    assert entry["muted"] is False
 
 
 def test_list_arrangement_empty_track(loaded_actions):

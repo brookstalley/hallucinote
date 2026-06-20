@@ -61,6 +61,13 @@ register(
         ),
         handler=arrangement_handlers.info_handler,
         example="ableton_arrangement(action='info')",
+        tips=(
+            "This is arrangement-LEVEL only. For the per-track clip inventory "
+            "(placements, names, start/length, muted, note_count) — e.g. to "
+            "debug 'this track shows no events' — read "
+            "ableton_clip(action='list', track_index=N, location='arrangement'), "
+            "not this tool.",
+        ),
     )
 )
 

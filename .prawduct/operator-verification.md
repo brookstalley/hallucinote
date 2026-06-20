@@ -1016,3 +1016,28 @@ or `swell`, after `--only clips` + `--only arrangement` has materialized the lan
    rest), then `--only arrangement --probe`. Expect the survivors to be re-bound
    (`rebound_arrangement_clips` non-empty) and only the deleted one re-duplicated —
    no duplicate placements.
+
+## Bug 1 (incoming 2026-06-20) — arrangement-clip read gains note_count + muted
+
+**Status:** PENDING — needs an attended Live session + re-vendor. **Visual change:**
+no (read payload only). Added 2026-06-20. Touches `handlers/clip.py` +
+`actions/arrangement.py` — both in `_FINGERPRINT_PATHS`, so the server fingerprint
+flips: re-vendor (relaunch dev-mode, then `/ableton-mcp-install`) and reopen Live
+before checking.
+
+Why it can't be auto-verified: the unit suite proves the payload shape against a
+fake clip; only a real bridge proves Live's `clip.get_notes_extended` /
+`clip.muted` / `clip.is_midi_clip` behave as the handler assumes on a live set.
+
+Checks (on any pushed song with an arrangement, e.g. `alien`/`swell`):
+
+1. **note_count is real.** `ableton_clip(action='list', track_index=N,
+   location='arrangement')` on a MIDI track returns each clip with `note_count`
+   matching its actual note count and `muted` reflecting its state. A long but
+   empty clip reports `note_count: 0` (the original "track shows no events"
+   question now answerable without a probe).
+2. **Audio clip → None.** On an audio track's arrangement clip, `note_count` is
+   `null` (not a crash — get_notes_extended is MIDI-only and is guarded).
+3. **Signpost is visible.** `ableton_arrangement(action='help')` / the `info`
+   action surfaces the tip pointing at `ableton_clip(action='list',
+   location='arrangement')` for the per-track inventory.

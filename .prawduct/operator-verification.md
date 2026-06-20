@@ -980,3 +980,39 @@ via `/song-pick-instruments`, then probe-and-link so devices are linked):
    Filter Type), a `value_raw` param (Wavetable `LFO * S. Rate`), and a
    normalized/display continuous param — none falsely re-written, none falsely
    skipped (spot-check one dialed value survives a no-op push).
+
+## SYN-4R7P — probe-and-link re-materializes the arrangement after a Live delete
+
+**Status:** PENDING — needs an attended Live session. **Visual change:** yes (the
+arrangement timeline re-populates with clips). Added 2026-06-20, AFTER the
+2026-06-14 blanket acceptance, so it blocks `/pr create` until run.
+
+The unit suite proves the reconcile logic against an injected
+`live_arrangement_clips_by_track` map; only a real bridge proves the live read —
+`ableton_clip(action='list', location='arrangement')` per track — returns
+placements shaped as the reconciler assumes (`arrangement_clip_index`,
+`start_beats`, `length`), so position-matching binds to the right clip.
+
+Why it can't be auto-verified: the reconcile reads the live arrangement lane from
+a running Live set; there is no headless stand-in for the arrangement-clip list.
+
+Checks (on a pushed song whose arrangement clips are already placed — e.g. `alien`
+or `swell`, after `--only clips` + `--only arrangement` has materialized the lane):
+
+1. **The reported bug is gone.** Delete the arrangement clips in Live (timeline
+   lane empty), then `push execute <session> --song <slug> --only arrangement
+   --probe`. Expect probe-and-link to report `unlinked_stale_arrangement_clips`
+   (the dropped links), the `arrangement` phase to **re-duplicate** the placements
+   from the session clips (NOT crash with `IndexError: clip_index out of range`),
+   and the timeline to re-populate.
+2. **Note edit → re-materialize loop.** Edit notes in `build.py`, rebuild, `--only
+   clips` (updates session clips), delete the stale arrangement clips, `--only
+   arrangement --probe`. Confirm the arrangement now plays the edited notes.
+3. **Untouched arrangement is a no-op.** Re-run `--only arrangement --probe`
+   without deleting anything. Expect `unlinked_stale_arrangement_clips == []`,
+   `rebound_arrangement_clips == []`, and the phase to refresh notes in place (no
+   re-duplication, no doubling).
+4. **Renumber re-bind.** Delete ONE early arrangement clip (Live re-numbers the
+   rest), then `--only arrangement --probe`. Expect the survivors to be re-bound
+   (`rebound_arrangement_clips` non-empty) and only the deleted one re-duplicated —
+   no duplicate placements.

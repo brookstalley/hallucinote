@@ -48,8 +48,8 @@ Where `/compose-part` / `/song-pick-instruments` / sound-design / automation wor
 - [x] Chunk 2 — /compose-part Step 7 "Record the decision" (finished-move boundary, bright-line-gated, silent)
 - [x] Chunk 3 — delegation carries capture (CLAUDE.md norm + /compose-part Step 7 + /song-pick-instruments Step 5 "survives delegation")
 - [x] Chunk 4 — /compose-review §7 + /mix-review §7 DECISION-COMPLETENESS backstop
-- [ ] Chunk 5 — DEFERRED to backlog (derived-overview rot)
+- [x] Chunk 5 — DEFERRED + filed to backlog as **DOC-4F8M** (derived-overview rot; not built here)
 
 **Coherence fix that emerged (Chunk 1):** the canonical schema (`song-conventions.md`) **raises on unknown frontmatter keys**, requires `date` for decisions, and has `scope` ∈ {song,time,track,track-time}. The first template draft violated all three (`decided_by`, `scope: section`, no `date`) — would have broken the indexer; fixed. Also reconciled a pre-existing **dated-vs-numbered decision-filename** split (`song-new`/`song-pick-instruments` use `NN-`; `song-conventions`/`song-context`/historical `falling-walking` use dated) by documenting BOTH schemes honestly (filename orders; frontmatter `date` is the queryable *when*) rather than force-migrating real song data.
 
-**Context:** Chunks 1–4 built + self-reviewed; full diff 8 files +103/−5, all cross-refs resolve, schema-valid. Next: independent review (worktree gate-blind), then Chunk 5 → backlog, then offer PR.
+**Context:** Chunks 1–4 built; independent review = SOUND-WITH-NOTES (template verified schema-valid against the live validator `src/hallucinote/markdown_refs.py`; `write_markdown_ref` signature confirmed; design tension confirmed coherent). Both review WARNINGs cleared: (1) Chunk 5 actually filed to backlog as DOC-4F8M; (2) the dated-only contradiction at `song-conventions.md` "Authoring discipline" (`:186`, `:190`) reconciled. Ready to offer PR into develop.

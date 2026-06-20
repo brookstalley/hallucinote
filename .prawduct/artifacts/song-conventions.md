@@ -183,11 +183,11 @@ The reindexer walks the corpus, upserts rows, refreshes FTS5, and tombstones row
 
 ## Authoring discipline
 
-- One decision per file. Don't append to an existing decision file when a new decision arises — write a new dated file.
+- One decision per file. Don't append to an existing decision file when a new decision arises — write a new file.
 - Reference cross-cutting decisions via the `related` field, not by prose mention.
 - Decision rationale captures *why* + *trade-off*, not just *what*. The mechanical change ("we dropped the stabs") belongs in the commit message; the *why* ("they retrigger the slow-attack envelope") belongs in the decision file.
 - Annotations describe intent that should drive future work. If an annotation becomes stale (the intent changed), update it in place — annotations are timeless, but they evolve with the song.
-- Filenames use lowercase letters, digits, hyphens. For decisions: `YYYY-MM-DD-short-slug.md`. For annotations: `short-slug.md`.
+- Filenames use lowercase letters, digits, hyphens. For decisions: `NN-short-slug.md` (the `/song-new` scaffolder default) or `YYYY-MM-DD-short-slug.md` (historical) — the filename only orders the file; the `date` frontmatter field is the queryable *when*. For annotations: `short-slug.md`.
 
 ## Relationship to the structured DB
 

@@ -237,7 +237,7 @@ Capture only **substantive** creative/production moves. The test: would a future
 
 ### The decision-file template
 
-One file per decision, `decisions/NN-<topic>.md` (`NN` = next free number, for ordering and a stable ADR id). The **frontmatter schema is owned by [`../.prawduct/artifacts/song-conventions.md`](../.prawduct/artifacts/song-conventions.md)** ("Frontmatter schema" + the "which corpus?" heuristic) — don't re-document it here; the key rules that bite: `kind: decision` requires a `date` field, `scope` ∈ {`song`, `time`, `track`, `track-time`} (a section move is `time` + `bars`; a per-track move is `track-time` + `track` + `bars`), and **unknown keys raise at index time** (so no invented fields — record provenance in the body, not a key). Write via `write_markdown_ref` so it's audit-threaded and FTS5-indexed — that's what makes `/song-context` and `/decisions` find it:
+One file per decision, `decisions/NN-<topic>.md` (`NN` = next free number, for ordering and a stable ADR id). The **frontmatter schema is owned by [`../.prawduct/artifacts/song-conventions.md`](../.prawduct/artifacts/song-conventions.md)** (its "Frontmatter schema" section + the decisions-vs-annotations-vs-attempts heuristic) — don't re-document it here; the key rules that bite: `kind: decision` requires a `date` field, `scope` ∈ {`song`, `time`, `track`, `track-time`} (a section move is `time` + `bars`; a per-track move is `track-time` + `track` + `bars`), and **unknown keys raise at index time** (so no invented fields — record provenance in the body, not a key). Write via `write_markdown_ref` so it's audit-threaded and FTS5-indexed — that's what makes `/song-context` and `/decisions` find it:
 
 ```python
 from pathlib import Path

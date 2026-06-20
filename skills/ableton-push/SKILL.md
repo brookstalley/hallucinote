@@ -72,11 +72,14 @@ Proceed only on explicit `yes`. If `no`, point at `songs/<slug>/REQUIREMENTS.md`
 
 (First-push bootstrap: replace `<session_id>` with `--auto-session`.)
 
-`--probe` calls `ableton_track(list)` + `ableton_return(list)` in-process via the MCP TCP client. Strict reconciliation drops any `ableton_links` row whose `ableton_index` no longer appears in the probe.
+`--probe` calls `ableton_track(list)` + `ableton_return(list)` + `ableton_clip(list, location='arrangement')` per track in-process via the MCP TCP client. Strict reconciliation drops any `ableton_links` row whose `ableton_index` no longer appears in the probe.
 
 Display:
 - Matched counts (`"linked 3 of 5 DB tracks; 2 will be created"`).
 - `unlinked_stale_tracks` / `unlinked_stale_returns` / `unlinked_stale_clips` counts if non-empty. (`unlinked_stale_clips` are clip links cascade-dropped because their parent track was no longer linked — the set-swap recovery, SYN-3C8K.)
+- `unlinked_stale_arrangement_clips` / `rebound_arrangement_clips` counts if non-empty (SYN-4R7P). An arrangement clip you deleted in Live drops its stale link so the next push **re-duplicates** the placement (Live re-numbers arrangement-clip indices on delete, so this also re-binds placements that merely shifted index). Only the `--probe` path reconciles arrangement clips; `--snapshot` is arrangement-blind.
+
+**Re-materialize the arrangement after a note edit (SYN-4R7P).** Editing notes in `build.py` updates the *session* clips, not their arrangement copies. To rebuild the timeline from the updated session clips: re-push the clips (`execute --only clips`), delete the stale arrangement clips in Live, then re-run the standard cycle — **`probe-and-link --probe`** (this is where reconciliation drops the now-stale arrangement links) **→ `execute --only arrangement --probe`** (re-duplicates from the session clips). The reconcile lives in `probe-and-link`, NOT `execute` (execute only runs a read-only coherence check), so the recovery is the full two-step cycle, not `execute --only arrangement` alone.
 - `notes` verbatim if non-empty (duplicate names, kind mismatches, case-only near-matches).
 - `unmatched_live_tracks` / `unmatched_live_returns` if non-empty.
 
@@ -172,6 +175,7 @@ Read `songs/<slug>/.last-push-state.json`. Surface in this order:
 
 - **`probe-and-link` exits non-zero**: snapshot malformed, DB path wrong, or session_id unknown. Show stderr.
 - **`execute` exits 1 (partial)**: act on the stdout "Halt cause" block (cause + next step); fix in `build.py`/snapshot, rebuild, re-run `execute`. Idempotent — already-applied rows skip. `.last-push-errors.json` has per-call forensics.
+- **`arrangement` phase fails with `IndexError: clip_index out of range` (SYN-4R7P)**: you deleted/edited arrangement clips in Live, so the recorded `arrangement_clip` links are stale and `execute` (which only runs a read-only coherence check) refreshed into a dead index. Re-run **`probe-and-link --probe`** — it reconciles the stale arrangement links (drops/re-binds) — then re-run `execute --only arrangement --probe` to re-materialize. `execute` alone does NOT reconcile.
 - **`execute` exits 2 (connection lost)**: see `ableton://guides/error-recovery`. Re-execute.
 - **`ValueError` from a planner**: usually a strict-precondition issue. Show the error and stop.
 

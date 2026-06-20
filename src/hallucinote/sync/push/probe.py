@@ -19,6 +19,8 @@ from hallucinote.analyzer_identity import is_analyzer_device
 from hallucinote.analyzer_staleness import detect_stale_analyzer_surfaces
 from hallucinote.db import mutations as M, queries as Q
 
+from ._core import _position_bar_to_beats
+
 
 # ---------------------------------------------------------------------------
 # Probe-and-link: bind existing Live tracks/returns to DB rows by name
@@ -316,6 +318,19 @@ class ProbeAndLinkResult:
     where Live's default ``A-Reverb``'s built-in Reverb matched a DB
     device but wasn't yet linked, causing ``_emit_device_calls`` to load
     a duplicate Reverb on each subsequent push.
+
+    SYN-4R7P added ``unlinked_stale_arrangement_clips`` / ``rebound_arrangement_clips``:
+    ``arrangement_clip`` links reconciled against Live truth when
+    ``live_arrangement_clips_by_track`` is supplied (the ``--probe`` path).
+    A Live arrangement clip has no stable id and Live re-numbers
+    ``arrangement_clip_index`` on any delete, so position is its identity
+    key. A link whose live placement is gone is dropped (so the next push
+    re-duplicates it instead of crashing on a ``replace_notes`` REFRESH at a
+    dead index); a link whose live placement merely renumbered is re-bound to
+    the current index. This is the arrangement-side sibling of the SYN-3C8K
+    clip cascade — without it ``--only arrangement --probe`` raised
+    ``IndexError: clip_index out of range`` after the user deleted arrangement
+    clips in Live.
     """
     matched_tracks: list[dict[str, Any]] = field(default_factory=list)
     matched_returns: list[dict[str, Any]] = field(default_factory=list)
@@ -327,6 +342,8 @@ class ProbeAndLinkResult:
     unlinked_stale_tracks: list[dict[str, Any]] = field(default_factory=list)
     unlinked_stale_returns: list[dict[str, Any]] = field(default_factory=list)
     unlinked_stale_clips: list[dict[str, Any]] = field(default_factory=list)
+    unlinked_stale_arrangement_clips: list[dict[str, Any]] = field(default_factory=list)
+    rebound_arrangement_clips: list[dict[str, Any]] = field(default_factory=list)
     default_scaffold_unmatched_tracks: list[dict[str, Any]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
@@ -342,6 +359,7 @@ def probe_and_link(
     live_tracks: list[dict[str, Any]],
     live_returns: list[dict[str, Any]],
     live_devices_by_parent: dict[tuple[str, int], list[dict[str, Any]]] | None = None,
+    live_arrangement_clips_by_track: dict[int, list[dict[str, Any]]] | None = None,
     actor: str = "sync",
     reason: str | None = None,
 ) -> ProbeAndLinkResult:
@@ -384,10 +402,22 @@ def probe_and_link(
     longer linked is dropped, because a Live-set swap that reuses the session
     drops the parent track link without deleting the clip link, and a dangling
     clip link makes the clips planner emit ``replace_notes`` against an empty
-    slot. Other nested kinds (device / envelope / note) are re-established by
-    the next push's create-call path. This closes the punk-fate drift bug
-    (deleted Live track → stale link → clip creates against the wrong track)
-    and the swell set-swap halt (dangling clip links → clips phase IndexError).
+    slot. This closes the punk-fate drift bug (deleted Live track → stale link →
+    clip creates against the wrong track) and the swell set-swap halt (dangling
+    clip links → clips phase IndexError).
+
+    **SYN-4R7P: arrangement-clip reconciliation.** When
+    ``live_arrangement_clips_by_track`` is supplied (the ``--probe`` path),
+    ``arrangement_clip`` links are reconciled against Live truth by POSITION
+    (Live re-numbers ``arrangement_clip_index`` on any delete, so the index is
+    not a stable handle — same identity rule as the pull-side diff). A link
+    whose live placement is gone is dropped so the next push re-duplicates it;
+    a renumbered placement is re-bound to its new index. Without this,
+    ``--only arrangement --probe`` raised ``IndexError`` after the user deleted
+    arrangement clips in Live (the link survived, so the planner took the
+    ``replace_notes`` REFRESH branch at a dead index). The remaining nested
+    kinds (device / envelope / note) are still re-established by the next push's
+    create-call path.
 
     **W18-D: default-scaffold detection.** When every entry in
     ``unmatched_live_tracks`` matches a canonical Live-default name
@@ -497,8 +527,9 @@ def probe_and_link(
     # W18-B: strict reconciliation — sweep ableton_links for rows whose
     # ableton_index no longer appears in the fresh probe. Track + return kinds
     # drop here directly; the clip kind cascades off its parent track below
-    # (SYN-3C8K). Other nested kinds (device/envelope/note/arrangement_clip)
-    # are re-established by the next push's create-call path. Iterate over a
+    # (SYN-3C8K), and arrangement_clip links reconcile by position when probed
+    # (SYN-4R7P, further below). The remaining nested kinds (device/envelope/
+    # note) are re-established by the next push's create-call path. Iterate over a
     # snapshot of the rows because the unlink mutator deletes from the same
     # table.
     live_track_indexes = {lt["track_index"] for lt in live_tracks}
@@ -567,6 +598,134 @@ def probe_and_link(
             "db_id": link["db_id"],
             "ableton_index": link["ableton_index"],
         })
+
+    # SYN-4R7P: reconcile stale arrangement_clip links against Live truth. An
+    # arrangement clip is a distinct Live copy whose index Live RE-NUMBERS on any
+    # delete (no stable id, no name column — position is the identity key,
+    # mirroring the pull-side diff in sync/pull/clips.py). When the user
+    # deletes/edits arrangement clips in Live, the recorded arrangement_clip link
+    # goes stale: plan_push_arrangement sees the link present, takes the
+    # replace_notes(location='arrangement', clip_index=stale) REFRESH branch, and
+    # crashes with IndexError on a clip that no longer exists. The original W18-B
+    # sweep skipped this kind on the (false) claim it "re-establishes via the next
+    # push's create-call path" — but that path only fires when the link is ABSENT,
+    # so a stale-but-present link never recovers. Reconcile here, after the track
+    # sweep + clip cascade so parent-track links are settled:
+    #   * DB row gone, or parent track link gone     -> drop (cascade)
+    #   * no live placement at the row's authored pos -> drop (create re-dupes)
+    #   * live placement at a RENUMBERED index        -> re-bind the link index
+    #   * live placement at the recorded index        -> keep (refresh works)
+    # Only runs with a fresh per-track arrangement probe (None on --snapshot, like
+    # devices). A track ABSENT from the probe map is a transient per-track probe
+    # failure -> skip (never drop a live binding on missing info); an EMPTY list
+    # is genuinely "no live clips on that track" -> drop.
+    if live_arrangement_clips_by_track is not None:
+        ts_points = Q.get_time_signature_map(conn, song_id)
+        arr_rows_by_id = {
+            r["id"]: r for r in Q.get_arrangement_for_song(conn, song_id)
+        }
+        # Identity is the placement's START position only (not start+end): the
+        # reconcile asks "does a live clip still exist for this DB placement?",
+        # so a user resize/trim in Live keeps the binding (the pull-side diff in
+        # sync/pull/clips.py keys on (start,end) because it diffs CONTENT — a
+        # different question). Two DB placements may legitimately share a start
+        # on one track ("rare but valid" per get_arrangement_for_song); to keep
+        # coincident placements from both binding to the SAME live clip, track
+        # the live indices already consumed per track and prefer each link's
+        # RECORDED index when it still sits at the position (no churn, no swap).
+        consumed_by_track: dict[int, set[int]] = {}
+        for link in [
+            ln for ln in Q.get_ableton_links_for_session(conn, session_id)
+            if ln["db_kind"] == "arrangement_clip"
+        ]:
+            arr_row = arr_rows_by_id.get(link["db_id"])
+            parent_track_at = (
+                Q.get_ableton_link(
+                    conn, session_id=session_id, db_kind="track",
+                    db_id=arr_row["track_id"],
+                )
+                if arr_row is not None else None
+            )
+            if arr_row is None or parent_track_at is None:
+                M.unlink_db_from_ableton(
+                    conn,
+                    session_id=session_id,
+                    db_kind="arrangement_clip",
+                    db_id=link["db_id"],
+                    actor=actor,
+                    reason=reason or "probe-and-link: stale arrangement_clip "
+                    "link (DB row or parent track gone)",
+                )
+                result.unlinked_stale_arrangement_clips.append({
+                    "db_id": link["db_id"],
+                    "ableton_index": link["ableton_index"],
+                })
+                continue
+            # Track absent from the probe map = transient probe failure; keep the
+            # link rather than risk dropping a live binding on missing info.
+            if parent_track_at not in live_arrangement_clips_by_track:
+                continue
+            placements = live_arrangement_clips_by_track[parent_track_at]
+            want_beats = _position_bar_to_beats(arr_row["start_bar"], ts_points)
+            consumed = consumed_by_track.setdefault(parent_track_at, set())
+            recorded = link["ableton_index"]
+            at_position = [
+                p for p in placements
+                if p.get("start_beats") is not None
+                and abs(float(p["start_beats"]) - want_beats) <= 1e-3
+            ]
+            # Prefer the recorded index if a live clip still sits at this
+            # position there — keeps the binding stable and stops two coincident
+            # placements from swapping indices. Otherwise take the first live
+            # clip at the position not already claimed by another placement.
+            match = next(
+                (
+                    p for p in at_position
+                    if p.get("arrangement_clip_index") == recorded
+                    and recorded not in consumed
+                ),
+                None,
+            ) or next(
+                (
+                    p for p in at_position
+                    if p.get("arrangement_clip_index") not in consumed
+                ),
+                None,
+            )
+            if match is None:
+                M.unlink_db_from_ableton(
+                    conn,
+                    session_id=session_id,
+                    db_kind="arrangement_clip",
+                    db_id=link["db_id"],
+                    actor=actor,
+                    reason=reason or "probe-and-link: stale arrangement_clip "
+                    "link (no live clip at authored position)",
+                )
+                result.unlinked_stale_arrangement_clips.append({
+                    "db_id": link["db_id"],
+                    "ableton_index": link["ableton_index"],
+                })
+                continue
+            live_idx = match.get("arrangement_clip_index")
+            if live_idx is not None:
+                consumed.add(int(live_idx))
+            if live_idx is not None and int(live_idx) != link["ableton_index"]:
+                M.link_db_to_ableton(
+                    conn,
+                    session_id=session_id,
+                    db_kind="arrangement_clip",
+                    db_id=link["db_id"],
+                    ableton_index=int(live_idx),
+                    actor=actor,
+                    reason=reason or "probe-and-link: re-bind arrangement_clip "
+                    "link after Live re-numbered the placement",
+                )
+                result.rebound_arrangement_clips.append({
+                    "db_id": link["db_id"],
+                    "from_index": link["ableton_index"],
+                    "to_index": int(live_idx),
+                })
 
     # W20-A: bind devices by (parent, position, class_name). Run after track
     # + return matching so we know each parent's ableton_index. Closes the

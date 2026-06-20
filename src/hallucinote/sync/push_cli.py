@@ -220,6 +220,42 @@ def _probe_live_session_clips_via_mcp(
     return by_track
 
 
+def _probe_live_arrangement_clips_via_mcp(
+    *,
+    live_tracks: list[dict],
+    send_fn=None,
+) -> dict[int, list[dict]]:
+    """SYN-4R7P: probe ``ableton_clip(action='list', location='arrangement')``
+    per Live track so probe-and-link can reconcile stale ``arrangement_clip``
+    links against Live truth (Live re-numbers ``arrangement_clip_index`` on any
+    delete, so a recorded link goes stale and the arrangement phase crashes with
+    ``IndexError`` on a ``replace_notes`` REFRESH at the dead index).
+
+    Returns a dict keyed by ``track_index`` with the track's arrangement-clip
+    placements (``{arrangement_clip_index, name, start_beats, length}``). A
+    per-track probe failure leaves that track's key ABSENT (not an empty list) so
+    the reconciler reads it as "no info, don't drop" rather than "no clips, drop"
+    — a transient failure must never delete a live binding (mirrors the
+    per-parent tolerance of :func:`_probe_live_devices_via_mcp`).
+    """
+    if send_fn is None:
+        from hallucinote_mcp import client as _client  # type: ignore[import-not-found]
+        send_fn = _client.send
+    from hallucinote_mcp.wire import Request  # type: ignore[import-not-found]
+
+    by_track: dict[int, list[dict]] = {}
+    for t in live_tracks:
+        idx = t["track_index"]
+        resp = send_fn(Request(
+            tool="ableton_clip", action="list",
+            params={"track_index": idx, "location": "arrangement"},
+        ))
+        if getattr(resp, "ok", False):
+            payload = getattr(resp, "result", None) or {}
+            by_track[idx] = list(payload.get("clips") or [])
+    return by_track
+
+
 def _resolve_db_path(args: argparse.Namespace) -> Path:
     """``--song <slug>`` → per-branch DB via resolve_db_path; ``--db PATH`` → PATH.
 
@@ -427,10 +463,17 @@ def _cmd_probe_and_link(args: argparse.Namespace) -> int:
     # duplication path. The --snapshot path stays device-blind (the JSON
     # file doesn't carry chain info); use --probe for the full coverage.
     live_devices_by_parent: dict | None = None
+    live_arrangement_clips_by_track: dict | None = None
     if args.probe:
         live_tracks, live_returns = _probe_live_via_mcp()
         live_devices_by_parent = _probe_live_devices_via_mcp(
             live_tracks=live_tracks, live_returns=live_returns,
+        )
+        # SYN-4R7P: also probe each track's arrangement clips so stale
+        # arrangement_clip links reconcile against Live truth (the --snapshot
+        # JSON carries no arrangement info, so that path stays arrangement-blind).
+        live_arrangement_clips_by_track = _probe_live_arrangement_clips_via_mcp(
+            live_tracks=live_tracks,
         )
     else:
         if not args.snapshot:
@@ -489,6 +532,7 @@ def _cmd_probe_and_link(args: argparse.Namespace) -> int:
         live_tracks=live_tracks,
         live_returns=live_returns,
         live_devices_by_parent=live_devices_by_parent,
+        live_arrangement_clips_by_track=live_arrangement_clips_by_track,
         actor="sync",
         reason=args.reason or f"probe-and-link from session {session_id}",
     )

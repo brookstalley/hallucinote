@@ -262,6 +262,14 @@ def _emit_device_calls(
                     load_args["preset_uri"] = device["preset_uri"]
                     if browser_path_value is not None:
                         load_args["browser_path"] = browser_path_value
+                elif browser_path_value is not None and (
+                    _browser_path_names_preset_file(browser_path_value)
+                ):
+                    # Corrupt preset_query + no preset_uri: still honor a
+                    # standalone preset-file browser_path, or the rack loads
+                    # EMPTY — the same SYN-RACK-PRESET-RELINK gap the main elif
+                    # below closes for the (common) no-preset_query case.
+                    load_args["browser_path"] = browser_path_value
         elif device["preset_uri"] is not None:
             load_args["preset_uri"] = device["preset_uri"]
             if browser_path_value is not None:

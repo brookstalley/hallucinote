@@ -141,3 +141,24 @@ operator-verification** — the bundle is entirely engine-side + unit-tested.
 - File the render-relink backlog item via `/prawduct:backlog`.
 - Create the worktree off develop (`feat/high-roi-cluster`), establish clean
   baseline (full suite green).
+
+## Independent review (Critic) — resolutions
+
+Reviewed `develop..HEAD` by an independent agent. REC-4Z8Q and the docs confirmed
+correct/accurate (NOTEs only). One **WARNING resolved**:
+
+- **render-relink was applied at only 1 of ≥3 live-return↔DB match boundaries.**
+  `normalize_live_return_name` was swept into the rest: `pull/mix.py`
+  `_apply_return_info` (was writing the dirty ` | HallucinoteAnalyzer` name into
+  the DB — source-of-truth corruption) and `_apply_sends` (silently dropped
+  sends), plus `capture.py` replay (return name + sends lookup). + pull-side and
+  capture-replay regression tests. Completeness re-checked: probe + mix×2 +
+  capture×2 cover every live-name→DB match; the mutator is the write-boundary and
+  push goes DB→Live (neither reads live names for matching).
+
+NOTEs accepted: REC-4Z8Q exemption verified correct (transposed/contained pedals
+recall; fast-skip preserved; no second skip copy); DOC-7K3M docstrings accurate;
+regex anchored/idempotent; no import cycle.
+
+**Outcome:** 4000 suite passed / 320 skipped (audio) / 0 failures. RND-2R9K filed
+for the Live-side root cause (don't rename returns on analyzer load).

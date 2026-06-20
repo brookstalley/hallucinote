@@ -54,6 +54,9 @@ The state-converger reconciles: changed parts re-author through mutators (events
 ### 6. Iterate
 Refine the code → `build.py` → `push-notes --changed`. Each loop is sub-second and token-free. Keep going until the part is finished — don't stop to ask "what next" between iterations (CLAUDE.md → *Stop only on high-stakes decisions or must-answer questions*).
 
+### 7. Record the decision — at the finished-move boundary, if it was substantive
+Once the part (or a section's pass) is finished, capture the **WHY** the code can't hold. The ADR is part of *done*, like the device chain — file it **silently** as you finish, **not** as a stop-to-ask between iterations (that would violate the stop-less norm; this fires once, at the finished-move boundary, not per loop). Capture only **bright-line-substantive** moves — a feel/groove arc, a sound-design subsystem, a structural/form change, a committed musical landing, a transition/hand-off plan — never a velocity nudge or one level tweak. Write `songs/<slug>/decisions/NN-*.md` via the template in `docs/song-authoring-conventions.md` → *Rationale is authorship* (the `write_markdown_ref` form, so `/song-context` finds it). **Route by outcome:** a move you *kept* → `decisions/`; a move you *tried and reverted* → `attempts/` (that's `/compose-review`'s attempt-log, not here). If you **delegated** this part's sound-design/automation to a subagent, the subagent returns its rationale and you file the ADR — don't let delegation launder the WHY (CLAUDE.md → *Rationale is authorship*). The `/compose-review` completeness check is the backstop, not a substitute — capture here, while the WHY is in hand.
+
 ## Named pattern shapes (where `/pattern-compose` went)
 The named patterns the old `/pattern-compose` offered are importable helpers — you call them in `build.py` instead of asking a skill to inline notes:
 

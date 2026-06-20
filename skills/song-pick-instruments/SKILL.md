@@ -59,7 +59,7 @@ Reject unknown modes with a teaching error listing the valid choices.
      This goes to `compile_snapshot(..., browser_paths=loads)` in Step 6 for cross-machine fallback identity. Skipping doesn't break the load itself but loses portability for teammates on different Live installs.
    - **Sends** — `ableton_track(action='set_send', track_index=<i>, return_index=<j>, value=<0..1>)`. Skip 0.0-level sends.
 
-5. **Write a signal-chain decision.** Write `songs/<slug>/decisions/NN-signal-chains.md` (next free `NN`). See `docs/song-authoring-conventions.md` for the decision-file template (or copy an existing `NN-signal-chains.md` from another song as a model). The decision IS the sound design — treat post-instrument processing as authorship, not a mix-time follow-up.
+5. **Write a signal-chain decision.** Write `songs/<slug>/decisions/NN-signal-chains.md` (next free `NN`). See `docs/song-authoring-conventions.md` → *Rationale is authorship* for the decision-file template (or copy an existing `NN-signal-chains.md` from another song as a model). The decision IS the sound design — treat post-instrument processing as authorship, not a mix-time follow-up. **Survives delegation:** if a subagent picked or loaded the chains, it returns the per-chain rationale and *you* (the orchestrator) write this decision — never skip it because the loading happened elsewhere (CLAUDE.md → *Rationale is authorship*). This is the most common place the WHY gets laundered away.
 
 6. **Capture for the DB.** Run the capture probes yourself (the sequence `hallucinote.tools.capture_cli plan` documents — session info, returns, per-track info + sends + device parameters + nested rack chains) and assemble via `compile_snapshot`, passing your accumulated `loads`:
 

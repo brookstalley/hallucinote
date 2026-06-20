@@ -340,11 +340,17 @@ def _attempt_load_fallback(
 
 
 # SYN-9F2L: the planner prefers the display form on the wire (exact via the
-# param's own display curve), but two handler refusals have a known second
+# param's own display curve), but several handler refusals have a known second
 # form worth one retry each. Hint substrings match the handler's teaching
 # errors (handlers/display_value.py resolve_continuous_write).
 _SET_PARAM_ENUM_HINTS = ("is an enum", "is_quantized=True")
-_SET_PARAM_NO_CURVE_HINTS = ("str_for_value",)
+# Refusals whose remedy is "fall back to the stored normalized value": the param
+# exposes no str_for_value curve to invert, OR its display can't address it —
+# non-numeric (a pan's "50L".."50R" — SYN-RACK-PRESET-RELINK §3), non-monotonic,
+# or constant. The display-can't-address family all end in "the normalized
+# `value`"; matching that recovers them via the same normalized retry instead of
+# 5 guaranteed pan failures on every push of a track with a dialed Analog pan.
+_SET_PARAM_NO_CURVE_HINTS = ("str_for_value", "the normalized `value`")
 
 
 def _attempt_set_parameter_fallback(

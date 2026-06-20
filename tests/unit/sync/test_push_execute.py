@@ -1700,6 +1700,62 @@ def test_set_parameter_display_fallback_retries_with_normalized(
     assert float(normalized_writes[0]["params"]["value"]) == pytest.approx(0.389)
 
 
+def test_set_parameter_non_numeric_display_falls_back_to_normalized(
+    conn, song, session, state_dir,
+):
+    """SYN-RACK-PRESET-RELINK §3: a pan param captured as a display string
+    ("50L") that the handler refuses with the NON-NUMERIC-display teaching error
+    ('...has a non-numeric display...; set it via the normalized `value`') is
+    retried once with the DB's stored normalized value. Before this, that
+    message matched no fallback hint, so it was 5 guaranteed, unrecoverable
+    failures on every push of a track with a dialed Analog pan."""
+    tid = M.create_track(
+        conn, song_id=song, track_index=1, name="Alien Voice", kind="midi",
+    )
+    chain = M.create_device_chain(conn, parent_track_id=tid)
+    did = M.create_device(
+        conn, chain_id=chain, position=1, kind="Analog", display_name="Analog",
+    )
+    M.set_device_parameter(
+        conn, device_id=did, name="AMP1 Pan",
+        value_display="50L", value_normalized=0.25,
+    )
+    base = _make_send_fn()
+
+    def send(req):
+        if (
+            req.action == "set_parameter"
+            and req.params.get("value_display") is not None
+        ):
+            base.call_log.append({
+                "tool": req.tool, "action": req.action,
+                "params_keys": sorted(req.params.keys()),
+                "params": dict(req.params),
+            })
+            return FakeResponse(
+                ok=False,
+                error=(
+                    "parameter 'AMP1 Pan' has a non-numeric display "
+                    "(' 50L'..' 50R'); set it via the normalized `value` "
+                    "instead of `value_display`"
+                ),
+            )
+        return base(req)
+
+    send.call_log = base.call_log  # type: ignore[attr-defined]
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send,
+    )
+    assert result.outcome == "ok"
+    normalized_writes = [
+        c for c in send.call_log
+        if c["action"] == "set_parameter" and "value" in c["params"]
+    ]
+    assert len(normalized_writes) == 1
+    assert float(normalized_writes[0]["params"]["value"]) == pytest.approx(0.25)
+
+
 # ---------------------------------------------------------------------------
 # SYN-6B4Q: cue deferral (skip-with-warning) + plan-error halt
 # ---------------------------------------------------------------------------

@@ -1041,3 +1041,33 @@ Checks (on any pushed song with an arrangement, e.g. `alien`/`swell`):
 3. **Signpost is visible.** `ableton_arrangement(action='help')` / the `info`
    action surfaces the tip pointing at `ableton_clip(action='list',
    location='arrangement')` for the per-track inventory.
+
+## Bug 2 (incoming 2026-06-20) — rack presets load from browser_path; pan via normalized
+
+**Status:** PENDING — needs an attended Live session + re-vendor. **Visual change:**
+yes (rack tracks fill with their kit/preset instead of an empty shell). Added
+2026-06-20. Touches `handlers/device.py` (in `_FINGERPRINT_PATHS`) → fingerprint
+flips: re-vendor (relaunch dev-mode, then `/ableton-mcp-install`) and reopen Live.
+
+Why it can't be auto-verified: the unit suite proves the resolution + emission
+against a fake browser; only a real bridge proves Live's browser resolves a
+captured `.adg`/`.adv` path to the actual preset, and that a dialed pan dials
+correctly via the normalized value.
+
+Checks (on `alien` / `compose/swell`, or any song with rack-preset instruments,
+pushed onto a FRESH Live set):
+
+1. **The reported bug is gone.** Fresh full push of a song with Drum Rack /
+   Instrument Rack `.adg` instruments captured with browser_path only. Confirm
+   each rack loads POPULATED (`ableton_device(get_device_chains, ...)` →
+   `chain_count > 0`, the real chains) — NOT an empty shell — and the nested
+   per-pad/per-chain params land (no `chain_index out of range` cascade).
+2. **`.adv` device preset.** A track whose instrument is an `.adv` preset (e.g.
+   Analog "Metalic Lead") loads the preset's macro state, not a default Analog.
+3. **Pan via normalized (§3).** Push a track with a dialed Analog pan (`AMP1 Pan`
+   ≈ `50L`). Confirm it lands at the correct pan with NO `DisplayValueError`
+   surfacing as a hard failure (the planner's display attempt is refused, then
+   the normalized retry succeeds — visible as `set_parameter_fallback:
+   "normalized"` in the push state, or simply a correctly-panned track).
+4. **Built-in still kind-only.** A native device captured with a non-preset
+   browser_path (no `.adg`/`.adv`) still loads by kind cleanly (no regression).

@@ -30,6 +30,15 @@ matched and never re-flags. The declaration IS the learn-back — no separate
 markdown-annotation surface this phase (``project_intent_home_rationalization``:
 WHAT in build.py, WHY in markdown; a disposable DB annotation is a data-loss trap).
 
+**Caveat — "never re-flags" is LINE-altitude only (DOC-7K3M).** A declared profile
+silences *this* lens (the per-line contour/interval/harmony-fit grading); it says
+nothing at section or song altitude. A phrase that is fine as a line but loops too
+often across sections, or a hook that should evolve and doesn't, is a FORM question
+for the recurrence lens (``recurrence.lens`` — motivic economy) and the
+compose-review's energy/contrast read, not something a ``MelodicProfile`` can or
+should suppress. Declaring a profile does not mean "this melody is done at every
+altitude" — only that its line-level character is intentional.
+
 **Every field is optional** (``None``-default). A profile that declares nothing is
 legal and produces zero gradings — the line reads as unconstrained substrate facts,
 exactly the 2a behavior (graceful degradation, never forcing a part to declare).

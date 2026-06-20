@@ -264,6 +264,21 @@ def unlink_db_from_ableton(
     song_row = conn.execute(
         "SELECT song_id FROM ableton_sessions WHERE id = ?", (session_id,)
     ).fetchone()
+    # FK-GUARD: a clip link is reconciled away precisely when its clip row is GONE
+    # from the DB — a `build.py --reset` rebuild or a Live-set swap that reuses the
+    # session (the SYN-3C8K cascade in probe_and_link drops clip links whose clip
+    # row no longer exists). Stamping the event's `clip_id` with that now-dangling
+    # id violates `events.clip_id`'s FK to `clips(id)` on INSERT
+    # (sqlite3.IntegrityError, which crashed probe-and-link mid-reconcile). Only
+    # stamp `clip_id` when the clip row still exists; the unlinked id is preserved
+    # in the event payload's `db_id` regardless, so no audit information is lost.
+    clip_id_for_event: str | None = None
+    if db_kind == "clip":
+        clip_exists = conn.execute(
+            "SELECT 1 FROM clips WHERE id = ?", (db_id,)
+        ).fetchone() is not None
+        if clip_exists:
+            clip_id_for_event = db_id
     _emit(
         conn,
         E.ABLETON_LINK_REMOVED,
@@ -275,7 +290,7 @@ def unlink_db_from_ableton(
             "ableton_index": ableton_index,
         },
         song_id=song_row["song_id"] if song_row else None,
-        clip_id=db_id if db_kind == "clip" else None,
+        clip_id=clip_id_for_event,
         actor=actor,
         request_id=request_id,
         reason=reason,

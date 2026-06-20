@@ -1049,6 +1049,65 @@ def test_load_browser_path_fallback_not_used_when_preset_uri_resolves(loaded_act
     ]
 
 
+def test_load_browser_path_preset_file_loads_standalone(loaded_actions):
+    """SYN-RACK-PRESET-RELINK: a browser_path whose leaf is a preset FILE
+    (.adg/.adv) loads STANDALONE — no preset_uri / preset_query needed. The
+    common /song-snapshot case: capture can't probe preset_uri, so a rack
+    preset's only identity is its browser_path. Before this it loaded the bare
+    CLASS node (empty Drum Rack, 0 chains). The standalone path must resolve the
+    PRESET, not the class node — even with both present in the browser."""
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("Drums")]))
+    empty_rack = FakeBrowserItem(
+        "Drum Rack", uri="query:Drums#Empty", is_loadable=True,
+    )
+    kit = FakeBrowserItem(
+        "AG Techno Kit.adg", uri="query:Drums#FileId_KIT", is_loadable=True,
+    )
+    ctx.application.browser.drums.children.extend([empty_rack, kit])
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={
+                "node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"},
+                "kind": "Drum Rack",
+                # No preset_uri / preset_query — browser_path is the only identity.
+                "browser_path": ["drums", "AG Techno Kit.adg"],
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.to_dict()
+    # Resolves the PRESET, not the empty "Drum Rack" class node.
+    assert ctx.application.browser.load_calls[0].name == "AG Techno Kit.adg"
+    assert ctx.application.browser.load_calls[0].uri == "query:Drums#FileId_KIT"
+    assert resp.result["resolved_path"] == ["drums", "AG Techno Kit.adg"]
+
+
+def test_load_browser_path_preset_file_standalone_refuses_when_not_installed(
+    loaded_actions,
+):
+    """A standalone preset-file browser_path that resolves to nothing on this
+    machine (preset not installed at that path) refuses with a teaching error
+    naming the path — not a silent empty-rack load."""
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("Drums")]))
+    # drums root has no matching preset.
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={
+                "node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"},
+                "kind": "Drum Rack",
+                "browser_path": ["drums", "AG Techno Kit.adg"],
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "AG Techno Kit.adg" in err
+    assert "not be installed" in err
+
+
 def test_load_replace_in_place_succeeds(loaded_actions):
     """E2: Live's browser sometimes REPLACES the existing device in place
     instead of appending — empirically observed when loading a Drum Rack

@@ -994,6 +994,42 @@ def _raise_silent_noop(
     )
 
 
+_PRESET_FILE_SUFFIXES: tuple[str, ...] = (".adg", ".adv")
+
+
+def _browser_path_is_preset_file(browser_path: list[str]) -> bool:
+    """True when ``browser_path`` ends at an actual preset FILE — a rack preset
+    (``.adg``) or a device/instrument preset (``.adv``).
+
+    Such a leaf names loadable preset CONTENT, so the path is a portable
+    STANDALONE load selector (it carries the kit / preset, not just a device
+    class). A path ending at a built-in device node (``"Operator"``,
+    ``"Sub Bass"`` — no extension) is NOT standalone-loadable here: it resolves
+    to the bare class, so the loader keeps requiring ``preset_uri`` /
+    ``preset_query`` for it. The captured browser_path leaf carries the
+    extension (it is the browser item's display name, e.g.
+    ``"AG Techno Kit.adg"``)."""
+    return browser_path[-1].lower().endswith(_PRESET_FILE_SUFFIXES)
+
+
+def _browser_path_to_query(browser_path: list[str]) -> dict[str, Any]:
+    """Synthesize the ``preset_query`` that resolves a captured ``browser_path``:
+    root = first segment, optional ``path_prefix`` = the middle segments,
+    ``pattern`` = the leaf (the loaded item's display name). Substring +
+    case-sensitive — identical to the W13-A E3 fallback so both call sites
+    (standalone preset-file load, and preset_uri-miss fallback) resolve the
+    same way."""
+    query: dict[str, Any] = {
+        "root": browser_path[0],
+        "pattern": browser_path[-1],
+        "mode": "substring",
+        "case_sensitive": True,
+    }
+    if len(browser_path) > 2:
+        query["path_prefix"] = browser_path[1:-1]
+    return query
+
+
 def load_handler(
     context: LiveContext,
     *,
@@ -1134,20 +1170,26 @@ def load_handler(
                 "from the browser root to the loaded item's name — got "
                 f"{browser_path!r}"
             )
-        if preset_uri is None:
-            # browser_path is the FALLBACK for preset_uri — it's not a
-            # standalone selector. Composers wanting a path-scoped search
-            # without a per-machine URI should use preset_query (the
-            # canonical portable selector); browser_path activates only
-            # alongside preset_uri so the fast path tries the FileId
-            # first. Surfacing this avoids confusion about which selector
-            # actually drives the walk.
+        if (
+            preset_uri is None
+            and preset_query is None
+            and not _browser_path_is_preset_file(browser_path)
+        ):
+            # browser_path is the FALLBACK for preset_uri for a BUILT-IN device
+            # path (leaf = a class node, no extension) — not a standalone
+            # selector. Composers wanting a path-scoped search of a built-in
+            # without a per-machine URI should use preset_query. EXCEPTION
+            # (SYN-RACK-PRESET-RELINK): a leaf that is an actual preset FILE
+            # (.adg/.adv) names preset CONTENT and DOES load standalone (handled
+            # below) — a /song-snapshot of a rack preset carries browser_path
+            # only (capture can't probe preset_uri), and refusing it loaded an
+            # empty rack shell.
             raise ValueError(
-                "browser_path is the fallback identity for preset_uri — "
-                "pass it alongside preset_uri so the handler tries the "
-                "FileId first and falls back to a path-scoped search if "
-                "the URI doesn't resolve. For standalone portable "
-                "selection, use preset_query."
+                "browser_path is the fallback identity for preset_uri unless it "
+                "points at a preset FILE (.adg/.adv), which loads standalone. "
+                "Pass a built-in-device path alongside preset_uri (FileId tried "
+                "first, path-scoped fallback second). For standalone portable "
+                "selection of a built-in, use preset_query."
             )
 
     application = getattr(context, "application", None)
@@ -1162,13 +1204,37 @@ def load_handler(
             "application.browser not exposed in this Live version"
         )
 
+    standalone_preset_file = (
+        preset_query is None
+        and preset_uri is None
+        and browser_path is not None
+        and _browser_path_is_preset_file(browser_path)
+    )
     if preset_query is not None:
         item, resolved_path = _resolve_preset_query(browser, preset_query)
+    elif standalone_preset_file:
+        # SYN-RACK-PRESET-RELINK: a browser_path whose leaf is a preset FILE
+        # (.adg/.adv) is a STANDALONE selector — resolve the preset CONTENT from
+        # the captured path. Without this, the kind-only walk below resolves the
+        # bare CLASS node (an empty Drum/Instrument Rack), so a /song-snapshot
+        # that captured a rack preset with browser_path only (capture probes
+        # can't surface preset_uri) loaded an empty shell with 0 chains and
+        # every nested-chain param write failed with chain_index-out-of-range.
+        try:
+            item, resolved_path = _resolve_preset_query(
+                browser, _browser_path_to_query(browser_path),
+            )
+        except ValueError as exc:
+            raise ValueError(
+                f"load: browser_path={browser_path!r} names a preset file but "
+                f"did not resolve to a loadable on this machine (the preset may "
+                f"not be installed at that path): {exc}"
+            ) from None
     else:
         item, resolved_path = _find_browser_item(
             browser, kind=kind, preset_uri=preset_uri,
         )
-    if item is None and browser_path is not None:
+    if item is None and browser_path is not None and not standalone_preset_file:
         # E3 fallback identity: the per-machine preset_uri didn't
         # resolve (different FileId on this machine, or plugin moved
         # between catalog versions). Synthesize a preset_query from the
@@ -1178,18 +1244,12 @@ def load_handler(
         # the plugin / preset that was originally loaded). Surfaces
         # 0-match and multi-match through the same teaching-error
         # surface as preset_query, with a fallback-context prefix so
-        # the caller knows the URI was tried first.
-        fallback_query = {
-            "root": browser_path[0],
-            "pattern": browser_path[-1],
-            "mode": "substring",
-            "case_sensitive": True,
-        }
-        if len(browser_path) > 2:
-            fallback_query["path_prefix"] = browser_path[1:-1]
+        # the caller knows the URI was tried first. (A standalone
+        # preset-file browser_path is resolved as the primary selector
+        # above, never here.)
         try:
             item, resolved_path = _resolve_preset_query(
-                browser, fallback_query,
+                browser, _browser_path_to_query(browser_path),
             )
         except ValueError as exc:
             raise ValueError(

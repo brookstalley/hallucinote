@@ -206,6 +206,83 @@ def test_plan_push_devices_preset_uri_only_no_browser_path(
     assert "browser_path" not in load.args
 
 
+def test_plan_push_devices_emits_standalone_browser_path_for_preset_file(
+    conn, song, session, linked_track,
+):
+    """SYN-RACK-PRESET-RELINK: a rack-preset device captured with browser_path
+    ONLY (no preset_uri/preset_query — the common /song-snapshot case, since
+    capture can't probe preset_uri) must emit browser_path as a STANDALONE load
+    selector when its leaf is a preset file (.adg/.adv). Before this the planner
+    emitted kind only, so the rack loaded empty (0 chains) and every nested
+    param write failed."""
+    cid = M.create_device_chain(conn, parent_track_id=linked_track)
+    M.create_device(
+        conn, chain_id=cid, position=1, kind="Drum Rack",
+        display_name="AG Techno Kit",
+        browser_path=["drums", "AG Techno Kit.adg"],
+    )
+    plan = push.plan_push_devices(conn, song_id=song, session_id=session)
+    load = next(
+        c for c in plan.calls
+        if c.tool == "ableton_device" and c.args.get("action") == "load"
+    )
+    assert "preset_uri" not in load.args
+    assert "preset_query" not in load.args
+    assert load.args["browser_path"] == ["drums", "AG Techno Kit.adg"]
+
+
+def test_plan_push_devices_standalone_browser_path_survives_corrupt_preset_query(
+    conn, song, session, linked_track,
+):
+    """Resilience: if a device's stored preset_query is corrupt JSON (can only
+    happen via DB corruption — the mutator normalizes) and there's no
+    preset_uri, the planner must still fall back to a standalone preset-file
+    browser_path rather than loading an empty rack. Closes the elif-chain gap
+    the Critic flagged."""
+    cid = M.create_device_chain(conn, parent_track_id=linked_track)
+    did = M.create_device(
+        conn, chain_id=cid, position=1, kind="Drum Rack",
+        display_name="AG Techno Kit",
+        browser_path=["drums", "AG Techno Kit.adg"],
+    )
+    # Corrupt the preset_query column directly (the mutator would reject this).
+    conn.execute(
+        "UPDATE devices SET preset_query = ? WHERE id = ?", ("{not json", did),
+    )
+    plan = push.plan_push_devices(conn, song_id=song, session_id=session)
+    load = next(
+        c for c in plan.calls
+        if c.tool == "ableton_device" and c.args.get("action") == "load"
+    )
+    assert "preset_query" not in load.args
+    assert "preset_uri" not in load.args
+    assert load.args["browser_path"] == ["drums", "AG Techno Kit.adg"]
+    assert any("not valid JSON" in n for n in plan.notes)
+
+
+def test_plan_push_devices_no_standalone_browser_path_for_builtin_device(
+    conn, song, session, linked_track,
+):
+    """The standalone emission is preset-FILE-only. A built-in device captured
+    with a non-preset browser_path (leaf is a class node, no .adg/.adv) and no
+    preset_uri stays kind-only — emitting browser_path standalone would make the
+    load handler refuse it (it's not a standalone selector for built-ins)."""
+    cid = M.create_device_chain(conn, parent_track_id=linked_track)
+    M.create_device(
+        conn, chain_id=cid, position=1, kind="Operator",
+        display_name="Operator",
+        browser_path=["instruments", "Operator"],
+    )
+    plan = push.plan_push_devices(conn, song_id=song, session_id=session)
+    load = next(
+        c for c in plan.calls
+        if c.tool == "ableton_device" and c.args.get("action") == "load"
+    )
+    assert load.args["kind"] == "Operator"
+    assert "browser_path" not in load.args
+    assert "preset_uri" not in load.args
+
+
 def test_plan_push_devices_threads_preset_query_to_load(
     conn, song, session, linked_track,
 ):

@@ -1016,3 +1016,58 @@ or `swell`, after `--only clips` + `--only arrangement` has materialized the lan
    rest), then `--only arrangement --probe`. Expect the survivors to be re-bound
    (`rebound_arrangement_clips` non-empty) and only the deleted one re-duplicated —
    no duplicate placements.
+
+## Bug 1 (incoming 2026-06-20) — arrangement-clip read gains note_count + muted
+
+**Status:** PENDING — needs an attended Live session + re-vendor. **Visual change:**
+no (read payload only). Added 2026-06-20. Touches `handlers/clip.py` +
+`actions/arrangement.py` — both in `_FINGERPRINT_PATHS`, so the server fingerprint
+flips: re-vendor (relaunch dev-mode, then `/ableton-mcp-install`) and reopen Live
+before checking.
+
+Why it can't be auto-verified: the unit suite proves the payload shape against a
+fake clip; only a real bridge proves Live's `clip.get_notes_extended` /
+`clip.muted` / `clip.is_midi_clip` behave as the handler assumes on a live set.
+
+Checks (on any pushed song with an arrangement, e.g. `alien`/`swell`):
+
+1. **note_count is real.** `ableton_clip(action='list', track_index=N,
+   location='arrangement')` on a MIDI track returns each clip with `note_count`
+   matching its actual note count and `muted` reflecting its state. A long but
+   empty clip reports `note_count: 0` (the original "track shows no events"
+   question now answerable without a probe).
+2. **Audio clip → None.** On an audio track's arrangement clip, `note_count` is
+   `null` (not a crash — get_notes_extended is MIDI-only and is guarded).
+3. **Signpost is visible.** `ableton_arrangement(action='help')` / the `info`
+   action surfaces the tip pointing at `ableton_clip(action='list',
+   location='arrangement')` for the per-track inventory.
+
+## Bug 2 (incoming 2026-06-20) — rack presets load from browser_path; pan via normalized
+
+**Status:** PENDING — needs an attended Live session + re-vendor. **Visual change:**
+yes (rack tracks fill with their kit/preset instead of an empty shell). Added
+2026-06-20. Touches `handlers/device.py` (in `_FINGERPRINT_PATHS`) → fingerprint
+flips: re-vendor (relaunch dev-mode, then `/ableton-mcp-install`) and reopen Live.
+
+Why it can't be auto-verified: the unit suite proves the resolution + emission
+against a fake browser; only a real bridge proves Live's browser resolves a
+captured `.adg`/`.adv` path to the actual preset, and that a dialed pan dials
+correctly via the normalized value.
+
+Checks (on `alien` / `compose/swell`, or any song with rack-preset instruments,
+pushed onto a FRESH Live set):
+
+1. **The reported bug is gone.** Fresh full push of a song with Drum Rack /
+   Instrument Rack `.adg` instruments captured with browser_path only. Confirm
+   each rack loads POPULATED (`ableton_device(get_device_chains, ...)` →
+   `chain_count > 0`, the real chains) — NOT an empty shell — and the nested
+   per-pad/per-chain params land (no `chain_index out of range` cascade).
+2. **`.adv` device preset.** A track whose instrument is an `.adv` preset (e.g.
+   Analog "Metalic Lead") loads the preset's macro state, not a default Analog.
+3. **Pan via normalized (§3).** Push a track with a dialed Analog pan (`AMP1 Pan`
+   ≈ `50L`). Confirm it lands at the correct pan with NO `DisplayValueError`
+   surfacing as a hard failure (the planner's display attempt is refused, then
+   the normalized retry succeeds — visible as `set_parameter_fallback:
+   "normalized"` in the push state, or simply a correctly-panned track).
+4. **Built-in still kind-only.** A native device captured with a non-preset
+   browser_path (no `.adg`/`.adv`) still loads by kind cleanly (no regression).

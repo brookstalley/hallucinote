@@ -47,6 +47,10 @@
 
 **Context:** All chunks done & committed. Bug 2 §2 (batch set_parameters) = out of scope (optimization). Bug 2 #3 (fail-loud on empty-rack) DEFERRED → backlog: see below.
 
+**Critic (cumulative, independent agent — worktree gate-blind):** NO blocking findings. Verified the scaffold gate has no false-drop path (name-match consumes the index before the gate), the device-cascade master-exclusion is correct, the §3 hint can't match unrelated errors + safely no-ops without a normalized value, and the new tests are genuine regressions (not tautologies). 3 NOTES: #1 (corrupt-preset_query elif gap) FIXED (`58f461f` + test); #2 (nested-link defensiveness — safe direction, left) and #3 (`_browser_path_*` duplication — documented intentional) accepted. 4338 green.
+
+**Reflection:** The load-bearing insight was that "empty-rack-load doom" is a RUNTIME fact (does the loaded rack have chains?), not a static DB property — a re-push onto a populated set has chains without a DB selector, so a planner-side skip breaks it (caught by 8 existing tests + reasoning, before shipping the wrong fix). Tests-as-contracts surfaced twice as a signal: the clip-only cascade boundary test (legitimately extended) and the 8 nested-write tests (legitimately blocked the wrong fail-loud) — both times the failing test was the design telling me something.
+
 ## Deferred (filed to backlog)
 
 **Bug 2 fix #3 — fail-loud on empty-rack load.** Deferred, NOT silently dropped.

@@ -461,6 +461,142 @@ def test_clips_planner_emits_create_after_stale_clip_link_cascade(
     )
 
 
+# ---------------------------------------------------------------------------
+# SYN-SCAFFOLD-MISLINK: set-swap rebind onto a fresh default scaffold
+# ---------------------------------------------------------------------------
+
+
+def test_probe_and_link_drops_mislinked_track_link_on_scaffold_set_swap(
+    conn, song, session,
+):
+    """The reported bug: reusing a session bound to a now-discarded set and
+    re-pushing onto a fresh DEFAULT set rebinds the surviving track links by
+    bare index onto the scaffold tracks (1-MIDI..4-Audio). The link to index 1
+    SURVIVES the W18-B bare-index sweep (index 1 still exists), so the tracks
+    phase reads the DB track as "linked" and never re-creates it. Reconciliation
+    must drop a link whose index is now occupied by a canonical default-scaffold
+    track, so the DB track falls into unmatched_db_tracks and gets re-created."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=1,
+    )
+    # Fresh default set: 1-MIDI..4-Audio. Index 1 STILL EXISTS (now a scaffold
+    # track), so the pre-fix sweep kept the mislinked link.
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[
+            {"track_index": 1, "name": "1-MIDI", "kind": "midi"},
+            {"track_index": 2, "name": "2-MIDI", "kind": "midi"},
+            {"track_index": 3, "name": "3-Audio", "kind": "audio"},
+            {"track_index": 4, "name": "4-Audio", "kind": "audio"},
+        ],
+        live_returns=[],
+    )
+    assert result.unlinked_stale_tracks == [{"db_id": tid, "ableton_index": 1}]
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="track", db_id=tid,
+    ) is None
+    # The DB track is now unmatched → the tracks phase will re-create it.
+    assert [t["db_id"] for t in result.unmatched_db_tracks] == [tid]
+    # Scaffold detection still fires (it keys the "delete defaults?" prompt).
+    assert {t["name"] for t in result.default_scaffold_unmatched_tracks} == {
+        "1-MIDI", "2-MIDI", "3-Audio", "4-Audio",
+    }
+
+
+def test_probe_and_link_cascades_device_link_when_parent_track_mislinked(
+    conn, song, session,
+):
+    """SYN-SCAFFOLD-MISLINK device cascade: when the mislinked parent track link
+    is dropped, its top-level device links must cascade away too — else
+    _emit_device_calls reads them as present and SKIPS the load, leaving the
+    re-created track device-less (the clip-cascade failure moved one phase
+    later)."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    chain = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    did = M.create_device(
+        conn, chain_id=chain, position=1, kind="Operator", display_name="Operator",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=1,
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=did, ableton_index=1,
+    )
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[{"track_index": 1, "name": "1-MIDI", "kind": "midi"}],
+        live_returns=[],
+    )
+    assert result.unlinked_stale_tracks == [{"db_id": tid, "ableton_index": 1}]
+    assert result.unlinked_stale_devices == [{"db_id": did, "ableton_index": 1}]
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="device", db_id=did,
+    ) is None
+
+
+def test_probe_and_link_keeps_track_link_when_renamed_not_scaffold(
+    conn, song, session,
+):
+    """The scaffold gate must NOT over-drop. A track RENAMED in Live (its index
+    survives, its new name is non-canonical) is still the same track — its link
+    must stay so the next push updates it in place rather than creating a
+    duplicate. Only a CANONICAL default-scaffold name proves the index is a
+    fresh scaffold track; a renamed real track is not."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=1,
+    )
+    # Live track at index 1 was renamed "Drumz" (non-canonical) — NOT a scaffold.
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[{"track_index": 1, "name": "Drumz", "kind": "midi"}],
+        live_returns=[],
+    )
+    assert result.unlinked_stale_tracks == []
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="track", db_id=tid,
+    ) is not None
+
+
+def test_check_coherence_flags_mislinked_scaffold_track_link(
+    conn, song, session,
+):
+    """check_coherence shares the bare-index blind spot: defense-in-depth must
+    also refuse execute when a track link points at an index now occupied by a
+    canonical default-scaffold track (the set-swap signature)."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=1,
+    )
+    result = push.check_coherence(
+        conn, session_id=session,
+        live_tracks=[{"track_index": 1, "name": "1-MIDI", "kind": "midi"}],
+        live_returns=[],
+    )
+    assert not result.ok
+    assert any(
+        e["kind"] == "mislinked_scaffold_track_links" for e in result.errors
+    )
+
+
+def test_check_coherence_ok_when_track_link_matches_real_track(
+    conn, song, session,
+):
+    """The coherence scaffold check must not false-positive: a link to an index
+    occupied by the real (non-scaffold-named) track is coherent."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=1,
+    )
+    result = push.check_coherence(
+        conn, session_id=session,
+        live_tracks=[{"track_index": 1, "name": "Drums", "kind": "midi"}],
+        live_returns=[],
+    )
+    assert result.ok
+
+
 def test_probe_and_link_reconciles_to_new_index_on_shifted_match(conn, song, session):
     """Live track survives but at a new index (e.g., earlier track was
     deleted, this one shifted down). Name still matches → link rewritten
@@ -485,14 +621,18 @@ def test_probe_and_link_reconciles_to_new_index_on_shifted_match(conn, song, ses
     ) == 1
 
 
-def test_probe_and_link_cascade_boundary_is_clip_only_on_stale_parent(
+def test_probe_and_link_cascade_covers_clip_and_device_on_stale_parent(
     conn, song, session,
 ):
-    """The stale-parent cascade is CLIP-scoped (SYN-3C8K): a clip link drops
-    with its parent track (a dangling clip link halts the clips phase), but
-    other nested kinds (device/envelope/note) are still left intact — they're
-    re-established by the next push's own create-call path, and walking deep
-    would require extra MCP probes. This locks the corrected boundary."""
+    """SYN-SCAFFOLD-MISLINK extended the stale-parent cascade from clip-only to
+    clip AND top-level device links. (Previously this boundary was deliberately
+    clip-scoped — but a device link left dangling under a dropped parent makes
+    _emit_device_calls read it as present and SKIP the load, leaving the
+    re-created track device-less. The cascade now covers it.) A device link
+    whose device ROW is also gone — a `build.py --reset` rebuild or set-swap
+    regenerated it under a new id — drops here too, the device analog of the
+    SYN-3C8K clip-row-gone cascade. envelope/note aren't persisted as
+    ableton_links; they re-establish via the next push's own create-call path."""
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
     cid = M.create_clip(conn, track_id=tid, slot=0, length_beats=4.0)
     M.link_db_to_ableton(
@@ -501,7 +641,8 @@ def test_probe_and_link_cascade_boundary_is_clip_only_on_stale_parent(
     M.link_db_to_ableton(
         conn, session_id=session, db_kind="clip", db_id=cid, ableton_index=0,
     )
-    # A non-clip nested link parented to the same (now-stale) track.
+    # A device link whose device row doesn't exist (regenerated under a new id),
+    # parented to the same now-stale track.
     M.link_db_to_ableton(
         conn, session_id=session, db_kind="device", db_id="dev-synthetic",
         ableton_index=0,
@@ -518,10 +659,10 @@ def test_probe_and_link_cascade_boundary_is_clip_only_on_stale_parent(
     assert Q.get_ableton_link(
         conn, session_id=session, db_kind="clip", db_id=cid,
     ) is None
-    # ...but the device link is left intact (boundary: cascade is clip-only).
+    # ...and the orphaned device link now cascades too (SYN-SCAFFOLD-MISLINK).
     assert Q.get_ableton_link(
         conn, session_id=session, db_kind="device", db_id="dev-synthetic",
-    ) == 0
+    ) is None
 
 
 def test_probe_and_link_emits_link_removed_event_on_stale_unlink(

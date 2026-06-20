@@ -331,6 +331,19 @@ class ProbeAndLinkResult:
     clip cascade — without it ``--only arrangement --probe`` raised
     ``IndexError: clip_index out of range`` after the user deleted arrangement
     clips in Live.
+
+    SYN-SCAFFOLD-MISLINK added ``unlinked_stale_devices`` plus a scaffold-aware
+    track-link drop. A *reused* session pushed onto a fresh default-scaffold set
+    (the documented set-swap recovery) leaves track links pointing at indices
+    that STILL EXIST — now occupied by Live's canonical default-scaffold tracks
+    (``1-MIDI`` / ``2-MIDI`` / ``3-Audio`` / ``4-Audio``). The bare-index W18-B
+    sweep kept those links, so the tracks phase read the DB track as "linked" to
+    a scaffold track and never re-created it (only the one DB track whose old
+    index fell off the end got made), and the clips phase then failed en masse
+    against the empty scaffold slot. A canonical-default-named live track is
+    provably not any DB track, so a link pointing at one is dropped — and its
+    device links cascade via ``unlinked_stale_devices`` (the sibling of the
+    SYN-3C8K clip cascade; without it a re-created track comes up device-less).
     """
     matched_tracks: list[dict[str, Any]] = field(default_factory=list)
     matched_returns: list[dict[str, Any]] = field(default_factory=list)
@@ -342,6 +355,7 @@ class ProbeAndLinkResult:
     unlinked_stale_tracks: list[dict[str, Any]] = field(default_factory=list)
     unlinked_stale_returns: list[dict[str, Any]] = field(default_factory=list)
     unlinked_stale_clips: list[dict[str, Any]] = field(default_factory=list)
+    unlinked_stale_devices: list[dict[str, Any]] = field(default_factory=list)
     unlinked_stale_arrangement_clips: list[dict[str, Any]] = field(default_factory=list)
     rebound_arrangement_clips: list[dict[str, Any]] = field(default_factory=list)
     default_scaffold_unmatched_tracks: list[dict[str, Any]] = field(default_factory=list)
@@ -534,17 +548,47 @@ def probe_and_link(
     # table.
     live_track_indexes = {lt["track_index"] for lt in live_tracks}
     live_return_indexes = {lr["return_index"] for lr in live_returns}
+    # SYN-SCAFFOLD-MISLINK: a *reused* session pushed onto a fresh default set
+    # (the documented set-swap recovery) leaves track links pointing at indices
+    # that STILL EXIST — now occupied by Live's canonical default-scaffold tracks
+    # (1-MIDI / 2-MIDI / 3-Audio / 4-Audio). The bare-index check below keeps
+    # such a link (its index is present), so the tracks phase reads the DB track
+    # as "linked" to a scaffold track and never re-creates it; the clips phase
+    # then fails en masse against the empty scaffold slot. A canonical-default-
+    # named live track is PROVABLY not any DB track (nobody renames a real track
+    # TO `3-Audio`), so a link pointing at one is a mislink — drop it so the DB
+    # track re-creates. Gate on the canonical NAME (these tracks are already in
+    # unmatched_live_tracks, computed above) — NOT on bare "unmatched": that
+    # preserves the rename-in-Live case, where an unmatched-by-name live track
+    # IS the renamed DB track and its surviving link must stay.
+    scaffold_track_indexes = {
+        t["track_index"]
+        for t in result.unmatched_live_tracks
+        if t["name"] in CANONICAL_DEFAULT_SCAFFOLD_TRACK_NAMES
+    }
     for link in list(Q.get_ableton_links_for_session(conn, session_id)):
         db_kind = link["db_kind"]
         ableton_index = link["ableton_index"]
-        if db_kind == "track" and ableton_index not in live_track_indexes:
+        if db_kind == "track" and (
+            ableton_index not in live_track_indexes
+            or ableton_index in scaffold_track_indexes
+        ):
+            mislinked_onto_scaffold = (
+                ableton_index in live_track_indexes
+                and ableton_index in scaffold_track_indexes
+            )
             M.unlink_db_from_ableton(
                 conn,
                 session_id=session_id,
                 db_kind=db_kind,
                 db_id=link["db_id"],
                 actor=actor,
-                reason=reason or "probe-and-link: stale track link",
+                reason=reason or (
+                    "probe-and-link: mislinked track link "
+                    "(index now a default-scaffold track)"
+                    if mislinked_onto_scaffold
+                    else "probe-and-link: stale track link"
+                ),
             )
             result.unlinked_stale_tracks.append({
                 "db_id": link["db_id"],
@@ -595,6 +639,61 @@ def probe_and_link(
             reason=reason or "probe-and-link: stale clip link (parent track unlinked)",
         )
         result.unlinked_stale_clips.append({
+            "db_id": link["db_id"],
+            "ableton_index": link["ableton_index"],
+        })
+
+    # SYN-SCAFFOLD-MISLINK: cascade stale device-link drops — the sibling of the
+    # SYN-3C8K clip cascade above. Only top-level devices carry an ableton_link
+    # (see _match_devices_for_linked_parents), and such a link is valid only
+    # while its parent track/return is linked in this session. A set-swap that
+    # drops a mislinked parent track link (above) would otherwise ORPHAN the
+    # device links: _emit_device_calls reads the link as present and SKIPS the
+    # load, so the re-created track comes up device-less — the clip-cascade
+    # failure moved one phase later. Drop a device link whose parent track/return
+    # has no surviving link (just-dropped or never linked), or whose device row
+    # is gone from the DB. The MASTER is excluded: its devices are a persistent
+    # singleton with NO track-kind link (master is excluded from name-matching),
+    # reconciled instead by _match_devices_for_linked_parents' ("master", 0)
+    # pass — so a missing track link there is normal, not orphaned. Runs after
+    # the track sweep so parent-link lookups reflect the drops; fresh snapshot
+    # because the unlink mutator mutates the same table.
+    for link in [
+        ln for ln in Q.get_ableton_links_for_session(conn, session_id)
+        if ln["db_kind"] == "device"
+    ]:
+        device_row = Q.get_device(conn, link["db_id"])
+        parent_linked = False
+        is_master_device = False
+        if device_row is not None:
+            chain_row = Q.get_device_chain(conn, device_row["chain_id"])
+            if chain_row is not None and chain_row["parent_track_id"] is not None:
+                parent_track = Q.get_track(conn, chain_row["parent_track_id"])
+                if parent_track is not None and parent_track["kind"] == "master":
+                    is_master_device = True
+                else:
+                    parent_linked = Q.get_ableton_link(
+                        conn, session_id=session_id, db_kind="track",
+                        db_id=chain_row["parent_track_id"],
+                    ) is not None
+            elif chain_row is not None and chain_row["parent_return_id"] is not None:
+                parent_linked = Q.get_ableton_link(
+                    conn, session_id=session_id, db_kind="return",
+                    db_id=chain_row["parent_return_id"],
+                ) is not None
+            # parent_rack_device_id (a nested device) never carries a top-level
+            # ableton_link, so it won't appear in this device-link loop.
+        if is_master_device or parent_linked:
+            continue
+        M.unlink_db_from_ableton(
+            conn,
+            session_id=session_id,
+            db_kind="device",
+            db_id=link["db_id"],
+            actor=actor,
+            reason=reason or "probe-and-link: stale device link (parent unlinked)",
+        )
+        result.unlinked_stale_devices.append({
             "db_id": link["db_id"],
             "ableton_index": link["ableton_index"],
         })
@@ -1056,6 +1155,9 @@ def check_coherence(
 
     live_track_indexes = {lt["track_index"] for lt in live_tracks}
     live_return_indexes = {lr["return_index"] for lr in live_returns}
+    live_track_name_by_index = {
+        lt["track_index"]: lt.get("name") for lt in live_tracks
+    }
 
     links = Q.get_ableton_links_for_session(conn, session_id)
     if not links:
@@ -1068,12 +1170,26 @@ def check_coherence(
 
     stale_track_links: list[dict[str, Any]] = []
     stale_return_links: list[dict[str, Any]] = []
+    mislinked_scaffold_track_links: list[dict[str, Any]] = []
     for link in links:
         db_kind = link["db_kind"]
         ableton_index = link["ableton_index"]
         if db_kind == "track":
             if ableton_index not in live_track_indexes:
                 stale_track_links.append({
+                    "db_id": link["db_id"],
+                    "ableton_index": ableton_index,
+                })
+            elif (
+                live_track_name_by_index.get(ableton_index)
+                in CANONICAL_DEFAULT_SCAFFOLD_TRACK_NAMES
+            ):
+                # SYN-SCAFFOLD-MISLINK: the index still exists but is now a
+                # canonical default-scaffold track — a set-swap rebind. The
+                # bare-index check above misses it (index present), but a real
+                # DB track is never legitimately linked to a `3-Audio`-named
+                # scaffold track, so this is a mislink the execute must refuse.
+                mislinked_scaffold_track_links.append({
                     "db_id": link["db_id"],
                     "ableton_index": ableton_index,
                 })
@@ -1119,6 +1235,27 @@ def check_coherence(
             recovery=(
                 "Re-run `push_cli probe-and-link --probe` (or supply a fresh "
                 "--snapshot) to drop the stale link rows."
+            ),
+        )
+
+    if mislinked_scaffold_track_links:
+        indexes = sorted({l["ableton_index"] for l in mislinked_scaffold_track_links})
+        result.add_error(
+            kind="mislinked_scaffold_track_links",
+            detail=(
+                f"{len(mislinked_scaffold_track_links)} ableton_links row(s) point "
+                f"at track_index(es) {indexes} now occupied by Live default-scaffold "
+                f"tracks ({sorted(CANONICAL_DEFAULT_SCAFFOLD_TRACK_NAMES)}). This is "
+                "the set-swap signature: the session was bound to a now-discarded "
+                "set, and its links rebind by bare index onto the fresh scaffold, so "
+                "the tracks phase would skip re-creating those DB tracks (only the "
+                "track whose old index fell off the end gets made)."
+            ),
+            recovery=(
+                "Re-run `push_cli probe-and-link --probe` — SYN-SCAFFOLD-MISLINK "
+                "reconciliation drops the mislinked links so the tracks phase "
+                "re-creates the DB tracks. Or mint a fresh session with "
+                "`--auto-session` (zero inherited links)."
             ),
         )
 

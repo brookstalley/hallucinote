@@ -333,6 +333,34 @@ def test_apply_return_info_strips_prefix_no_mutation_on_round_trip(
     assert row["name"] == "Reverb"  # still suffix-only
 
 
+def test_apply_return_info_strips_render_analyzer_suffix(conn, song, session):
+    """SYN-RENDER-RELINK: `ableton_render` renames returns
+    `<name> | HallucinoteAnalyzer`. Pulling that must NOT write the dirty suffix
+    into the DB return name — the live-return normalizer strips it so the
+    round-trip diffs equal (no source-of-truth corruption)."""
+    rid = M.create_return(
+        conn, song_id=song, name="Reverb", position=1, volume=0.85, pan=0.0,
+    )
+    _link_return(conn, session=session, db_id=rid, ableton_index=1)
+    out = pull.apply_pull_results(
+        conn,
+        [{
+            "key": f"return_info:{rid}",
+            "ok": True,
+            "tool": "ableton_return",
+            "result": {
+                "return_index": 1, "name": "A-Reverb | HallucinoteAnalyzer",
+                "color": None, "volume": 0.85, "panning": 0.0,
+            },
+        }],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert out.no_ops == 1
+    row = Q.get_return(conn, rid)
+    assert row["name"] == "Reverb"  # NOT "Reverb | HallucinoteAnalyzer"
+
+
 def test_apply_return_info_writes_stripped_name_when_changed(
     conn, song, session,
 ):
@@ -482,6 +510,25 @@ def test_apply_track_sends_level_change(conn, song, session):
     # W4-C: DB stores SUFFIX-only return names; the send row joins back the
     # DB-side name "Reverb" even though Ableton's send map was keyed by
     # "A-Reverb".
+    assert any(s["return_name"] == "Reverb" and abs(s["level"] - 0.4) < 1e-6
+               for s in sends)
+
+
+def test_apply_track_sends_binds_through_render_analyzer_suffix(conn, song, session):
+    """SYN-RENDER-RELINK: after a render, Live's send map is keyed by the renamed
+    return (`A-Reverb | HallucinoteAnalyzer`). The send lookup must normalize that
+    suffix so the send binds to DB return `Reverb` instead of silently dropping."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    rid = M.create_return(conn, song_id=song, name="Reverb", position=1)
+    _link_return(conn, session=session, db_id=rid, ableton_index=1)
+    M.set_send_level(conn, from_track_id=tid, to_return_id=rid, level=0.0)
+    results = [_result(f"track_sends:{tid}", {"A-Reverb | HallucinoteAnalyzer": 0.4})]
+    out = pull.apply_pull_results(
+        conn, results, song_id=song, session_id=session
+    )
+    assert out.mutations == 1
+    sends = Q.get_sends_for_track(conn, tid)
     assert any(s["return_name"] == "Reverb" and abs(s["level"] - 0.4) < 1e-6
                for s in sends)
 

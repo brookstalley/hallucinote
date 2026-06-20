@@ -9,9 +9,10 @@ from hallucinote.capture import (
     SNAPSHOT_SCHEMA_VERSION,
     capture_plan, compile_snapshot, inject_browser_paths,
     migrate_snapshot, preserve_browser_paths, replay_capture,
-    snapshot_needs_migration, strip_return_slot_prefix,
+    snapshot_needs_migration,
 )
 from hallucinote.db import init_db, mutations as M, queries as Q
+from hallucinote.return_naming import strip_return_slot_prefix
 
 # Several fixtures in this module deliberately use Live's `<letter>-` prefixed
 # return names (e.g. `"A-Reverb"`) — they simulate captured Live state, where
@@ -163,6 +164,32 @@ def test_replay_creates_song_master_returns_tracks_sends(conn):
         and s["return_name"] == "Delay"
     )
     assert drums_to_delay["level"] == pytest.approx(0.1)
+
+
+def test_replay_strips_render_analyzer_suffix_from_returns(conn):
+    """SYN-RENDER-RELINK: a snapshot taken after a render carries returns named
+    `<letter>-<name> | HallucinoteAnalyzer`. Replay must store the canonical DB
+    name (suffix stripped) and still bind sends keyed by the dirty name."""
+    snap = {
+        "song": {"tempo": 120.0, "signature": "4/4",
+                 "master": {"volume": 0.85, "panning": 0.0}},
+        "returns": [
+            {"index": 1, "name": "A-Reverb | HallucinoteAnalyzer",
+             "volume": 0.85, "panning": 0.0},
+        ],
+        "tracks": [
+            {"index": 5, "name": "01 Drums", "type": "midi",
+             "volume": 0.7, "panning": 0.0,
+             "sends": {"A-Reverb | HallucinoteAnalyzer": 0.3}},
+        ],
+    }
+    sid = replay_capture(conn, snap, song_name="t", song_key="Dm")
+    returns = Q.get_returns_for_song(conn, sid)
+    assert [r["name"] for r in returns] == ["Reverb"]  # suffix stripped
+    sends = Q.get_sends_for_song(conn, sid)
+    assert len(sends) == 1
+    assert sends[0]["return_name"] == "Reverb"
+    assert sends[0]["level"] == pytest.approx(0.3)
 
 
 def test_replay_is_idempotent_on_duplicate_song(conn):

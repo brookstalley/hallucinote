@@ -77,7 +77,7 @@ from typing import Any
 
 from hallucinote.analyzer_identity import is_analyzer_device
 from hallucinote.db import mutations as M, queries as Q
-from hallucinote.return_naming import strip_return_slot_prefix
+from hallucinote.return_naming import normalize_live_return_name
 
 # SNP-8R4K chunk 2 — snapshot schema version stamped on every compiled snapshot
 # (`compile_snapshot`) and asserted by the at-rest cleanup (`migrate_snapshot`).
@@ -696,7 +696,9 @@ def replay_capture(
         # W4-C: strip Live's `<letter>-` slot prefix on the way into the DB.
         # The snapshot's `t["sends"]` is keyed by the SAME prefixed names
         # Live reports, so we strip on the lookup side too (below).
-        stripped_name = strip_return_slot_prefix(r["name"])
+        # SYN-RENDER-RELINK: also strip a render-appended ` | HallucinoteAnalyzer`
+        # suffix so a snapshot taken post-render doesn't store the dirty name.
+        stripped_name = normalize_live_return_name(r["name"])
         if stripped_name != r["name"]:
             stripped_pairs.append((r["name"], stripped_name))
         rid = M.create_return(
@@ -785,8 +787,9 @@ def replay_capture(
                 continue
             # W4-C: the snapshot's send map is keyed by Live's prefixed names;
             # the return_ids_by_name dict is keyed by stripped names, so we
-            # strip here too for consistent lookup.
-            target = return_ids_by_name.get(strip_return_slot_prefix(return_name))
+            # strip here too for consistent lookup. SYN-RENDER-RELINK: normalize
+            # the analyzer suffix too so a post-render snapshot's sends still bind.
+            target = return_ids_by_name.get(normalize_live_return_name(return_name))
             if target is None:
                 raise ValueError(
                     f"track {t['name']!r} sends to return {return_name!r} "

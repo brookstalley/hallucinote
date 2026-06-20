@@ -155,7 +155,16 @@ first — see "Refreshing the analysis"). For each section, you have:
   answer back. (`sloppy` is the one worth a closer look: it's the discredited
   white-noise humanization, distinct from a structured human groove.)
 - `loudness` per surface (LUFS-I/S/M, true peak), `attribution` (who owns each
-  band), `overshoots`, `reverb_verifications`. The last is **per return** (RT60
+  band), `overshoots`, `reverb_verifications`. **The `master` loudness block is the
+  PRE-fader mix BUS** — the HallucinoteAnalyzer taps the master device chain, which
+  Live processes before the master mixer volume, so `master.loudness.true_peak_dbtp`
+  is the bus, NOT the delivered output. For the "is the delivered output clipping?"
+  question read `delivered_true_peak_dbtp` (bus TP + the calibrated master-fader
+  gain, also surfaced as `master_fader_db`); it is `null` when the master fader
+  wasn't known or the master is muted. Never read the bus true-peak as delivery, and
+  never advise trimming the master fader to move `master.true_peak` — the fader is
+  post-tap, so the bus number won't budge (only `delivered_true_peak_dbtp` will).
+  The last of these is **per return** (RT60
   is a property of the return's reverb device, measured once from its captured
   ring-out — not per send). When `sufficient_tail` is false the capture had no
   usable ring-out: report it as "RT60 unverifiable — re-render with a larger

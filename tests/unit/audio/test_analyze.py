@@ -530,6 +530,76 @@ def test_analyze_mix_pan_prediction_uses_stem_gains(tmp_path: Path):
     assert "too diluted" in v.note
 
 
+def test_analyze_mix_delivered_true_peak_applies_master_fader(tmp_path: Path):
+    """MASTER-PREFADER-TP: the master metrics are captured PRE-fader (the
+    analyzer taps the master device chain). Given the master fader volume,
+    analyze_mix surfaces the post-fader DELIVERED true-peak = bus TP +
+    live_fader_db(volume), plus the fader gain itself."""
+    from hallucinote.audio.levels import live_fader_db
+
+    duration_s = 2.0
+    master = calibrated_pink_noise(-20.0, duration_s)
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "01 Drums", calibrated_pink_noise(-26.0, duration_s))],
+        master_audio=master,
+    )
+    # A trim below unity (0.85 is Live-12 unity) → a negative dB gain.
+    volume = 0.70
+    report = analyze_mix(captures_dir, master_fader_volume=volume)
+
+    expected_db = live_fader_db(volume)
+    assert expected_db < 0.0  # below unity → attenuation
+    assert report.master_fader_volume == volume
+    assert report.master_fader_db == pytest.approx(expected_db)
+    assert report.delivered_true_peak_dbtp == pytest.approx(
+        report.master.loudness.true_peak_dbtp + expected_db
+    )
+    # The delivered peak is below the bus peak when the fader attenuates.
+    assert report.delivered_true_peak_dbtp < report.master.loudness.true_peak_dbtp
+
+
+def test_analyze_mix_master_fader_none_leaves_delivered_fields_none(tmp_path: Path):
+    """No master fader supplied → the master block stays pre-fader bus only;
+    no false delivered number is fabricated."""
+    duration_s = 2.0
+    master = calibrated_pink_noise(-20.0, duration_s)
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "01 Drums", calibrated_pink_noise(-26.0, duration_s))],
+        master_audio=master,
+    )
+    report = analyze_mix(captures_dir)  # master_fader_volume defaults to None
+
+    assert report.master_fader_volume is None
+    assert report.master_fader_db is None
+    assert report.delivered_true_peak_dbtp is None
+
+
+def test_analyze_mix_muted_master_serializes_delivered_as_null(tmp_path: Path):
+    """A muted master (volume 0) → live_fader_db = -inf → delivered = -inf.
+    The dataclass carries the honest -inf (silence delivers no peak), but the
+    JSON serializes it as null so the report stays valid under
+    json.dumps(allow_nan=False) — never a crash on the delivery field."""
+    duration_s = 2.0
+    master = calibrated_pink_noise(-20.0, duration_s)
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "01 Drums", calibrated_pink_noise(-26.0, duration_s))],
+        master_audio=master,
+    )
+    report = analyze_mix(captures_dir, master_fader_volume=0.0)
+
+    assert report.master_fader_volume == 0.0
+    assert report.master_fader_db == float("-inf")
+    assert report.delivered_true_peak_dbtp == float("-inf")
+    # MUST NOT raise — both -inf dB fields go through _finite_or_none.
+    parsed = json.loads(json.dumps(report.to_json_dict(), allow_nan=False))
+    assert parsed["master_fader_volume"] == 0.0
+    assert parsed["master_fader_db"] is None
+    assert parsed["delivered_true_peak_dbtp"] is None
+
+
 def test_analyze_mix_skips_when_no_automation_declared(tmp_path: Path):
     """No declared envelopes → a teaching skip, symmetric with reverb/section."""
     flat = sine(440.0, 2.0, amplitude=0.5)

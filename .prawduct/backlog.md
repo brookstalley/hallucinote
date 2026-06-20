@@ -38,6 +38,17 @@ sections only via explicit `/backlog update` calls.
 
 ## Open
 
+- **[SYN-9F4K]** Fail loud on empty-rack load (push devices phase) — chain_count==0 buries the real cause under hundreds of chain-index-out-of-range errors
+  `effort: M · impact: S · area: sync · source: user · added: 2026-06-20 · status: open · stage: ready · refs: incoming-bugs/2026-06-20-fresh-push-loads-rack-presets-as-empty-shells-from-browser-path-only.md`
+
+  Bugfix/diagnostics. When a rack device's preset fails to populate (loads with `chain_count == 0`) on a FRESH push, the planned nested-chain param writes each fail with chain-index-out-of-range — hundreds of errors that bury the real cause. **Deferred from the 2026-06-20 incoming-bug fix** (Bug 2 report #3, branch `fix/incoming-bugs-2026-06-20`) because the correct implementation needs **RUNTIME chain-count detection in the execute loop**: compare the load result's actual `chain_count` against the DB's expected nested-chain count, and suppress that device's dependent nested writes when the rack came up empty.
+
+  **Why the cheaper variants are wrong (do NOT take them):** A **static-planner version** (skip when a rack has no DB selector) is INCORRECT — it breaks re-push onto an already-populated Live set (the rack has chains in Live even without a DB selector; **8 existing tests in `test_push_devices.py`** encode that no-selector nested racks DO emit nested writes). A **load-handler version** (raise on selector+rack+0-chains) false-positives on a legitimately-empty saved rack preset.
+
+  **Lower priority now** that SYN-RACK-PRESET-RELINK fixed the primary empty-rack cause (`browser_path` `.adg`/`.adv` now loads populated — see the referenced report's primary fixes #1/#2). This item is the remaining *diagnostics* half (fix #3): fail fast with "preset content did not load" instead of emitting the cascade.
+
+  **Needs:** surface `chain_count` from the `ableton_device(load)` result; thread expected-vs-actual into the `push_execute` device phase; skip+alert the doomed nested writes for that device. **Verifiable signal:** a fresh push of a song whose rack preset loads with `chain_count == 0` (where the DB recorded N>0 chains) halts the devices phase with a single "preset content did not load" message for that device — NOT hundreds of chain-index-out-of-range errors — and a re-push onto an already-populated set (no DB selector, chains present in Live) still emits its nested writes (the 8 `test_push_devices.py` no-selector cases unchanged). (incoming-bug Bug 2 report #3, user, 2026-06-20)
+
 - **[RND-2R9K]** Render-analyzer auto-load RENAMES return tracks (Live-side root cause) — breaks DB↔Live relink
   `effort: M · impact: M · area: render · source: user · added: 2026-06-20 · status: open · stage: ready · related: RND-7K3M · refs: incoming-bugs/2026-06-20-render-analyzer-autoload-renames-return-tracks-breaks-relink.md`
 

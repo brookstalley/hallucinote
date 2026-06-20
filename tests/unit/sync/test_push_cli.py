@@ -135,6 +135,27 @@ def test_probe_and_link_strips_return_slot_prefix(conn, song, session):
     ) == 1
 
 
+def test_probe_and_link_strips_render_analyzer_suffix_on_returns(conn, song, session):
+    """SYN-RENDER-RELINK: `ableton_render`'s analyzer auto-load renames RETURN
+    tracks (appends ` | HallucinoteAnalyzer`), which defeated probe-and-link's name
+    match and silently broke DB↔Live return relink after any render. The live-return
+    normalizer must strip that render-appended suffix (and the slot prefix) so the
+    return still matches its DB row."""
+    rid = M.create_return(conn, song_id=song, name="Reverb", position=1)
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[],
+        live_returns=[{"return_index": 1, "name": "A-Reverb | HallucinoteAnalyzer"}],
+    )
+    assert result.matched_returns == [
+        {"db_id": rid, "name": "Reverb", "ableton_index": 1},
+    ]
+    assert result.unmatched_db_returns == []
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="return", db_id=rid,
+    ) == 1
+
+
 def test_probe_and_link_warns_on_duplicate_live_track_names(conn, song, session):
     """Two Live tracks with the same name → link to the first, note
     the ambiguity so the user can rename."""

@@ -155,6 +155,18 @@ def melody_report() -> MelodyReport:
                 ),
             })
 
+    Per-SECTION path (when you don't have, or don't want, a full `Arrangement` —
+    a single section, a subset of lines, or a synthetic read): call `analyze_melody`
+    over `SectionMelody` inputs directly. `analyze_arrangement` is sugar over this
+    (it calls `arr.section_melody_inputs()` for you); reach for `analyze_melody`
+    when you're constructing sections by hand. Same `profiles=` grading applies.
+
+        from hallucinote.melody import analyze_melody, SectionMelody
+        return analyze_melody(
+            [SectionMelody(name="Chorus", length_beats=32.0,
+                           layers={"Lead": chorus_lead_notes})],
+            song_slug="{{slug}}")
+
     Until this song has a composed melodic line wired here, it returns an empty
     report (the CLI then shows "0 lines" rather than failing).
     """

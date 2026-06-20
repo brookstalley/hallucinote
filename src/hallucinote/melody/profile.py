@@ -30,6 +30,20 @@ matched and never re-flags. The declaration IS the learn-back — no separate
 markdown-annotation surface this phase (``project_intent_home_rationalization``:
 WHAT in build.py, WHY in markdown; a disposable DB annotation is a data-loss trap).
 
+**Caveat — the contour fields are measured at SECTION altitude (DOC-7K3M).**
+``contour_intent`` / ``apex_position`` are read over the whole section's line, so a
+**phrase-looping** part — one whose individual phrases arch, but which repeats that
+phrase across the section — reads ``level`` / apex-early at section scale no matter
+how well each phrase arches. Declaring ``contour_intent="arch"`` on such a line then
+emits ``aimless-line`` / ``apex-position-mismatch`` *forever*: that's an
+**altitude-mismatch (the lens can't see per-phrase shape here), not an
+intent-mismatch** — the "never re-flags" promise holds for line-altitude character,
+not for phrase shape measured at section scale. Handling until a per-phrase contour
+read exists: leave the contested contour field ``None`` (accept the neutral
+substrate read) or treat the finding as a known altitude limit. (Distinct from
+*form* questions — whether a hook recurs too much / should evolve — which are the
+recurrence lens's motivic-economy read, not this line lens at all.)
+
 **Every field is optional** (``None``-default). A profile that declares nothing is
 legal and produces zero gradings — the line reads as unconstrained substrate facts,
 exactly the 2a behavior (graceful degradation, never forcing a part to declare).

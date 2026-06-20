@@ -14,7 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, asdict
 from typing import Any
 
-from hallucinote.return_naming import strip_return_slot_prefix
+from hallucinote.return_naming import normalize_live_return_name
 from hallucinote.analyzer_identity import is_analyzer_device
 from hallucinote.analyzer_staleness import detect_stale_analyzer_surfaces
 from hallucinote.db import mutations as M, queries as Q
@@ -482,7 +482,7 @@ def probe_and_link(
     # ---- Returns: strip Live's slot-letter prefix, then match by name.
     live_return_by_name: dict[str, list[dict[str, Any]]] = {}
     for lr in live_returns:
-        stripped = strip_return_slot_prefix(lr["name"])
+        stripped = normalize_live_return_name(lr["name"])
         live_return_by_name.setdefault(stripped, []).append(lr)
     consumed_live_return_indexes: set[int] = set()
     for dr in db_returns:
@@ -521,7 +521,7 @@ def probe_and_link(
         result.unmatched_live_returns,
         kind="return",
         notes=result.notes,
-        live_normalize=strip_return_slot_prefix,
+        live_normalize=normalize_live_return_name,
     )
 
     # W18-B: strict reconciliation — sweep ableton_links for rows whose

@@ -271,6 +271,20 @@ Chain a correction by adding `related: ["songs/<slug>/attempts/<the-move-that-wo
 to the failed entry. Musical-craft only — a *tool* gripe (a push glitch, a Live bug) is an
 incoming-bug, not an attempt; revealed *intent* is an annotation, not an attempt.
 
+### 7. DECISION-COMPLETENESS — capture what the iterate loop didn't
+
+Capture is supposed to happen *in the loop* (`/compose-part` → *Record the decision*), but
+moves slip away under execute-and-react pressure — this is the backstop, not a substitute.
+Before you finish, scan what landed since the last `decisions/` entry: the **bright-line-
+substantive** moves in `build.py` / the snapshot (a feel/groove arc, a sound-design subsystem,
+a structural/form change, a committed musical landing, a transition/hand-off plan, baked mix
+levels — see `docs/song-authoring-conventions.md` → *Rationale is authorship*). For each one
+with no ADR, **propose** a one-line decision and let the user confirm — propose-and-react,
+never auto-write a verdict. File confirmed ones via the decision template (`write_markdown_ref`,
+`kind: decision`). Skip trivia (a velocity nudge, one level tweak). This records intent-as-
+*chosen* (what was kept and why) — distinct from §5's revealed intent (annotation) and §6's
+tried-and-reverted path (attempt).
+
 ## When to use this vs /mix-review
 
 `/compose-review` is **before** `/mix-review` in the lifecycle: it asks whether

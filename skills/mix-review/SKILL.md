@@ -326,6 +326,18 @@ a correction with `related:` → the entry that worked. Musical-craft only — a
 (stale server, push glitch) is an incoming-bug, not an attempt; revealed *intent* is an
 annotation.
 
+### 7. DECISION-COMPLETENESS — capture the mix decisions that didn't get recorded
+
+The backstop for decisions made between checkpoints under execute-and-react pressure. Before
+you finish, scan the **bright-line-substantive** mix moves that landed in the snapshot since
+the last `decisions/` entry: baked mix levels that define the sound, a sidechain that shapes
+the groove, a return/reverb design, a committed balance where one element is meant to win (see
+`docs/song-authoring-conventions.md` → *Rationale is authorship*). For each with no ADR,
+**propose** a one-line decision and let the user confirm — propose-and-react, never auto-write.
+File confirmed ones via the decision template (`write_markdown_ref`, `kind: decision`). Skip
+trivia. This records the *kept-and-why* (decision) — distinct from §5's revealed intent
+(annotation) and §6's tried-and-reverted path (attempt).
+
 ## Refreshing the analysis
 
 If there's no recent report (or the mix changed), render + analyze first. Both

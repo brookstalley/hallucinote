@@ -26,7 +26,7 @@ Skip retrieval only for purely mechanical edits (typos, renaming a clip, fixing 
 
 Each song in `songs/<name>/` carries composer intent in two atomic-file directories:
 
-- `songs/<name>/decisions/YYYY-MM-DD-slug.md` — deliberate choices with rationale (ADR-shaped, dated)
+- `songs/<name>/decisions/NN-slug.md` (or dated `YYYY-MM-DD-slug.md`) — deliberate choices with rationale (ADR-shaped; `date` in frontmatter)
 - `songs/<name>/annotations/slug.md` — timeless scoped intent (section feel, sound-design palette, don't-do warnings)
 
 Both layers are indexed into the song's SQLite DB via `markdown_refs` + an FTS5 virtual table. The retrieval surface is `hallucinote.tools.song_context` — it runs a filtered query and prints markdown-formatted matches.

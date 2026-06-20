@@ -15,7 +15,7 @@ songs/<song-name>/
   build.py                ← programmatic builder
   captured_session.json   ← optional initial-mix snapshot
   decisions/
-    YYYY-MM-DD-slug.md    ← one deliberate choice per file (ADR-shaped)
+    NN-slug.md            ← one deliberate choice per file (ADR-shaped; or dated YYYY-MM-DD-slug.md — the `date` frontmatter field is the queryable *when*)
   annotations/
     slug.md               ← scoped intent notes (timeless, no date required)
   attempts/
@@ -28,7 +28,7 @@ Files in `decisions/`, `annotations/`, and `attempts/` are atomic — one decisi
 
 ## When does something become a `decisions/` file vs an `annotations/` file vs stay in the overview?
 
-**Decision** (`decisions/`) — a deliberate choice with rationale that future composers should see. ADR-shaped: dated, with the *why* behind it.
+**Decision** (`decisions/`) — a deliberate choice with rationale that future composers should see. ADR-shaped: a `date` field in frontmatter (the queryable *when*) and the *why* behind it. Filenames come in two flavors in the wild — `NN-slug.md` (the `/song-new` scaffolder default — ordering + a stable id) and `YYYY-MM-DD-slug.md` (historical songs); the filename only orders the file, the `date` field is what's queried.
 
 > Example: "On 2026-05-26 we dropped the chorus pad re-articulation stabs because they retrigger the patch's slow-attack envelope, killing the bloom. The MIDI showed an 8-beat sustain but the audible note effectively ended at the first stab. Each chord now holds 7.5 beats — short breath at chord change, long bloom in between."
 
@@ -56,7 +56,7 @@ scope: track-time         # song | time | track | track-time
 track: 03 Synth Bass      # required when scope ∈ {track, track-time}; matches tracks.name
 bars: [33, 40]            # required when scope ∈ {time, track-time}; [start] for point, [start, end] for range
 tags: [dim7, bridge]      # optional; inline-list literal
-related: [decisions/2026-05-19-bridge.md]   # optional cross-links
+related: [decisions/05-bridge.md]           # optional cross-links
 outcome: failed           # attempt only, REQUIRED: worked | partial | failed
 resolution: reverted      # attempt only, REQUIRED: kept | reverted | superseded
 ---

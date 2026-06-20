@@ -34,6 +34,10 @@ from hallucinote.db import queries as Q
 # planner also emits ``device_param_override:`` and ``device_chain_props:``
 # (small count, trickier addressing) and ``device:`` loads; those pass straight
 # through, unaffected.
+#
+# NOTE: this prefix is deliberately DISTINCT from ``device_param_override:`` —
+# the two diverge at char 13 (``device_paramet`` vs ``device_param_o``), so a
+# ``startswith`` test correctly excludes overrides. Keep them prefix-distinct.
 _DEVICE_PARAM_KEY_PREFIX = "device_parameter:"
 
 

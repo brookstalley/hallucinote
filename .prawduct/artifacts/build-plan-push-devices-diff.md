@@ -6,8 +6,10 @@
 **Critic mode:** cumulative (gates the PR); chunk review per chunk.
 
 **Status (2026-06-19):** Chunk 1 DONE (committed `9e6c980`, independent review
-SOUND — no false-skip path). Chunk 2 DONE (heartbeat). Full suite green (4291).
-Operator-verification enqueued. Not yet PR'd. Cumulative review pending at PR time.
+SOUND — no false-skip path). Chunk 2 DONE (heartbeat, `88d6ecb`). Full suite
+green (4292 passed / 2 skipped). Operator-verification enqueued. Cumulative
+review: READY-WITH-NOTES (no blocking) — live-shape check gated by the
+operator-verification entry. Ready to PR.
 
 ## Problem (observable)
 

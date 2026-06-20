@@ -944,3 +944,39 @@ the previously-vendored Remote Script until re-vendored.
 3. **`start`/`status` are the render entry** and behave as in the Chunk-1 entry
    above (start returns fast; status long-polls to a terminal state with a
    well-formed manifest; no false failure).
+
+---
+
+## PSH-3K9D — devices-phase diff-reconcile skips already-current params (live bridge)
+
+**Status:** PENDING — needs an attended Live session. **Visual change:** no
+(no UI; verify via the dispatched-call count + state-file warnings). Added
+2026-06-19, AFTER the 2026-06-14 blanket acceptance, so it blocks `/pr create`
+until run. The unit suite proves the diff logic against a fake `send_fn`; only a
+real bridge proves the `ableton_device(action='get_parameters', detail='full')`
+read returns the value shapes the comparison assumes (raw `value`, `value_display`
+from `str_for_value`, enum `value_items`, `min`/`max`).
+
+Why it can't be auto-verified: the push reads live param values from a running
+Live set; there is no headless stand-in for the real device-parameter surface.
+
+Checks (on a just-captured set — e.g. `alien` or `swell`, chains loaded + captured
+via `/song-pick-instruments`, then probe-and-link so devices are linked):
+
+1. **Already-current ⇒ ~0 dispatched.** `push execute <session> --song <slug>
+   --only devices --probe`. Expect the `devices` phase to dispatch **~0**
+   `set_parameter` calls (the warnings/state report "N param(s) already current
+   in Live — skipped"), and complete in **seconds**, not minutes. This is the
+   reported stall, gone.
+2. **One genuine change ⇒ exactly one write.** Dial one param in Live (or edit
+   one `build.py`/snapshot value), re-run `--only devices`. Expect exactly that
+   one param dispatched, the rest skipped.
+3. **Fresh-set first push unchanged.** Push the song into a *fresh* set (devices
+   not pre-loaded): loads happen, then the convergence re-plan applies all
+   captured params (NOT diffed — a freshly-loaded device is at factory defaults);
+   the diff fires no reads on that path. Confirm the full devices phase still
+   completes and params land.
+4. **Value-shape coverage.** Confirm the skip works across an enum param (e.g. a
+   Filter Type), a `value_raw` param (Wavetable `LFO * S. Rate`), and a
+   normalized/display continuous param — none falsely re-written, none falsely
+   skipped (spot-check one dialed value survives a no-op push).

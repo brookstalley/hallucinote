@@ -49,6 +49,12 @@ EXIT_PARTIAL = 1
 EXIT_CONNECTION_LOST = 2
 
 
+# PSH-3K9D chunk 2: emit a mid-phase progress heartbeat every this-many dispatched
+# calls — to stderr and into .last-push-state.json — so a phase issuing many calls
+# is observable (a slow phase and a hung one stop looking identical to a poller).
+_HEARTBEAT_EVERY = 25
+
+
 # Phase status values written into .last-push-state.json. Mirrors the design
 # doc's table.
 _STATUS_OK = "ok"
@@ -660,6 +666,11 @@ def execute_push(
     error_records: list[dict[str, Any]] = []
     # SYN-6B4Q: benign warnings (deferred cues) — do not flip outcome/exit.
     warning_messages: list[str] = []
+    # PSH-3K9D chunk 2: mid-phase heartbeat — {phase, done, total}. None except
+    # DURING a dispatch that crosses _HEARTBEAT_EVERY; _flush_state surfaces it so
+    # a poller sees forward motion inside a long phase. Reset per phase + cleared
+    # at the terminal flush so a finished push never shows stale progress.
+    phase_progress: dict[str, Any] | None = None
 
     def _flush_state(current_phase: str | None = None) -> None:
         """Write ``.last-push-state.json`` reflecting progress SO FAR (PSH-5T9D).
@@ -682,6 +693,10 @@ def execute_push(
             # PSH-2R7K: the phase-targeting filter (None for a full run) so a
             # scoped run's state file is never mistaken for a full push.
             "scope": scope,
+            # PSH-3K9D chunk 2: mid-phase progress for the currently-dispatching
+            # phase (omitted at phase boundaries + terminal — only present while a
+            # long phase is mid-flight). Distinguishes slow from hung.
+            **({"phase_progress": phase_progress} if phase_progress else {}),
             "phases": [
                 {
                     "name": p.name,
@@ -743,15 +758,45 @@ def execute_push(
             reason=reason or f"push_cli execute pad-probe (session={session_id})",
         )
 
-    def _dispatch_calls(calls) -> tuple[list[dict[str, Any]], bool]:
+    def _read_device_params(node: dict[str, Any]) -> dict[str, Any] | None:
+        """PSH-3K9D: read one device's current Live parameters for the
+        devices-phase diff-reconcile. Returns the ``get_parameters`` result
+        payload, or ``None`` on ANY failure — the diff then keeps that device's
+        writes (skip-on-confident-equal). Auxiliary like the pad-probe: a read
+        hiccup must never derail an otherwise-fine push, only forgo the skip."""
+        try:
+            resp = send_fn(Request(
+                tool="ableton_device",
+                action="get_parameters",
+                params={"node": node, "detail": "full"},
+            ))
+        except Exception:  # prawduct:allow prawduct/broad-except -- best-effort pre-dispatch read; any failure just forgoes the skip (keeps the write), never halts the push
+            logger.debug("devices-diff get_parameters read failed — keeping writes", exc_info=True)
+            return None
+        if not bool(getattr(resp, "ok", False)):
+            return None
+        return getattr(resp, "result", None)
+
+    def _dispatch_calls(
+        calls, *, phase_name: str | None = None,
+    ) -> tuple[list[dict[str, Any]], bool]:
         """Dispatch ToolCalls via ``send_fn`` → (results, connection_lost).
 
         Per-call failures append to ``error_records``; a connection-class
         exception stops the batch immediately (no point continuing without
         Live). Shared by the main per-phase pass and the devices-phase
         convergence pass (SYN-9F2L).
+
+        PSH-3K9D chunk 2: when ``phase_name`` is set, emit a mid-phase heartbeat
+        every ``_HEARTBEAT_EVERY`` processed calls — to stderr (``progress_fn``)
+        AND into ``.last-push-state.json`` (``phase_progress``) — so a phase
+        issuing many calls is observable. ``len(results)`` is the processed count
+        (one result per call); the connection-loss early-return appends none, so
+        no heartbeat fires on the failed call.
         """
+        nonlocal phase_progress
         results: list[dict[str, Any]] = []
+        total = len(calls)
         for call in calls:
             action = call.args.get("action")
             params = {k: v for k, v in call.args.items() if k != "action"}
@@ -878,6 +923,17 @@ def execute_push(
                     "error": err_msg,
                     "hint": hint,
                 })
+
+            # PSH-3K9D chunk 2: mid-phase heartbeat. `len(results)` is the
+            # processed count (one result appended per call above). Fires every
+            # _HEARTBEAT_EVERY calls, never on the last (the phase's own "[x] ok"
+            # line covers completion). Throttled, so the per-call state write
+            # stays cheap even on a 1000+ call phase.
+            done = len(results)
+            if phase_name and done % _HEARTBEAT_EVERY == 0 and done < total:
+                phase_progress = {"phase": phase_name, "done": done, "total": total}
+                _flush_state(current_phase=phase_name)
+                _emit_progress(f"[{phase_name}] {done}/{total} call(s)…")
         return results, False
 
     def _apply_results(batch: list[dict[str, Any]], phase_name: str) -> None:
@@ -928,7 +984,13 @@ def execute_push(
         uniform. The three halt causes (plan-error, connection-lost, call-fail)
         differ only in their counts + labels — this is the one place that
         bookkeeping lives. The caller still issues ``break`` (loop control can't
-        cross the call boundary)."""
+        cross the call boundary).
+
+        PSH-3K9D chunk 2: intentionally does NOT call ``_flush_state`` — the
+        terminal flush after the loop clears ``phase_progress`` first (the only
+        post-loop write). Adding a flush here would persist a stale mid-phase
+        ``phase_progress`` from the just-halted phase; if you add one, reset
+        ``phase_progress = None`` before it."""
         nonlocal halt_phase, outcome, exit_code
         phase_outcomes.append(PhaseOutcome(
             name=phase_name, status=_STATUS_HALTED,
@@ -957,6 +1019,9 @@ def execute_push(
         _emit_progress(notice)
 
     for idx, phase in enumerate(phases):
+        # PSH-3K9D chunk 2: clear any prior phase's mid-flight progress before
+        # the phase-start flush, so a poller never sees stale done/total.
+        phase_progress = None
         # PSH-5T9D: flush at the START of each phase so a poller of
         # .last-push-state.json sees the current phase before it runs (the
         # per-phase progress the opacity bug asked for). The stderr heartbeat
@@ -1000,6 +1065,33 @@ def execute_push(
             _emit_progress(f"[{phase.name}] skipped (nothing to push)")
             continue
 
+        # PSH-3K9D: make the devices phase a true diff-reconcile. Read each
+        # device's current Live params once and drop the set_parameter calls
+        # already equal to Live — the just-captured set used to re-apply ~1200
+        # redundant params and stall for minutes. Skip-on-confident-equal: any
+        # doubt keeps the write, so this can only ever degrade to today's
+        # re-write-everything behavior, never to a wrong mix. Loaded-this-pass
+        # devices land their params via the convergence re-plan below (NOT
+        # diffed — a fresh device is at factory defaults, so every param
+        # genuinely differs); on a fresh-set push the main plan has only loads,
+        # so this fires no reads at all.
+        calls_to_dispatch = plan.calls
+        if phase.name == "devices":
+            from hallucinote.sync.push.device_param_diff import (
+                partition_unchanged_device_params,
+            )
+            calls_to_dispatch, skipped_params = partition_unchanged_device_params(
+                plan.calls, conn=conn, read_fn=_read_device_params,
+            )
+            if skipped_params:
+                msg = (
+                    f"devices: {len(skipped_params)} param(s) already current in "
+                    f"Live — skipped; dispatching {len(calls_to_dispatch)} call(s)"
+                )
+                _emit_progress(f"[{phase.name}] {msg}")
+                if msg not in warning_messages:
+                    warning_messages.append(msg)
+
         # PSH-5T9D: announce a phase that actually dispatches. The realtime
         # perform gets a distinctive heads-up + ETA framing so a multi-minute
         # phase isn't mistaken for a hang (the worst-case the bug named).
@@ -1009,9 +1101,11 @@ def execute_push(
                 "this can take several minutes…"
             )
         else:
-            _emit_progress(f"[{phase.name}] running ({len(plan.calls)} call(s))…")
+            _emit_progress(f"[{phase.name}] running ({len(calls_to_dispatch)} call(s))…")
 
-        results, connection_lost = _dispatch_calls(plan.calls)
+        results, connection_lost = _dispatch_calls(
+            calls_to_dispatch, phase_name=phase.name,
+        )
 
         # For connection-lost the dispatch stopped before any subsequent ok
         # rows could accumulate, so applying what we have is safe.
@@ -1042,7 +1136,9 @@ def execute_push(
                 if c.key not in dispatched_keys
             ]
             if extra_calls:
-                extra_results, connection_lost = _dispatch_calls(extra_calls)
+                extra_results, connection_lost = _dispatch_calls(
+                    extra_calls, phase_name=phase.name,
+                )
                 results.extend(extra_results)
                 if extra_results:
                     _apply_results(extra_results, phase.name)
@@ -1076,6 +1172,8 @@ def execute_push(
 
     # Persist the terminal state (PSH-5T9D: the per-phase flushes above already
     # made it pollable mid-run; this is the final, current_phase=None write).
+    # PSH-3K9D chunk 2: clear mid-phase progress so the terminal file is clean.
+    phase_progress = None
     _flush_state(current_phase=None)
 
     top_patterns: list[dict[str, Any]] = []

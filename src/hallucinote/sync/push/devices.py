@@ -9,6 +9,21 @@ from hallucinote.db import queries as Q
 
 from ._core import PushPlan, ToolCall, build_node_addr
 
+# SYN-RACK-PRESET-RELINK: a browser_path whose leaf is a preset FILE (.adg rack
+# preset / .adv device preset) names loadable preset CONTENT, so the load handler
+# honors it as a STANDALONE selector. A built-in-device browser_path (leaf = a
+# class node, no extension) does not, and the handler refuses it standalone — so
+# the planner must only emit a no-uri/no-query browser_path for a preset file.
+# Mirrors hallucinote_mcp.handlers.device._browser_path_is_preset_file (separate
+# packages, so the tiny check is duplicated rather than shared).
+_PRESET_FILE_SUFFIXES: tuple[str, ...] = (".adg", ".adv")
+
+
+def _browser_path_names_preset_file(browser_path: list[str]) -> bool:
+    return bool(browser_path) and browser_path[-1].lower().endswith(
+        _PRESET_FILE_SUFFIXES
+    )
+
 
 def plan_push_devices(
     conn: sqlite3.Connection,
@@ -251,6 +266,20 @@ def _emit_device_calls(
             load_args["preset_uri"] = device["preset_uri"]
             if browser_path_value is not None:
                 load_args["browser_path"] = browser_path_value
+        elif browser_path_value is not None and _browser_path_names_preset_file(
+            browser_path_value
+        ):
+            # SYN-RACK-PRESET-RELINK: no preset_query / preset_uri, but a
+            # captured browser_path whose leaf is a preset FILE (.adg/.adv). The
+            # load handler now honors that as a STANDALONE selector (loads the
+            # preset content, not a bare class). This is the common
+            # /song-snapshot case: capture can't probe preset_uri, so a rack
+            # preset's only identity is its browser_path — without emitting it
+            # the device loaded as an empty rack (0 chains) and every nested
+            # param write failed. Only emit it standalone for a preset FILE; a
+            # built-in-device browser_path (no extension) stays kind-only (the
+            # handler refuses a standalone non-preset-file browser_path).
+            load_args["browser_path"] = browser_path_value
         plan.add(ToolCall(
             tool="ableton_device",
             args=load_args,

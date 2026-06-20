@@ -355,6 +355,20 @@ _ACK_ONLY_KINDS: frozenset[str] = frozenset({
     # full push never finishes (no routing/envelopes/automation/arrangement/cues).
     # See incoming-bugs/2026-06-18-push-apply-unknown-device_param_override-result-kind-halts-devices-phase.md
     "device_param_override",
+    # NODE-ADDR Chunk C/F: per-chain mixer state (mute/solo/volume/pan) +
+    # choke_group/out_note, emitted by the devices planner as
+    # `device_chain_props:{chain_id}` via ableton_device(set_chain_property)
+    # (devices.py). Ack-only — the chain state ORIGINATES in the snapshot/DB and
+    # a chain has no Live-side index to record back (it is addressed by
+    # chain_index, not a linkable handle), exactly like device_param_override
+    # above. The DIRECT TWIN of the 2026-06-18 device_param_override bug, one key
+    # kind over: without this case a full push of any rack-preset song carrying
+    # non-default per-chain volume/mute/choke CRASHES in the devices-phase apply
+    # — but only once the rack actually LOADS POPULATED (the rack-preset load fix
+    # newly exposed it; before, these calls failed at dispatch on an empty-shell
+    # rack and never reached apply).
+    # See incoming-bugs/2026-06-20-push-apply-unknown-device_chain_props-result-kind-crashes-devices-phase.md
+    "device_chain_props",
     # SYN-4P2D (scenes): ableton_scene(action='ensure_count') provisions
     # session clip slots before the clips phase. Scenes are a Live-set
     # structural property, not a Hallucinote entity — there's no per-scene DB

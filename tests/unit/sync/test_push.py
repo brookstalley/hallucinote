@@ -1110,3 +1110,122 @@ def test_aliases_today_at_or_below_ceiling():
         "the ceiling deliberately. Current entries: "
         f"{sorted(ALIASES_TODAY.keys())}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Emitted-key-kind contract — every key the push planners emit must resolve
+# in apply_push_results (bug-class guard for the device_param_override /
+# device_chain_props twins)
+# ---------------------------------------------------------------------------
+
+
+# The three planner keys whose KIND segment (the text before the first ':')
+# is itself f-string-interpolated, mapped to the concrete kinds each can
+# produce. A static source scan can't expand these, so they're declared here
+# explicitly — and the guard asserts BOTH directions (every template found in
+# source is in this table; every template in this table is still emitted), so
+# the table can't silently rot.
+_INTERPOLATED_KEY_EXPANSIONS: dict[str, set[str]] = {
+    # mix.py: per-field track mixer state via ableton_track(set_property).
+    "track_{db_field}": {
+        "track_volume", "track_pan", "track_mute",
+        "track_solo", "track_arm", "track_color",
+    },
+    # mix.py: per-field return mixer state via ableton_return(set_property)
+    # (returns have no arm).
+    "return_{db_field}": {
+        "return_volume", "return_pan", "return_mute",
+        "return_solo", "return_color",
+    },
+    # routing.py: per-direction track routing via ableton_track(set_*_routing).
+    "track_{direction}_routing": {
+        "track_output_routing", "track_input_routing",
+    },
+}
+
+
+def _emitted_key_kinds() -> tuple[set[str], set[str]]:
+    """Scan every push-planner module for the kind segment of each emitted
+    ``ToolCall(key=...)`` literal. Returns ``(static_kinds, interpolated_kinds)``.
+
+    Robust because the codebase emits every key as an INLINE string literal on
+    a ``key=f"..."`` / ``key="..."`` line — no key is built in a variable first
+    (asserted by a grep at authoring time), so a source scan sees them all. The
+    error-message f-strings in ``plan.py`` (``key={key!r}``) don't match the
+    pattern (no quote after ``key=``).
+    """
+    import pathlib
+    import re
+
+    from hallucinote.sync.push import plan as _plan
+
+    push_dir = pathlib.Path(_plan.__file__).parent
+    pat = re.compile(r'key=f?"([^"]*)"')
+    static_kinds: set[str] = set()
+    interpolated_kinds: set[str] = set()
+    for module in sorted(push_dir.glob("*.py")):
+        for literal in pat.findall(module.read_text()):
+            # The kind is the text before the first ':'. For interpolated keys
+            # (track_{db_field}:…) the leading '{' lands inside this segment.
+            kind = literal.split(":", 1)[0]
+            (interpolated_kinds if "{" in kind else static_kinds).add(kind)
+    return static_kinds, interpolated_kinds
+
+
+def test_every_emitted_push_key_kind_is_declared():
+    """Every key kind the push planners emit MUST resolve in
+    ``apply_push_results`` — i.e. appear in ``_LINK_KINDS``, ``_ACK_ONLY_KINDS``,
+    or the dedicated ``perform_batch`` branch. Otherwise a full push CRASHES in
+    the result-apply step the moment that key is produced, halting every phase
+    after it (the song never finishes materializing).
+
+    This is the bug-class guard for two siblings that each shipped this exact
+    way: ``device_param_override`` (2026-06-18) and its direct twin
+    ``device_chain_props`` (2026-06-20) — a new planner-emitted key kind that
+    nobody declared on the apply side. The plan.py docstring already states the
+    contract ("every key kind the planner emits MUST appear in …"); this test
+    enforces it mechanically so the next sibling can't regress silently.
+    """
+    from hallucinote.sync.push import plan
+
+    declared = (
+        set(plan._LINK_KINDS)
+        | set(plan._ACK_ONLY_KINDS)
+        | {"perform_batch"}  # dedicated branch in apply_push_results
+    )
+    static_kinds, interpolated_kinds = _emitted_key_kinds()
+
+    # Sanity: the scan actually found keys (a no-op scan would pass vacuously).
+    # Pin the two bug-class siblings so this guard provably covers them.
+    assert {"device_param_override", "device_chain_props"} <= static_kinds, (
+        "the emitted-key scan did not find the device_param_override / "
+        "device_chain_props keys — the scan is broken, not the contract"
+    )
+
+    # Every interpolated kind template found in source must be expanded here.
+    unmapped = interpolated_kinds - set(_INTERPOLATED_KEY_EXPANSIONS)
+    assert not unmapped, (
+        f"new interpolated push key kind(s) {sorted(unmapped)} — add their "
+        "concrete expansions to _INTERPOLATED_KEY_EXPANSIONS in this test so "
+        "the guard can check each against the apply-side declarations."
+    )
+    # …and no stale entries (a removed interpolated key must drop its row).
+    stale = set(_INTERPOLATED_KEY_EXPANSIONS) - interpolated_kinds
+    assert not stale, (
+        f"_INTERPOLATED_KEY_EXPANSIONS has entries no planner emits anymore: "
+        f"{sorted(stale)} — remove them."
+    )
+
+    concrete = set(static_kinds)
+    for template in interpolated_kinds:
+        concrete |= _INTERPOLATED_KEY_EXPANSIONS[template]
+
+    undeclared = concrete - declared
+    assert not undeclared, (
+        f"push planner(s) emit key kind(s) {sorted(undeclared)} that "
+        "apply_push_results does NOT resolve — a full push will CRASH in the "
+        "result-apply step the moment one is produced (see the "
+        "device_param_override / device_chain_props bugs). Declare each in "
+        "_LINK_KINDS or _ACK_ONLY_KINDS (or add a dedicated branch) in "
+        "sync/push/plan.py."
+    )

@@ -343,6 +343,44 @@ def test_probe_and_link_cascades_stale_clip_link_when_parent_track_dropped(
     ) is None
 
 
+def test_probe_and_link_unlinks_stale_clip_link_when_clip_row_deleted(
+    conn, song, session,
+):
+    """FK-GUARD regression for the reported probe-and-link crash: a `build.py
+    --reset` rebuild (or a Live-set swap that reuses the session) regenerates
+    clips under new ids, leaving a clip link whose clip row is GONE from the DB.
+    The SYN-3C8K cascade drops that link via unlink_db_from_ableton — which used
+    to stamp the audit event's clip_id with the now-dangling id, violating
+    events.clip_id's FK on INSERT (sqlite3.IntegrityError: FOREIGN KEY constraint
+    failed) and crashing the whole reconcile. It must now reconcile cleanly.
+
+    The track stays present (matched by name), so ONLY the clip-row-gone
+    condition drives the cascade — isolating the exact FK trigger."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    cid = M.create_clip(conn, track_id=tid, slot=0, length_beats=4.0, name="Drums A")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=1,
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="clip", db_id=cid, ableton_index=0,
+    )
+    # The clip row vanishes (rebuild regenerated it under a new id); the clip LINK
+    # lingers — ableton_links.db_id has no FK to clips.
+    conn.execute("DELETE FROM clips WHERE id = ?", (cid,))
+    assert Q.get_clip(conn, cid) is None
+
+    # Pre-fix: this call raised sqlite3.IntegrityError mid-reconcile.
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[{"track_index": 1, "name": "Drums", "kind": "midi"}],
+        live_returns=[],
+    )
+    assert result.unlinked_stale_clips == [{"db_id": cid, "ableton_index": 0}]
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="clip", db_id=cid,
+    ) is None
+
+
 def test_probe_and_link_keeps_clip_link_when_parent_track_survives(
     conn, song, session,
 ):

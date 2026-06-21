@@ -803,6 +803,53 @@ def test_apply_push_results_accepts_device_param_override_as_ack(
     assert kinds == ["device", "track"]
 
 
+def test_apply_push_results_accepts_device_chain_props_as_ack(
+    conn, song, session, linked_track,
+):
+    """Per-chain mixer/choke state (NODE-ADDR Chunk C/F: mute/solo/volume/pan +
+    choke_group/out_note) is emitted by the planner as a
+    `device_chain_props:{chain_id}` result key via
+    ableton_device(set_chain_property). apply_push_results must ACK it (no DB
+    write, no raise): the chain state ORIGINATES in the snapshot/DB and a chain
+    has no Live-side index to record back (addressed by chain_index), exactly
+    like `device_param_override`.
+
+    Regression (DIRECT TWIN of the 2026-06-18 device_param_override bug, one key
+    kind over): the kind had no case, so apply_push_results raised
+    `ValueError: unknown push result key kind 'device_chain_props'`, which
+    CRASHED the devices-phase apply — a full from-scratch push of any rack-preset
+    song carrying non-default per-chain volume/mute/choke never finished (no
+    routing/envelopes/automation/arrangement/cues). Stayed latent until the
+    rack-preset load fix made the rack load populated, so the set_chain_property
+    calls finally SUCCEEDED and their results reached this apply step.
+    See incoming-bugs/2026-06-20-push-apply-unknown-device_chain_props-result-kind-crashes-devices-phase.md
+    """
+    cid = M.create_device_chain(conn, parent_track_id=linked_track)
+    did = M.create_device(
+        conn, chain_id=cid, position=1, kind="Drum Rack",
+        display_name="AG Techno Kit",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=did, ableton_index=2,
+    )
+    # The planner keys this by the chain id; the result carries the applied
+    # chain state (content irrelevant to apply — it's ack-only).
+    warnings = push.apply_push_results(
+        conn,
+        [
+            {"key": f"device_chain_props:{cid}", "ok": True,
+             "tool": "ableton_device",
+             "result": {"volume": 0.72, "mute": False}},
+        ],
+        session_id=session,
+    )
+    assert warnings == []
+    # Existing device + track links survive; nothing else added (ack-only).
+    links = Q.get_ableton_links_for_session(conn, session)
+    kinds = sorted(l["db_kind"] for l in links)
+    assert kinds == ["device", "track"]
+
+
 # ---------- end-to-end: falling-walking-shaped fixture ----------
 
 

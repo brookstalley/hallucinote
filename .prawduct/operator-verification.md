@@ -1019,11 +1019,28 @@ or `swell`, after `--only clips` + `--only arrangement` has materialized the lan
 
 ## Bug 1 (incoming 2026-06-20) — arrangement-clip read gains note_count + muted
 
-**Status:** PENDING — needs an attended Live session + re-vendor. **Visual change:**
-no (read payload only). Added 2026-06-20. Touches `handlers/clip.py` +
-`actions/arrangement.py` — both in `_FINGERPRINT_PATHS`, so the server fingerprint
-flips: re-vendor (relaunch dev-mode, then `/ableton-mcp-install`) and reopen Live
-before checking.
+**Status:** ✅ **VERIFIED LIVE 3/3 2026-06-20** (Live attended; develop @ `41665f1`,
+server fingerprint `0fd1cec33ebc`, Remote Script re-vendored + Live reopened by the
+operator). Checked on a freshly-pushed `alien` (5 MIDI tracks; arrangement
+materialized via `push execute --only arrangement`). **Visual change:** no (read
+payload only).
+
+1. ✅ **note_count is real.** `ableton_clip(action='list', track_index=5,
+   location='arrangement')` on the Drums MIDI track returned every clip with a real
+   per-clip `note_count` (intro 62, verse1 503, prechorus1 155, chorus1 82, verse2
+   333, prechorus2 162, chorus2 236, bridge 111, chorus3 770, outro 33) + `muted:
+   false` per clip — counts vary sensibly per section, not a stub. The "track shows
+   no events" question is now answerable without a probe.
+2. ✅ **Audio clip → None.** Drove a real WAV (`master.wav` from the captures dir)
+   onto an audio track via `ableton_probe(call, create_audio_clip)`, then
+   `ableton_clip(list, ..., location='arrangement')` returned the clip with
+   `note_count: null` (guarded — no crash; get_notes_extended is MIDI-only) and
+   `muted: true` (real state). Test clip deleted after.
+3. ✅ **Signpost is visible.** `ableton_arrangement(action='help')` `info` action
+   tip reads: "For the per-track clip inventory (...muted, note_count) ... read
+   ableton_clip(action='list', ..., location='arrangement'), not this tool."
+
+_Original entry:_ Touches `handlers/clip.py` + `actions/arrangement.py`.
 
 Why it can't be auto-verified: the unit suite proves the payload shape against a
 fake clip; only a real bridge proves Live's `clip.get_notes_extended` /
@@ -1044,10 +1061,50 @@ Checks (on any pushed song with an arrangement, e.g. `alien`/`swell`):
 
 ## Bug 2 (incoming 2026-06-20) — rack presets load from browser_path; pan via normalized
 
-**Status:** PENDING — needs an attended Live session + re-vendor. **Visual change:**
-yes (rack tracks fill with their kit/preset instead of an empty shell). Added
-2026-06-20. Touches `handlers/device.py` (in `_FINGERPRINT_PATHS`) → fingerprint
-flips: re-vendor (relaunch dev-mode, then `/ableton-mcp-install`) and reopen Live.
+**Status:** ✅ **VERIFIED LIVE 4/4 2026-06-20** (Live attended; develop @ `41665f1`,
+server fingerprint `0fd1cec33ebc`, Remote Script re-vendored + Live reopened by the
+operator). Fresh full push of `alien` onto a fresh default set
+(`probe-and-link --auto-session` → `execute --probe`): the devices phase dispatched
+**all 1219 calls cleanly** — vs the pre-fix run which halted here with **771
+failures** (the `.last-push-errors.json` from that run is preserved and shows BOTH
+bug signatures: `chain_index N out of range [1, 0]` from empty-shell racks +
+`AMP1 Pan ... DisplayValueError`). **Visual change:** yes (rack tracks fill).
+
+1. ✅ **Rack `.adg` loads populated.** Drum Rack `AG Techno Kit` → `chain_count: 16`,
+   every pad chain has its real Simpler + per-pad FX (Erosion Legacy, Reverb,
+   nested Audio Effect Racks → EQ Eight at depth-2 `device_path [[6,3],[1,1]]`); per-
+   chain volumes landed at captured non-defaults (0.807/0.657/0.745…). Instrument
+   Rack `Inclement Drone Pad` → `chain_count: 2` (Grainy Electric Shield:
+   MultiSampler+AutoFilter+Reverb; Drift: Drift+EQ8+Reverb+Echo). No empty shell,
+   no `chain_index out of range` cascade.
+2. ✅ **`.adv` device preset.** `Metalic Lead.adv` loaded as a real Analog carrying
+   the preset's macro/param state (non-default PB Range "6.00", Volume −4.6 dB, Note
+   PB Range 48st, Glide On, OSC2 Octave +1 / Semi +4, vibrato dialed) — not a
+   factory Analog.
+3. ✅ **Pan via normalized (§3).** AMP1 Pan landed at its captured `0.5079365` ("1R",
+   non-default; default is 0.5/"C") — the exact value the pre-fix run hard-failed on.
+   Controlled live re-test on the device: `value_display='50L'` → server raises
+   `DisplayValueError: ... non-numeric display (' 50L'..' 50R'); set it via the
+   normalized value`; `value=0.0` (normalized) → ok, lands `" 50L"`. The planner
+   automates exactly this (`push_execute.py:_attempt_set_parameter_fallback` →
+   `fallback_kind="normalized"`, annotated `set_parameter_fallback`). No hard failure.
+4. ✅ **Built-in still kind-only.** Operator (track 6) + Wavetable (track 7), captured
+   with non-preset browser_path, loaded by kind with their own non-default params
+   (Operator: Algorithm/Osc-A Wave, Volume −18 dB; Wavetable: Osc 1 Pos, Unison 30%,
+   Volume −9 dB). No regression.
+
+> ⚠️ **Full push completion blocked by a SEPARATE, newly-exposed bug** (filed
+> `incoming-bugs/2026-06-20-push-apply-unknown-device_chain_props-result-kind-crashes-devices-phase.md`):
+> the devices-phase result-apply raises `ValueError: unknown push result key kind
+> 'device_chain_props'` (`sync/push/plan.py`) once the rack chains actually load and
+> their `set_chain_property` calls succeed — the twin of the 2026-06-18
+> `device_param_override` apply bug, one key over (missing from `_ACK_ONLY_KINDS`).
+> Device LOAD (this Bug 2) is correct; the chain-props apply gap it exposes blocks
+> phases after `devices`. One-line fix; arrangement was materialized here via
+> `--only arrangement` to finish the Bug 1 checks. Re-verify the single-pass full
+> push once that lands.
+
+_Original entry:_ Touches `handlers/device.py`.
 
 Why it can't be auto-verified: the unit suite proves the resolution + emission
 against a fake browser; only a real bridge proves Live's browser resolves a

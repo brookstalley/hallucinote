@@ -81,10 +81,22 @@
 
 ## Status
 
-- [ ] Single chunk — empty-rack guard + executor wiring + tests.
+- [x] Single chunk — empty-rack guard + executor wiring + tests.
+  - Guard derives candidate racks from the calls (group by `(parent, device_index)`),
+    runs at BOTH devices-phase dispatch sites (main + convergence). Engine-only.
+  - 4375 passed, 2 skipped (full suite). New: `test_empty_rack_guard.py` (22) +
+    3 executor e2e (fresh empty / populated / re-push empty), cascade modeled.
+  - Independent cumulative Critic (worktree-blind → Agent on `caab81c^..HEAD`):
+    PASS-WITH-WARNINGS → W1 (re-push reintroduces cascade) + W2 (test didn't model
+    cascade) both fixed → verify-resolutions = RESOLVED, no new blocking findings.
+
+**Context:** Code-complete on `fix/syn-9f4k-empty-rack-fail-loud` (2 commits:
+caab81c first pass, 0ff75bb Critic-resolution rework). Pending USER go: merge to
+develop, then backlog SYN-9F4K → shipped (closed-by the branch/PR) + archive the
+already-archived incoming-bug stays as-is, + reflection.
 
 ## Done when
 
-- New + existing tests green (full suite).
-- Independent cumulative Critic on `develop..HEAD` — blocking findings resolved.
-- Backlog SYN-9F4K → shipped; archive note. Reflection captured.
+- [x] New + existing tests green (full suite).
+- [x] Independent cumulative Critic — blocking findings resolved (verify-resolutions RESOLVED).
+- [ ] Merge to develop (user go) → backlog SYN-9F4K → shipped. Reflection captured.

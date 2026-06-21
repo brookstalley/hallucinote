@@ -2130,3 +2130,106 @@ def test_execute_no_tuning_notice_for_12tet_song(
               if c["tool"] == "ableton_probe"
               and c["params"].get("path") == "song.tuning_system"]
     assert probed == []  # 12-TET path costs no Live round-trip
+
+
+# ---------------------------------------------------------------------------
+# SYN-9F4K — fail loud on an empty-rack load (devices-phase convergence)
+# ---------------------------------------------------------------------------
+
+
+def _rack_song(conn, song, session):
+    """A pre-linked track holding an UNLINKED rack whose nested chain carries a
+    dialed param. On a fresh `only='devices'` push the rack loads, then the
+    convergence pass emits the nested write — the exact shape that cascades when
+    the rack comes up empty (the 2026-06-20 repro: AG Techno Kit, 0 chains)."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=5,
+    )
+    chain = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    rack = M.create_device(
+        conn, chain_id=chain, position=1,
+        kind="Drum Rack", display_name="AG Techno Kit",
+    )
+    nested_chain = M.create_device_chain(conn, parent_rack_device_id=rack, position=1)
+    nested = M.create_device(
+        conn, chain_id=nested_chain, position=1, kind="Simpler", display_name="Kick",
+    )
+    M.set_device_parameter(
+        conn, device_id=nested, name="Volume",
+        value_display="-6 dB", value_normalized=0.5,
+    )
+    return {"rack_id": rack, "nested_id": nested}
+
+
+def _make_chain_count_send_fn(*, chain_count):
+    """``_make_send_fn`` + a ``get_device_chains`` answer with a fixed
+    ``chain_count`` (and otherwise acks, loads → device_index)."""
+    base = _make_send_fn()
+
+    def send(req, *, read_timeout=None):
+        if req.tool == "ableton_device" and req.action == "get_device_chains":
+            base.call_log.append({
+                "tool": req.tool, "action": req.action,
+                "params_keys": sorted(req.params.keys()),
+                "params": dict(req.params), "read_timeout": read_timeout,
+            })
+            return FakeResponse(ok=True, result={
+                "chain_count": chain_count, "chains": [],
+            })
+        return base(req, read_timeout=read_timeout)
+
+    send.call_log = base.call_log  # type: ignore[attr-defined]
+    return send
+
+
+def test_execute_empty_rack_halts_with_one_error_no_cascade(
+    conn, song, session, state_dir,
+):
+    """A rack that loads with 0 chains while the DB authored nested content halts
+    the devices phase on ONE 'preset content did not load' error — the doomed
+    nested write is never dispatched (no chain-index-out-of-range cascade)."""
+    _rack_song(conn, song, session)
+    send_fn = _make_chain_count_send_fn(chain_count=0)
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session, state_dir=state_dir,
+        send_fn=send_fn, only="devices",
+    )
+    assert result.outcome == "partial"
+    assert result.phase_halted == "devices"
+    # The probe fired against the freshly-loaded rack's live address.
+    probes = [c for c in send_fn.call_log if c["action"] == "get_device_chains"]
+    assert len(probes) == 1
+    assert probes[0]["params"]["track_index"] == 5
+    assert probes[0]["params"]["device_index"] == 1
+    # The doomed nested write was NEVER dispatched (suppressed, not cascaded).
+    set_params = [c for c in send_fn.call_log if c["action"] == "set_parameter"]
+    assert set_params == []
+    # Exactly one error, naming the real cause — not hundreds of symptom errors.
+    errors = json.loads((state_dir / ".last-push-errors.json").read_text())["errors"]
+    assert len(errors) == 1
+    assert "preset content did not load" in errors[0]["error"]
+    assert "AG Techno Kit" in errors[0]["error"]
+    assert errors[0]["hint"]
+    # The summary surfaces the single halt cause.
+    assert "preset content did not load" in push_execute.format_summary(result)
+
+
+def test_execute_populated_rack_dispatches_nested_writes(
+    conn, song, session, state_dir,
+):
+    """The mirror case: when the same rack loads WITH chains, the guard keeps the
+    nested writes — they dispatch and the phase completes OK."""
+    _rack_song(conn, song, session)
+    send_fn = _make_chain_count_send_fn(chain_count=16)
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session, state_dir=state_dir,
+        send_fn=send_fn, only="devices",
+    )
+    assert result.outcome == "ok"
+    # The nested write was dispatched (not suppressed).
+    set_params = [c for c in send_fn.call_log if c["action"] == "set_parameter"]
+    assert len(set_params) == 1
+    assert set_params[0]["params"]["parameter_name"] == "Volume"
+    # No errors file on a clean push.
+    assert not (state_dir / ".last-push-errors.json").exists()

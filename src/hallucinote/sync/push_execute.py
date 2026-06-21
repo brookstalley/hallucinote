@@ -783,6 +783,69 @@ def execute_push(
             return None
         return getattr(resp, "result", None)
 
+    def _probe_rack_chain_count(rack: dict[str, Any]) -> int | None:
+        """SYN-9F4K: read a freshly-loaded rack's live chain count via the
+        existing ``get_device_chains`` handler (engine-only — reuses the
+        read-only handler, no MCP wire change). Returns the ``chain_count`` int,
+        or ``None`` on ANY failure — the guard then keeps the rack's writes
+        (keep-on-doubt: a probe hiccup must never fabricate an empty-rack halt)."""
+        parent = rack["parent"]
+        kind = parent.get("kind") if isinstance(parent, dict) else None
+        params: dict[str, Any] = {"device_index": rack["live_index"]}
+        if kind == "track":
+            params["track_index"] = parent.get("index")
+        elif kind == "return":
+            params["return_index"] = parent.get("index")
+        elif kind == "master":
+            params["master"] = True
+        else:
+            return None
+        try:
+            resp = send_fn(Request(
+                tool="ableton_device", action="get_device_chains", params=params,
+            ))
+        except Exception:  # prawduct:allow prawduct/broad-except -- best-effort runtime probe; any failure forgoes the empty-rack guard (keeps writes), never halts
+            logger.debug("empty-rack chain probe failed — keeping writes", exc_info=True)
+            return None
+        if not bool(getattr(resp, "ok", False)):
+            return None
+        result = getattr(resp, "result", None) or {}
+        chain_count = result.get("chain_count")
+        return chain_count if isinstance(chain_count, int) else None
+
+    def _loaded_racks_from(main_calls) -> list[dict[str, Any]]:
+        """SYN-9F4K: the top-level rack devices LOADED by this devices-phase pass,
+        resolved to their now-live address — one entry per load for the empty-rack
+        guard: ``{device_id, live_index, parent, display_name}``. A load whose
+        link didn't land (or that carries no parent address) is skipped — it can't
+        be probed. Cheap per-load DB reads; the guard only *probes* a rack that
+        actually has pending nested writes, so non-rack loads cost no Live round-trip."""
+        racks: list[dict[str, Any]] = []
+        for call in main_calls:
+            if call.tool != "ableton_device" or call.args.get("action") != "load":
+                continue
+            key = call.key or ""
+            if not key.startswith("device:"):
+                continue
+            device_id = key.split(":", 1)[1]
+            live_index = Q.get_ableton_link(
+                conn, session_id=session_id, db_kind="device", db_id=device_id,
+            )
+            if live_index is None:
+                continue
+            parent = (call.args.get("node") or {}).get("parent")
+            if not parent:
+                continue
+            row = Q.get_device(conn, device_id)
+            display_name = (row["display_name"] if row is not None else None) or device_id
+            racks.append({
+                "device_id": device_id,
+                "live_index": live_index,
+                "parent": parent,
+                "display_name": display_name,
+            })
+        return racks
+
     def _dispatch_calls(
         calls, *, phase_name: str | None = None,
     ) -> tuple[list[dict[str, Any]], bool]:
@@ -1142,12 +1205,48 @@ def execute_push(
                 if c.key not in dispatched_keys
             ]
             if extra_calls:
-                extra_results, connection_lost = _dispatch_calls(
-                    extra_calls, phase_name=phase.name,
+                # SYN-9F4K: a rack that loaded this pass with 0 chains cannot
+                # accept its dependent nested writes — each would fail
+                # chain-index-out-of-range, burying the real cause (the empty
+                # load) under hundreds of errors. Probe each freshly-loaded rack
+                # that has pending nested writes; drop the doomed writes and
+                # record ONE "preset content did not load" failure per empty rack
+                # so the phase halts on a single clear error instead of the
+                # cascade. Engine-only (reuses get_device_chains, no MCP change).
+                from hallucinote.sync.push.empty_rack_guard import (
+                    partition_doomed_nested_writes,
                 )
-                results.extend(extra_results)
-                if extra_results:
-                    _apply_results(extra_results, phase.name)
+                extra_calls, empty_rack_failures = partition_doomed_nested_writes(
+                    extra_calls,
+                    loaded_racks=_loaded_racks_from(plan.calls),
+                    probe_fn=_probe_rack_chain_count,
+                )
+                for fail in empty_rack_failures:
+                    # One synthetic failed result (so the boundary halt fires) +
+                    # one error record (so the errors file / summary names the
+                    # cause). Not routed through _apply_results — these are
+                    # diagnosis, not wire results.
+                    failure_entry = {
+                        "key": f"device:{fail['device_id']}",
+                        "tool": "ableton_device",
+                        "error": fail["message"],
+                    }
+                    results.append({**failure_entry, "ok": False, "result": None})
+                    error_records.append({
+                        **failure_entry,
+                        "action": "load",
+                        "args_summary": {
+                            "empty_rack_suppressed_writes": fail["suppressed_count"],
+                        },
+                        "hint": fail["hint"],
+                    })
+                if extra_calls:
+                    extra_results, connection_lost = _dispatch_calls(
+                        extra_calls, phase_name=phase.name,
+                    )
+                    results.extend(extra_results)
+                    if extra_results:
+                        _apply_results(extra_results, phase.name)
 
         calls_ok = sum(1 for r in results if r.get("ok"))
         calls_failed = sum(1 for r in results if not r.get("ok"))

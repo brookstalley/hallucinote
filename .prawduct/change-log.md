@@ -6,7 +6,7 @@
 
 ## 2026-06-21 — Render no longer leaves RETURN-track names dirty (RND-2R9K)
 
-<!-- prawduct: type=fix | chunks=RND-2R9K | scope=mcp-render,tests -->
+<!-- prawduct: type=fix | chunks=RND-2R9K | scope=mcp-render,tests | status=merged -->
 
 **Residual name hygiene, fixed.** `ableton_render`'s analyzer auto-load made Live
 natively append ` | HallucinoteAnalyzer` to every RETURN track's name (a

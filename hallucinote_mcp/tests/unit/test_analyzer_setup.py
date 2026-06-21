@@ -919,3 +919,25 @@ def test_sweep_return_name_restore_is_idempotent():
 
     ensure_analyzers_loaded(ctx)
     assert ctx.song.return_tracks[0].name == "Reverb"
+
+
+def test_return_name_restoration_matches_engine_normalizer():
+    """Drift lock for the forced twin: when a render-renamed return IS restored,
+    the bare name set equals the engine's canonical `normalize_live_return_name`.
+    The `hallucinote_mcp` package can't import the engine at runtime (it runs
+    Live-side), so `_return_name_restoration` re-implements the strip — but the
+    test package CAN import the engine, so this pins the two against drift (the
+    composition order differs, prefix-then-suffix vs suffix-then-prefix, but the
+    result must match)."""
+    from hallucinote.return_naming import normalize_live_return_name
+
+    for dirty in [
+        "A-Reverb | HallucinoteAnalyzer",
+        "B-Delay | HallucinoteAnalyzer",
+        "Z-My Bus | HallucinoteAnalyzer",
+        "A-Reverb|HallucinoteAnalyzer",
+        "A-Reverb  |  HallucinoteAnalyzer ",
+    ]:
+        assert _return_name_restoration(dirty) == normalize_live_return_name(
+            dirty
+        ), dirty

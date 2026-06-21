@@ -20,9 +20,10 @@ after the load — `_return_name_restoration` strips Live's slot prefix + the an
 suffix (the value a fresh push would set, per the W3-H/W4-C contract), runs read-only
 when the name is clean (no churn; self-heals a pre-fix-dirtied set), and is scoped to
 returns. The strip logic is a forced twin of `hallucinote.return_naming` (this package
-is engine-independent / runs Live-side, so it can't import the engine). 7 new unit
-tests; full suite 4348 passed. Live round-trip (real rename; single- vs double-prefix
-on restore) queued in operator-verification.md.
+is engine-independent / runs Live-side, so it can't import the engine — a parity
+test locks the twin against drift). 8 new unit tests; full suite 4349 passed. Live
+round-trip (real rename; single- vs double-prefix on restore) queued in
+operator-verification.md.
 
 ## 2026-06-17 — Durable nested-param overrides on a preset_query device (SNP-2H9F)
 

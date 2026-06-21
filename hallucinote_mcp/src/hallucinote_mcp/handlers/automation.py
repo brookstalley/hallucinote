@@ -1570,8 +1570,9 @@ _PERFORM_WALL_CLOCK_FLOOR_S = 10.0
 # if ``current_song_time`` does not advance for this many seconds it aborts with
 # a structured error naming the stuck beat. Generous enough to clear a count-in
 # (1-2 bars even at a slow record tempo) and the first-tick transport spin-up, so
-# only a genuinely stalled transport trips it. Kept above the default settle
-# timeout (2 s) so it never pre-empts the arm-settle path.
+# only a genuinely stalled transport trips it. (The arm-settle wait completes
+# BEFORE the ramp loop where this watchdog runs, so the settle is protected by
+# loop ordering, not by this magnitude.)
 _PERFORM_STALL_TIMEOUT_S = 15.0
 
 # ENV-2T9K — perform fidelity via tempo-reduction-during-record. The realtime

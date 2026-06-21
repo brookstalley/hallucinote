@@ -6,7 +6,7 @@
 
 ## 2026-06-21 — perform_batch transport-stall watchdog + loop/punch reset (PSH-3H8M)
 
-<!-- prawduct: type=fix | chunks=PSH-3H8M | scope=mcp-perform,tests -->
+<!-- prawduct: type=fix | chunks=PSH-3H8M | scope=mcp-perform,tests | status=merged -->
 
 **Hang on a frozen transport, mitigated.** `perform_batch` could hang when the
 transport won't advance (manual stop, a loop region trapping the playhead, residual

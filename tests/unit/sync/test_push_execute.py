@@ -2162,9 +2162,19 @@ def _rack_song(conn, song, session):
     return {"rack_id": rack, "nested_id": nested}
 
 
-def _make_chain_count_send_fn(*, chain_count):
+def _make_chain_count_send_fn(*, chain_count, model_cascade=False):
     """``_make_send_fn`` + a ``get_device_chains`` answer with a fixed
-    ``chain_count`` (and otherwise acks, loads → device_index)."""
+    ``chain_count`` (and otherwise acks, loads → device_index).
+
+    ``model_cascade``: when True, a ``set_parameter`` whose node descends into a
+    chain (``path`` present) — the doomed nested write — returns the real Live
+    failure (``IndexError: chain_index … out of range [1, 0]``). With the guard
+    working those writes are suppressed and this branch never fires; if the guard
+    regressed it WOULD fire, so the test's "no chain_index cascade" assertion is
+    meaningful (otherwise the fake would ack the doomed write and hide the bug).
+    Also fails ``get_parameters`` on a nested node (the diff's read into a missing
+    chain fails in real Live too → the diff keeps the write, then the guard catches
+    it) so the re-push path is modeled honestly."""
     base = _make_send_fn()
 
     def send(req, *, read_timeout=None):
@@ -2177,6 +2187,18 @@ def _make_chain_count_send_fn(*, chain_count):
             return FakeResponse(ok=True, result={
                 "chain_count": chain_count, "chains": [],
             })
+        nested = bool((req.params.get("node") or {}).get("path"))
+        if model_cascade and req.tool == "ableton_device" and nested and req.action in (
+            "set_parameter", "get_parameters",
+        ):
+            base.call_log.append({
+                "tool": req.tool, "action": req.action,
+                "params_keys": sorted(req.params.keys()),
+                "params": dict(req.params), "read_timeout": read_timeout,
+            })
+            return FakeResponse(
+                ok=False, error="IndexError: chain_index 1 out of range [1, 0]",
+            )
         return base(req, read_timeout=read_timeout)
 
     send.call_log = base.call_log  # type: ignore[attr-defined]
@@ -2190,7 +2212,10 @@ def test_execute_empty_rack_halts_with_one_error_no_cascade(
     the devices phase on ONE 'preset content did not load' error — the doomed
     nested write is never dispatched (no chain-index-out-of-range cascade)."""
     _rack_song(conn, song, session)
-    send_fn = _make_chain_count_send_fn(chain_count=0)
+    # model_cascade=True: had the guard NOT suppressed, the nested write would
+    # come back with the real chain-index error — so the "no cascade" assertion
+    # below actually has teeth.
+    send_fn = _make_chain_count_send_fn(chain_count=0, model_cascade=True)
     result = push_execute.execute_push(
         conn=conn, song_id=song, session_id=session, state_dir=state_dir,
         send_fn=send_fn, only="devices",
@@ -2205,14 +2230,54 @@ def test_execute_empty_rack_halts_with_one_error_no_cascade(
     # The doomed nested write was NEVER dispatched (suppressed, not cascaded).
     set_params = [c for c in send_fn.call_log if c["action"] == "set_parameter"]
     assert set_params == []
-    # Exactly one error, naming the real cause — not hundreds of symptom errors.
+    # Exactly one error, naming the real cause — and NO chain-index cascade.
     errors = json.loads((state_dir / ".last-push-errors.json").read_text())["errors"]
     assert len(errors) == 1
     assert "preset content did not load" in errors[0]["error"]
     assert "AG Techno Kit" in errors[0]["error"]
     assert errors[0]["hint"]
+    assert all("chain_index" not in e["error"] for e in errors)
     # The summary surfaces the single halt cause.
     assert "preset content did not load" in push_execute.format_summary(result)
+
+
+def test_execute_repush_empty_rack_halts_in_main_dispatch_not_cascade(
+    conn, song, session, state_dir,
+):
+    """W1 regression: a rack ALREADY linked (a re-push) that STILL loads empty
+    re-emits its nested writes in the MAIN dispatch (not the convergence pass,
+    which only sees a device loaded this pass). The guard must catch them there
+    too, or the cascade returns on every push after the first. Here the rack is
+    pre-linked at device_index 1; with no load this pass the rack's name isn't
+    available, so the message falls back to its live address."""
+    fx = _rack_song(conn, song, session)
+    # Pre-link the rack: this is the second push, the device already has a Live
+    # index from the first.
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=fx["rack_id"],
+        ableton_index=1,
+    )
+    send_fn = _make_chain_count_send_fn(chain_count=0, model_cascade=True)
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session, state_dir=state_dir,
+        send_fn=send_fn, only="devices",
+    )
+    assert result.outcome == "partial"
+    assert result.phase_halted == "devices"
+    # No load this pass (already linked); the guard fired in the MAIN dispatch.
+    loads = [c for c in send_fn.call_log if c["action"] == "load"]
+    assert loads == []
+    probes = [c for c in send_fn.call_log if c["action"] == "get_device_chains"]
+    assert len(probes) == 1
+    # The nested write never dispatched — no cascade on the re-push either.
+    set_params = [c for c in send_fn.call_log if c["action"] == "set_parameter"]
+    assert set_params == []
+    errors = json.loads((state_dir / ".last-push-errors.json").read_text())["errors"]
+    assert len(errors) == 1
+    assert "preset content did not load" in errors[0]["error"]
+    assert all("chain_index" not in e["error"] for e in errors)
+    # Address fallback (no load → no name): identifies the rack by its address.
+    assert "track index 5" in errors[0]["error"]
 
 
 def test_execute_populated_rack_dispatches_nested_writes(

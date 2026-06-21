@@ -10,12 +10,22 @@ under symptom noise (the 2026-06-20 ``fresh-push-loads-rack-presets-as-empty-
 shells`` report, fix #3; the primary empty-rack cause was already fixed by
 SYN-RACK-PRESET-RELINK — this is the diagnostics half).
 
-This module makes the devices phase fail loud instead: after the loads land, the
-executor probes each freshly-loaded rack's RUNTIME chain count (the existing
-``ableton_device(action='get_device_chains')`` handler — engine-only, no MCP wire
-change) and this module drops the doomed nested writes for any rack that came up
-empty, emitting ONE "preset content did not load" failure. The phase then halts
-on that single clear error rather than the cascade.
+This module makes the devices phase fail loud instead: before dispatching a batch
+of device-phase calls, the executor lets this guard probe each rack ADDRESSED by a
+pending nested write — its RUNTIME chain count, via the existing
+``ableton_device(action='get_device_chains')`` handler (engine-only, no MCP wire
+change) — and drop the doomed nested writes for any rack that came up empty,
+emitting ONE "preset content did not load" failure. The phase then halts on that
+single clear error rather than the cascade.
+
+The candidate racks are derived from the CALLS themselves: every call that
+descends into a chain (a nested-device ``path`` or a ``chain`` terminal) names a
+top-level rack by its ``(parent, device_index)`` live address. Grouping by that
+pair means the guard works on ANY device-phase batch — the fresh-load convergence
+re-plan (where the writes first appear) AND the main dispatch of a later push
+(where a still-empty but already-linked rack re-emits them). Both must be guarded:
+the load link commits even on a halted push, so without the main-dispatch pass the
+cascade would return on every push after the first.
 
 SAFETY LAW — **suppress-on-confident-empty, keep-on-any-doubt.** A false
 suppression+halt would block a push that would otherwise apply (re-runnable, but
@@ -33,32 +43,43 @@ answer — so the check lives here in the executor, never in the planner (which
 stays unchanged, leaving those cases untouched by construction).
 
 Pure apart from the injected ``probe_fn`` (the executor's get_device_chains
-sender), so it unit-tests with a fake probe + plain call objects.
+sender) and the optional ``name_fn`` (a best-effort display-name lookup), so it
+unit-tests with a fake probe + plain call objects.
 """
 from __future__ import annotations
 
 from typing import Any, Callable
 
 
-def _addresses_into_rack(node: Any, *, parent: Any, device_index: int) -> bool:
-    """True when a call's NodeAddr targets a chain / nested device INSIDE the
-    rack at ``(parent, device_index)`` — a write that NEEDS the rack's chains to
-    exist, so it is doomed when the rack loaded empty.
+def _dependent_address(node: Any) -> tuple[Any, int] | None:
+    """If ``node`` addresses a chain / nested device INSIDE a rack — a write that
+    NEEDS the rack's chains to exist, so it is doomed when the rack loaded empty —
+    return the rack's ``(parent, device_index)`` live address; else ``None``.
 
     A write to the rack's OWN params (device terminal, no ``path``) addresses the
     rack device itself, which exists even on an empty load, so it is NOT a
-    dependent write and is left alone. Both ``parent`` AND ``device_index`` must
-    match: two racks can sit at the same ``device_index`` under different parents.
+    dependent write and yields ``None`` (left alone). ``parent`` is part of the
+    address because two racks can sit at the same ``device_index`` under different
+    parents.
     """
     if not isinstance(node, dict):
-        return False
-    if node.get("parent") != parent:
-        return False
-    if node.get("device_index") != device_index:
-        return False
-    # Dependent iff it descends into a chain: a nested-device ``path``, OR a
+        return None
+    device_index = node.get("device_index")
+    if device_index is None:
+        return None
+    # Dependent iff it descends into a chain: a nested-device ``path`` OR a
     # chain-terminal address (``set_chain_property``).
-    return bool(node.get("path")) or node.get("terminal") == "chain"
+    if not (node.get("path") or node.get("terminal") == "chain"):
+        return None
+    return node.get("parent"), device_index
+
+
+def _parent_key(parent: Any) -> tuple[Any, Any]:
+    """A hashable grouping key for a NodeAddr parent dict (``kind`` + ``index``;
+    ``index`` is absent → ``None`` for the master parent)."""
+    if not isinstance(parent, dict):
+        return ("?", parent)
+    return (parent.get("kind"), parent.get("index"))
 
 
 def _describe_parent(parent: Any) -> str:
@@ -74,71 +95,79 @@ def _describe_parent(parent: Any) -> str:
 def partition_doomed_nested_writes(
     calls: list[Any],
     *,
-    loaded_racks: list[dict[str, Any]],
     probe_fn: Callable[[dict[str, Any]], int | None],
+    name_fn: Callable[[Any, int], str | None] | None = None,
 ) -> tuple[list[Any], list[dict[str, Any]]]:
     """Split ``calls`` into ``(survivors, empty_rack_failures)``.
 
-    ``loaded_racks`` is one entry per top-level rack device loaded THIS pass:
-    ``{"device_id", "live_index", "parent", "display_name"}`` (``parent`` is the
-    NodeAddr parent dict; ``live_index`` the rack's Live ``device_index``). For
-    each rack:
+    Candidate racks are derived from ``calls``: every call whose NodeAddr descends
+    into a chain (:func:`_dependent_address`) is grouped by its ``(parent,
+    device_index)`` — that pair is a top-level rack's live address. For each group:
 
-      * gather the calls in ``calls`` that address INTO it
-        (:func:`_addresses_into_rack`);
-      * if there are none, the rack has no pending nested writes — skip it (so a
-        legitimately-empty preset with no authored content is never probed and
-        never false-flagged);
-      * otherwise probe its live chain count. If it is confidently ``0``, those
-        writes are doomed — drop them and record one failure. Any other result
-        (``None`` = read failed, or ``> 0`` = populated) keeps the rack's writes
-        (keep-on-doubt).
+      * probe the rack's live chain count via ``probe_fn({"parent", "live_index"})``;
+      * if it is confidently ``0`` the writes are doomed — drop them and record one
+        failure;
+      * any other result (``None`` = read failed, or ``> 0`` = populated) keeps the
+        group (keep-on-doubt).
 
-    Each ``empty_rack_failures`` entry is ``{"device_id", "display_name",
-    "parent", "suppressed_count", "message", "hint"}`` — the executor turns it
-    into one ``results`` + ``error_records`` pair so the phase halts on a single
-    clear error instead of the cascade.
+    ``name_fn(parent, device_index) -> str | None`` is an optional best-effort
+    lookup of the rack's display name for the message (falls back to the address).
 
-    Original call order is preserved in ``survivors``.
+    Each ``empty_rack_failures`` entry is ``{"parent", "device_index",
+    "display_name", "suppressed_count", "message", "hint"}`` — the executor turns
+    it into one ``results`` + ``error_records`` pair so the phase halts on a single
+    clear error instead of the cascade. Original call order is preserved in
+    ``survivors``; ``probe_fn`` is called at most once per distinct rack.
     """
+    # (parent_key) -> {"parent", "device_index", "calls"}. dict preserves first-
+    # seen order so failures report in call order.
+    groups: dict[tuple[Any, Any], dict[str, Any]] = {}
+    for call in calls:
+        addr = _dependent_address(getattr(call, "args", {}).get("node"))
+        if addr is None:
+            continue
+        parent, device_index = addr
+        gkey = _parent_key(parent)
+        group = groups.get(gkey)
+        if group is None:
+            group = groups[gkey] = {
+                "parent": parent, "device_index": device_index, "calls": [],
+            }
+        group["calls"].append(call)
+
     suppressed: set[int] = set()  # id() of dropped call objects (all live in `calls`)
     failures: list[dict[str, Any]] = []
-
-    for rack in loaded_racks:
-        parent = rack["parent"]
-        live_index = rack["live_index"]
-        dependent = [
-            c for c in calls
-            if _addresses_into_rack(
-                getattr(c, "args", {}).get("node"),
-                parent=parent, device_index=live_index,
-            )
-        ]
-        if not dependent:
-            continue  # no authored nested content pending -> nothing to protect
-        if probe_fn(rack) != 0:
+    for group in groups.values():
+        parent = group["parent"]
+        device_index = group["device_index"]
+        if probe_fn({"parent": parent, "live_index": device_index}) != 0:
             continue  # None (read failed) or > 0 (populated) -> keep-on-doubt
-        for c in dependent:
-            suppressed.add(id(c))
-        name = rack.get("display_name") or rack["device_id"]
+        doomed = group["calls"]
+        for call in doomed:
+            suppressed.add(id(call))
+        name = name_fn(parent, device_index) if name_fn else None
+        label = (
+            f"rack {name!r} on {_describe_parent(parent)}" if name
+            else f"the rack on {_describe_parent(parent)} at device index {device_index}"
+        )
         failures.append({
-            "device_id": rack["device_id"],
-            "display_name": name,
             "parent": parent,
-            "suppressed_count": len(dependent),
+            "device_index": device_index,
+            "display_name": name,
+            "suppressed_count": len(doomed),
             "message": (
-                f"preset content did not load: rack {name!r} on "
-                f"{_describe_parent(parent)} came up with 0 chains, but the song "
-                f"authored nested content for it — suppressed {len(dependent)} "
-                "dependent nested write(s) that would each fail "
+                f"preset content did not load: {label} came up with 0 chains, but "
+                f"the song authored nested content for it — suppressed "
+                f"{len(doomed)} dependent nested write(s) that would each fail "
                 "chain-index-out-of-range. The rack preset's identity did not "
                 "resolve on this machine."
             ),
             "hint": (
-                "re-load the preset in Live (browse to the .adg/.adv and load it "
-                "onto the device), or repair the snapshot's preset identity "
-                "(preset_query / preset_uri), then re-run execute (idempotent — "
-                "applied rows skip)."
+                "the rack preset's identity must be repaired before this song can "
+                "push: re-load the preset in Live (browse to the .adg/.adv and "
+                "load it onto the device), or repair the snapshot's preset "
+                "identity (preset_query / preset_uri), THEN re-run execute. "
+                "Re-running without fixing the preset reproduces this next push."
             ),
         })
 

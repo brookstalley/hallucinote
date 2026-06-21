@@ -49,13 +49,20 @@
 ## Files
 
 - NEW `src/hallucinote/sync/push/empty_rack_guard.py` — pure-ish
-  `partition_doomed_nested_writes(calls, *, loaded_racks, probe_fn)`; splits the
-  convergence-pass calls into `(survivors, empty_rack_failures)`. Unit-testable with
-  a fake `probe_fn` + plain call objects. Models `device_param_diff.py`.
-- `src/hallucinote/sync/push_execute.py` — two closures (`_probe_rack_chain_count`
-  reusing `get_device_chains`; `_loaded_racks_from` resolving this-pass loads to
-  their live address) + wire the guard into the devices-phase convergence block;
-  turn each failure into one `results` + `error_records` pair so the phase halts.
+  `partition_doomed_nested_writes(calls, *, probe_fn, name_fn=None)`; derives
+  candidate racks from the calls themselves (groups dependent writes by their
+  `(parent, device_index)` — that pair IS a rack's live address), probes each,
+  and splits into `(survivors, empty_rack_failures)`. Unit-testable with a fake
+  `probe_fn` + plain call objects. Models `device_param_diff.py`.
+- `src/hallucinote/sync/push_execute.py` — `_probe_rack_chain_count` (reuses
+  `get_device_chains`) + `_loaded_rack_name_fn` (best-effort rack display-name for
+  the message, from this pass's load calls) + `_empty_rack_result_entries`
+  (failures → synthetic `results` + `error_records`). Run the guard at BOTH
+  devices-phase dispatch sites — the main dispatch (catches a re-push against a
+  rack that is linked but still loads empty) AND the convergence pass (catches the
+  fresh-load case). (W1 fix: the load link commits even on a halted push, so a
+  re-push re-emits the nested writes in the main dispatch, not convergence — both
+  sites must guard or the cascade returns on every push after the first.)
 - NEW `tests/unit/sync/test_empty_rack_guard.py` — the helper: suppress-when-empty,
   keep-when-populated, keep-on-probe-failure, rack-own-params-survive, no-probe-when-
   no-dependent-writes, parent+index disambiguation, chain-terminal dependency, order.

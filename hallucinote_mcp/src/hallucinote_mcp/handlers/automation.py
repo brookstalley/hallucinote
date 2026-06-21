@@ -2141,11 +2141,12 @@ def perform_batch_handler(
                     raise TimeoutError(
                         f"perform_batch transport stopped advancing at beat "
                         f"{beat:.3f} of the {union_end:.3f}-beat span — perform "
-                        f"aborted after {_PERFORM_STALL_TIMEOUT_S:.0f}s with no "
-                        f"playhead movement. Likely a manual transport stop, a "
-                        f"modal dialog / count-in, or residual transport state "
-                        f"from an interrupted prior perform. The handler's "
-                        f"cleanup disarms the set and restores transport state."
+                        f"aborted: no playhead movement for "
+                        f">={_PERFORM_STALL_TIMEOUT_S:.0f}s. Likely a manual "
+                        f"transport stop, a modal dialog / count-in, or residual "
+                        f"transport state from an interrupted prior perform. The "
+                        f"handler's cleanup disarms the set and restores "
+                        f"transport state."
                     )
                 if now >= deadline:
                     raise TimeoutError(

@@ -4,6 +4,34 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-21 — perform_batch transport-stall watchdog + loop/punch reset (PSH-3H8M)
+
+<!-- prawduct: type=fix | chunks=PSH-3H8M | scope=mcp-perform,tests -->
+
+**Hang on a frozen transport, mitigated.** `perform_batch` could hang when the
+transport won't advance (manual stop, a loop region trapping the playhead, residual
+state from an interrupted prior perform). The span-proportional wall-clock ceiling
+(already live) means it no longer hangs *forever*, but for a long (8–11 min) perform
+that ceiling is ~16–33 min away — so a stalled transport still read as a black-box
+hang whose only exit was `kill -9`. This closes the residual:
+
+- **Fast non-advancement watchdog** (`_PERFORM_STALL_TIMEOUT_S = 15s`): the record
+  loop polls `current_song_time`; if it doesn't advance for 15 s it aborts with a
+  structured error naming the stuck beat, instead of waiting out the ceiling. Seeded
+  at `-inf` so the spin-up tick can't false-trip, and any real advance resets the
+  clock — a slow-but-advancing high-`slowdown_factor` pass never aborts.
+- **Pre-perform loop/punch reset**: `_arm_and_seek` saves then clears
+  `loop`/`punch_in`/`punch_out` (only flags actually set → no churn) and the `finally`
+  restores them, so a residual loop region can't trap the playhead and the user's set
+  isn't mutated.
+
+5 new unit tests (fast abort + named beat, no-false-positive while advancing,
+loop/punch clear-then-restore + ordering, clean-set no-churn, restore-on-abort). Live
+stall repro + loop-trap queued in operator-verification.md. **Still-open residual:**
+a `run_on_main`-blocked 0%-CPU sub-case needs a timeout on `run_on_main` itself (the
+watchdog runs between callbacks, so it can't fire while blocked inside one) — high
+blast radius, Live-only tunable; tracked on PSH-3H8M.
+
 ## 2026-06-21 — Render no longer leaves RETURN-track names dirty (RND-2R9K)
 
 <!-- prawduct: type=fix | chunks=RND-2R9K | scope=mcp-render,tests | status=merged -->

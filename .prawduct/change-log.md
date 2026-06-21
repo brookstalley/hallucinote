@@ -4,6 +4,26 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-21 — Render no longer leaves RETURN-track names dirty (RND-2R9K)
+
+<!-- prawduct: type=fix | chunks=RND-2R9K | scope=mcp-render,tests -->
+
+**Residual name hygiene, fixed.** `ableton_render`'s analyzer auto-load made Live
+natively append ` | HallucinoteAnalyzer` to every RETURN track's name (a
+`browser.load_item` side effect Live applies to returns but not tracks/master), so
+a render left the user's set dirty. The functional half — the suffix defeating
+probe-and-link's return matcher — was already fixed defensively by SYN-RENDER-RELINK
+(`normalize_live_return_name` strips it at the read boundaries); this closes the
+residual so a render leaves the set byte-for-byte. The analyzer sweep
+(`hallucinote_mcp/analyzer/setup.py`) now restores each return's pre-load bare name
+after the load — `_return_name_restoration` strips Live's slot prefix + the analyzer
+suffix (the value a fresh push would set, per the W3-H/W4-C contract), runs read-only
+when the name is clean (no churn; self-heals a pre-fix-dirtied set), and is scoped to
+returns. The strip logic is a forced twin of `hallucinote.return_naming` (this package
+is engine-independent / runs Live-side, so it can't import the engine). 7 new unit
+tests; full suite 4348 passed. Live round-trip (real rename; single- vs double-prefix
+on restore) queued in operator-verification.md.
+
 ## 2026-06-17 — Durable nested-param overrides on a preset_query device (SNP-2H9F)
 
 <!-- prawduct: type=feat | chunks=SNP-2H9F | scope=capture,db-schema,db-mutations,db-queries,sync-push,docs,tests | status=merged -->

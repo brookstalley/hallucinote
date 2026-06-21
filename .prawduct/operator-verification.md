@@ -1173,3 +1173,54 @@ Recipe: `ableton_automation(action='perform_batch', arcs=[...])` directly, or
    spurious loop/punch churn (a set with loop/punch already off writes neither)
    and NO false watchdog abort (the stall window only trips on a frozen, not a
    slow, transport).
+
+---
+
+## RND-2R9K — render leaves RETURN-track names clean (analyzer rename undone)
+
+**Status:** PENDING — needs an attended Live session. **Visual change:** yes
+(return names in Live's return strip: after a render they read e.g. `A-Reverb`,
+NOT `A-Reverb | HallucinoteAnalyzer`). Added 2026-06-21.
+
+**Re-vendor REQUIRED, with a gotcha:** the fix lives in
+`hallucinote_mcp/analyzer/setup.py`, which the analyzer sweep runs **Live-side**
+(`runs_on_worker=True` + `context.run_on_main`), so the running Remote Script
+must carry the new code — relaunch dev-mode (`/mcp` respawn so running==disk),
+then `/ableton-mcp-install`, then reopen Live. **Gotcha:** `analyzer/` is OUTSIDE
+`_FINGERPRINT_PATHS`, so this change does NOT flip the server fingerprint — the
+install/handshake will report `matched` even against a STALE Remote Script that
+lacks the fix. Do not trust the version match to tell you a re-vendor is needed;
+force it.
+
+Why it can't be auto-verified: the bug IS Live's native rename of returns on
+`browser.load_item` — a real-Live side effect the unit fakes cannot model (they
+append the device without renaming). The unit suite proves the pure restore
+decision (`_return_name_restoration`) and that the sweep restores a pre-set dirty
+name; only a live render proves Live actually renames, that the restore sticks,
+and — the one thing the fakes can't prove — that the restored name shows a
+**single** slot prefix (`A-Reverb`), not a double (`A-A-Reverb`), i.e. that the
+strip-prefix-and-set-bare-name decision matches Live's setter semantics (the
+W3-H / W4-C documented contract).
+
+Checks (a pushed song with two returns named `Reverb` / `Delay`, e.g. `alien`):
+
+1. **Render → returns end clean (the deliverable).** `ableton_render(action=
+   'start', song_slug=…)` (even a render that then fails is enough — the
+   analyzer auto-load runs before the transport gate). Then `ableton_return(
+   action='list')`: each return reads its bare authored name with Live's single
+   slot prefix (`A-Reverb`, `B-Delay`) — NO ` | HallucinoteAnalyzer` suffix and
+   NO doubled prefix (`A-A-Reverb`). The HallucinoteAnalyzer device is STILL
+   present on each return (the fix restores the NAME, it does not remove the
+   device).
+2. **probe-and-link is clean post-render.** `push probe-and-link --song <slug>
+   --probe` → `unmatched_db_returns: []` and `unmatched_live_returns: []`
+   immediately after a render, with no hand-rename step. (Pre-fix this required
+   the manual `ableton_return(action='rename')` workaround.)
+3. **Self-heals a pre-dirtied set + no churn.** On a return manually renamed to
+   `Reverb | HallucinoteAnalyzer` (simulating a pre-fix render), run a render →
+   confirm the name is cleaned to `Reverb`. On an already-clean return, confirm a
+   render does NOT rewrite the name (no spurious name-change in Live's undo
+   history; the restore is read-only when no suffix is present).
+4. **Tracks/master untouched.** Confirm a render still leaves audio-track and
+   master names exactly as authored (Live renames returns only; the fix is
+   return-scoped).

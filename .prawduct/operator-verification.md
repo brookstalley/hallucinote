@@ -1131,6 +1131,51 @@ pushed onto a FRESH Live set):
 
 ---
 
+## PSH-3H8M — perform_batch transport watchdog + loop/punch pre-perform reset
+
+**Status:** PENDING — needs an attended Live session + a perform pass. **Visual
+change:** minimal (loop/punch buttons toggle off during a perform and restore
+after; the abort surfaces as a structured error, not a hang). Added 2026-06-21.
+
+**Re-vendor REQUIRED:** the fix lives in `hallucinote_mcp/handlers/automation.py`,
+which IS in `_FINGERPRINT_PATHS`, so the server fingerprint flips and the install
+handshake will (correctly) flag the drift — relaunch dev-mode (`/mcp` respawn so
+running==disk), then `/ableton-mcp-install`, then reopen Live.
+
+Why it can't be auto-verified: the bug is a REAL Live transport stall (manual
+stop / residual transport state from an interrupted perform / a loop region
+trapping the playhead). The unit fakes model a frozen `current_song_time`, but
+only real Live proves the watchdog fires on an actual stall, that clearing a real
+loop region lets the playhead traverse the full span, and that no legitimately
+slow pass (a high `slowdown_factor`) false-trips the 15 s stall window. Pairs
+naturally with the ENV-8K2R / ENV-7G4K perform smoke already queued — run them in
+one perform session.
+
+Recipe: `ableton_automation(action='perform_batch', arcs=[...])` directly, or
+`push_cli plan performed_automation` then execute.
+
+1. **Watchdog fires fast on a real stall (the deliverable).** Start a perform
+   over a multi-bar span, then manually STOP the transport mid-record (the exact
+   repro from the report). Confirm the call aborts within ~15 s with the
+   structured `TimeoutError` naming the stuck beat ("transport stopped advancing
+   at beat X of the Y-beat span …"), NOT an indefinite hang requiring `kill -9`.
+   Afterward the set is disarmed (`record_mode` / `session_automation_record`
+   both read False) and the transport is stopped.
+2. **Loop region no longer traps the playhead.** Set a Live loop region that does
+   NOT cover the whole perform span (pre-fix: the playhead loops inside it and
+   never reaches `union_end` → hang until the wall-clock ceiling). Run the
+   perform → it COMPLETES (the pre-perform reset cleared the loop so the playhead
+   traversed the full span), and the loop region is RESTORED (on, same bounds)
+   afterward. Repeat with punch-in/out enabled → cleared during, restored after.
+3. **No regression on a clean, legitimately-long pass.** A normal perform with
+   the transport advancing — including a high `slowdown_factor` (e.g. 4×, a
+   genuinely slow but ADVANCING playhead) — completes exactly as before, with NO
+   spurious loop/punch churn (a set with loop/punch already off writes neither)
+   and NO false watchdog abort (the stall window only trips on a frozen, not a
+   slow, transport).
+
+---
+
 ## RND-2R9K — render leaves RETURN-track names clean (analyzer rename undone)
 
 **Status:** PENDING — needs an attended Live session. **Visual change:** yes

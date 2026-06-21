@@ -1562,6 +1562,19 @@ _DEFAULT_PERFORM_SETTLE_TIMEOUT_MS = 2000
 _PERFORM_WALL_CLOCK_FACTOR = 3.0
 _PERFORM_WALL_CLOCK_FLOOR_S = 10.0
 
+# PSH-3H8M — fast non-advancement watchdog. The wall-clock budget above is a
+# HARD CEILING, but it scales with the span: an 8-11 min perform tolerates a
+# ~16-33 min stuck-transport wait before it aborts. This watchdog catches a
+# FROZEN playhead (manual transport stop, modal dialog, residual transport state
+# from an interrupted prior perform) in a fixed time regardless of span length —
+# if ``current_song_time`` does not advance for this many seconds it aborts with
+# a structured error naming the stuck beat. Generous enough to clear a count-in
+# (1-2 bars even at a slow record tempo) and the first-tick transport spin-up, so
+# only a genuinely stalled transport trips it. (The arm-settle wait completes
+# BEFORE the ramp loop where this watchdog runs, so the settle is protected by
+# loop ordering, not by this magnitude.)
+_PERFORM_STALL_TIMEOUT_S = 15.0
+
 # ENV-2T9K — perform fidelity via tempo-reduction-during-record. The realtime
 # ramp is scheduling-bound at ~2.5 Hz, so denser AUTHORING can't yield denser
 # recording; the only lever is slowing the TRANSPORT so the fixed tick rate
@@ -1978,6 +1991,14 @@ def perform_batch_handler(
                     song.session_automation_record
                 ),
                 "current_song_time": float(song.current_song_time),
+                # PSH-3H8M: a residual loop / punch region can trap the playhead
+                # in a sub-span that never reaches union_end (a hang the wall-
+                # clock ceiling only catches after the full budget). Capture them
+                # so the pre-perform reset can clear them and the finally restore
+                # them — the perform runs clean without mutating the user's set.
+                "loop": bool(song.loop),
+                "punch_in": bool(song.punch_in),
+                "punch_out": bool(song.punch_out),
             }
             return saved, float(song.tempo)
 
@@ -2044,6 +2065,17 @@ def perform_batch_handler(
                 song = context.song
                 if bool(song.is_playing):
                     song.stop_playing()
+                # PSH-3H8M: force a known-clean transport before playing so a
+                # prior interrupted perform (or a user-left loop/punch) can't trap
+                # the playhead in a sub-span that never reaches union_end. Only
+                # write a flag that is actually set, so a clean set logs no churn;
+                # the finally restores the saved values.
+                if saved["loop"]:
+                    song.loop = False
+                if saved["punch_in"]:
+                    song.punch_in = False
+                if saved["punch_out"]:
+                    song.punch_out = False
                 # ENV-2T9K: slow the transport BEFORE arming so the whole record
                 # pass runs at the reduced tempo (restored in the finally).
                 if slowdown_factor > 1.0:
@@ -2079,18 +2111,45 @@ def perform_batch_handler(
                 _PERFORM_WALL_CLOCK_FLOOR_S,
             ) + settle_timeout_s
 
-            def _ramp_step() -> bool:
+            def _ramp_step() -> float:
                 song = context.song
                 beat = float(song.current_song_time)
                 _open_entering(beat)
                 _write_or_close(beat)
-                return beat >= union_end
+                return beat
 
+            # PSH-3H8M: track the furthest beat the playhead reached so the
+            # watchdog can tell "playing (slowly)" — beat keeps rising — from
+            # "frozen" — beat unchanged for _PERFORM_STALL_TIMEOUT_S. Seeded at
+            # -inf so the very first read counts as advancement and the spin-up
+            # tick can't trip the watchdog.
+            last_beat = float("-inf")
+            last_advance = time.monotonic()
             while True:
-                done = context.run_on_main(_ramp_step)
-                if done:
+                beat = context.run_on_main(_ramp_step)
+                if beat >= union_end:
                     break
-                if time.monotonic() >= deadline:
+                now = time.monotonic()
+                if beat > last_beat:
+                    last_beat = beat
+                    last_advance = now
+                elif now - last_advance >= _PERFORM_STALL_TIMEOUT_S:
+                    # Fast path: the playhead is frozen. Abort NOW with the stuck
+                    # beat named, instead of waiting out the span-proportional
+                    # wall-clock ceiling below (which for a long perform is many
+                    # minutes). This is the PSH-3H8M operability fix: a stalled
+                    # transport fails clean and fast instead of hanging.
+                    raise TimeoutError(
+                        f"perform_batch transport stopped advancing at beat "
+                        f"{beat:.3f} of the {union_end:.3f}-beat span — perform "
+                        f"aborted: no playhead movement for "
+                        f">={_PERFORM_STALL_TIMEOUT_S:.0f}s. Likely a manual "
+                        f"transport stop, a modal dialog / count-in, or residual "
+                        f"transport state from an interrupted prior perform. The "
+                        f"handler's cleanup disarms the set and restores "
+                        f"transport state."
+                    )
+                if now >= deadline:
                     raise TimeoutError(
                         f"perform_batch ramp did not reach union span end "
                         f"{union_end} beats within its wall-clock budget "
@@ -2122,6 +2181,21 @@ def perform_batch_handler(
                     )
                     a.state = "closed"
             _attempt("stop_playing", lambda: context.song.stop_playing())
+            # PSH-3H8M: restore loop / punch to the saved state — only the flags
+            # actually cleared in the pre-perform reset (saved True), so a set
+            # that had them off logs no churn.
+            if saved["loop"]:
+                _attempt("loop", lambda: setattr(context.song, "loop", True))
+            if saved["punch_in"]:
+                _attempt(
+                    "punch_in",
+                    lambda: setattr(context.song, "punch_in", True),
+                )
+            if saved["punch_out"]:
+                _attempt(
+                    "punch_out",
+                    lambda: setattr(context.song, "punch_out", True),
+                )
             # ENV-2T9K: restore the original tempo after the slowed pass. Only
             # if we changed it — a no-op set would still log a tempo event.
             if slowdown_factor > 1.0:

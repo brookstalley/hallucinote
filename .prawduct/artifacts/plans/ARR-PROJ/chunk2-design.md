@@ -53,15 +53,21 @@ note-only clip is notes+name.) NEVER `replace_notes`-in-place (§6b-A): create m
 FRESH clip, set_notes fills it → no orphans by construction.
 
 **D4 — Envelope-bearing placements route to duplicate-onto-cleared.**
-Detection (pure DB): a placement is envelope-bearing iff `get_envelopes_for_clip(
-clip_id)` is non-empty (`clip_cc` / `clip_pitch_bend`, the only `target_clip_id` kinds)
-OR any of its notes carries a `note_expression` envelope. The DB CHECK constraint proves
-`mixer_*`/`send_level`/`device_parameter` are NEVER clip-scoped (they're track/device/
-return-scoped, materialized in other phases) — so the §5 framing narrows to clip MIDI
-envelopes only. Envelope-bearing → `duplicate_to_arrangement` (needs the clip linked in a
-session slot); lands on the cleared region (clear ran first) → no B-24. alien has ZERO
-clip-scoped envelopes, so this branch is untested-by-alien — cover it with a unit test
-(synthetic `clip_cc` row) + leave a live operator-verify note for a real envelope song.
+Detection (pure DB) — **as IMPLEMENTED in `envelope_hosting_clip_ids` (envelopes.py),
+which corrected this section's first draft.** A first idea was "`get_envelopes_for_clip(
+clip_id)` non-empty" — that is WRONG and was NOT shipped: the DB CHECK forbids
+`target_clip_id` on `mixer_*`/`send_level`/`device_parameter` envelopes (they're
+track/device/return-scoped), yet the `envelopes` phase still RIDES those on a covering
+SESSION clip (W4-A snapshot-copy), so `get_envelopes_for_clip` would miss exactly the
+clips that need the duplicate route. The shipped detection instead reuses the
+authoritative `classify_envelope_route`: a clip hosts an envelope iff some envelope routes
+`session_clip` and `_resolve_envelope_session_clip` lands on it, OR a `clip_scoped`
+`note_expression` rides its note's clip (`clip_cc`/`clip_pitch_bend` are LOM-skipped today
+but included defensively). Envelope-bearing → `duplicate_to_arrangement` (needs the clip
+linked in a session slot); lands on the cleared region → no B-24. Confirmed live on alien:
+exactly one host (Alien Voice `send_level`), which a `get_envelopes_for_clip` check would
+have MISSED — proving the correction. Covered by `test_push_envelopes` host-detection tests
++ a planner routing test; alien is the live operator-verify witness.
 
 **D5 — Audio placements: existing skip-and-warn (CLP-AUD2 scope).** Unchanged route.
 

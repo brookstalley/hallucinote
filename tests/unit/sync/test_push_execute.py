@@ -1961,6 +1961,39 @@ def test_execute_arrangement_integrity_assert_halts_on_drop(
     assert "missing" in blob.lower()  # the drop reads as a missing note
 
 
+def test_execute_arrangement_assert_connection_loss_writes_state(
+    conn, song, session, tiny_song, state_dir,
+):
+    """ARR-PROJ Chunk 3: a Live disconnect DURING the post-arrangement integrity
+    re-probe halts as connection_lost (not an uncaught traceback) and still writes
+    the terminal state file — the executor's always-write-state contract."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4,
+    )
+    M.insert_notes(conn, clip_id=tiny_song["clip_id"], notes=[
+        {"pitch": 60, "start_beats": 0.0, "duration_beats": 1.0, "velocity": 100},
+    ])
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=tiny_song["track_id"],
+        clip_id=tiny_song["clip_id"], start_bar=1.0, end_bar=2.0,
+    )
+    base = _make_send_fn()
+
+    def drop_conn(req, *, read_timeout=None):
+        if (req.tool == "ableton_note" and req.action == "list"
+                and req.params.get("location") == "arrangement"):
+            raise ConnectionRefusedError("Live vanished mid-assert")
+        return base(req, read_timeout=read_timeout)
+
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=drop_conn,
+    )
+    assert result.outcome == "connection_lost"
+    assert result.exit_code == push_execute.EXIT_CONNECTION_LOST
+    assert (state_dir / ".last-push-state.json").exists()  # always-write-state held
+
+
 # ---------------------------------------------------------------------------
 # PSH-2R7K — phase-targeting (--only / --start-at / --stop-after)
 # ---------------------------------------------------------------------------

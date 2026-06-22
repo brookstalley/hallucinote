@@ -496,8 +496,11 @@ build_state:
 # RTE-1K9T (PR #163), ENV-9P4T (#161), ENV-8K2R/ENV-2T9K and the deleted
 # PSH-CLUSTER are shipped/stale; their plan dirs may be deleted.
 # Unset: build-plan-push-devices-diff shipped (PR #188) and its file was removed;
-# ARR-PROJ arrangement-materialization redesign (systemic). Plan authored 2026-06-22;
-# Chunk 1 is Live-gated (attended Ableton session) — nothing built yet, no code changed.
+# ARR-PROJ arrangement-materialization redesign (systemic). Plan authored 2026-06-22.
+# Chunks 1-3 SHIPPED on plan/arr-proj-arrangement-materialization (Live spike confirmed
+# the projection model; the projection planner + integrity comparator/assert/
+# verify-arrangement CLI are built and green). Chunks 4 (collapse the positional-link
+# reconcile) and 5 (docs/skill) remain. See the build-plan Status for the live state.
 active_build_plan: artifacts/plans/ARR-PROJ/build-plan.md
 
 # =============================================================================

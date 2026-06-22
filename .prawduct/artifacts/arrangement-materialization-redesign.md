@@ -1,6 +1,10 @@
 # Arrangement Materialization — Systemic Redesign (arrangement-as-projection)
 
-**Status:** DESIGN / DISCOVERY — captured 2026-06-22. Not yet built.
+**Status:** IN BUILD — captured 2026-06-22. Chunks 1–3 SHIPPED on
+`plan/arr-proj-arrangement-materialization` (spike confirmed the model; the
+projection planner + the integrity comparator/assert/`verify-arrangement` CLI are
+built and green). Chunks 4 (collapse the positional-link reconcile) and 5 (docs/
+skill) remain. See `plans/ARR-PROJ/build-plan.md` Status for the live state.
 **Backlog tag:** ARR-PROJ (umbrella; supersedes the per-symptom patches listed in §10).
 **Scope class:** behavior-changing refactor of the authorship spine. Stakes HIGH.
 **Foreign API:** Ableton Live LOM (the MCP server ↔ Remote Script boundary).
@@ -382,7 +386,13 @@ must not drop; both must halt-on-mismatch rather than report OK.
 - **The envelope-bearing dual path is where complexity re-enters.** If detection of
   "this placement carries a clip envelope" is wrong, an envelope clip could be routed to
   create+fill and lose its automation. Mitigate: the DB is authoritative about clip
-  envelopes; make routing a pure DB query + test both branches.
+  envelopes; make routing a pure DB query + test both branches. **Built (Chunk 2):
+  routing reuses the authoritative `classify_envelope_route` (`envelope_hosting_clip_ids`),
+  unit-tested both branches. RESIDUAL (Chunk 3): the push-time integrity assert is
+  NOTE-only — it does NOT read back clip envelopes, so it cannot backstop a mis-route that
+  silently drops a clip envelope. That branch's correctness rests on the router, not the
+  assert. Closing it (an envelope-aware assert) is future work; tracked, not silently
+  dropped.**
 - **`create_midi_clip` length/position semantics** may differ subtly from
   `duplicate_clip_to_arrangement` (e.g. loop/clip-end markers). Chunk 1 must confirm.
 - **Cues phase coupling.** Cues need arrangement extent and run after arrangement; the

@@ -220,9 +220,16 @@ def assert_arrangement_materialized(
     eps_beats: float = DEFAULT_EPS_BEATS,
 ) -> ArrangementReport:
     """Push-time PREVENTION assert: verify the freshly-materialized arrangement,
-    raise :class:`ArrangementIntegrityError` (HALT) on ANY divergence. Returns
-    the (faithful) report otherwise. Reads in a fresh probe — never inline after
-    the write (§6a)."""
+    raise :class:`ArrangementIntegrityError` (HALT) on silent corruption
+    (:meth:`ArrangementReport.has_corruption`). Returns the report otherwise.
+    Reads in a fresh probe — never inline after the write (§6a).
+
+    SCOPE (design §9 residual risk): this assert is NOTE-only — it does not read
+    back clip envelopes, so it cannot catch an envelope-bearing placement that was
+    mis-routed to create+fill and silently dropped its clip envelope. That branch's
+    correctness rests on :func:`push.envelope_hosting_clip_ids` reusing the
+    authoritative ``classify_envelope_route`` (a pure-DB query, unit-tested), NOT
+    on this assert. Extending the assert to verify clip envelopes is future work."""
     report = verify_song_arrangement(
         conn, song_id=song_id, session_id=session_id,
         send_fn=send_fn, eps_beats=eps_beats,

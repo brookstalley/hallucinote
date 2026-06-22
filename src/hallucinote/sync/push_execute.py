@@ -1339,6 +1339,25 @@ def execute_push(
                     calls_failed=1,
                 )
                 break
+            except _CONNECTION_EXCS as exc:
+                # The assert's fresh re-probe lost Live mid-check. Treat exactly
+                # like a dispatch-time connection loss so the terminal state file
+                # is still written (the executor's always-write-state contract)
+                # and the operator gets a re-execute instruction, not a traceback.
+                error_records.append({
+                    "key": None,
+                    "tool": phase.name,
+                    "action": "integrity_assert",
+                    "args_summary": {"phase": phase.name},
+                    "error": f"connection lost during the arrangement integrity re-probe: {exc}",
+                    "hint": "see ableton://guides/error-recovery; re-execute (idempotent).",
+                })
+                _halt(
+                    phase.name, idx, outcome_label="connection_lost",
+                    exit_code_val=EXIT_CONNECTION_LOST, calls_ok=calls_ok,
+                    calls_failed=calls_failed + 1,
+                )
+                break
 
         pad_ok, pad_failed = _maybe_pad_probe(phase.name)
         phase_outcomes.append(PhaseOutcome(

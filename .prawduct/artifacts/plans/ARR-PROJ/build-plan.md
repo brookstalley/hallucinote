@@ -40,7 +40,7 @@ After Chunk 1 the level rises to High for Chunks 2–6.
 - [x] Chunk 01: Live spike + one-track thin vertical slice (root-cause + architecture proof)
 - [x] Chunk 02: Sync-planner rebuild path (clear + create+fill + exception routing)
 - [x] Chunk 03: Integrity comparator — push-time assert + `verify-arrangement` audit (collapsed-set, tolerance)
-- [ ] Chunk 04: Collapse the positional-link reconcile subsystem
+- [x] Chunk 04: Collapse the positional-link reconcile subsystem
 - [ ] Chunk 05: Docs + skill — retire the SYN-4R7P recovery dance
 - [~] Chunk 06 (conditional): bulk `clear_arrangement` MCP wire action — **DROPPED** (Chunk-1d chose planner-deletes; existing `delete` wire suffices, zero fingerprint change)
 
@@ -84,8 +84,33 @@ the NOTE API in a fresh callback, compares → `ArrangementReport`. Two consumer
 `cli.py`) — reports extra/missing/mismatch per (track, section), exit 1 on any divergence.
 Test fakes (`_handle_arrangement_projection` in test_push_execute) now model the projection so
 the executor assert reads faithful. Note: verify-arrangement compares the CURRENT DB vs Live
-(rebuild build.py first to verify build.py↔Live). NEXT: Chunk 4 (collapse the positional-link
-reconcile subsystem) then Chunk 5 (docs/skill retire the SYN-4R7P dance).
+(rebuild build.py first to verify build.py↔Live).
+
+**Chunk 4 BUILT 2026-06-22 (headless, 4393 green; net −392 lines).** Removed the SYN-4R7P
+arrangement-clip reconcile from `probe_and_link` (`sync/push/probe.py`): the drop/keep/
+rebind-by-position block, the `live_arrangement_clips_by_track` parameter, the
+`unlinked_stale_arrangement_clips` / `rebound_arrangement_clips` result fields, and the now-unused
+`_position_bar_to_beats` import; docstrings updated to explain the projection model needs no
+reconcile. Narrowed `_cmd_probe_and_link` (`push_cli.py`) to stop probing arrangement clips
+(`_probe_live_arrangement_clips_via_mcp` is RETAINED — the execute path still feeds it to the
+projection planner's clear). **Key correctness finding:** the reconcile only ever protected the
+OLD `plan_push_arrangement` `replace_notes`-REFRESH branch (a stale link → IndexError at a dead
+index); Chunk 2 replaced that branch with clear+rebuild, so the reconcile had nothing left to
+protect — its removal introduces no regression. The scoped PSH-6W2J `push_notes`→arrangement
+path never used this reconcile (it's a separate command; its stale-link risk is the separately-
+tracked `replace_notes`-handler item). `arrangement_clip` links are still WRITTEN fresh each push
+by `apply_push_results` (for the PSH-6W2J refresh) — only the positional RECONCILE is gone. Cues
+phase unaffected (DB-driven extent, never the reconcile). Deleted the 9 reconcile tests +
+`_link_arrangement_clip` helper; kept `test_arrangement_planner_rematerializes_after_live_side_delete`
+(projection planner subsumes the SYN-4R7P scenario) + added a regression asserting probe_and_link
+leaves a stale arrangement_clip link untouched even when its parent track link drops. Superseded
+the PENDING SYN-4R7P operator-verification entry (it verified the removed reconcile) → no longer
+blocks `/pr create`; the ARR-PROJ live e2e carries the remaining live obligation. Critic (chunk):
+1 WARNING (stale test evidence) resolved by the green run; 0 blocking. NEXT: Chunk 5 (docs/skill
+retire the SYN-4R7P recovery dance: SKILL.md:80/82/178, guides/gaps+conventions, archive the two
+2026-06-21 incoming-bug reports + rewire ARR-9X4T/ARR-7H2N refs), then the cumulative-Critic PR
+gate (the chunk review overwrote the prior verify-resolutions chain record; ledger preserves it
+but a fresh `cumulative` is needed before `/pr create`).
 
 ## Scaffolding
 

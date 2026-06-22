@@ -1030,21 +1030,25 @@ via `/song-pick-instruments`, then probe-and-link so devices are linked):
 
 ## SYN-4R7P — probe-and-link re-materializes the arrangement after a Live delete
 
-**Status:** PENDING — needs an attended Live session. **Visual change:** yes (the
-arrangement timeline re-populates with clips). Added 2026-06-20, AFTER the
-2026-06-14 blanket acceptance, so it blocks `/pr create` until run.
+**Status:** SUPERSEDED by ARR-PROJ (Chunk 4, 2026-06-22). The probe-and-link
+arrangement-clip reconcile this entry was written to verify has been **removed** —
+the arrangement is now materialized as a pure projection of the DB (clear +
+create+fill every push, see `plan_push_arrangement`), so a Live-side delete /
+renumber is absorbed by the next push's clear+rebuild, with no positional link to
+reconcile. The behaviors below (`unlinked_stale_arrangement_clips` reported,
+re-duplicate-via-reconcile, rebind-on-renumber) no longer exist, so this check is
+moot. The live obligation it carried is replaced by the **ARR-PROJ** entries: the
+Chunk-1 spike (two full Drums-track rebuilds, `net_noop_vs_baseline=True`, already
+recorded) plus the still-pending ARR-PROJ live e2e (clear+rebuild idempotence on a
+real multi-section set). No longer blocks `/pr create`.
 
-The unit suite proves the reconcile logic against an injected
-`live_arrangement_clips_by_track` map; only a real bridge proves the live read —
-`ableton_clip(action='list', location='arrangement')` per track — returns
-placements shaped as the reconciler assumes (`arrangement_clip_index`,
-`start_beats`, `length`), so position-matching binds to the right clip.
+<details><summary>Original SYN-4R7P checks (historical — verify the removed reconcile)</summary>
 
-Why it can't be auto-verified: the reconcile reads the live arrangement lane from
-a running Live set; there is no headless stand-in for the arrangement-clip list.
-
-Checks (on a pushed song whose arrangement clips are already placed — e.g. `alien`
-or `swell`, after `--only clips` + `--only arrangement` has materialized the lane):
+The unit suite proved the reconcile logic against an injected
+`live_arrangement_clips_by_track` map; only a real bridge proved the live read —
+`ableton_clip(action='list', location='arrangement')` per track — returned
+placements shaped as the reconciler assumed (`arrangement_clip_index`,
+`start_beats`, `length`), so position-matching bound to the right clip.
 
 1. **The reported bug is gone.** Delete the arrangement clips in Live (timeline
    lane empty), then `push execute <session> --song <slug> --only arrangement
@@ -1063,6 +1067,8 @@ or `swell`, after `--only clips` + `--only arrangement` has materialized the lan
    rest), then `--only arrangement --probe`. Expect the survivors to be re-bound
    (`rebound_arrangement_clips` non-empty) and only the deleted one re-duplicated —
    no duplicate placements.
+
+</details>
 
 ## Bug 1 (incoming 2026-06-20) — arrangement-clip read gains note_count + muted
 

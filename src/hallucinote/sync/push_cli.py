@@ -463,18 +463,15 @@ def _cmd_probe_and_link(args: argparse.Namespace) -> int:
     # duplication path. The --snapshot path stays device-blind (the JSON
     # file doesn't carry chain info); use --probe for the full coverage.
     live_devices_by_parent: dict | None = None
-    live_arrangement_clips_by_track: dict | None = None
     if args.probe:
         live_tracks, live_returns = _probe_live_via_mcp()
         live_devices_by_parent = _probe_live_devices_via_mcp(
             live_tracks=live_tracks, live_returns=live_returns,
         )
-        # SYN-4R7P: also probe each track's arrangement clips so stale
-        # arrangement_clip links reconcile against Live truth (the --snapshot
-        # JSON carries no arrangement info, so that path stays arrangement-blind).
-        live_arrangement_clips_by_track = _probe_live_arrangement_clips_via_mcp(
-            live_tracks=live_tracks,
-        )
+        # ARR-PROJ: probe-and-link no longer reconciles arrangement_clip links
+        # (the arrangement is rebuilt as a pure projection every push), so this
+        # path probes only tracks/returns/devices. The execute path still probes
+        # arrangement clips itself, for the projection planner's clear.
     else:
         if not args.snapshot:
             raise SystemExit(
@@ -532,7 +529,6 @@ def _cmd_probe_and_link(args: argparse.Namespace) -> int:
         live_tracks=live_tracks,
         live_returns=live_returns,
         live_devices_by_parent=live_devices_by_parent,
-        live_arrangement_clips_by_track=live_arrangement_clips_by_track,
         actor="sync",
         reason=args.reason or f"probe-and-link from session {session_id}",
     )

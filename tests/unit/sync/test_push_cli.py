@@ -689,270 +689,8 @@ def test_probe_and_link_emits_link_removed_event_on_stale_unlink(
 
 
 # ---------------------------------------------------------------------------
-# SYN-4R7P: arrangement_clip stale-link reconciliation
+# ARR-PROJ: projection planner subsumes SYN-4R7P (no probe-and-link reconcile)
 # ---------------------------------------------------------------------------
-
-
-def _link_arrangement_clip(
-    conn, session, *, song, track_id, start_bar, end_bar, ableton_index,
-):
-    """Create a session clip + an arrangement placement of it, then record the
-    (arrangement_clip -> ableton_index) link. Returns the arrangement_clip id."""
-    cid = M.create_clip(
-        conn, track_id=track_id, slot=0,
-        length_beats=(end_bar - start_bar) * 4.0, name="A",
-    )
-    aid = M.add_arrangement_clip(
-        conn, song_id=song, track_id=track_id, clip_id=cid,
-        start_bar=start_bar, end_bar=end_bar,
-    )
-    M.link_db_to_ableton(
-        conn, session_id=session, db_kind="arrangement_clip", db_id=aid,
-        ableton_index=ableton_index,
-    )
-    return aid
-
-
-def test_probe_and_link_drops_arrangement_link_when_live_clip_deleted(
-    conn, song, session,
-):
-    """SYN-4R7P (the reported bug): the user deleted the arrangement clip in Live
-    but the arrangement_clip link survives, so plan_push_arrangement takes the
-    replace_notes(location='arrangement') REFRESH branch at a now-dead clip_index
-    and crashes with IndexError. Reconciliation must drop the stale link so the
-    next push re-duplicates the placement instead."""
-    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
-    M.link_db_to_ableton(
-        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=1,
-    )
-    aid = _link_arrangement_clip(
-        conn, session, song=song, track_id=tid,
-        start_bar=1.0, end_bar=5.0, ableton_index=0,
-    )
-    # Track present (matched by name), but its arrangement lane is now EMPTY.
-    result = push.probe_and_link(
-        conn, song_id=song, session_id=session,
-        live_tracks=[{"track_index": 1, "name": "Drums", "kind": "midi"}],
-        live_returns=[],
-        live_arrangement_clips_by_track={1: []},
-    )
-    assert result.unlinked_stale_arrangement_clips == [
-        {"db_id": aid, "ableton_index": 0},
-    ]
-    assert Q.get_ableton_link(
-        conn, session_id=session, db_kind="arrangement_clip", db_id=aid,
-    ) is None
-
-
-def test_probe_and_link_keeps_arrangement_link_when_live_clip_present(
-    conn, song, session,
-):
-    """A placement that still exists in Live at the recorded index is current —
-    keep the link (the refresh path works), no drop, no re-bind."""
-    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
-    M.link_db_to_ableton(
-        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=1,
-    )
-    aid = _link_arrangement_clip(
-        conn, session, song=song, track_id=tid,
-        start_bar=1.0, end_bar=5.0, ableton_index=0,
-    )
-    result = push.probe_and_link(
-        conn, song_id=song, session_id=session,
-        live_tracks=[{"track_index": 1, "name": "Drums", "kind": "midi"}],
-        live_returns=[],
-        live_arrangement_clips_by_track={
-            1: [{"arrangement_clip_index": 0, "start_beats": 0.0, "length": 16.0}],
-        },
-    )
-    assert result.unlinked_stale_arrangement_clips == []
-    assert result.rebound_arrangement_clips == []
-    assert Q.get_ableton_link(
-        conn, session_id=session, db_kind="arrangement_clip", db_id=aid,
-    ) == 0
-
-
-def test_probe_and_link_rebinds_arrangement_link_when_live_clip_renumbered(
-    conn, song, session,
-):
-    """Live re-numbers arrangement_clip_index on any delete. A placement that
-    still exists at its authored position but moved to a new index must be
-    RE-BOUND to that index — not dropped (dropping would re-duplicate it on the
-    next push) and not left stale (the recorded index now points elsewhere)."""
-    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
-    M.link_db_to_ableton(
-        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=1,
-    )
-    aid = _link_arrangement_clip(
-        conn, session, song=song, track_id=tid,
-        start_bar=1.0, end_bar=5.0, ableton_index=2,  # recorded at index 2
-    )
-    result = push.probe_and_link(
-        conn, song_id=song, session_id=session,
-        live_tracks=[{"track_index": 1, "name": "Drums", "kind": "midi"}],
-        live_returns=[],
-        # Same position (beat 0.0), but Live now reports it at index 0.
-        live_arrangement_clips_by_track={
-            1: [{"arrangement_clip_index": 0, "start_beats": 0.0, "length": 16.0}],
-        },
-    )
-    assert result.unlinked_stale_arrangement_clips == []
-    assert result.rebound_arrangement_clips == [
-        {"db_id": aid, "from_index": 2, "to_index": 0},
-    ]
-    assert Q.get_ableton_link(
-        conn, session_id=session, db_kind="arrangement_clip", db_id=aid,
-    ) == 0
-
-
-def test_probe_and_link_drops_arrangement_link_when_db_row_deleted(
-    conn, song, session,
-):
-    """Parent track survives, but the arrangement_clips row is gone from the DB
-    (a --reset rebuild regenerated it under a new id). The lingering link must be
-    dropped. unlink_db_from_ableton stamps no clip_id for arrangement_clip, so
-    this never trips the events.clip_id FK the SYN-3C8K clip path had to guard."""
-    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
-    M.link_db_to_ableton(
-        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=1,
-    )
-    aid = _link_arrangement_clip(
-        conn, session, song=song, track_id=tid,
-        start_bar=1.0, end_bar=5.0, ableton_index=0,
-    )
-    conn.execute("DELETE FROM arrangement_clips WHERE id = ?", (aid,))
-    result = push.probe_and_link(
-        conn, song_id=song, session_id=session,
-        live_tracks=[{"track_index": 1, "name": "Drums", "kind": "midi"}],
-        live_returns=[],
-        live_arrangement_clips_by_track={
-            1: [{"arrangement_clip_index": 0, "start_beats": 0.0, "length": 16.0}],
-        },
-    )
-    assert result.unlinked_stale_arrangement_clips == [
-        {"db_id": aid, "ableton_index": 0},
-    ]
-    assert Q.get_ableton_link(
-        conn, session_id=session, db_kind="arrangement_clip", db_id=aid,
-    ) is None
-
-
-def test_probe_and_link_drops_arrangement_link_when_parent_track_gone(
-    conn, song, session,
-):
-    """Cascade: when the parent track link is dropped as stale, its
-    arrangement_clip links drop too (a dangling arrangement_clip link is no use
-    once its track is gone), mirroring the SYN-3C8K clip cascade."""
-    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
-    M.link_db_to_ableton(
-        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=5,
-    )
-    aid = _link_arrangement_clip(
-        conn, session, song=song, track_id=tid,
-        start_bar=1.0, end_bar=5.0, ableton_index=0,
-    )
-    # 'Drums'@5 is gone (a default scaffold sits at index 1) → track link dropped.
-    result = push.probe_and_link(
-        conn, song_id=song, session_id=session,
-        live_tracks=[{"track_index": 1, "name": "1-MIDI", "kind": "midi"}],
-        live_returns=[],
-        live_arrangement_clips_by_track={1: []},
-    )
-    assert result.unlinked_stale_arrangement_clips == [
-        {"db_id": aid, "ableton_index": 0},
-    ]
-    assert Q.get_ableton_link(
-        conn, session_id=session, db_kind="arrangement_clip", db_id=aid,
-    ) is None
-    assert Q.get_ableton_link(
-        conn, session_id=session, db_kind="track", db_id=tid,
-    ) is None
-
-
-def test_probe_and_link_keeps_arrangement_link_when_track_absent_from_probe(
-    conn, song, session,
-):
-    """A per-track arrangement probe failure leaves that track's key ABSENT from
-    the map (distinct from an empty list). The reconciler must read that as 'no
-    info' and KEEP the link — a transient probe failure must never delete a live
-    binding."""
-    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
-    M.link_db_to_ableton(
-        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=1,
-    )
-    aid = _link_arrangement_clip(
-        conn, session, song=song, track_id=tid,
-        start_bar=1.0, end_bar=5.0, ableton_index=0,
-    )
-    # Probe ran (map is not None) but returned nothing for track 1 → key absent.
-    result = push.probe_and_link(
-        conn, song_id=song, session_id=session,
-        live_tracks=[{"track_index": 1, "name": "Drums", "kind": "midi"}],
-        live_returns=[],
-        live_arrangement_clips_by_track={},
-    )
-    assert result.unlinked_stale_arrangement_clips == []
-    assert Q.get_ableton_link(
-        conn, session_id=session, db_kind="arrangement_clip", db_id=aid,
-    ) == 0
-
-
-def test_probe_and_link_leaves_arrangement_links_when_not_probed(
-    conn, song, session,
-):
-    """The --snapshot path passes live_arrangement_clips_by_track=None (the JSON
-    carries no arrangement info). Reconciliation is skipped entirely, leaving
-    arrangement_clip links untouched — parity with the device-blind snapshot
-    path."""
-    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
-    M.link_db_to_ableton(
-        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=1,
-    )
-    aid = _link_arrangement_clip(
-        conn, session, song=song, track_id=tid,
-        start_bar=1.0, end_bar=5.0, ableton_index=0,
-    )
-    result = push.probe_and_link(
-        conn, song_id=song, session_id=session,
-        live_tracks=[{"track_index": 1, "name": "Drums", "kind": "midi"}],
-        live_returns=[],
-        # live_arrangement_clips_by_track defaults to None
-    )
-    assert result.unlinked_stale_arrangement_clips == []
-    assert Q.get_ableton_link(
-        conn, session_id=session, db_kind="arrangement_clip", db_id=aid,
-    ) == 0
-
-
-def test_probe_and_link_emits_link_removed_event_on_stale_arrangement_unlink(
-    conn, song, session,
-):
-    """The arrangement_clip drop goes through the mutator so the event log records
-    the removal (audit-trail seed for the future event-store flip)."""
-    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
-    M.link_db_to_ableton(
-        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=1,
-    )
-    aid = _link_arrangement_clip(
-        conn, session, song=song, track_id=tid,
-        start_bar=1.0, end_bar=5.0, ableton_index=0,
-    )
-    push.probe_and_link(
-        conn, song_id=song, session_id=session,
-        live_tracks=[{"track_index": 1, "name": "Drums", "kind": "midi"}],
-        live_returns=[],
-        live_arrangement_clips_by_track={1: []},
-    )
-    bodies = [
-        json.loads(e["payload_json"])
-        for e in conn.execute(
-            "SELECT payload_json FROM events WHERE kind = 'ableton_link_removed'"
-        ).fetchall()
-    ]
-    arr = [b for b in bodies if b["db_kind"] == "arrangement_clip"]
-    assert len(arr) == 1
-    assert arr[0]["db_id"] == aid
-    assert arr[0]["ableton_index"] == 0
 
 
 def test_arrangement_planner_rematerializes_after_live_side_delete(
@@ -984,52 +722,48 @@ def test_arrangement_planner_rematerializes_after_live_side_delete(
     assert plan.calls[0].key == f"arrangement_clip:{aid}"
 
 
-def test_probe_and_link_keeps_distinct_indices_for_coincident_arrangement_clips(
+def test_probe_and_link_no_longer_reconciles_arrangement_clip_links(
     conn, song, session,
 ):
-    """Two arrangement placements at the SAME start on one track ("rare but
-    valid" per get_arrangement_for_song) must each keep their OWN live clip — not
-    both collapse onto the first positional match. The recorded-index preference
-    + per-track consumed-index tracking prevents an index swap or double-bind."""
+    """ARR-PROJ removed the SYN-4R7P arrangement reconcile. Even in the case that
+    used to cascade-drop an arrangement_clip link — the parent track link is
+    dropped as stale — probe_and_link now leaves the arrangement_clip link
+    untouched. With clear+create+fill as the sole materialization path, a stale
+    positional link is harmless: the next push clears Live by probe and rebuilds,
+    so there is nothing to reconcile. (probe_and_link also no longer accepts a
+    live_arrangement_clips_by_track argument, and ProbeAndLinkResult no longer
+    carries the arrangement-reconcile fields.)"""
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
     M.link_db_to_ableton(
-        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=1,
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=5,
     )
-    cid_a = M.create_clip(conn, track_id=tid, slot=0, length_beats=16.0, name="A")
-    cid_b = M.create_clip(conn, track_id=tid, slot=1, length_beats=16.0, name="B")
-    aid_a = M.add_arrangement_clip(
-        conn, song_id=song, track_id=tid, clip_id=cid_a, start_bar=1.0, end_bar=5.0,
-    )
-    aid_b = M.add_arrangement_clip(
-        conn, song_id=song, track_id=tid, clip_id=cid_b, start_bar=1.0, end_bar=5.0,
+    cid = M.create_clip(conn, track_id=tid, slot=0, length_beats=16.0, name="A")
+    aid = M.add_arrangement_clip(
+        conn, song_id=song, track_id=tid, clip_id=cid, start_bar=1.0, end_bar=5.0,
     )
     M.link_db_to_ableton(
-        conn, session_id=session, db_kind="arrangement_clip", db_id=aid_a,
+        conn, session_id=session, db_kind="arrangement_clip", db_id=aid,
         ableton_index=0,
     )
-    M.link_db_to_ableton(
-        conn, session_id=session, db_kind="arrangement_clip", db_id=aid_b,
-        ableton_index=1,
-    )
-    # Live still has BOTH coincident clips, at indices 0 and 1.
+    # 'Drums'@5 is gone (a default scaffold sits at index 1) -> the track link is
+    # dropped as stale (W18-B). Pre-ARR-PROJ this cascade-dropped the
+    # arrangement_clip link too; now it must survive.
     result = push.probe_and_link(
         conn, song_id=song, session_id=session,
-        live_tracks=[{"track_index": 1, "name": "Drums", "kind": "midi"}],
+        live_tracks=[{"track_index": 1, "name": "1-MIDI", "kind": "midi"}],
         live_returns=[],
-        live_arrangement_clips_by_track={1: [
-            {"arrangement_clip_index": 0, "start_beats": 0.0, "length": 16.0},
-            {"arrangement_clip_index": 1, "start_beats": 0.0, "length": 16.0},
-        ]},
     )
-    assert result.unlinked_stale_arrangement_clips == []
-    assert result.rebound_arrangement_clips == []
-    # Each link kept its OWN index — no swap, no double-bind onto index 0.
+    # The stale track link still drops (unchanged W18-B behavior)...
+    assert result.unlinked_stale_tracks == [{"db_id": tid, "ableton_index": 5}]
     assert Q.get_ableton_link(
-        conn, session_id=session, db_kind="arrangement_clip", db_id=aid_a,
+        conn, session_id=session, db_kind="track", db_id=tid,
+    ) is None
+    # ...but the arrangement_clip link is left intact -- no reconcile happens.
+    assert not hasattr(result, "unlinked_stale_arrangement_clips")
+    assert not hasattr(result, "rebound_arrangement_clips")
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="arrangement_clip", db_id=aid,
     ) == 0
-    assert Q.get_ableton_link(
-        conn, session_id=session, db_kind="arrangement_clip", db_id=aid_b,
-    ) == 1
 
 
 # ---------------------------------------------------------------------------

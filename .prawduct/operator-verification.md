@@ -15,6 +15,25 @@ pending entries when `operator_verification_required: true`.
 
 ---
 
+## ARR-PROJ Chunk 2 — full projection planner end-to-end in real Live (2026-06-22) — PENDING
+
+Chunk 2 (the planner rewrite) is headless-verified (4379 green, Critic 0 findings) but the
+WHOLE new path has not run against real Live as one flow — only the create+fill *primitive*
+did (Chunk-1 spike, Drums only). The integration still to confirm live: the
+`live_arrangement_clips_by_track` probe threading, the descending-index clear, per-placement
+create+fill across multiple tracks in one phase, AND the envelope-bearing → duplicate route
+(alien's one host: the Alien Voice `send_level` clip).
+
+**Check (alien, Ableton open, server version-matched):**
+`uv run hallucinote push execute --only arrangement --probe --song alien` (the new
+`_cmd_execute` probes arrangement and threads it into the projection planner; `--only
+arrangement` skips the realtime perform phase). Expect: every track's existing arrangement
+clips cleared then create+filled from the DB; the Alien Voice envelope-hosting placement
+duplicated (not create+filled) so its `send_level` clip envelope survives; `.last-push-state.json`
+outcome `ok`. Then `hallucinote verify-arrangement` (once Chunk 3 lands) or a per-track
+`ableton_note(list, location='arrangement')` spot-check shows collapsed note_counts == DB, and
+NO stacking on the re-run. Render-confirm the song still sounds correct.
+
 ## ARR-PROJ Chunk 1 — arrangement-as-projection live spike (2026-06-22) — PASSED (note-level), render optional
 
 **Attended session, alien set, server version-matched (`/mcp` respawn).** Drove the

@@ -35,6 +35,10 @@ from typing import Any, Callable
 from hallucinote.db import mutations as M
 from hallucinote.db import queries as Q
 from hallucinote.sync import push
+from hallucinote.sync.push.empty_rack_guard import (
+    _parent_key,
+    partition_doomed_nested_writes,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -783,6 +787,95 @@ def execute_push(
             return None
         return getattr(resp, "result", None)
 
+    def _probe_rack_chain_count(rack: dict[str, Any]) -> int | None:
+        """SYN-9F4K: read a freshly-loaded rack's live chain count via the
+        existing ``get_device_chains`` handler (engine-only — reuses the
+        read-only handler, no MCP wire change). Returns the ``chain_count`` int,
+        or ``None`` on ANY failure — the guard then keeps the rack's writes
+        (keep-on-doubt: a probe hiccup must never fabricate an empty-rack halt)."""
+        parent = rack["parent"]
+        kind = parent.get("kind") if isinstance(parent, dict) else None
+        params: dict[str, Any] = {"device_index": rack["live_index"]}
+        if kind == "track":
+            params["track_index"] = parent.get("index")
+        elif kind == "return":
+            params["return_index"] = parent.get("index")
+        elif kind == "master":
+            params["master"] = True
+        else:
+            return None
+        try:
+            resp = send_fn(Request(
+                tool="ableton_device", action="get_device_chains", params=params,
+            ))
+        except Exception:  # prawduct:allow prawduct/broad-except -- best-effort runtime probe; any failure forgoes the empty-rack guard (keeps writes), never halts
+            logger.debug("empty-rack chain probe failed — keeping writes", exc_info=True)
+            return None
+        if not bool(getattr(resp, "ok", False)):
+            return None
+        result = getattr(resp, "result", None) or {}
+        chain_count = result.get("chain_count")
+        return chain_count if isinstance(chain_count, int) else None
+
+    def _loaded_rack_name_fn(main_calls):
+        """SYN-9F4K: build a best-effort ``name_fn`` for the empty-rack guard from
+        THIS pass's load calls — ``(parent, device_index) -> display_name`` for
+        each rack loaded this pass, resolved via its now-live link. The guard uses
+        it to name an empty rack in the failure message; a rack with no load this
+        pass (e.g. an already-linked rack on a re-push) isn't in the map, so the
+        guard falls back to the rack's live address. Cheap per-load DB reads."""
+        name_map: dict[tuple[Any, Any], str] = {}
+        for call in main_calls:
+            if call.tool != "ableton_device" or call.args.get("action") != "load":
+                continue
+            key = call.key or ""
+            if not key.startswith("device:"):
+                continue
+            device_id = key.split(":", 1)[1]
+            live_index = Q.get_ableton_link(
+                conn, session_id=session_id, db_kind="device", db_id=device_id,
+            )
+            if live_index is None:
+                continue
+            parent = (call.args.get("node") or {}).get("parent")
+            if not parent:
+                continue
+            row = Q.get_device(conn, device_id)
+            display_name = (row["display_name"] if row is not None else None)
+            if display_name:
+                name_map[(_parent_key(parent), live_index)] = display_name
+
+        def name_fn(parent, device_index):
+            return name_map.get((_parent_key(parent), device_index))
+
+        return name_fn
+
+    def _empty_rack_result_entries(failures) -> list[dict[str, Any]]:
+        """SYN-9F4K: turn empty-rack guard failures into synthetic failed-result
+        entries (returned, for the caller to extend ``results``) + error records
+        (appended here). One per empty rack, so the boundary halt fires on a single
+        clear "preset content did not load" error instead of the chain-index
+        cascade. NOT routed through ``_apply_results`` — these are diagnosis, not
+        wire results."""
+        entries: list[dict[str, Any]] = []
+        for fail in failures:
+            kind, index = _parent_key(fail["parent"])
+            base = {
+                "key": f"empty_rack:{kind}:{index}/{fail['device_index']}",
+                "tool": "ableton_device",
+                "error": fail["message"],
+            }
+            entries.append({**base, "ok": False, "result": None})
+            error_records.append({
+                **base,
+                "action": "load",
+                "args_summary": {
+                    "empty_rack_suppressed_writes": fail["suppressed_count"],
+                },
+                "hint": fail["hint"],
+            })
+        return entries
+
     def _dispatch_calls(
         calls, *, phase_name: str | None = None,
     ) -> tuple[list[dict[str, Any]], bool]:
@@ -1082,6 +1175,7 @@ def execute_push(
         # genuinely differs); on a fresh-set push the main plan has only loads,
         # so this fires no reads at all.
         calls_to_dispatch = plan.calls
+        main_rack_failures: list[dict[str, Any]] = []
         if phase.name == "devices":
             from hallucinote.sync.push.device_param_diff import (
                 partition_unchanged_device_params,
@@ -1097,6 +1191,19 @@ def execute_push(
                 _emit_progress(f"[{phase.name}] {msg}")
                 if msg not in warning_messages:
                     warning_messages.append(msg)
+            # SYN-9F4K: an already-linked rack that still loads empty (a re-push
+            # against an unresolved preset) re-emits its nested writes HERE, in
+            # the main dispatch — not the convergence pass (which only sees a
+            # device loaded THIS pass). Probe + drop them too, or the
+            # chain-index-out-of-range cascade returns on every push after the
+            # first. On a fresh push the rack is unlinked, so the main plan has
+            # only the load (no nested writes) and this is a no-op — the
+            # convergence guard below handles that case (with the loaded rack's
+            # name). name_fn=None here: a re-push emits no load, so no name is
+            # available — the message falls back to the rack's live address.
+            calls_to_dispatch, main_rack_failures = partition_doomed_nested_writes(
+                calls_to_dispatch, probe_fn=_probe_rack_chain_count,
+            )
 
         # PSH-5T9D: announce a phase that actually dispatches. The realtime
         # perform gets a distinctive heads-up + ETA framing so a multi-minute
@@ -1117,6 +1224,13 @@ def execute_push(
         # rows could accumulate, so applying what we have is safe.
         if results:
             _apply_results(results, phase.name)
+
+        # SYN-9F4K: record any main-dispatch empty-rack failures AFTER apply
+        # (they're diagnosis, not wire results). Their ok=False entries make
+        # `all(r.get("ok"))` False below, so the convergence pass is correctly
+        # skipped — the phase halts on the single clear error.
+        if main_rack_failures:
+            results.extend(_empty_rack_result_entries(main_rack_failures))
 
         # SYN-9F2L convergence: a device loaded THIS pass gets its link at
         # apply-time, after parameter planning — so its dialed parameters
@@ -1142,12 +1256,31 @@ def execute_push(
                 if c.key not in dispatched_keys
             ]
             if extra_calls:
-                extra_results, connection_lost = _dispatch_calls(
-                    extra_calls, phase_name=phase.name,
+                # SYN-9F4K: a rack that loaded this pass with 0 chains cannot
+                # accept its dependent nested writes — each would fail
+                # chain-index-out-of-range, burying the real cause (the empty
+                # load) under hundreds of errors. Probe each rack a nested write
+                # addresses; drop the doomed writes and record ONE "preset content
+                # did not load" failure per empty rack so the phase halts on a
+                # single clear error instead of the cascade. The loaded rack's
+                # name is available this pass (name_fn from the loads). Engine-only
+                # (reuses get_device_chains, no MCP change).
+                extra_calls, empty_rack_failures = partition_doomed_nested_writes(
+                    extra_calls,
+                    probe_fn=_probe_rack_chain_count,
+                    name_fn=_loaded_rack_name_fn(plan.calls),
                 )
-                results.extend(extra_results)
-                if extra_results:
-                    _apply_results(extra_results, phase.name)
+                if empty_rack_failures:
+                    results.extend(
+                        _empty_rack_result_entries(empty_rack_failures)
+                    )
+                if extra_calls:
+                    extra_results, connection_lost = _dispatch_calls(
+                        extra_calls, phase_name=phase.name,
+                    )
+                    results.extend(extra_results)
+                    if extra_results:
+                        _apply_results(extra_results, phase.name)
 
         calls_ok = sum(1 for r in results if r.get("ok"))
         calls_failed = sum(1 for r in results if not r.get("ok"))

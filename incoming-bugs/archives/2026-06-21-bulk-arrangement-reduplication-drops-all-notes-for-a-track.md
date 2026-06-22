@@ -1,5 +1,16 @@
 # `execute --only arrangement` silently drops ALL notes for a track (empty arrangement clips) — and `ableton_clip list` note_count masks it
 
+> **RESOLVED by ARR-PROJ (2026-06-22).** The bulk `duplicate_to_arrangement` drop is gone:
+> the note path now `create`+fills each arrangement clip explicitly from the DB (no bulk
+> duplicate), and a post-phase **integrity assert** compares each materialized clip's real
+> notes (read via the note API, not the source-masking `ableton_clip list` note_count)
+> against the DB — a drop now HALTs the push with an actionable report instead of reporting
+> `OK`. The `note_count`-masking sub-issue is subsumed by reading the arrangement clip's own
+> notes in the comparator (design §6b/q2). **Acceptance witness** for the redesign — see
+> `.prawduct/artifacts/arrangement-materialization-redesign.md` §1/§10 and the ARR-PROJ build
+> plan (Chunks 1–5 built; broad live e2e tracked in `.prawduct/operator-verification.md`).
+> Backlog item ARR-7H2N closes when the redesign merges.
+
 **Severity:** H — a primary instrument (Human Riff, the EBM backbone) rendered
 **completely silent** across the entire song, with NO error and a push that reported
 `OK`. The silence is invisible to every cheap check (`ableton_clip list` reports the

@@ -1,5 +1,16 @@
 # Note-edit arrangement re-materialization STACKS notes (corrupts the arrangement) when the edited clip isn't the last on its track
 
+> **RESOLVED by ARR-PROJ (2026-06-22).** Root cause = the copy-with-positional-link
+> materialization model (`duplicate_to_arrangement` re-firing Live's B-24 overlap-split
+> onto an occupied timeline). The redesign replaces it with arrangement-as-projection:
+> the note path now CLEARs + `create`+fills a fresh clip from the DB every push, so the
+> overlap-split cannot occur by construction, and a post-phase integrity assert HALTs on
+> any divergence (no silent `OK`). This is an **acceptance witness** for the redesign,
+> not a separate patch — see `.prawduct/artifacts/arrangement-materialization-redesign.md`
+> §1/§10 and the ARR-PROJ build plan (Chunks 1–5 built; broad live e2e tracked in
+> `.prawduct/operator-verification.md`). Backlog item ARR-9X4T closes when the redesign
+> merges.
+
 **Severity:** H — silent, AUDIBLE corruption of the rendered arrangement (doubled /
 tripled drum hits, stacked riffs), produced by following the **documented** recovery.
 No error is raised; the push reports `OK`. Recovery from the corruption requires a

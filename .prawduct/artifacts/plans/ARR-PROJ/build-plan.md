@@ -41,7 +41,7 @@ After Chunk 1 the level rises to High for Chunks 2–6.
 - [x] Chunk 02: Sync-planner rebuild path (clear + create+fill + exception routing)
 - [x] Chunk 03: Integrity comparator — push-time assert + `verify-arrangement` audit (collapsed-set, tolerance)
 - [x] Chunk 04: Collapse the positional-link reconcile subsystem
-- [ ] Chunk 05: Docs + skill — retire the SYN-4R7P recovery dance
+- [x] Chunk 05: Docs + skill — retire the SYN-4R7P recovery dance
 - [~] Chunk 06 (conditional): bulk `clear_arrangement` MCP wire action — **DROPPED** (Chunk-1d chose planner-deletes; existing `delete` wire suffices, zero fingerprint change)
 
 Context: Plan authored 2026-06-22 from the discovery artifact. **Chunk 1 Live spike RAN
@@ -111,6 +111,29 @@ retire the SYN-4R7P recovery dance: SKILL.md:80/82/178, guides/gaps+conventions,
 2026-06-21 incoming-bug reports + rewire ARR-9X4T/ARR-7H2N refs), then the cumulative-Critic PR
 gate (the chunk review overwrote the prior verify-resolutions chain record; ledger preserves it
 but a fresh `cumulative` is needed before `/pr create`).
+
+**Chunk 5 BUILT 2026-06-22 (doc-only).** Retired the SYN-4R7P recovery dance from
+`skills/ableton-push/SKILL.md`: dropped the arrangement-clip list from the `--probe`
+description (line 75); removed the `unlinked_stale_arrangement_clips` / `rebound_arrangement_clips`
+display bullet (now-removed fields); rewrote "Re-materialize the arrangement after a note edit"
+to the projection model (rebuild → `execute --only arrangement` clears+rebuilds from the DB,
+idempotent, NO manual delete-then-re-duplicate); corrected the phase-table arrangement row
+(delete-to-clear + create+fill; `duplicate_to_arrangement` only for envelope-bearing); rewrote
+the `IndexError` troubleshooting entry — that crash can no longer occur, and folded in the
+**verify-arrangement** surfacing (`python -m hallucinote.cli verify-arrangement --song <slug>`),
+closing the Chunk-3 W4 residual ("verify-arrangement unsurfaced in skills/docs"). Grep-asserted
+the delete-by-hand recovery language is gone (only negated "is retired" / "can no longer occur"
+framing remains). The `ableton://guides/{gaps,conventions}` needed NO change — they carry no
+recovery-dance language; gaps.md:36-43 (the arrangement-clip envelope limit) is the REAL Live
+constraint underpinning the envelope-bearing duplicate route and stays. Archived the two
+2026-06-21 incoming-bug reports (stacking + bulk-drop) to `incoming-bugs/archives/` with
+RESOLVED-by-ARR-PROJ headers, and rewired their `refs:` in the ARR-PROJ / ARR-9X4T / ARR-7H2N
+backlog items to the archived paths. **Deferred (surfaced, not dropped):** the
+ARR-9X4T/ARR-7H2N `status=shipped` flip is gated on "once the redesign lands" (done-when #3) —
+done at merge + live-verify (the `/prawduct:pr` post-merge cleanup), since archiving = resolved
+= the same act as the backlog close and the broad live e2e is still pending. ALL buildable
+chunks now done; remaining: `/prawduct:critic cumulative` (PR gate) + the ARR-PROJ live e2e
+(operator-verification) + the backlog close at merge.
 
 ## Scaffolding
 

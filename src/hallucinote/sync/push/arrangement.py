@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import sqlite3
+from typing import Any
 
 from hallucinote.db import queries as Q
 
 from ._core import PushPlan, ToolCall, _notes_for_mcp, _position_bar_to_beats
+from .envelopes import envelope_hosting_clip_ids
 
 
 def _arrangement_note_refresh_call(
@@ -91,52 +93,52 @@ def plan_push_arrangement(
     *,
     song_id: str,
     session_id: str,
+    live_arrangement_clips_by_track: dict[int, list[dict[str, Any]]] | None = None,
 ) -> PushPlan:
-    """Plan the arrangement build for a song.
+    """Plan the arrangement build as a PROJECTION of the DB (ARR-PROJ).
 
-    Strategy: for each ``arrangement_clips`` row, emit one
-    ``ableton_clip(action='duplicate_to_arrangement', track_index,
-    clip_index, start_beats)`` call. The agent / push-skill is responsible
-    for executing them — they're reorder-safe within the planner output
-    (each call addresses an independent (track, slot, position) triple)
-    and Live's underlying API handles them serially.
+    Per track with placements: CLEAR its existing arrangement clips (from the
+    probed Live state, in descending ``arrangement_clip_index`` so Live's
+    post-delete renumbering never invalidates a pending delete) then materialize
+    each placement directly. The common note-only case uses ``create``
+    (``create_midi_clip`` + ``set_notes``) on a FRESH arrangement clip — no
+    ``duplicate_to_arrangement``, so Live's B-24 overlap-split (the 13-month
+    stacking bug) cannot occur, and no ``replace_notes``-in-place (the §6b-A
+    orphan path). Idempotent by construction: same DB → same arrangement, every
+    push, regardless of the timeline's prior state.
 
-    Pre-conditions (W10-G post-Wave-0): unlinked deps skip-and-warn
-    instead of raising. The prior strict-raise contract (W3-C/F) was
-    correct in intent but unfriendly in practice — Wave 0's full-band-rock
-    canary surfaced this as a Python traceback through the CLI when an
-    earlier phase failed partway. W10-G normalizes phase-planner partial-
-    state behavior: every planner skips-with-note, matching the existing
-    ``plan_push_envelopes`` and ``plan_push_devices`` patterns. The agent
-    sees actionable notes per skipped row and continues; nothing in Live
-    gets half-built because the row simply isn't emitted as a call.
+    Routing (design §5):
 
-    Idempotency (W10-A): each row whose ``arrangement_clip`` link is
-    already recorded in ``ableton_links`` is silently skipped. Without
-    this, re-running a successful push would silently duplicate every
-    arrangement placement (the canary triage Group C / C-original). The
-    skip count surfaces as a tracking warn so the agent / UI can show
-    "nothing to do" instead of going dark.
+      * **note-only placement** → ``create`` a fresh arrangement clip filled
+        from the DB notes (no session source needed).
+      * **envelope-bearing placement** — its clip HOSTS a clip-bound envelope
+        (:func:`envelope_hosting_clip_ids`, the W4-A snapshot-copy case) →
+        ``duplicate_to_arrangement`` onto the cleared region so the clip
+        envelope survives (``create``+``set_notes`` writes notes only and would
+        silently drop it — the §9 routing risk). Lands on an empty region (clear
+        ran first) → no B-24. Needs the clip linked in a session slot.
+      * **audio placement** → the whole (audio) track is left untouched
+        (CLP-AUD2 scope); see §6a below.
 
-    Position conversion: each row's 1-based fractional ``start_bar`` is
-    converted to cumulative beats from song start via
-    :func:`_position_bar_to_beats`. The agent doesn't see bars; the MCP
-    surface is meter-agnostic (beats throughout).
+    ``live_arrangement_clips_by_track``: ``{track_index: [{arrangement_clip_index,
+    start_beats, ...}]}`` from the execute-path probe
+    (:func:`push_cli._probe_live_arrangement_clips_via_mcp`). When ``None`` (a
+    caller that did not probe) NO clear is emitted and a loud ``alert`` warns the
+    timeline must already be empty — the idempotency guarantee holds only with
+    the probe. The execute path always probes; this fallback exists solely for
+    non-execute callers / tests / the ``plan``/``phases`` debug subcommands.
 
-    Clear pass: not emitted here. When unlinked rows exist (first push,
-    or partial-apply recovery), the agent / push-skill should wipe
-    existing arrangement clips on the involved tracks before running
-    the plan. The planner can't emit a pre-clear: no MCP
-    ``arrangement_clip_delete`` action exists and the planner has no DB
-    knowledge of Live's current arrangement state. The idempotent-skip
-    above means this only matters for genuinely-new placements; see
-    W3-I for the long-term direction.
+    §6a all-or-nothing: the clear is DESTRUCTIVE, so a track is materialized
+    atomically — every link it needs is validated BEFORE any of its calls (clear
+    or create) join the plan. A track that cannot be fully rebuilt emits nothing
+    (no clear) and an alert; sibling tracks are unaffected. The planner therefore
+    never PLANS a half-materialization (apply-time failures still fail loud via
+    the executor halt + the Chunk-3 integrity assert).
 
-    Returns N decomposed calls (one per row whose track + clip are both
-    linked AND whose arrangement_clip link is NOT yet recorded). Each
-    call's result must carry ``arrangement_clip_index`` so
-    :func:`apply_push_results` can record the binding under the
-    ``arrangement_clip:{db_id}`` key.
+    Each ``create`` / ``duplicate`` call is keyed ``arrangement_clip:{db_id}`` so
+    :func:`apply_push_results` records the binding from ``arrangement_clip_index``;
+    each ``delete`` is keyed ``arrangement_clip_clear:{track}:{idx}`` (ack-only —
+    a delete records no binding).
     """
     plan = PushPlan()
     arr_rows = Q.get_arrangement_for_song(conn, song_id)
@@ -150,112 +152,181 @@ def plan_push_arrangement(
             "no time_signature_map; assuming 4/4 for arrangement bar→beats conversion"
         )
 
-    already_linked = 0
-    refreshed = 0
-    new_placements = 0
-    for row in arr_rows:
-        # W10-A / PSH-6W2J: re-pushes must NOT re-duplicate an already-placed
-        # clip (that silently doubled the placement on every re-run). But the
-        # original "skip entirely" was too aggressive — it also suppressed note
-        # propagation, so a later note edit never reached the arrangement copy
-        # (silent stale render/playback). Now an already-linked placement emits
-        # a `replace_notes(location='arrangement')` REFRESH instead: idempotent
-        # on placement (no doubling), notes kept in sync.
-        arr_at = Q.get_ableton_link(
-            conn, session_id=session_id, db_kind="arrangement_clip",
-            db_id=row["id"],
+    if live_arrangement_clips_by_track is None:
+        plan.alert(
+            "arrangement planned WITHOUT a Live arrangement probe: no clear was "
+            "emitted, so create+fill will STACK onto any existing arrangement "
+            "clips on the involved tracks. Run through the execute path (which "
+            "probes automatically) or ensure the timeline is already empty."
         )
-        if arr_at is not None:
-            already_linked += 1
-            refresh_call = _arrangement_note_refresh_call(
-                conn, row=row, session_id=session_id
-            )
-            if refresh_call is not None:
-                plan.add(refresh_call)
-                refreshed += 1
-            continue
+
+    host_clip_ids = envelope_hosting_clip_ids(conn, song_id)
+
+    # Group placements by track (rows already ordered by track_id, start_bar, id).
+    rows_by_track: dict[str, list[sqlite3.Row]] = {}
+    for row in arr_rows:
+        rows_by_track.setdefault(row["track_id"], []).append(row)
+
+    created = duplicated = cleared = skipped_tracks = 0
+
+    for track_id, rows in rows_by_track.items():
         track_at = Q.get_ableton_link(
-            conn, session_id=session_id, db_kind="track", db_id=row["track_id"]
+            conn, session_id=session_id, db_kind="track", db_id=track_id,
         )
         if track_at is None:
-            plan.warn(
-                f"arrangement_clip {row['id']!r}: track {row['track_id']!r} "
-                f"not linked in session {session_id!r}. Run plan_push_song_tracks "
-                f"+ apply_push_results before this phase to surface the link. "
-                f"Skipping this placement."
+            plan.alert(
+                f"arrangement: track {track_id!r} not linked in session "
+                f"{session_id!r}; skipping all {len(rows)} placement(s) on it. "
+                "Run the tracks phase + apply_push_results first."
             )
+            skipped_tracks += 1
             continue
-        clip_at = Q.get_ableton_link(
-            conn, session_id=session_id, db_kind="clip", db_id=row["clip_id"]
-        )
-        if clip_at is None:
-            # CLP-AUD1: an audio clip is never linked (its push is
-            # CLP-AUD2 scope), so the generic "run the clip-create
-            # phase" advice would send the caller in a loop — name the
-            # real blocker instead.
-            clip_row = Q.get_clip(conn, row["clip_id"])
-            if clip_row is not None and clip_row["kind"] == "audio":
-                plan.warn(
-                    f"arrangement_clip {row['id']!r}: session clip "
-                    f"{row['clip_id']!r} is kind='audio' — audio-clip "
-                    "push is CLP-AUD2 scope (the row is authored but not "
-                    "synced), so this placement can't reach Live yet. "
-                    "Skipping this placement."
-                )
-                continue
-            plan.warn(
-                f"arrangement_clip {row['id']!r}: session clip {row['clip_id']!r} "
-                f"not linked in session {session_id!r}. Run the clip-create "
-                f"phase + apply_push_results to surface the link. "
-                f"Skipping this placement."
-            )
-            continue
-        plan.add(ToolCall(
-            tool="ableton_clip",
-            args={
-                "action": "duplicate_to_arrangement",
-                "track_index": track_at,
-                "clip_index": clip_at,
-                "start_beats": _position_bar_to_beats(row["start_bar"], ts_points),
-            },
-            key=f"arrangement_clip:{row['id']}",
-            purpose=(
-                f"duplicate session slot {clip_at} on track {track_at} → "
-                f"arrangement bar {row['start_bar']:g}"
-            ),
-        ))
-        new_placements += 1
 
-    if already_linked:
-        # Surface the idempotent re-push so the agent/UI sees what happened.
-        # PSH-6W2J: already-linked placements aren't silently skipped anymore —
-        # their notes are refreshed from the session clip (no re-duplication).
-        note = (
-            f"{already_linked} arrangement placement(s) already linked "
-            f"in session {session_id!r} — refreshed notes from their session "
-            "clips, no re-duplication (idempotent re-push)"
-        )
-        if refreshed != already_linked:
-            # Some linked placements couldn't be refreshed (unresolved track
-            # link, or audio source — no notes to push). Name the gap so a
-            # stale arrangement copy can't hide behind the "refreshed" claim.
-            note += (
-                f"; {already_linked - refreshed} of them not refreshed "
-                "(track link unresolved or audio source)"
+        # When a probe was provided but this track's lane is ABSENT from it, the
+        # per-track probe FAILED (vs. a present-but-empty lane = genuinely no
+        # clips — see _probe_live_arrangement_clips_via_mcp's per-track tolerance).
+        # The lane's state is unknown, so create+fill could STACK onto unprobed
+        # clips — the exact failure the projection prevents. Skip + alert rather
+        # than guess the timeline is clear.
+        if (
+            live_arrangement_clips_by_track is not None
+            and track_at not in live_arrangement_clips_by_track
+        ):
+            plan.alert(
+                f"arrangement: no Live arrangement probe for track {track_id!r} "
+                f"(Live index {track_at}) — the per-track probe failed, so the "
+                "lane state is unknown; skipping to avoid create+fill stacking "
+                "onto unprobed clips. Re-run once Live is reachable for it."
             )
-        plan.warn(note)
-    if new_placements:
-        # Fires for genuine NEW duplicates only (first push, or partial-apply
-        # recovery) — NOT for note refreshes of already-placed clips, which add
-        # nothing to clear. The agent should ensure those slots are empty in
-        # Live before running the duplicates (the planner emits no pre-clear:
-        # no MCP `arrangement_clip_delete` action exists, and the planner has no
-        # DB knowledge of Live's current arrangement state regardless).
+            skipped_tracks += 1
+            continue
+
+        # --- Validate + build the placement calls; commit only if the WHOLE
+        #     track is materializable (§6a — never clear what we can't rebuild).
+        placement_calls: list[ToolCall] = []
+        skip_reason: str | None = None
+        skip_is_known_scope = False  # audio (CLP-AUD2) → warn; real gap → alert
+        for row in rows:
+            clip_row = Q.get_clip(conn, row["clip_id"])
+            if clip_row is None:
+                skip_reason = (
+                    f"placement {row['id']!r} references missing clip "
+                    f"{row['clip_id']!r}"
+                )
+                break
+            if clip_row["kind"] == "audio":
+                # A Live track is MIDI or audio, so any audio placement means an
+                # audio track: skip the WHOLE track's projection. Clearing it
+                # would wipe manually-placed audio clips we cannot rebuild
+                # (audio-clip arrangement push is CLP-AUD2 scope).
+                skip_reason = (
+                    f"placement {row['id']!r} is kind='audio' (CLP-AUD2 scope) — "
+                    "audio-track arrangement is not materialized by push; left "
+                    "untouched so manual audio clips are preserved"
+                )
+                skip_is_known_scope = True
+                break
+
+            start_beats = _position_bar_to_beats(row["start_bar"], ts_points)
+            if row["clip_id"] in host_clip_ids:
+                # Envelope-bearing → duplicate-onto-cleared (needs clip linked).
+                clip_at = Q.get_ableton_link(
+                    conn, session_id=session_id, db_kind="clip",
+                    db_id=row["clip_id"],
+                )
+                if clip_at is None:
+                    skip_reason = (
+                        f"envelope-bearing placement {row['id']!r}: source clip "
+                        f"{row['clip_id']!r} not linked (needed for the duplicate "
+                        "route — run the clips phase + apply first)"
+                    )
+                    break
+                placement_calls.append(ToolCall(
+                    tool="ableton_clip",
+                    args={
+                        "action": "duplicate_to_arrangement",
+                        "track_index": track_at,
+                        "clip_index": clip_at,
+                        "start_beats": start_beats,
+                    },
+                    key=f"arrangement_clip:{row['id']}",
+                    purpose=(
+                        f"duplicate envelope-bearing clip {row['clip_id']!r} → "
+                        f"arrangement bar {row['start_bar']:g} (carries clip "
+                        "envelope; cleared region first — no B-24)"
+                    ),
+                ))
+                duplicated += 1
+            else:
+                # Note-only → create+fill a FRESH arrangement clip from DB notes.
+                notes = Q.get_notes_for_clip(conn, row["clip_id"])
+                placement_calls.append(ToolCall(
+                    tool="ableton_clip",
+                    args={
+                        "action": "create",
+                        "location": "arrangement",
+                        "kind": "midi",
+                        "track_index": track_at,
+                        "start_beats": start_beats,
+                        "length": float(clip_row["length_beats"]),
+                        "name": clip_row["name"],
+                        "notes": _notes_for_mcp(notes),
+                    },
+                    key=f"arrangement_clip:{row['id']}",
+                    purpose=(
+                        f"create+fill arrangement clip {row['id']!r} on track "
+                        f"{track_at} @ bar {row['start_bar']:g} "
+                        f"({len(notes)} notes from DB)"
+                    ),
+                ))
+                created += 1
+
+        if skip_reason is not None:
+            msg = (
+                f"arrangement: skipping track {track_id!r} entirely (no clear, no "
+                f"rebuild) — {skip_reason}. The clear is destructive, so a track "
+                "is materialized only when it can be fully rebuilt (§6a)."
+            )
+            (plan.warn if skip_is_known_scope else plan.alert)(msg)
+            skipped_tracks += 1
+            continue
+
+        # CLEAR (descending index) — committed only now that the track is fully
+        # rebuildable. Emitted BEFORE the placement calls so deletes dispatch
+        # first (dispatch preserves add-order).
+        track_calls: list[ToolCall] = []
+        if live_arrangement_clips_by_track is not None:
+            live_clips = live_arrangement_clips_by_track.get(track_at, [])
+            for c in sorted(
+                live_clips,
+                key=lambda c: c["arrangement_clip_index"],
+                reverse=True,
+            ):
+                idx = c["arrangement_clip_index"]
+                track_calls.append(ToolCall(
+                    tool="ableton_clip",
+                    args={
+                        "action": "delete",
+                        "location": "arrangement",
+                        "track_index": track_at,
+                        "clip_index": idx,
+                    },
+                    key=f"arrangement_clip_clear:{track_at}:{idx}",
+                    purpose=(
+                        f"clear existing arrangement clip {idx} on track "
+                        f"{track_at} (projection rebuild)"
+                    ),
+                ))
+                cleared += 1
+        track_calls.extend(placement_calls)
+        for call in track_calls:
+            plan.add(call)
+
+    if cleared or created or duplicated:
         plan.warn(
-            "agent must clear existing arrangement clips on the involved tracks "
-            "before running these duplicates (planner emits no pre-clear ops "
-            "because no MCP arrangement-clip-delete action exists and the "
-            "planner has no DB knowledge of Live's current arrangement state)"
+            f"arrangement projection: cleared {cleared}, created+filled "
+            f"{created}, duplicated {duplicated} (envelope-bearing) across "
+            f"{len(rows_by_track) - skipped_tracks} track(s)"
         )
     return plan
 

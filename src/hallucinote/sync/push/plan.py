@@ -75,6 +75,7 @@ def plan_push_song(
     song_id: str,
     session_id: str,
     perform_slowdown_factor: float = 1.0,
+    live_arrangement_clips_by_track: dict[int, list[dict]] | None = None,
 ) -> list[PushPhase]:
     """Master orchestration: return the thirteen phases of a full song push, in order.
 
@@ -140,10 +141,13 @@ def plan_push_song(
           automation (ENV-7G4K), fingerprint-gated. Needs tracks +
           returns + devices linked. Realtime: the transport plays each
           changed arc's span (the plan names the wall-clock cost).
-      12. ``arrangement`` — :func:`plan_push_arrangement`. Emits
-          ``duplicate_to_arrangement`` per arrangement row. Carries
-          session-clip envelopes as snapshot copies (W4-A finding).
-          Needs clips linked (raises otherwise).
+      12. ``arrangement`` — :func:`plan_push_arrangement` (ARR-PROJ). Projects
+          the DB onto the arrangement: per track, CLEAR its existing clips (from
+          ``live_arrangement_clips_by_track``, the execute-path probe) then
+          create+fill each placement from the DB (note-only) — idempotent, no
+          B-24 stacking. Envelope-bearing placements duplicate onto the cleared
+          region to keep their snapshot-copied clip envelopes (W4-A). Needs
+          tracks linked; envelope-bearing/audio placements need clips linked.
       13. ``cues`` — :func:`plan_push_cue_points`. Creates cue points.
           Must run AFTER arrangement: Live's ``set_or_delete_cue`` is
           clamped to ``[0, song.last_event_time]``; cues placed before
@@ -250,8 +254,9 @@ def plan_push_song(
             name="arrangement",
             plan_fn=lambda: plan_push_arrangement(
                 conn, song_id=song_id, session_id=session_id,
+                live_arrangement_clips_by_track=live_arrangement_clips_by_track,
             ),
-            description="Duplicate session clips to the arrangement view (snapshots session-clip envelopes per W4-A).",
+            description="Project the DB onto the arrangement: clear each track then create+fill (envelope-bearing clips duplicate onto the cleared region) — ARR-PROJ.",
         ),
         PushPhase(
             name="cues",
@@ -380,6 +385,15 @@ _ACK_ONLY_KINDS: frozenset[str] = frozenset({
     # duplicate landed); this op only rewrites content, so there's no new index
     # to record — ack-only. Distinct from the `arrangement_clip:` duplicate key.
     "arrangement_clip_notes",
+    # ARR-PROJ Chunk 2: the projection planner CLEARS a track's existing
+    # arrangement clips before create+filling from the DB, emitting
+    # ableton_clip(action='delete', location='arrangement') keyed
+    # `arrangement_clip_clear:{track}:{idx}`. Ack-only — a delete removes a clip
+    # (and its link, which the rebuild re-records under `arrangement_clip:`);
+    # the delete result carries no index to bind. Without this case
+    # apply_push_results raises on the unknown key prefix and HALTS the
+    # arrangement phase before any clip is rebuilt.
+    "arrangement_clip_clear",
 })
 
 

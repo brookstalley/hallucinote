@@ -24,6 +24,7 @@ import sys
 _SUBCOMMANDS: dict[str, tuple[str, str]] = {
     "push": ("hallucinote.sync.push_cli", "main"),
     "pull": ("hallucinote.sync.pull_cli", "main"),
+    "verify-arrangement": ("hallucinote.sync.verify_arrangement_cli", "main"),
     "tuning-pull": ("hallucinote.tuning.pull_cli", "main"),
     "compat": ("hallucinote.sync.compat", "main"),
     "capture": ("hallucinote.tools.capture_cli", "main"),
@@ -40,6 +41,7 @@ _SUBCOMMANDS: dict[str, tuple[str, str]] = {
 _SUMMARY: dict[str, str] = {
     "push": "build → Live: probe-and-link, execute (14 phases), push-notes",
     "pull": "fold manual Live edits back into the DB",
+    "verify-arrangement": "audit the DB arrangement against Live (collapsed-set; exit 1 on divergence)",
     "tuning-pull": "capture Live's loaded alternate tuning onto a song (rare; 0.01%)",
     "compat": "check a song's third-party plugin requirements before sharing/pushing",
     "capture": "acquire the live set into a song's captured_session.json",

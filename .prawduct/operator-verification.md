@@ -15,6 +15,53 @@ pending entries when `operator_verification_required: true`.
 
 ---
 
+## ARR-PROJ Chunk 2 — full projection planner end-to-end in real Live (2026-06-22) — PENDING
+
+Chunk 2 (the planner rewrite) is headless-verified (4379 green, Critic 0 findings) but the
+WHOLE new path has not run against real Live as one flow — only the create+fill *primitive*
+did (Chunk-1 spike, Drums only). The integration still to confirm live: the
+`live_arrangement_clips_by_track` probe threading, the descending-index clear, per-placement
+create+fill across multiple tracks in one phase, AND the envelope-bearing → duplicate route
+(alien's one host: the Alien Voice `send_level` clip).
+
+**Check (alien, Ableton open, server version-matched):**
+`uv run hallucinote push execute --only arrangement --probe --song alien` (the new
+`_cmd_execute` probes arrangement and threads it into the projection planner; `--only
+arrangement` skips the realtime perform phase). Expect: every track's existing arrangement
+clips cleared then create+filled from the DB; the Alien Voice envelope-hosting placement
+duplicated (not create+filled) so its `send_level` clip envelope survives; `.last-push-state.json`
+outcome `ok`. Then `hallucinote verify-arrangement` (once Chunk 3 lands) or a per-track
+`ableton_note(list, location='arrangement')` spot-check shows collapsed note_counts == DB, and
+NO stacking on the re-run. Render-confirm the song still sounds correct.
+
+## ARR-PROJ Chunk 1 — arrangement-as-projection live spike (2026-06-22) — PASSED (note-level), render optional
+
+**Attended session, alien set, server version-matched (`/mcp` respawn).** Drove the
+real Drums track (10 placements, ~2500 notes incl. a 771-note clip) through two
+consecutive `clear (per-clip delete) → create_midi_clip + set_notes → fresh
+read-back` rebuilds via `.prawduct/artifacts/plans/ARR-PROJ/chunk1-spike.py`.
+
+**Verified live (agent-run, this session):**
+1. **Faithful + idempotent + drop-free.** `pass1=True pass2=True idempotent=True
+   net_noop_vs_baseline=True` — every section's Live note_count matched the DB
+   collapsed set on both passes; the rebuild returned Drums to byte-identical
+   baseline. No drop, no B-24 stack (impossible by construction — no duplicate).
+2. **note_count trustworthy (§6 q2).** On a source-less `create_midi_clip` clip
+   (verse1), `ableton_clip(list).note_count == ableton_note(list) count == 503 ==
+   DB collapsed` — reads the arrangement clip's OWN notes, read in a fresh callback.
+3. **Live collapses same-(pitch,start) (§6b-1).** 509→503, 337→333, 771→770 held
+   as collapsed — confirms the comparator must collapse before diffing.
+4. **Clear wire exists; planner-deletes chosen.** Descending per-clip
+   `delete(location='arrangement')` cleared 10 clips in ~7s; no bulk-clear action
+   needed (Chunk 6 dropped, zero fingerprint change).
+
+**Pending (optional — Early-Feedback "hear-it" milestone):** an *audible* render of
+the rebuilt Drums track was not run. The note-API read-back proves note-for-note
+fidelity and `net_noop=True` means the track is note-identical to the arrangement
+the operator was already hearing, so render-correctness is transitively established.
+Run `ableton_render(action='start', song_slug='alien')` if an audible confirmation
+is wanted; otherwise this is operator-acceptable on the note-level proof.
+
 ## 2026-06-13 autonomous session — bridge prepped + new pending checks
 
 **Bridge is READY for the existing SNP-8R4K checks below.** This session re-vendored
@@ -983,21 +1030,25 @@ via `/song-pick-instruments`, then probe-and-link so devices are linked):
 
 ## SYN-4R7P — probe-and-link re-materializes the arrangement after a Live delete
 
-**Status:** PENDING — needs an attended Live session. **Visual change:** yes (the
-arrangement timeline re-populates with clips). Added 2026-06-20, AFTER the
-2026-06-14 blanket acceptance, so it blocks `/pr create` until run.
+**Status:** SUPERSEDED by ARR-PROJ (Chunk 4, 2026-06-22). The probe-and-link
+arrangement-clip reconcile this entry was written to verify has been **removed** —
+the arrangement is now materialized as a pure projection of the DB (clear +
+create+fill every push, see `plan_push_arrangement`), so a Live-side delete /
+renumber is absorbed by the next push's clear+rebuild, with no positional link to
+reconcile. The behaviors below (`unlinked_stale_arrangement_clips` reported,
+re-duplicate-via-reconcile, rebind-on-renumber) no longer exist, so this check is
+moot. The live obligation it carried is replaced by the **ARR-PROJ** entries: the
+Chunk-1 spike (two full Drums-track rebuilds, `net_noop_vs_baseline=True`, already
+recorded) plus the still-pending ARR-PROJ live e2e (clear+rebuild idempotence on a
+real multi-section set). No longer blocks `/pr create`.
 
-The unit suite proves the reconcile logic against an injected
-`live_arrangement_clips_by_track` map; only a real bridge proves the live read —
-`ableton_clip(action='list', location='arrangement')` per track — returns
-placements shaped as the reconciler assumes (`arrangement_clip_index`,
-`start_beats`, `length`), so position-matching binds to the right clip.
+<details><summary>Original SYN-4R7P checks (historical — verify the removed reconcile)</summary>
 
-Why it can't be auto-verified: the reconcile reads the live arrangement lane from
-a running Live set; there is no headless stand-in for the arrangement-clip list.
-
-Checks (on a pushed song whose arrangement clips are already placed — e.g. `alien`
-or `swell`, after `--only clips` + `--only arrangement` has materialized the lane):
+The unit suite proved the reconcile logic against an injected
+`live_arrangement_clips_by_track` map; only a real bridge proved the live read —
+`ableton_clip(action='list', location='arrangement')` per track — returned
+placements shaped as the reconciler assumed (`arrangement_clip_index`,
+`start_beats`, `length`), so position-matching bound to the right clip.
 
 1. **The reported bug is gone.** Delete the arrangement clips in Live (timeline
    lane empty), then `push execute <session> --song <slug> --only arrangement
@@ -1016,6 +1067,8 @@ or `swell`, after `--only clips` + `--only arrangement` has materialized the lan
    rest), then `--only arrangement --probe`. Expect the survivors to be re-bound
    (`rebound_arrangement_clips` non-empty) and only the deleted one re-duplicated —
    no duplicate placements.
+
+</details>
 
 ## Bug 1 (incoming 2026-06-20) — arrangement-clip read gains note_count + muted
 

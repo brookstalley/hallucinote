@@ -86,6 +86,51 @@ def tiny_song(conn, song):
     return {"track_id": tid, "clip_id": cid, "song_id": song}
 
 
+def _handle_arrangement_projection(req, arr_state):
+    """Model the ARR-PROJ projection so the executor's post-arrangement integrity
+    assert (Chunk 3) sees a faithful materialization: track create/delete on the
+    arrangement lane and answer list / note-list from the accumulated state.
+    Returns a FakeResponse, or None to fall through to the generic dispatch."""
+    p = req.params
+    if req.tool == "ableton_clip" and p.get("location") == "arrangement":
+        lane = arr_state.setdefault(p["track_index"], [])
+        if req.action == "create":
+            lane.append({"start_beats": float(p["start_beats"]),
+                         "name": p.get("name") or "",
+                         "notes": list(p.get("notes") or [])})
+            lane.sort(key=lambda c: c["start_beats"])
+            idx = 1 + next(i for i, c in enumerate(lane)
+                           if abs(c["start_beats"] - float(p["start_beats"])) < 1e-9)
+            return FakeResponse(ok=True, result={"arrangement_clip_index": idx})
+        if req.action == "delete":
+            lane.sort(key=lambda c: c["start_beats"])
+            ci = p["clip_index"]
+            if 1 <= ci <= len(lane):
+                lane.pop(ci - 1)
+            return FakeResponse(ok=True, result={"deleted": True})
+        if req.action == "list":
+            lane.sort(key=lambda c: c["start_beats"])
+            return FakeResponse(ok=True, result={"clips": [
+                {"arrangement_clip_index": i, "start_beats": c["start_beats"],
+                 "name": c["name"], "length": 4.0, "muted": False,
+                 "note_count": len(c["notes"])}
+                for i, c in enumerate(lane, 1)
+            ]})
+    if (req.tool == "ableton_note" and req.action == "list"
+            and p.get("location") == "arrangement"):
+        lane = sorted(arr_state.get(p["track_index"], []), key=lambda c: c["start_beats"])
+        ci = p["clip_index"]
+        notes = lane[ci - 1]["notes"] if 1 <= ci <= len(lane) else []
+        return FakeResponse(ok=True, result={"notes": [
+            {"note_id": j, "pitch": n["pitch"],
+             "start_time": n.get("start_time", n.get("start_beats", 0.0)),
+             "duration": n.get("duration", n.get("duration_beats", 0.0)),
+             "velocity": n.get("velocity", 100), "mute": bool(n.get("mute", False))}
+            for j, n in enumerate(notes)
+        ]})
+    return None
+
+
 def _make_send_fn(
     *,
     fail_keys: set[str] = frozenset(),
@@ -109,6 +154,7 @@ def _make_send_fn(
     """
     counters: dict[str, int] = {}
     call_log: list[dict] = []
+    arr_state: dict[int, list[dict]] = {}  # ARR-PROJ: per-track arrangement lane
 
     def _kind_for(tool: str, action: str) -> str | None:
         # Map (tool, action) to the link kind used by apply_push_results.
@@ -150,6 +196,13 @@ def _make_send_fn(
                 error=f"simulated failure for {composite}",
                 hint=fail_hint,
             )
+
+        # ARR-PROJ Chunk 3: model the arrangement projection (create/delete/list/
+        # note-list) so the executor's post-arrangement integrity assert reads a
+        # faithful materialization instead of an empty (looks-dropped) lane.
+        arr_resp = _handle_arrangement_projection(req, arr_state)
+        if arr_resp is not None:
+            return arr_resp
 
         # perform_batch (ENV-9P4T) fans out to a per-arc result list; echo
         # each arc's arc_id with a configurable automation_state (default 1
@@ -1868,6 +1921,120 @@ def test_execute_cue_past_composed_length_halts_partial(
     state = json.loads((state_dir / ".last-push-state.json").read_text())
     by_name = {p["name"]: p for p in state["phases"]}
     assert by_name["cues"]["status"] == "halted"
+
+
+def test_execute_arrangement_integrity_assert_halts_on_drop(
+    conn, song, session, tiny_song, state_dir,
+):
+    """ARR-PROJ Chunk 3: the post-arrangement PREVENTION assert HALTs the push
+    when the materialized arrangement diverges from the DB — here a simulated
+    bulk-drop (Live reports ZERO notes for a clip the DB filled) — instead of
+    reporting OK. The structural backstop for the 2026-06-21/-22 drop/orphan
+    bugs; without it the corrupt render passes every cheap check."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4,
+    )
+    M.insert_notes(conn, clip_id=tiny_song["clip_id"], notes=[
+        {"pitch": 60, "start_beats": 0.0, "duration_beats": 1.0, "velocity": 100},
+    ])
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=tiny_song["track_id"],
+        clip_id=tiny_song["clip_id"], start_bar=1.0, end_bar=2.0,
+    )
+    base = _make_send_fn()
+
+    def corrupt(req, *, read_timeout=None):
+        resp = base(req, read_timeout=read_timeout)
+        if (req.tool == "ableton_note" and req.action == "list"
+                and req.params.get("location") == "arrangement"):
+            resp.result = {"notes": []}  # the clip is placed but its notes dropped
+        return resp
+
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=corrupt,
+    )
+    assert result.outcome == "partial"
+    assert result.phase_halted == "arrangement"
+    blob = json.dumps(json.loads((state_dir / ".last-push-errors.json").read_text()))
+    assert "integrity" in blob.lower()
+    assert "missing" in blob.lower()  # the drop reads as a missing note
+
+
+def test_execute_arrangement_assert_connection_loss_writes_state(
+    conn, song, session, tiny_song, state_dir,
+):
+    """ARR-PROJ Chunk 3: a Live disconnect DURING the post-arrangement integrity
+    re-probe halts as connection_lost (not an uncaught traceback) and still writes
+    the terminal state file — the executor's always-write-state contract."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4,
+    )
+    M.insert_notes(conn, clip_id=tiny_song["clip_id"], notes=[
+        {"pitch": 60, "start_beats": 0.0, "duration_beats": 1.0, "velocity": 100},
+    ])
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=tiny_song["track_id"],
+        clip_id=tiny_song["clip_id"], start_bar=1.0, end_bar=2.0,
+    )
+    base = _make_send_fn()
+
+    def drop_conn(req, *, read_timeout=None):
+        if (req.tool == "ableton_note" and req.action == "list"
+                and req.params.get("location") == "arrangement"):
+            raise ConnectionRefusedError("Live vanished mid-assert")
+        return base(req, read_timeout=read_timeout)
+
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=drop_conn,
+    )
+    assert result.outcome == "connection_lost"
+    assert result.exit_code == push_execute.EXIT_CONNECTION_LOST
+    assert (state_dir / ".last-push-state.json").exists()  # always-write-state held
+
+
+def test_execute_arrangement_probe_failure_warns_not_silent_ok(
+    conn, song, session, tiny_song, state_dir,
+):
+    """Cumulative-Critic W1: when the post-arrangement integrity re-probe FAILS
+    (Live note-list errors — NOT a disconnect), the placement goes UNVERIFIED. The
+    assert must NOT halt (a probe error isn't silent corruption), but the push must
+    NOT silently report a clean OK either: it surfaces a benign warning so
+    'couldn't verify N clip(s)' reads distinctly from 'verified all N'. Without it,
+    a push where verification was IMPOSSIBLE is indistinguishable from one that
+    PASSED — the exact gap the assert exists to close."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4,
+    )
+    M.insert_notes(conn, clip_id=tiny_song["clip_id"], notes=[
+        {"pitch": 60, "start_beats": 0.0, "duration_beats": 1.0, "velocity": 100},
+    ])
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=tiny_song["track_id"],
+        clip_id=tiny_song["clip_id"], start_bar=1.0, end_bar=2.0,
+    )
+    base = _make_send_fn()
+
+    def probe_fails(req, *, read_timeout=None):
+        # Let materialization (create/delete) and the clip-list succeed, but fail
+        # the integrity re-probe's NOTE list so the placement can't be verified.
+        if (req.tool == "ableton_note" and req.action == "list"
+                and req.params.get("location") == "arrangement"):
+            return FakeResponse(ok=False, error="simulated re-probe failure")
+        return base(req, read_timeout=read_timeout)
+
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=probe_fails,
+    )
+    # Probe failure is not silent corruption → no halt, exit stays clean.
+    assert result.outcome == "ok"
+    assert result.phase_halted is None
+    # ...but the unverified placement is surfaced as a benign warning.
+    assert any("could NOT be verified" in w for w in result.warnings), result.warnings
+    state = json.loads((state_dir / ".last-push-state.json").read_text())
+    assert any("could NOT be verified" in w for w in state.get("warnings", []))
 
 
 # ---------------------------------------------------------------------------

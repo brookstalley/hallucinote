@@ -596,6 +596,7 @@ def execute_push(
     start_at: str | None = None,
     stop_after: str | None = None,
     progress_fn: Callable[[str], None] | None = None,
+    live_arrangement_clips_by_track: dict[int, list[dict]] | None = None,
 ) -> ExecuteResult:
     """Run the full thirteen-phase push, dispatching each call via ``send_fn``.
 
@@ -644,6 +645,7 @@ def execute_push(
     phases = push.plan_push_song(
         conn, song_id=song_id, session_id=session_id,
         perform_slowdown_factor=perform_slowdown_factor,
+        live_arrangement_clips_by_track=live_arrangement_clips_by_track,
     )
     phases, scope = _filter_phases(
         phases, only=only, start_at=start_at, stop_after=stop_after,
@@ -1300,6 +1302,91 @@ def execute_push(
                 calls_failed=calls_failed,
             )
             break
+
+        # ARR-PROJ Chunk 3: PREVENTION assert. The arrangement phase just
+        # materialized; re-probe Live in a FRESH callback (never inline after the
+        # write, §6a) and verify every clip's audible set equals the DB collapsed
+        # set. HALT on silent corruption (drop / orphan / stack / drift) instead
+        # of reporting OK — the structural backstop for the 2026-06-21 stacking +
+        # bulk-drop and 2026-06-22 orphan bugs.
+        if phase.name == "arrangement":
+            from hallucinote.sync.arrangement_verify import (
+                ArrangementIntegrityError,
+                assert_arrangement_materialized,
+            )
+            try:
+                integrity_report = assert_arrangement_materialized(
+                    conn, song_id=song_id, session_id=session_id, send_fn=send_fn,
+                )
+                # The assert HALTs only on SILENT corruption; a per-clip re-probe
+                # FAILURE is not corruption, so the assert returns normally — but
+                # those placements went UNVERIFIED, so "OK" would overstate the
+                # guarantee (the exact gap the assert exists to close). Surface the
+                # unverified count as a benign warning (does not flip the exit) so
+                # "couldn't verify N clips" reads distinctly from "verified all N".
+                unverified = [
+                    r for r in integrity_report.results
+                    if r.status == "probe_failed"
+                ]
+                if unverified:
+                    verified_n = sum(
+                        1 for r in integrity_report.results
+                        if r.status in ("faithful", "diverged", "missing_clip")
+                    )
+                    affected = ", ".join(
+                        f"{r.track_name}/{r.section}" for r in unverified[:5]
+                    ) + (" ..." if len(unverified) > 5 else "")
+                    msg = (
+                        f"arrangement integrity: {len(unverified)} placement(s) "
+                        f"could NOT be verified (Live note/clip re-probe failed); "
+                        f"the assert covered only {verified_n} placement(s), so a "
+                        f"silent drop/stack on the unverified ones would NOT have "
+                        f"been caught. Re-run `execute --only arrangement` once Live "
+                        f"is reachable to re-materialize + re-verify. Affected: "
+                        f"{affected}"
+                    )
+                    if msg not in warning_messages:
+                        warning_messages.append(msg)
+            except ArrangementIntegrityError as exc:
+                error_records.append({
+                    "key": None,
+                    "tool": phase.name,
+                    "action": "integrity_assert",
+                    "args_summary": {"phase": phase.name},
+                    "error": str(exc),
+                    "hint": (
+                        "the materialized arrangement does not match the DB "
+                        "(drop / orphan / stack / drift). Re-run `execute --only "
+                        "arrangement --probe` (idempotent clear+rebuild); if it "
+                        "persists, run `hallucinote verify-arrangement` and inspect "
+                        "the named track/section."
+                    ),
+                })
+                _halt(
+                    phase.name, idx, outcome_label="partial",
+                    exit_code_val=EXIT_PARTIAL, calls_ok=calls_ok,
+                    calls_failed=1,
+                )
+                break
+            except _CONNECTION_EXCS as exc:
+                # The assert's fresh re-probe lost Live mid-check. Treat exactly
+                # like a dispatch-time connection loss so the terminal state file
+                # is still written (the executor's always-write-state contract)
+                # and the operator gets a re-execute instruction, not a traceback.
+                error_records.append({
+                    "key": None,
+                    "tool": phase.name,
+                    "action": "integrity_assert",
+                    "args_summary": {"phase": phase.name},
+                    "error": f"connection lost during the arrangement integrity re-probe: {exc}",
+                    "hint": "see ableton://guides/error-recovery; re-execute (idempotent).",
+                })
+                _halt(
+                    phase.name, idx, outcome_label="connection_lost",
+                    exit_code_val=EXIT_CONNECTION_LOST, calls_ok=calls_ok,
+                    calls_failed=calls_failed + 1,
+                )
+                break
 
         pad_ok, pad_failed = _maybe_pad_probe(phase.name)
         phase_outcomes.append(PhaseOutcome(

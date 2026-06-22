@@ -496,9 +496,14 @@ build_state:
 # RTE-1K9T (PR #163), ENV-9P4T (#161), ENV-8K2R/ENV-2T9K and the deleted
 # PSH-CLUSTER are shipped/stale; their plan dirs may be deleted.
 # Unset: build-plan-push-devices-diff shipped (PR #188) and its file was removed;
-# no build plan is active. (The device_chain_props bugfix, PR #197, was a small
-# worktree fix with no formal plan.)
-active_build_plan: null
+# ARR-PROJ arrangement-materialization redesign (systemic). Plan authored 2026-06-22.
+# All 5 buildable chunks BUILT (headless) on plan/arr-proj-arrangement-materialization:
+# spike confirmed the projection model; projection planner + integrity comparator/assert/
+# verify-arrangement CLI built and green; Chunk 4 removed the positional-link reconcile;
+# Chunk 5 retired the SYN-4R7P doc/skill recovery dance. Remaining: cumulative-Critic PR
+# gate + the ARR-PROJ live e2e + the ARR-9X4T/ARR-7H2N backlog close at merge. See the
+# build-plan Status for the live state.
+active_build_plan: artifacts/plans/ARR-PROJ/build-plan.md
 
 # =============================================================================
 # CHANGE LOG

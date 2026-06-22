@@ -225,18 +225,21 @@ def _probe_live_arrangement_clips_via_mcp(
     live_tracks: list[dict],
     send_fn=None,
 ) -> dict[int, list[dict]]:
-    """SYN-4R7P: probe ``ableton_clip(action='list', location='arrangement')``
-    per Live track so probe-and-link can reconcile stale ``arrangement_clip``
-    links against Live truth (Live re-numbers ``arrangement_clip_index`` on any
-    delete, so a recorded link goes stale and the arrangement phase crashes with
-    ``IndexError`` on a ``replace_notes`` REFRESH at the dead index).
+    """ARR-PROJ: probe ``ableton_clip(action='list', location='arrangement')``
+    per Live track so the EXECUTE path's projection planner
+    (:func:`push.plan_push_arrangement`) knows each track's current arrangement
+    clips and can plan the per-clip CLEAR before re-creating from the DB. (This
+    once also fed the SYN-4R7P probe-and-link reconcile; that reconcile was removed
+    in Chunk 4 — the projection clears+rebuilds every push, so there is no stale
+    positional link to reconcile.)
 
     Returns a dict keyed by ``track_index`` with the track's arrangement-clip
     placements (``{arrangement_clip_index, name, start_beats, length}``). A
     per-track probe failure leaves that track's key ABSENT (not an empty list) so
-    the reconciler reads it as "no info, don't drop" rather than "no clips, drop"
-    — a transient failure must never delete a live binding (mirrors the
-    per-parent tolerance of :func:`_probe_live_devices_via_mcp`).
+    the planner reads it as "lane state unknown → skip, don't clear" rather than
+    "no clips, safe to fill" — a transient failure must never let create+fill stack
+    onto unprobed clips (mirrors the per-parent tolerance of
+    :func:`_probe_live_devices_via_mcp`).
     """
     if send_fn is None:
         from hallucinote_mcp import client as _client  # type: ignore[import-not-found]
@@ -463,18 +466,15 @@ def _cmd_probe_and_link(args: argparse.Namespace) -> int:
     # duplication path. The --snapshot path stays device-blind (the JSON
     # file doesn't carry chain info); use --probe for the full coverage.
     live_devices_by_parent: dict | None = None
-    live_arrangement_clips_by_track: dict | None = None
     if args.probe:
         live_tracks, live_returns = _probe_live_via_mcp()
         live_devices_by_parent = _probe_live_devices_via_mcp(
             live_tracks=live_tracks, live_returns=live_returns,
         )
-        # SYN-4R7P: also probe each track's arrangement clips so stale
-        # arrangement_clip links reconcile against Live truth (the --snapshot
-        # JSON carries no arrangement info, so that path stays arrangement-blind).
-        live_arrangement_clips_by_track = _probe_live_arrangement_clips_via_mcp(
-            live_tracks=live_tracks,
-        )
+        # ARR-PROJ: probe-and-link no longer reconciles arrangement_clip links
+        # (the arrangement is rebuilt as a pure projection every push), so this
+        # path probes only tracks/returns/devices. The execute path still probes
+        # arrangement clips itself, for the projection planner's clear.
     else:
         if not args.snapshot:
             raise SystemExit(
@@ -532,7 +532,6 @@ def _cmd_probe_and_link(args: argparse.Namespace) -> int:
         live_tracks=live_tracks,
         live_returns=live_returns,
         live_devices_by_parent=live_devices_by_parent,
-        live_arrangement_clips_by_track=live_arrangement_clips_by_track,
         actor="sync",
         reason=args.reason or f"probe-and-link from session {session_id}",
     )
@@ -756,12 +755,14 @@ def _cmd_execute(args: argparse.Namespace) -> int:
         start_at = resumed
         sys.stderr.write(f"push_cli execute: --resume → --start-at {start_at}\n")
 
+    coherence_live_tracks: list[dict] | None = None
     if not args.no_coherence_check:
         # The mutex group makes --probe or --snapshot the only other paths,
         # so exactly one is set here.
         live_tracks, live_returns = _cmd_check_coherence_probe_or_snapshot(
             args, subcmd="execute",
         )
+        coherence_live_tracks = live_tracks
         check = push.check_coherence(
             conn,
             session_id=args.session_id,
@@ -776,6 +777,18 @@ def _cmd_execute(args: argparse.Namespace) -> int:
             sys.stderr.write("\n")
             return 1
 
+    # ARR-PROJ: the arrangement phase projects the DB onto a CLEARED timeline, so
+    # it needs Live's current arrangement clips per track to plan the per-clip
+    # clear. Probe live (same call probe-and-link uses); execute reaches Live at
+    # dispatch regardless, so this is always valid. Reuse the coherence probe's
+    # track list when present to avoid a redundant ableton_track(list).
+    arr_probe_tracks = coherence_live_tracks
+    if arr_probe_tracks is None:
+        arr_probe_tracks, _ = _probe_live_via_mcp()
+    live_arrangement_clips_by_track = _probe_live_arrangement_clips_via_mcp(
+        live_tracks=arr_probe_tracks,
+    )
+
     try:
         result = push_execute.execute_push(
             conn=conn,
@@ -789,6 +802,7 @@ def _cmd_execute(args: argparse.Namespace) -> int:
             start_at=start_at,
             stop_after=stop_after,
             progress_fn=_stderr_progress,
+            live_arrangement_clips_by_track=live_arrangement_clips_by_track,
         )
     except push_execute.PhaseTargetError as exc:
         sys.stderr.write(f"push_cli execute: {exc}\n")

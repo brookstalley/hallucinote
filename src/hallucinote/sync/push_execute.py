@@ -1303,6 +1303,43 @@ def execute_push(
             )
             break
 
+        # ARR-PROJ Chunk 3: PREVENTION assert. The arrangement phase just
+        # materialized; re-probe Live in a FRESH callback (never inline after the
+        # write, §6a) and verify every clip's audible set equals the DB collapsed
+        # set. HALT on silent corruption (drop / orphan / stack / drift) instead
+        # of reporting OK — the structural backstop for the 2026-06-21 stacking +
+        # bulk-drop and 2026-06-22 orphan bugs.
+        if phase.name == "arrangement":
+            from hallucinote.sync.arrangement_verify import (
+                ArrangementIntegrityError,
+                assert_arrangement_materialized,
+            )
+            try:
+                assert_arrangement_materialized(
+                    conn, song_id=song_id, session_id=session_id, send_fn=send_fn,
+                )
+            except ArrangementIntegrityError as exc:
+                error_records.append({
+                    "key": None,
+                    "tool": phase.name,
+                    "action": "integrity_assert",
+                    "args_summary": {"phase": phase.name},
+                    "error": str(exc),
+                    "hint": (
+                        "the materialized arrangement does not match the DB "
+                        "(drop / orphan / stack / drift). Re-run `execute --only "
+                        "arrangement --probe` (idempotent clear+rebuild); if it "
+                        "persists, run `hallucinote verify-arrangement` and inspect "
+                        "the named track/section."
+                    ),
+                })
+                _halt(
+                    phase.name, idx, outcome_label="partial",
+                    exit_code_val=EXIT_PARTIAL, calls_ok=calls_ok,
+                    calls_failed=1,
+                )
+                break
+
         pad_ok, pad_failed = _maybe_pad_probe(phase.name)
         phase_outcomes.append(PhaseOutcome(
             name=phase.name, status=_STATUS_OK,

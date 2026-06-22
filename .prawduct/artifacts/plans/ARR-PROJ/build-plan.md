@@ -39,7 +39,7 @@ After Chunk 1 the level rises to High for Chunks 2–6.
 
 - [x] Chunk 01: Live spike + one-track thin vertical slice (root-cause + architecture proof)
 - [x] Chunk 02: Sync-planner rebuild path (clear + create+fill + exception routing)
-- [ ] Chunk 03: Integrity comparator — push-time assert + `verify-arrangement` audit (collapsed-set, tolerance)
+- [x] Chunk 03: Integrity comparator — push-time assert + `verify-arrangement` audit (collapsed-set, tolerance)
 - [ ] Chunk 04: Collapse the positional-link reconcile subsystem
 - [ ] Chunk 05: Docs + skill — retire the SYN-4R7P recovery dance
 - [~] Chunk 06 (conditional): bulk `clear_arrangement` MCP wire action — **DROPPED** (Chunk-1d chose planner-deletes; existing `delete` wire suffices, zero fingerprint change)
@@ -69,8 +69,23 @@ idempotent-skip / refresh-in-place / must-clear-warn model + its tests REPLACED 
 behavior change). Decisions in `chunk2-design.md`. OUT of scope (flagged, not dropped): the
 scoped `plan_push_arrangement_clip_notes` still uses `replace_notes`-in-place (orphan-prone per
 §6b-A) — its fix is the `replace_notes` HANDLER becoming a true total-replace, which flips the
-MCP fingerprint, so it stays a separate item (incoming-bug report already filed). NEXT: Chunk 3
-(integrity comparator: push-time assert + `verify-arrangement` audit).
+MCP fingerprint, so it stays a separate item (incoming-bug report already filed).
+
+**Chunk 3 BUILT 2026-06-22 (headless, full suite green).** ONE canonical comparator
+(`sync/arrangement_compare.py::compare_clip_notes`) with the 3 normalizations: collapsed
+distinct-(pitch, eps-bucketed start) set (Live collapses same-(pitch,start)), float tolerance
+(start/dur eps≈1e-3, pitch exact, vel ±1), note-content compare (not raw count). Orchestration
+(`sync/arrangement_verify.py`) pairs each DB placement to its Live clip by position, probes via
+the NOTE API in a fresh callback, compares → `ArrangementReport`. Two consumers: (a)
+`assert_arrangement_materialized` wired into the executor AFTER the arrangement phase
+(`push_execute.py`) — HALTs (PARTIAL) on `has_corruption()` = diverged/missing-clip/orphan
+(NOT on track_unlinked/probe_failed, which are operational, not silent corruption); (b)
+`hallucinote verify-arrangement --song <slug>` (`sync/verify_arrangement_cli.py`, registered in
+`cli.py`) — reports extra/missing/mismatch per (track, section), exit 1 on any divergence.
+Test fakes (`_handle_arrangement_projection` in test_push_execute) now model the projection so
+the executor assert reads faithful. Note: verify-arrangement compares the CURRENT DB vs Live
+(rebuild build.py first to verify build.py↔Live). NEXT: Chunk 4 (collapse the positional-link
+reconcile subsystem) then Chunk 5 (docs/skill retire the SYN-4R7P dance).
 
 ## Scaffolding
 

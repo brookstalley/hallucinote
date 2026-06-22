@@ -6,7 +6,7 @@
 
 ## 2026-06-22 — Arrangement materialization is now a projection of the DB (ARR-PROJ)
 
-<!-- prawduct: type=feat | chunks=ARR-PROJ | scope=sync-push,arrangement-verify,cli,skills,docs,tests -->
+<!-- prawduct: type=feat | chunks=ARR-PROJ | scope=sync-push,arrangement-verify,cli,skills,docs,tests | status=merged -->
 
 **Two foundational bugs retired by construction, not patched.** Thirteen months of
 arrangement whack-a-mole (stacking on re-materialize — ARR-9X4T; a silently-dropped

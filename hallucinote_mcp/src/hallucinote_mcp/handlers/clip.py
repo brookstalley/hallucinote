@@ -14,11 +14,14 @@ paths:
 Indices are 1-based on the wire and translated to 0-based when accessing the
 Live API.
 
-Note operations: ``replace_notes`` calls ``clip.set_notes(tuple(...))`` which
-**replaces** the clip's entire note array. The action name is renamed (from
-``add_notes_to_clip`` on the legacy fork) to make the semantic visible. Per-
-note addressing (true append, in-place mutation) waits on MCP gap #4 — see
-``handlers/note.py`` for those stubs.
+Note operations: ``replace_notes`` does a true total-replace — a full-extent
+``remove_notes_extended(0, 128, 0, length)`` clear *then* ``clip.set_notes``,
+because Live's ``set_notes`` alone does NOT reliably clear pre-existing notes
+on arrangement clips (ARR-ORPHAN). It reads the resulting set back and returns
+``notes_present`` so a caller can detect orphan-survival. The action name is
+renamed (from ``add_notes_to_clip`` on the legacy fork) to make the semantic
+visible. Per-note addressing (true append, in-place mutation) waits on MCP
+gap #4 — see ``handlers/note.py`` for those stubs.
 """
 from __future__ import annotations
 
@@ -871,15 +874,47 @@ def replace_notes_handler(
         context, track_index=track_index, location=location, clip_index=clip_index
     )
     coerced = _coerce_notes(notes)
+    # True total-replace. Live's ``set_notes()`` does NOT reliably clear
+    # pre-existing notes on ARRANGEMENT clips — it left 5 older-generation
+    # notes (distinct (pitch, start), inside the clip extent) untouched on a
+    # 243-note write, reporting success (ARR-ORPHAN). Explicitly clear the
+    # full clip extent first so the write is a genuine total-replace on both
+    # views. The session path already total-replaces; the clear is harmless
+    # (and defensive) there.
+    clip.remove_notes_extended(0, 128, 0.0, float(clip.length))
     clip.set_notes(coerced)
+    # Read the resulting set back so the caller can detect a leak instead of
+    # trusting the intended count. Live collapses same-(pitch, start) notes,
+    # so a faithful write can legitimately hold FEWER than ``len(coerced)``
+    # (e.g. stacked add_wildness notes); collapse only ever REDUCES, so an
+    # EXCESS is impossible after a true clear and is the one unambiguous
+    # orphan-survival signal. (MIDI-only — get_notes_extended raises on audio;
+    # mirrors the list-handler guard at the top of this module.)
+    notes_present = (
+        len(clip.get_notes_extended(0, 128, 0.0, float(clip.length)))
+        if clip.is_midi_clip
+        else len(coerced)
+    )
     result: dict[str, Any] = {
         "track_index": track_index,
         "location": location,
         "notes_written": len(coerced),
+        "notes_present": notes_present,
     }
-    warning = _inline_notes_warning(len(coerced))
-    if warning:
-        result["warning"] = warning
+    warnings: list[str] = []
+    inline_warning = _inline_notes_warning(len(coerced))
+    if inline_warning:
+        warnings.append(inline_warning)
+    if notes_present > len(coerced):
+        warnings.append(
+            f"replace_notes left {notes_present - len(coerced)} unexpected "
+            f"note(s): wrote {len(coerced)} but the clip holds {notes_present} "
+            "after a full-extent clear (orphan-survival — ARR-ORPHAN). The "
+            "clip is NOT faithful to the written set; re-read with "
+            "ableton_note(action='list') and clear the stragglers."
+        )
+    if warnings:
+        result["warning"] = warnings[0] if len(warnings) == 1 else " | ".join(warnings)
     return result
 
 

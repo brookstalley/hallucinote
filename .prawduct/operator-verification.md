@@ -1277,3 +1277,43 @@ Checks (a pushed song with two returns named `Reverb` / `Delay`, e.g. `alien`):
 4. **Tracks/master untouched.** Confirm a render still leaves audio-track and
    master names exactly as authored (Live renames returns only; the fix is
    return-scoped).
+
+---
+
+## 2026-06-22 — ARR-ORPHAN: `replace_notes` true total-replace (fix/arr-orphan)
+
+Visual change: no. **Fingerprint flip: YES** — `handlers/clip.py` is a wire-shape
+file, so this change bumps the MCP server fingerprint. The running server (the
+`--plugin-dir` dev bridge / marketplace) is at the pre-change fingerprint; the
+re-vendor handshake is part of this verification. Relaunch dev-mode (`/mcp`
+respawn so running==disk) → `/ableton-mcp-install` → reopen Live so the Remote
+Script carries the new handler.
+
+Why it can't be auto-verified: the bug IS Live's native `Clip.set_notes()` NOT
+fully clearing pre-existing notes on an **arrangement** clip — a real-Live side
+effect the unit fakes cannot model (the `FakeClip` overwrite is clean; the
+bug-faithful `OrphanProneArrangementClip` only *simulates* the merge). The unit
+suite proves the handler now full-extent-clears before `set_notes` and reports
+`notes_present`; only a live run proves Live actually leaves orphans without the
+clear, and that the clear removes them.
+
+Checks (a pushed song with an arrangement clip carrying known stale notes — e.g.
+`alien` `Drums chorus2`, or hand-seed orphans via `ableton_probe` →
+`arrangement_clips[i].add_new_notes`):
+
+1. **Orphans cleared (the deliverable).** On an arrangement clip that holds
+   stale notes from an earlier generation, call `ableton_clip(action=
+   'replace_notes', location='arrangement', track_index=…, clip_index=…,
+   notes=[…the exact intended set…])`. Then `ableton_note(action='list',
+   location='arrangement', …)`: the clip holds EXACTLY the written set — no
+   surviving orphans (pre-fix it held written + orphans).
+2. **`notes_present` reports the truth.** The `replace_notes` result includes
+   `notes_present` equal to the audible note count after the write (== written
+   when no collapse; < written for stacked same-(pitch,start) wildness; it must
+   NOT exceed written). Confirm the field is present and accurate.
+3. **No cry-wolf on collapse.** On a clip whose intended set has stacked
+   same-(pitch, start) notes (e.g. an `add_wildness` section), confirm
+   `replace_notes` returns `notes_present` < `notes_written` with **no** orphan
+   warning (collapse is faithful, not a leak).
+4. **Session view unaffected.** A `replace_notes` on a session clip still
+   total-replaces correctly (the defensive clear is harmless there).

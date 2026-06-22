@@ -56,6 +56,17 @@ class FakeClip:
         # the args; the full-range list-read passes the whole clip span).
         return list(self.notes)
 
+    def remove_notes_extended(self, from_pitch, pitch_span, from_time, time_span):
+        # Faithful windowed remove: drop notes whose (pitch, start) fall in the
+        # [from_pitch, from_pitch+span) x [from_time, from_time+span) window.
+        # replace_notes clears the full extent (0,128,0,length) before writing.
+        lo_p, hi_p = from_pitch, from_pitch + pitch_span
+        lo_t, hi_t = from_time, from_time + time_span
+        self.notes = tuple(
+            n for n in self.notes
+            if not (lo_p <= n[0] < hi_p and lo_t <= n[1] < hi_t)
+        )
+
     def fire(self) -> None:  # not used directly on clip; clip_slot.fire fires
         pass
 
@@ -83,6 +94,31 @@ class FakeClipSlot:
 
 class FakeArrangementClip(FakeClip):
     """Marker subclass so tests can assert arrangement-vs-session origin."""
+
+
+class OrphanProneArrangementClip(FakeArrangementClip):
+    """Models Live's observed ARR-ORPHAN behavior: ``set_notes`` on an
+    arrangement clip does NOT clear pre-existing notes — it MERGES the new
+    array in, collapsing on (pitch, start) the way Live does, so notes from an
+    older write generation at distinct (pitch, start) survive. ``remove_notes_
+    extended`` (inherited) DOES clear properly, so a full-extent clear before
+    the merge restores total-replace. This is the bug the prevention fix kills.
+    """
+
+    def set_notes(self, notes_tuple):
+        merged = {(n[0], n[1]): n for n in self.notes}
+        for n in notes_tuple:
+            merged[(n[0], n[1])] = n
+        self.notes = tuple(merged.values())
+
+
+class StubbornOrphanArrangementClip(OrphanProneArrangementClip):
+    """Worst case: the merge-not-replace ``set_notes`` AND a no-op clear, so
+    orphans cannot be removed. Used to prove the read-back diagnostic surfaces
+    a warning (notes_present > notes_written) when a clear genuinely fails."""
+
+    def remove_notes_extended(self, from_pitch, pitch_span, from_time, time_span):
+        pass  # clear fails — orphans persist
 
 
 class FakeTrack:
@@ -1044,8 +1080,117 @@ def test_replace_notes_overwrites_existing(loaded_actions):
     )
     assert resp.ok is True
     assert resp.result["notes_written"] == 2
+    assert resp.result["notes_present"] == 2
     assert len(clip.notes) == 2
     assert clip.notes[0] == (67, 0.0, 0.5, 90, False)
+
+
+def test_replace_notes_arrangement_clears_orphans_before_write(loaded_actions):
+    """ARR-ORPHAN: on an arrangement clip whose ``set_notes`` does NOT clear
+    pre-existing notes (Live's observed behavior), replace_notes must still
+    leave exactly the written set — the full-extent clear removes the older-
+    generation orphans before the merge-style ``set_notes`` runs. Without the
+    clear, the clip would keep the 5 stale notes (the alien Drums chorus2 bug).
+    """
+    orphans = (
+        # 5 older-generation notes at distinct (pitch, start), inside the clip
+        # extent — the shape that survived on alien's Drums chorus2.
+        (40, 22.5, 0.25, 30, False),
+        (42, 23.0, 0.25, 28, False),
+        (44, 24.0, 0.25, 31, False),
+        (46, 25.5, 0.25, 27, False),
+        (48, 26.0, 0.25, 29, False),
+    )
+    clip = OrphanProneArrangementClip(name="Drums chorus2", length=32.0)
+    clip.notes = orphans
+    track = FakeTrack(name="Drums", arrangement_clips=[clip])
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    new_notes = [
+        {"pitch": 36, "start_time": float(i), "duration": 0.5, "velocity": 100}
+        for i in range(8)
+    ]
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="replace_notes",
+            params={
+                "track_index": 1, "location": "arrangement", "clip_index": 1,
+                "notes": new_notes,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    # Orphans gone: clip holds exactly the 8 written notes, none of the 5 old.
+    assert len(clip.notes) == 8
+    assert all(n[0] == 36 for n in clip.notes)
+    assert resp.result["notes_written"] == 8
+    assert resp.result["notes_present"] == 8
+    assert "warning" not in resp.result  # faithful → no orphan warning
+
+
+def test_replace_notes_reports_orphan_survival_when_clear_fails(loaded_actions):
+    """Diagnostic read-back: if a clear genuinely fails (modeled by a no-op
+    remove + merge-style ``set_notes``), the post-write read-back surfaces it —
+    ``notes_present`` exceeds ``notes_written`` and a warning names the
+    orphan-survival, so a caller never trusts a silent lie again."""
+    orphans = (
+        (40, 22.5, 0.25, 30, False),
+        (42, 23.0, 0.25, 28, False),
+    )
+    clip = StubbornOrphanArrangementClip(name="Drums chorus2", length=32.0)
+    clip.notes = orphans
+    track = FakeTrack(name="Drums", arrangement_clips=[clip])
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    new_notes = [
+        {"pitch": 36, "start_time": float(i), "duration": 0.5, "velocity": 100}
+        for i in range(4)
+    ]
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="replace_notes",
+            params={
+                "track_index": 1, "location": "arrangement", "clip_index": 1,
+                "notes": new_notes,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert resp.result["notes_written"] == 4
+    assert resp.result["notes_present"] == 6  # 4 written + 2 surviving orphans
+    assert "warning" in resp.result
+    assert "orphan-survival" in resp.result["warning"]
+    assert "2 unexpected" in resp.result["warning"]
+
+
+def test_replace_notes_collapse_does_not_warn(loaded_actions):
+    """Cry-wolf guard: Live collapses same-(pitch, start) notes, so a faithful
+    write of stacked notes (e.g. add_wildness) legitimately yields FEWER notes
+    in the clip. ``notes_present`` < ``notes_written`` must NOT warn — only an
+    EXCESS signals a leak (the capability report's normalization #1)."""
+    clip = OrphanProneArrangementClip(name="Riff", length=32.0)  # starts empty
+    track = FakeTrack(name="Riff", arrangement_clips=[clip])
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    stacked = [
+        {"pitch": 40, "start_time": 0.0, "duration": 1.0, "velocity": 100},
+        # same (pitch, start) as above — Live keeps one; a faithful collapse.
+        {"pitch": 40, "start_time": 0.0, "duration": 0.5, "velocity": 60},
+        {"pitch": 42, "start_time": 1.0, "duration": 1.0, "velocity": 100},
+    ]
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="replace_notes",
+            params={
+                "track_index": 1, "location": "arrangement", "clip_index": 1,
+                "notes": stacked,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert resp.result["notes_written"] == 3
+    assert resp.result["notes_present"] == 2  # collapsed to 2 distinct (pitch,start)
+    assert "warning" not in resp.result  # collapse is faithful, not a leak
 
 
 def test_replace_notes_omits_clip_index_to_suppress_relink_event(loaded_actions):

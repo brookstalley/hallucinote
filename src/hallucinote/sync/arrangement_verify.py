@@ -99,12 +99,26 @@ def _send(send_fn: Callable[..., Any], tool: str, action: str, **params: Any) ->
 
 
 def _find_live_at(
-    live_clips: list[dict[str, Any]], start_beats: float, eps: float,
+    live_clips: list[dict[str, Any]],
+    start_beats: float,
+    eps: float,
+    consumed: set[int],
 ) -> dict[str, Any] | None:
-    """The Live arrangement clip whose start matches ``start_beats`` within eps."""
+    """The closest unconsumed Live arrangement clip whose start matches
+    ``start_beats`` within eps.
+
+    ``consumed`` holds the ``arrangement_clip_index`` values already paired to an
+    earlier DB placement. Excluding them lets two placements sharing a start on one
+    track ("rare but valid" per :func:`Q.get_arrangement_for_song`) each pair to
+    their OWN Live clip instead of both matching the single closest one — the
+    second's twin would otherwise fall into ``extra_live_clips`` and FALSE-halt a
+    faithful build. This mirrors the per-track consumed-index discipline the
+    removed SYN-4R7P reconcile used for the same coincident-placement case."""
     best = None
     best_d = eps
     for c in live_clips:
+        if c.get("arrangement_clip_index") in consumed:
+            continue
         d = abs(float(c["start_beats"]) - start_beats)
         if d <= best_d:
             best, best_d = c, d
@@ -171,7 +185,7 @@ def verify_song_arrangement(
         for r in rows:
             start_b = _position_bar_to_beats(r["start_bar"], ts)
             clip_row = Q.get_clip(conn, r["clip_id"])
-            lc = _find_live_at(live_clips, start_b, eps_beats)
+            lc = _find_live_at(live_clips, start_b, eps_beats, matched_live_idx)
             if clip_row is not None and clip_row["kind"] == "audio":
                 if lc is not None:
                     matched_live_idx.add(lc["arrangement_clip_index"])

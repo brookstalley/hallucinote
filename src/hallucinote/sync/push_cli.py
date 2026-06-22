@@ -225,18 +225,21 @@ def _probe_live_arrangement_clips_via_mcp(
     live_tracks: list[dict],
     send_fn=None,
 ) -> dict[int, list[dict]]:
-    """SYN-4R7P: probe ``ableton_clip(action='list', location='arrangement')``
-    per Live track so probe-and-link can reconcile stale ``arrangement_clip``
-    links against Live truth (Live re-numbers ``arrangement_clip_index`` on any
-    delete, so a recorded link goes stale and the arrangement phase crashes with
-    ``IndexError`` on a ``replace_notes`` REFRESH at the dead index).
+    """ARR-PROJ: probe ``ableton_clip(action='list', location='arrangement')``
+    per Live track so the EXECUTE path's projection planner
+    (:func:`push.plan_push_arrangement`) knows each track's current arrangement
+    clips and can plan the per-clip CLEAR before re-creating from the DB. (This
+    once also fed the SYN-4R7P probe-and-link reconcile; that reconcile was removed
+    in Chunk 4 — the projection clears+rebuilds every push, so there is no stale
+    positional link to reconcile.)
 
     Returns a dict keyed by ``track_index`` with the track's arrangement-clip
     placements (``{arrangement_clip_index, name, start_beats, length}``). A
     per-track probe failure leaves that track's key ABSENT (not an empty list) so
-    the reconciler reads it as "no info, don't drop" rather than "no clips, drop"
-    — a transient failure must never delete a live binding (mirrors the
-    per-parent tolerance of :func:`_probe_live_devices_via_mcp`).
+    the planner reads it as "lane state unknown → skip, don't clear" rather than
+    "no clips, safe to fill" — a transient failure must never let create+fill stack
+    onto unprobed clips (mirrors the per-parent tolerance of
+    :func:`_probe_live_devices_via_mcp`).
     """
     if send_fn is None:
         from hallucinote_mcp import client as _client  # type: ignore[import-not-found]

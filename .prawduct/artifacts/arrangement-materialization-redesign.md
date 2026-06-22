@@ -1,10 +1,12 @@
 # Arrangement Materialization — Systemic Redesign (arrangement-as-projection)
 
-**Status:** IN BUILD — captured 2026-06-22. Chunks 1–3 SHIPPED on
-`plan/arr-proj-arrangement-materialization` (spike confirmed the model; the
-projection planner + the integrity comparator/assert/`verify-arrangement` CLI are
-built and green). Chunks 4 (collapse the positional-link reconcile) and 5 (docs/
-skill) remain. See `plans/ARR-PROJ/build-plan.md` Status for the live state.
+**Status:** BUILT (headless) — captured 2026-06-22. All five buildable chunks SHIPPED on
+`plan/arr-proj-arrangement-materialization`: the spike confirmed the model; the projection
+planner + the integrity comparator/assert/`verify-arrangement` CLI are built and green;
+Chunk 4 removed the positional-link reconcile; Chunk 5 retired the SYN-4R7P recovery dance
+from the docs/skill. Remaining before close: the cumulative-Critic PR gate, the ARR-PROJ
+live e2e (`.prawduct/operator-verification.md`), and the ARR-9X4T/ARR-7H2N backlog close at
+merge. See `plans/ARR-PROJ/build-plan.md` Status for the live state.
 **Backlog tag:** ARR-PROJ (umbrella; supersedes the per-symptom patches listed in §10).
 **Scope class:** behavior-changing refactor of the authorship spine. Stakes HIGH.
 **Foreign API:** Ableton Live LOM (the MCP server ↔ Remote Script boundary).

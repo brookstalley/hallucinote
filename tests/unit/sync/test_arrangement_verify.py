@@ -153,6 +153,63 @@ def test_track_unlinked_reported_not_crashed(conn, song, session):
     assert report.divergences()[0].status == "track_unlinked"
 
 
+def test_coincident_placements_each_pair_to_own_clip(conn, song, session):
+    """Cumulative-Critic W2: two DB placements sharing a start on one track ("rare
+    but valid" per get_arrangement_for_song) must each pair to their OWN Live clip.
+    Without consumed-index tracking, both matched the single closest clip and the
+    twin Live clip fell into extra_live_clips, FALSE-halting a faithful build. The
+    fix mirrors the per-track consumed-index discipline the removed SYN-4R7P
+    reconcile used for exactly this case. (Pairing is positional, so the two clips
+    carry the same notes here — content-distinct coincident clips are a deeper
+    positional-matching limit, not what this regression locks.)"""
+    M.add_time_signature_point(conn, song_id=song, start_bar=1.0, numerator=4, denominator=4)
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    M.link_db_to_ableton(conn, session_id=session, db_kind="track", db_id=tid, ableton_index=1)
+    cid_a = M.create_clip(conn, track_id=tid, slot=1, length_beats=16.0, name="A")
+    cid_b = M.create_clip(conn, track_id=tid, slot=2, length_beats=16.0, name="B")
+    M.insert_notes(conn, clip_id=cid_a, notes=[dbn(60, 0.0)])
+    M.insert_notes(conn, clip_id=cid_b, notes=[dbn(60, 0.0)])
+    M.add_arrangement_clip(conn, song_id=song, track_id=tid, clip_id=cid_a, start_bar=1.0, end_bar=5.0)
+    M.add_arrangement_clip(conn, song_id=song, track_id=tid, clip_id=cid_b, start_bar=1.0, end_bar=5.0)
+    # Live has BOTH coincident clips at beat 0.0, indices 1 and 2.
+    live = {1: [
+        {"arrangement_clip_index": 1, "start_beats": 0.0, "notes": [lnote(60, 0.0)]},
+        {"arrangement_clip_index": 2, "start_beats": 0.0, "notes": [lnote(60, 0.0)]},
+    ]}
+    report = verify_song_arrangement(
+        conn, song_id=song, session_id=session, send_fn=make_send_fn(live),
+    )
+    assert report.faithful, [(r.section, r.status) for r in report.results]
+    assert not report.extra_live_clips
+    assert not report.has_corruption()
+
+
+def test_probe_failed_does_not_halt_but_is_not_faithful(conn, song, session):
+    """Cumulative-Critic W1: a per-clip note re-probe FAILURE is not silent
+    corruption — has_corruption() is False so the push-time assert must NOT HALT —
+    but the placement went UNVERIFIED, so it is NOT faithful either. (The executor
+    turns this into a benign warning so 'couldn't verify' reads distinctly from
+    'verified OK'; see test_push_execute.)"""
+    _setup_one_placement(conn, song, session, db_notes=[dbn(60, 0.0)])
+
+    def send(req):
+        if req.tool == "ableton_clip" and req.action == "list":
+            return FakeResp(result={"clips": [
+                {"arrangement_clip_index": 1, "start_beats": 0.0, "name": ""},
+            ]})
+        if req.tool == "ableton_note" and req.action == "list":
+            return FakeResp(ok=False, error="simulated note-probe failure")
+        return FakeResp(ok=False, error="unexpected")
+
+    report = verify_song_arrangement(conn, song_id=song, session_id=session, send_fn=send)
+    assert [r.status for r in report.results] == ["probe_failed"]
+    assert not report.has_corruption()  # does not halt
+    assert not report.faithful          # but not a pass
+    # The assert returns without raising (no corruption) — proving probe failure
+    # is non-fatal at the assert boundary.
+    assert_arrangement_materialized(conn, song_id=song, session_id=session, send_fn=send)
+
+
 def test_assert_returns_report_on_faithful(conn, song, session):
     _setup_one_placement(conn, song, session, db_notes=[dbn(60, 0.0)])
     live = {1: [{"arrangement_clip_index": 1, "start_beats": 0.0, "notes": [lnote(60, 0.0)]}]}

@@ -1994,6 +1994,49 @@ def test_execute_arrangement_assert_connection_loss_writes_state(
     assert (state_dir / ".last-push-state.json").exists()  # always-write-state held
 
 
+def test_execute_arrangement_probe_failure_warns_not_silent_ok(
+    conn, song, session, tiny_song, state_dir,
+):
+    """Cumulative-Critic W1: when the post-arrangement integrity re-probe FAILS
+    (Live note-list errors — NOT a disconnect), the placement goes UNVERIFIED. The
+    assert must NOT halt (a probe error isn't silent corruption), but the push must
+    NOT silently report a clean OK either: it surfaces a benign warning so
+    'couldn't verify N clip(s)' reads distinctly from 'verified all N'. Without it,
+    a push where verification was IMPOSSIBLE is indistinguishable from one that
+    PASSED — the exact gap the assert exists to close."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4,
+    )
+    M.insert_notes(conn, clip_id=tiny_song["clip_id"], notes=[
+        {"pitch": 60, "start_beats": 0.0, "duration_beats": 1.0, "velocity": 100},
+    ])
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=tiny_song["track_id"],
+        clip_id=tiny_song["clip_id"], start_bar=1.0, end_bar=2.0,
+    )
+    base = _make_send_fn()
+
+    def probe_fails(req, *, read_timeout=None):
+        # Let materialization (create/delete) and the clip-list succeed, but fail
+        # the integrity re-probe's NOTE list so the placement can't be verified.
+        if (req.tool == "ableton_note" and req.action == "list"
+                and req.params.get("location") == "arrangement"):
+            return FakeResponse(ok=False, error="simulated re-probe failure")
+        return base(req, read_timeout=read_timeout)
+
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=probe_fails,
+    )
+    # Probe failure is not silent corruption → no halt, exit stays clean.
+    assert result.outcome == "ok"
+    assert result.phase_halted is None
+    # ...but the unverified placement is surfaced as a benign warning.
+    assert any("could NOT be verified" in w for w in result.warnings), result.warnings
+    state = json.loads((state_dir / ".last-push-state.json").read_text())
+    assert any("could NOT be verified" in w for w in state.get("warnings", []))
+
+
 # ---------------------------------------------------------------------------
 # PSH-2R7K — phase-targeting (--only / --start-at / --stop-after)
 # ---------------------------------------------------------------------------

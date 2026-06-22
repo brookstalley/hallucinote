@@ -135,6 +135,31 @@ done at merge + live-verify (the `/prawduct:pr` post-merge cleanup), since archi
 chunks now done; remaining: `/prawduct:critic cumulative` (PR gate) + the ARR-PROJ live e2e
 (operator-verification) + the backlog close at merge.
 
+**Cumulative Critic 2026-06-22 (fable, 3-way coordinator; `develop...fa659a6`): 0 blocking,
+6 warnings, 5 notes.** The two correctness warnings — both in the Chunk-3 integrity layer —
+fixed before merge:
+- **W1 (integrity assert silently passes when its own re-probe fails).** `has_corruption()`
+  excludes `probe_failed` (correct — a probe error isn't silent corruption), but the executor
+  discarded the report, so an all-`probe_failed` verify was indistinguishable from a pass. Fix:
+  `push_execute` now captures the report and surfaces any `probe_failed` count into the benign
+  `warning_messages` channel ("N placement(s) could NOT be verified … re-run") — non-fatal, but
+  no longer a silent clean OK. Tests: verify-level (probe_failed → no halt, not faithful) +
+  executor-level (warning surfaced, exit stays ok).
+- **W2 (coincident-start placements FALSE-halt the integrity assert).** `_find_live_at` paired
+  without consuming the matched Live clip, so two placements sharing a start both matched the
+  same clip and the twin fell into `extra_live_clips` → false halt. Fix: thread the per-track
+  `consumed` index set into `_find_live_at` (mirrors the discipline the removed SYN-4R7P
+  reconcile used). Regression test proven to fail pre-fix. (Residual, noted in-test: pairing is
+  positional, so content-DISTINCT coincident clips on one track can still cross-pair — a deeper
+  positional-matching limit, not introduced here.)
+Coherence drifts also fixed: design-artifact + project-state status banners advanced to "all 5
+built"; the SKILL.md re-materialize paragraph moved out of the `--probe` Display bullet list;
+the `_probe_live_arrangement_clips_via_mcp` docstring rewritten to its real (projection-planner
+clear) purpose. Notes (backlog/optional, untouched): CLI exit-code trichotomy for transient
+probe-miss; Chunk-3 operator-verification entry; fingerprint non-reuse rationale; the
+ARR-9X4T/ARR-7H2N close (correctly gated on the live e2e). The fix commit rides the cumulative
+chain via `verify-resolutions`.
+
 ## Scaffolding
 
 N/A — existing mature codebase. No new project init. Test commands (unchanged):

@@ -1315,9 +1315,38 @@ def execute_push(
                 assert_arrangement_materialized,
             )
             try:
-                assert_arrangement_materialized(
+                integrity_report = assert_arrangement_materialized(
                     conn, song_id=song_id, session_id=session_id, send_fn=send_fn,
                 )
+                # The assert HALTs only on SILENT corruption; a per-clip re-probe
+                # FAILURE is not corruption, so the assert returns normally — but
+                # those placements went UNVERIFIED, so "OK" would overstate the
+                # guarantee (the exact gap the assert exists to close). Surface the
+                # unverified count as a benign warning (does not flip the exit) so
+                # "couldn't verify N clips" reads distinctly from "verified all N".
+                unverified = [
+                    r for r in integrity_report.results
+                    if r.status == "probe_failed"
+                ]
+                if unverified:
+                    verified_n = sum(
+                        1 for r in integrity_report.results
+                        if r.status in ("faithful", "diverged", "missing_clip")
+                    )
+                    affected = ", ".join(
+                        f"{r.track_name}/{r.section}" for r in unverified[:5]
+                    ) + (" ..." if len(unverified) > 5 else "")
+                    msg = (
+                        f"arrangement integrity: {len(unverified)} placement(s) "
+                        f"could NOT be verified (Live note/clip re-probe failed); "
+                        f"the assert covered only {verified_n} placement(s), so a "
+                        f"silent drop/stack on the unverified ones would NOT have "
+                        f"been caught. Re-run `execute --only arrangement` once Live "
+                        f"is reachable to re-materialize + re-verify. Affected: "
+                        f"{affected}"
+                    )
+                    if msg not in warning_messages:
+                        warning_messages.append(msg)
             except ArrangementIntegrityError as exc:
                 error_records.append({
                     "key": None,

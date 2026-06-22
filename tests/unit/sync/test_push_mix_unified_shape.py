@@ -511,7 +511,15 @@ def test_planner_replace_notes_emit_validates_against_dispatcher(conn):
             self.loop_end = 16.0
             self.muted = False
             self.color = 0
+            self.is_midi_clip = True
         def set_notes(self, n): self.notes = tuple(n)
+        def get_notes_extended(self, fp, ps, ft, ts): return list(self.notes)
+        def remove_notes_extended(self, fp, ps, ft, ts):
+            # replace_notes now full-extent-clears before set_notes (ARR-ORPHAN).
+            self.notes = tuple(
+                x for x in self.notes
+                if not (fp <= x[0] < fp + ps and ft <= x[1] < ft + ts)
+            )
 
     class _Slot:
         def __init__(self, clip=None): self.clip = clip

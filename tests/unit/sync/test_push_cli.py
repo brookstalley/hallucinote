@@ -2647,6 +2647,7 @@ def test_cli_execute_no_coherence_check_skips_validation(
             "push.check_coherence called despite --no-coherence-check"
         )
     monkeypatch.setattr(push, "check_coherence", _check_should_not_run)
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", lambda send_fn=None: ([], []))
 
     def _fake_execute(**kwargs):
         from hallucinote.sync.push_execute import ExecuteResult
@@ -3015,6 +3016,7 @@ def test_cli_execute_regenerates_requirements_after_device_push(
         push_cli.push_execute, "execute_push",
         lambda **kw: _fake_execute_result(devices_calls_ok=2),
     )
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", lambda send_fn=None: ([], []))
     monkeypatch.setattr(push_cli, "_resolve_db_path", lambda args: db_path)
     regen_calls: list[str] = []
 
@@ -3042,6 +3044,7 @@ def test_cli_execute_no_regen_when_devices_phase_idle(
         push_cli.push_execute, "execute_push",
         lambda **kw: _fake_execute_result(devices_calls_ok=0),
     )
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", lambda send_fn=None: ([], []))
     monkeypatch.setattr(push_cli, "_resolve_db_path", lambda args: db_path)
     monkeypatch.setattr(
         compat, "regen_requirements",
@@ -3065,6 +3068,7 @@ def test_cli_execute_db_only_prints_stale_notice_instead_of_regen(
         push_cli.push_execute, "execute_push",
         lambda **kw: _fake_execute_result(devices_calls_ok=1),
     )
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", lambda send_fn=None: ([], []))
     monkeypatch.setattr(
         compat, "regen_requirements",
         lambda slug: pytest.fail("regen must not run without --song"),
@@ -3089,6 +3093,7 @@ def test_cli_execute_regen_failure_never_masks_push_outcome(
         push_cli.push_execute, "execute_push",
         lambda **kw: _fake_execute_result(devices_calls_ok=1),
     )
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", lambda send_fn=None: ([], []))
     monkeypatch.setattr(push_cli, "_resolve_db_path", lambda args: db_path)
 
     def failing_regen(slug):
@@ -3121,6 +3126,7 @@ def test_cli_execute_halted_push_with_device_changes_still_regenerates(
     monkeypatch.setattr(
         push_cli.push_execute, "execute_push", lambda **kw: halted,
     )
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", lambda send_fn=None: ([], []))
     monkeypatch.setattr(push_cli, "_resolve_db_path", lambda args: db_path)
     regen_calls: list[str] = []
     monkeypatch.setattr(
@@ -3158,9 +3164,13 @@ def test_resume_phase_from_state_none_when_no_halt(tmp_path):
     assert push_cli._resume_phase_from_state(tmp_path) is None
 
 
-def test_cli_execute_unknown_phase_exits_2(conn, song, session, db_path, capsys):
-    """A bad --only phase fails fast (exit 2) with the valid-phase list, before
-    any dispatch — so no Live is needed to prove it teaches."""
+def test_cli_execute_unknown_phase_exits_2(
+    conn, song, session, db_path, capsys, monkeypatch,
+):
+    """A bad --only phase fails fast (exit 2) with the valid-phase list. The
+    rejection is execute_push's PhaseTargetError (raised before any phase
+    dispatches); the live probe is stubbed so the test needs no running Live."""
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", lambda send_fn=None: ([], []))
     rc = push_cli.main([
         "execute", session, "--db", str(db_path),
         "--no-coherence-check", "--only", "bogus",
@@ -3213,6 +3223,7 @@ def test_cli_execute_resume_resolves_and_passes_targeting(
         )
 
     monkeypatch.setattr(push_cli.push_execute, "execute_push", fake_execute)
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", lambda send_fn=None: ([], []))
     rc = push_cli.main([
         "execute", session, "--db", str(db_path),
         "--no-coherence-check", "--resume", "--stop-after", "devices",

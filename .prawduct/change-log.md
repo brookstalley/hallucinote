@@ -4,6 +4,52 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-22 — Arrangement materialization is now a projection of the DB (ARR-PROJ)
+
+<!-- prawduct: type=feat | chunks=ARR-PROJ | scope=sync-push,arrangement-verify,cli,skills,docs,tests -->
+
+**Two foundational bugs retired by construction, not patched.** Thirteen months of
+arrangement whack-a-mole (stacking on re-materialize — ARR-9X4T; a silently-dropped
+track's notes — ARR-7H2N; the SYN-4R7P delete-by-hand recovery dance) traced to two
+design choices, not N bugs: `duplicate_to_arrangement`'s B-24 overlap-split, and a
+persistent *positional* `ableton_link` that Live renumbers out from under us. The fix
+reframes the arrangement as a **projection of the DB** — clear, then recreate — so both
+failure modes become impossible by construction rather than guarded against.
+
+- **Projection rebuild planner** (`sync/push/arrangement.py`): per track, clear its
+  arrangement clips (descending per-clip `delete`) then create+fill each placement from
+  the DB on a FRESH clip (`create_midi_clip` + `set_notes`), all-or-nothing per track
+  (probe-failure skips rather than stacks). `duplicate_to_arrangement` is retained ONLY
+  for envelope-bearing placements (the one Live constraint that needs it); audio uses the
+  existing path. Re-materialize onto an occupied timeline clears-then-rebuilds — the
+  ARR-9X4T stacking witness can no longer be produced.
+- **Integrity comparator** (`sync/arrangement_compare.py` + `arrangement_verify.py`): one
+  canonical DB-collapsed-set vs Live-arrangement-set comparator with three normalizations
+  (distinct-(pitch, ε-bucketed start) collapse — Live collapses same-(pitch,start) while
+  build.py legitimately stacks; float tolerance; note-content compare via the note API in
+  a fresh callback, never inline). Two consumers: a **push-time assert** wired after the
+  arrangement phase that HALTs (PARTIAL) on genuine corruption instead of reporting OK,
+  and a **`hallucinote verify-arrangement --song <slug>`** audit CLI (non-zero exit on any
+  divergence). Surfaces a `probe_failed` count as a benign warning so an all-probe-failed
+  verify is no longer indistinguishable from a clean pass.
+- **Reconcile subsystem removed** (`sync/push/probe.py`, net −392 lines): with rebuild as
+  the sole path, the SYN-4R7P positional-link reconcile (drop/keep/rebind-by-position) had
+  nothing left to protect — it only ever guarded the old `replace_notes`-refresh branch
+  that Chunk 2 replaced. Deleted outright; the `arrangement_clip` link is still written
+  fresh each push for the scoped PSH-6W2J refresh.
+- **Docs/skill** (`skills/ableton-push/SKILL.md`): the delete-then-re-duplicate recovery
+  dance is retired in favor of the idempotent clear+rebuild path; `verify-arrangement`
+  surfaced; the two 2026-06-21 incoming-bug reports archived RESOLVED.
+
+Five chunks (Chunk 6 bulk-clear-wire DROPPED — planner-deletes suffice, zero MCP
+fingerprint change). Live spike (Chunk 1) confirmed the model end-to-end on a real set
+(faithful, idempotent, drop-free). 4396 passed, 0 failed. Cumulative Critic clean (0
+blocking; two integrity-layer correctness warnings — silent-pass-on-probe-failure and a
+coincident-start false-halt — fixed at root). The full-path live e2e
+(`push execute --only arrangement --probe --song alien` + `verify-arrangement` + render)
+is queued in operator-verification.md (deferred, user-directed). Closes ARR-9X4T,
+ARR-7H2N, SYN-4R7P.
+
 ## 2026-06-21 — perform_batch transport-stall watchdog + loop/punch reset (PSH-3H8M)
 
 <!-- prawduct: type=fix | chunks=PSH-3H8M | scope=mcp-perform,tests | status=merged -->

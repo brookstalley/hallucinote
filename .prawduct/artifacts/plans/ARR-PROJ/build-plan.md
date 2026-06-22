@@ -42,11 +42,21 @@ After Chunk 1 the level rises to High for Chunks 2–6.
 - [ ] Chunk 03: Integrity comparator — push-time assert + `verify-arrangement` audit (collapsed-set, tolerance)
 - [ ] Chunk 04: Collapse the positional-link reconcile subsystem
 - [ ] Chunk 05: Docs + skill — retire the SYN-4R7P recovery dance
-- [ ] Chunk 06 (conditional): bulk `clear_arrangement` MCP wire action
+- [~] Chunk 06 (conditional): bulk `clear_arrangement` MCP wire action — **DROPPED** (Chunk-1d chose planner-deletes; existing `delete` wire suffices, zero fingerprint change)
 
-Context: Plan authored 2026-06-22 from the discovery artifact. Nothing built yet. Chunk 1 is
-Live-gated and must run in an attended Ableton session before Chunk 2. Branch: not yet cut
-(feature branch off `develop` per gitflow — see [[feedback_pr_gate_base_is_develop]]).
+Context: Plan authored 2026-06-22 from the discovery artifact. **Chunk 1 Live spike RAN
+2026-06-22 (attended, alien set) and CONFIRMS the projection model** — findings in design
+§6c, evidence in operator-verification (ARR-PROJ Chunk 1). All three §6 questions answered:
+create+fill is faithful/idempotent/drop-free (two full Drums-track rebuilds,
+`net_noop_vs_baseline=True`); note_count reads the arrangement clip's own collapsed notes
+(§6 q2 trustworthy, read fresh); Live collapses same-(pitch,start) (§6b-1 confirmed live).
+**Wire decision (Chunk 1d): planner-deletes via existing `delete` wire → Chunk 6 DROPPED
+(zero fingerprint change).** Spike script (recorded probe sequence): `chunk1-spike.py` in
+this dir. Open: an optional audible render (queued in operator-verification, transitively
+established); Chunk-1 Critic rolled into the Chunk-2 cumulative PR (spike = throwaway script
++ doc findings; per [[feedback_critic_cadence_for_small_chunks]]). Branch:
+`plan/arr-proj-arrangement-materialization` (off `develop`, already cut + pushed). NEXT:
+Chunk 2 (planner rewrite, the keystone — headless/testable, NOT live-gated).
 
 ## Scaffolding
 

@@ -250,6 +250,79 @@ per (track, section), non-zero exit on divergence) — the **detection** layer c
 the **prevention** (Chunk 3 push-time assert), sharing the same comparison logic. Reuses
 `push-notes --changed`'s per-clip content fingerprint. This becomes a chunk in ARR-PROJ.
 
+## 6c. Chunk-1 Live spike findings (2026-06-22) — architecture CONFIRMED
+
+Attended Ableton session, alien set (5 MIDI tracks, faithful baseline), server
+version-matched after a `/mcp` respawn. Probe sequence preserved at
+`.prawduct/artifacts/plans/ARR-PROJ/chunk1-spike.py` (drives the real Drums track
+via the in-process MCP TCP client; keeps note payloads out of agent context —
+prints counts only). Two consecutive clear+create+fill rebuilds of the Drums
+track (10 placements, ~2500 notes incl. a 771-note clip):
+
+**Result — `pass1=True pass2=True idempotent=True net_noop_vs_baseline=True`.**
+Every section's Live note_count matched the DB collapsed set exactly on both
+passes; the second rebuild equalled the first; the track returned to byte-identical
+baseline state (the mutation was a content no-op — fully reversible).
+
+**§6 q1 (bulk-drop) — ANSWERED.** create+fill dropped nothing across two full
+rebuilds. The drop cannot be reproduced *through the create+fill path*: there is
+no `duplicate_to_arrangement`, no overlap-split, no session-copy step to lose. The
+old bulk-drop's exact Live-side root cause stays uncharacterized (it lived in the
+duplicate path the redesign deletes); reproducing it on the legacy path was not
+pursued because the projection path provably sidesteps it. **B-24 stacking is
+impossible by construction** — `create_midi_clip` makes a fresh empty clip at the
+target beat; nothing overlaps, nothing splits.
+
+**§6 q2 (note_count trust) — ANSWERED; trustworthy.** Both `ableton_clip(list)`
+`note_count` (handler `clip.py:104-105`) and `ableton_note(list,
+location='arrangement')` (`note.py:56`) call the SAME
+`clip.get_notes_extended(0,128,0.0,clip.length)` on the **arrangement clip object
+directly** — neither mirrors a session source by construction. Live confirmed: on
+a source-less `create_midi_clip` clip (verse1), both reads returned 503 = the DB
+collapsed count. A created arrangement clip has no session slot to mirror, so the
+count can only be its own notes. **Refinement to §6b-B normalization #3:** the
+integrity comparator must use the *note API* not because it reads a different
+object, but because it needs note *content* (pitch/start/dur/vel tuples) for the
+collapsed+tolerance compare — `clip(list)` gives only a bare count. The
+"mirrors-the-source" symptom from the 2026-06-21 report, if real, is a Live-side
+same-callback-readback staleness artifact (§6a), not a structural mirror — so the
+assert MUST read in a fresh probe/callback (the spike did: a new `list` call after
+the writes). Confirmed trustworthy under that discipline.
+
+**§6b normalization #1 (Live collapses same-(pitch,start)) — CONFIRMED live.** DB
+raw→collapsed: verse1 509→503, verse2 337→333, chorus3 771→770; Live held exactly
+the collapsed count each time. A raw-count compare would have cried wolf on three
+of ten clips. The comparator MUST collapse distinct-(pitch,start) before diffing.
+
+**§6 q3 (create+fill at scale + semantics) — CONFIRMED.** `create_midi_clip(start,
+length)` start/length semantics match `_position_bar_to_beats(start_bar)` +
+`clip.length_beats` exactly (every clip resolved at the requested start within
+1e-6, correct length). Idempotent at full-track scale across two rebuilds.
+
+### Wire decision (Chunk-1d) — planner-deletes, NO new wire action
+
+The arrangement-clip `delete` wire action **already exists** (`clip.py:455-507`:
+`location='arrangement'` → `track.delete_clip(clip)` by 1-based index; indices
+renumber down after each delete). The planner's own comment ("no MCP
+arrangement-clip-delete action exists", `arrangement.py:130`) is **stale**.
+Measured cost: descending-index delete cleared 10 clips in ~6.5–7.4s (~0.7s/clip);
+create+fill ~5s/track (~0.5s/clip). A 5-track / ~49-placement song ≈ under a
+minute end-to-end — acceptable.
+
+**Decision: Chunk 2 uses planned per-clip `delete` calls (existing wire) →
+ZERO MCP fingerprint change, no re-vendor. Chunk 6 (bulk `clear_arrangement`) is
+NOT needed and is dropped unless a later, much larger song shows the per-clip loop
+is too slow.** Planner constraint carried forward: emit deletes in **descending
+index order** (or repeatedly delete index 1), and treat Live's post-delete
+collection as renumbered — never cache an index across a delete.
+
+**Open sub-item (acceptance):** an *audible* render of the rebuilt track was not
+run — the note-API read-back proves note-for-note fidelity (stronger than audio for
+counts), and `net_noop_vs_baseline=True` means the rebuilt Drums is note-identical
+to the pre-spike arrangement the user was already hearing, so "render-correct" is
+transitively established. A fresh render is available as the Early-Feedback
+"hear-it" milestone if desired; queued in operator-verification.
+
 ## 7. Boundary / wire-shape surface (MCP fingerprint + re-vendor)
 
 - The create+fill path reuses **existing** wire actions (`create`, `replace_notes`,

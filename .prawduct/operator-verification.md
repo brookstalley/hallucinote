@@ -15,6 +15,34 @@ pending entries when `operator_verification_required: true`.
 
 ---
 
+## ARR-PROJ Chunk 1 — arrangement-as-projection live spike (2026-06-22) — PASSED (note-level), render optional
+
+**Attended session, alien set, server version-matched (`/mcp` respawn).** Drove the
+real Drums track (10 placements, ~2500 notes incl. a 771-note clip) through two
+consecutive `clear (per-clip delete) → create_midi_clip + set_notes → fresh
+read-back` rebuilds via `.prawduct/artifacts/plans/ARR-PROJ/chunk1-spike.py`.
+
+**Verified live (agent-run, this session):**
+1. **Faithful + idempotent + drop-free.** `pass1=True pass2=True idempotent=True
+   net_noop_vs_baseline=True` — every section's Live note_count matched the DB
+   collapsed set on both passes; the rebuild returned Drums to byte-identical
+   baseline. No drop, no B-24 stack (impossible by construction — no duplicate).
+2. **note_count trustworthy (§6 q2).** On a source-less `create_midi_clip` clip
+   (verse1), `ableton_clip(list).note_count == ableton_note(list) count == 503 ==
+   DB collapsed` — reads the arrangement clip's OWN notes, read in a fresh callback.
+3. **Live collapses same-(pitch,start) (§6b-1).** 509→503, 337→333, 771→770 held
+   as collapsed — confirms the comparator must collapse before diffing.
+4. **Clear wire exists; planner-deletes chosen.** Descending per-clip
+   `delete(location='arrangement')` cleared 10 clips in ~7s; no bulk-clear action
+   needed (Chunk 6 dropped, zero fingerprint change).
+
+**Pending (optional — Early-Feedback "hear-it" milestone):** an *audible* render of
+the rebuilt Drums track was not run. The note-API read-back proves note-for-note
+fidelity and `net_noop=True` means the track is note-identical to the arrangement
+the operator was already hearing, so render-correctness is transitively established.
+Run `ableton_render(action='start', song_slug='alien')` if an audible confirmation
+is wanted; otherwise this is operator-acceptable on the note-level proof.
+
 ## 2026-06-13 autonomous session — bridge prepped + new pending checks
 
 **Bridge is READY for the existing SNP-8R4K checks below.** This session re-vendored

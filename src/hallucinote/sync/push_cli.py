@@ -756,12 +756,14 @@ def _cmd_execute(args: argparse.Namespace) -> int:
         start_at = resumed
         sys.stderr.write(f"push_cli execute: --resume → --start-at {start_at}\n")
 
+    coherence_live_tracks: list[dict] | None = None
     if not args.no_coherence_check:
         # The mutex group makes --probe or --snapshot the only other paths,
         # so exactly one is set here.
         live_tracks, live_returns = _cmd_check_coherence_probe_or_snapshot(
             args, subcmd="execute",
         )
+        coherence_live_tracks = live_tracks
         check = push.check_coherence(
             conn,
             session_id=args.session_id,
@@ -776,6 +778,18 @@ def _cmd_execute(args: argparse.Namespace) -> int:
             sys.stderr.write("\n")
             return 1
 
+    # ARR-PROJ: the arrangement phase projects the DB onto a CLEARED timeline, so
+    # it needs Live's current arrangement clips per track to plan the per-clip
+    # clear. Probe live (same call probe-and-link uses); execute reaches Live at
+    # dispatch regardless, so this is always valid. Reuse the coherence probe's
+    # track list when present to avoid a redundant ableton_track(list).
+    arr_probe_tracks = coherence_live_tracks
+    if arr_probe_tracks is None:
+        arr_probe_tracks, _ = _probe_live_via_mcp()
+    live_arrangement_clips_by_track = _probe_live_arrangement_clips_via_mcp(
+        live_tracks=arr_probe_tracks,
+    )
+
     try:
         result = push_execute.execute_push(
             conn=conn,
@@ -789,6 +803,7 @@ def _cmd_execute(args: argparse.Namespace) -> int:
             start_at=start_at,
             stop_after=stop_after,
             progress_fn=_stderr_progress,
+            live_arrangement_clips_by_track=live_arrangement_clips_by_track,
         )
     except push_execute.PhaseTargetError as exc:
         sys.stderr.write(f"push_cli execute: {exc}\n")

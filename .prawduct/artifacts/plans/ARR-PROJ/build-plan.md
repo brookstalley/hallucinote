@@ -37,8 +37,8 @@ After Chunk 1 the level rises to High for Chunks 2–6.
 
 ## Status
 
-- [ ] Chunk 01: Live spike + one-track thin vertical slice (root-cause + architecture proof)
-- [ ] Chunk 02: Sync-planner rebuild path (clear + create+fill + exception routing)
+- [x] Chunk 01: Live spike + one-track thin vertical slice (root-cause + architecture proof)
+- [x] Chunk 02: Sync-planner rebuild path (clear + create+fill + exception routing)
 - [ ] Chunk 03: Integrity comparator — push-time assert + `verify-arrangement` audit (collapsed-set, tolerance)
 - [ ] Chunk 04: Collapse the positional-link reconcile subsystem
 - [ ] Chunk 05: Docs + skill — retire the SYN-4R7P recovery dance
@@ -55,8 +55,22 @@ create+fill is faithful/idempotent/drop-free (two full Drums-track rebuilds,
 this dir. Open: an optional audible render (queued in operator-verification, transitively
 established); Chunk-1 Critic rolled into the Chunk-2 cumulative PR (spike = throwaway script
 + doc findings; per [[feedback_critic_cadence_for_small_chunks]]). Branch:
-`plan/arr-proj-arrangement-materialization` (off `develop`, already cut + pushed). NEXT:
-Chunk 2 (planner rewrite, the keystone — headless/testable, NOT live-gated).
+`plan/arr-proj-arrangement-materialization` (off `develop`, already cut + pushed).
+
+**Chunk 2 BUILT 2026-06-22 (headless, 4379 green).** `plan_push_arrangement` rewritten to the
+projection model (`sync/push/arrangement.py`): per track, clear (descending per-clip `delete`)
++ create+fill from DB (note-only) / duplicate-onto-cleared (envelope-bearing) / skip (audio),
+§6a all-or-nothing per track (incl. probe-failure skip to avoid stacking). New
+`envelope_hosting_clip_ids` (envelopes.py) reuses `classify_envelope_route` for the duplicate
+route (alien's one host = Alien Voice send_level). Threaded `live_arrangement_clips_by_track`
+through `plan_push_song` → `execute_push` → `_cmd_execute` (probes arrangement at execute time,
+reusing the coherence track list). New ack-only apply key `arrangement_clip_clear`. Old
+idempotent-skip / refresh-in-place / must-clear-warn model + its tests REPLACED (intentional
+behavior change). Decisions in `chunk2-design.md`. OUT of scope (flagged, not dropped): the
+scoped `plan_push_arrangement_clip_notes` still uses `replace_notes`-in-place (orphan-prone per
+§6b-A) — its fix is the `replace_notes` HANDLER becoming a true total-replace, which flips the
+MCP fingerprint, so it stays a separate item (incoming-bug report already filed). NEXT: Chunk 3
+(integrity comparator: push-time assert + `verify-arrangement` audit).
 
 ## Scaffolding
 

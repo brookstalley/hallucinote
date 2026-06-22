@@ -955,42 +955,33 @@ def test_probe_and_link_emits_link_removed_event_on_stale_arrangement_unlink(
     assert arr[0]["ableton_index"] == 0
 
 
-def test_arrangement_planner_emits_duplicate_after_stale_link_reconcile(
+def test_arrangement_planner_rematerializes_after_live_side_delete(
     conn, song, session,
 ):
-    """End-to-end payoff (SYN-4R7P): after reconciliation drops the stale
-    arrangement_clip link, plan_push_arrangement emits duplicate_to_arrangement
-    (re-materialize) instead of the replace_notes REFRESH that raised IndexError
-    at the dead index — so `push execute --only arrangement --probe` re-builds the
-    arrangement from the session clips."""
+    """ARR-PROJ subsumes SYN-4R7P: after the user deletes an arrangement clip in
+    Live (the lane goes empty), the projection planner re-materializes it via
+    create+fill from the DB — no stale-link IndexError, no replace_notes into a
+    dead index, no reconcile step required. The probe (empty lane) means no
+    clear is needed; the placement is simply (re)created."""
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
     M.link_db_to_ableton(
         conn, session_id=session, db_kind="track", db_id=tid, ableton_index=1,
     )
     cid = M.create_clip(conn, track_id=tid, slot=0, length_beats=16.0, name="A")
-    M.link_db_to_ableton(
-        conn, session_id=session, db_kind="clip", db_id=cid, ableton_index=0,
-    )
     aid = M.add_arrangement_clip(
         conn, song_id=song, track_id=tid, clip_id=cid, start_bar=1.0, end_bar=5.0,
     )
-    M.link_db_to_ableton(
-        conn, session_id=session, db_kind="arrangement_clip", db_id=aid,
-        ableton_index=0,
-    )
-    # User deleted the arrangement clip in Live → the lane is empty.
-    push.probe_and_link(
+    # User deleted the arrangement clip in Live → the probe shows an empty lane.
+    plan = push.plan_push_arrangement(
         conn, song_id=song, session_id=session,
-        live_tracks=[{"track_index": 1, "name": "Drums", "kind": "midi"}],
-        live_returns=[],
         live_arrangement_clips_by_track={1: []},
     )
-    plan = push.plan_push_arrangement(conn, song_id=song, session_id=session)
     actions = [c.args["action"] for c in plan.calls]
-    assert actions == ["duplicate_to_arrangement"], (
-        "after the stale arrangement_clip link is dropped, the planner must "
-        "re-duplicate the placement, not replace_notes into a dead index"
+    assert actions == ["create"], (
+        "after a Live-side delete the projection planner re-materializes via "
+        f"create+fill (no reconcile, no duplicate), got: {actions}"
     )
+    assert plan.calls[0].key == f"arrangement_clip:{aid}"
 
 
 def test_probe_and_link_keeps_distinct_indices_for_coincident_arrangement_clips(

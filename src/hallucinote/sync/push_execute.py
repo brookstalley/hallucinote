@@ -596,6 +596,7 @@ def execute_push(
     start_at: str | None = None,
     stop_after: str | None = None,
     progress_fn: Callable[[str], None] | None = None,
+    live_arrangement_clips_by_track: dict[int, list[dict]] | None = None,
 ) -> ExecuteResult:
     """Run the full thirteen-phase push, dispatching each call via ``send_fn``.
 
@@ -644,6 +645,7 @@ def execute_push(
     phases = push.plan_push_song(
         conn, song_id=song_id, session_id=session_id,
         perform_slowdown_factor=perform_slowdown_factor,
+        live_arrangement_clips_by_track=live_arrangement_clips_by_track,
     )
     phases, scope = _filter_phases(
         phases, only=only, start_at=start_at, stop_after=stop_after,

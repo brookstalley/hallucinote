@@ -393,6 +393,36 @@ def test_mixer_volume_emits_via_session_clip(
     }
 
 
+# ---------- ARR-PROJ §5/§9: envelope_hosting_clip_ids (duplicate-route detection) ----------
+
+
+def test_envelope_hosting_clip_ids_includes_session_clip_host(
+    conn, song, session, track, clip, arr_clip,
+):
+    """A clip that HOSTS a session_clip-routed envelope (here a mixer_volume
+    covered by ``arr_clip``) is reported as an envelope host, so the arrangement
+    planner routes its placement to duplicate (create+fill would drop the
+    snapshot-copied clip envelope — §9 risk)."""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume", target_track_id=track,
+    )
+    _add_one_breakpoint(conn, eid)  # breakpoints in [0,1], covered by arr_clip [0,8]
+    assert push.envelope_hosting_clip_ids(conn, song) == {clip}
+
+
+def test_envelope_hosting_clip_ids_excludes_perform_routed(
+    conn, song, session, track, clip,
+):
+    """An envelope with NO covering session clip routes to perform (a continuous
+    arrangement ride), so its track's clips are NOT envelope hosts — create+fill
+    is safe for them. (No ``arr_clip`` placement here, so nothing covers it.)"""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume", target_track_id=track,
+    )
+    _add_one_breakpoint(conn, eid)
+    assert push.envelope_hosting_clip_ids(conn, song) == set()
+
+
 def test_mixer_pan_emits_via_session_clip(
     conn, song, session, linked_track, linked_clip, arr_clip,
 ):

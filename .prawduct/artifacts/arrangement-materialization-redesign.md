@@ -140,13 +140,22 @@ the patch option would have required.
 
 ## 5. The narrow exceptions the redesign MUST preserve
 
-1. **Envelope-bearing clips (hard Live limit).** Arrangement clips can't host
-   mixer/pan/send/device-parameter envelopes; the only way is author-on-session +
-   `duplicate_to_arrangement` so the copy inherits them (`gaps.md:36-43`). The router
-   sends these placements down the duplicate path — onto a **cleared** region (so no
-   B-24 overlap) — and they are deterministically detectable from the DB (the DB knows
-   which clips carry clip-scoped envelopes). This keeps the swell/ENV-4S2K sample-window
-   feature working. Rare; bounded.
+1. **Envelope-bearing clips (hard Live limit).** Arrangement clips can't host clip
+   envelopes; the only way is author-on-session + `duplicate_to_arrangement` so the copy
+   inherits them (`gaps.md:36-43`). The router sends these placements down the duplicate
+   path — onto a **cleared** region (so no B-24 overlap). **Detection corrected by Chunk-2
+   investigation (2026-06-22):** "envelope-bearing" is NOT a `target_clip_id` query as
+   first framed. The DB CHECK constraint forbids `target_clip_id` on
+   mixer/pan/send/device_parameter envelopes — those are *track/device/return*-scoped and
+   materialized in the envelopes/performed phases, NOT on the arrangement clip. The clips
+   that need the duplicate route are the ones a track-scoped envelope RIDES via a covering
+   session clip (the W4-A snapshot-copy: `classify_envelope_route` → `session_clip`) plus
+   `note_expression` (rides its note's clip). Detection reuses the authoritative
+   `classify_envelope_route` + `_resolve_envelope_session_clip` (no routing drift), via the
+   new `envelope_hosting_clip_ids(conn, song_id)` helper. Confirmed live on alien: exactly
+   one host (an Alien Voice `send_level` clip); the Drums spike was therefore NOT
+   envelope-lossy. See `chunk2-design.md` D4. This keeps the swell/ENV-4S2K feature
+   working. Rare; bounded.
 2. **Audio clips.** Session-view audio clips can't be created via LOM; arrangement audio
    placements come via duplicate or browser drag and are already an unlinked path
    (CLP-AUD1/2). Out of scope for the note-path redesign — leave the existing audio

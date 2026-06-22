@@ -77,7 +77,7 @@ worth a backlog entry.
 - **Operator-verify required** (fingerprint flip + Live-only orphan reproduction) — queued in
   `.prawduct/operator-verification.md`.
 
-## Chunk 2 — detection: `verify-arrangement --from-build`  [status: DECISION PENDING]
+## Chunk 2 — detection: `verify-arrangement --from-build`  [status: DEFERRED to backlog ARR-FROMBUILD (user decision 2026-06-22)]
 
 `hallucinote verify-arrangement` + the collapse-tolerant comparator + push-time assert already
 SHIPPED (PR #201, ARR-PROJ Chunk 3). The only un-built delta from the capability report is

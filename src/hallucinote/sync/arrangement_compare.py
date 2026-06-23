@@ -6,8 +6,9 @@ ONE comparator, two consumers (design §6b-B):
   (b) the ``hallucinote verify-arrangement`` audit CLI (DETECTION).
 
 It compares a clip's DB notes against Live's actual arrangement-clip notes,
-encoding the three normalizations the 2026-06-21 bulk-drop / 2026-06-22 orphan
-bugs proved necessary — a raw note_count compare cries wolf:
+encoding the normalizations the 2026-06-21 bulk-drop / 2026-06-22 orphan bugs
+(and the ARR-CMPHALT false-halts) proved necessary — a raw note_count compare
+cries wolf:
 
   1. **Live collapses same-(pitch, start) and truncates a same-pitch overlap.**
      Two faces of one Live constraint — same-pitch notes may not overlap. (a)

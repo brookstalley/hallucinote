@@ -402,6 +402,30 @@ def _replay_devices(
                 request_id=request_id,
                 reason=reason,
             )
+        # SYN-2D9K: prune device_parameters orphaned by a device-class change.
+        # `params_dialed` is the authoritative full dialed set on capture, so a
+        # DB param absent from it is a stale orphan — e.g. an Operator's params
+        # lingering after the instrument was swapped to Analog. create_device
+        # UPDATEs the existing row in place on a class change (reusing device_id),
+        # so the old class's params are never CASCADE-deleted; the upsert above
+        # never removes them; and the soft `--reset` deliberately preserves the
+        # device tables. Mirror the pull path's drop-stale reconcile
+        # (sync/pull/devices.py). Tri-state, exactly as for sidechain sources
+        # above: snapshot SILENCE (no `params_dialed` key) is "no opinion, keep
+        # whatever the DB holds"; a PRESENT mapping (even an explicit empty one)
+        # is authoritative and clears any DB param not in it.
+        if "params_dialed" in d:
+            dialed = d["params_dialed"] or {}
+            for row in Q.get_device_parameters(conn, device_id):
+                if row["name"] not in dialed:
+                    M.remove_device_parameter(
+                        conn,
+                        device_id=device_id,
+                        name=row["name"],
+                        actor=actor,
+                        request_id=request_id,
+                        reason=reason,
+                    )
         # SNP-2H9F: nested-param overrides on a preset-seeded device. A flat list
         # of {path, name, value[, normalized][, value_items]} that keeps
         # preset_query intact — push re-asserts each at its NodeAddr path after the

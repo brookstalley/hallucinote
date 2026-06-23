@@ -4,6 +4,47 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-23 — Device-phase no longer halts on orphaned device_parameters (SYN-2D9K)
+
+<!-- prawduct: type=fix | chunks=SYN-2D9K | scope=sync-push,capture,tests | status=merged -->
+
+**Orphaned `device_parameters` from a device-class swap no longer HALT the push.**
+Swapping a track's instrument to a different device *class* between captures (e.g.
+`alien`'s Operator→Analog) left the prior class's params orphaned in the DB; `create_device`
+reuses the `device_id` (no CASCADE), replay's upsert never prunes, and a soft `--reset`
+preserves the device tables — so 92 orphans survived every rebuild and HALTed the devices
+phase with a misleading value-range hint.
+
+- **Ch1** — per-device param-SET reconcile in `_replay_devices`, mirroring the existing
+  pull-path reconcile: drop DB params absent from the snapshot's `params_dialed` via
+  `remove_device_parameter` (no new mutator, no schema change). Tri-state mirrors the
+  sidechain idiom: absent key = preserve; present (even empty) = authoritative/clear.
+- **Ch2** (defense-in-depth) — the device-phase orphan error is now taught engine-side at
+  the `push_execute` failure-record site (pure `_orphan_param_hint`, no MCP fingerprint flip).
+- **Safety** — verified no framework `build.py` path calls `set_device_parameter` (only
+  capture/pull do), so `params_dialed` is authoritative and the reconcile is data-loss-safe;
+  the cumulative Critic independently re-confirmed this. PR #204. 2991 engine tests green.
+
+## 2026-06-23 — Arrangement-integrity comparator stops false-halting a faithful push (ARR-CMPHALT)
+
+<!-- prawduct: type=fix | chunks=ARR-CMPHALT | scope=arrangement-verify,tests | status=merged -->
+
+**The ARR-PROJ integrity assert no longer HARD-HALTs `execute --only arrangement` on a
+faithful materialization.** Two pure-module defects in `arrangement_compare.py`:
+
+- **Ch1** — same-pitch overlap-trim was unmodeled. Live's `set_notes` truncates an earlier
+  note when a same-pitch note starts before it ends; the comparator compared the DB's
+  untrimmed durations against Live's trimmed read-back. `_clamp_same_pitch_overlaps`
+  normalizes both note sets before grouping — only *shortens* durations, so a real
+  drop/orphan is still caught.
+- **Ch2** — `_bucket`'s `round()` was unstable at half-eps boundaries, splitting one onset
+  across `missing` + `extra`. Replaced exact-bucket-key set ops with key pairing + boundary
+  reconcile (composes with the wildness-stack collapse; a drifted twin reads as one
+  mismatch, not missing+extra).
+- **Safety** — the cumulative Critic adversarially proved the loosened detector still
+  catches real bulk-drop / orphan / dur-vel-drift (the cardinal risk of loosening a
+  detector). PR #203. 2985 engine tests green.
+
 ## 2026-06-22 — Arrangement materialization is now a projection of the DB (ARR-PROJ)
 
 <!-- prawduct: type=feat | chunks=ARR-PROJ | scope=sync-push,arrangement-verify,cli,skills,docs,tests | status=merged -->

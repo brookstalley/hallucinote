@@ -503,7 +503,9 @@ build_state:
 # Chunk 5 retired the SYN-4R7P doc/skill recovery dance. Remaining: cumulative-Critic PR
 # gate + the ARR-PROJ live e2e + the ARR-9X4T/ARR-7H2N backlog close at merge. See the
 # build-plan Status for the live state.
-active_build_plan: artifacts/plans/ARR-PROJ/build-plan.md
+# ARR-PROJ shipped (PR #201); ARR-CMPHALT (PR #203) + SYN-2D9K (PR #204) shipped
+# 2026-06-23 — no active build plan.
+active_build_plan: null
 
 # =============================================================================
 # CHANGE LOG

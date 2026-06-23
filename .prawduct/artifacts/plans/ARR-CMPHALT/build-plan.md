@@ -25,7 +25,7 @@ The ARR-PROJ integrity assert (`assert_arrangement_materialized`, `sync/arrangem
 
 No same-pitch-overlap-trim handling exists anywhere in `sync/` (confirmed by code map). Both fixes are confined to the pure `arrangement_compare.py`.
 
-## Chunk 1 — Finding 1: normalize same-pitch overlap-trim before comparing  [status: not started]
+## Chunk 1 — Finding 1: normalize same-pitch overlap-trim before comparing  [status: done — 63df22d, chunk-Critic clean]
 
 - **Description:** Add a pure normalization pass that, within each note set, for each pitch (sort that pitch's notes by start), clamps every note's effective `dur` to end no later than the next same-pitch onset — the exact transform Live's `set_notes` applies. Apply it to **both** the DB-side and Live-side `NoteLite` sets inside `compare_clip_notes`, after `_to_lite` and before grouping (Live's side is already trimmed → idempotent). Faithful overlap-trims then pass `_dur_vel_match`; a genuine drop/drift still surfaces.
 - **Depends on:** none.
@@ -41,7 +41,7 @@ No same-pitch-overlap-trim handling exists anywhere in `sync/` (confirmed by cod
   2. `/prawduct:critic` run and blocking findings resolved
   3. Committed and chunk marked `[x]` in Status
 
-## Chunk 2 — Finding 2: kill the half-eps bucket-boundary instability  [status: not started]
+## Chunk 2 — Finding 2: kill the half-eps bucket-boundary instability  [status: done — full sync dir 998 green, engine suite 2985 green]
 
 - **Description:** Make the comparator tolerance-stable at bucket boundaries so a note present on both sides (equal pitch, starts within `eps`, matching dur/vel post-normalization) can **never** appear in both `missing` and `extra`. **Recommended mechanism:** keep the existing grouping but add a pure post-pass that reconciles leftover `missing`↔`extra` pairs — for each `missing` note, if an `extra` note of equal pitch exists whose start is within `eps` and whose `(dur, vel)` matches (`_dur_vel_match`), cancel both (they are the same note split across adjacent buckets). **Alternative** (flagged in Open assumptions): replace the integer `_bucket` key with greedy nearest-neighbor pairing within `eps` per pitch. Choose at build time against the test suite; do not change `eps`/`vel_tol` or the same-(pitch,start) collapse semantics.
 - **Depends on:** Chunk 1 (the reconcile compares dur/vel via the same `_dur_vel_match`, which Chunk 1's normalization feeds — so boundary reconciliation works on already-overlap-normalized notes).

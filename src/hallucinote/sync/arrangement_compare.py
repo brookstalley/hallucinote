@@ -24,7 +24,10 @@ bugs proved necessary — a raw note_count compare cries wolf:
      read as a duration mismatch (ARR-CMPHALT Finding 1).
   2. **Float tolerance.** start/duration within ``eps_beats``, pitch exact,
      velocity within ``vel_tol`` (capture/probe introduces ~1e-7 noise; the MCP
-     note API already ints velocity, so the tolerance is a safety margin).
+     note API already ints velocity, so the tolerance is a safety margin). A
+     start on a half-eps bucket boundary can bucket to adjacent integers on the
+     two sides; a boundary-split reconcile repairs it so one onset is never
+     split into a false missing+extra (ARR-CMPHALT Finding 2).
   3. **Read via the note API.** This module is PURE — the caller supplies the
      already-probed Live notes (from ``ableton_note(list, location=
      'arrangement')`` / ``get_notes_extended``, NOT ``ableton_clip list``
@@ -95,9 +98,12 @@ class ClipDiff:
 
 
 def _bucket(start: float, eps: float) -> int:
-    """Quantize a start time to an integer eps-bucket. Absorbs the set_notes
-    round-trip + capture noise; real note starts sit on musical grids far wider
-    than ``eps``, so this never splits a genuine correspondence."""
+    """Quantize a start time to an integer eps-bucket for grouping. A start on a
+    half-eps boundary can land in adjacent buckets on the DB vs Live side
+    (``round`` is half-to-even and the round-tripped values differ sub-ULP); the
+    boundary-split reconcile in :func:`compare_clip_notes` repairs that, so a
+    genuine correspondence is never left split as missing+extra (ARR-CMPHALT
+    Finding 2)."""
     return round(float(start) / eps)
 
 
@@ -164,15 +170,37 @@ def compare_clip_notes(
     db_keys = set(db_groups)
     live_keys = set(live_groups)
 
-    for k in db_keys - live_keys:
+    # Pair DB keys to Live keys: exact (pitch, eps-bucket) matches first, then
+    # reconcile Finding-2 boundary splits among the leftovers. A note whose start
+    # lands on a half-eps bucket boundary buckets to ADJACENT integers on the DB
+    # vs Live side, so the SAME onset would otherwise surface as both a `missing`
+    # (DB bucket) and an `extra` (Live bucket) — a note must never appear in both.
+    pairs: list[tuple[tuple[int, int], tuple[int, int]]] = [
+        (k, k) for k in db_keys & live_keys
+    ]
+    unmatched_db = sorted(db_keys - live_keys)
+    unmatched_live = sorted(live_keys - db_keys)
+    for dk in unmatched_db[:]:
+        pitch, bucket = dk
+        for lk in unmatched_live:
+            # Same pitch, adjacent bucket, representative starts within eps = one
+            # onset split by the round() boundary, not a genuine drop+orphan pair.
+            if (lk[0] == pitch and abs(lk[1] - bucket) <= 1
+                    and abs(db_groups[dk][0].start - live_groups[lk][0].start) <= eps):
+                pairs.append((dk, lk))
+                unmatched_db.remove(dk)
+                unmatched_live.remove(lk)
+                break
+
+    for dk in unmatched_db:
         # One representative per missing collapsed key (the audible note dropped).
-        diff.missing.append(db_groups[k][0])
-    for k in live_keys - db_keys:
+        diff.missing.append(db_groups[dk][0])
+    for lk in unmatched_live:
         # Every Live note at an un-authored key is extra (orphan / stack member).
-        diff.extra.extend(live_groups[k])
-    for k in db_keys & live_keys:
-        members = db_groups[k]
-        for lv in live_groups[k]:
+        diff.extra.extend(live_groups[lk])
+    for dk, lk in pairs:
+        members = db_groups[dk]
+        for lv in live_groups[lk]:
             if not any(_dur_vel_match(dbn, lv, eps, vel_tol) for dbn in members):
                 diff.mismatch.append((members[0], lv))
 

@@ -138,6 +138,55 @@ def test_non_overlapping_same_pitch_notes_keep_full_duration():
     assert diff.faithful, diff.summary()
 
 
+def _straddle_bucket():
+    """Two starts ~2e-5 beats apart (well within eps=1e-3) that straddle the
+    1782.5 half-eps boundary, so round(start/eps) puts them in ADJACENT buckets
+    (1782 vs 1783) — the exact instability of ARR-CMPHALT Finding 2 (a feel
+    offset landing a start on a half-eps boundary + sub-ULP round-trip noise)."""
+    return 1.78249, 1.78251  # round(1782.49)=1782 ; round(1782.51)=1783
+
+
+def test_half_eps_boundary_split_is_faithful():
+    """Finding 2: the SAME note, bucketed to adjacent integers on the DB vs Live
+    side, must reconcile to faithful — NOT surface as both missing and extra."""
+    db_start, live_start = _straddle_bucket()
+    diff = compare_clip_notes([db(60, db_start)], [live(60, live_start)])
+    assert diff.faithful, diff.summary()
+    # The hard invariant: never in both lists.
+    assert diff.missing == [] and diff.extra == []
+
+
+def test_boundary_reconcile_does_not_hide_a_genuine_missing():
+    """A DB note at a half-eps start with NO Live note within eps still reads
+    missing — the reconcile only cancels a true boundary twin, not a real drop."""
+    db_start, _ = _straddle_bucket()
+    diff = compare_clip_notes([db(60, db_start)], [])
+    assert [n.pitch for n in diff.missing] == [60]
+    assert diff.extra == []
+
+
+def test_boundary_reconcile_does_not_hide_a_genuine_extra():
+    """Symmetric: a Live orphan at a half-eps start with no DB note still reads
+    extra."""
+    _, live_start = _straddle_bucket()
+    diff = compare_clip_notes([], [live(67, live_start)])
+    assert [n.pitch for n in diff.extra] == [67]
+    assert diff.missing == []
+
+
+def test_boundary_split_with_dur_vel_drift_still_reads_mismatch():
+    """A boundary-split twin whose dur/vel has genuinely drifted is NOT a clean
+    reconcile — it must read as a mismatch (the divergence is real), not be
+    silently cancelled into faithful."""
+    db_start, live_start = _straddle_bucket()
+    diff = compare_clip_notes(
+        [db(60, db_start, dur=1.0, vel=100)],
+        [live(60, live_start, dur=1.0, vel=40)],  # velocity drifted far
+    )
+    assert diff.missing == [] and diff.extra == []
+    assert len(diff.mismatch) == 1
+
+
 def test_empty_both_is_faithful():
     assert compare_clip_notes([], []).faithful
 

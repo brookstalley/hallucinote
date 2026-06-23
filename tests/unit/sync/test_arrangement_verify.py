@@ -100,6 +100,31 @@ def test_wildness_stack_faithful_through_orchestration(conn, song, session):
     ).faithful
 
 
+def test_overlap_and_boundary_split_faithful_through_orchestration(conn, song, session):
+    """ARR-CMPHALT end-to-end (Findings 1+2 together): a DB clip with a same-pitch
+    OVERLAP and a start on a half-eps bucket boundary. Live truncates the overlap
+    to the next same-pitch onset and round-trips the boundary start to a sub-ULP-
+    different float that buckets adjacently. The materialization is faithful
+    (every onset present) so the push-time assert must NOT halt — this is the
+    exact false-HALT the comparator fix removes."""
+    _setup_one_placement(conn, song, session, db_notes=[
+        dbn(60, 0.0, dur=3.0),       # overlaps the next p60 onset → Live trims to 1.0
+        dbn(60, 1.0, dur=1.0),
+        dbn(62, 1.78249, dur=0.25),  # half-eps boundary start
+    ])
+    live = {1: [{"arrangement_clip_index": 1, "start_beats": 0.0, "notes": [
+        lnote(60, 0.0, dur=1.0),       # Live's same-pitch overlap truncation (Finding 1)
+        lnote(60, 1.0, dur=1.0),
+        lnote(62, 1.78251, dur=0.25),  # round-trip noise across the bucket boundary (Finding 2)
+    ]}]}
+    send = make_send_fn(live)
+    report = verify_song_arrangement(conn, song_id=song, session_id=session, send_fn=send)
+    assert report.faithful, [(r.status, r.diff.summary() if r.diff else None) for r in report.results]
+    assert not report.has_corruption()
+    # The push-time assert returns without raising (faithful) — no false HALT.
+    assert_arrangement_materialized(conn, song_id=song, session_id=session, send_fn=send)
+
+
 def test_dropped_note_reads_diverged_and_assert_halts(conn, song, session):
     _setup_one_placement(conn, song, session, db_notes=[dbn(60, 0.0), dbn(62, 1.0)])
     live = {1: [{"arrangement_clip_index": 1, "start_beats": 0.0,

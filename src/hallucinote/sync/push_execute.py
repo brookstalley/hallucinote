@@ -225,6 +225,34 @@ _PRESET_URI_MISS_HINTS = (
     "no loadable browser item",
 )
 
+# SYN-2D9K: substrings that mark a set_parameter failure as "this parameter is
+# not on the device" (the orphan-from-class-change shape), distinct from a
+# value-range refusal.
+_PARAM_NOT_FOUND_HINTS = ("not found",)
+
+
+def _orphan_param_hint(
+    *, tool: str, action: str | None, err_msg: str | None,
+    parameter_name: object,
+) -> str | None:
+    """SYN-2D9K: a ``set_parameter`` that 404s on a parameter the device does
+    not have is almost always a STALE ORPHAN — a prior device class's param
+    lingering in ``device_parameters`` after the instrument was swapped (e.g.
+    Operator -> Analog). The MCP hint points at value-range debugging, which
+    sends the operator hunting a phantom. Return a hint naming the real cause +
+    the cure, or ``None`` when the failure is not that shape."""
+    if tool != "ableton_device" or action != "set_parameter" or not err_msg:
+        return None
+    if not any(h in err_msg for h in _PARAM_NOT_FOUND_HINTS):
+        return None
+    pname = f"{parameter_name!r} " if parameter_name else ""
+    return (
+        f"parameter {pname}is not on this device — most likely a stale orphan "
+        "from a device-class change (the DB still carries a prior class's "
+        "params). Rebuild the song (a rebuild now prunes orphans, SYN-2D9K) to "
+        "clear it; if it persists, the snapshot's device class may not match Live."
+    )
+
 
 def _search_root_for_kind(kind: str, class_name: str | None = None) -> str:
     """Pick the canonical browser root for a fallback search by device kind.
@@ -971,6 +999,15 @@ def execute_push(
 
             result_payload = getattr(resp, "result", None) if ok else None
             hint = getattr(resp, "hint", None) if not ok else None
+            # SYN-2D9K: replace the MCP's value-range hint with the orphan-cause
+            # hint when a set_parameter fails on a param the device doesn't have.
+            if not ok:
+                orphan_hint = _orphan_param_hint(
+                    tool=call.tool, action=action, err_msg=err_msg,
+                    parameter_name=call.args.get("parameter_name"),
+                )
+                if orphan_hint is not None:
+                    hint = orphan_hint
 
             # SYN-6B4Q: a cue_create_batch dispatched in skip mode reports the
             # cues it DEFERRED (ahead of Live's current extent). The call itself

@@ -2465,3 +2465,35 @@ def test_execute_populated_rack_dispatches_nested_writes(
     assert set_params[0]["params"]["parameter_name"] == "Volume"
     # No errors file on a clean push.
     assert not (state_dir / ".last-push-errors.json").exists()
+
+
+# ---------- SYN-2D9K: orphan-param teaching hint on a set_parameter 404 ----------
+
+
+def test_orphan_param_hint_fires_on_param_not_found():
+    """A set_parameter that 404s on a param the device lacks gets the orphan-cause
+    hint (names the stale-orphan-from-class-change cause + the rebuild cure),
+    replacing the MCP's misleading value-range hint."""
+    h = push_execute._orphan_param_hint(
+        tool="ableton_device", action="set_parameter",
+        err_msg="parameter 'A Coarse' not found on device 1; available: ['Volume']",
+        parameter_name="A Coarse",
+    )
+    assert h is not None
+    assert "stale orphan" in h and "A Coarse" in h and "SYN-2D9K" in h
+
+
+def test_orphan_param_hint_silent_on_non_orphan_failures():
+    """It must NOT fire on a value-range refusal, a different tool/action, or a
+    missing error — only on the param-not-found shape of a device set_parameter."""
+    f = push_execute._orphan_param_hint
+    # A value-range refusal is not the orphan shape.
+    assert f(tool="ableton_device", action="set_parameter",
+             err_msg="value 5.0 out of range [0, 1]", parameter_name="Volume") is None
+    # Wrong tool / wrong action / no error message.
+    assert f(tool="ableton_clip", action="set_parameter",
+             err_msg="not found", parameter_name=None) is None
+    assert f(tool="ableton_device", action="load",
+             err_msg="not found", parameter_name=None) is None
+    assert f(tool="ableton_device", action="set_parameter",
+             err_msg=None, parameter_name="X") is None

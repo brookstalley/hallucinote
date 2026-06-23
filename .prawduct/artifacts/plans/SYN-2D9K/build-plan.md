@@ -26,7 +26,7 @@ A device's `device_parameters` rows orphan when its class/identity changes (e.g.
 
 So the DB carried 116 valid Analog + 92 stale Operator params; the 92 fail forever at the `devices` push phase (`ValueError: parameter 'A Coarse' not found`) → cryptic HALT. **The asymmetry:** device *chains* already get drop-clears-stale reconciliation; `device_parameters` do not. **The precedent already exists on the pull side** (`sync/pull/devices.py:1181-1193` loops `M.remove_device_parameter` for every DB param name absent from the live read) — this is a replay-vs-pull asymmetry, not a missing capability.
 
-## Chunk 1 — prune orphan params in `_replay_devices`  [status: not started]
+## Chunk 1 — prune orphan params in `_replay_devices`  [status: done — 346186b, chunk-Critic clean]
 
 - **Description:** After the param-upsert loop in `_replay_devices`, reconcile the per-device param SET: for a device whose snapshot entry carries `params_dialed`, read the device's current DB params (`Q.get_device_parameters`) and `M.remove_device_parameter` each whose `name` is not in the snapshot's `params_dialed` keys. Skip the reconcile entirely when the device entry has no `params_dialed` key (no-opinion; see Open assumptions). Mirror `sync/pull/devices.py:1181-1193`. Because `_replay_rack_chains` recurses through `_replay_devices`, this automatically covers nested-rack devices at every depth.
 - **Depends on:** none.
@@ -43,11 +43,11 @@ So the DB carried 116 valid Analog + 92 stale Operator params; the 92 fail forev
   2. `/prawduct:critic` run and blocking findings resolved
   3. Committed and chunk marked `[x]` in Status
 
-## Chunk 2 — make the device-phase orphan error teach (defense-in-depth)  [status: not started]
+## Chunk 2 — make the device-phase orphan error teach (defense-in-depth)  [status: done — engine suite 2983 green. Built as a pure `_orphan_param_hint` helper wired at the push_execute failure-record site (overrides the MCP value-range hint); no MCP fingerprint flip]
 
-- **Description:** When `set_parameter` 404s mid-`devices` push, replace the value-range-debugging hint with one that names the real cause. In the device-phase failure path (`src/hallucinote/sync/push/devices.py`, the `set_parameter` emit/handle sites ~454-523), when the failure is "parameter not found on device", surface a hint along the lines of *"looks like a stale orphan param from a device-class change (snapshot has N params for this device, DB has M); rebuild into a fresh DB or it should self-prune after the SYN-2D9K fix."* This is a backstop for any *other* orphan source (a DB built before Chunk 1, an out-of-band param mismatch) — Chunk 1 is the actual fix.
+- **Description:** When `set_parameter` 404s mid-`devices` push, replace the value-range-debugging hint with one that names the real cause. **As built:** the planner (`push/devices.py`) only *emits* the call; the failure + the misleading MCP value-range hint surface at *execution*, so the fix lands in `src/hallucinote/sync/push_execute.py` at the failure-record site — a pure `_orphan_param_hint(tool, action, err_msg, parameter_name)` helper that, on a `set_parameter` "not found", returns a hint naming the stale-orphan-from-class-change cause + the rebuild cure, overriding `hint` before it's recorded. Backstop for any *other* orphan source (a DB built before Chunk 1, an out-of-band param mismatch) — Chunk 1 is the actual fix.
 - **Depends on:** Chunk 1.
-- **Deliverables:** edit to `src/hallucinote/sync/push/devices.py` (error/hint construction only — no behavior change to the push itself).
+- **Deliverables:** edit to `src/hallucinote/sync/push_execute.py` (the `_orphan_param_hint` helper + one wiring line at the failure-record site — no behavior change to the push itself, hint text only).
 - **Tests:** extend the existing push-devices unit tests to assert the new hint text fires on a parameter-not-found failure (the failure-surface is already exercised; assert the message, not new control flow).
 - **Acceptance criteria:** a simulated parameter-not-found failure yields the orphan-aware hint; existing push-devices tests green.
 - **Type:** cumulative-final

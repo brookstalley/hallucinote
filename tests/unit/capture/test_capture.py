@@ -11,7 +11,7 @@ from hallucinote.capture import (
     migrate_snapshot, preserve_browser_paths, replay_capture,
     snapshot_needs_migration,
 )
-from hallucinote.db import init_db, mutations as M, queries as Q
+from hallucinote.db import events as E, init_db, mutations as M, queries as Q
 from hallucinote.return_naming import strip_return_slot_prefix
 
 # Several fixtures in this module deliberately use Live's `<letter>-` prefixed
@@ -331,6 +331,129 @@ def test_replay_creates_dialed_params(conn):
     # Discrete-enum param carries display only.
     assert params["Filter Type"]["value_display"] == "Lowpass"
     assert params["Filter Type"]["value_normalized"] is None
+
+
+# ---------- SYN-2D9K: device_parameters orphan reconcile on re-replay ----------
+
+
+def _snapshot_one_device(params_dialed, *, kind="Operator",
+                         class_name="Operator", include_dialed_key=True) -> dict:
+    """A minimal snapshot with a single instrument on one track. `params_dialed`
+    is included unless `include_dialed_key=False` (to exercise the absent-key,
+    'no opinion' branch of the reconcile)."""
+    dev = {"index": 1, "name": "Lead", "class": kind, "class_name": class_name}
+    if include_dialed_key:
+        dev["params_dialed"] = params_dialed
+    return {
+        "song": {"master": {"volume": 0.85, "panning": 0.0}},
+        "returns": [],
+        "tracks": [{
+            "index": 5, "name": "Lead Trk", "type": "midi",
+            "volume": 0.6, "panning": 0.0,
+            "devices": [dev],
+        }],
+    }
+
+
+def _lead_device(conn, song_id):
+    trk = next(t for t in Q.get_tracks_for_song(conn, song_id)
+               if t["name"] == "Lead Trk")
+    return Q.get_devices_for_track(conn, trk["id"])[0]
+
+
+def _lead_param_names(conn, song_id) -> set:
+    dev = _lead_device(conn, song_id)
+    return {p["name"] for p in Q.get_device_parameters(conn, dev["id"])}
+
+
+def test_re_replay_prunes_params_dropped_from_snapshot(conn):
+    """SYN-2D9K: a param removed from a device's params_dialed on re-replay is
+    pruned from the DB — the snapshot's dialed set is authoritative."""
+    snap1 = _snapshot_one_device({
+        "A": {"value": "1", "normalized": 0.1},
+        "B": {"value": "2", "normalized": 0.2},
+        "C": {"value": "3", "normalized": 0.3},
+    })
+    song_id = replay_capture(conn, snap1, song_name="syn")
+    assert _lead_param_names(conn, song_id) == {"A", "B", "C"}
+
+    snap2 = _snapshot_one_device({"A": {"value": "1", "normalized": 0.1}})
+    replay_capture(conn, snap2, song_name="syn")
+    assert _lead_param_names(conn, song_id) == {"A"}
+
+
+def test_device_class_swap_prunes_prior_class_params(conn):
+    """The exact SYN-2D9K bug: a track's instrument swapped Operator->Analog
+    between captures. create_device UPDATEs the row in place (the device_id is
+    REUSED), so without the reconcile the Operator params linger forever (alien:
+    116 valid Analog + 92 stale Operator -> 92 set_parameter HALTs). Assert the
+    device_id is unchanged (in-place update — the bug's premise) AND the prior
+    class's params are gone."""
+    operator = _snapshot_one_device(
+        {"A Coarse": {"value": "0.5", "normalized": 0.5},
+         "Algorithm": {"value": "1", "normalized": 0.0}},
+        kind="Operator", class_name="Operator",
+    )
+    song_id = replay_capture(conn, operator, song_name="syn")
+    dev_before = _lead_device(conn, song_id)
+    assert {p["name"] for p in Q.get_device_parameters(conn, dev_before["id"])} \
+        == {"A Coarse", "Algorithm"}
+
+    analog = _snapshot_one_device(
+        {"OSC1 Shape": {"value": "Saw"},
+         "Volume": {"value": "0", "normalized": 0.7}},
+        kind="Analog", class_name="Analog",
+    )
+    replay_capture(conn, analog, song_name="syn")
+    dev_after = _lead_device(conn, song_id)
+
+    assert dev_after["id"] == dev_before["id"]   # in-place update, reused row
+    assert dev_after["kind"] == "Analog"
+    names = {p["name"] for p in Q.get_device_parameters(conn, dev_after["id"])}
+    assert names == {"OSC1 Shape", "Volume"}     # no Operator orphans survive
+    assert "A Coarse" not in names and "Algorithm" not in names
+
+
+def test_re_replay_unchanged_params_emits_no_removal(conn):
+    """Idempotency: re-replaying an unchanged snapshot prunes nothing and emits
+    no DEVICE_PARAMETER_REMOVED event (remove_device_parameter no-ops on a row
+    that isn't there)."""
+    snap = _snapshot_one_device({"A": {"value": "1", "normalized": 0.1},
+                                 "B": {"value": "2", "normalized": 0.2}})
+    song_id = replay_capture(conn, snap, song_name="syn")
+
+    def removed_count():
+        return conn.execute(
+            "SELECT COUNT(*) AS n FROM events WHERE kind = ?",
+            (E.DEVICE_PARAMETER_REMOVED,),
+        ).fetchone()["n"]
+
+    assert removed_count() == 0
+    replay_capture(conn, snap, song_name="syn")
+    assert _lead_param_names(conn, song_id) == {"A", "B"}
+    assert removed_count() == 0
+
+
+def test_absent_params_dialed_key_preserves_db_params(conn):
+    """Tri-state, mirroring the sidechain-source rule: a device entry that OMITS
+    `params_dialed` is 'no opinion' — existing DB params are preserved. A
+    PRESENT-but-empty `params_dialed` is the explicit 'no dialed params' and
+    clears them. (Capture always emits the key; the absent branch protects a
+    hand-authored partial snapshot.)"""
+    snap1 = _snapshot_one_device({"A": {"value": "1", "normalized": 0.1},
+                                  "B": {"value": "2", "normalized": 0.2}})
+    song_id = replay_capture(conn, snap1, song_name="syn")
+    assert _lead_param_names(conn, song_id) == {"A", "B"}
+
+    # Key omitted -> preserve.
+    replay_capture(conn, _snapshot_one_device({}, include_dialed_key=False),
+                   song_name="syn")
+    assert _lead_param_names(conn, song_id) == {"A", "B"}
+
+    # Present-but-empty -> clear all.
+    replay_capture(conn, _snapshot_one_device({}, include_dialed_key=True),
+                   song_name="syn")
+    assert _lead_param_names(conn, song_id) == set()
 
 
 def test_replay_reads_preset_query_from_snapshot(conn):

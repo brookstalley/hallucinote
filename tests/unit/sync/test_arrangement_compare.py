@@ -97,6 +97,47 @@ def test_wildness_key_with_one_matching_member_is_faithful():
     assert compare_clip_notes(db_notes, lv).faithful
 
 
+def test_same_pitch_overlap_trim_is_faithful():
+    """ARR-CMPHALT Finding 1: build.py authors a same-pitch note whose duration
+    overlaps the next same-pitch onset; Live truncates the earlier note to end
+    exactly at that onset. Faithful — every onset present, only dur clamped — so
+    it must NOT read as a duration mismatch. Values from the alien report
+    (Human Riff: p63 @0.612 DBdur 0.255, next onset @0.762 → LIVEdur 0.150)."""
+    db_notes = [
+        db(63, 0.612, dur=0.255, vel=118),  # overlaps the next p63 onset
+        db(63, 0.762, dur=0.150, vel=118),
+    ]
+    lv = [
+        live(63, 0.612, dur=0.150, vel=118),  # Live trimmed 0.255 → 0.150
+        live(63, 0.762, dur=0.150, vel=118),
+    ]
+    diff = compare_clip_notes(db_notes, lv)
+    assert diff.faithful, diff.summary()
+
+
+def test_overlap_trim_does_not_mask_a_real_drop():
+    """The overlap clamp only shortens durations — it must never erase a
+    genuinely missing onset. The second same-pitch note is dropped in Live → the
+    clip still reads `missing`, not faithful."""
+    db_notes = [db(60, 0.0, dur=3.0), db(60, 1.0, dur=1.0)]  # 60@0.0 overlaps 60@1.0
+    lv = [live(60, 0.0, dur=1.0)]  # 60@1.0 genuinely dropped
+    diff = compare_clip_notes(db_notes, lv)
+    assert not diff.faithful
+    assert [(n.pitch, n.start) for n in diff.missing] == [(60, 1.0)]
+    assert diff.extra == [] and diff.mismatch == []
+
+
+def test_non_overlapping_same_pitch_notes_keep_full_duration():
+    """A same-pitch note that ends exactly at (or before) the next onset is not
+    an overlap — its duration must not be clamped. Legato p60 @0.0 dur 2.0 ending
+    right at the next onset @2.0 stays dur 2.0; a spurious clamp would read as a
+    mismatch against Live's untruncated 2.0."""
+    db_notes = [db(60, 0.0, dur=2.0), db(60, 2.0, dur=1.0)]
+    lv = [live(60, 0.0, dur=2.0), live(60, 2.0, dur=1.0)]  # Live did not truncate
+    diff = compare_clip_notes(db_notes, lv)
+    assert diff.faithful, diff.summary()
+
+
 def test_empty_both_is_faithful():
     assert compare_clip_notes([], []).faithful
 

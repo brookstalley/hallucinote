@@ -9,11 +9,19 @@ It compares a clip's DB notes against Live's actual arrangement-clip notes,
 encoding the three normalizations the 2026-06-21 bulk-drop / 2026-06-22 orphan
 bugs proved necessary — a raw note_count compare cries wolf:
 
-  1. **Live collapses same-(pitch, start).** Compare the distinct-(pitch, start)
-     collapsed set, not raw counts. build.py legitimately stacks notes sharing
-     pitch+start with different duration/velocity (e.g. ``add_wildness``); Live
-     holds one per (pitch, start). Confirmed live on alien (Human Riff chorus3:
-     332 raw DB → 305 Live, *faithful*).
+  1. **Live collapses same-(pitch, start) and truncates a same-pitch overlap.**
+     Two faces of one Live constraint — same-pitch notes may not overlap. (a)
+     Same (pitch, start): compare the distinct-(pitch, start) collapsed set, not
+     raw counts. build.py legitimately stacks notes sharing pitch+start with
+     different duration/velocity (e.g. ``add_wildness``); Live holds one per
+     (pitch, start). Confirmed live on alien (Human Riff chorus3: 332 raw DB →
+     305 Live, *faithful*). (b) Different starts, overlapping: when build.py
+     authors a same-pitch note whose duration runs past the next same-pitch
+     onset (wildness sustains, legato, doublings), Live ``set_notes`` truncates
+     the earlier note to end exactly at that onset — faithful (every onset
+     survives, only ``dur`` clamps). Normalize the SAME clamp into both note sets
+     before comparing (``_clamp_same_pitch_overlaps``) so a faithful trim is not
+     read as a duration mismatch (ARR-CMPHALT Finding 1).
   2. **Float tolerance.** start/duration within ``eps_beats``, pitch exact,
      velocity within ``vel_tol`` (capture/probe introduces ~1e-7 noise; the MCP
      note API already ints velocity, so the tolerance is a safety margin).
@@ -97,6 +105,35 @@ def _dur_vel_match(a: NoteLite, b: NoteLite, eps: float, vel_tol: int) -> bool:
     return abs(a.dur - b.dur) <= eps and abs(a.vel - b.vel) <= vel_tol
 
 
+def _clamp_same_pitch_overlaps(notes: list[NoteLite], eps: float) -> list[NoteLite]:
+    """Mirror Live's same-pitch overlap truncation (ARR-CMPHALT Finding 1).
+
+    Live's clip model forbids two same-pitch notes from overlapping, so
+    ``set_notes`` trims each note's duration to end no later than the next
+    same-pitch *onset*. Apply the identical clamp to a note set so a faithfully
+    materialized overlap compares equal instead of reading as a duration
+    mismatch. Pure and idempotent — re-clamping an already-trimmed set (Live's
+    side) is a no-op. Only ever *shortens* a duration; never adds, drops, or
+    moves a note, so a genuine missing/extra onset is unaffected."""
+    by_pitch: dict[int, list[NoteLite]] = {}
+    for nl in notes:
+        by_pitch.setdefault(nl.pitch, []).append(nl)
+    out: list[NoteLite] = []
+    for group in by_pitch.values():
+        starts = sorted(nl.start for nl in group)
+        for nl in group:
+            # The next same-pitch onset is the smallest start more than eps
+            # beyond this note's (notes within eps share an onset — a stack —
+            # and do not truncate each other).
+            next_onset = next((s for s in starts if s > nl.start + eps), None)
+            if next_onset is not None:
+                gap = next_onset - nl.start
+                if nl.dur > gap + eps:  # genuine overlap → clamp to the onset
+                    nl = NoteLite(nl.pitch, nl.start, gap, nl.vel)
+            out.append(nl)
+    return out
+
+
 def compare_clip_notes(
     db_notes: Iterable[Any],
     live_notes: Iterable[Any],
@@ -107,18 +144,20 @@ def compare_clip_notes(
     """Compare one clip's DB notes against Live's actual notes.
 
     Both are collapsed to the distinct-(pitch, eps-bucketed start) audible set
-    (normalization #1). A DB key may carry a *stack* of (dur, vel) variants
-    (wildness); Live holds one note per key, faithful if it matches ANY member
-    of the DB stack within tolerance (#2). Returns a :class:`ClipDiff`.
+    (normalization #1a), after clamping same-pitch overlaps to mirror Live's
+    truncation (#1b, ``_clamp_same_pitch_overlaps``). A DB key may carry a
+    *stack* of (dur, vel) variants (wildness); Live holds one note per key,
+    faithful if it matches ANY member of the DB stack within tolerance (#2).
+    Returns a :class:`ClipDiff`.
     """
     eps = eps_beats
+    db_lites = _clamp_same_pitch_overlaps([_to_lite(n) for n in db_notes], eps)
+    live_lites = _clamp_same_pitch_overlaps([_to_lite(n) for n in live_notes], eps)
     db_groups: dict[tuple[int, int], list[NoteLite]] = {}
-    for n in db_notes:
-        nl = _to_lite(n)
+    for nl in db_lites:
         db_groups.setdefault((nl.pitch, _bucket(nl.start, eps)), []).append(nl)
     live_groups: dict[tuple[int, int], list[NoteLite]] = {}
-    for n in live_notes:
-        nl = _to_lite(n)
+    for nl in live_lites:
         live_groups.setdefault((nl.pitch, _bucket(nl.start, eps)), []).append(nl)
 
     diff = ClipDiff()

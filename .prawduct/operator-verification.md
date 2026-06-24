@@ -15,7 +15,23 @@ pending entries when `operator_verification_required: true`.
 
 ---
 
-## MCP-1V8K — device load focuses Session view before browser.load_item (2026-06-23) — PENDING
+## MCP-1V8K — device load focuses Session view before browser.load_item (2026-06-23) — PASSED (agent-run live, 2026-06-23)
+
+**Verified live (agent-run, this session, Ableton Live 12 Suite, default set).** Re-vendored the
+Remote Script from develop (`0.1.0+a8ce2abb7163`, `matches_mcp_server: true`), launched Live, and
+drove the repro directly via `hallucinote_mcp.client.send`:
+- The version handshake matched (`a8ce2abb7163`) — Live loaded the re-vendored Remote Script, not the stale one.
+- `ableton_session(set_view, view='arranger')` → `focused_view: "Arranger"` (the post-render precondition).
+- `ableton_device(load, node={track 1}, terminal='track', kind='Operator')` while focused on Arranger →
+  **`load.ok: True`, Operator landed** (`ableton_device(list, track_index=1)` device_count 0→1) — pre-fix
+  this silently no-ops in Arranger.
+- `ableton_session(info)` after the load → **`focused_view: "Session"`** — the `_focus_session_view_for_load`
+  switch ran.
+- Cleanup: deleted the test Operator (device_count→0); set left as found, not saved.
+
+Residual (not blocking — covered by the same code path): the non-empty-chain and master-track (DEV-6M2K)
+repeats from check item 3 below were not separately exercised; the fix is unconditional (focuses Session
+before every `browser.load_item`), so the single verified path exercises the same line.
 
 `device.py` `load_handler` now calls `application.view.show_view("Session")` before
 `browser.load_item`, because that call silently no-ops when Live's focused view is Arranger

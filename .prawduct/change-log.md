@@ -4,6 +4,27 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-23 — Device loads survive Arranger focus; push rejects bad phase names before any Live probe (MCP-1V8K, PSH-PHASEORDER)
+
+<!-- prawduct: type=fix | chunks=MCP-1V8K,PSH-PHASEORDER | scope=mcp-device,sync-push,tests -->
+
+Two quick-win bugfixes triaged from the incoming-bug batch. (The other two fresh "ready"
+items — BLD-RESET, RND-3W7P — were verified already-fixed in code and closed, not rebuilt.)
+
+- **MCP-1V8K** — `ableton_device(load)` silently no-opped when Live's focused view was
+  Arranger (the state every render leaves behind), bricking the push device phase,
+  `/song-pick-instruments`, and any interactive re-voice with a misleading "did not append"
+  error. `load_handler` now focuses Session before `browser.load_item` (the single affected
+  callsite — the nested-rack `Chain.insert_device` path is unaffected), and the silent-noop
+  teaching error now names the Arranger-view cause. Live-gated: `device.py` is in
+  `_FINGERPRINT_PATHS`, so it needs a re-vendor + handshake — operator-verification queued.
+- **PSH-PHASEORDER** — a typo'd `--only`/`--start-at`/`--stop-after` paid the full coherence
+  + arrangement Live probe (and could be masked by a stale-link coherence refusal) before
+  being rejected. Extracted a pure `validate_phase_targets()` from `_filter_phases`; the push
+  CLI runs it before any Live round-trip, so a bad phase name fails fast (exit 2) with the
+  valid-phase list and zero Live contact. `_filter_phases` delegates to the same function —
+  one rule. 4419 tests green.
+
 ## 2026-06-23 — Device-phase no longer halts on orphaned device_parameters (SYN-2D9K)
 
 <!-- prawduct: type=fix | chunks=SYN-2D9K | scope=sync-push,capture,tests | status=merged -->

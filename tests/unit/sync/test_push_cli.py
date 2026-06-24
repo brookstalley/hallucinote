@@ -3168,8 +3168,8 @@ def test_cli_execute_unknown_phase_exits_2(
     conn, song, session, db_path, capsys, monkeypatch,
 ):
     """A bad --only phase fails fast (exit 2) with the valid-phase list. The
-    rejection is execute_push's PhaseTargetError (raised before any phase
-    dispatches); the live probe is stubbed so the test needs no running Live."""
+    rejection is a PhaseTargetError (raised before any phase dispatches); the
+    live probe is stubbed so the test needs no running Live."""
     monkeypatch.setattr(push_cli, "_probe_live_via_mcp", lambda send_fn=None: ([], []))
     rc = push_cli.main([
         "execute", session, "--db", str(db_path),
@@ -3179,6 +3179,36 @@ def test_cli_execute_unknown_phase_exits_2(
     err = capsys.readouterr().err
     assert "unknown --only phase 'bogus'" in err
     assert "tempo_map" in err  # the valid list, in order
+
+
+def test_cli_execute_unknown_phase_rejected_before_live_probe(
+    conn, song, session, db_path, capsys, monkeypatch,
+):
+    """PSH-PHASEORDER: a typo'd phase is rejected BEFORE any Live round-trip.
+
+    Runs with coherence checking ON (--probe, the realistic default) and makes
+    both the coherence probe and the arrangement probe raise if reached. With
+    the up-front validation the typo exits 2 with the teaching message and
+    NEITHER probe runs — so a typo can't pay a Live round-trip (or be masked by
+    a stale-link coherence refusal) before being caught."""
+    def _boom_coherence(*a, **k):
+        raise AssertionError("coherence probe ran before phase-name validation")
+
+    def _boom_probe(*a, **k):
+        raise AssertionError("arrangement probe ran before phase-name validation")
+
+    monkeypatch.setattr(
+        push_cli, "_cmd_check_coherence_probe_or_snapshot", _boom_coherence,
+    )
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", _boom_probe)
+    rc = push_cli.main([
+        "execute", session, "--db", str(db_path),
+        "--probe", "--start-at", "bogus",
+    ])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "unknown --start-at phase 'bogus'" in err
+    assert "tempo_map" in err
 
 
 def test_cli_execute_resume_no_prior_run_exits_2(conn, song, session, db_path, capsys):
@@ -3210,7 +3240,12 @@ def test_cli_execute_resume_resolves_and_passes_targeting(
     conn, song, session, db_path, monkeypatch, capsys,
 ):
     """End-to-end CLI wiring: --resume reads the halted phase into start_at and
-    --stop-after rides through to execute_push (resume + stop-after is allowed)."""
+    --stop-after rides through to execute_push (resume + stop-after is allowed).
+
+    The window must be valid (stop_after at or after the resumed start) — the
+    halt was at ``routing`` so ``--stop-after arrangement`` (a later phase) is a
+    real window. PSH-PHASEORDER now validates this up front, before any Live
+    probe."""
     (db_path.parent / ".last-push-state.json").write_text(
         json.dumps({"phase_halted": "routing"})
     )
@@ -3226,9 +3261,9 @@ def test_cli_execute_resume_resolves_and_passes_targeting(
     monkeypatch.setattr(push_cli, "_probe_live_via_mcp", lambda send_fn=None: ([], []))
     rc = push_cli.main([
         "execute", session, "--db", str(db_path),
-        "--no-coherence-check", "--resume", "--stop-after", "devices",
+        "--no-coherence-check", "--resume", "--stop-after", "arrangement",
     ])
     assert rc == 0
-    assert captured["start_at"] == "routing"   # --resume resolved it
-    assert captured["stop_after"] == "devices"  # passed through
+    assert captured["start_at"] == "routing"       # --resume resolved it
+    assert captured["stop_after"] == "arrangement"  # passed through
     assert captured["only"] is None

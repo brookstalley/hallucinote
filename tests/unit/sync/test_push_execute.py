@@ -2110,6 +2110,35 @@ def test_filter_phases_stop_before_start_errors():
         push_execute._filter_phases(_DEMO_PHASES, start_at="c", stop_after="a")
 
 
+# PSH-PHASEORDER: validate_phase_targets is the pure name-validation the CLI
+# runs up front (before any Live probe). It shares the rule with _filter_phases.
+def test_validate_phase_targets_accepts_valid():
+    # No raise = valid. Covers a bare run, --only, a window, and a prefix.
+    names = ["a", "b", "c", "d"]
+    push_execute.validate_phase_targets(names)
+    push_execute.validate_phase_targets(names, only="c")
+    push_execute.validate_phase_targets(names, start_at="b", stop_after="d")
+    push_execute.validate_phase_targets(names, stop_after="b")
+
+
+def test_validate_phase_targets_unknown_name_teaches():
+    with pytest.raises(push_execute.PhaseTargetError) as exc:
+        push_execute.validate_phase_targets(["a", "b"], start_at="nope")
+    msg = str(exc.value)
+    assert "unknown --start-at phase 'nope'" in msg
+    assert "a, b" in msg  # the valid list, in order
+
+
+def test_validate_phase_targets_only_excludes_window():
+    with pytest.raises(push_execute.PhaseTargetError):
+        push_execute.validate_phase_targets(["a", "b", "c"], only="a", stop_after="b")
+
+
+def test_validate_phase_targets_stop_before_start_errors():
+    with pytest.raises(push_execute.PhaseTargetError):
+        push_execute.validate_phase_targets(["a", "b", "c"], start_at="c", stop_after="a")
+
+
 def test_execute_only_runs_one_phase(conn, song, session, tiny_song, state_dir):
     result = push_execute.execute_push(
         conn=conn, song_id=song, session_id=session,

@@ -83,9 +83,52 @@ _LARGE_LIST_KEYS = frozenset({
 class PhaseTargetError(ValueError):
     """A phase-targeting flag named an unknown phase or an invalid combination.
 
-    Raised by :func:`_filter_phases`; the CLI catches it and exits 2 with the
-    teaching message (which lists the valid phases in order).
+    Raised by :func:`validate_phase_targets`; the CLI catches it and exits 2
+    with the teaching message (which lists the valid phases in order).
     """
+
+
+def validate_phase_targets(
+    names: list[str],
+    *,
+    only: str | None = None,
+    start_at: str | None = None,
+    stop_after: str | None = None,
+) -> None:
+    """Validate the phase-targeting flags against the canonical phase NAME list.
+
+    Pure (no Live, no slicing) so the CLI can call it BEFORE any Live probe
+    (PSH-PHASEORDER): a typo'd ``--only``/``--start-at``/``--stop-after``
+    shouldn't pay a coherence + arrangement round-trip — or be masked by a
+    stale-link coherence refusal — before being rejected. :func:`_filter_phases`
+    delegates here so the rule lives in one place.
+
+    Raises :class:`PhaseTargetError` (teaching message + valid-phase list) on an
+    unknown phase name, ``--only`` combined with a window flag, or a window whose
+    stop precedes its start.
+    """
+    def _check(flag: str, value: str | None) -> None:
+        if value is not None and value not in names:
+            raise PhaseTargetError(
+                f"unknown {flag} phase {value!r}. Valid phases (in order): "
+                + ", ".join(names)
+            )
+
+    _check("--only", only)
+    _check("--start-at", start_at)
+    _check("--stop-after", stop_after)
+
+    if only is not None and (start_at is not None or stop_after is not None):
+        raise PhaseTargetError(
+            "--only cannot be combined with --start-at/--stop-after"
+        )
+
+    if start_at is not None and stop_after is not None:
+        if names.index(stop_after) < names.index(start_at):
+            raise PhaseTargetError(
+                f"--stop-after {stop_after!r} precedes --start-at {start_at!r} "
+                "in the phase order"
+            )
 
 
 def _filter_phases(
@@ -103,37 +146,21 @@ def _filter_phases(
     JSON-friendly dict describing the filter (or ``None`` for a full run) recorded
     into ``.last-push-state.json`` so a scoped run is never mistaken for a full one.
 
-    Raises :class:`PhaseTargetError` (teaching message + valid-phase list) on an
-    unknown phase name, ``--only`` combined with a window flag, or a window whose
-    stop precedes its start.
+    Validation (unknown name, ``--only`` + window, stop-before-start) is delegated
+    to :func:`validate_phase_targets` — the same check the CLI runs up front before
+    any Live probe (PSH-PHASEORDER), so a scoped execute and a pre-probe reject
+    share one rule.
     """
     names = [p.name for p in phases]
-
-    def _check(flag: str, value: str | None) -> None:
-        if value is not None and value not in names:
-            raise PhaseTargetError(
-                f"unknown {flag} phase {value!r}. Valid phases (in order): "
-                + ", ".join(names)
-            )
-
-    _check("--only", only)
-    _check("--start-at", start_at)
-    _check("--stop-after", stop_after)
+    validate_phase_targets(
+        names, only=only, start_at=start_at, stop_after=stop_after,
+    )
 
     if only is not None:
-        if start_at is not None or stop_after is not None:
-            raise PhaseTargetError(
-                "--only cannot be combined with --start-at/--stop-after"
-            )
         return tuple(p for p in phases if p.name == only), {"only": only}
 
     lo = names.index(start_at) if start_at is not None else 0
     hi = names.index(stop_after) if stop_after is not None else len(names) - 1
-    if hi < lo:
-        raise PhaseTargetError(
-            f"--stop-after {stop_after!r} precedes --start-at {start_at!r} "
-            "in the phase order"
-        )
     sliced = tuple(phases[lo:hi + 1])
     scope: dict[str, str] | None = None
     if start_at is not None or stop_after is not None:

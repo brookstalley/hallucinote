@@ -138,17 +138,39 @@ class FakeBrowserRoot(FakeBrowserItem):
         self.children: list[FakeBrowserItem] = []
 
 
+class FakeApplicationView:
+    """Models Live's ``Application.View`` for device-load tests.
+
+    ``show_view(name)`` focuses a top-level view; ``current`` records which
+    one is focused. ``browser.load_item`` is view-sensitive — it silently
+    no-ops when Arranger is focused (MCP-1V8K), so the loader must focus
+    Session first. Defaults to Session so the pre-existing load tests (which
+    don't touch the view) keep exercising the happy path.
+    """
+
+    def __init__(self, current: str = "Session") -> None:
+        self.current = current
+        self.show_view_calls: list[str] = []
+
+    def show_view(self, name: str) -> None:
+        self.show_view_calls.append(name)
+        self.current = name
+
+
 class FakeBrowser:
     """Mirrors Live 12.4 browser behavior for device-load tests.
 
     ``load_item(item)`` appends a fresh device to whatever track is
-    currently set as ``song.view.selected_track``. Tests populate
+    currently set as ``song.view.selected_track`` — UNLESS Live's focused
+    view is Arranger, in which case the load silently no-ops (MCP-1V8K:
+    the state a render leaves behind). Tests populate
     ``audio_effects.children``, ``drums.children``, etc. with
     ``FakeBrowserItem`` instances and then call the load action.
     """
 
-    def __init__(self, song: "FakeSong"):
+    def __init__(self, song: "FakeSong", view: "FakeApplicationView"):
         self._song = song
+        self._view = view
         self.instruments = FakeBrowserRoot("Instruments")
         self.audio_effects = FakeBrowserRoot("Audio Effects")
         self.midi_effects = FakeBrowserRoot("MIDI Effects")
@@ -161,6 +183,9 @@ class FakeBrowser:
 
     def load_item(self, item: FakeBrowserItem) -> None:
         self.load_calls.append(item)
+        if self._view.current == "Arranger":
+            # Live silently no-ops a browser load when Arranger is focused.
+            return
         target = self._song.view.selected_track
         if target is None:
             raise RuntimeError(
@@ -172,7 +197,8 @@ class FakeBrowser:
 
 class FakeApplication:
     def __init__(self, song: "FakeSong"):
-        self.browser = FakeBrowser(song)
+        self.view = FakeApplicationView()
+        self.browser = FakeBrowser(song, self.view)
 
 
 class FakeSongView:
@@ -401,6 +427,32 @@ def test_load_appends_to_chain(loaded_actions):
     assert ctx.song.view.selected_track is ctx.song.tracks[0]
     # And the browser saw exactly one load_item call.
     assert len(ctx.application.browser.load_calls) == 1
+
+
+def test_load_focuses_session_view_when_arranger(loaded_actions):
+    """MCP-1V8K: a render leaves Live focused on Arranger, where
+    ``browser.load_item`` silently no-ops. The loader must focus Session
+    before loading so the post-render "load a device" sequence works on the
+    first try. Without the focus-Session step the FakeBrowser no-ops in
+    Arranger and the device never lands (the regression this guards)."""
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    # Simulate the post-render state: focus is on Arranger.
+    ctx.application.view.current = "Arranger"
+    _add_browser_item(ctx, "audio_effects", "Operator", uri="query:Operator")
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Operator"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    # The loader focused Session before loading...
+    assert "Session" in ctx.application.view.show_view_calls
+    assert ctx.application.view.current == "Session"
+    # ...so the load actually landed (no silent Arranger no-op).
+    assert len(ctx.song.tracks[0].devices) == 1
+    assert resp.result["kind"] == "Operator"
 
 
 def test_load_response_carries_loaded_class_name(loaded_actions):

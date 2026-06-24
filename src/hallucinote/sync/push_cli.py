@@ -730,10 +730,8 @@ def _cmd_execute(args: argparse.Namespace) -> int:
     else:
         state_dir = db_path.parent
 
-    # PSH-2R7K: resolve phase-targeting up front (cheap; before the Live probe so
-    # a bad combination fails fast). --resume derives --start-at from the prior
-    # run's halted phase. (Unknown phase NAMES are validated inside execute_push
-    # against the canonical list and surface as PhaseTargetError below.)
+    # PSH-2R7K: resolve phase-targeting up front. --resume derives --start-at
+    # from the prior run's halted phase.
     only = args.only
     start_at = args.start_at
     stop_after = args.stop_after
@@ -754,6 +752,26 @@ def _cmd_execute(args: argparse.Namespace) -> int:
             return 2
         start_at = resumed
         sys.stderr.write(f"push_cli execute: --resume → --start-at {start_at}\n")
+
+    # PSH-PHASEORDER: validate the phase-target NAMES (and their combination)
+    # BEFORE any Live round-trip. plan_push_song is pure-data (no Live; it only
+    # constructs the phase list, never calling the lazy plan_fns), so reading the
+    # canonical phase names here is cheap and drift-free. Otherwise a typo'd
+    # --only/--start-at/--stop-after pays the full coherence + arrangement probe
+    # — and a stale-link coherence refusal can even mask the typo — before being
+    # rejected.
+    try:
+        push_execute.validate_phase_targets(
+            [p.name for p in push.plan_push_song(
+                conn, song_id=song_id, session_id=args.session_id,
+            )],
+            only=only,
+            start_at=start_at,
+            stop_after=stop_after,
+        )
+    except push_execute.PhaseTargetError as exc:
+        sys.stderr.write(f"push_cli execute: {exc}\n")
+        return 2
 
     coherence_live_tracks: list[dict] | None = None
     if not args.no_coherence_check:

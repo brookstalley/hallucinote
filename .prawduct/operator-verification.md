@@ -15,6 +15,27 @@ pending entries when `operator_verification_required: true`.
 
 ---
 
+## MCP-1V8K — device load focuses Session view before browser.load_item (2026-06-23) — PENDING
+
+`device.py` `load_handler` now calls `application.view.show_view("Session")` before
+`browser.load_item`, because that call silently no-ops when Live's focused view is Arranger
+(the state a render leaves behind), bricking every post-render device load. `device.py` is in
+`_FINGERPRINT_PATHS` (`handlers`), so this **flips the server fingerprint** and only reaches a
+live set after a **re-vendor + `/ableton-mcp-install` handshake** (dev-mode relaunch — see
+`project_mcp_deploy_topology_dev_vs_marketplace`). The headless test proves the loader *calls*
+`show_view("Session")`, but the fake hardcodes the premise (Arranger → no-op); it does not prove
+the premise or the fix hold in real Live.
+
+**Check (any song, Ableton open, server version-matched after re-vendor):**
+1. `ableton_render(...)` anything (leaves `focused_view = "Arranger"`; confirm via
+   `ableton_session(action='info')`).
+2. Without manually switching views, `ableton_device(action='load', node={parent:{kind:'track',
+   index:N}, terminal:'track'}, kind='Operator')` → expect: device lands on the first try
+   (no "did not append" error), and `ableton_session(action='info')` now reports
+   `focused_view = "Session"`.
+3. Repeat into a non-empty chain and onto the master track (DEV-6M2K path) to confirm the
+   view-focus doesn't disturb those loads.
+
 ## ARR-PROJ Chunk 2 — full projection planner end-to-end in real Live (2026-06-22) — PENDING
 
 Chunk 2 (the planner rewrite) is headless-verified (4379 green, Critic 0 findings) but the

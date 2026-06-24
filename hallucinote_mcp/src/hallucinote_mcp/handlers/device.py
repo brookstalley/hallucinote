@@ -988,10 +988,34 @@ def _raise_silent_noop(
     raise RuntimeError(
         f"load: Live did not append a device on {parent_kind} "
         f"{parent_idx} after browser.load_item. Existing chain: "
-        f"[{existing_str}]. Most common cause: a device with matching "
-        f"class is already present at the expected position (Live "
-        f"silently no-ops the load){suffix}."
+        f"[{existing_str}]. Likely causes: (1) a device with matching class "
+        f"is already present at the expected position (Live silently no-ops "
+        f"the load); (2) the focused view blocked the load — the loader "
+        f"focuses Session first (MCP-1V8K), but if Application.View was "
+        f"unreachable the view may still be Arranger, where browser.load_item "
+        f"silently no-ops{suffix}."
     )
+
+
+def _focus_session_view_for_load(context: LiveContext) -> None:
+    """Focus Live's Session view before a ``browser.load_item`` (MCP-1V8K).
+
+    ``browser.load_item`` is view-sensitive: when Live's focused view is
+    Arranger it silently no-ops — no device appears anywhere. A render leaves
+    the focus on Arranger, so the very common "render, then load a device"
+    sequence (push device phase, ``/song-pick-instruments``, any interactive
+    re-voice) would otherwise fail with a confusing "did not append" error.
+    Focusing Session makes the load target the selected track's chain
+    reliably.
+
+    Best-effort: if ``Application.View`` isn't reachable (older Live builds /
+    odd embeddings), proceed with the load anyway — the post-load chain-grew
+    guard still surfaces a genuine failure as a teaching error.
+    """
+    try:
+        context.application.view.show_view("Session")
+    except (AttributeError, RuntimeError):
+        pass
 
 
 _PRESET_FILE_SUFFIXES: tuple[str, ...] = (".adg", ".adv")
@@ -1292,6 +1316,9 @@ def load_handler(
         )
 
     chain_before_classes = [_canonical_class_name(d) for d in parent.devices]
+    # browser.load_item silently no-ops when Live's focused view is Arranger
+    # (the state a render leaves behind) — focus Session first (MCP-1V8K).
+    _focus_session_view_for_load(context)
     view.selected_track = parent
     browser.load_item(item)
 

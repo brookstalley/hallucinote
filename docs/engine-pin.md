@@ -15,13 +15,18 @@ execute in the exact same env. No clone, no `pip install`, no PyPI.
 
 ## Current pin (keep honest when versions move)
 
-- Engine `hallucinote`: **0.9.0** (`pyproject.toml`; `uv.lock` pins the same, editable).
-- Plugin: **0.9.8** (`.claude-plugin/plugin.json`).
+- Engine `hallucinote`: **1.6.0** (`pyproject.toml`; `uv.lock` pins the same, editable).
+- Plugin: **1.6.0** (`.claude-plugin/plugin.json`).
 
-**Plugin version ≠ engine version, and that's fine.** They version independently;
-the coupling is *by source* (`uv.lock` records `hallucinote` as an editable workspace
-member, `editable = "."`), not by the version string. The lock + the commit are the
-pin; the version strings are metadata.
+**Plugin, engine, and MCP-package versions move in lockstep (since 1.5.0).** Root
+`pyproject.toml [project].version` is the canonical product version; the plugin
+manifest, the MCP package's `pyproject.toml`, and `src/hallucinote/__init__.py`
+carry a literal copy, and `tests/unit/test_version_parity.py` fails CI on drift. The
+coupling is *by source* (`uv.lock` records `hallucinote` as an editable workspace
+member, `editable = "."`); the lock + the commit are the pin. The one version that
+is **deliberately decoupled** is the MCP server's handshake `BASE_VERSION+fingerprint`
+(`hallucinote_mcp/src/hallucinote_mcp/__init__.py`) — see [§Version surfaces in the
+release process](release-process.md#version-surfaces).
 
 ## Checking alignment
 

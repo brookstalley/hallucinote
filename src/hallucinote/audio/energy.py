@@ -171,4 +171,4 @@ def realize_energy(
     )
 
 
-__all__ = ["realize_energy", "LOUDNESS", "ONSET_DENSITY"]
+__all__ = ["realize_energy", "LOUDNESS", "ONSET_DENSITY", "SPECTRAL_CENTROID"]

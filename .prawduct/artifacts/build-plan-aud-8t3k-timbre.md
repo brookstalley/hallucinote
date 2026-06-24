@@ -43,7 +43,15 @@
    ARR-2S9D (per-section energy correlate, same slot, `stage: requirements`, unbuilt)
    adds further keys the same way when built — no conflict.
 
-4. **Timbre significance thresholds are PROVISIONAL (uncalibrated).** Unlike loudness
+4. **Section timbre rides the per-section `StemMetrics`, not a new `SectionMetrics`
+   field.** The spec named both `StemMetrics` and `SectionMetrics` as homes, but
+   `SectionMetrics` already holds `master` / `stems` / `returns` as `StemMetrics`,
+   each serialized through `_stem_to_dict` — so adding `timbre` to `StemMetrics`
+   delivers per-section timbre for free (identical to how per-section *loudness* is
+   homed). No separate `SectionMetrics.timbre` field is needed; the observable
+   requirement (timbre per section in the JSON) is met and tested.
+
+5. **Timbre significance thresholds are PROVISIONAL (uncalibrated).** Unlike loudness
    (calibrated against the sun-zone-done re-capture jitter set), there is no
    render-jitter baseline for centroid/flatness/rolloff yet. `compare.py` surfaces
    timbre deltas with provisional thresholds explicitly marked uncalibrated; a

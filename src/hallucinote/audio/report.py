@@ -75,12 +75,42 @@ class LoudnessMetrics:
 
 
 @dataclass(frozen=True)
+class TimbreMetrics:
+    """Per-surface standing timbre descriptors (AUD-8T3K).
+
+    A read-side lens — neutral measurement, never a grade (consistent with the
+    energy lens). Each value is the MEDIAN over silence-gated STFT frames, so it
+    describes the surface's timbre *while it is sounding*, not diluted by
+    inter-onset silence. ``NaN`` (→ JSON ``null`` via ``_finite_or_none``) when
+    no frame carries measurable energy (a silent/empty surface).
+
+      ``spectral_centroid_hz``  — magnitude-weighted mean frequency. Brightness:
+                                  distortion / an open filter pushes it up.
+      ``spectral_flatness``     — geometric ÷ arithmetic mean over the 24 Bark
+                                  band powers, 0..1. Tonal → ~0, white noise →
+                                  ~1. The "noisiness" axis. Computed over Bark
+                                  bands, NOT raw FFT bins (raw bins crush to ~0
+                                  for any pitched material).
+      ``spectral_rolloff_hz``   — frequency below which 85 % of the energy lies.
+                                  A second brightness/edge cue, robust to a
+                                  bright but low-energy top end.
+    """
+    spectral_centroid_hz: float
+    spectral_flatness: float
+    spectral_rolloff_hz: float
+
+
+@dataclass(frozen=True)
 class StemMetrics:
     """One row per captured surface (audio track / return / master)."""
     track_id: str
     surface_kind: SurfaceKind
     surface_name: str
     loudness: LoudnessMetrics
+    # Standing timbre descriptors (AUD-8T3K). Optional + default ``None`` so
+    # hand-built fixtures and pre-timbre baselines stay valid (AUD-2N6K
+    # optional-field pattern); ``analyze_mix`` always populates it.
+    timbre: "TimbreMetrics | None" = None
 
     def __post_init__(self) -> None:
         if self.surface_kind not in _VALID_SURFACE_KINDS:
@@ -692,6 +722,18 @@ def _stem_to_dict(s: StemMetrics) -> dict[str, Any]:
             "lufs_m_peak": _finite_or_none(s.loudness.lufs_m_peak),
             "true_peak_dbtp": _finite_or_none(s.loudness.true_peak_dbtp),
         },
+        # Standing timbre (AUD-8T3K). None when no timbre was measured (hand-built
+        # fixture); each value's NaN "silent" sentinel collapses to null like
+        # loudness, so the object is valid JSON under allow_nan=False.
+        "timbre": (
+            {
+                "spectral_centroid_hz": _finite_or_none(s.timbre.spectral_centroid_hz),
+                "spectral_flatness": _finite_or_none(s.timbre.spectral_flatness),
+                "spectral_rolloff_hz": _finite_or_none(s.timbre.spectral_rolloff_hz),
+            }
+            if s.timbre is not None
+            else None
+        ),
     }
 
 

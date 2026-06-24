@@ -6,7 +6,7 @@
 
 ## 2026-06-23 — Device loads survive Arranger focus; push rejects bad phase names before any Live probe (MCP-1V8K, PSH-PHASEORDER)
 
-<!-- prawduct: type=fix | chunks=MCP-1V8K,PSH-PHASEORDER | scope=mcp-device,sync-push,tests -->
+<!-- prawduct: type=fix | chunks=MCP-1V8K,PSH-PHASEORDER | scope=mcp-device,sync-push,tests | status=merged -->
 
 Two quick-win bugfixes triaged from the incoming-bug batch. (The other two fresh "ready"
 items — BLD-RESET, RND-3W7P — were verified already-fixed in code and closed, not rebuilt.)

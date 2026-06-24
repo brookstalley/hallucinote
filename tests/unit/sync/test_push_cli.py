@@ -135,6 +135,27 @@ def test_probe_and_link_strips_return_slot_prefix(conn, song, session):
     ) == 1
 
 
+def test_probe_and_link_strips_render_analyzer_suffix_on_returns(conn, song, session):
+    """SYN-RENDER-RELINK: `ableton_render`'s analyzer auto-load renames RETURN
+    tracks (appends ` | HallucinoteAnalyzer`), which defeated probe-and-link's name
+    match and silently broke DB↔Live return relink after any render. The live-return
+    normalizer must strip that render-appended suffix (and the slot prefix) so the
+    return still matches its DB row."""
+    rid = M.create_return(conn, song_id=song, name="Reverb", position=1)
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[],
+        live_returns=[{"return_index": 1, "name": "A-Reverb | HallucinoteAnalyzer"}],
+    )
+    assert result.matched_returns == [
+        {"db_id": rid, "name": "Reverb", "ableton_index": 1},
+    ]
+    assert result.unmatched_db_returns == []
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="return", db_id=rid,
+    ) == 1
+
+
 def test_probe_and_link_warns_on_duplicate_live_track_names(conn, song, session):
     """Two Live tracks with the same name → link to the first, note
     the ambiguity so the user can rename."""
@@ -343,6 +364,44 @@ def test_probe_and_link_cascades_stale_clip_link_when_parent_track_dropped(
     ) is None
 
 
+def test_probe_and_link_unlinks_stale_clip_link_when_clip_row_deleted(
+    conn, song, session,
+):
+    """FK-GUARD regression for the reported probe-and-link crash: a `build.py
+    --reset` rebuild (or a Live-set swap that reuses the session) regenerates
+    clips under new ids, leaving a clip link whose clip row is GONE from the DB.
+    The SYN-3C8K cascade drops that link via unlink_db_from_ableton — which used
+    to stamp the audit event's clip_id with the now-dangling id, violating
+    events.clip_id's FK on INSERT (sqlite3.IntegrityError: FOREIGN KEY constraint
+    failed) and crashing the whole reconcile. It must now reconcile cleanly.
+
+    The track stays present (matched by name), so ONLY the clip-row-gone
+    condition drives the cascade — isolating the exact FK trigger."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    cid = M.create_clip(conn, track_id=tid, slot=0, length_beats=4.0, name="Drums A")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=1,
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="clip", db_id=cid, ableton_index=0,
+    )
+    # The clip row vanishes (rebuild regenerated it under a new id); the clip LINK
+    # lingers — ableton_links.db_id has no FK to clips.
+    conn.execute("DELETE FROM clips WHERE id = ?", (cid,))
+    assert Q.get_clip(conn, cid) is None
+
+    # Pre-fix: this call raised sqlite3.IntegrityError mid-reconcile.
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[{"track_index": 1, "name": "Drums", "kind": "midi"}],
+        live_returns=[],
+    )
+    assert result.unlinked_stale_clips == [{"db_id": cid, "ableton_index": 0}]
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="clip", db_id=cid,
+    ) is None
+
+
 def test_probe_and_link_keeps_clip_link_when_parent_track_survives(
     conn, song, session,
 ):
@@ -402,6 +461,142 @@ def test_clips_planner_emits_create_after_stale_clip_link_cascade(
     )
 
 
+# ---------------------------------------------------------------------------
+# SYN-SCAFFOLD-MISLINK: set-swap rebind onto a fresh default scaffold
+# ---------------------------------------------------------------------------
+
+
+def test_probe_and_link_drops_mislinked_track_link_on_scaffold_set_swap(
+    conn, song, session,
+):
+    """The reported bug: reusing a session bound to a now-discarded set and
+    re-pushing onto a fresh DEFAULT set rebinds the surviving track links by
+    bare index onto the scaffold tracks (1-MIDI..4-Audio). The link to index 1
+    SURVIVES the W18-B bare-index sweep (index 1 still exists), so the tracks
+    phase reads the DB track as "linked" and never re-creates it. Reconciliation
+    must drop a link whose index is now occupied by a canonical default-scaffold
+    track, so the DB track falls into unmatched_db_tracks and gets re-created."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=1,
+    )
+    # Fresh default set: 1-MIDI..4-Audio. Index 1 STILL EXISTS (now a scaffold
+    # track), so the pre-fix sweep kept the mislinked link.
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[
+            {"track_index": 1, "name": "1-MIDI", "kind": "midi"},
+            {"track_index": 2, "name": "2-MIDI", "kind": "midi"},
+            {"track_index": 3, "name": "3-Audio", "kind": "audio"},
+            {"track_index": 4, "name": "4-Audio", "kind": "audio"},
+        ],
+        live_returns=[],
+    )
+    assert result.unlinked_stale_tracks == [{"db_id": tid, "ableton_index": 1}]
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="track", db_id=tid,
+    ) is None
+    # The DB track is now unmatched → the tracks phase will re-create it.
+    assert [t["db_id"] for t in result.unmatched_db_tracks] == [tid]
+    # Scaffold detection still fires (it keys the "delete defaults?" prompt).
+    assert {t["name"] for t in result.default_scaffold_unmatched_tracks} == {
+        "1-MIDI", "2-MIDI", "3-Audio", "4-Audio",
+    }
+
+
+def test_probe_and_link_cascades_device_link_when_parent_track_mislinked(
+    conn, song, session,
+):
+    """SYN-SCAFFOLD-MISLINK device cascade: when the mislinked parent track link
+    is dropped, its top-level device links must cascade away too — else
+    _emit_device_calls reads them as present and SKIPS the load, leaving the
+    re-created track device-less (the clip-cascade failure moved one phase
+    later)."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    chain = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    did = M.create_device(
+        conn, chain_id=chain, position=1, kind="Operator", display_name="Operator",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=1,
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=did, ableton_index=1,
+    )
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[{"track_index": 1, "name": "1-MIDI", "kind": "midi"}],
+        live_returns=[],
+    )
+    assert result.unlinked_stale_tracks == [{"db_id": tid, "ableton_index": 1}]
+    assert result.unlinked_stale_devices == [{"db_id": did, "ableton_index": 1}]
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="device", db_id=did,
+    ) is None
+
+
+def test_probe_and_link_keeps_track_link_when_renamed_not_scaffold(
+    conn, song, session,
+):
+    """The scaffold gate must NOT over-drop. A track RENAMED in Live (its index
+    survives, its new name is non-canonical) is still the same track — its link
+    must stay so the next push updates it in place rather than creating a
+    duplicate. Only a CANONICAL default-scaffold name proves the index is a
+    fresh scaffold track; a renamed real track is not."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=1,
+    )
+    # Live track at index 1 was renamed "Drumz" (non-canonical) — NOT a scaffold.
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[{"track_index": 1, "name": "Drumz", "kind": "midi"}],
+        live_returns=[],
+    )
+    assert result.unlinked_stale_tracks == []
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="track", db_id=tid,
+    ) is not None
+
+
+def test_check_coherence_flags_mislinked_scaffold_track_link(
+    conn, song, session,
+):
+    """check_coherence shares the bare-index blind spot: defense-in-depth must
+    also refuse execute when a track link points at an index now occupied by a
+    canonical default-scaffold track (the set-swap signature)."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=1,
+    )
+    result = push.check_coherence(
+        conn, session_id=session,
+        live_tracks=[{"track_index": 1, "name": "1-MIDI", "kind": "midi"}],
+        live_returns=[],
+    )
+    assert not result.ok
+    assert any(
+        e["kind"] == "mislinked_scaffold_track_links" for e in result.errors
+    )
+
+
+def test_check_coherence_ok_when_track_link_matches_real_track(
+    conn, song, session,
+):
+    """The coherence scaffold check must not false-positive: a link to an index
+    occupied by the real (non-scaffold-named) track is coherent."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=1,
+    )
+    result = push.check_coherence(
+        conn, session_id=session,
+        live_tracks=[{"track_index": 1, "name": "Drums", "kind": "midi"}],
+        live_returns=[],
+    )
+    assert result.ok
+
+
 def test_probe_and_link_reconciles_to_new_index_on_shifted_match(conn, song, session):
     """Live track survives but at a new index (e.g., earlier track was
     deleted, this one shifted down). Name still matches → link rewritten
@@ -426,14 +621,18 @@ def test_probe_and_link_reconciles_to_new_index_on_shifted_match(conn, song, ses
     ) == 1
 
 
-def test_probe_and_link_cascade_boundary_is_clip_only_on_stale_parent(
+def test_probe_and_link_cascade_covers_clip_and_device_on_stale_parent(
     conn, song, session,
 ):
-    """The stale-parent cascade is CLIP-scoped (SYN-3C8K): a clip link drops
-    with its parent track (a dangling clip link halts the clips phase), but
-    other nested kinds (device/envelope/note) are still left intact — they're
-    re-established by the next push's own create-call path, and walking deep
-    would require extra MCP probes. This locks the corrected boundary."""
+    """SYN-SCAFFOLD-MISLINK extended the stale-parent cascade from clip-only to
+    clip AND top-level device links. (Previously this boundary was deliberately
+    clip-scoped — but a device link left dangling under a dropped parent makes
+    _emit_device_calls read it as present and SKIP the load, leaving the
+    re-created track device-less. The cascade now covers it.) A device link
+    whose device ROW is also gone — a `build.py --reset` rebuild or set-swap
+    regenerated it under a new id — drops here too, the device analog of the
+    SYN-3C8K clip-row-gone cascade. envelope/note aren't persisted as
+    ableton_links; they re-establish via the next push's own create-call path."""
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
     cid = M.create_clip(conn, track_id=tid, slot=0, length_beats=4.0)
     M.link_db_to_ableton(
@@ -442,7 +641,8 @@ def test_probe_and_link_cascade_boundary_is_clip_only_on_stale_parent(
     M.link_db_to_ableton(
         conn, session_id=session, db_kind="clip", db_id=cid, ableton_index=0,
     )
-    # A non-clip nested link parented to the same (now-stale) track.
+    # A device link whose device row doesn't exist (regenerated under a new id),
+    # parented to the same now-stale track.
     M.link_db_to_ableton(
         conn, session_id=session, db_kind="device", db_id="dev-synthetic",
         ableton_index=0,
@@ -459,10 +659,10 @@ def test_probe_and_link_cascade_boundary_is_clip_only_on_stale_parent(
     assert Q.get_ableton_link(
         conn, session_id=session, db_kind="clip", db_id=cid,
     ) is None
-    # ...but the device link is left intact (boundary: cascade is clip-only).
+    # ...and the orphaned device link now cascades too (SYN-SCAFFOLD-MISLINK).
     assert Q.get_ableton_link(
         conn, session_id=session, db_kind="device", db_id="dev-synthetic",
-    ) == 0
+    ) is None
 
 
 def test_probe_and_link_emits_link_removed_event_on_stale_unlink(
@@ -486,6 +686,84 @@ def test_probe_and_link_emits_link_removed_event_on_stale_unlink(
     assert body["db_kind"] == "track"
     assert body["db_id"] == tid
     assert body["ableton_index"] == 5
+
+
+# ---------------------------------------------------------------------------
+# ARR-PROJ: projection planner subsumes SYN-4R7P (no probe-and-link reconcile)
+# ---------------------------------------------------------------------------
+
+
+def test_arrangement_planner_rematerializes_after_live_side_delete(
+    conn, song, session,
+):
+    """ARR-PROJ subsumes SYN-4R7P: after the user deletes an arrangement clip in
+    Live (the lane goes empty), the projection planner re-materializes it via
+    create+fill from the DB — no stale-link IndexError, no replace_notes into a
+    dead index, no reconcile step required. The probe (empty lane) means no
+    clear is needed; the placement is simply (re)created."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=1,
+    )
+    cid = M.create_clip(conn, track_id=tid, slot=0, length_beats=16.0, name="A")
+    aid = M.add_arrangement_clip(
+        conn, song_id=song, track_id=tid, clip_id=cid, start_bar=1.0, end_bar=5.0,
+    )
+    # User deleted the arrangement clip in Live → the probe shows an empty lane.
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track={1: []},
+    )
+    actions = [c.args["action"] for c in plan.calls]
+    assert actions == ["create"], (
+        "after a Live-side delete the projection planner re-materializes via "
+        f"create+fill (no reconcile, no duplicate), got: {actions}"
+    )
+    assert plan.calls[0].key == f"arrangement_clip:{aid}"
+
+
+def test_probe_and_link_no_longer_reconciles_arrangement_clip_links(
+    conn, song, session,
+):
+    """ARR-PROJ removed the SYN-4R7P arrangement reconcile. Even in the case that
+    used to cascade-drop an arrangement_clip link — the parent track link is
+    dropped as stale — probe_and_link now leaves the arrangement_clip link
+    untouched. With clear+create+fill as the sole materialization path, a stale
+    positional link is harmless: the next push clears Live by probe and rebuilds,
+    so there is nothing to reconcile. (probe_and_link also no longer accepts a
+    live_arrangement_clips_by_track argument, and ProbeAndLinkResult no longer
+    carries the arrangement-reconcile fields.)"""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=5,
+    )
+    cid = M.create_clip(conn, track_id=tid, slot=0, length_beats=16.0, name="A")
+    aid = M.add_arrangement_clip(
+        conn, song_id=song, track_id=tid, clip_id=cid, start_bar=1.0, end_bar=5.0,
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="arrangement_clip", db_id=aid,
+        ableton_index=0,
+    )
+    # 'Drums'@5 is gone (a default scaffold sits at index 1) -> the track link is
+    # dropped as stale (W18-B). Pre-ARR-PROJ this cascade-dropped the
+    # arrangement_clip link too; now it must survive.
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[{"track_index": 1, "name": "1-MIDI", "kind": "midi"}],
+        live_returns=[],
+    )
+    # The stale track link still drops (unchanged W18-B behavior)...
+    assert result.unlinked_stale_tracks == [{"db_id": tid, "ableton_index": 5}]
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="track", db_id=tid,
+    ) is None
+    # ...but the arrangement_clip link is left intact -- no reconcile happens.
+    assert not hasattr(result, "unlinked_stale_arrangement_clips")
+    assert not hasattr(result, "rebound_arrangement_clips")
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="arrangement_clip", db_id=aid,
+    ) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -2369,6 +2647,7 @@ def test_cli_execute_no_coherence_check_skips_validation(
             "push.check_coherence called despite --no-coherence-check"
         )
     monkeypatch.setattr(push, "check_coherence", _check_should_not_run)
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", lambda send_fn=None: ([], []))
 
     def _fake_execute(**kwargs):
         from hallucinote.sync.push_execute import ExecuteResult
@@ -2737,6 +3016,7 @@ def test_cli_execute_regenerates_requirements_after_device_push(
         push_cli.push_execute, "execute_push",
         lambda **kw: _fake_execute_result(devices_calls_ok=2),
     )
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", lambda send_fn=None: ([], []))
     monkeypatch.setattr(push_cli, "_resolve_db_path", lambda args: db_path)
     regen_calls: list[str] = []
 
@@ -2764,6 +3044,7 @@ def test_cli_execute_no_regen_when_devices_phase_idle(
         push_cli.push_execute, "execute_push",
         lambda **kw: _fake_execute_result(devices_calls_ok=0),
     )
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", lambda send_fn=None: ([], []))
     monkeypatch.setattr(push_cli, "_resolve_db_path", lambda args: db_path)
     monkeypatch.setattr(
         compat, "regen_requirements",
@@ -2787,6 +3068,7 @@ def test_cli_execute_db_only_prints_stale_notice_instead_of_regen(
         push_cli.push_execute, "execute_push",
         lambda **kw: _fake_execute_result(devices_calls_ok=1),
     )
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", lambda send_fn=None: ([], []))
     monkeypatch.setattr(
         compat, "regen_requirements",
         lambda slug: pytest.fail("regen must not run without --song"),
@@ -2811,6 +3093,7 @@ def test_cli_execute_regen_failure_never_masks_push_outcome(
         push_cli.push_execute, "execute_push",
         lambda **kw: _fake_execute_result(devices_calls_ok=1),
     )
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", lambda send_fn=None: ([], []))
     monkeypatch.setattr(push_cli, "_resolve_db_path", lambda args: db_path)
 
     def failing_regen(slug):
@@ -2843,6 +3126,7 @@ def test_cli_execute_halted_push_with_device_changes_still_regenerates(
     monkeypatch.setattr(
         push_cli.push_execute, "execute_push", lambda **kw: halted,
     )
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", lambda send_fn=None: ([], []))
     monkeypatch.setattr(push_cli, "_resolve_db_path", lambda args: db_path)
     regen_calls: list[str] = []
     monkeypatch.setattr(
@@ -2880,9 +3164,13 @@ def test_resume_phase_from_state_none_when_no_halt(tmp_path):
     assert push_cli._resume_phase_from_state(tmp_path) is None
 
 
-def test_cli_execute_unknown_phase_exits_2(conn, song, session, db_path, capsys):
-    """A bad --only phase fails fast (exit 2) with the valid-phase list, before
-    any dispatch — so no Live is needed to prove it teaches."""
+def test_cli_execute_unknown_phase_exits_2(
+    conn, song, session, db_path, capsys, monkeypatch,
+):
+    """A bad --only phase fails fast (exit 2) with the valid-phase list. The
+    rejection is a PhaseTargetError (raised before any phase dispatches); the
+    live probe is stubbed so the test needs no running Live."""
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", lambda send_fn=None: ([], []))
     rc = push_cli.main([
         "execute", session, "--db", str(db_path),
         "--no-coherence-check", "--only", "bogus",
@@ -2891,6 +3179,36 @@ def test_cli_execute_unknown_phase_exits_2(conn, song, session, db_path, capsys)
     err = capsys.readouterr().err
     assert "unknown --only phase 'bogus'" in err
     assert "tempo_map" in err  # the valid list, in order
+
+
+def test_cli_execute_unknown_phase_rejected_before_live_probe(
+    conn, song, session, db_path, capsys, monkeypatch,
+):
+    """PSH-PHASEORDER: a typo'd phase is rejected BEFORE any Live round-trip.
+
+    Runs with coherence checking ON (--probe, the realistic default) and makes
+    both the coherence probe and the arrangement probe raise if reached. With
+    the up-front validation the typo exits 2 with the teaching message and
+    NEITHER probe runs — so a typo can't pay a Live round-trip (or be masked by
+    a stale-link coherence refusal) before being caught."""
+    def _boom_coherence(*a, **k):
+        raise AssertionError("coherence probe ran before phase-name validation")
+
+    def _boom_probe(*a, **k):
+        raise AssertionError("arrangement probe ran before phase-name validation")
+
+    monkeypatch.setattr(
+        push_cli, "_cmd_check_coherence_probe_or_snapshot", _boom_coherence,
+    )
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", _boom_probe)
+    rc = push_cli.main([
+        "execute", session, "--db", str(db_path),
+        "--probe", "--start-at", "bogus",
+    ])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "unknown --start-at phase 'bogus'" in err
+    assert "tempo_map" in err
 
 
 def test_cli_execute_resume_no_prior_run_exits_2(conn, song, session, db_path, capsys):
@@ -2922,7 +3240,12 @@ def test_cli_execute_resume_resolves_and_passes_targeting(
     conn, song, session, db_path, monkeypatch, capsys,
 ):
     """End-to-end CLI wiring: --resume reads the halted phase into start_at and
-    --stop-after rides through to execute_push (resume + stop-after is allowed)."""
+    --stop-after rides through to execute_push (resume + stop-after is allowed).
+
+    The window must be valid (stop_after at or after the resumed start) — the
+    halt was at ``routing`` so ``--stop-after arrangement`` (a later phase) is a
+    real window. PSH-PHASEORDER now validates this up front, before any Live
+    probe."""
     (db_path.parent / ".last-push-state.json").write_text(
         json.dumps({"phase_halted": "routing"})
     )
@@ -2935,11 +3258,12 @@ def test_cli_execute_resume_resolves_and_passes_targeting(
         )
 
     monkeypatch.setattr(push_cli.push_execute, "execute_push", fake_execute)
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", lambda send_fn=None: ([], []))
     rc = push_cli.main([
         "execute", session, "--db", str(db_path),
-        "--no-coherence-check", "--resume", "--stop-after", "devices",
+        "--no-coherence-check", "--resume", "--stop-after", "arrangement",
     ])
     assert rc == 0
-    assert captured["start_at"] == "routing"   # --resume resolved it
-    assert captured["stop_after"] == "devices"  # passed through
+    assert captured["start_at"] == "routing"       # --resume resolved it
+    assert captured["stop_after"] == "arrangement"  # passed through
     assert captured["only"] is None

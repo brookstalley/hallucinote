@@ -131,6 +131,7 @@ from .songs import (
     TIMING_MODES,
     create_song,
     set_song_timing_mode,
+    set_song_tuning,
 )
 from .tracks import (
     INPUT_ROUTING_KINDS,
@@ -155,6 +156,7 @@ __all__ = [
     "TIMING_MODES",
     "create_song",
     "set_song_timing_mode",
+    "set_song_tuning",
     # tracks
     "INPUT_ROUTING_KINDS",
     "MONITORING_STATES",

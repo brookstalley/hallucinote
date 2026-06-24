@@ -6,7 +6,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
-from hallucinote.return_naming import strip_return_slot_prefix
+from hallucinote.return_naming import normalize_live_return_name
 
 from hallucinote.db import mutations as M, queries as Q
 
@@ -478,8 +478,10 @@ def _apply_return_info(
     if "name" in result:
         # W4-C: Live unconditionally prefixes return names with `<slot-letter>-`
         # (W3-H 2026-05-18). The DB stores SUFFIX-only; strip the prefix
-        # before diffing so the no-op case actually no-ops.
-        stripped = strip_return_slot_prefix(result["name"])
+        # before diffing so the no-op case actually no-ops. SYN-RENDER-RELINK:
+        # also strip a render-appended ` | HallucinoteAnalyzer` suffix — otherwise
+        # pulling a post-render set writes the dirty name straight into the DB.
+        stripped = normalize_live_return_name(result["name"])
         if stripped != ret_row["name"]:
             changes["name"] = stripped
     if "volume" in result and _floats_differ(result["volume"], ret_row["volume"]):
@@ -629,7 +631,9 @@ def _apply_track_sends(
             continue
         # W4-C: Live's send map is keyed by prefixed return names
         # (`A-Reverb`); the DB stores suffix-only, so strip on lookup.
-        return_name = strip_return_slot_prefix(raw_name)
+        # SYN-RENDER-RELINK: also strip a render-appended analyzer suffix so the
+        # send doesn't silently drop when get_return_by_name misses.
+        return_name = normalize_live_return_name(raw_name)
         seen_names.add(return_name)
         ret_row = Q.get_return_by_name(conn, song_id=song_id, name=return_name)
         if ret_row is None:

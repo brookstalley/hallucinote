@@ -67,7 +67,19 @@ Early — approaching 1.0, and honest about the rough edges:
 
 - Works today on **Ableton Live 12**, **macOS and Windows**.
 - **Live edition:** the authoring loop — compose, push, pull, play, and the symbolic `compose-review` — runs on **any Live 12 edition, Standard included**. The audio-analysis features (render → `mix-review` by measurement) need **Max for Live**, so they're **Suite-only**; `/hallucinote:ableton-mcp-install` asks whether you have Suite and lets Standard users skip the analyzer.
-- Audio recording is a boundary, not a feature yet: Claude authors MIDI and the mix; a human vocal take or a hand-ridden fader automation lane can't be read back through the bridge today. Known limitations live at the bottom of [`CHANGELOG.md`](CHANGELOG.md#known-limitations).
+- Audio recording is a boundary, not a feature yet: Claude authors MIDI and the mix; a human vocal take or a hand-ridden fader automation lane can't be read back through the bridge today. See **[Known issues](#known-issues)** for the full list of accepted limitations.
+
+## Known issues
+
+Limitations we know about and have consciously accepted for now — each with its workaround where one exists. (Per-release detail lives at the bottom of [`CHANGELOG.md`](CHANGELOG.md#known-limitations).)
+
+- **Removing a sidechain in Live needs a full rebuild, not an incremental one.** A snapshot that is *silent* about a device's sidechain source is treated as "no opinion," so a sidechain authored in `build.py` survives every rebuild. The flip side: if you delete a sidechain *in Live* and re-snapshot, an incremental rebuild won't clear the old source. To drop it durably, rebuild from a fresh DB, clear it in `build.py` with `set_device_sidechain(None)`, or write an explicit null source into the snapshot.
+- **Human audio can't be read back through the bridge.** Claude authors MIDI and the mix; a recorded vocal take or a hand-ridden fader-automation lane lives only in the `.als` — the bridge can't pull it into a song's source. Audio recording is a boundary, not a feature, today.
+- **Measured mix review needs Max for Live (Suite).** The authoring loop — compose, push, pull, play, and the *symbolic* `/compose-review` — runs on any Live 12 edition. Only the render → analysis → `/mix-review` path needs Max for Live, so on Standard you review by ear with `/compose-review`. This split is by design (see [`docs/capability-truth.md`](docs/capability-truth.md)).
+- **Mid-song tempo / time-signature changes aren't supported.** Changes before bar 1 round-trip cleanly; a mid-song change surfaces a refuse-and-teach at the call site (a real MCP gap, never silent data loss).
+- **A few device-parameter enums can't round-trip.** Some Live enum parameters have no normalized form on the MCP wire; they're skipped with a warning rather than set to the wrong value. Continuous parameters round-trip cleanly.
+- **Nested rack chains are modeled one level deep.** Capture and the structural/analysis read-back descend a single chain level; devices nested deeper inside racks aren't modeled yet.
+- **Linux is unsupported.** Ableton Live ships no Linux build; Wine/CrossOver gets a best-effort install candidate with warn-and-confirm. macOS and Windows are the supported platforms.
 
 ## Install
 

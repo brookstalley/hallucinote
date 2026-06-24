@@ -9,6 +9,7 @@ Conventions for authoring `build.py` against the Hallucinote library. Companion 
 - [The toolkit reduces work — it never limits what you can author](#the-toolkit-reduces-work--it-never-limits-what-you-can-author)
 - [Authoring API — the helper surface](#authoring-api--the-helper-surface)
 - [Sound design is authorship](#sound-design-is-authorship)
+- [Rationale is authorship — the WHY ships in `decisions/`](#rationale-is-authorship--the-why-ships-in-decisions)
 - [Per-part feel (microtiming is authorship)](#per-part-feel-microtiming-is-authorship)
 - [Drum kits: probe, don't assume](#drum-kits-probe-dont-assume)
 - [Repeated sections (verse twice, chorus three times)](#repeated-sections-verse-twice-chorus-three-times)
@@ -209,6 +210,70 @@ A finished song has the sound it's supposed to have *as part of being finished*,
 The "default volumes / sends / chain-state" the song needs to *sound right* live in this file. The composer's job is to put them there as part of authoring, not to defer them to a later mix session. See `docs/snapshot-schema.md` for the schema; see `/hallucinote:song-pick-instruments` for the picker that writes chains.
 
 This applies most strongly to a **creative product prompt** (see `/hallucinote:song-new`, "Read the request"): the deliverable is the playable song, and the song's sound is part of being playable.
+
+---
+
+## Rationale is authorship — the WHY ships in `decisions/`
+
+`build.py` and the snapshot carry the **WHAT** — `feel_shift(verse, RUN_PUSH)`, a chaos-burst subsystem, `params_dialed` mix levels. They do **not** carry the **WHY**, or the cross-cutting narrative→sound mapping that has no home in code: a reader sees `RUN_PUSH`, not *"the human rushes ahead of the machine = fear."* That rationale is the song's most valuable, least-recoverable artifact — it's what survives `/clear` and what `/song-context` serves — so it ships in `songs/<slug>/decisions/NN-*.md` as a first-class part of authoring, exactly the way the device chain ships in the snapshot (see *Sound design is authorship*).
+
+**A decision is a deliverable component, not a checkpoint.** File the ADR *silently*, as part of finishing the move — at the **finished-move boundary** (a part/section reaches its intended state, a subsystem lands), never as a stop-to-ask between build→push iterations. That would both violate the stop-less norm (CLAUDE.md → *Stop only on high-stakes decisions*) and bury the corpus in noise. Capture is **not** front-loaded to `/song-new` and the review checkpoints; the bulk of a song's decisions are made in the iterate loop, and that's where they must be recorded.
+
+### The bright line — what gets an ADR
+
+Capture only **substantive** creative/production moves. The test: would a future session (or a teammate) be unable to reconstruct *why* from the code alone?
+
+| Capture → `decisions/NN-*.md` | Code only — no ADR |
+|---|---|
+| a feel/groove **arc** (verse push / chorus drag) | a single velocity-jitter or `feel` nudge |
+| a **sound-design subsystem** (a chaos burst, a reverb deepen-then-snap) | one EQ/level tweak |
+| a **structural/form** change (the form tripled; a section added) | a clip rename, a length trim |
+| a **committed musical landing** (the chorus's low-fifth drop) | a mechanical refactor of `build.py` |
+| a **transition/hand-off** plan (C1→V2 fragmentation) | |
+| **baked mix levels** that define the sound (Alien −9 dB + distortion) | |
+| a **signal-chain** choice (this is `/song-pick-instruments` Step 5) | |
+
+**Routing:** a move you *kept* → `decisions/` (what you chose and why). A move you *tried and reverted* → `attempts/` (the path, incl. dead ends — the attempt ledger, queried via `/song-attempts`). A revealed *intent* (where the song wants to land) → `annotations/`. Three different homes; pick by what the entry records.
+
+### The decision-file template
+
+One file per decision, `decisions/NN-<topic>.md` (`NN` = next free number, for ordering and a stable ADR id). The **frontmatter schema is owned by [`../.prawduct/artifacts/song-conventions.md`](../.prawduct/artifacts/song-conventions.md)** (its "Frontmatter schema" section + the decisions-vs-annotations-vs-attempts heuristic) — don't re-document it here; the key rules that bite: `kind: decision` requires a `date` field, `scope` ∈ {`song`, `time`, `track`, `track-time`} (a section move is `time` + `bars`; a per-track move is `track-time` + `track` + `bars`), and **unknown keys raise at index time** (so no invented fields — record provenance in the body, not a key). Write via `write_markdown_ref` so it's audit-threaded and FTS5-indexed — that's what makes `/song-context` and `/decisions` find it:
+
+```python
+from pathlib import Path
+from hallucinote.markdown_refs import write_markdown_ref
+from hallucinote.db.connection import init_db, resolve_db_path
+conn = init_db(resolve_db_path("<slug>"))  # branch-aware; slug, not a path
+write_markdown_ref(
+    conn,
+    path=Path("songs/<slug>/decisions/07-chorus-low-fifth-drop.md"),
+    repo_root=Path("."),
+    frontmatter={"kind": "decision", "scope": "track-time",
+                 "date": "2026-06-19", "track": "Bass", "bars": [33, 41],
+                 "tags": ["chorus", "bass", "landing"]},
+    body=(
+        "## Context\n"
+        "The chorus was lifting harmonically but had no floor — it floated.\n\n"
+        "## Decision\n"
+        "Land the chorus on a low fifth in the bass on the downbeat of each 8-bar cycle.\n\n"
+        "## Why\n"
+        "The drop gives the lift something to push against — arrival, not just brightness.\n\n"
+        "## Narrative → sound\n"
+        "The song is about gravity reasserting after escape; the low fifth IS the pull "
+        "back down.\n\n"
+        "Decided by: agreed-after-confirm (proposed it, user kept it)."
+    ),
+    actor="llm", reason="decision-capture from compose-part",
+)
+```
+
+The body shape — **Context / Decision / Why / Narrative → sound** — is this section's contribution; the schema doc governs the frontmatter. The **Narrative → sound** part is optional but is the whole point when a decision maps story to a sonic move — the thing code can never hold. Record provenance (user / inferred / agreed-after-confirm) as a body line, since the schema has no key for it.
+
+### Where this is enforced
+
+- **`/compose-part`** closes a finished substantive move by filing the ADR (its *Record the decision* step).
+- **Delegation carries capture.** When sound-design/automation is delegated to a subagent, the subagent **returns** its rationale (context/decision/why) and the orchestrator files the ADR. Delegation must not launder the WHY away.
+- **`/compose-review` + `/mix-review`** run a completeness check (their DECISION-COMPLETENESS step): "N substantive `build.py`/snapshot changes since the last recorded decision — capture them?" — propose-and-react, the backstop for whatever slipped under execute-and-react pressure.
 
 ---
 

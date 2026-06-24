@@ -19,7 +19,7 @@ DB only, never the Live API.
 """
 from __future__ import annotations
 
-from ..handlers import analysis as analysis_handlers
+from . import analysis as analysis_handlers
 from ..schema import Action, ParamSpec, register
 
 
@@ -36,14 +36,14 @@ register(
 )
 
 
-register(
+_analyze_action = register(
     Action(
         tool="ableton_analysis",
         name="analyze",
         description=(
             "Run the audio-analysis MVP pipeline against a captures dir. "
             "Reads captures/<ts>/manifest.json + WAVs produced by "
-            "ableton_render(render), measures per-stem loudness (LUFS-I/S/M "
+            "ableton_render(start), measures per-stem loudness (LUFS-I/S/M "
             "+ true peak), detects master-bus overshoots and attributes "
             "each to top contributors per band, verifies reverb RT60 "
             "per-return from each return's captured ring-out (one result per "
@@ -132,6 +132,13 @@ register(
             "the report's compare_to field has the per-metric rows. "
             "Reports written before seq tagging have db_seq=null and "
             "can't be resolved by seq.",
+            "Sync vs async: this synchronous 'analyze' is the one-call fast "
+            "path for a quick few-surface capture. For a full-band song (many "
+            "tracks + returns) or one with many declared sections — each adds "
+            "masking/timing/cross-rhythm passes — the full pipeline can exceed "
+            "the 60s tool-call timeout and this call red-times-out (the report "
+            "still lands on disk, but you're left polling for it). Use "
+            "action='start' + 'status' for those.",
         ),
     )
 )
@@ -215,6 +222,86 @@ register(
             "the parsed MixReport dict — same shape that analyze produces. "
             "analysis_code = {signature, stale} flags whether this server's "
             "loaded analysis code differs from disk (run /mcp if stale).",
+        ),
+    )
+)
+
+
+# `start` takes the SAME params as `analyze` (shared, not duplicated) but runs
+# the DSP on a detached server-process thread and returns a job handle
+# immediately — the synchronous `analyze` false-fails on the 60s tool-call
+# timeout for a many-surface / many-section report. The agent then polls
+# `status`. The synchronous `analyze` stays as the fast path (see its tips for
+# the sync-vs-async trigger).
+register(
+    Action(
+        tool="ableton_analysis",
+        name="start",
+        description=(
+            "Start an analysis in the BACKGROUND and return a job handle "
+            "immediately, so a many-surface / many-section report never hits "
+            "the 60s tool-call timeout the synchronous 'analyze' false-fails "
+            "on. Same params as 'analyze'. Returns {job_id, report_dir, "
+            "eta_seconds (null — analyze runtime has no realtime anchor to "
+            "estimate), poll}; the 'poll' text tells you to call status(job_id) "
+            "until state is 'done' or 'failed'. One analysis at a time — a "
+            "start while another is running returns {busy: true, job_id} "
+            "instead of launching a second DSP pass."
+        ),
+        params=_analyze_action.params,
+        handler=analysis_handlers.analyze_start_handler,
+        runs_server_side=True,
+        example=(
+            "ableton_analysis(action='start', song_slug='reggae-metal')"
+        ),
+        tips=(
+            "Prefer start/status over the synchronous 'analyze' for a full-band "
+            "song or one with many declared sections — the DSP pipeline "
+            "(loudness + masking + timing + cross-rhythm + reverb, per section) "
+            "can run past 60s and red-time-out the synchronous call.",
+            "status long-polls ~45s per call, so the poll loop is a handful of "
+            "calls, not a busy spin.",
+            "Input errors (typo'd slug, no captures dir) surface via status as "
+            "state='failed' with the teaching error — start returns a handle "
+            "first, then status carries the diagnosis.",
+        ),
+    )
+)
+
+
+register(
+    Action(
+        tool="ableton_analysis",
+        name="status",
+        description=(
+            "Poll a background analysis started with 'start'. Long-polls ~45s "
+            "for the job to finish, then returns {job_id, state, progress, "
+            "report_dir} plus {report, report_path} on state='done' or {error} "
+            "on state='failed'. Repeat until state is 'done' or 'failed'. A "
+            "running analysis returns state='running' with a coarse progress "
+            "stage. 'report' is the same lightweight summary the synchronous "
+            "'analyze' returns (master peak, overshoot/section counts, "
+            "analysis_code stale flag); the full per-stem MixReport JSON stays "
+            "on disk at report_path."
+        ),
+        params=(
+            ParamSpec(
+                name="job_id",
+                type="str",
+                description=(
+                    "The job_id returned by ableton_analysis(action='start')."
+                ),
+            ),
+        ),
+        handler=analysis_handlers.analyze_status_handler,
+        runs_server_side=True,
+        example=(
+            "ableton_analysis(action='status', job_id='analyze-ab12cd34ef56')"
+        ),
+        tips=(
+            "Unknown job_id returns a structured error naming recent analyze "
+            "jobs — job state lives in the server process, so it resets when "
+            "the MCP server restarts.",
         ),
     )
 )

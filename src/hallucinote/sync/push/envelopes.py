@@ -320,6 +320,68 @@ def classify_envelope_route(
     return "unroutable"
 
 
+def _session_clip_host_track(
+    conn: sqlite3.Connection, envelope: sqlite3.Row,
+) -> str | None:
+    """The track whose covering session clip a ``session_clip``-routed envelope
+    rides — ``target_track_id`` for mixer/pan/send, the device's PARENT track
+    for device_parameter (device_parameter rows carry no ``target_track_id``).
+    Mirrors :func:`classify_envelope_route`'s host-track resolution so the two
+    never drift."""
+    kind = envelope["target_kind"]
+    if kind in ("mixer_volume", "mixer_pan", "send_level"):
+        return envelope["target_track_id"]
+    if kind == "device_parameter":
+        chain_row = Q.get_device_parent_chain(conn, envelope["target_device_id"])
+        return chain_row["parent_track_id"] if chain_row is not None else None
+    return None
+
+
+def envelope_hosting_clip_ids(
+    conn: sqlite3.Connection, song_id: str,
+) -> set[str]:
+    """ARR-PROJ §5/§9: the set of session-clip ids that HOST a clip-bound
+    envelope — i.e. clips whose envelopes ``duplicate_to_arrangement``
+    snapshot-copies into the arrangement (W4-A).
+
+    An arrangement placement of such a clip MUST materialize via the duplicate
+    path, NOT create+fill: create+fill writes notes only and would silently
+    drop the clip envelope (the §9 routing risk). The arrangement planner routes
+    every placement whose ``clip_id`` is in this set to duplicate-onto-cleared,
+    and every other (note-only) placement to create+fill.
+
+    A clip hosts an envelope when the envelope routes ``session_clip``
+    (:func:`classify_envelope_route`) and a covering placement resolves to it,
+    or for a materialized clip-scoped kind (``note_expression`` rides its note's
+    clip). ``clip_cc`` / ``clip_pitch_bend`` are LOM-skipped by the envelopes
+    phase today, but their authored clip is included defensively (harmless — if
+    the envelope isn't on the session clip there is nothing for duplicate to
+    carry and nothing for create+fill to lose). Reuses the authoritative
+    classifier so routing never drifts from the envelopes phase.
+    """
+    hosts: set[str] = set()
+    for env in Q.get_envelopes_for_song(conn, song_id):
+        route = classify_envelope_route(conn, env, song_id=song_id)
+        if route == "session_clip":
+            host_track_id = _session_clip_host_track(conn, env)
+            span = _envelope_span(conn, env["id"])
+            if host_track_id and span:
+                cov = _resolve_envelope_session_clip(
+                    conn, song_id=song_id, target_track_id=host_track_id,
+                    env_min=span[0], env_max=span[1],
+                )
+                if cov is not None:
+                    hosts.add(cov.clip_id)
+        elif route == "clip_scoped":
+            if env["target_clip_id"]:
+                hosts.add(env["target_clip_id"])
+            elif env["target_note_id"]:
+                note = Q.get_note(conn, env["target_note_id"])
+                if note is not None:
+                    hosts.add(note["clip_id"])
+    return hosts
+
+
 def _warn_non_session_route(
     plan: PushPlan,
     *,

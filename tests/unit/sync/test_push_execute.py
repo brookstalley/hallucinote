@@ -86,6 +86,51 @@ def tiny_song(conn, song):
     return {"track_id": tid, "clip_id": cid, "song_id": song}
 
 
+def _handle_arrangement_projection(req, arr_state):
+    """Model the ARR-PROJ projection so the executor's post-arrangement integrity
+    assert (Chunk 3) sees a faithful materialization: track create/delete on the
+    arrangement lane and answer list / note-list from the accumulated state.
+    Returns a FakeResponse, or None to fall through to the generic dispatch."""
+    p = req.params
+    if req.tool == "ableton_clip" and p.get("location") == "arrangement":
+        lane = arr_state.setdefault(p["track_index"], [])
+        if req.action == "create":
+            lane.append({"start_beats": float(p["start_beats"]),
+                         "name": p.get("name") or "",
+                         "notes": list(p.get("notes") or [])})
+            lane.sort(key=lambda c: c["start_beats"])
+            idx = 1 + next(i for i, c in enumerate(lane)
+                           if abs(c["start_beats"] - float(p["start_beats"])) < 1e-9)
+            return FakeResponse(ok=True, result={"arrangement_clip_index": idx})
+        if req.action == "delete":
+            lane.sort(key=lambda c: c["start_beats"])
+            ci = p["clip_index"]
+            if 1 <= ci <= len(lane):
+                lane.pop(ci - 1)
+            return FakeResponse(ok=True, result={"deleted": True})
+        if req.action == "list":
+            lane.sort(key=lambda c: c["start_beats"])
+            return FakeResponse(ok=True, result={"clips": [
+                {"arrangement_clip_index": i, "start_beats": c["start_beats"],
+                 "name": c["name"], "length": 4.0, "muted": False,
+                 "note_count": len(c["notes"])}
+                for i, c in enumerate(lane, 1)
+            ]})
+    if (req.tool == "ableton_note" and req.action == "list"
+            and p.get("location") == "arrangement"):
+        lane = sorted(arr_state.get(p["track_index"], []), key=lambda c: c["start_beats"])
+        ci = p["clip_index"]
+        notes = lane[ci - 1]["notes"] if 1 <= ci <= len(lane) else []
+        return FakeResponse(ok=True, result={"notes": [
+            {"note_id": j, "pitch": n["pitch"],
+             "start_time": n.get("start_time", n.get("start_beats", 0.0)),
+             "duration": n.get("duration", n.get("duration_beats", 0.0)),
+             "velocity": n.get("velocity", 100), "mute": bool(n.get("mute", False))}
+            for j, n in enumerate(notes)
+        ]})
+    return None
+
+
 def _make_send_fn(
     *,
     fail_keys: set[str] = frozenset(),
@@ -109,6 +154,7 @@ def _make_send_fn(
     """
     counters: dict[str, int] = {}
     call_log: list[dict] = []
+    arr_state: dict[int, list[dict]] = {}  # ARR-PROJ: per-track arrangement lane
 
     def _kind_for(tool: str, action: str) -> str | None:
         # Map (tool, action) to the link kind used by apply_push_results.
@@ -150,6 +196,13 @@ def _make_send_fn(
                 error=f"simulated failure for {composite}",
                 hint=fail_hint,
             )
+
+        # ARR-PROJ Chunk 3: model the arrangement projection (create/delete/list/
+        # note-list) so the executor's post-arrangement integrity assert reads a
+        # faithful materialization instead of an empty (looks-dropped) lane.
+        arr_resp = _handle_arrangement_projection(req, arr_state)
+        if arr_resp is not None:
+            return arr_resp
 
         # perform_batch (ENV-9P4T) fans out to a per-arc result list; echo
         # each arc's arc_id with a configurable automation_state (default 1
@@ -1700,6 +1753,62 @@ def test_set_parameter_display_fallback_retries_with_normalized(
     assert float(normalized_writes[0]["params"]["value"]) == pytest.approx(0.389)
 
 
+def test_set_parameter_non_numeric_display_falls_back_to_normalized(
+    conn, song, session, state_dir,
+):
+    """SYN-RACK-PRESET-RELINK §3: a pan param captured as a display string
+    ("50L") that the handler refuses with the NON-NUMERIC-display teaching error
+    ('...has a non-numeric display...; set it via the normalized `value`') is
+    retried once with the DB's stored normalized value. Before this, that
+    message matched no fallback hint, so it was 5 guaranteed, unrecoverable
+    failures on every push of a track with a dialed Analog pan."""
+    tid = M.create_track(
+        conn, song_id=song, track_index=1, name="Alien Voice", kind="midi",
+    )
+    chain = M.create_device_chain(conn, parent_track_id=tid)
+    did = M.create_device(
+        conn, chain_id=chain, position=1, kind="Analog", display_name="Analog",
+    )
+    M.set_device_parameter(
+        conn, device_id=did, name="AMP1 Pan",
+        value_display="50L", value_normalized=0.25,
+    )
+    base = _make_send_fn()
+
+    def send(req):
+        if (
+            req.action == "set_parameter"
+            and req.params.get("value_display") is not None
+        ):
+            base.call_log.append({
+                "tool": req.tool, "action": req.action,
+                "params_keys": sorted(req.params.keys()),
+                "params": dict(req.params),
+            })
+            return FakeResponse(
+                ok=False,
+                error=(
+                    "parameter 'AMP1 Pan' has a non-numeric display "
+                    "(' 50L'..' 50R'); set it via the normalized `value` "
+                    "instead of `value_display`"
+                ),
+            )
+        return base(req)
+
+    send.call_log = base.call_log  # type: ignore[attr-defined]
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send,
+    )
+    assert result.outcome == "ok"
+    normalized_writes = [
+        c for c in send.call_log
+        if c["action"] == "set_parameter" and "value" in c["params"]
+    ]
+    assert len(normalized_writes) == 1
+    assert float(normalized_writes[0]["params"]["value"]) == pytest.approx(0.25)
+
+
 # ---------------------------------------------------------------------------
 # SYN-6B4Q: cue deferral (skip-with-warning) + plan-error halt
 # ---------------------------------------------------------------------------
@@ -1814,6 +1923,120 @@ def test_execute_cue_past_composed_length_halts_partial(
     assert by_name["cues"]["status"] == "halted"
 
 
+def test_execute_arrangement_integrity_assert_halts_on_drop(
+    conn, song, session, tiny_song, state_dir,
+):
+    """ARR-PROJ Chunk 3: the post-arrangement PREVENTION assert HALTs the push
+    when the materialized arrangement diverges from the DB — here a simulated
+    bulk-drop (Live reports ZERO notes for a clip the DB filled) — instead of
+    reporting OK. The structural backstop for the 2026-06-21/-22 drop/orphan
+    bugs; without it the corrupt render passes every cheap check."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4,
+    )
+    M.insert_notes(conn, clip_id=tiny_song["clip_id"], notes=[
+        {"pitch": 60, "start_beats": 0.0, "duration_beats": 1.0, "velocity": 100},
+    ])
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=tiny_song["track_id"],
+        clip_id=tiny_song["clip_id"], start_bar=1.0, end_bar=2.0,
+    )
+    base = _make_send_fn()
+
+    def corrupt(req, *, read_timeout=None):
+        resp = base(req, read_timeout=read_timeout)
+        if (req.tool == "ableton_note" and req.action == "list"
+                and req.params.get("location") == "arrangement"):
+            resp.result = {"notes": []}  # the clip is placed but its notes dropped
+        return resp
+
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=corrupt,
+    )
+    assert result.outcome == "partial"
+    assert result.phase_halted == "arrangement"
+    blob = json.dumps(json.loads((state_dir / ".last-push-errors.json").read_text()))
+    assert "integrity" in blob.lower()
+    assert "missing" in blob.lower()  # the drop reads as a missing note
+
+
+def test_execute_arrangement_assert_connection_loss_writes_state(
+    conn, song, session, tiny_song, state_dir,
+):
+    """ARR-PROJ Chunk 3: a Live disconnect DURING the post-arrangement integrity
+    re-probe halts as connection_lost (not an uncaught traceback) and still writes
+    the terminal state file — the executor's always-write-state contract."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4,
+    )
+    M.insert_notes(conn, clip_id=tiny_song["clip_id"], notes=[
+        {"pitch": 60, "start_beats": 0.0, "duration_beats": 1.0, "velocity": 100},
+    ])
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=tiny_song["track_id"],
+        clip_id=tiny_song["clip_id"], start_bar=1.0, end_bar=2.0,
+    )
+    base = _make_send_fn()
+
+    def drop_conn(req, *, read_timeout=None):
+        if (req.tool == "ableton_note" and req.action == "list"
+                and req.params.get("location") == "arrangement"):
+            raise ConnectionRefusedError("Live vanished mid-assert")
+        return base(req, read_timeout=read_timeout)
+
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=drop_conn,
+    )
+    assert result.outcome == "connection_lost"
+    assert result.exit_code == push_execute.EXIT_CONNECTION_LOST
+    assert (state_dir / ".last-push-state.json").exists()  # always-write-state held
+
+
+def test_execute_arrangement_probe_failure_warns_not_silent_ok(
+    conn, song, session, tiny_song, state_dir,
+):
+    """Cumulative-Critic W1: when the post-arrangement integrity re-probe FAILS
+    (Live note-list errors — NOT a disconnect), the placement goes UNVERIFIED. The
+    assert must NOT halt (a probe error isn't silent corruption), but the push must
+    NOT silently report a clean OK either: it surfaces a benign warning so
+    'couldn't verify N clip(s)' reads distinctly from 'verified all N'. Without it,
+    a push where verification was IMPOSSIBLE is indistinguishable from one that
+    PASSED — the exact gap the assert exists to close."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4,
+    )
+    M.insert_notes(conn, clip_id=tiny_song["clip_id"], notes=[
+        {"pitch": 60, "start_beats": 0.0, "duration_beats": 1.0, "velocity": 100},
+    ])
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=tiny_song["track_id"],
+        clip_id=tiny_song["clip_id"], start_bar=1.0, end_bar=2.0,
+    )
+    base = _make_send_fn()
+
+    def probe_fails(req, *, read_timeout=None):
+        # Let materialization (create/delete) and the clip-list succeed, but fail
+        # the integrity re-probe's NOTE list so the placement can't be verified.
+        if (req.tool == "ableton_note" and req.action == "list"
+                and req.params.get("location") == "arrangement"):
+            return FakeResponse(ok=False, error="simulated re-probe failure")
+        return base(req, read_timeout=read_timeout)
+
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=probe_fails,
+    )
+    # Probe failure is not silent corruption → no halt, exit stays clean.
+    assert result.outcome == "ok"
+    assert result.phase_halted is None
+    # ...but the unverified placement is surfaced as a benign warning.
+    assert any("could NOT be verified" in w for w in result.warnings), result.warnings
+    state = json.loads((state_dir / ".last-push-state.json").read_text())
+    assert any("could NOT be verified" in w for w in state.get("warnings", []))
+
+
 # ---------------------------------------------------------------------------
 # PSH-2R7K — phase-targeting (--only / --start-at / --stop-after)
 # ---------------------------------------------------------------------------
@@ -1885,6 +2108,35 @@ def test_filter_phases_only_excludes_window():
 def test_filter_phases_stop_before_start_errors():
     with pytest.raises(push_execute.PhaseTargetError):
         push_execute._filter_phases(_DEMO_PHASES, start_at="c", stop_after="a")
+
+
+# PSH-PHASEORDER: validate_phase_targets is the pure name-validation the CLI
+# runs up front (before any Live probe). It shares the rule with _filter_phases.
+def test_validate_phase_targets_accepts_valid():
+    # No raise = valid. Covers a bare run, --only, a window, and a prefix.
+    names = ["a", "b", "c", "d"]
+    push_execute.validate_phase_targets(names)
+    push_execute.validate_phase_targets(names, only="c")
+    push_execute.validate_phase_targets(names, start_at="b", stop_after="d")
+    push_execute.validate_phase_targets(names, stop_after="b")
+
+
+def test_validate_phase_targets_unknown_name_teaches():
+    with pytest.raises(push_execute.PhaseTargetError) as exc:
+        push_execute.validate_phase_targets(["a", "b"], start_at="nope")
+    msg = str(exc.value)
+    assert "unknown --start-at phase 'nope'" in msg
+    assert "a, b" in msg  # the valid list, in order
+
+
+def test_validate_phase_targets_only_excludes_window():
+    with pytest.raises(push_execute.PhaseTargetError):
+        push_execute.validate_phase_targets(["a", "b", "c"], only="a", stop_after="b")
+
+
+def test_validate_phase_targets_stop_before_start_errors():
+    with pytest.raises(push_execute.PhaseTargetError):
+        push_execute.validate_phase_targets(["a", "b", "c"], start_at="c", stop_after="a")
 
 
 def test_execute_only_runs_one_phase(conn, song, session, tiny_song, state_dir):
@@ -2011,3 +2263,266 @@ def test_terminal_state_has_current_phase_none(conn, song, session, tiny_song, s
     )
     state = json.loads((state_dir / ".last-push-state.json").read_text())
     assert state["current_phase"] is None
+
+
+# ---------------------------------------------------------------------------
+# MICROTUNE Chunk 3: the gated tuning notice rides the warnings channel
+# ---------------------------------------------------------------------------
+def _tuning_aware_send(*, tuning_system):
+    """Wrap the standard fake so an ableton_probe get of song.tuning_system
+    returns the given {type,value}; everything else delegates to _make_send_fn."""
+    inner = _make_send_fn()
+
+    def send(req, *, read_timeout=None):
+        if req.tool == "ableton_probe" and req.action == "get":
+            path = req.params.get("path")
+            if path == "song.tuning_system":
+                return FakeResponse(ok=True, result={"path": path, **tuning_system})
+        return inner(req, read_timeout=read_timeout)
+
+    send.call_log = inner.call_log  # type: ignore[attr-defined]
+    return send
+
+
+def _set_tuning_on(conn, song_id):
+    from hallucinote.tuning.model import TuningData
+    tuning = TuningData(
+        name="19-EDO", step_count=19, period_cents=1200.0, reference_note=60,
+        step_cents=tuple(round(1200.0 * i / 19, 6) for i in range(1, 20)),
+    )
+    M.set_song_tuning(
+        conn, song_id=song_id,
+        tuning_ref="tunings/19-edo.ascl", tuning_data=tuning.to_blob(),
+    )
+
+
+def test_execute_emits_tuning_notices_for_alt_tuned_song(
+    conn, song, session, tiny_song, state_dir,
+):
+    _set_tuning_on(conn, song)
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session, state_dir=state_dir,
+        send_fn=_tuning_aware_send(tuning_system={"type": "NoneType", "value": None}),
+    )
+    # Push still OK; the notices ride the benign warnings channel + the summary.
+    assert result.outcome == "ok"
+    joined = "\n".join(result.warnings)
+    assert "tunings/19-edo.ascl" in joined  # the load instruction names the .ascl
+    assert "NO tuning loaded" in joined
+    assert "Warnings (push still OK)" in push_execute.format_summary(result)
+
+
+def test_execute_no_tuning_notice_for_12tet_song(
+    conn, song, session, tiny_song, state_dir,
+):
+    # No tuning set: the notice path returns [] without any probe of tuning_system.
+    send_fn = _make_send_fn()
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session, state_dir=state_dir,
+        send_fn=send_fn,
+    )
+    assert all("tuning" not in w.lower() for w in result.warnings)
+    probed = [c for c in send_fn.call_log
+              if c["tool"] == "ableton_probe"
+              and c["params"].get("path") == "song.tuning_system"]
+    assert probed == []  # 12-TET path costs no Live round-trip
+
+
+# ---------------------------------------------------------------------------
+# SYN-9F4K — fail loud on an empty-rack load (devices-phase convergence)
+# ---------------------------------------------------------------------------
+
+
+def _rack_song(conn, song, session):
+    """A pre-linked track holding an UNLINKED rack whose nested chain carries a
+    dialed param. On a fresh `only='devices'` push the rack loads, then the
+    convergence pass emits the nested write — the exact shape that cascades when
+    the rack comes up empty (the 2026-06-20 repro: AG Techno Kit, 0 chains)."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=5,
+    )
+    chain = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    rack = M.create_device(
+        conn, chain_id=chain, position=1,
+        kind="Drum Rack", display_name="AG Techno Kit",
+    )
+    nested_chain = M.create_device_chain(conn, parent_rack_device_id=rack, position=1)
+    nested = M.create_device(
+        conn, chain_id=nested_chain, position=1, kind="Simpler", display_name="Kick",
+    )
+    M.set_device_parameter(
+        conn, device_id=nested, name="Volume",
+        value_display="-6 dB", value_normalized=0.5,
+    )
+    return {"rack_id": rack, "nested_id": nested}
+
+
+def _make_chain_count_send_fn(*, chain_count, model_cascade=False):
+    """``_make_send_fn`` + a ``get_device_chains`` answer with a fixed
+    ``chain_count`` (and otherwise acks, loads → device_index).
+
+    ``model_cascade``: when True, a ``set_parameter`` whose node descends into a
+    chain (``path`` present) — the doomed nested write — returns the real Live
+    failure (``IndexError: chain_index … out of range [1, 0]``). With the guard
+    working those writes are suppressed and this branch never fires; if the guard
+    regressed it WOULD fire, so the test's "no chain_index cascade" assertion is
+    meaningful (otherwise the fake would ack the doomed write and hide the bug).
+    Also fails ``get_parameters`` on a nested node (the diff's read into a missing
+    chain fails in real Live too → the diff keeps the write, then the guard catches
+    it) so the re-push path is modeled honestly."""
+    base = _make_send_fn()
+
+    def send(req, *, read_timeout=None):
+        if req.tool == "ableton_device" and req.action == "get_device_chains":
+            base.call_log.append({
+                "tool": req.tool, "action": req.action,
+                "params_keys": sorted(req.params.keys()),
+                "params": dict(req.params), "read_timeout": read_timeout,
+            })
+            return FakeResponse(ok=True, result={
+                "chain_count": chain_count, "chains": [],
+            })
+        nested = bool((req.params.get("node") or {}).get("path"))
+        if model_cascade and req.tool == "ableton_device" and nested and req.action in (
+            "set_parameter", "get_parameters",
+        ):
+            base.call_log.append({
+                "tool": req.tool, "action": req.action,
+                "params_keys": sorted(req.params.keys()),
+                "params": dict(req.params), "read_timeout": read_timeout,
+            })
+            return FakeResponse(
+                ok=False, error="IndexError: chain_index 1 out of range [1, 0]",
+            )
+        return base(req, read_timeout=read_timeout)
+
+    send.call_log = base.call_log  # type: ignore[attr-defined]
+    return send
+
+
+def test_execute_empty_rack_halts_with_one_error_no_cascade(
+    conn, song, session, state_dir,
+):
+    """A rack that loads with 0 chains while the DB authored nested content halts
+    the devices phase on ONE 'preset content did not load' error — the doomed
+    nested write is never dispatched (no chain-index-out-of-range cascade)."""
+    _rack_song(conn, song, session)
+    # model_cascade=True: had the guard NOT suppressed, the nested write would
+    # come back with the real chain-index error — so the "no cascade" assertion
+    # below actually has teeth.
+    send_fn = _make_chain_count_send_fn(chain_count=0, model_cascade=True)
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session, state_dir=state_dir,
+        send_fn=send_fn, only="devices",
+    )
+    assert result.outcome == "partial"
+    assert result.phase_halted == "devices"
+    # The probe fired against the freshly-loaded rack's live address.
+    probes = [c for c in send_fn.call_log if c["action"] == "get_device_chains"]
+    assert len(probes) == 1
+    assert probes[0]["params"]["track_index"] == 5
+    assert probes[0]["params"]["device_index"] == 1
+    # The doomed nested write was NEVER dispatched (suppressed, not cascaded).
+    set_params = [c for c in send_fn.call_log if c["action"] == "set_parameter"]
+    assert set_params == []
+    # Exactly one error, naming the real cause — and NO chain-index cascade.
+    errors = json.loads((state_dir / ".last-push-errors.json").read_text())["errors"]
+    assert len(errors) == 1
+    assert "preset content did not load" in errors[0]["error"]
+    assert "AG Techno Kit" in errors[0]["error"]
+    assert errors[0]["hint"]
+    assert all("chain_index" not in e["error"] for e in errors)
+    # The summary surfaces the single halt cause.
+    assert "preset content did not load" in push_execute.format_summary(result)
+
+
+def test_execute_repush_empty_rack_halts_in_main_dispatch_not_cascade(
+    conn, song, session, state_dir,
+):
+    """W1 regression: a rack ALREADY linked (a re-push) that STILL loads empty
+    re-emits its nested writes in the MAIN dispatch (not the convergence pass,
+    which only sees a device loaded this pass). The guard must catch them there
+    too, or the cascade returns on every push after the first. Here the rack is
+    pre-linked at device_index 1; with no load this pass the rack's name isn't
+    available, so the message falls back to its live address."""
+    fx = _rack_song(conn, song, session)
+    # Pre-link the rack: this is the second push, the device already has a Live
+    # index from the first.
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=fx["rack_id"],
+        ableton_index=1,
+    )
+    send_fn = _make_chain_count_send_fn(chain_count=0, model_cascade=True)
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session, state_dir=state_dir,
+        send_fn=send_fn, only="devices",
+    )
+    assert result.outcome == "partial"
+    assert result.phase_halted == "devices"
+    # No load this pass (already linked); the guard fired in the MAIN dispatch.
+    loads = [c for c in send_fn.call_log if c["action"] == "load"]
+    assert loads == []
+    probes = [c for c in send_fn.call_log if c["action"] == "get_device_chains"]
+    assert len(probes) == 1
+    # The nested write never dispatched — no cascade on the re-push either.
+    set_params = [c for c in send_fn.call_log if c["action"] == "set_parameter"]
+    assert set_params == []
+    errors = json.loads((state_dir / ".last-push-errors.json").read_text())["errors"]
+    assert len(errors) == 1
+    assert "preset content did not load" in errors[0]["error"]
+    assert all("chain_index" not in e["error"] for e in errors)
+    # Address fallback (no load → no name): identifies the rack by its address.
+    assert "track index 5" in errors[0]["error"]
+
+
+def test_execute_populated_rack_dispatches_nested_writes(
+    conn, song, session, state_dir,
+):
+    """The mirror case: when the same rack loads WITH chains, the guard keeps the
+    nested writes — they dispatch and the phase completes OK."""
+    _rack_song(conn, song, session)
+    send_fn = _make_chain_count_send_fn(chain_count=16)
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session, state_dir=state_dir,
+        send_fn=send_fn, only="devices",
+    )
+    assert result.outcome == "ok"
+    # The nested write was dispatched (not suppressed).
+    set_params = [c for c in send_fn.call_log if c["action"] == "set_parameter"]
+    assert len(set_params) == 1
+    assert set_params[0]["params"]["parameter_name"] == "Volume"
+    # No errors file on a clean push.
+    assert not (state_dir / ".last-push-errors.json").exists()
+
+
+# ---------- SYN-2D9K: orphan-param teaching hint on a set_parameter 404 ----------
+
+
+def test_orphan_param_hint_fires_on_param_not_found():
+    """A set_parameter that 404s on a param the device lacks gets the orphan-cause
+    hint (names the stale-orphan-from-class-change cause + the rebuild cure),
+    replacing the MCP's misleading value-range hint."""
+    h = push_execute._orphan_param_hint(
+        tool="ableton_device", action="set_parameter",
+        err_msg="parameter 'A Coarse' not found on device 1; available: ['Volume']",
+        parameter_name="A Coarse",
+    )
+    assert h is not None
+    assert "stale orphan" in h and "A Coarse" in h and "SYN-2D9K" in h
+
+
+def test_orphan_param_hint_silent_on_non_orphan_failures():
+    """It must NOT fire on a value-range refusal, a different tool/action, or a
+    missing error — only on the param-not-found shape of a device set_parameter."""
+    f = push_execute._orphan_param_hint
+    # A value-range refusal is not the orphan shape.
+    assert f(tool="ableton_device", action="set_parameter",
+             err_msg="value 5.0 out of range [0, 1]", parameter_name="Volume") is None
+    # Wrong tool / wrong action / no error message.
+    assert f(tool="ableton_clip", action="set_parameter",
+             err_msg="not found", parameter_name=None) is None
+    assert f(tool="ableton_device", action="load",
+             err_msg="not found", parameter_name=None) is None
+    assert f(tool="ableton_device", action="set_parameter",
+             err_msg=None, parameter_name="X") is None

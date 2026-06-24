@@ -83,16 +83,61 @@ class FakeSong:
         self.scenes: list[Any] = [object(), object()]
         self.view = None  # info_handler tolerates absent view
 
+        # Arrangement-override latch (back_to_arranger). Default: not engaged.
+        self.back_to_arranger = 0
+        self.re_enable_automation_called = 0
+
         self.play_called = 0
+        self.continue_called = 0
         self.stop_called = 0
 
     def start_playing(self):
         self.play_called += 1
         self.is_playing = True
 
+    def continue_playing(self):
+        self.continue_called += 1
+        self.is_playing = True
+
     def stop_playing(self):
         self.stop_called += 1
         self.is_playing = False
+
+    def re_enable_automation(self):
+        self.re_enable_automation_called += 1
+
+
+class LatchStuckSong(FakeSong):
+    """A Song whose ``back_to_arranger`` latch ignores API writes — mirrors the
+    Live 12.x LOM quirk where ``setattr(song, 'back_to_arranger', 0)`` is
+    accepted without error but does not clear the override.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._latched = True
+
+    @property
+    def back_to_arranger(self):
+        return self._latched
+
+    @back_to_arranger.setter
+    def back_to_arranger(self, value):
+        # Live silently drops the write; the latch survives.
+        pass
+
+
+class HonoredLatchNoReEnableSong(FakeSong):
+    """A latched Song that HONORS the API clear but exposes no callable
+    ``re_enable_automation`` — mirrors an older Live build / minimal surface.
+    Exercises the handler's ``callable()`` guard so a missing method does not
+    crash the recovery.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.back_to_arranger = 1  # latched; plain attr setter honors the clear
+        self.re_enable_automation = None  # not callable → guard must skip it
 
 
 class FakeLiveContext:
@@ -160,8 +205,10 @@ _EXPECTED_ACTIONS = {
     "set_tempo",
     "set_signature",
     "play",
+    "continue_playing",
     "stop",
     "seek",
+    "back_to_arrangement",
     "snapshot",
     "revert",
     "list_snapshots",
@@ -200,6 +247,26 @@ def test_info_returns_structured_snapshot(loaded_session_actions):
     assert r["scene_count"] == 2
     # Reads via Application.View — defaults to "Session" in the fake.
     assert r["focused_view"] == "Session"
+    # Arrangement-override latch is always reported; not engaged by default,
+    # and no teaching block is attached when nothing is overridden.
+    assert r["back_to_arranger"] is False
+    assert "arrangement_override" not in r
+
+
+def test_info_surfaces_latched_arrangement_override(loaded_session_actions):
+    """When back_to_arranger is engaged, info names the state + the GUI
+    recovery instead of leaving the agent to read a bare bool (MCP-7P3R)."""
+    song = FakeSong()
+    song.back_to_arranger = 1
+    ctx = FakeLiveContext(song=song)
+    resp = dispatch(Request(tool="ableton_session", action="info"), context=ctx)
+    assert resp.ok is True
+    r = resp.result
+    assert r["back_to_arranger"] is True
+    assert r["arrangement_override"]["latched"] is True
+    note = r["arrangement_override"]["note"]
+    assert "Back to Arrangement" in note
+    assert "back_to_arrangement" in note  # points at the recovery action
 
 
 def test_info_focused_view_reports_unknown_when_application_unreachable(
@@ -384,8 +451,29 @@ def test_play_invokes_song_start_playing(loaded_session_actions):
     assert resp.ok is True
     assert ctx.song.play_called == 1
     assert ctx.song.is_playing is True
-    # Wave-2 W2-D / B-15: result_template returns a structured response.
-    assert resp.result == {"is_playing": True}
+    # play = Live's *Start* verb; we report the verb invoked, not a claimed
+    # start position (the realized position isn't reliably read back).
+    assert resp.result["is_playing"] is True
+    assert resp.result["verb"] == "start"
+    assert "started_from" not in resp.result  # no fabricated position field
+    # the note teaches the override latch as the real cause of "no audio".
+    assert "back_to_arrangement" in resp.result["note"]
+
+
+def test_continue_playing_reports_continue_verb(loaded_session_actions):
+    ctx = FakeLiveContext()
+    resp = dispatch(
+        Request(tool="ableton_session", action="continue_playing"), context=ctx
+    )
+    assert resp.ok is True
+    # *Continue*: resume from the last-stopped position.
+    assert ctx.song.continue_called == 1
+    assert ctx.song.play_called == 0
+    assert ctx.song.is_playing is True
+    assert resp.result["is_playing"] is True
+    assert resp.result["verb"] == "continue"
+    assert "started_from" not in resp.result
+    assert "seek" in resp.result["note"]
 
 
 def test_stop_invokes_song_stop_playing(loaded_session_actions):
@@ -478,6 +566,92 @@ def test_seek_acquires_live_state_lock(loaded_session_actions):
     )
     assert resp.ok is True
     assert recording.events == ["acquire", "release"]
+
+
+# ---------- back_to_arrangement ----------
+
+
+def test_back_to_arrangement_noop_when_not_overridden(loaded_session_actions):
+    """Nothing latched → cleared:true, was_latched:false, and no write is
+    attempted on the latch."""
+    ctx = FakeLiveContext()
+    resp = dispatch(
+        Request(tool="ableton_session", action="back_to_arrangement"),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert resp.result["cleared"] is True
+    assert resp.result["was_latched"] is False
+    # No best-effort recovery attempted when there was nothing to recover.
+    assert ctx.song.re_enable_automation_called == 0
+
+
+def test_back_to_arrangement_clears_a_honored_latch(loaded_session_actions):
+    """When Live honors the API clear (the FakeSong latch is a plain settable
+    attribute), the latch drops and we report cleared:true."""
+    song = FakeSong()
+    song.back_to_arranger = 1
+    ctx = FakeLiveContext(song=song)
+    resp = dispatch(
+        Request(tool="ableton_session", action="back_to_arrangement"),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert resp.result["cleared"] is True
+    assert resp.result["was_latched"] is True
+    assert song.back_to_arranger == 0
+    # Mirrors the GUI button: it also re-enables overridden automation.
+    assert song.re_enable_automation_called == 1
+    assert "warning" not in resp.result
+
+
+def test_back_to_arrangement_teaches_when_live_ignores_the_clear(
+    loaded_session_actions,
+):
+    """The Live 12.x quirk: setattr is accepted but the latch survives. The
+    action must report cleared:false with a teaching warning naming the GUI
+    button — never a misleading ok (MCP-7P3R direction 1)."""
+    song = LatchStuckSong()
+    ctx = FakeLiveContext(song=song)
+    resp = dispatch(
+        Request(tool="ableton_session", action="back_to_arrangement"),
+        context=ctx,
+    )
+    assert resp.ok is True
+    assert resp.result["cleared"] is False
+    assert resp.result["was_latched"] is True
+    # It still tried (re_enable_automation is the GUI button's other half).
+    assert song.re_enable_automation_called == 1
+    assert "Back to Arrangement" in resp.result["warning"]
+
+
+def test_back_to_arrangement_tolerates_missing_re_enable_automation(
+    loaded_session_actions,
+):
+    """The callable() guard skips a non-callable/absent re_enable_automation
+    (older Live build) without crashing — the latch still clears."""
+    song = HonoredLatchNoReEnableSong()
+    ctx = FakeLiveContext(song=song)
+    resp = dispatch(
+        Request(tool="ableton_session", action="back_to_arrangement"), context=ctx
+    )
+    assert resp.ok is True
+    assert resp.result["cleared"] is True
+    assert resp.result["was_latched"] is True
+    assert song.back_to_arranger == 0  # the plain setter honored the clear
+
+
+def test_back_to_arrangement_runs_once_on_main(loaded_session_actions):
+    """Atomic: the whole read-clear-readback happens in one main-thread bounce
+    (the handler is not runs_on_worker)."""
+    song = FakeSong()
+    song.back_to_arranger = 1
+    ctx = FakeLiveContext(song=song)
+    dispatch(
+        Request(tool="ableton_session", action="back_to_arrangement"),
+        context=ctx,
+    )
+    assert ctx.run_on_main_calls == 1
 
 
 # set_arrangement_loop: deprecated in Wave M-5 — see

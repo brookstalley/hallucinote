@@ -27,6 +27,11 @@ import re as _re
 from typing import Any
 
 from ..dispatcher import LiveContext
+from ._arrangement_latch import (
+    CLICK_BACK_TO_ARRANGEMENT,
+    OVERRIDE_DESCRIPTION,
+    is_overridden,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -46,7 +51,8 @@ def info_handler(context: LiveContext) -> dict[str, Any]:
     master = song.master_track
     master_mixer = master.mixer_device
 
-    return {
+    overridden = is_overridden(song)
+    snapshot: dict[str, Any] = {
         "tempo": float(song.tempo),
         "signature": {
             "numerator": int(song.signature_numerator),
@@ -54,6 +60,11 @@ def info_handler(context: LiveContext) -> dict[str, Any]:
         },
         "is_playing": bool(song.is_playing),
         "current_song_time": float(song.current_song_time),
+        # The Arrangement-override latch. A bare ``True`` here is the silent
+        # cause of "transport moving, no audio" — so when it is engaged we
+        # also surface a named, recoverable state rather than leaving the
+        # agent to interpret the bool (MCP-7P3R direction 4).
+        "back_to_arranger": overridden,
         "loop": {
             "enabled": bool(song.loop),
             "start": float(song.loop_start),
@@ -68,6 +79,16 @@ def info_handler(context: LiveContext) -> dict[str, Any]:
         "scene_count": len(song.scenes),
         "focused_view": _focused_view(context),
     }
+    if overridden:
+        snapshot["arrangement_override"] = {
+            "latched": True,
+            "note": (
+                f"{OVERRIDE_DESCRIPTION} {CLICK_BACK_TO_ARRANGEMENT} "
+                f"ableton_session(action='back_to_arrangement') attempts the "
+                f"API clear and reports whether Live honored it."
+            ),
+        }
+    return snapshot
 
 
 def _focused_view(context: LiveContext) -> str:
@@ -195,6 +216,107 @@ def seek_handler(
     with context.live_state_lock:
         song_time = context.run_on_main(_compute_and_seek_on_main)
     return {"bar": bar, "beat": beat, "song_time": song_time}
+
+
+# ---------------------------------------------------------------------------
+# transport: play / continue_playing
+#
+# Both are handler actions (not declarative LiveOps) so they can return a
+# ``verb`` teaching field naming which Live transport verb fired — *Start*
+# (play) vs *Continue* (continue_playing). We report the VERB invoked, not a
+# read-back of where Live actually began: a handler can't reliably read the
+# realized start position back (the audio thread settles ``current_song_time``
+# on a delayed schedule — see ``seek_handler``). The common reason a ``seek``
+# "doesn't take" is not the transport verb at all but the ``back_to_arranger``
+# override latch suppressing Arrangement playback (MCP-7P3R directions 2 + 4 —
+# the recovery is ``back_to_arrangement``). The dispatcher runs these on the
+# main thread.
+# ---------------------------------------------------------------------------
+
+_PLAY_SEMANTICS_NOTE = (
+    "play invokes Live's *Start*; continue_playing invokes *Continue* (resume "
+    "from the last-stopped position). This result reports the verb invoked, NOT "
+    "a read-back of where Live actually began — the realized start position is "
+    "Live-state-dependent and a handler can't reliably read it back. In a clean "
+    "transport state, seek then play locates-and-plays: the render capture path "
+    "relies on exactly that (current_song_time set, then start_playing). If you "
+    "seeked and playback didn't begin there — or the transport moves but you "
+    "hear no audio — the usual cause is the back_to_arranger override latch "
+    "suppressing Arrangement playback, not the seek; clear it with "
+    "ableton_session(action='back_to_arrangement')."
+)
+
+
+def play_handler(context: LiveContext) -> dict[str, Any]:
+    """Start playback (Live's *Start* transport verb)."""
+    context.song.start_playing()
+    return {
+        "is_playing": True,
+        "verb": "start",
+        "note": _PLAY_SEMANTICS_NOTE,
+    }
+
+
+def continue_playing_handler(context: LiveContext) -> dict[str, Any]:
+    """Resume playback (Live's *Continue* transport verb).
+
+    *Continue* resumes from the last-stopped position. The result names the
+    verb invoked, not the realized start position (see ``_PLAY_SEMANTICS_NOTE``).
+    """
+    context.song.continue_playing()
+    return {
+        "is_playing": True,
+        "verb": "continue",
+        "note": _PLAY_SEMANTICS_NOTE,
+    }
+
+
+# ---------------------------------------------------------------------------
+# back_to_arrangement — recover from a Session-clip override of the Arrangement
+# ---------------------------------------------------------------------------
+
+
+def back_to_arrangement_handler(context: LiveContext) -> dict[str, Any]:
+    """Re-engage Arrangement playback after a Session clip overrode a track.
+
+    Does what Live's **Back to Arrangement** button does — clears the global
+    ``back_to_arranger`` latch and re-enables any overridden automation — then
+    reads the latch back and reports honestly whether Live honored it. In Live
+    12.x the property write is silently ignored (a LOM quirk, not a threading
+    one — this handler already runs on the main thread), so the API clear may
+    not stick; when it doesn't, we return ``cleared: False`` with a teaching
+    ``warning`` naming the GUI button rather than a misleading ``ok``. (Direction
+    1 of MCP-7P3R.)
+    """
+    song = context.song
+    if not is_overridden(song):
+        return {
+            "cleared": True,
+            "was_latched": False,
+            "note": "Arrangement was not overridden — nothing to recover.",
+        }
+
+    # Best-effort, mirroring the GUI button. Both reads/writes are already on
+    # the main thread (this handler is not runs_on_worker).
+    try:
+        song.back_to_arranger = 0
+    except (AttributeError, RuntimeError):
+        pass
+    re_enable = getattr(song, "re_enable_automation", None)
+    if callable(re_enable):
+        re_enable()
+
+    if not is_overridden(song):
+        return {"cleared": True, "was_latched": True}
+    return {
+        "cleared": False,
+        "was_latched": True,
+        "warning": (
+            f"Live did not honor the API clear: back_to_arranger is still "
+            f"latched after setting it to 0 and calling re_enable_automation. "
+            f"{CLICK_BACK_TO_ARRANGEMENT}"
+        ),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -431,6 +553,9 @@ __all__ = [
     "info_handler",
     "set_master_property_handler",
     "seek_handler",
+    "play_handler",
+    "continue_playing_handler",
+    "back_to_arrangement_handler",
     "set_signature_handler",
     "set_view_handler",
     "snapshot_handler",

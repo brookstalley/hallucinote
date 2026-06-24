@@ -10,6 +10,7 @@ from hallucinote_mcp.analyzer import setup as analyzer_setup
 from hallucinote_mcp.analyzer.setup import (
     ANALYZER_DEVICE_NAME,
     _reposition_action,
+    _return_name_restoration,
     _strip_action,
     ensure_analyzers_loaded,
     strip_analyzers,
@@ -835,3 +836,108 @@ def test_strip_is_idempotent():
     assert second.stripped_count == 0
     assert ctx.song.tracks[0].devices == []
     assert ctx.song.master_track.devices == []
+
+
+# --- RND-2R9K: render must not leave RETURN tracks renamed ------------
+#
+# Loading the analyzer onto a return makes Live natively append
+# ` | HallucinoteAnalyzer` to the return's name (return-only — tracks and master
+# are untouched). The sweep restores the pre-load name so a render leaves the set
+# byte-for-byte. The pure decision is tested directly; the sweep-level tests
+# pre-set the dirty name because the Live fake cannot model Live's native rename
+# (it's a real-Live side effect, not Hallucinote code — see the operator-
+# verification entry for the live round-trip).
+
+
+def test_return_name_restoration_strips_prefix_and_suffix():
+    """A render-renamed return resolves to the bare authored name (the value a
+    fresh push would set; Live re-prepends the slot letter on read)."""
+    assert _return_name_restoration("A-Reverb | HallucinoteAnalyzer") == "Reverb"
+    assert _return_name_restoration("B-Delay | HallucinoteAnalyzer") == "Delay"
+
+
+def test_return_name_restoration_tolerates_spacing():
+    """The suffix match is spacing-tolerant around the pipe (Live's exact
+    rendering of the appended device name is not guaranteed)."""
+    assert _return_name_restoration("A-Reverb|HallucinoteAnalyzer") == "Reverb"
+    assert _return_name_restoration("A-Reverb  |  HallucinoteAnalyzer ") == "Reverb"
+
+
+def test_return_name_restoration_returns_none_for_clean_names():
+    """No analyzer suffix → None, so the sweep does not churn a clean return
+    (whether already-bare or still carrying Live's slot prefix)."""
+    assert _return_name_restoration("A-Reverb") is None
+    assert _return_name_restoration("Reverb") is None
+
+
+def test_return_name_restoration_preserves_legitimate_midname_pipe():
+    """A pipe that is part of the authored name (not the trailing analyzer
+    suffix) is left intact — the match is anchored at end-of-string."""
+    assert _return_name_restoration("A-My | Mix Bus") is None
+
+
+def test_sweep_restores_renamed_return_name():
+    """The keystone: a return left renamed by a prior render is restored to its
+    bare authored name during the next sweep, while a clean sibling return is
+    untouched (read-only, no churn)."""
+    ctx = _FakeCtx(_FakeSong(
+        returns=[
+            _FakeTrack("A-Reverb | HallucinoteAnalyzer"),  # dirtied by a render
+            _FakeTrack("B-Delay"),                          # clean
+        ],
+    ))
+
+    ensure_analyzers_loaded(ctx)
+
+    assert ctx.song.return_tracks[0].name == "Reverb"
+    assert ctx.song.return_tracks[1].name == "B-Delay"
+
+
+def test_sweep_does_not_rename_tracks_or_master():
+    """Live only renames RETURNS on device-load, so the sweep must not touch
+    track or master names — even ones that happen to look suffix-like."""
+    ctx = _FakeCtx(_FakeSong(
+        tracks=[_FakeTrack("Drums | HallucinoteAnalyzer")],
+        master=_FakeTrack("Master"),
+    ))
+
+    ensure_analyzers_loaded(ctx)
+
+    assert ctx.song.tracks[0].name == "Drums | HallucinoteAnalyzer"
+    assert ctx.song.master_track.name == "Master"
+
+
+def test_sweep_return_name_restore_is_idempotent():
+    """Multi-hop: once restored, a second sweep finds a clean return and leaves
+    it alone (the bare name has no suffix → no re-write)."""
+    ctx = _FakeCtx(_FakeSong(
+        returns=[_FakeTrack("A-Reverb | HallucinoteAnalyzer")],
+    ))
+
+    ensure_analyzers_loaded(ctx)
+    assert ctx.song.return_tracks[0].name == "Reverb"
+
+    ensure_analyzers_loaded(ctx)
+    assert ctx.song.return_tracks[0].name == "Reverb"
+
+
+def test_return_name_restoration_matches_engine_normalizer():
+    """Drift lock for the forced twin: when a render-renamed return IS restored,
+    the bare name set equals the engine's canonical `normalize_live_return_name`.
+    The `hallucinote_mcp` package can't import the engine at runtime (it runs
+    Live-side), so `_return_name_restoration` re-implements the strip — but the
+    test package CAN import the engine, so this pins the two against drift (the
+    composition order differs, prefix-then-suffix vs suffix-then-prefix, but the
+    result must match)."""
+    from hallucinote.return_naming import normalize_live_return_name
+
+    for dirty in [
+        "A-Reverb | HallucinoteAnalyzer",
+        "B-Delay | HallucinoteAnalyzer",
+        "Z-My Bus | HallucinoteAnalyzer",
+        "A-Reverb|HallucinoteAnalyzer",
+        "A-Reverb  |  HallucinoteAnalyzer ",
+    ]:
+        assert _return_name_restoration(dirty) == normalize_live_return_name(
+            dirty
+        ), dirty

@@ -41,8 +41,15 @@ def test_read_timeout_for_perform_batch_is_unbounded():
     assert client.read_timeout_for("ableton_automation", "perform_batch") is None
 
 
-def test_read_timeout_for_render_is_unbounded():
-    assert client.read_timeout_for("ableton_render", "render") is None
+def test_read_timeout_for_render_start_is_default():
+    # The synchronous `render` action (formerly unbounded — it held the socket
+    # for the whole realtime pass) was retired (MCP-9R3T). `start` mints a job
+    # handle and returns immediately, so the default read timeout suits it; the
+    # realtime render runs on the detached worker, not this forwarded call.
+    assert (
+        client.read_timeout_for("ableton_render", "start")
+        == client._DEFAULT_READ_TIMEOUT
+    )
 
 
 def test_read_timeout_for_ensure_loaded_is_generous_but_bounded():

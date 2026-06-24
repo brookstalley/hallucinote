@@ -151,15 +151,47 @@ def test_return_hosted_device_sidechains_off_track(conn):
     assert bus_comp["sidechain_source_track_id"] == kick["id"]
 
 
-def test_clear_on_absence_rebuild(conn):
-    """Snapshot authoritative: removing the sidechain from the snapshot and
-    rebuilding clears the stale DB value (same idiom as set_chain_properties)."""
+def test_absence_is_no_opinion_not_clear_on_rebuild(conn):
+    """CONTRACT CHANGE (replaces BAK-3M9T's `test_clear_on_absence_rebuild`):
+    snapshot SILENCE is "no opinion", not "clear". Dropping the sidechain_source
+    key from the snapshot and rebuilding now LEAVES the DB value intact — replay
+    only touches a device's sidechain when the snapshot DECLARES it.
+
+    Why the reversal: a snapshot that omits the key isn't necessarily saying
+    "no sidechain" — it may simply not have captured one (capture writes the key
+    only when it FINDS a source), while build.py authored it directly. The old
+    "absent -> clear" rule clobbered that build.py-authored source on every
+    build, breaking converger idempotency for any song with a mix-pass sidechain.
+    The accepted cost: snapshot-silence no longer clears a removed sidechain on
+    an INCREMENTAL rebuild — clear via an explicit null (next test), a fresh-DB
+    rebuild, or set_device_sidechain(None) in build.py.
+    See incoming-bugs/2026-06-17-replay-capture-nulls-sidechain-source-breaking-converger-idempotency.md
+    """
     replay_capture(conn, _snapshot_with_sidechain(), song_name="s")
-    snap_no_sc = _snapshot_with_sidechain()
-    dev = snap_no_sc["tracks"][0]["devices"][0]
+    snap_silent = _snapshot_with_sidechain()
+    dev = snap_silent["tracks"][0]["devices"][0]
     del dev["sidechain_source"]
     del dev["sidechain_source_channel"]
-    sid = replay_capture(conn, snap_no_sc, song_name="s")  # same song -> upsert
+    sid = replay_capture(conn, snap_silent, song_name="s")  # same song -> upsert
+    kick = next(t for t in Q.get_tracks_for_song(conn, sid) if t["name"] == "Kick")
+    comp = _bass_comp(conn, sid)
+    # Preserved, NOT cleared — silence is no opinion.
+    assert comp["sidechain_source_track_id"] == kick["id"]
+    assert comp["sidechain_source_channel"] == "Post FX"
+
+
+def test_explicit_null_source_clears_on_rebuild(conn):
+    """Forward-compatible: an EXPLICIT null `sidechain_source` (a future capture
+    that records "no source here") DOES clear the prior value — distinct from an
+    ABSENT key (no opinion, preserved above). Capture doesn't emit null today,
+    but the replay path already honours it, so snapshot-driven clearing can be
+    added later with no rework."""
+    replay_capture(conn, _snapshot_with_sidechain(), song_name="s")
+    snap_null = _snapshot_with_sidechain()
+    dev = snap_null["tracks"][0]["devices"][0]
+    dev["sidechain_source"] = None
+    dev.pop("sidechain_source_channel", None)
+    sid = replay_capture(conn, snap_null, song_name="s")
     comp = _bass_comp(conn, sid)
     assert comp["sidechain_source_track_id"] is None
     assert comp["sidechain_source_channel"] is None
@@ -180,6 +212,57 @@ def test_sidechain_survives_rebuild(conn):
         (E.DEVICE_SIDECHAIN_SET,),
     ).fetchone()["n"]
     assert n == 1
+
+
+def test_build_authored_sidechain_survives_silent_snapshot_rebuild(conn):
+    """The converger regression (swell): a sidechain authored in build.py (via
+    M.set_device_sidechain, the `_author_sidechains` pattern) on a device the
+    SNAPSHOT says nothing about must SURVIVE a rebuild, with no clobbering event.
+
+    Before the fix, replay enqueued every device's `sidechain_source` (absent ->
+    None) and cleared it, so each build ran real -> null (replay) -> real
+    (author) per sidechain = 2 spurious state-change events per build, forever.
+    The idempotency guard test was therefore un-satisfiable for every song that
+    authors a mix-pass sidechain.
+    See incoming-bugs/2026-06-17-replay-capture-nulls-sidechain-source-breaking-converger-idempotency.md
+    """
+    snap = {
+        "song": {"master": {"volume": 0.85, "panning": 0.0}},
+        "returns": [],
+        "tracks": [
+            {"index": 1, "name": "Bass", "type": "midi", "volume": 0.7,
+             "panning": 0.0,
+             "devices": [{"index": 1, "name": "Bass Comp", "class": "Compressor"}]},
+            {"index": 2, "name": "Kick", "type": "midi", "volume": 0.7,
+             "panning": 0.0},
+        ],
+    }
+    sid = replay_capture(conn, snap, song_name="s")
+    kick = next(t for t in Q.get_tracks_for_song(conn, sid) if t["name"] == "Kick")
+    comp = _bass_comp(conn, sid)
+    # build.py authors the sidechain source (snapshot never carried it).
+    M.set_device_sidechain(
+        conn, device_id=comp["id"], source_track_id=kick["id"], channel=None,
+    )
+
+    def _sc_events() -> int:
+        return conn.execute(
+            "SELECT COUNT(*) AS n FROM events WHERE kind = ?",
+            (E.DEVICE_SIDECHAIN_SET,),
+        ).fetchone()["n"]
+
+    assert _sc_events() == 1  # the single build.py author
+
+    # Rebuild over the existing DB with the SAME silent snapshot, then re-author
+    # (the build.py loop). The authored source must survive and the converger
+    # must reach a fixpoint — zero further sidechain events.
+    replay_capture(conn, snap, song_name="s")
+    comp = _bass_comp(conn, sid)
+    assert comp["sidechain_source_track_id"] == kick["id"]  # survived replay
+    M.set_device_sidechain(
+        conn, device_id=comp["id"], source_track_id=kick["id"], channel=None,
+    )
+    assert _sc_events() == 1  # no real->null->real churn — idempotent
 
 
 def test_unresolvable_source_raises(conn):

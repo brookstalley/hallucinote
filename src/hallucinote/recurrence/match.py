@@ -446,7 +446,17 @@ def match_all_in_layer(
         for i in range(len(layer_pitches))
         for j in range(i + 1, len(layer_pitches))
     }
-    if motif_intervals and not (motif_intervals & layer_intervals):
+    # REC-4Z8Q: exempt zero-interval (repeated-pitch) motifs — pedal / drone /
+    # ostinato. Such a motif has `0 in motif_intervals`, and it recalls against any
+    # layer that REPEATS that pitch — a 0-semitone "interval" across two onsets. But
+    # `layer_intervals` is built from DISTINCT layer pitches, so a repeated pitch
+    # collapses to one and contributes no 0, making the skip fire ({0} & {} == {})
+    # and the recall vanish before the per-onset scan. The fast-skip's premise
+    # ("some pitch PAIR must appear at a matching interval") only holds for a motif
+    # whose intervals are all non-zero; for a 0-interval motif, fall through to the
+    # scan. Multi-pitch motifs (the dominant-cost drum-layer skip) are unaffected —
+    # `0 not in motif_intervals` leaves their guard unchanged.
+    if motif_intervals and 0 not in motif_intervals and not (motif_intervals & layer_intervals):
         return []
 
     rel_motif = _rebased(motif_sig)

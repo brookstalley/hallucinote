@@ -14,17 +14,25 @@ paths:
 Indices are 1-based on the wire and translated to 0-based when accessing the
 Live API.
 
-Note operations: ``replace_notes`` calls ``clip.set_notes(tuple(...))`` which
-**replaces** the clip's entire note array. The action name is renamed (from
-``add_notes_to_clip`` on the legacy fork) to make the semantic visible. Per-
-note addressing (true append, in-place mutation) waits on MCP gap #4 — see
-``handlers/note.py`` for those stubs.
+Note operations: ``replace_notes`` does a true total-replace — a full-extent
+``remove_notes_extended(0, 128, 0, length)`` clear *then* ``clip.set_notes``,
+because Live's ``set_notes`` alone does NOT reliably clear pre-existing notes
+on arrangement clips (ARR-ORPHAN). It reads the resulting set back and returns
+``notes_present`` so a caller can detect orphan-survival. The action name is
+renamed (from ``add_notes_to_clip`` on the legacy fork) to make the semantic
+visible. Per-note addressing (true append, in-place mutation) waits on MCP
+gap #4 — see ``handlers/note.py`` for those stubs.
 """
 from __future__ import annotations
 
 from typing import Any, Iterable
 
 from ..dispatcher import LiveContext
+from ._arrangement_latch import (
+    CLICK_BACK_TO_ARRANGEMENT,
+    OVERRIDE_DESCRIPTION,
+    is_overridden,
+)
 
 
 _LOCATION_ENUM = ("session", "arrangement")
@@ -60,8 +68,12 @@ def list_handler(
 
     Arrangement: returns every placed clip with ``arrangement_clip_index``
     (1-based, ordered by ``track.arrangement_clips`` — Live's ordering),
-    plus ``name``, ``start_beats``, and ``length``. There are no "empty"
-    arrangement positions — ``arrangement_clips`` is dense.
+    plus ``name``, ``start_beats``, ``length``, ``muted``, and ``note_count``.
+    ``note_count`` distinguishes an empty placement from a full one (a long clip
+    spanning the song looks identical to an empty one on name/length alone — the
+    "track shows no events" debugging question); it is ``None`` for audio clips
+    (notes are MIDI-only). There are no "empty" arrangement positions —
+    ``arrangement_clips`` is dense.
 
     Index naming follows ``docs/terminology.md``: session uses
     ``clip_index`` (slot), arrangement uses the fully-qualified
@@ -88,11 +100,22 @@ def list_handler(
                 })
     else:
         for i, clip in enumerate(track.arrangement_clips, start=1):
+            # note_count answers the "no events" debugging question that a
+            # bare name/length can't (an empty long clip looks like a full one).
+            # MIDI-only — get_notes_extended raises on audio clips, so guard on
+            # is_midi_clip and report None for audio (mirrors note.py's reader).
+            note_count = (
+                len(clip.get_notes_extended(0, 128, 0.0, float(clip.length)))
+                if clip.is_midi_clip
+                else None
+            )
             clips_out.append({
                 "arrangement_clip_index": i,
                 "name": clip.name,
                 "start_beats": float(clip.start_time),
                 "length": float(clip.length),
+                "muted": bool(clip.muted),
+                "note_count": note_count,
             })
     return {
         "track_index": track_index,
@@ -564,7 +587,23 @@ def stop_handler(
         stop_fn()
     else:
         track.stop_all_clips()
-    return {"track_index": track_index, "clip_index": clip_index, "stopped": True}
+    result: dict[str, Any] = {
+        "track_index": track_index,
+        "clip_index": clip_index,
+        "stopped": True,
+    }
+    # Stopping the Session clip does NOT auto-resume the Arrangement on a track
+    # whose lane was overridden — the global latch survives the stop, so the
+    # track stays silent (greyed Arrangement lane). Surface that instead of a
+    # bare ``stopped: True`` that reads as "fixed" (MCP-7P3R direction 4).
+    if is_overridden(context.song):
+        result["still_overridden"] = True
+        result["note"] = (
+            f"Stopping the Session clip did not re-engage the Arrangement. "
+            f"{OVERRIDE_DESCRIPTION} {CLICK_BACK_TO_ARRANGEMENT} "
+            f"ableton_session(action='back_to_arrangement') attempts the API clear."
+        )
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -835,15 +874,47 @@ def replace_notes_handler(
         context, track_index=track_index, location=location, clip_index=clip_index
     )
     coerced = _coerce_notes(notes)
+    # True total-replace. Live's ``set_notes()`` does NOT reliably clear
+    # pre-existing notes on ARRANGEMENT clips — it left 5 older-generation
+    # notes (distinct (pitch, start), inside the clip extent) untouched on a
+    # 243-note write, reporting success (ARR-ORPHAN). Explicitly clear the
+    # full clip extent first so the write is a genuine total-replace on both
+    # views. The session path already total-replaces; the clear is harmless
+    # (and defensive) there.
+    clip.remove_notes_extended(0, 128, 0.0, float(clip.length))
     clip.set_notes(coerced)
+    # Read the resulting set back so the caller can detect a leak instead of
+    # trusting the intended count. Live collapses same-(pitch, start) notes,
+    # so a faithful write can legitimately hold FEWER than ``len(coerced)``
+    # (e.g. stacked add_wildness notes); collapse only ever REDUCES, so an
+    # EXCESS is impossible after a true clear and is the one unambiguous
+    # orphan-survival signal. (MIDI-only — get_notes_extended raises on audio;
+    # mirrors the list-handler guard at the top of this module.)
+    notes_present = (
+        len(clip.get_notes_extended(0, 128, 0.0, float(clip.length)))
+        if clip.is_midi_clip
+        else len(coerced)
+    )
     result: dict[str, Any] = {
         "track_index": track_index,
         "location": location,
         "notes_written": len(coerced),
+        "notes_present": notes_present,
     }
-    warning = _inline_notes_warning(len(coerced))
-    if warning:
-        result["warning"] = warning
+    warnings: list[str] = []
+    inline_warning = _inline_notes_warning(len(coerced))
+    if inline_warning:
+        warnings.append(inline_warning)
+    if notes_present > len(coerced):
+        warnings.append(
+            f"replace_notes left {notes_present - len(coerced)} unexpected "
+            f"note(s): wrote {len(coerced)} but the clip holds {notes_present} "
+            "after a full-extent clear (orphan-survival — ARR-ORPHAN). The "
+            "clip is NOT faithful to the written set; re-read with "
+            "ableton_note(action='list') and clear the stragglers."
+        )
+    if warnings:
+        result["warning"] = warnings[0] if len(warnings) == 1 else " | ".join(warnings)
     return result
 
 

@@ -28,6 +28,16 @@ recurring free function (e.g. sun-zone-done's ``_hybrid_hook``, never
 ``arr.motif(...)``) is invisible — register it to track its recall (an authoring
 choice). The CLI states this plainly.
 
+What is worth registering (DOC-7K3M motif-sizing guidance): register motifs with
+enough length + contour to be *distinctive*. The matcher recovers a transform GROUP
+(transpose / invert / retrograde / augment·diminish / fragment, plus bounded 2-op
+compositions), so a too-short or too-plain motif matches almost any layer and
+inflates the recall count without musical meaning — a 2-note fragment, or a
+zero-interval pedal/drone/ostinato (a single repeated pitch — which the matcher
+*does* now recall, REC-4Z8Q), recurs trivially nearly everywhere. Prefer a motif of
+~3+ notes with a non-trivial interval shape; treat a recall report dominated by such
+degenerate motifs as a registration smell, not a finding about the music.
+
 Output mirrors the sibling lenses (frozen dataclasses, a local ``Severity``
 Literal, an explicit ``to_dict()`` boundary), defined locally so the recurrence
 layer never depends on the higher ``audio`` layer. Pure stdlib — no numpy.

@@ -165,6 +165,96 @@ as `preset_uri`. Display-name matching only works for the built-in roots
 These are pure-math timing transforms. Hallucinote owns the math; push the
 result via `replace_notes`. See `ableton://guides/gaps` for the rationale.
 
+## Long-running actions = start + poll
+
+`ableton_render` (realtime arrangement playback, multi-minute) and a large
+`ableton_analysis` (unbounded DSP — grows with track + section count) **cannot
+fit a single tool-call**: Claude Code's per-tool-call timeout is a wall-clock
+limit (60s for this server), it is transport-agnostic, and there is **no
+wake-on-done** for MCP tools. A synchronous call that outruns it returns a
+**false failure** — the agent sees an error while the work actually finished
+server-side. So these surfaces use a **start + poll** pattern:
+
+1. `action='start'` runs the work in the background and returns **immediately**
+   with a job handle — `{job_id, captures_dir|report_dir, eta_seconds, poll}` —
+   where `poll` is the instruction text telling you how to poll.
+2. `action='status', job_id=…` **long-polls** ~45s, then returns
+   `{state: running|done|failed, progress, …}` (plus `manifest`/`report` +
+   path on `done`, `error` on `failed`). Repeat until `state` is `done` or
+   `failed` — it's a handful of calls, not a busy spin.
+
+Dispositions:
+
+- **`ableton_render`** — synchronous `render` was **retired** (it always
+  exceeded the timeout). `start` + `status` is the **only** render entry.
+- **`ableton_analysis`** — synchronous `analyze` is **kept** as the one-call
+  fast path for a quick few-surface capture; use `start` + `status` for a
+  full-band song or one with many declared sections (the `analyze` tips say
+  when to switch).
+
+The **`/render-analyze`** skill orchestrates render-`start`→poll→analyze-`start`
+→poll out of the agent's main context and returns just the MixReport summary —
+prefer it over driving the poll loops by hand.
+
+## Transport: Start vs Continue, and "play from bar X"
+
+Live distinguishes two ways to start the transport, and the MCP actions mirror
+them — each result reports the `verb` it invoked:
+
+| Action | Live verb | `verb` | What it does |
+|---|---|---|---|
+| `ableton_session(action='play')` | **Start** | `start` | start the transport |
+| `ableton_session(action='continue_playing')` | **Continue** | `continue` | resume from the last-stopped position |
+
+These results report the **verb invoked**, **not** a read-back of where Live
+actually began — a handler can't reliably read the realized start position back
+(`current_song_time` settles on a delayed schedule).
+
+**To audition from a specific bar** in a clean transport state, `seek` then
+`play` locates-and-plays — this is exactly what the render capture path does
+(set `current_song_time`, then `start_playing`):
+
+```
+ableton_session(action='seek', bar=243)
+ableton_session(action='play')
+```
+
+If a seek "doesn't take" — the playhead rolls but you hear **no audio** — the
+usual cause is **not** the transport verb but the `back_to_arranger` override
+latch (next section), which suppresses Arrangement playback regardless of where
+you start. (`current_song_time` also cannot be moved via
+`ableton_probe(action='set')` — that write is silently ignored; use `seek`.)
+
+## Recovering from a Session-clip override ("transport moving, no audio")
+
+When a **Session clip fires** on a track whose real content lives in the
+**Arrangement**, Live engages the global **`back_to_arranger`** latch: every
+overridden track ignores its Arrangement lane and goes silent (the lane shows
+**greyed out**), even as the transport rolls. The classic symptom is a healthy
+Arrangement clip sitting under the playhead that won't sound.
+
+Stopping the Session clip is **not** enough — `ableton_clip(action='stop')` and
+`song.stop_all_clips()` stop the clip but leave the latch engaged (they return
+`still_overridden: true` when that's the case). The latch **cannot be cleared
+through the Live API** in Live 12.x — `ableton_probe(action='set',
+path='song.back_to_arranger', value=0)` is accepted without error and silently
+ignored (it returns `applied: false`).
+
+Recovery:
+
+```
+ableton_session(action='back_to_arrangement')
+```
+
+This does what Live's **Back to Arrangement** transport button does (clears the
+latch + re-enables overridden automation) and reports `cleared`. If it comes back
+`cleared: false`, the Live build did not honor the API clear — **click the Back to
+Arrangement button** in Live's transport bar, then `continue_playing`. (To avoid
+the trap entirely, delete or disarm a leftover preview Session clip after you
+duplicate it to the Arrangement.) `ableton_session(action='info')` reports
+`back_to_arranger` and, when latched, an `arrangement_override` block naming the
+recovery.
+
 ## Routing & busses — prefer a PRE-MAIN bus over the master
 
 Live's **master, group, and return tracks are clip-less summing points**: they

@@ -209,3 +209,30 @@ def test_full_quote_subsumes_its_own_fragments():
     results = match_all_in_layer(_MOTIF, layer)
     assert all(r.coverage >= 1.0 - 1e-9 for r in results)
     assert any(r.variation == "exact" for r in results)
+
+
+def test_zero_interval_motif_recalls_against_repeated_pitch_layer():
+    """REC-4Z8Q: a repeated-pitch motif (pedal/drone/ostinato — interval set {0})
+    must recall against a layer that repeats that pitch. The interval-overlap
+    fast-skip computed layer_intervals over DISTINCT pitches, so a layer's repeated
+    pitch produced no 0-interval and the motif was falsely skipped (returned [])
+    before any per-onset scan."""
+    pedal = [_n(60, 0.0, 0.5), _n(60, 1.0, 0.5), _n(60, 2.0, 0.5)]
+    layer = _tile(pedal, 0.0, 4.0)  # the pedal recurs at beat 0 and beat 4
+    results = match_all_in_layer(pedal, layer)
+    assert results, (
+        "a repeated-pitch motif must recall against a layer that repeats the pitch"
+    )
+    assert any(r.coverage >= 1.0 - 1e-9 for r in results)
+
+
+def test_fast_skip_preserved_for_multi_interval_motif_vs_disjoint_layer():
+    """The zero-interval exemption (REC-4Z8Q) must not defeat the dominant-cost
+    fast skip: a pitched multi-interval motif against a layer that shares NO
+    interval still returns [] (no false recall) — the drum-layer skip case the
+    optimization exists for."""
+    # _MOTIF's pitch-pair intervals are {3,4,5,7,8,12}. A percussion-style layer
+    # on pitches 36/37/38 has intervals {1,2}, disjoint from the motif's.
+    perc = [_n(36, 0.0, 0.25), _n(37, 1.0, 0.25), _n(38, 2.0, 0.25),
+            _n(36, 4.0, 0.25), _n(37, 5.0, 0.25), _n(38, 6.0, 0.25)]
+    assert match_all_in_layer(_MOTIF, perc) == []

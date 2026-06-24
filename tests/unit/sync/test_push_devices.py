@@ -206,6 +206,83 @@ def test_plan_push_devices_preset_uri_only_no_browser_path(
     assert "browser_path" not in load.args
 
 
+def test_plan_push_devices_emits_standalone_browser_path_for_preset_file(
+    conn, song, session, linked_track,
+):
+    """SYN-RACK-PRESET-RELINK: a rack-preset device captured with browser_path
+    ONLY (no preset_uri/preset_query — the common /song-snapshot case, since
+    capture can't probe preset_uri) must emit browser_path as a STANDALONE load
+    selector when its leaf is a preset file (.adg/.adv). Before this the planner
+    emitted kind only, so the rack loaded empty (0 chains) and every nested
+    param write failed."""
+    cid = M.create_device_chain(conn, parent_track_id=linked_track)
+    M.create_device(
+        conn, chain_id=cid, position=1, kind="Drum Rack",
+        display_name="AG Techno Kit",
+        browser_path=["drums", "AG Techno Kit.adg"],
+    )
+    plan = push.plan_push_devices(conn, song_id=song, session_id=session)
+    load = next(
+        c for c in plan.calls
+        if c.tool == "ableton_device" and c.args.get("action") == "load"
+    )
+    assert "preset_uri" not in load.args
+    assert "preset_query" not in load.args
+    assert load.args["browser_path"] == ["drums", "AG Techno Kit.adg"]
+
+
+def test_plan_push_devices_standalone_browser_path_survives_corrupt_preset_query(
+    conn, song, session, linked_track,
+):
+    """Resilience: if a device's stored preset_query is corrupt JSON (can only
+    happen via DB corruption — the mutator normalizes) and there's no
+    preset_uri, the planner must still fall back to a standalone preset-file
+    browser_path rather than loading an empty rack. Closes the elif-chain gap
+    the Critic flagged."""
+    cid = M.create_device_chain(conn, parent_track_id=linked_track)
+    did = M.create_device(
+        conn, chain_id=cid, position=1, kind="Drum Rack",
+        display_name="AG Techno Kit",
+        browser_path=["drums", "AG Techno Kit.adg"],
+    )
+    # Corrupt the preset_query column directly (the mutator would reject this).
+    conn.execute(
+        "UPDATE devices SET preset_query = ? WHERE id = ?", ("{not json", did),
+    )
+    plan = push.plan_push_devices(conn, song_id=song, session_id=session)
+    load = next(
+        c for c in plan.calls
+        if c.tool == "ableton_device" and c.args.get("action") == "load"
+    )
+    assert "preset_query" not in load.args
+    assert "preset_uri" not in load.args
+    assert load.args["browser_path"] == ["drums", "AG Techno Kit.adg"]
+    assert any("not valid JSON" in n for n in plan.notes)
+
+
+def test_plan_push_devices_no_standalone_browser_path_for_builtin_device(
+    conn, song, session, linked_track,
+):
+    """The standalone emission is preset-FILE-only. A built-in device captured
+    with a non-preset browser_path (leaf is a class node, no .adg/.adv) and no
+    preset_uri stays kind-only — emitting browser_path standalone would make the
+    load handler refuse it (it's not a standalone selector for built-ins)."""
+    cid = M.create_device_chain(conn, parent_track_id=linked_track)
+    M.create_device(
+        conn, chain_id=cid, position=1, kind="Operator",
+        display_name="Operator",
+        browser_path=["instruments", "Operator"],
+    )
+    plan = push.plan_push_devices(conn, song_id=song, session_id=session)
+    load = next(
+        c for c in plan.calls
+        if c.tool == "ableton_device" and c.args.get("action") == "load"
+    )
+    assert load.args["kind"] == "Operator"
+    assert "browser_path" not in load.args
+    assert "preset_uri" not in load.args
+
+
 def test_plan_push_devices_threads_preset_query_to_load(
     conn, song, session, linked_track,
 ):
@@ -680,6 +757,94 @@ def test_apply_push_results_accepts_device_parameter_as_ack(
         session_id=session,
     )
     # Existing device + track links survive; nothing else added.
+    links = Q.get_ableton_links_for_session(conn, session)
+    kinds = sorted(l["db_kind"] for l in links)
+    assert kinds == ["device", "track"]
+
+
+def test_apply_push_results_accepts_device_param_override_as_ack(
+    conn, song, session, linked_track,
+):
+    """A nested preset param override (DEV-4P7R `param_overrides`, e.g. a
+    `value_raw` on a rack's nested Wavetable LFO) is emitted by the planner as a
+    `device_param_override:` result key whose tail carries the NodeAddr path +
+    param name. apply_push_results must ACK it (no DB write, no raise): its value
+    ORIGINATES in the snapshot/DB, exactly like `device_parameter`.
+
+    Regression: the kind had no case, so apply_push_results raised
+    `ValueError: unknown push result key kind 'device_param_override'`, which
+    HALTED the devices phase mid-run — a full from-scratch push of any song with
+    such an override never finished (no routing/envelopes/automation/arrangement).
+    See incoming-bugs/2026-06-18-push-apply-unknown-device_param_override-result-kind-halts-devices-phase.md
+    """
+    cid = M.create_device_chain(conn, parent_track_id=linked_track)
+    did = M.create_device(
+        conn, chain_id=cid, position=1, kind="Instrument Rack",
+        display_name="Synth Vox Ai",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=did, ableton_index=2,
+    )
+    key = (
+        f'device_param_override:{did}:'
+        '[{"chain_index": 1, "device_position": 1}]:LFO 1 S. Rate'
+    )
+    warnings = push.apply_push_results(
+        conn,
+        [
+            {"key": key, "ok": True, "tool": "ableton_device", "result": {}},
+        ],
+        session_id=session,
+    )
+    assert warnings == []
+    # Existing device + track links survive; nothing else added (ack-only).
+    links = Q.get_ableton_links_for_session(conn, session)
+    kinds = sorted(l["db_kind"] for l in links)
+    assert kinds == ["device", "track"]
+
+
+def test_apply_push_results_accepts_device_chain_props_as_ack(
+    conn, song, session, linked_track,
+):
+    """Per-chain mixer/choke state (NODE-ADDR Chunk C/F: mute/solo/volume/pan +
+    choke_group/out_note) is emitted by the planner as a
+    `device_chain_props:{chain_id}` result key via
+    ableton_device(set_chain_property). apply_push_results must ACK it (no DB
+    write, no raise): the chain state ORIGINATES in the snapshot/DB and a chain
+    has no Live-side index to record back (addressed by chain_index), exactly
+    like `device_param_override`.
+
+    Regression (DIRECT TWIN of the 2026-06-18 device_param_override bug, one key
+    kind over): the kind had no case, so apply_push_results raised
+    `ValueError: unknown push result key kind 'device_chain_props'`, which
+    CRASHED the devices-phase apply — a full from-scratch push of any rack-preset
+    song carrying non-default per-chain volume/mute/choke never finished (no
+    routing/envelopes/automation/arrangement/cues). Stayed latent until the
+    rack-preset load fix made the rack load populated, so the set_chain_property
+    calls finally SUCCEEDED and their results reached this apply step.
+    See incoming-bugs/2026-06-20-push-apply-unknown-device_chain_props-result-kind-crashes-devices-phase.md
+    """
+    cid = M.create_device_chain(conn, parent_track_id=linked_track)
+    did = M.create_device(
+        conn, chain_id=cid, position=1, kind="Drum Rack",
+        display_name="AG Techno Kit",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=did, ableton_index=2,
+    )
+    # The planner keys this by the chain id; the result carries the applied
+    # chain state (content irrelevant to apply — it's ack-only).
+    warnings = push.apply_push_results(
+        conn,
+        [
+            {"key": f"device_chain_props:{cid}", "ok": True,
+             "tool": "ableton_device",
+             "result": {"volume": 0.72, "mute": False}},
+        ],
+        session_id=session,
+    )
+    assert warnings == []
+    # Existing device + track links survive; nothing else added (ack-only).
     links = Q.get_ableton_links_for_session(conn, session)
     kinds = sorted(l["db_kind"] for l in links)
     assert kinds == ["device", "track"]

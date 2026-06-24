@@ -77,7 +77,7 @@ from typing import Any
 
 from hallucinote.analyzer_identity import is_analyzer_device
 from hallucinote.db import mutations as M, queries as Q
-from hallucinote.return_naming import strip_return_slot_prefix
+from hallucinote.return_naming import normalize_live_return_name
 
 # SNP-8R4K chunk 2 — snapshot schema version stamped on every compiled snapshot
 # (`compile_snapshot`) and asserted by the at-rest cleanup (`migrate_snapshot`).
@@ -366,12 +366,25 @@ def _replay_devices(
             reason=reason,
         )
         # BAK-3M9T: defer sidechain-source resolution (the source may name a
-        # track created later in the replay loop). None → clear on the post-pass.
-        sidechain_pending.append((
-            device_id,
-            d.get("sidechain_source"),
-            d.get("sidechain_source_channel"),
-        ))
+        # track created later in the replay loop) to the post-pass.
+        #
+        # Snapshot SILENCE means "no opinion", not "clear". Only enqueue when the
+        # snapshot ENTRY actually declares `sidechain_source` — a device the
+        # snapshot says nothing about keeps whatever the DB already holds (e.g. a
+        # source authored in build.py via M.set_device_sidechain). Capture only
+        # writes the key when it FINDS a live source (~L1288 below), so an absent
+        # key is genuinely "unspoken"; clobbering it to null re-cleared every
+        # build.py-authored sidechain on every build, breaking converger
+        # idempotency for any song with a mix-pass sidechain.
+        # See incoming-bugs/2026-06-17-replay-capture-nulls-sidechain-source-breaking-converger-idempotency.md
+        # An explicit null value (a future capture that records "no source here")
+        # still clears on the post-pass — this is forward-compatible.
+        if "sidechain_source" in d:
+            sidechain_pending.append((
+                device_id,
+                d.get("sidechain_source"),
+                d.get("sidechain_source_channel"),
+            ))
         for name, p in (d.get("params_dialed") or {}).items():
             value_display, value_normalized, value_items, value_raw = \
                 _param_value_fields(
@@ -389,6 +402,30 @@ def _replay_devices(
                 request_id=request_id,
                 reason=reason,
             )
+        # SYN-2D9K: prune device_parameters orphaned by a device-class change.
+        # `params_dialed` is the authoritative full dialed set on capture, so a
+        # DB param absent from it is a stale orphan — e.g. an Operator's params
+        # lingering after the instrument was swapped to Analog. create_device
+        # UPDATEs the existing row in place on a class change (reusing device_id),
+        # so the old class's params are never CASCADE-deleted; the upsert above
+        # never removes them; and the soft `--reset` deliberately preserves the
+        # device tables. Mirror the pull path's drop-stale reconcile
+        # (sync/pull/devices.py). Tri-state, exactly as for sidechain sources
+        # above: snapshot SILENCE (no `params_dialed` key) is "no opinion, keep
+        # whatever the DB holds"; a PRESENT mapping (even an explicit empty one)
+        # is authoritative and clears any DB param not in it.
+        if "params_dialed" in d:
+            dialed = d["params_dialed"] or {}
+            for row in Q.get_device_parameters(conn, device_id):
+                if row["name"] not in dialed:
+                    M.remove_device_parameter(
+                        conn,
+                        device_id=device_id,
+                        name=row["name"],
+                        actor=actor,
+                        request_id=request_id,
+                        reason=reason,
+                    )
         # SNP-2H9F: nested-param overrides on a preset-seeded device. A flat list
         # of {path, name, value[, normalized][, value_items]} that keeps
         # preset_query intact — push re-asserts each at its NodeAddr path after the
@@ -683,7 +720,9 @@ def replay_capture(
         # W4-C: strip Live's `<letter>-` slot prefix on the way into the DB.
         # The snapshot's `t["sends"]` is keyed by the SAME prefixed names
         # Live reports, so we strip on the lookup side too (below).
-        stripped_name = strip_return_slot_prefix(r["name"])
+        # SYN-RENDER-RELINK: also strip a render-appended ` | HallucinoteAnalyzer`
+        # suffix so a snapshot taken post-render doesn't store the dirty name.
+        stripped_name = normalize_live_return_name(r["name"])
         if stripped_name != r["name"]:
             stripped_pairs.append((r["name"], stripped_name))
         rid = M.create_return(
@@ -772,8 +811,9 @@ def replay_capture(
                 continue
             # W4-C: the snapshot's send map is keyed by Live's prefixed names;
             # the return_ids_by_name dict is keyed by stripped names, so we
-            # strip here too for consistent lookup.
-            target = return_ids_by_name.get(strip_return_slot_prefix(return_name))
+            # strip here too for consistent lookup. SYN-RENDER-RELINK: normalize
+            # the analyzer suffix too so a post-render snapshot's sends still bind.
+            target = return_ids_by_name.get(normalize_live_return_name(return_name))
             if target is None:
                 raise ValueError(
                     f"track {t['name']!r} sends to return {return_name!r} "
@@ -809,9 +849,11 @@ def replay_capture(
     # BAK-3M9T: apply each device's sidechain source now that every track exists.
     # The source is stored by surface name (never a per-build UUID), resolved here
     # against this song's tracks (the source is always a track — see
-    # set_device_sidechain / plan_pull_device_sidechain). A device with no
-    # `sidechain_source` clears any prior source (None), idempotently — the
-    # snapshot is authoritative.
+    # set_device_sidechain / plan_pull_device_sidechain). Only devices whose
+    # snapshot entry DECLARED `sidechain_source` reach this list (snapshot silence
+    # is "no opinion", not "clear" — see _replay_devices above); an explicit null
+    # source value DOES clear, idempotently. The snapshot is authoritative for what
+    # it declares, never for what it omits.
     for device_id, source_name, channel in sidechain_pending:
         if source_name is None:
             M.set_device_sidechain(

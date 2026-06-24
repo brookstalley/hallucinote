@@ -31,8 +31,11 @@ class LiveConnectionError(Exception):
 # server route but the push route hit the 15s default and severed verification).
 # The default suits actions that return within Live's main-thread budget; a few
 # break it by design and need a wider (or no) window:
-#   - ableton_render(render): full-arrangement playback before responding
-#     (minutes) → unbounded; only the operator stopping playback ends it.
+#   - ableton_render(start): mints a job handle + spawns the detached render
+#     worker, then returns immediately (< ~3s) → the default suits it; the
+#     realtime full-arrangement playback runs on the worker, NOT on this
+#     forwarded call. (The synchronous `render` action that DID block here for
+#     minutes — needing an unbounded socket — was retired, MCP-9R3T.)
 #   - ableton_automation(perform_batch): plays the union span of all changed
 #     arcs in record (minutes at mix scale) → unbounded; the HANDLER owns the
 #     timeout via its own ramp deadline + finally-restore, so a socket cutoff
@@ -40,12 +43,19 @@ class LiveConnectionError(Exception):
 #   - ableton_render(ensure_loaded): loads the analyzer onto 25+ surfaces, each
 #     a few seconds on the main thread → a generous BOUNDED ceiling so a stuck
 #     load still surfaces as a timeout (MCP-4T6Y).
+#   - ableton_render(status): long-polls the render job ~45s before returning, so
+#     the socket read window must exceed that long-poll (else the socket severs
+#     the poll mid-wait). Bounded just above the handler's long-poll; the
+#     long-poll itself must stay under the Claude Code tool-call timeout (raise
+#     .mcp.json `timeout` if you widen it). NOTE: start (not listed) returns
+#     immediately, so the default suits it. (MCP-9R3T async render.)
 _DEFAULT_READ_TIMEOUT: float = 15.0
 _ENSURE_LOADED_READ_TIMEOUT: float = 180.0
+_STATUS_READ_TIMEOUT: float = 60.0
 _READ_TIMEOUTS: dict[tuple[str, str], float | None] = {
-    ("ableton_render", "render"): None,
     ("ableton_automation", "perform_batch"): None,
     ("ableton_render", "ensure_loaded"): _ENSURE_LOADED_READ_TIMEOUT,
+    ("ableton_render", "status"): _STATUS_READ_TIMEOUT,
 }
 
 
@@ -87,10 +97,13 @@ def send(
         to accept. The Remote Script is either up or it isn't; if it can't
         accept within 15 s it's not coming back this call.
       - ``read_timeout`` bounds how long we wait for the response after the
-        request lands on the wire. Long-running handlers (``ableton_render``
-        plays the entire arrangement; ``ableton_automation(perform_batch)``
-        records the union span in realtime — minutes for either) require a
-        generous (or no) ceiling. **When the caller doesn't specify, it is
+        request lands on the wire. Long-running handlers (e.g.
+        ``ableton_automation(perform_batch)`` records the union span in realtime
+        — minutes) require a generous (or no) ceiling. (``ableton_render`` is no
+        longer one of these on the forwarded call: its ``start`` returns a job
+        handle in ~3s — the realtime playback runs on a detached worker — and
+        ``status`` long-polls under a bounded ceiling.) **When the caller doesn't
+        specify, it is
         resolved from the (tool, action) policy** (``read_timeout_for``) so
         BOTH wire-recv routes — the server's agent-forward and push_cli's
         direct dispatch — get the same window without each caller re-deriving
@@ -141,6 +154,7 @@ def _response_from_dict(obj: dict[str, Any]) -> Response:
         example=obj.get("example"),
         hint=obj.get("hint"),
         warnings=warnings,
+        code=obj.get("code"),
     )
 
 

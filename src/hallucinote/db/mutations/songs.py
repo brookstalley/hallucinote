@@ -139,8 +139,55 @@ def set_song_timing_mode(
     )
 
 
+def set_song_tuning(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    tuning_ref: str | None,
+    tuning_data: str | None,
+    actor: str = "system",
+    request_id: str | None = None,
+    reason: str | None = None,
+) -> None:
+    """Bind a song to a pulled alternate tuning (MICROTUNE / TUN-4Q7W).
+
+    `tuning_ref` is the song-relative path to the cached `.ascl`; `tuning_data` is
+    the derived JSON blob the mapper / writer / drift-verify read. Both are opaque
+    strings here — this mutator stays tuning-agnostic (the `hallucinote.tuning`
+    package owns serialization), preserving the isolation invariant that the core
+    DB layer imports nothing from `tuning`. Pass both `None` to clear a song back
+    to 12-TET.
+
+    Idempotent: a no-op (no event) when both columns already match the inputs,
+    mirroring `set_song_timing_mode`.
+    """
+    actor, request_id = _resolve_actor_and_request(actor, request_id)
+    row = conn.execute(
+        "SELECT tuning_ref, tuning_data FROM songs WHERE id = ?", (song_id,)
+    ).fetchone()
+    if row is not None and (row["tuning_ref"], row["tuning_data"]) == (
+        tuning_ref, tuning_data,
+    ):
+        return
+    conn.execute(
+        "UPDATE songs SET tuning_ref = ?, tuning_data = ? WHERE id = ?",
+        (tuning_ref, tuning_data, song_id),
+    )
+    _touch_song(conn, song_id)
+    _emit(
+        conn,
+        E.SONG_TUNING_SET,
+        {"tuning_ref": tuning_ref, "tuning_data": tuning_data},
+        song_id=song_id,
+        actor=actor,
+        request_id=request_id,
+        reason=reason,
+    )
+
+
 __all__ = [
     "TIMING_MODES",
     "create_song",
     "set_song_timing_mode",
+    "set_song_tuning",
 ]

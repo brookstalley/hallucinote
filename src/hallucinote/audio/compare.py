@@ -146,7 +146,7 @@ def resolve_baseline(analysis_dir: Path | str, seq: int) -> Path:
     """
     analysis_dir = Path(analysis_dir)
     # Exclude status.json — the BUG3 completion heartbeat the analyze handler
-    # (hallucinote_mcp.handlers.analysis) writes into this same dir. It carries
+    # (hallucinote_mcp.server_side.analysis) writes into this same dir. It carries
     # no db_seq so the loop below already skips it, but excluding it by name
     # keeps it out of the candidate set entirely (no stray read, clearer intent).
     candidates = (

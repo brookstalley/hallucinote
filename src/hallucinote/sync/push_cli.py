@@ -220,6 +220,45 @@ def _probe_live_session_clips_via_mcp(
     return by_track
 
 
+def _probe_live_arrangement_clips_via_mcp(
+    *,
+    live_tracks: list[dict],
+    send_fn=None,
+) -> dict[int, list[dict]]:
+    """ARR-PROJ: probe ``ableton_clip(action='list', location='arrangement')``
+    per Live track so the EXECUTE path's projection planner
+    (:func:`push.plan_push_arrangement`) knows each track's current arrangement
+    clips and can plan the per-clip CLEAR before re-creating from the DB. (This
+    once also fed the SYN-4R7P probe-and-link reconcile; that reconcile was removed
+    in Chunk 4 — the projection clears+rebuilds every push, so there is no stale
+    positional link to reconcile.)
+
+    Returns a dict keyed by ``track_index`` with the track's arrangement-clip
+    placements (``{arrangement_clip_index, name, start_beats, length}``). A
+    per-track probe failure leaves that track's key ABSENT (not an empty list) so
+    the planner reads it as "lane state unknown → skip, don't clear" rather than
+    "no clips, safe to fill" — a transient failure must never let create+fill stack
+    onto unprobed clips (mirrors the per-parent tolerance of
+    :func:`_probe_live_devices_via_mcp`).
+    """
+    if send_fn is None:
+        from hallucinote_mcp import client as _client  # type: ignore[import-not-found]
+        send_fn = _client.send
+    from hallucinote_mcp.wire import Request  # type: ignore[import-not-found]
+
+    by_track: dict[int, list[dict]] = {}
+    for t in live_tracks:
+        idx = t["track_index"]
+        resp = send_fn(Request(
+            tool="ableton_clip", action="list",
+            params={"track_index": idx, "location": "arrangement"},
+        ))
+        if getattr(resp, "ok", False):
+            payload = getattr(resp, "result", None) or {}
+            by_track[idx] = list(payload.get("clips") or [])
+    return by_track
+
+
 def _resolve_db_path(args: argparse.Namespace) -> Path:
     """``--song <slug>`` → per-branch DB via resolve_db_path; ``--db PATH`` → PATH.
 
@@ -432,6 +471,10 @@ def _cmd_probe_and_link(args: argparse.Namespace) -> int:
         live_devices_by_parent = _probe_live_devices_via_mcp(
             live_tracks=live_tracks, live_returns=live_returns,
         )
+        # ARR-PROJ: probe-and-link no longer reconciles arrangement_clip links
+        # (the arrangement is rebuilt as a pure projection every push), so this
+        # path probes only tracks/returns/devices. The execute path still probes
+        # arrangement clips itself, for the projection planner's clear.
     else:
         if not args.snapshot:
             raise SystemExit(
@@ -687,10 +730,8 @@ def _cmd_execute(args: argparse.Namespace) -> int:
     else:
         state_dir = db_path.parent
 
-    # PSH-2R7K: resolve phase-targeting up front (cheap; before the Live probe so
-    # a bad combination fails fast). --resume derives --start-at from the prior
-    # run's halted phase. (Unknown phase NAMES are validated inside execute_push
-    # against the canonical list and surface as PhaseTargetError below.)
+    # PSH-2R7K: resolve phase-targeting up front. --resume derives --start-at
+    # from the prior run's halted phase.
     only = args.only
     start_at = args.start_at
     stop_after = args.stop_after
@@ -712,12 +753,34 @@ def _cmd_execute(args: argparse.Namespace) -> int:
         start_at = resumed
         sys.stderr.write(f"push_cli execute: --resume → --start-at {start_at}\n")
 
+    # PSH-PHASEORDER: validate the phase-target NAMES (and their combination)
+    # BEFORE any Live round-trip. plan_push_song is pure-data (no Live; it only
+    # constructs the phase list, never calling the lazy plan_fns), so reading the
+    # canonical phase names here is cheap and drift-free. Otherwise a typo'd
+    # --only/--start-at/--stop-after pays the full coherence + arrangement probe
+    # — and a stale-link coherence refusal can even mask the typo — before being
+    # rejected.
+    try:
+        push_execute.validate_phase_targets(
+            [p.name for p in push.plan_push_song(
+                conn, song_id=song_id, session_id=args.session_id,
+            )],
+            only=only,
+            start_at=start_at,
+            stop_after=stop_after,
+        )
+    except push_execute.PhaseTargetError as exc:
+        sys.stderr.write(f"push_cli execute: {exc}\n")
+        return 2
+
+    coherence_live_tracks: list[dict] | None = None
     if not args.no_coherence_check:
         # The mutex group makes --probe or --snapshot the only other paths,
         # so exactly one is set here.
         live_tracks, live_returns = _cmd_check_coherence_probe_or_snapshot(
             args, subcmd="execute",
         )
+        coherence_live_tracks = live_tracks
         check = push.check_coherence(
             conn,
             session_id=args.session_id,
@@ -732,6 +795,18 @@ def _cmd_execute(args: argparse.Namespace) -> int:
             sys.stderr.write("\n")
             return 1
 
+    # ARR-PROJ: the arrangement phase projects the DB onto a CLEARED timeline, so
+    # it needs Live's current arrangement clips per track to plan the per-clip
+    # clear. Probe live (same call probe-and-link uses); execute reaches Live at
+    # dispatch regardless, so this is always valid. Reuse the coherence probe's
+    # track list when present to avoid a redundant ableton_track(list).
+    arr_probe_tracks = coherence_live_tracks
+    if arr_probe_tracks is None:
+        arr_probe_tracks, _ = _probe_live_via_mcp()
+    live_arrangement_clips_by_track = _probe_live_arrangement_clips_via_mcp(
+        live_tracks=arr_probe_tracks,
+    )
+
     try:
         result = push_execute.execute_push(
             conn=conn,
@@ -745,6 +820,7 @@ def _cmd_execute(args: argparse.Namespace) -> int:
             start_at=start_at,
             stop_after=stop_after,
             progress_fn=_stderr_progress,
+            live_arrangement_clips_by_track=live_arrangement_clips_by_track,
         )
     except push_execute.PhaseTargetError as exc:
         sys.stderr.write(f"push_cli execute: {exc}\n")

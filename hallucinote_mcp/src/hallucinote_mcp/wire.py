@@ -128,6 +128,13 @@ class Response:
     hint: str | None = None
     needs_remote: bool = False
     warnings: tuple[str, ...] | None = None
+    # Stable machine-readable discriminator for errors the MCP server side
+    # post-processes. Today the only producer is the version handshake
+    # (``VERSION_MISMATCH_CODE``), which the server uses to refine the
+    # remediation hint (re-vendor vs. respawn the server process). Optional
+    # and serialized only when set, so it is backward-compatible with a
+    # vendored Remote Script that predates it.
+    code: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {"ok": self.ok}
@@ -145,6 +152,8 @@ class Response:
                 out["example"] = self.example
             if self.hint is not None:
                 out["hint"] = self.hint
+            if self.code is not None:
+                out["code"] = self.code
         if self.warnings:
             out["warnings"] = list(self.warnings)
         return out
@@ -162,6 +171,7 @@ def error(
     optional: Iterable[str] | None = None,
     example: str | None = None,
     hint: str | None = None,
+    code: str | None = None,
 ) -> Response:
     return Response(
         ok=False,
@@ -171,12 +181,20 @@ def error(
         optional=tuple(optional) if optional is not None else None,
         example=example,
         hint=hint,
+        code=code,
     )
 
 
 # ---------------------------------------------------------------------------
 # Version handshake
 # ---------------------------------------------------------------------------
+
+#: Discriminator the Remote Script side stamps onto a version-mismatch
+#: refusal so the MCP server side can refine the remediation (the
+#: Remote-Script-side hint can only guess "re-vendor"; the server side
+#: knows whether its own *process* is the stale half — see
+#: ``hallucinote_mcp.stale_server_process_hint``).
+VERSION_MISMATCH_CODE = "version_mismatch"
 
 
 def check_version_compat(
@@ -250,6 +268,7 @@ def check_version_compat(
                 "on the tool call to bypass — see the warning the bypass "
                 "attaches for the data-corruption caveat."
             ),
+            code=VERSION_MISMATCH_CODE,
         )
     return None
 
@@ -368,9 +387,9 @@ def recv_message(sock: _socket.socket, timeout: float | None = None) -> dict[str
         ``FrameError`` with the elapsed budget.
       - ``None`` — explicitly clear any prior socket timeout and block
         indefinitely. The caller is asserting "this read may take as
-        long as the handler needs" (e.g. ``ableton_render(render)``
-        plays the full arrangement before responding — minutes for a
-        long song). Without the explicit clear, ``socket.create_connection``'s
+        long as the handler needs" (e.g. ``ableton_automation(perform_batch)``
+        plays the union span of all changed arcs in record before responding —
+        minutes at mix scale). Without the explicit clear, ``socket.create_connection``'s
         connect timeout would carry over and bound the read at 15 s
         even when the caller intends to wait.
     """

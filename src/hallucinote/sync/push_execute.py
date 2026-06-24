@@ -35,6 +35,10 @@ from typing import Any, Callable
 from hallucinote.db import mutations as M
 from hallucinote.db import queries as Q
 from hallucinote.sync import push
+from hallucinote.sync.push.empty_rack_guard import (
+    _parent_key,
+    partition_doomed_nested_writes,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +51,12 @@ logger = logging.getLogger(__name__)
 EXIT_OK = 0
 EXIT_PARTIAL = 1
 EXIT_CONNECTION_LOST = 2
+
+
+# PSH-3K9D chunk 2: emit a mid-phase progress heartbeat every this-many dispatched
+# calls — to stderr and into .last-push-state.json — so a phase issuing many calls
+# is observable (a slow phase and a hung one stop looking identical to a poller).
+_HEARTBEAT_EVERY = 25
 
 
 # Phase status values written into .last-push-state.json. Mirrors the design
@@ -73,9 +83,52 @@ _LARGE_LIST_KEYS = frozenset({
 class PhaseTargetError(ValueError):
     """A phase-targeting flag named an unknown phase or an invalid combination.
 
-    Raised by :func:`_filter_phases`; the CLI catches it and exits 2 with the
-    teaching message (which lists the valid phases in order).
+    Raised by :func:`validate_phase_targets`; the CLI catches it and exits 2
+    with the teaching message (which lists the valid phases in order).
     """
+
+
+def validate_phase_targets(
+    names: list[str],
+    *,
+    only: str | None = None,
+    start_at: str | None = None,
+    stop_after: str | None = None,
+) -> None:
+    """Validate the phase-targeting flags against the canonical phase NAME list.
+
+    Pure (no Live, no slicing) so the CLI can call it BEFORE any Live probe
+    (PSH-PHASEORDER): a typo'd ``--only``/``--start-at``/``--stop-after``
+    shouldn't pay a coherence + arrangement round-trip — or be masked by a
+    stale-link coherence refusal — before being rejected. :func:`_filter_phases`
+    delegates here so the rule lives in one place.
+
+    Raises :class:`PhaseTargetError` (teaching message + valid-phase list) on an
+    unknown phase name, ``--only`` combined with a window flag, or a window whose
+    stop precedes its start.
+    """
+    def _check(flag: str, value: str | None) -> None:
+        if value is not None and value not in names:
+            raise PhaseTargetError(
+                f"unknown {flag} phase {value!r}. Valid phases (in order): "
+                + ", ".join(names)
+            )
+
+    _check("--only", only)
+    _check("--start-at", start_at)
+    _check("--stop-after", stop_after)
+
+    if only is not None and (start_at is not None or stop_after is not None):
+        raise PhaseTargetError(
+            "--only cannot be combined with --start-at/--stop-after"
+        )
+
+    if start_at is not None and stop_after is not None:
+        if names.index(stop_after) < names.index(start_at):
+            raise PhaseTargetError(
+                f"--stop-after {stop_after!r} precedes --start-at {start_at!r} "
+                "in the phase order"
+            )
 
 
 def _filter_phases(
@@ -93,37 +146,21 @@ def _filter_phases(
     JSON-friendly dict describing the filter (or ``None`` for a full run) recorded
     into ``.last-push-state.json`` so a scoped run is never mistaken for a full one.
 
-    Raises :class:`PhaseTargetError` (teaching message + valid-phase list) on an
-    unknown phase name, ``--only`` combined with a window flag, or a window whose
-    stop precedes its start.
+    Validation (unknown name, ``--only`` + window, stop-before-start) is delegated
+    to :func:`validate_phase_targets` — the same check the CLI runs up front before
+    any Live probe (PSH-PHASEORDER), so a scoped execute and a pre-probe reject
+    share one rule.
     """
     names = [p.name for p in phases]
-
-    def _check(flag: str, value: str | None) -> None:
-        if value is not None and value not in names:
-            raise PhaseTargetError(
-                f"unknown {flag} phase {value!r}. Valid phases (in order): "
-                + ", ".join(names)
-            )
-
-    _check("--only", only)
-    _check("--start-at", start_at)
-    _check("--stop-after", stop_after)
+    validate_phase_targets(
+        names, only=only, start_at=start_at, stop_after=stop_after,
+    )
 
     if only is not None:
-        if start_at is not None or stop_after is not None:
-            raise PhaseTargetError(
-                "--only cannot be combined with --start-at/--stop-after"
-            )
         return tuple(p for p in phases if p.name == only), {"only": only}
 
     lo = names.index(start_at) if start_at is not None else 0
     hi = names.index(stop_after) if stop_after is not None else len(names) - 1
-    if hi < lo:
-        raise PhaseTargetError(
-            f"--stop-after {stop_after!r} precedes --start-at {start_at!r} "
-            "in the phase order"
-        )
     sliced = tuple(phases[lo:hi + 1])
     scope: dict[str, str] | None = None
     if start_at is not None or stop_after is not None:
@@ -214,6 +251,34 @@ _PRESET_URI_MISS_HINTS = (
     "preset_uri",
     "no loadable browser item",
 )
+
+# SYN-2D9K: substrings that mark a set_parameter failure as "this parameter is
+# not on the device" (the orphan-from-class-change shape), distinct from a
+# value-range refusal.
+_PARAM_NOT_FOUND_HINTS = ("not found",)
+
+
+def _orphan_param_hint(
+    *, tool: str, action: str | None, err_msg: str | None,
+    parameter_name: object,
+) -> str | None:
+    """SYN-2D9K: a ``set_parameter`` that 404s on a parameter the device does
+    not have is almost always a STALE ORPHAN — a prior device class's param
+    lingering in ``device_parameters`` after the instrument was swapped (e.g.
+    Operator -> Analog). The MCP hint points at value-range debugging, which
+    sends the operator hunting a phantom. Return a hint naming the real cause +
+    the cure, or ``None`` when the failure is not that shape."""
+    if tool != "ableton_device" or action != "set_parameter" or not err_msg:
+        return None
+    if not any(h in err_msg for h in _PARAM_NOT_FOUND_HINTS):
+        return None
+    pname = f"{parameter_name!r} " if parameter_name else ""
+    return (
+        f"parameter {pname}is not on this device — most likely a stale orphan "
+        "from a device-class change (the DB still carries a prior class's "
+        "params). Rebuild the song (a rebuild now prunes orphans, SYN-2D9K) to "
+        "clear it; if it persists, the snapshot's device class may not match Live."
+    )
 
 
 def _search_root_for_kind(kind: str, class_name: str | None = None) -> str:
@@ -334,11 +399,17 @@ def _attempt_load_fallback(
 
 
 # SYN-9F2L: the planner prefers the display form on the wire (exact via the
-# param's own display curve), but two handler refusals have a known second
+# param's own display curve), but several handler refusals have a known second
 # form worth one retry each. Hint substrings match the handler's teaching
 # errors (handlers/display_value.py resolve_continuous_write).
 _SET_PARAM_ENUM_HINTS = ("is an enum", "is_quantized=True")
-_SET_PARAM_NO_CURVE_HINTS = ("str_for_value",)
+# Refusals whose remedy is "fall back to the stored normalized value": the param
+# exposes no str_for_value curve to invert, OR its display can't address it —
+# non-numeric (a pan's "50L".."50R" — SYN-RACK-PRESET-RELINK §3), non-monotonic,
+# or constant. The display-can't-address family all end in "the normalized
+# `value`"; matching that recovers them via the same normalized retry instead of
+# 5 guaranteed pan failures on every push of a track with a dialed Analog pan.
+_SET_PARAM_NO_CURVE_HINTS = ("str_for_value", "the normalized `value`")
 
 
 def _attempt_set_parameter_fallback(
@@ -580,6 +651,7 @@ def execute_push(
     start_at: str | None = None,
     stop_after: str | None = None,
     progress_fn: Callable[[str], None] | None = None,
+    live_arrangement_clips_by_track: dict[int, list[dict]] | None = None,
 ) -> ExecuteResult:
     """Run the full thirteen-phase push, dispatching each call via ``send_fn``.
 
@@ -628,6 +700,7 @@ def execute_push(
     phases = push.plan_push_song(
         conn, song_id=song_id, session_id=session_id,
         perform_slowdown_factor=perform_slowdown_factor,
+        live_arrangement_clips_by_track=live_arrangement_clips_by_track,
     )
     phases, scope = _filter_phases(
         phases, only=only, start_at=start_at, stop_after=stop_after,
@@ -660,6 +733,11 @@ def execute_push(
     error_records: list[dict[str, Any]] = []
     # SYN-6B4Q: benign warnings (deferred cues) — do not flip outcome/exit.
     warning_messages: list[str] = []
+    # PSH-3K9D chunk 2: mid-phase heartbeat — {phase, done, total}. None except
+    # DURING a dispatch that crosses _HEARTBEAT_EVERY; _flush_state surfaces it so
+    # a poller sees forward motion inside a long phase. Reset per phase + cleared
+    # at the terminal flush so a finished push never shows stale progress.
+    phase_progress: dict[str, Any] | None = None
 
     def _flush_state(current_phase: str | None = None) -> None:
         """Write ``.last-push-state.json`` reflecting progress SO FAR (PSH-5T9D).
@@ -682,6 +760,10 @@ def execute_push(
             # PSH-2R7K: the phase-targeting filter (None for a full run) so a
             # scoped run's state file is never mistaken for a full push.
             "scope": scope,
+            # PSH-3K9D chunk 2: mid-phase progress for the currently-dispatching
+            # phase (omitted at phase boundaries + terminal — only present while a
+            # long phase is mid-flight). Distinguishes slow from hung.
+            **({"phase_progress": phase_progress} if phase_progress else {}),
             "phases": [
                 {
                     "name": p.name,
@@ -743,15 +825,134 @@ def execute_push(
             reason=reason or f"push_cli execute pad-probe (session={session_id})",
         )
 
-    def _dispatch_calls(calls) -> tuple[list[dict[str, Any]], bool]:
+    def _read_device_params(node: dict[str, Any]) -> dict[str, Any] | None:
+        """PSH-3K9D: read one device's current Live parameters for the
+        devices-phase diff-reconcile. Returns the ``get_parameters`` result
+        payload, or ``None`` on ANY failure — the diff then keeps that device's
+        writes (skip-on-confident-equal). Auxiliary like the pad-probe: a read
+        hiccup must never derail an otherwise-fine push, only forgo the skip."""
+        try:
+            resp = send_fn(Request(
+                tool="ableton_device",
+                action="get_parameters",
+                params={"node": node, "detail": "full"},
+            ))
+        except Exception:  # prawduct:allow prawduct/broad-except -- best-effort pre-dispatch read; any failure just forgoes the skip (keeps the write), never halts the push
+            logger.debug("devices-diff get_parameters read failed — keeping writes", exc_info=True)
+            return None
+        if not bool(getattr(resp, "ok", False)):
+            return None
+        return getattr(resp, "result", None)
+
+    def _probe_rack_chain_count(rack: dict[str, Any]) -> int | None:
+        """SYN-9F4K: read a freshly-loaded rack's live chain count via the
+        existing ``get_device_chains`` handler (engine-only — reuses the
+        read-only handler, no MCP wire change). Returns the ``chain_count`` int,
+        or ``None`` on ANY failure — the guard then keeps the rack's writes
+        (keep-on-doubt: a probe hiccup must never fabricate an empty-rack halt)."""
+        parent = rack["parent"]
+        kind = parent.get("kind") if isinstance(parent, dict) else None
+        params: dict[str, Any] = {"device_index": rack["live_index"]}
+        if kind == "track":
+            params["track_index"] = parent.get("index")
+        elif kind == "return":
+            params["return_index"] = parent.get("index")
+        elif kind == "master":
+            params["master"] = True
+        else:
+            return None
+        try:
+            resp = send_fn(Request(
+                tool="ableton_device", action="get_device_chains", params=params,
+            ))
+        except Exception:  # prawduct:allow prawduct/broad-except -- best-effort runtime probe; any failure forgoes the empty-rack guard (keeps writes), never halts
+            logger.debug("empty-rack chain probe failed — keeping writes", exc_info=True)
+            return None
+        if not bool(getattr(resp, "ok", False)):
+            return None
+        result = getattr(resp, "result", None) or {}
+        chain_count = result.get("chain_count")
+        return chain_count if isinstance(chain_count, int) else None
+
+    def _loaded_rack_name_fn(main_calls):
+        """SYN-9F4K: build a best-effort ``name_fn`` for the empty-rack guard from
+        THIS pass's load calls — ``(parent, device_index) -> display_name`` for
+        each rack loaded this pass, resolved via its now-live link. The guard uses
+        it to name an empty rack in the failure message; a rack with no load this
+        pass (e.g. an already-linked rack on a re-push) isn't in the map, so the
+        guard falls back to the rack's live address. Cheap per-load DB reads."""
+        name_map: dict[tuple[Any, Any], str] = {}
+        for call in main_calls:
+            if call.tool != "ableton_device" or call.args.get("action") != "load":
+                continue
+            key = call.key or ""
+            if not key.startswith("device:"):
+                continue
+            device_id = key.split(":", 1)[1]
+            live_index = Q.get_ableton_link(
+                conn, session_id=session_id, db_kind="device", db_id=device_id,
+            )
+            if live_index is None:
+                continue
+            parent = (call.args.get("node") or {}).get("parent")
+            if not parent:
+                continue
+            row = Q.get_device(conn, device_id)
+            display_name = (row["display_name"] if row is not None else None)
+            if display_name:
+                name_map[(_parent_key(parent), live_index)] = display_name
+
+        def name_fn(parent, device_index):
+            return name_map.get((_parent_key(parent), device_index))
+
+        return name_fn
+
+    def _empty_rack_result_entries(failures) -> list[dict[str, Any]]:
+        """SYN-9F4K: turn empty-rack guard failures into synthetic failed-result
+        entries (returned, for the caller to extend ``results``) + error records
+        (appended here). One per empty rack, so the boundary halt fires on a single
+        clear "preset content did not load" error instead of the chain-index
+        cascade. NOT routed through ``_apply_results`` — these are diagnosis, not
+        wire results."""
+        entries: list[dict[str, Any]] = []
+        for fail in failures:
+            kind, index = _parent_key(fail["parent"])
+            base = {
+                "key": f"empty_rack:{kind}:{index}/{fail['device_index']}",
+                "tool": "ableton_device",
+                "error": fail["message"],
+            }
+            entries.append({**base, "ok": False, "result": None})
+            error_records.append({
+                **base,
+                "action": "load",
+                "args_summary": {
+                    "empty_rack_suppressed_writes": fail["suppressed_count"],
+                },
+                "hint": fail["hint"],
+            })
+        return entries
+
+    def _dispatch_calls(
+        calls, *, phase_name: str | None = None,
+    ) -> tuple[list[dict[str, Any]], bool]:
         """Dispatch ToolCalls via ``send_fn`` → (results, connection_lost).
 
         Per-call failures append to ``error_records``; a connection-class
         exception stops the batch immediately (no point continuing without
         Live). Shared by the main per-phase pass and the devices-phase
         convergence pass (SYN-9F2L).
+
+        PSH-3K9D chunk 2: when ``phase_name`` is set, emit a mid-phase heartbeat
+        every ``_HEARTBEAT_EVERY`` processed calls — to stderr (``progress_fn``)
+        AND into ``.last-push-state.json`` (``phase_progress``) — so a phase
+        issuing many calls is observable. ``len(results)`` is the processed count
+        (one result per call); the connection-loss early-return appends none, so
+        no heartbeat fires on the failed call.
         """
+        nonlocal phase_progress
         results: list[dict[str, Any]] = []
+        total = len(calls)
         for call in calls:
             action = call.args.get("action")
             params = {k: v for k, v in call.args.items() if k != "action"}
@@ -825,6 +1026,15 @@ def execute_push(
 
             result_payload = getattr(resp, "result", None) if ok else None
             hint = getattr(resp, "hint", None) if not ok else None
+            # SYN-2D9K: replace the MCP's value-range hint with the orphan-cause
+            # hint when a set_parameter fails on a param the device doesn't have.
+            if not ok:
+                orphan_hint = _orphan_param_hint(
+                    tool=call.tool, action=action, err_msg=err_msg,
+                    parameter_name=call.args.get("parameter_name"),
+                )
+                if orphan_hint is not None:
+                    hint = orphan_hint
 
             # SYN-6B4Q: a cue_create_batch dispatched in skip mode reports the
             # cues it DEFERRED (ahead of Live's current extent). The call itself
@@ -878,6 +1088,17 @@ def execute_push(
                     "error": err_msg,
                     "hint": hint,
                 })
+
+            # PSH-3K9D chunk 2: mid-phase heartbeat. `len(results)` is the
+            # processed count (one result appended per call above). Fires every
+            # _HEARTBEAT_EVERY calls, never on the last (the phase's own "[x] ok"
+            # line covers completion). Throttled, so the per-call state write
+            # stays cheap even on a 1000+ call phase.
+            done = len(results)
+            if phase_name and done % _HEARTBEAT_EVERY == 0 and done < total:
+                phase_progress = {"phase": phase_name, "done": done, "total": total}
+                _flush_state(current_phase=phase_name)
+                _emit_progress(f"[{phase_name}] {done}/{total} call(s)…")
         return results, False
 
     def _apply_results(batch: list[dict[str, Any]], phase_name: str) -> None:
@@ -928,7 +1149,13 @@ def execute_push(
         uniform. The three halt causes (plan-error, connection-lost, call-fail)
         differ only in their counts + labels — this is the one place that
         bookkeeping lives. The caller still issues ``break`` (loop control can't
-        cross the call boundary)."""
+        cross the call boundary).
+
+        PSH-3K9D chunk 2: intentionally does NOT call ``_flush_state`` — the
+        terminal flush after the loop clears ``phase_progress`` first (the only
+        post-loop write). Adding a flush here would persist a stale mid-phase
+        ``phase_progress`` from the just-halted phase; if you add one, reset
+        ``phase_progress = None`` before it."""
         nonlocal halt_phase, outcome, exit_code
         phase_outcomes.append(PhaseOutcome(
             name=phase_name, status=_STATUS_HALTED,
@@ -943,7 +1170,23 @@ def execute_push(
             ))
         _emit_progress(f"[{phase_name}] HALTED — {outcome_label}")
 
+    # MICROTUNE Chunk 3: before the phase loop, emit the gated tuning notices —
+    # the re-load instruction + a non-blocking drift warning — for an alt-tuned
+    # song. Inert (returns []) for the 99.99% with tuning_ref NULL, with NO extra
+    # Live round-trip. Routed through the benign warnings channel so they ride
+    # the summary + state file; emitted early so the operator sees them up front.
+    from hallucinote.sync.push.tuning_notice import collect_tuning_notices
+    for notice in collect_tuning_notices(
+        conn, song_id=song_id, send_fn=send_fn, request_cls=Request,
+    ):
+        if notice not in warning_messages:
+            warning_messages.append(notice)
+        _emit_progress(notice)
+
     for idx, phase in enumerate(phases):
+        # PSH-3K9D chunk 2: clear any prior phase's mid-flight progress before
+        # the phase-start flush, so a poller never sees stale done/total.
+        phase_progress = None
         # PSH-5T9D: flush at the START of each phase so a poller of
         # .last-push-state.json sees the current phase before it runs (the
         # per-phase progress the opacity bug asked for). The stderr heartbeat
@@ -987,6 +1230,47 @@ def execute_push(
             _emit_progress(f"[{phase.name}] skipped (nothing to push)")
             continue
 
+        # PSH-3K9D: make the devices phase a true diff-reconcile. Read each
+        # device's current Live params once and drop the set_parameter calls
+        # already equal to Live — the just-captured set used to re-apply ~1200
+        # redundant params and stall for minutes. Skip-on-confident-equal: any
+        # doubt keeps the write, so this can only ever degrade to today's
+        # re-write-everything behavior, never to a wrong mix. Loaded-this-pass
+        # devices land their params via the convergence re-plan below (NOT
+        # diffed — a fresh device is at factory defaults, so every param
+        # genuinely differs); on a fresh-set push the main plan has only loads,
+        # so this fires no reads at all.
+        calls_to_dispatch = plan.calls
+        main_rack_failures: list[dict[str, Any]] = []
+        if phase.name == "devices":
+            from hallucinote.sync.push.device_param_diff import (
+                partition_unchanged_device_params,
+            )
+            calls_to_dispatch, skipped_params = partition_unchanged_device_params(
+                plan.calls, conn=conn, read_fn=_read_device_params,
+            )
+            if skipped_params:
+                msg = (
+                    f"devices: {len(skipped_params)} param(s) already current in "
+                    f"Live — skipped; dispatching {len(calls_to_dispatch)} call(s)"
+                )
+                _emit_progress(f"[{phase.name}] {msg}")
+                if msg not in warning_messages:
+                    warning_messages.append(msg)
+            # SYN-9F4K: an already-linked rack that still loads empty (a re-push
+            # against an unresolved preset) re-emits its nested writes HERE, in
+            # the main dispatch — not the convergence pass (which only sees a
+            # device loaded THIS pass). Probe + drop them too, or the
+            # chain-index-out-of-range cascade returns on every push after the
+            # first. On a fresh push the rack is unlinked, so the main plan has
+            # only the load (no nested writes) and this is a no-op — the
+            # convergence guard below handles that case (with the loaded rack's
+            # name). name_fn=None here: a re-push emits no load, so no name is
+            # available — the message falls back to the rack's live address.
+            calls_to_dispatch, main_rack_failures = partition_doomed_nested_writes(
+                calls_to_dispatch, probe_fn=_probe_rack_chain_count,
+            )
+
         # PSH-5T9D: announce a phase that actually dispatches. The realtime
         # perform gets a distinctive heads-up + ETA framing so a multi-minute
         # phase isn't mistaken for a hang (the worst-case the bug named).
@@ -996,14 +1280,23 @@ def execute_push(
                 "this can take several minutes…"
             )
         else:
-            _emit_progress(f"[{phase.name}] running ({len(plan.calls)} call(s))…")
+            _emit_progress(f"[{phase.name}] running ({len(calls_to_dispatch)} call(s))…")
 
-        results, connection_lost = _dispatch_calls(plan.calls)
+        results, connection_lost = _dispatch_calls(
+            calls_to_dispatch, phase_name=phase.name,
+        )
 
         # For connection-lost the dispatch stopped before any subsequent ok
         # rows could accumulate, so applying what we have is safe.
         if results:
             _apply_results(results, phase.name)
+
+        # SYN-9F4K: record any main-dispatch empty-rack failures AFTER apply
+        # (they're diagnosis, not wire results). Their ok=False entries make
+        # `all(r.get("ok"))` False below, so the convergence pass is correctly
+        # skipped — the phase halts on the single clear error.
+        if main_rack_failures:
+            results.extend(_empty_rack_result_entries(main_rack_failures))
 
         # SYN-9F2L convergence: a device loaded THIS pass gets its link at
         # apply-time, after parameter planning — so its dialed parameters
@@ -1029,10 +1322,31 @@ def execute_push(
                 if c.key not in dispatched_keys
             ]
             if extra_calls:
-                extra_results, connection_lost = _dispatch_calls(extra_calls)
-                results.extend(extra_results)
-                if extra_results:
-                    _apply_results(extra_results, phase.name)
+                # SYN-9F4K: a rack that loaded this pass with 0 chains cannot
+                # accept its dependent nested writes — each would fail
+                # chain-index-out-of-range, burying the real cause (the empty
+                # load) under hundreds of errors. Probe each rack a nested write
+                # addresses; drop the doomed writes and record ONE "preset content
+                # did not load" failure per empty rack so the phase halts on a
+                # single clear error instead of the cascade. The loaded rack's
+                # name is available this pass (name_fn from the loads). Engine-only
+                # (reuses get_device_chains, no MCP change).
+                extra_calls, empty_rack_failures = partition_doomed_nested_writes(
+                    extra_calls,
+                    probe_fn=_probe_rack_chain_count,
+                    name_fn=_loaded_rack_name_fn(plan.calls),
+                )
+                if empty_rack_failures:
+                    results.extend(
+                        _empty_rack_result_entries(empty_rack_failures)
+                    )
+                if extra_calls:
+                    extra_results, connection_lost = _dispatch_calls(
+                        extra_calls, phase_name=phase.name,
+                    )
+                    results.extend(extra_results)
+                    if extra_results:
+                        _apply_results(extra_results, phase.name)
 
         calls_ok = sum(1 for r in results if r.get("ok"))
         calls_failed = sum(1 for r in results if not r.get("ok"))
@@ -1053,6 +1367,91 @@ def execute_push(
             )
             break
 
+        # ARR-PROJ Chunk 3: PREVENTION assert. The arrangement phase just
+        # materialized; re-probe Live in a FRESH callback (never inline after the
+        # write, §6a) and verify every clip's audible set equals the DB collapsed
+        # set. HALT on silent corruption (drop / orphan / stack / drift) instead
+        # of reporting OK — the structural backstop for the 2026-06-21 stacking +
+        # bulk-drop and 2026-06-22 orphan bugs.
+        if phase.name == "arrangement":
+            from hallucinote.sync.arrangement_verify import (
+                ArrangementIntegrityError,
+                assert_arrangement_materialized,
+            )
+            try:
+                integrity_report = assert_arrangement_materialized(
+                    conn, song_id=song_id, session_id=session_id, send_fn=send_fn,
+                )
+                # The assert HALTs only on SILENT corruption; a per-clip re-probe
+                # FAILURE is not corruption, so the assert returns normally — but
+                # those placements went UNVERIFIED, so "OK" would overstate the
+                # guarantee (the exact gap the assert exists to close). Surface the
+                # unverified count as a benign warning (does not flip the exit) so
+                # "couldn't verify N clips" reads distinctly from "verified all N".
+                unverified = [
+                    r for r in integrity_report.results
+                    if r.status == "probe_failed"
+                ]
+                if unverified:
+                    verified_n = sum(
+                        1 for r in integrity_report.results
+                        if r.status in ("faithful", "diverged", "missing_clip")
+                    )
+                    affected = ", ".join(
+                        f"{r.track_name}/{r.section}" for r in unverified[:5]
+                    ) + (" ..." if len(unverified) > 5 else "")
+                    msg = (
+                        f"arrangement integrity: {len(unverified)} placement(s) "
+                        f"could NOT be verified (Live note/clip re-probe failed); "
+                        f"the assert covered only {verified_n} placement(s), so a "
+                        f"silent drop/stack on the unverified ones would NOT have "
+                        f"been caught. Re-run `execute --only arrangement` once Live "
+                        f"is reachable to re-materialize + re-verify. Affected: "
+                        f"{affected}"
+                    )
+                    if msg not in warning_messages:
+                        warning_messages.append(msg)
+            except ArrangementIntegrityError as exc:
+                error_records.append({
+                    "key": None,
+                    "tool": phase.name,
+                    "action": "integrity_assert",
+                    "args_summary": {"phase": phase.name},
+                    "error": str(exc),
+                    "hint": (
+                        "the materialized arrangement does not match the DB "
+                        "(drop / orphan / stack / drift). Re-run `execute --only "
+                        "arrangement --probe` (idempotent clear+rebuild); if it "
+                        "persists, run `hallucinote verify-arrangement` and inspect "
+                        "the named track/section."
+                    ),
+                })
+                _halt(
+                    phase.name, idx, outcome_label="partial",
+                    exit_code_val=EXIT_PARTIAL, calls_ok=calls_ok,
+                    calls_failed=1,
+                )
+                break
+            except _CONNECTION_EXCS as exc:
+                # The assert's fresh re-probe lost Live mid-check. Treat exactly
+                # like a dispatch-time connection loss so the terminal state file
+                # is still written (the executor's always-write-state contract)
+                # and the operator gets a re-execute instruction, not a traceback.
+                error_records.append({
+                    "key": None,
+                    "tool": phase.name,
+                    "action": "integrity_assert",
+                    "args_summary": {"phase": phase.name},
+                    "error": f"connection lost during the arrangement integrity re-probe: {exc}",
+                    "hint": "see ableton://guides/error-recovery; re-execute (idempotent).",
+                })
+                _halt(
+                    phase.name, idx, outcome_label="connection_lost",
+                    exit_code_val=EXIT_CONNECTION_LOST, calls_ok=calls_ok,
+                    calls_failed=calls_failed + 1,
+                )
+                break
+
         pad_ok, pad_failed = _maybe_pad_probe(phase.name)
         phase_outcomes.append(PhaseOutcome(
             name=phase.name, status=_STATUS_OK,
@@ -1063,6 +1462,8 @@ def execute_push(
 
     # Persist the terminal state (PSH-5T9D: the per-phase flushes above already
     # made it pollable mid-run; this is the final, current_phase=None write).
+    # PSH-3K9D chunk 2: clear mid-phase progress so the terminal file is clean.
+    phase_progress = None
     _flush_state(current_phase=None)
 
     top_patterns: list[dict[str, Any]] = []

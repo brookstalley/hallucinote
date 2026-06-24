@@ -75,6 +75,7 @@ def plan_push_song(
     song_id: str,
     session_id: str,
     perform_slowdown_factor: float = 1.0,
+    live_arrangement_clips_by_track: dict[int, list[dict]] | None = None,
 ) -> list[PushPhase]:
     """Master orchestration: return the thirteen phases of a full song push, in order.
 
@@ -140,10 +141,13 @@ def plan_push_song(
           automation (ENV-7G4K), fingerprint-gated. Needs tracks +
           returns + devices linked. Realtime: the transport plays each
           changed arc's span (the plan names the wall-clock cost).
-      12. ``arrangement`` — :func:`plan_push_arrangement`. Emits
-          ``duplicate_to_arrangement`` per arrangement row. Carries
-          session-clip envelopes as snapshot copies (W4-A finding).
-          Needs clips linked (raises otherwise).
+      12. ``arrangement`` — :func:`plan_push_arrangement` (ARR-PROJ). Projects
+          the DB onto the arrangement: per track, CLEAR its existing clips (from
+          ``live_arrangement_clips_by_track``, the execute-path probe) then
+          create+fill each placement from the DB (note-only) — idempotent, no
+          B-24 stacking. Envelope-bearing placements duplicate onto the cleared
+          region to keep their snapshot-copied clip envelopes (W4-A). Needs
+          tracks linked; envelope-bearing/audio placements need clips linked.
       13. ``cues`` — :func:`plan_push_cue_points`. Creates cue points.
           Must run AFTER arrangement: Live's ``set_or_delete_cue`` is
           clamped to ``[0, song.last_event_time]``; cues placed before
@@ -250,8 +254,9 @@ def plan_push_song(
             name="arrangement",
             plan_fn=lambda: plan_push_arrangement(
                 conn, song_id=song_id, session_id=session_id,
+                live_arrangement_clips_by_track=live_arrangement_clips_by_track,
             ),
-            description="Duplicate session clips to the arrangement view (snapshots session-clip envelopes per W4-A).",
+            description="Project the DB onto the arrangement: clear each track then create+fill (envelope-bearing clips duplicate onto the cleared region) — ARR-PROJ.",
         ),
         PushPhase(
             name="cues",
@@ -346,6 +351,29 @@ _ACK_ONLY_KINDS: frozenset[str] = frozenset({
     "device_sidechain",
     # Chunk 4a (devices)
     "device_parameter",      # ableton_device(action='set_parameter') for tracks + returns (Wave M-4)
+    # Nested preset param override (DEV-4P7R `param_overrides`, e.g. a `value_raw`
+    # on a rack's nested Wavetable LFO). The push planner emits this kind once the
+    # override is applied; ack-only because the intended value ORIGINATES in the
+    # snapshot/DB (same rationale as `device_parameter` above) — there is no
+    # Live-side index to record back. Without this case the devices phase HALTS
+    # mid-run on any song whose snapshot carries a `value_raw` override, so the
+    # full push never finishes (no routing/envelopes/automation/arrangement/cues).
+    # See incoming-bugs/2026-06-18-push-apply-unknown-device_param_override-result-kind-halts-devices-phase.md
+    "device_param_override",
+    # NODE-ADDR Chunk C/F: per-chain mixer state (mute/solo/volume/pan) +
+    # choke_group/out_note, emitted by the devices planner as
+    # `device_chain_props:{chain_id}` via ableton_device(set_chain_property)
+    # (devices.py). Ack-only — the chain state ORIGINATES in the snapshot/DB and
+    # a chain has no Live-side index to record back (it is addressed by
+    # chain_index, not a linkable handle), exactly like device_param_override
+    # above. The DIRECT TWIN of the 2026-06-18 device_param_override bug, one key
+    # kind over: without this case a full push of any rack-preset song carrying
+    # non-default per-chain volume/mute/choke CRASHES in the devices-phase apply
+    # — but only once the rack actually LOADS POPULATED (the rack-preset load fix
+    # newly exposed it; before, these calls failed at dispatch on an empty-shell
+    # rack and never reached apply).
+    # See incoming-bugs/2026-06-20-push-apply-unknown-device_chain_props-result-kind-crashes-devices-phase.md
+    "device_chain_props",
     # SYN-4P2D (scenes): ableton_scene(action='ensure_count') provisions
     # session clip slots before the clips phase. Scenes are a Live-set
     # structural property, not a Hallucinote entity — there's no per-scene DB
@@ -357,6 +385,15 @@ _ACK_ONLY_KINDS: frozenset[str] = frozenset({
     # duplicate landed); this op only rewrites content, so there's no new index
     # to record — ack-only. Distinct from the `arrangement_clip:` duplicate key.
     "arrangement_clip_notes",
+    # ARR-PROJ Chunk 2: the projection planner CLEARS a track's existing
+    # arrangement clips before create+filling from the DB, emitting
+    # ableton_clip(action='delete', location='arrangement') keyed
+    # `arrangement_clip_clear:{track}:{idx}`. Ack-only — a delete removes a clip
+    # (and its link, which the rebuild re-records under `arrangement_clip:`);
+    # the delete result carries no index to bind. Without this case
+    # apply_push_results raises on the unknown key prefix and HALTS the
+    # arrangement phase before any clip is rebuilt.
+    "arrangement_clip_clear",
 })
 
 

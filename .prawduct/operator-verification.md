@@ -15,6 +15,90 @@ pending entries when `operator_verification_required: true`.
 
 ---
 
+## MCP-1V8K — device load focuses Session view before browser.load_item (2026-06-23) — PASSED (agent-run live, 2026-06-23)
+
+**Verified live (agent-run, this session, Ableton Live 12 Suite, default set).** Re-vendored the
+Remote Script from develop (`0.1.0+a8ce2abb7163`, `matches_mcp_server: true`), launched Live, and
+drove the repro directly via `hallucinote_mcp.client.send`:
+- The version handshake matched (`a8ce2abb7163`) — Live loaded the re-vendored Remote Script, not the stale one.
+- `ableton_session(set_view, view='arranger')` → `focused_view: "Arranger"` (the post-render precondition).
+- `ableton_device(load, node={track 1}, terminal='track', kind='Operator')` while focused on Arranger →
+  **`load.ok: True`, Operator landed** (`ableton_device(list, track_index=1)` device_count 0→1) — pre-fix
+  this silently no-ops in Arranger.
+- `ableton_session(info)` after the load → **`focused_view: "Session"`** — the `_focus_session_view_for_load`
+  switch ran.
+- Cleanup: deleted the test Operator (device_count→0); set left as found, not saved.
+
+Residual (not blocking — covered by the same code path): the non-empty-chain and master-track (DEV-6M2K)
+repeats from check item 3 below were not separately exercised; the fix is unconditional (focuses Session
+before every `browser.load_item`), so the single verified path exercises the same line.
+
+`device.py` `load_handler` now calls `application.view.show_view("Session")` before
+`browser.load_item`, because that call silently no-ops when Live's focused view is Arranger
+(the state a render leaves behind), bricking every post-render device load. `device.py` is in
+`_FINGERPRINT_PATHS` (`handlers`), so this **flips the server fingerprint** and only reaches a
+live set after a **re-vendor + `/ableton-mcp-install` handshake** (dev-mode relaunch — see
+`project_mcp_deploy_topology_dev_vs_marketplace`). The headless test proves the loader *calls*
+`show_view("Session")`, but the fake hardcodes the premise (Arranger → no-op); it does not prove
+the premise or the fix hold in real Live.
+
+**Check (any song, Ableton open, server version-matched after re-vendor):**
+1. `ableton_render(...)` anything (leaves `focused_view = "Arranger"`; confirm via
+   `ableton_session(action='info')`).
+2. Without manually switching views, `ableton_device(action='load', node={parent:{kind:'track',
+   index:N}, terminal:'track'}, kind='Operator')` → expect: device lands on the first try
+   (no "did not append" error), and `ableton_session(action='info')` now reports
+   `focused_view = "Session"`.
+3. Repeat into a non-empty chain and onto the master track (DEV-6M2K path) to confirm the
+   view-focus doesn't disturb those loads.
+
+## ARR-PROJ Chunk 2 — full projection planner end-to-end in real Live (2026-06-22) — PENDING
+
+Chunk 2 (the planner rewrite) is headless-verified (4379 green, Critic 0 findings) but the
+WHOLE new path has not run against real Live as one flow — only the create+fill *primitive*
+did (Chunk-1 spike, Drums only). The integration still to confirm live: the
+`live_arrangement_clips_by_track` probe threading, the descending-index clear, per-placement
+create+fill across multiple tracks in one phase, AND the envelope-bearing → duplicate route
+(alien's one host: the Alien Voice `send_level` clip).
+
+**Check (alien, Ableton open, server version-matched):**
+`uv run hallucinote push execute --only arrangement --probe --song alien` (the new
+`_cmd_execute` probes arrangement and threads it into the projection planner; `--only
+arrangement` skips the realtime perform phase). Expect: every track's existing arrangement
+clips cleared then create+filled from the DB; the Alien Voice envelope-hosting placement
+duplicated (not create+filled) so its `send_level` clip envelope survives; `.last-push-state.json`
+outcome `ok`. Then `hallucinote verify-arrangement` (once Chunk 3 lands) or a per-track
+`ableton_note(list, location='arrangement')` spot-check shows collapsed note_counts == DB, and
+NO stacking on the re-run. Render-confirm the song still sounds correct.
+
+## ARR-PROJ Chunk 1 — arrangement-as-projection live spike (2026-06-22) — PASSED (note-level), render optional
+
+**Attended session, alien set, server version-matched (`/mcp` respawn).** Drove the
+real Drums track (10 placements, ~2500 notes incl. a 771-note clip) through two
+consecutive `clear (per-clip delete) → create_midi_clip + set_notes → fresh
+read-back` rebuilds via `.prawduct/artifacts/plans/ARR-PROJ/chunk1-spike.py`.
+
+**Verified live (agent-run, this session):**
+1. **Faithful + idempotent + drop-free.** `pass1=True pass2=True idempotent=True
+   net_noop_vs_baseline=True` — every section's Live note_count matched the DB
+   collapsed set on both passes; the rebuild returned Drums to byte-identical
+   baseline. No drop, no B-24 stack (impossible by construction — no duplicate).
+2. **note_count trustworthy (§6 q2).** On a source-less `create_midi_clip` clip
+   (verse1), `ableton_clip(list).note_count == ableton_note(list) count == 503 ==
+   DB collapsed` — reads the arrangement clip's OWN notes, read in a fresh callback.
+3. **Live collapses same-(pitch,start) (§6b-1).** 509→503, 337→333, 771→770 held
+   as collapsed — confirms the comparator must collapse before diffing.
+4. **Clear wire exists; planner-deletes chosen.** Descending per-clip
+   `delete(location='arrangement')` cleared 10 clips in ~7s; no bulk-clear action
+   needed (Chunk 6 dropped, zero fingerprint change).
+
+**Pending (optional — Early-Feedback "hear-it" milestone):** an *audible* render of
+the rebuilt Drums track was not run. The note-API read-back proves note-for-note
+fidelity and `net_noop=True` means the track is note-identical to the arrangement
+the operator was already hearing, so render-correctness is transitively established.
+Run `ableton_render(action='start', song_slug='alien')` if an audible confirmation
+is wanted; otherwise this is operator-acceptable on the note-level proof.
+
 ## 2026-06-13 autonomous session — bridge prepped + new pending checks
 
 **Bridge is READY for the existing SNP-8R4K checks below.** This session re-vendored
@@ -733,6 +817,68 @@ re-vendored server. On return, re-vendor then:
 
 ---
 
+## MICROTUNE Chunk 4 — verify-api close + `/tuning-pull` + drift live-read (2026-06-19)
+
+**Status:** VERIFIED LIVE (Wendy Carlos gamma loaded in Live this session). The
+Live-availability gate that blocked verify-api throughout is finally open, so the
+whole chain was exercised against real LOM shapes:
+
+1. **verify-api closed.** Probed `song.tuning_system` + sub-fields off the loaded
+   gamma tuning; recorded the real shapes in `api-notes-tuning.md` (a flat
+   `list[float]` `note_tunings`, not the typed-as-"dictionary" guess; standard
+   12-key `reference_pitch`). `read.py`'s `_extract_loaded_tuning` stub closed
+   against them → Chunk 1 is now **High confidence**.
+2. **`/tuning-pull` end-to-end (live).** Ran `hallucinote tuning-pull apply`
+   against a throwaway song DB fed the *real* live probe values → `status:pulled`,
+   `step_count:20`, `period_cents:701.955`, `reference_note:60`, cached
+   `tunings/wendy-carlos-gamma.ascl` written (20 pitch lines, non-octave period
+   `701.955017` as the last degree, unison unlisted), report carries the re-load
+   instruction.
+3. **Drift-warn — all 3 cases against real shapes.** Fed the captured live probe
+   responses through `tuning_notice._read_loaded_tuning` → `LoadedTuning('Wendy
+   Carlos gamma', 701.955…)`, then `drift_warning`: **match** (stored gamma) →
+   silent; **different** (stored JI, loaded gamma) → `"tuning DRIFT: Live has
+   'Wendy Carlos gamma' (period 701.96¢) … authored against 'JI 5-limit major' …"`;
+   **nothing-loaded** → `"tuning DRIFT: … expects 'Wendy Carlos gamma' but Live has
+   NO tuning loaded …"`. Push re-load instruction copy reads clearly.
+
+**Remaining (LOW, optional):** the drift-warn was exercised via a replay of the
+real probe responses (deterministic), not through a full `push_cli execute` over
+the live bridge — the live bridge read path itself is the same `ableton_probe`
+surface, separately confirmed `ok`. A future attended push of a real alt-tuned
+song would close that last cosmetic gap (the "Warnings (push still OK)" section in
+a real push summary), but the logic + live shapes are verified.
+
+---
+
+## MICROTUNE Chunk 3 — push tuning instruction + drift-warn (copy + live re-read)
+
+**Status:** SUPERSEDED by the Chunk 4 entry above (VERIFIED LIVE 2026-06-19). The
+two parts below were the queued items; both are now exercised against the loaded
+gamma tuning — drift copy + all 3 drift cases confirmed. Retained for history.
+
+Two parts needed an attended run, both gated on the **same
+Live-availability constraint as verify-api** (a tuning must be *loaded* in a
+readable Set — not available when this landed):
+
+1. **Instruction + drift copy (visual change).** On a real alt-tuned song's
+   `push_cli execute`, confirm the summary's "Warnings (push still OK)" section
+   carries the load instruction (`load songs/<slug>/tunings/<file>.ascl …`) and
+   that it reads clearly to an operator. A 12-TET push shows none of it.
+
+2. **Drift live re-read (the one unverified path).** The drift-warn re-reads
+   `song.tuning_system` live. The **nothing-loaded** branch rests on the
+   live-confirmed `{"type":"NoneType",…}` shape; the **different-tuning** branch
+   reads the scalar `name` + `pseudo_octave_in_cents` sub-paths, which are NOT yet
+   live-exercised. To verify: (a) push with NO tuning loaded → expect the "NO
+   tuning loaded" drift warning; (b) load the *correct* `.ascl` → expect silence;
+   (c) load a *different* tuning → expect the "DRIFT" warning naming both. If the
+   scalar sub-reads behave differently than assumed, this closes the same
+   verify-api gap as `read.py`'s loaded-tuning stub — capture the real shapes in
+   `api-notes-tuning.md` and adjust `tuning_notice._read_loaded_tuning`.
+
+---
+
 ## BAK-3M9T Chunk 01 — sidechain source round-trips through the durable snapshot
 
 > **2026-06-17 — merged with this check PENDING (user-directed).** PR #178 was
@@ -766,3 +912,445 @@ Branch `feat/snapshot-sidechain` (merged as `90214d3`, PR #178). On an attended 
 4. **Clear-on-absence.** Remove the sidechain in Live (Audio From → own track /
    No Input), `/song-snapshot` (field disappears), rebuild → confirm the sidechain
    is cleared, not stale (snapshot is authoritative).
+
+---
+
+## MCP-9R3T Chunk 1 — async render start/status against real Live
+
+Visual change: yes (agent-facing `start`/`status` result shape + live transport
+behavior). Branch `feat/async-render-analyze`. The substrate (job registry +
+`ableton_render` start/status) is unit-tested with a Live seam; the keystone —
+**mechanism A: a detached worker keeps the render alive after `start` returns** —
+is verify-api-confirmed FROM CODE (`run_on_main` is thread-agnostic; the
+scheduler outlives the request) but the realtime behavior under load needs a live
+session. Requires a re-vendor first (`start`/`status` change `ableton_render`'s
+wire shape → the fingerprint flips → `/ableton-mcp-install` + Live restart).
+
+On an attended Live run with a built multi-minute song:
+
+1. **`start` returns immediately.** `ableton_render(action='start', song_slug=…)`
+   → returns in < ~3 s with `{job_id, captures_dir, eta_seconds,
+   expected_stop_beat, poll}` while the transport is rolling — NOT after the full
+   render. Confirm the render actually started (transport playing, analyzers
+   armed).
+
+2. **`status` long-polls and advances.** `ableton_render(action='status',
+   job_id=…)` returns `state='running'` with `progress.current_beat` advancing
+   across successive polls; each call returns within ~45 s. Terminal poll returns
+   `state='done'` with a well-formed `manifest` (and `manifest_path` on disk) —
+   **no false failure**, where the synchronous `render` would have red-timed-out.
+
+3. **KEYSTONE — concurrency (build-plan Done-when #2).** While a render is
+   running, issue a concurrent `ableton_session(action='info')` → it must RETURN
+   promptly, not hang to timeout behind the render worker. (Per-request sockets +
+   thread-agnostic `run_on_main` say it should interleave; this is the one fact
+   only Live settles. If it DOES hang, fall back to mechanism B — the long-poll
+   `status` is already built, so only the worker spawn is removed.) NOTE: this
+   isolates the **Live main-thread** axis. The separate **server-event-loop**
+   axis — a `status` long-poll freezing the server — was fixed at the dispatch
+   layer in Chunk 2 (async tool wrapper + `anyio.to_thread`), which also covers
+   render's `status` (its 60 s socket read no longer blocks the loop). So here
+   you're verifying only that Live interleaves the worker's polls.
+
+4. **Busy + failure shapes.** A second `start` while one is running returns
+   `{busy: true, job_id}` (no second transport pass). A render that captures zero
+   frames lands `state='failed'` with the error in `status`, not a hang.
+
+5. **`status.json` heartbeat still written.** Confirm `<captures_dir>/status.json`
+   updates during the render (the registry progress mirrors it) and lands terminal
+   at the end — the crash-resilient backing for the in-memory registry.
+
+---
+
+## MCP-5N8K Chunk 2 — async analyze start/status against a real >60s capture
+
+Visual change: yes (agent-facing `ableton_analysis` `start`/`status` result
+shape). Branch `feat/async-render-analyze`. Lower risk than Chunk 1 — analyze
+runs in the MCP SERVER process (pure DSP, no Live threading), so the worker is a
+plain server-thread and there's no keystone. Fully unit-tested with fakes; what a
+live run adds is exercising the actual >60s case end-to-end. Requires the same
+re-vendor as Chunk 1 (`start`/`status` change `ableton_analysis`'s wire shape →
+fingerprint flips → `/ableton-mcp-install`).
+
+Needs a **many-surface song** (a full-band capture with several declared
+sections — the case whose DSP exceeds 60s today and red-times-out the
+synchronous `analyze`). Render it first (Chunk-1 `start`/`status`), then:
+
+1. **`start` returns immediately.** `ableton_analysis(action='start',
+   song_slug=…)` → returns fast with `{job_id, report_dir, eta_seconds=null,
+   poll}` while the DSP runs in the background — NOT after the full analysis.
+
+2. **`status` long-polls to done.** `ableton_analysis(action='status', job_id=…)`
+   returns `state='running'` (coarse `progress.stage`) within ~45 s per call,
+   then a terminal `state='done'` carrying `report` (the lightweight summary +
+   `analysis_code.stale`) and `report_path` — with the full MixReport JSON on
+   disk at that path. **No false failure**, where the synchronous `analyze`
+   red-times-out on the same capture.
+
+3. **Concurrency.** While the analysis runs, a concurrent unrelated MCP call
+   (e.g. `ableton_session(action='info')`) must RETURN promptly, not hang behind
+   the analyze long-poll. This is delivered at the **dispatch layer**: the
+   server's tool wrapper is `async` and offloads the blocking dispatch via
+   `anyio.to_thread.run_sync` (server.py), so a 45 s `status` wait occupies only
+   its worker thread, not the event loop. (FastMCP runs a *sync* tool INLINE on
+   the loop — that would freeze the server, which is why the wrapper is async;
+   proven headless by `test_status_longpoll_does_not_block_concurrent_tool_calls`.
+   Confirm it holds under real concurrent load.)
+
+4. **Busy + failure shapes.** A second `start` while one is running returns
+   `{busy: true, job_id}`. A `start` for a typo'd slug / missing captures lands
+   `state='failed'` with the teaching error surfaced through `status` (not a
+   hang).
+
+5. **Synchronous `analyze` still works** as the fast path for a quick
+   few-surface capture (the disposition keeps it).
+
+---
+
+## MCP-9R3T Chunk 3 — sync-render retirement + re-vendor handshake (PR 2)
+
+Visual change: yes (the `ableton_render` action surface changed — `render` is
+gone). Branch `feat/mcp-render-analyze`. PR 2 edits `actions/render.py` +
+`handlers/render.py` + `handlers/jobs.py` (all in `_FINGERPRINT_PATHS`), so the
+server fingerprint flips → the running server reports a version mismatch against
+the previously-vendored Remote Script until re-vendored.
+
+1. **Re-vendor handshake.** After merging PR 2, run `/ableton-mcp-install` (or
+   relaunch the dev-mode plugin, then install) to re-vendor, then reconnect. A
+   call should NOT report a version mismatch once the vendored RS matches the
+   running server. (Same handshake the PR #185 / Chunk-1 entries need — one
+   re-vendor covers the whole async render/analyze surface.)
+
+2. **Retired `render` action.** `ableton_render(action='render', song_slug=…)`
+   returns a teaching unknown-action error whose `valid_actions` include `start`
+   and `status` (verified headless; confirm the deployed surface matches).
+
+3. **`start`/`status` are the render entry** and behave as in the Chunk-1 entry
+   above (start returns fast; status long-polls to a terminal state with a
+   well-formed manifest; no false failure).
+
+---
+
+## PSH-3K9D — devices-phase diff-reconcile skips already-current params (live bridge)
+
+**Status:** PENDING — needs an attended Live session. **Visual change:** no
+(no UI; verify via the dispatched-call count + state-file warnings). Added
+2026-06-19, AFTER the 2026-06-14 blanket acceptance, so it blocks `/pr create`
+until run. The unit suite proves the diff logic against a fake `send_fn`; only a
+real bridge proves the `ableton_device(action='get_parameters', detail='full')`
+read returns the value shapes the comparison assumes (raw `value`, `value_display`
+from `str_for_value`, enum `value_items`, `min`/`max`).
+
+Why it can't be auto-verified: the push reads live param values from a running
+Live set; there is no headless stand-in for the real device-parameter surface.
+
+Checks (on a just-captured set — e.g. `alien` or `swell`, chains loaded + captured
+via `/song-pick-instruments`, then probe-and-link so devices are linked):
+
+1. **Already-current ⇒ ~0 dispatched.** `push execute <session> --song <slug>
+   --only devices --probe`. Expect the `devices` phase to dispatch **~0**
+   `set_parameter` calls (the warnings/state report "N param(s) already current
+   in Live — skipped"), and complete in **seconds**, not minutes. This is the
+   reported stall, gone.
+2. **One genuine change ⇒ exactly one write.** Dial one param in Live (or edit
+   one `build.py`/snapshot value), re-run `--only devices`. Expect exactly that
+   one param dispatched, the rest skipped.
+3. **Fresh-set first push unchanged.** Push the song into a *fresh* set (devices
+   not pre-loaded): loads happen, then the convergence re-plan applies all
+   captured params (NOT diffed — a freshly-loaded device is at factory defaults);
+   the diff fires no reads on that path. Confirm the full devices phase still
+   completes and params land.
+4. **Value-shape coverage.** Confirm the skip works across an enum param (e.g. a
+   Filter Type), a `value_raw` param (Wavetable `LFO * S. Rate`), and a
+   normalized/display continuous param — none falsely re-written, none falsely
+   skipped (spot-check one dialed value survives a no-op push).
+
+## SYN-4R7P — probe-and-link re-materializes the arrangement after a Live delete
+
+**Status:** SUPERSEDED by ARR-PROJ (Chunk 4, 2026-06-22). The probe-and-link
+arrangement-clip reconcile this entry was written to verify has been **removed** —
+the arrangement is now materialized as a pure projection of the DB (clear +
+create+fill every push, see `plan_push_arrangement`), so a Live-side delete /
+renumber is absorbed by the next push's clear+rebuild, with no positional link to
+reconcile. The behaviors below (`unlinked_stale_arrangement_clips` reported,
+re-duplicate-via-reconcile, rebind-on-renumber) no longer exist, so this check is
+moot. The live obligation it carried is replaced by the **ARR-PROJ** entries: the
+Chunk-1 spike (two full Drums-track rebuilds, `net_noop_vs_baseline=True`, already
+recorded) plus the still-pending ARR-PROJ live e2e (clear+rebuild idempotence on a
+real multi-section set). No longer blocks `/pr create`.
+
+<details><summary>Original SYN-4R7P checks (historical — verify the removed reconcile)</summary>
+
+The unit suite proved the reconcile logic against an injected
+`live_arrangement_clips_by_track` map; only a real bridge proved the live read —
+`ableton_clip(action='list', location='arrangement')` per track — returned
+placements shaped as the reconciler assumed (`arrangement_clip_index`,
+`start_beats`, `length`), so position-matching bound to the right clip.
+
+1. **The reported bug is gone.** Delete the arrangement clips in Live (timeline
+   lane empty), then `push execute <session> --song <slug> --only arrangement
+   --probe`. Expect probe-and-link to report `unlinked_stale_arrangement_clips`
+   (the dropped links), the `arrangement` phase to **re-duplicate** the placements
+   from the session clips (NOT crash with `IndexError: clip_index out of range`),
+   and the timeline to re-populate.
+2. **Note edit → re-materialize loop.** Edit notes in `build.py`, rebuild, `--only
+   clips` (updates session clips), delete the stale arrangement clips, `--only
+   arrangement --probe`. Confirm the arrangement now plays the edited notes.
+3. **Untouched arrangement is a no-op.** Re-run `--only arrangement --probe`
+   without deleting anything. Expect `unlinked_stale_arrangement_clips == []`,
+   `rebound_arrangement_clips == []`, and the phase to refresh notes in place (no
+   re-duplication, no doubling).
+4. **Renumber re-bind.** Delete ONE early arrangement clip (Live re-numbers the
+   rest), then `--only arrangement --probe`. Expect the survivors to be re-bound
+   (`rebound_arrangement_clips` non-empty) and only the deleted one re-duplicated —
+   no duplicate placements.
+
+</details>
+
+## Bug 1 (incoming 2026-06-20) — arrangement-clip read gains note_count + muted
+
+**Status:** ✅ **VERIFIED LIVE 3/3 2026-06-20** (Live attended; develop @ `41665f1`,
+server fingerprint `0fd1cec33ebc`, Remote Script re-vendored + Live reopened by the
+operator). Checked on a freshly-pushed `alien` (5 MIDI tracks; arrangement
+materialized via `push execute --only arrangement`). **Visual change:** no (read
+payload only).
+
+1. ✅ **note_count is real.** `ableton_clip(action='list', track_index=5,
+   location='arrangement')` on the Drums MIDI track returned every clip with a real
+   per-clip `note_count` (intro 62, verse1 503, prechorus1 155, chorus1 82, verse2
+   333, prechorus2 162, chorus2 236, bridge 111, chorus3 770, outro 33) + `muted:
+   false` per clip — counts vary sensibly per section, not a stub. The "track shows
+   no events" question is now answerable without a probe.
+2. ✅ **Audio clip → None.** Drove a real WAV (`master.wav` from the captures dir)
+   onto an audio track via `ableton_probe(call, create_audio_clip)`, then
+   `ableton_clip(list, ..., location='arrangement')` returned the clip with
+   `note_count: null` (guarded — no crash; get_notes_extended is MIDI-only) and
+   `muted: true` (real state). Test clip deleted after.
+3. ✅ **Signpost is visible.** `ableton_arrangement(action='help')` `info` action
+   tip reads: "For the per-track clip inventory (...muted, note_count) ... read
+   ableton_clip(action='list', ..., location='arrangement'), not this tool."
+
+_Original entry:_ Touches `handlers/clip.py` + `actions/arrangement.py`.
+
+Why it can't be auto-verified: the unit suite proves the payload shape against a
+fake clip; only a real bridge proves Live's `clip.get_notes_extended` /
+`clip.muted` / `clip.is_midi_clip` behave as the handler assumes on a live set.
+
+Checks (on any pushed song with an arrangement, e.g. `alien`/`swell`):
+
+1. **note_count is real.** `ableton_clip(action='list', track_index=N,
+   location='arrangement')` on a MIDI track returns each clip with `note_count`
+   matching its actual note count and `muted` reflecting its state. A long but
+   empty clip reports `note_count: 0` (the original "track shows no events"
+   question now answerable without a probe).
+2. **Audio clip → None.** On an audio track's arrangement clip, `note_count` is
+   `null` (not a crash — get_notes_extended is MIDI-only and is guarded).
+3. **Signpost is visible.** `ableton_arrangement(action='help')` / the `info`
+   action surfaces the tip pointing at `ableton_clip(action='list',
+   location='arrangement')` for the per-track inventory.
+
+## Bug 2 (incoming 2026-06-20) — rack presets load from browser_path; pan via normalized
+
+**Status:** ✅ **VERIFIED LIVE 4/4 2026-06-20** (Live attended; develop @ `41665f1`,
+server fingerprint `0fd1cec33ebc`, Remote Script re-vendored + Live reopened by the
+operator). Fresh full push of `alien` onto a fresh default set
+(`probe-and-link --auto-session` → `execute --probe`): the devices phase dispatched
+**all 1219 calls cleanly** — vs the pre-fix run which halted here with **771
+failures** (the `.last-push-errors.json` from that run is preserved and shows BOTH
+bug signatures: `chain_index N out of range [1, 0]` from empty-shell racks +
+`AMP1 Pan ... DisplayValueError`). **Visual change:** yes (rack tracks fill).
+
+1. ✅ **Rack `.adg` loads populated.** Drum Rack `AG Techno Kit` → `chain_count: 16`,
+   every pad chain has its real Simpler + per-pad FX (Erosion Legacy, Reverb,
+   nested Audio Effect Racks → EQ Eight at depth-2 `device_path [[6,3],[1,1]]`); per-
+   chain volumes landed at captured non-defaults (0.807/0.657/0.745…). Instrument
+   Rack `Inclement Drone Pad` → `chain_count: 2` (Grainy Electric Shield:
+   MultiSampler+AutoFilter+Reverb; Drift: Drift+EQ8+Reverb+Echo). No empty shell,
+   no `chain_index out of range` cascade.
+2. ✅ **`.adv` device preset.** `Metalic Lead.adv` loaded as a real Analog carrying
+   the preset's macro/param state (non-default PB Range "6.00", Volume −4.6 dB, Note
+   PB Range 48st, Glide On, OSC2 Octave +1 / Semi +4, vibrato dialed) — not a
+   factory Analog.
+3. ✅ **Pan via normalized (§3).** AMP1 Pan landed at its captured `0.5079365` ("1R",
+   non-default; default is 0.5/"C") — the exact value the pre-fix run hard-failed on.
+   Controlled live re-test on the device: `value_display='50L'` → server raises
+   `DisplayValueError: ... non-numeric display (' 50L'..' 50R'); set it via the
+   normalized value`; `value=0.0` (normalized) → ok, lands `" 50L"`. The planner
+   automates exactly this (`push_execute.py:_attempt_set_parameter_fallback` →
+   `fallback_kind="normalized"`, annotated `set_parameter_fallback`). No hard failure.
+4. ✅ **Built-in still kind-only.** Operator (track 6) + Wavetable (track 7), captured
+   with non-preset browser_path, loaded by kind with their own non-default params
+   (Operator: Algorithm/Osc-A Wave, Volume −18 dB; Wavetable: Osc 1 Pos, Unison 30%,
+   Volume −9 dB). No regression.
+
+> ⚠️ **Full push completion blocked by a SEPARATE, newly-exposed bug** (filed
+> `incoming-bugs/2026-06-20-push-apply-unknown-device_chain_props-result-kind-crashes-devices-phase.md`):
+> the devices-phase result-apply raises `ValueError: unknown push result key kind
+> 'device_chain_props'` (`sync/push/plan.py`) once the rack chains actually load and
+> their `set_chain_property` calls succeed — the twin of the 2026-06-18
+> `device_param_override` apply bug, one key over (missing from `_ACK_ONLY_KINDS`).
+> Device LOAD (this Bug 2) is correct; the chain-props apply gap it exposes blocks
+> phases after `devices`. One-line fix; arrangement was materialized here via
+> `--only arrangement` to finish the Bug 1 checks. Re-verify the single-pass full
+> push once that lands.
+
+_Original entry:_ Touches `handlers/device.py`.
+
+Why it can't be auto-verified: the unit suite proves the resolution + emission
+against a fake browser; only a real bridge proves Live's browser resolves a
+captured `.adg`/`.adv` path to the actual preset, and that a dialed pan dials
+correctly via the normalized value.
+
+Checks (on `alien` / `compose/swell`, or any song with rack-preset instruments,
+pushed onto a FRESH Live set):
+
+1. **The reported bug is gone.** Fresh full push of a song with Drum Rack /
+   Instrument Rack `.adg` instruments captured with browser_path only. Confirm
+   each rack loads POPULATED (`ableton_device(get_device_chains, ...)` →
+   `chain_count > 0`, the real chains) — NOT an empty shell — and the nested
+   per-pad/per-chain params land (no `chain_index out of range` cascade).
+2. **`.adv` device preset.** A track whose instrument is an `.adv` preset (e.g.
+   Analog "Metalic Lead") loads the preset's macro state, not a default Analog.
+3. **Pan via normalized (§3).** Push a track with a dialed Analog pan (`AMP1 Pan`
+   ≈ `50L`). Confirm it lands at the correct pan with NO `DisplayValueError`
+   surfacing as a hard failure (the planner's display attempt is refused, then
+   the normalized retry succeeds — visible as `set_parameter_fallback:
+   "normalized"` in the push state, or simply a correctly-panned track).
+4. **Built-in still kind-only.** A native device captured with a non-preset
+   browser_path (no `.adg`/`.adv`) still loads by kind cleanly (no regression).
+
+---
+
+## PSH-3H8M — perform_batch transport watchdog + loop/punch pre-perform reset
+
+**Status:** PENDING — needs an attended Live session + a perform pass. **Visual
+change:** minimal (loop/punch buttons toggle off during a perform and restore
+after; the abort surfaces as a structured error, not a hang). Added 2026-06-21.
+
+**Re-vendor REQUIRED:** the fix lives in `hallucinote_mcp/handlers/automation.py`,
+which IS in `_FINGERPRINT_PATHS`, so the server fingerprint flips and the install
+handshake will (correctly) flag the drift — relaunch dev-mode (`/mcp` respawn so
+running==disk), then `/ableton-mcp-install`, then reopen Live.
+
+Why it can't be auto-verified: the bug is a REAL Live transport stall (manual
+stop / residual transport state from an interrupted perform / a loop region
+trapping the playhead). The unit fakes model a frozen `current_song_time`, but
+only real Live proves the watchdog fires on an actual stall, that clearing a real
+loop region lets the playhead traverse the full span, and that no legitimately
+slow pass (a high `slowdown_factor`) false-trips the 15 s stall window. Pairs
+naturally with the ENV-8K2R / ENV-7G4K perform smoke already queued — run them in
+one perform session.
+
+Recipe: `ableton_automation(action='perform_batch', arcs=[...])` directly, or
+`push_cli plan performed_automation` then execute.
+
+1. **Watchdog fires fast on a real stall (the deliverable).** Start a perform
+   over a multi-bar span, then manually STOP the transport mid-record (the exact
+   repro from the report). Confirm the call aborts within ~15 s with the
+   structured `TimeoutError` naming the stuck beat ("transport stopped advancing
+   at beat X of the Y-beat span …"), NOT an indefinite hang requiring `kill -9`.
+   Afterward the set is disarmed (`record_mode` / `session_automation_record`
+   both read False) and the transport is stopped.
+2. **Loop region no longer traps the playhead.** Set a Live loop region that does
+   NOT cover the whole perform span (pre-fix: the playhead loops inside it and
+   never reaches `union_end` → hang until the wall-clock ceiling). Run the
+   perform → it COMPLETES (the pre-perform reset cleared the loop so the playhead
+   traversed the full span), and the loop region is RESTORED (on, same bounds)
+   afterward. Repeat with punch-in/out enabled → cleared during, restored after.
+3. **No regression on a clean, legitimately-long pass.** A normal perform with
+   the transport advancing — including a high `slowdown_factor` (e.g. 4×, a
+   genuinely slow but ADVANCING playhead) — completes exactly as before, with NO
+   spurious loop/punch churn (a set with loop/punch already off writes neither)
+   and NO false watchdog abort (the stall window only trips on a frozen, not a
+   slow, transport).
+
+---
+
+## RND-2R9K — render leaves RETURN-track names clean (analyzer rename undone)
+
+**Status:** PENDING — needs an attended Live session. **Visual change:** yes
+(return names in Live's return strip: after a render they read e.g. `A-Reverb`,
+NOT `A-Reverb | HallucinoteAnalyzer`). Added 2026-06-21.
+
+**Re-vendor REQUIRED, with a gotcha:** the fix lives in
+`hallucinote_mcp/analyzer/setup.py`, which the analyzer sweep runs **Live-side**
+(`runs_on_worker=True` + `context.run_on_main`), so the running Remote Script
+must carry the new code — relaunch dev-mode (`/mcp` respawn so running==disk),
+then `/ableton-mcp-install`, then reopen Live. **Gotcha:** `analyzer/` is OUTSIDE
+`_FINGERPRINT_PATHS`, so this change does NOT flip the server fingerprint — the
+install/handshake will report `matched` even against a STALE Remote Script that
+lacks the fix. Do not trust the version match to tell you a re-vendor is needed;
+force it.
+
+Why it can't be auto-verified: the bug IS Live's native rename of returns on
+`browser.load_item` — a real-Live side effect the unit fakes cannot model (they
+append the device without renaming). The unit suite proves the pure restore
+decision (`_return_name_restoration`) and that the sweep restores a pre-set dirty
+name; only a live render proves Live actually renames, that the restore sticks,
+and — the one thing the fakes can't prove — that the restored name shows a
+**single** slot prefix (`A-Reverb`), not a double (`A-A-Reverb`), i.e. that the
+strip-prefix-and-set-bare-name decision matches Live's setter semantics (the
+W3-H / W4-C documented contract).
+
+Checks (a pushed song with two returns named `Reverb` / `Delay`, e.g. `alien`):
+
+1. **Render → returns end clean (the deliverable).** `ableton_render(action=
+   'start', song_slug=…)` (even a render that then fails is enough — the
+   analyzer auto-load runs before the transport gate). Then `ableton_return(
+   action='list')`: each return reads its bare authored name with Live's single
+   slot prefix (`A-Reverb`, `B-Delay`) — NO ` | HallucinoteAnalyzer` suffix and
+   NO doubled prefix (`A-A-Reverb`). The HallucinoteAnalyzer device is STILL
+   present on each return (the fix restores the NAME, it does not remove the
+   device).
+2. **probe-and-link is clean post-render.** `push probe-and-link --song <slug>
+   --probe` → `unmatched_db_returns: []` and `unmatched_live_returns: []`
+   immediately after a render, with no hand-rename step. (Pre-fix this required
+   the manual `ableton_return(action='rename')` workaround.)
+3. **Self-heals a pre-dirtied set + no churn.** On a return manually renamed to
+   `Reverb | HallucinoteAnalyzer` (simulating a pre-fix render), run a render →
+   confirm the name is cleaned to `Reverb`. On an already-clean return, confirm a
+   render does NOT rewrite the name (no spurious name-change in Live's undo
+   history; the restore is read-only when no suffix is present).
+4. **Tracks/master untouched.** Confirm a render still leaves audio-track and
+   master names exactly as authored (Live renames returns only; the fix is
+   return-scoped).
+
+---
+
+## 2026-06-22 — ARR-ORPHAN: `replace_notes` true total-replace (fix/arr-orphan)
+
+Visual change: no. **Fingerprint flip: YES** — `handlers/clip.py` is a wire-shape
+file, so this change bumps the MCP server fingerprint. The running server (the
+`--plugin-dir` dev bridge / marketplace) is at the pre-change fingerprint; the
+re-vendor handshake is part of this verification. Relaunch dev-mode (`/mcp`
+respawn so running==disk) → `/ableton-mcp-install` → reopen Live so the Remote
+Script carries the new handler.
+
+Why it can't be auto-verified: the bug IS Live's native `Clip.set_notes()` NOT
+fully clearing pre-existing notes on an **arrangement** clip — a real-Live side
+effect the unit fakes cannot model (the `FakeClip` overwrite is clean; the
+bug-faithful `OrphanProneArrangementClip` only *simulates* the merge). The unit
+suite proves the handler now full-extent-clears before `set_notes` and reports
+`notes_present`; only a live run proves Live actually leaves orphans without the
+clear, and that the clear removes them.
+
+Checks (a pushed song with an arrangement clip carrying known stale notes — e.g.
+`alien` `Drums chorus2`, or hand-seed orphans via `ableton_probe` →
+`arrangement_clips[i].add_new_notes`):
+
+1. **Orphans cleared (the deliverable).** On an arrangement clip that holds
+   stale notes from an earlier generation, call `ableton_clip(action=
+   'replace_notes', location='arrangement', track_index=…, clip_index=…,
+   notes=[…the exact intended set…])`. Then `ableton_note(action='list',
+   location='arrangement', …)`: the clip holds EXACTLY the written set — no
+   surviving orphans (pre-fix it held written + orphans).
+2. **`notes_present` reports the truth.** The `replace_notes` result includes
+   `notes_present` equal to the audible note count after the write (== written
+   when no collapse; < written for stacked same-(pitch,start) wildness; it must
+   NOT exceed written). Confirm the field is present and accurate.
+3. **No cry-wolf on collapse.** On a clip whose intended set has stacked
+   same-(pitch, start) notes (e.g. an `add_wildness` section), confirm
+   `replace_notes` returns `notes_present` < `notes_written` with **no** orphan
+   warning (collapse is faithful, not a leak).
+4. **Session view unaffected.** A `replace_notes` on a session clip still
+   total-replaces correctly (the defensive clear is harmless there).

@@ -10,6 +10,10 @@ only, never Live. The handler follows the standard server-side DB
 shape: DB resolution via ``hallucinote.db.connection.resolve_db_path``
 and a teaching error when the song dir or DB row is missing.
 
+This module lives in ``hallucinote_mcp.server_side`` (not ``handlers/``)
+so its changes stay out of the version fingerprint — see that package's
+docstring and ``hallucinote_mcp/__init__.py`` ``_FINGERPRINT_PATHS`` (MCP-7F2K).
+
 Why not declare ``db_writes=True``? The MVP doesn't emit events — the
 MixReport is a pure read-side artifact. When ``AUDIO_ANALYZED`` becomes
 an event kind (P3 backlog), this handler flips on ``db_writes`` and
@@ -21,9 +25,21 @@ import datetime as dt
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from ..dispatcher import LiveContext  # noqa: F401  (used in type hints)
+# jobs.py lives in the FINGERPRINTED handlers/ set (it runs in BOTH processes —
+# render's worker uses it Live-side, analyze's uses it here server-side), so the
+# server-side analyze handlers reach UP into it. This is server_side → handlers,
+# the allowed direction; the isolation invariant only forbids handlers/ →
+# server_side/ (a Live-side change must never hinge on server-side code). See
+# the package docstring + test_server_side_isolation.py.
+from ..handlers.jobs import (
+    DEFAULT_STATUS_LONG_POLL_S,
+    JobRegistry,
+    default_registry,
+    spawn_daemon,
+)
 
 logger = logging.getLogger("hallucinote_mcp.analysis")
 
@@ -134,8 +150,9 @@ def _latest_captures_dir(song_slug: str) -> Path:
     if not captures_root.exists():
         raise _AnalysisError(
             f"no captures directory at {captures_root} — has "
-            f"ableton_render(action='render', song_slug={song_slug!r}) "
-            f"been called yet? Captures are written to "
+            f"ableton_render(action='start', song_slug={song_slug!r}) "
+            f"been called yet? (Then poll action='status' to completion.) "
+            f"Captures are written to "
             f"songs/{song_slug}/captures/<iso-ts>/."
         )
     candidates = [
@@ -145,7 +162,7 @@ def _latest_captures_dir(song_slug: str) -> Path:
     if not candidates:
         raise _AnalysisError(
             f"{captures_root} has no captures dirs with a manifest.json — "
-            f"each ableton_render(render) call writes one; if you see "
+            f"each ableton_render(action='start') render writes one; if you see "
             f"WAVs but no manifest the render didn't complete cleanly."
         )
     return max(candidates, key=_capture_recency_key)
@@ -373,6 +390,25 @@ def _collect_stem_gains(
     return gains
 
 
+def _collect_master_fader_volume(
+    conn: "sqlite3.Connection", song_id: str,
+) -> float | None:
+    """The master track's normalized fader volume (0..1), for the report's
+    DELIVERED (post-fader) true-peak.
+
+    The master loudness/true-peak is captured PRE-fader (the HallucinoteAnalyzer
+    taps the master DEVICE CHAIN, before the master mixer volume), so `analyze_mix`
+    needs the fader to emit `delivered_true_peak_dbtp` (it converts via
+    `live_fader_db`). Returns None when there's no master row or a NULL volume —
+    then the report's master block stays pre-fader bus only (no false delivered #).
+    """
+    for row in Q.get_tracks_for_song(conn, song_id):
+        if row["kind"] == "master":
+            vol = row["volume"]
+            return float(vol) if vol is not None else None
+    return None
+
+
 def _collect_sections(
     conn: "sqlite3.Connection", song_id: str,
 ) -> list["SectionWindow"]:
@@ -516,7 +552,7 @@ def analyze_handler(
     if not manifest.exists():
         raise _AnalysisError(
             f"no manifest.json at {captures_path} — captures dirs are "
-            f"produced by ableton_render(render) and always include "
+            f"produced by ableton_render(action='start') and always include "
             f"manifest.json next to the WAVs."
         )
 
@@ -534,6 +570,9 @@ def analyze_handler(
         declared_energy = _collect_declared_energy(conn, song_id) if song_id else []
         tempo_map = _collect_tempo_map(conn, song_id) if song_id else []
         stem_gains = _collect_stem_gains(conn, song_id) if song_id else {}
+        master_fader_volume = (
+            _collect_master_fader_volume(conn, song_id) if song_id else None
+        )
     finally:
         conn.close()
 
@@ -579,6 +618,12 @@ def analyze_handler(
             # static fader gain so masking sees mix balance, not source level.
             # Fader curve is Live-12-calibrated (see audio/levels.py).
             stem_gains=stem_gains,
+            # The master metrics are captured PRE master-fader (the analyzer taps
+            # the master DEVICE CHAIN). Thread the master fader volume so the
+            # report can surface the post-fader DELIVERED true-peak — the number
+            # that answers "is the delivered output clipping?" (None → the master
+            # block stays pre-fader bus only).
+            master_fader_volume=master_fader_volume,
             compare_to=compare_to,
             analysis_dir=analysis_dir,
         )
@@ -618,7 +663,13 @@ def analyze_handler(
         if not r["within_tolerance"]
     ]
     summary = {
+        # `master_true_peak_dbtp` is the PRE-fader mix bus (the analyzer taps the
+        # master device chain). `delivered_true_peak_dbtp` is the post-fader number
+        # a clipping check actually needs; both None-when-unknown values come from
+        # the already-sanitized report_dict (muted master → null, not -inf).
         "master_true_peak_dbtp": report_dict["master"]["loudness"]["true_peak_dbtp"],
+        "delivered_true_peak_dbtp": report_dict["delivered_true_peak_dbtp"],
+        "master_fader_db": report_dict["master_fader_db"],
         "overshoot_count": len(report_dict["overshoots"]),
         "reverb_out_of_tolerance_count": len(out_of_tolerance),
         "section_count": len(report_dict["per_section"]),
@@ -646,6 +697,160 @@ def analyze_handler(
         "summary": summary,
         "analysis_code": _analysis_code_status(),
     }
+
+
+# --- async start / status (MCP-5N8K) ---------------------------------
+
+# A many-surface / many-section analysis runs the full DSP pipeline (per-stem
+# loudness, masking, timing, cross-rhythm, reverb verification) and can exceed
+# the 60s per-tool-call timeout, false-failing the synchronous `analyze` long
+# after the report is actually written. `start` backgrounds the DSP on a
+# detached SERVER-PROCESS thread (analyze is pure DSP — no Live, so unlike
+# render's worker it needs no main-thread marshaling) and returns a job handle
+# immediately; `status` long-polls the registry. The synchronous `analyze`
+# stays as the one-call fast path for a quick few-surface capture — the action
+# help documents when to use which. See
+# .prawduct/artifacts/plans/MCP-ASYNC-RENDER-ANALYZE/api-notes.md.
+
+ANALYZE_POLL_INSTRUCTION = (
+    "Analysis running in the background. Poll ableton_analysis(action='status', "
+    "job_id='{job_id}'); each status call long-polls ~45s and returns "
+    "{{state}} — repeat until state is 'done' or 'failed'. One analysis at a "
+    "time: don't call start again while this is running."
+)
+
+
+def analyze_start_handler(
+    _context: LiveContext,
+    *,
+    song_slug: str,
+    captures_dir: str | None = None,
+    compare_to: int | None = None,
+    _registry: JobRegistry | None = None,
+    _analyze_fn: Callable[..., dict[str, Any]] | None = None,
+    _spawn: Callable[[Callable[[], None]], None] | None = None,
+    _resolve_report_dir: Callable[[str], Path] | None = None,
+) -> dict[str, Any]:
+    """Background an analysis and return its job handle immediately.
+
+    The handle (``job_id`` + ``report_dir`` + a poll instruction) lets the agent
+    poll ``status`` without holding the tool-call socket for the DSP's duration —
+    a many-surface / many-section report can exceed the 60s tool-call timeout the
+    synchronous ``analyze`` false-fails on. One analysis at a time: a ``start``
+    while another is running returns ``{busy: True, job_id}`` rather than
+    launching a second DSP pass (the pipeline is CPU-heavy; concurrent passes
+    would only contend).
+
+    ``eta_seconds`` is deliberately omitted (None): analyze runtime depends on
+    surface count × audio length × which per-section passes the song's declared
+    sections enable, with no realtime anchor like render's beats/tempo — any
+    single number would be a guess, so we report none rather than a misleading
+    one. Input errors (typo'd slug, no captures dir) surface via ``status`` as
+    ``state='failed'`` with the teaching error, the same path as a DSP failure —
+    ``start`` validates only what it needs to mint the handle (mirrors
+    render_start, whose render-time failures also surface through ``status``).
+    """
+    if not _HAS_HALLUCINOTE:  # pragma: no cover - exercised in Live's vendored env
+        raise _AnalysisError(
+            "ableton_analysis requires the hallucinote package — this handler "
+            "must run server-side, not from Live's Remote Script vendored env "
+            "(which doesn't ship hallucinote). Check the action's "
+            "runs_server_side flag."
+        )
+    registry = _registry if _registry is not None else default_registry()
+    analyze_fn = _analyze_fn if _analyze_fn is not None else analyze_handler
+    spawn = _spawn if _spawn is not None else (
+        lambda worker: spawn_daemon(worker, name="hallucinote-analyze-worker")
+    )
+    resolve_report_dir = (
+        _resolve_report_dir
+        if _resolve_report_dir is not None
+        else (lambda slug: _resolve_song_dir(slug) / "analysis")
+    )
+
+    # One analysis at a time — atomically claim the slot. The async dispatch
+    # wrapper (server.py) lets two starts run on different threads, so the claim
+    # must be atomic; create_if_idle closes the check-then-create TOCTOU. A
+    # start while one runs returns a busy handle pointing at the live job.
+    report_dir = resolve_report_dir(song_slug)
+    job, created = registry.create_if_idle(kind="analyze", dir=str(report_dir))
+    if not created:
+        return {
+            "busy": True,
+            "job_id": job.job_id,
+            "state": job.state,
+            "report_dir": job.dir,
+            "message": (
+                "An analysis is already running (one at a time). Poll it with "
+                f"ableton_analysis(action='status', job_id='{job.job_id}'), "
+                "or wait for it to finish before starting another."
+            ),
+        }
+    # Analyze has no fine-grained progress — analyze_mix is one blocking call
+    # with no progress callback (the spec is not to plumb one in) — so progress
+    # stays a coarse stage marker, the shape the api-notes job record reserves
+    # for analyze (``progress: {stage, ...} (coarse)``).
+    registry.update_progress(job.job_id, {"stage": "analyzing"})
+
+    def _worker() -> None:
+        try:
+            result = analyze_fn(
+                None,
+                song_slug=song_slug,
+                captures_dir=captures_dir,
+                compare_to=compare_to,
+            )
+            # Map analyze_handler's return into the locked-in {report,
+            # report_path} status shape (api-notes): ``report`` is the same
+            # lightweight bundle the synchronous ``analyze`` returns (summary +
+            # finding_count + schema_version + analysis_code); the full per-stem
+            # MixReport JSON stays on disk at ``report_path`` (the convenient
+            # accessor, symmetric with render's manifest_path).
+            registry.mark_done(job.job_id, {
+                "report": result,
+                "report_path": result.get("report_path"),
+            })
+        except Exception as e:  # prawduct:allow prawduct/broad-except -- detached analyze worker: any failure must land as job state=failed (else status long-polls forever); analyze_handler already logged + wrote status.json=error before re-raising — the worker's job is only to record the terminal state
+            logger.exception(
+                "analyze worker failed for job %s (song_slug=%s)",
+                job.job_id, song_slug,
+            )
+            registry.mark_failed(job.job_id, str(e))
+
+    spawn(_worker)
+    return job.start_result(ANALYZE_POLL_INSTRUCTION.format(job_id=job.job_id))
+
+
+def analyze_status_handler(
+    _context: LiveContext,
+    *,
+    job_id: str,
+    _registry: JobRegistry | None = None,
+    _long_poll_s: float = DEFAULT_STATUS_LONG_POLL_S,
+) -> dict[str, Any]:
+    """Long-poll an analyze job: wait up to ``_long_poll_s`` for it to finish,
+    then return its current state + progress (and report/error if terminal).
+
+    Returns ``state='running'`` if still in flight after the wait — the agent
+    simply calls again. Reads in-process job state only (no Live, no disk
+    re-glob), so ``_context`` is unused but kept for the uniform handler
+    signature. An unknown ``job_id`` raises a teaching ``_AnalysisError`` naming
+    recent analyze jobs (job state lives in the server process — it resets when
+    the MCP server restarts)."""
+    registry = _registry if _registry is not None else default_registry()
+    job = registry.get(job_id)
+    if job is None:
+        recent = registry.recent_ids(kind="analyze")
+        hint = (
+            f"recent analyze jobs: {', '.join(recent)}"
+            if recent
+            else "no analyze jobs have been started in this server process"
+        )
+        raise _AnalysisError(
+            f"analyze status: unknown job_id {job_id!r} ({hint})"
+        )
+    job.wait_terminal(_long_poll_s)
+    return job.status_result()
 
 
 def get_latest_report_handler(
@@ -799,6 +1004,8 @@ def extract_structure_handler(
 
 __all__ = [
     "analyze_handler",
+    "analyze_start_handler",
+    "analyze_status_handler",
     "get_latest_report_handler",
     "extract_structure_handler",
 ]

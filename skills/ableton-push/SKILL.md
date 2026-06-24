@@ -80,6 +80,8 @@ Display:
 - `notes` verbatim if non-empty (duplicate names, kind mismatches, case-only near-matches).
 - `unmatched_live_tracks` / `unmatched_live_returns` if non-empty.
 
+**Re-materialize the arrangement after a note edit (ARR-PROJ).** Editing notes in `build.py` updates the *session* clips. To rebuild the timeline: rebuild, then **`execute --only arrangement`** — the arrangement phase is a pure projection of the DB. It CLEARS each track's existing arrangement clips (by probing Live) and re-creates them from the DB every push (note-only clips fill straight from the DB; envelope-bearing clips duplicate from the session clip, so those want `execute --only clips` first). Idempotent — same DB → same arrangement, regardless of the timeline's prior state — so there is **no** manual "delete the stale clips by hand, then re-duplicate" step (the old SYN-4R7P dance is retired). A post-phase integrity assert HALTs the push if any materialized clip's notes diverge from the DB, so a silent drop/stack becomes a loud failure, never an `OK`.
+
 **Confirmation gates when `unmatched_live_tracks` is non-empty.** Two cases; the CLI tells you which.
 
 **Case 1: clean-default-scaffold.** `default_scaffold_unmatched_tracks` non-empty (canonical default names like `1-MIDI` / `2-MIDI` / `3-Audio` / `4-Audio`). Fires on a fresh `--auto-session` push AND on a reused session pushed onto a fresh default set (the set-swap case — SYN-3C8K dropped the earlier `auto_session_created==true` requirement; the CLI populates the field either way). Default the prompt to "yes, clean":
@@ -165,13 +167,14 @@ Read `songs/<slug>/.last-push-state.json`. Surface in this order:
 | `devices` | `ableton_device(action='load' / 'set_parameter')` |
 | `envelopes` | `ableton_automation(action='write_envelope')` |
 | `performed_automation` | `ableton_automation(action='perform_batch')` — realtime gesture recording, all changed arcs in one union-span pass; transport plays |
-| `arrangement` | `ableton_clip(action='duplicate_to_arrangement')` |
+| `arrangement` | projection rebuild — `ableton_clip(action='delete', location='arrangement')` to clear, then `ableton_clip(action='create', location='arrangement')`+`set_notes` per note-only placement (`duplicate_to_arrangement` only for envelope-bearing clips) |
 | `cues` | `ableton_arrangement(action='cue_create_batch')` |
 
 ## Failure modes
 
 - **`probe-and-link` exits non-zero**: snapshot malformed, DB path wrong, or session_id unknown. Show stderr.
 - **`execute` exits 1 (partial)**: act on the stdout "Halt cause" block (cause + next step); fix in `build.py`/snapshot, rebuild, re-run `execute`. Idempotent — already-applied rows skip. `.last-push-errors.json` has per-call forensics.
+- **Arrangement looks wrong (missing / doubled notes), or you hand-edited clips in Live?** The arrangement phase is a pure projection (clear + rebuild from the DB every push) guarded by a post-phase integrity assert that HALTs on divergence — a corrupt materialize fails loud, never `OK`. To audit the current DB↔Live arrangement at any time, run **`"$PY" -m hallucinote.cli verify-arrangement --song <slug>`**: it probes Live via the note API and reports `extra` / `missing` / `mismatch` per (track, section), exit 0 = faithful, 1 = divergence (rebuild `build.py` first to compare build.py↔Live). The old SYN-4R7P `IndexError: clip_index out of range` from a stale arrangement link can no longer occur — clear+rebuild never refreshes into a dead index, so the fix for a wrong-looking timeline is simply to re-run `execute --only arrangement`.
 - **`execute` exits 2 (connection lost)**: see `ableton://guides/error-recovery`. Re-execute.
 - **`ValueError` from a planner**: usually a strict-precondition issue. Show the error and stop.
 

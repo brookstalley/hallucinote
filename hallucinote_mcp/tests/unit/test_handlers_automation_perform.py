@@ -143,6 +143,12 @@ class FakePerformSong:
     def __init__(self, events: list[tuple]):
         self._events = events
         self._tempo = 120.0
+        # PSH-3H8M: loop / punch transport flags the pre-perform reset clears and
+        # the finally restores. Event-logged (like tempo) so a test can observe
+        # the clear-then-restore round-trip.
+        self._loop = False
+        self._punch_in = False
+        self._punch_out = False
         self.is_playing = False
         self.session_automation_record = False
         self.master_track = FakeTrack(events)
@@ -225,6 +231,34 @@ class FakePerformSong:
     def tempo(self, v: float) -> None:
         self._events.append(("tempo", round(float(v), 3)))
         self._tempo = float(v)
+
+    # -- loop / punch: event-logged so PSH-3H8M clear+restore is observable --
+    @property
+    def loop(self) -> bool:
+        return self._loop
+
+    @loop.setter
+    def loop(self, v: bool) -> None:
+        self._events.append(("loop", bool(v)))
+        self._loop = bool(v)
+
+    @property
+    def punch_in(self) -> bool:
+        return self._punch_in
+
+    @punch_in.setter
+    def punch_in(self, v: bool) -> None:
+        self._events.append(("punch_in", bool(v)))
+        self._punch_in = bool(v)
+
+    @property
+    def punch_out(self) -> bool:
+        return self._punch_out
+
+    @punch_out.setter
+    def punch_out(self, v: bool) -> None:
+        self._events.append(("punch_out", bool(v)))
+        self._punch_out = bool(v)
 
     def start_playing(self) -> None:
         self._events.append(("play",))
@@ -589,6 +623,100 @@ def test_perform_batch_ramp_deadline_raises_and_restores(monkeypatch):
     assert ("record_mode", False) in ctx.events
     assert ("session_automation_record", False) in ctx.events
     assert ctx.song.is_playing is False
+
+
+# ---------------------------------------------------------------------------
+# PSH-3H8M — fast non-advancement watchdog + loop/punch pre-perform reset
+# ---------------------------------------------------------------------------
+
+
+def test_perform_batch_stall_watchdog_aborts_fast(monkeypatch):
+    """A frozen playhead trips the fast non-advancement watchdog — aborting with
+    the stuck beat named, WITHOUT waiting out the span-proportional wall-clock
+    ceiling. Keeping the ceiling far away proves the WATCHDOG is what fires."""
+    monkeypatch.setattr(automation_handlers, "_PERFORM_STALL_TIMEOUT_S", 0.0)
+    monkeypatch.setattr(
+        automation_handlers, "_PERFORM_WALL_CLOCK_FLOOR_S", 600.0
+    )
+    ctx = FakeCtx()
+    ctx.song.beats_per_read = 0.0  # playhead frozen → never advances
+    with pytest.raises(TimeoutError, match="stopped advancing at beat"):
+        _one(
+            ctx, target_kind="mixer_volume", master=True,
+            breakpoints=[_bp(0.0, 0.5), _bp(4.0, 0.9)],
+        )
+    # The finally still ran: disarmed + transport stopped.
+    assert ("record_mode", False) in ctx.events
+    assert ctx.song.is_playing is False
+
+
+def test_perform_batch_stall_watchdog_no_false_positive_while_advancing(
+    monkeypatch,
+):
+    """An advancing playhead never trips the watchdog — even at a 0 s threshold,
+    every read resets the stall clock, so only a truly frozen transport aborts."""
+    monkeypatch.setattr(automation_handlers, "_PERFORM_STALL_TIMEOUT_S", 0.0)
+    ctx = FakeCtx()
+    ctx.song.beats_per_read = 1.0  # advances every read → completes normally
+    result = _one(
+        ctx, target_kind="mixer_volume", master=True,
+        breakpoints=[_bp(0.0, 0.5), _bp(4.0, 0.9)],
+    )
+    assert _arc0(result)["automation_state"] == 1  # finished, no TimeoutError
+
+
+def test_perform_batch_clears_and_restores_loop_punch():
+    """A user-left loop / punch region is cleared BEFORE the perform (so it can't
+    trap the playhead in a sub-span) and restored to its prior state AFTER."""
+    ctx = FakeCtx()
+    ctx.song.loop = True
+    ctx.song.punch_in = True
+    ctx.song.punch_out = True
+    ctx.events.clear()  # drop the setup writes
+
+    _one(
+        ctx, target_kind="mixer_volume", master=True,
+        breakpoints=[_bp(0.0, 0.5), _bp(4.0, 0.9)],
+    )
+
+    # Cleared during the pre-perform reset (before play), restored in finally.
+    play_idx = ctx.events.index(("play",))
+    assert ctx.events.index(("loop", False)) < play_idx
+    assert ctx.events.index(("punch_in", False)) < play_idx
+    assert ctx.events.index(("punch_out", False)) < play_idx
+    assert ctx.events.index(("loop", True)) > play_idx
+    # Final live state restored to the user's prior loop/punch.
+    assert ctx.song.loop is True
+    assert ctx.song.punch_in is True
+    assert ctx.song.punch_out is True
+
+
+def test_perform_batch_leaves_clean_transport_untouched():
+    """A set with loop / punch already OFF logs no loop/punch churn — the reset
+    only writes a flag it actually has to clear."""
+    ctx = FakeCtx()  # loop / punch default False
+    _one(
+        ctx, target_kind="mixer_volume", master=True,
+        breakpoints=[_bp(0.0, 0.5), _bp(4.0, 0.9)],
+    )
+    assert not any(
+        e[0] in ("loop", "punch_in", "punch_out") for e in ctx.events
+    )
+
+
+def test_perform_batch_restores_loop_punch_on_abort(monkeypatch):
+    """The loop / punch restore rides the finally — even when the perform aborts
+    (watchdog), the user's transport flags are put back."""
+    monkeypatch.setattr(automation_handlers, "_PERFORM_STALL_TIMEOUT_S", 0.0)
+    ctx = FakeCtx()
+    ctx.song.loop = True
+    ctx.song.beats_per_read = 0.0  # frozen → watchdog aborts
+    with pytest.raises(TimeoutError, match="stopped advancing"):
+        _one(
+            ctx, target_kind="mixer_volume", master=True,
+            breakpoints=[_bp(0.0, 0.5), _bp(4.0, 0.9)],
+        )
+    assert ctx.song.loop is True  # restored despite the abort
 
 
 def test_perform_batch_reports_unverified_arc_after_poll_timeout():

@@ -95,6 +95,57 @@ def test_check_version_compat_passes_when_fingerprints_match():
     assert resp is None
 
 
+def test_mismatch_refusal_carries_machine_code():
+    """The refusal stamps a stable ``code`` so the server side can refine the
+    remediation, and it survives the wire round-trip."""
+    from hallucinote_mcp.client import _response_from_dict
+    from hallucinote_mcp.wire import VERSION_MISMATCH_CODE
+
+    drifted = BASE_VERSION + "+abcdef012345"
+    resp = check_version_compat(drifted, __version__)
+    assert resp.code == VERSION_MISMATCH_CODE
+    # Serialized and reconstructed across the TCP boundary unchanged.
+    assert resp.to_dict()["code"] == VERSION_MISMATCH_CODE
+    assert _response_from_dict(resp.to_dict()).code == VERSION_MISMATCH_CODE
+
+
+class TestStaleServerProcessHint:
+    """The server side's third fact: its own on-disk source. A mismatch where
+    the running process fingerprint != the on-disk fingerprint is a stale
+    *server process*, not a stale Remote Script (MCP-8H4N)."""
+
+    def test_running_version_differs_from_disk_diagnoses_stale_process(self):
+        from hallucinote_mcp import stale_server_process_hint
+
+        # The process "sent" an older fingerprint than the on-disk source now
+        # computes — exactly the misdiagnosed case from the bug report.
+        stale = BASE_VERSION + "+0000deadbeef"
+        hint = stale_server_process_hint(running_version=stale)
+        assert hint is not None
+        assert "/mcp" in hint
+        assert "stale" in hint.lower()
+        # It must NOT send the user re-vendoring (the wrong fix here).
+        assert "will NOT help" in hint
+
+    def test_running_version_matches_disk_returns_none(self):
+        from hallucinote_mcp import stale_server_process_hint
+
+        # The live process IS current — no server-process diagnosis; the
+        # generic re-vendor hint should stand.
+        assert stale_server_process_hint(running_version=__version__) is None
+
+    def test_unknown_fingerprint_does_not_assert_staleness(self, monkeypatch):
+        import hallucinote_mcp
+        from hallucinote_mcp import stale_server_process_hint
+
+        monkeypatch.setattr(
+            hallucinote_mcp, "_compute_content_fingerprint", lambda *a, **k: "unknown"
+        )
+        # An unreadable tree fingerprints "unknown" — treat as "cannot
+        # diagnose," not "definitely stale."
+        assert stale_server_process_hint(running_version=__version__) is None
+
+
 def test_hash_file_is_stable_across_crlf_and_lf(tmp_path: Path):
     """The internal ``_hash_file`` helper must produce the same hash
     for a file's content whether the on-disk bytes use CRLF or LF

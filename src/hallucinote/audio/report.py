@@ -37,16 +37,20 @@ from typing import Any, Literal
 SCHEMA_VERSION = "1"
 
 
-def _finite_or_none(x: float) -> float | None:
-    """Map a non-finite float (NaN / ±Inf) to ``None`` (→ JSON ``null``) so the
-    whole report is valid JSON under ``json.dumps(allow_nan=False)`` (ARR-7M3D
-    B1 backstop). Several fields carry a deliberate NaN SENTINEL — an
-    insufficient-tail RT60 measurement (``ReverbVerification.measured_rt60_s``),
-    an unmeasurable automation change (``EnvelopeVerification.before/after``) —
-    that means "honestly unmeasured", which is exactly what JSON ``null``
-    conveys. Strict consumers (``JSON.parse``, the eval judge) reject the bare
-    ``NaN`` token, so this serializes the sentinel as ``null`` at the boundary
-    rather than writing invalid JSON."""
+def _finite_or_none(x: float | None) -> float | None:
+    """Map a non-finite float (NaN / ±Inf) — or ``None`` — to ``None`` (→ JSON
+    ``null``) so the whole report is valid JSON under
+    ``json.dumps(allow_nan=False)`` (ARR-7M3D B1 backstop). Several fields carry a
+    deliberate NaN SENTINEL — an insufficient-tail RT60 measurement
+    (``ReverbVerification.measured_rt60_s``), an unmeasurable automation change
+    (``EnvelopeVerification.before/after``) — that means "honestly unmeasured",
+    which is exactly what JSON ``null`` conveys. Optional dB fields (a muted
+    master's ``delivered_true_peak_dbtp`` = bus + ``-inf``) collapse the same way.
+    Strict consumers (``JSON.parse``, the eval judge) reject the bare ``NaN``
+    token, so this serializes the sentinel as ``null`` at the boundary rather than
+    writing invalid JSON. ``None`` passes straight through (not yet supplied)."""
+    if x is None:
+        return None
     return None if not math.isfinite(x) else x
 
 SurfaceKind = Literal["track", "return", "master"]
@@ -603,6 +607,17 @@ class MixReport:
     # None for pre-tagging captures — such reports can still be baselines
     # via an explicit path, just not by seq.
     db_seq: int | None = None
+    # The `master` block above is measured PRE master-fader: the HallucinoteAnalyzer
+    # sits in the master DEVICE CHAIN, which Live processes before the master mixer
+    # volume — so `master.loudness.true_peak_dbtp` is the mix BUS, not the delivered
+    # output. When the master fader is known, these surface the post-fader DELIVERED
+    # level so an agent never trims the fader expecting `master.true_peak` to move.
+    # All None when the master fader volume wasn't supplied (then `master` = bus only).
+    master_fader_volume: float | None = None       # normalized 0..1 (DB master volume)
+    master_fader_db: float | None = None           # live_fader_db(master_fader_volume)
+    # Post-fader true-peak = bus true-peak + master_fader_db (the master fader is a
+    # linear gain after the captured chain). THIS is the delivery/clipping number.
+    delivered_true_peak_dbtp: float | None = None
     schema_version: str = SCHEMA_VERSION
 
     def to_json_dict(self) -> dict[str, Any]:
@@ -632,6 +647,13 @@ class MixReport:
             "analyzer_signature": self.analyzer_signature,
             "db_seq": self.db_seq,
             "master": _stem_to_dict(self.master),
+            # Master is PRE-fader bus (see field comments). Delivered = post-fader.
+            # The two dB-domain fields go through _finite_or_none: a muted master
+            # (volume 0) gives master_fader_db = -inf → delivered = -inf, which
+            # must serialize as null, not crash json.dumps(allow_nan=False).
+            "master_fader_volume": self.master_fader_volume,
+            "master_fader_db": _finite_or_none(self.master_fader_db),
+            "delivered_true_peak_dbtp": _finite_or_none(self.delivered_true_peak_dbtp),
             "stems": [_stem_to_dict(s) for s in self.stems],
             "returns": [_stem_to_dict(r) for r in self.returns],
             "overshoots": [_overshoot_to_dict(o) for o in self.overshoots],

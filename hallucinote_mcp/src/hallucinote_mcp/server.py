@@ -19,12 +19,14 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as _dt
+import functools
 import inspect
 import logging
 import os
 import pathlib
 from typing import Annotated, Any, Optional
 
+import anyio
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
@@ -110,7 +112,8 @@ MCP prompts — so the agent can invoke them directly. For ANY song
 work, read /song-workflow first — it is the lifecycle map. The arc:
   /song-new -> /song-pick-instruments -> /compose-part ->
   /compose-review (READ the composition) -> /ableton-push ->
-  ableton_render + ableton_analysis -> /mix-review (READ the mix; needs Max for Live) ->
+  /render-analyze (render+analyze in one step, poll loops kept out of context) ->
+  /mix-review (READ the mix; needs Max for Live) ->
   /song-snapshot, then loop. Building blocks: /track-new-with-instrument,
   /return-new, /mix-sidechain, /clip-humanize, /ableton-pull, /song-context.
   The two review checkpoints (/compose-review, /mix-review) are easy to
@@ -162,7 +165,7 @@ def create_server(name: str = "hallucinote-mcp") -> FastMCP:
     _register_tool(mcp, "ableton_arrangement", "Arrangement layout, cue points, loop region.")
     _register_tool(mcp, "ableton_scene", "Session-view scenes: clip-slot rows + tempo + signature.")
     _register_tool(mcp, "ableton_browser", "Instruments, effects, plugins; search and fetch.")
-    _register_tool(mcp, "ableton_render", "Audio capture pipeline. Auto-loads HallucinoteAnalyzer on every audio track + return AND the master (idempotent; DEV-6M2K re-enabled master device load on Live 12.4.2 — no hand-placement step). The render action plays the arrangement and writes per-surface WAVs + manifest.json to a captures dir. Consumed by ableton_analysis.")
+    _register_tool(mcp, "ableton_render", "Audio capture pipeline. Auto-loads HallucinoteAnalyzer on every audio track + return AND the master (idempotent; DEV-6M2K re-enabled master device load on Live 12.4.2 — no hand-placement step). The start action backgrounds a render (the synchronous 'render' action was retired) — it plays the arrangement and writes per-surface WAVs + manifest.json to a captures dir; poll status to completion. Consumed by ableton_analysis.")
     _register_tool(mcp, "ableton_analysis", "Audio analysis pipeline. Consumes a captures dir written by ableton_render: per-stem loudness (LUFS-I/S/M + true peak), master-bus overshoot detection + per-band per-stem contribution attribution, per-return reverb RT60 measured from each return's captured ring-out (dry-source-free), and realized-vs-declared automation verification (device-parameter timbre flips, dynamic sends). Writes a MixReport JSON to songs/<slug>/analysis/.")
     _register_tool(mcp, "ableton_probe", "LOM capability probing: describe (class/properties/methods with signature docstrings), get (one property), set (write one property — settability is itself a finding), call (invoke a method, 'then' chains onto returned objects; can mutate — probe in scratch sets). Constrained path grammar: 'song'/'application' roots + '.attr'/'[index]' steps only.")
 
@@ -219,13 +222,14 @@ def handle_tool_call(
     if not server_response.needs_remote:
         return server_response.to_dict()
 
-    # Server-side path resolution for ableton_render(render). The render
-    # handler runs inside Live's process whose cwd is ``/`` (read-only on
-    # macOS), so relative paths like ``songs/<slug>/captures/<ts>`` fail
-    # with OSError. The MCP server's cwd IS the agent's repo root, so
-    # resolve the default + any relative output_dir to absolute HERE
-    # before forwarding.
-    if request.tool == "ableton_render" and request.action == "render":
+    # Server-side path resolution for ableton_render(start). The render worker
+    # runs inside Live's process whose cwd is ``/`` (read-only on macOS), so
+    # relative paths like ``songs/<slug>/captures/<ts>`` fail with OSError. The
+    # MCP server's cwd IS the agent's repo root, so resolve the default + any
+    # relative output_dir to absolute HERE before forwarding. (``start`` is the
+    # only render entry now — the synchronous ``render`` action was retired,
+    # MCP-9R3T; it took the same output_dir/db_seq preprocessing.)
+    if request.tool == "ableton_render" and request.action == "start":
         request = _absolutize_render_output_dir(request)
         request = _attach_render_db_seq(request)
 
@@ -251,11 +255,31 @@ def handle_tool_call(
             ),
         ).to_dict()
 
-    return remote_response.to_dict()
+    return _refine_version_mismatch(remote_response).to_dict()
+
+
+def _refine_version_mismatch(response: "client.Response") -> "client.Response":
+    """Refine a Remote-Script version-mismatch refusal with the server side's
+    own staleness diagnosis.
+
+    The Remote Script can only guess "re-vendor"; the server side can check
+    whether its *own process* is the stale half (running code vs. on-disk
+    source) — the case the generic hint misdiagnoses. When it is, swap in the
+    "respawn the server" remediation; otherwise leave the refusal untouched.
+    """
+    from . import stale_server_process_hint
+    from .wire import VERSION_MISMATCH_CODE
+
+    if response.code != VERSION_MISMATCH_CODE:
+        return response
+    hint = stale_server_process_hint()
+    if hint is None:
+        return response
+    return dataclasses.replace(response, hint=hint)
 
 
 def _absolutize_render_output_dir(request: Request) -> Request:
-    """Resolve ``ableton_render(render)`` 's ``output_dir`` to an absolute
+    """Resolve ``ableton_render(start)`` 's ``output_dir`` to an absolute
     path, computing the slug-derived default when missing.
 
     Why: the render handler runs on the Remote Script side (inside Live),
@@ -446,15 +470,34 @@ def _register_tool(mcp: FastMCP, tool_name: str, summary: str) -> None:
     )
     annotations["allow_version_mismatch"] = Optional[bool]
 
-    def wrapper(**kwargs: Any) -> dict[str, Any]:
+    async def wrapper(**kwargs: Any) -> dict[str, Any]:
         action = kwargs.pop("action")
         allow_version_mismatch = bool(kwargs.pop("allow_version_mismatch", None) or False)
         # Drop None-valued kwargs — they represent "not supplied" by the
         # MCP client. Real None payloads aren't a thing in our action
         # surface (the dispatcher validates required fields below).
         passed = {k: v for k, v in kwargs.items() if v is not None}
-        return handle_tool_call(
-            tool_name, action, passed, allow_version_mismatch=allow_version_mismatch
+        # Offload the SYNCHRONOUS, possibly long-BLOCKING dispatch onto a worker
+        # thread so the MCP event loop stays free. handle_tool_call blocks for
+        # the whole call: a `status` long-poll parks on threading.Event.wait /
+        # a socket read for ~45-60s, and render/analyze are unbounded. FastMCP
+        # runs a SYNC tool INLINE on the loop thread (mcp func_metadata:
+        # `return fn(**args)` — verified, no internal to_thread), so a sync
+        # wrapper would freeze the entire server (every other in-flight tool
+        # call) for that window — violating "a concurrent call must not hang
+        # behind a running job". FastMCP AWAITS an async tool, so offloading via
+        # anyio.to_thread keeps the loop responsive while one call long-polls.
+        # Concurrency is safe: client.send opens a fresh socket per call and
+        # Live's run_on_main FIFO-serializes main-thread touches. (MCP-9R3T /
+        # MCP-5N8K async render+analyze.)
+        return await anyio.to_thread.run_sync(
+            functools.partial(
+                handle_tool_call,
+                tool_name,
+                action,
+                passed,
+                allow_version_mismatch=allow_version_mismatch,
+            )
         )
 
     wrapper.__signature__ = inspect.Signature(  # type: ignore[attr-defined]

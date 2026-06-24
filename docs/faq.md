@@ -57,6 +57,15 @@ Native Live devices and catalog-ID drift are handled automatically; bundling
 sample packs is out of scope. The three portability cases are spelled out in
 [`docs/collaboration.md`](collaboration.md).
 
+## Can I compose in a non-12 tuning (microtonal / 19-EDO / Bohlen-Pierce)?
+
+Yes — a niche path built so 12-TET songs never pay for it. You think in
+scale-degree indices, a mapper converts each to a MIDI integer the **unchanged**
+generators consume, and Live's loaded tuning reinterprets the pitches at playback.
+Push can't load the tuning for you (the LOM tuning surface is read-only), so it
+instructs you to drag the cached `.ascl` in and warns if the wrong one is loaded.
+Full story + current limitations: [`docs/alternate-tunings.md`](alternate-tunings.md).
+
 ## Where do the notes, automation, and arrangement actually live?
 
 In the song's `build.py` and the SQLite DB it materializes — **not** in Live.

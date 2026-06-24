@@ -41,6 +41,7 @@ dist/
 
 # Prawduct session files
 .claude/settings.local.json
+.claude/worktrees/
 .prawduct/.critic-findings.json
 .prawduct/.test-evidence.json
 .prawduct/.pr-reviews/

@@ -440,6 +440,53 @@ def test_nonfinite_sentinels_serialize_as_null_under_allow_nan_false():
     assert parsed["automation_verifications"][0]["after"] is None
 
 
+def test_master_fader_fields_default_none_and_serialize():
+    """MASTER-PREFADER-TP: the delivered (post-fader) true-peak fields default to
+    None (master block = pre-fader bus only) and round-trip when populated."""
+    report = MixReport(
+        song_slug="x", captures_dir="/tmp/x", captured_at="20260528T120000Z",
+        analyzer_signature="sig",
+        stems=[_make_stem()],
+        master=_make_stem(track_id="master"),
+    )
+    default = report.to_json_dict()
+    assert default["master_fader_volume"] is None
+    assert default["master_fader_db"] is None
+    assert default["delivered_true_peak_dbtp"] is None
+
+    populated = MixReport(
+        song_slug="x", captures_dir="/tmp/x", captured_at="20260528T120000Z",
+        analyzer_signature="sig",
+        stems=[_make_stem()],
+        master=_make_stem(track_id="master"),
+        master_fader_volume=0.70,
+        master_fader_db=-3.5,
+        delivered_true_peak_dbtp=-4.5,
+    )
+    out = json.loads(json.dumps(populated.to_json_dict(), allow_nan=False))
+    assert out["master_fader_volume"] == 0.70
+    assert out["master_fader_db"] == -3.5
+    assert out["delivered_true_peak_dbtp"] == -4.5
+
+
+def test_muted_master_fader_db_serializes_as_null():
+    """A muted master (volume 0) gives master_fader_db = -inf and a delivered
+    peak of -inf; both must serialize as null, not crash allow_nan=False."""
+    report = MixReport(
+        song_slug="x", captures_dir="/tmp/x", captured_at="20260528T120000Z",
+        analyzer_signature="sig",
+        stems=[_make_stem()],
+        master=_make_stem(track_id="master"),
+        master_fader_volume=0.0,
+        master_fader_db=float("-inf"),
+        delivered_true_peak_dbtp=float("-inf"),
+    )
+    parsed = json.loads(json.dumps(report.to_json_dict(), allow_nan=False))
+    assert parsed["master_fader_volume"] == 0.0
+    assert parsed["master_fader_db"] is None
+    assert parsed["delivered_true_peak_dbtp"] is None
+
+
 def test_compare_to_defaults_none_and_serializes_when_populated():
     """``compare_to`` is None when no baseline was requested, and passes
     through serialization verbatim when ``analyze_mix(compare_to=...)``

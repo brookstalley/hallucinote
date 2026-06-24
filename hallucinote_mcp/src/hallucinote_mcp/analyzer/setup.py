@@ -52,6 +52,7 @@ above for future expansion.
 """
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -89,6 +90,43 @@ ANALYZER_DEVICE_NAME = "HallucinoteAnalyzer"
 with ``device.class_display_name == "Max Audio Effect"`` (every M4L
 audio-effect device shares that class — the .amxd-specific identity
 is in ``name``)."""
+
+
+# RND-2R9K: loading a device onto a RETURN track via ``browser.load_item``
+# makes Live natively append ` | <device-name>` to the return's stored name —
+# a side effect Live applies to returns but NOT to regular tracks or the master
+# (empirically return-only; 2026-06-20 incoming bug). The render's analyzer
+# auto-load therefore renames every return to ``<name> | HallucinoteAnalyzer``,
+# leaving the user's set dirty even though the relink already tolerates it
+# (SYN-RENDER-RELINK strips the suffix at the read boundaries). We undo the
+# rename so a render leaves the set byte-for-byte. These two patterns mirror the
+# engine's ``hallucinote.return_naming`` helpers — this package is deliberately
+# engine-independent (it runs Live-side, with no ``hallucinote`` import), so the
+# logic is a forced twin, exactly like ``ANALYZER_DEVICE_NAME`` above.
+_RETURN_SLOT_PREFIX_RE = re.compile(r"^[A-Z]-")
+_ANALYZER_NAME_SUFFIX_RE = re.compile(
+    r"\s*\|\s*" + re.escape(ANALYZER_DEVICE_NAME) + r"\s*$"
+)
+
+
+def _return_name_restoration(current_name: str) -> str | None:
+    """The bare name to SET on a return to undo a render-appended analyzer
+    suffix, or ``None`` when no restoration is needed (no suffix present → don't
+    churn / don't fire a spurious name-change event).
+
+    Pure (Live-free, unit-testable). Live re-prepends the ``<slot-letter>-``
+    segment on read and the DB/push path stores+sets the bare form (W3-H /
+    W4-C real-Live finding, see ``hallucinote.return_naming``), so the restore
+    value strips BOTH Live's slot prefix AND the analyzer suffix — i.e. exactly
+    what a fresh push of the return's authored name would set. The suffix match
+    is anchored at end-of-string so a legitimately authored mid-name ` | `
+    survives untouched.
+    """
+    if _ANALYZER_NAME_SUFFIX_RE.search(current_name) is None:
+        return None
+    without_suffix = _ANALYZER_NAME_SUFFIX_RE.sub("", current_name)
+    return _RETURN_SLOT_PREFIX_RE.sub("", without_suffix, count=1)
+
 
 ANALYZER_BROWSER_PATH_PREFIX = ("Presets", "Audio Effects", "Max Audio Effect")
 """Browser path under the ``user_library`` root where the install
@@ -256,7 +294,7 @@ def ensure_analyzers_loaded(
 
     Worker-thread caller invariant. The two registered actions that
     invoke this (``ableton_render(action='ensure_loaded')`` and
-    ``ableton_render(action='render')``) both run with
+    ``ableton_render(action='start')``) both run with
     ``runs_on_worker=True``. Each per-surface load + 2× set_parameter
     bout marshals onto Live's main thread via ``context.run_on_main``;
     between surfaces, we sleep on the worker thread to let Live's main
@@ -566,6 +604,20 @@ def _ensure_on_surface(
         value=str(float(osc_emit_port)),
         value_type="continuous",
     ))
+
+    # RND-2R9K: undo Live's native rename of a RETURN track when the analyzer
+    # loaded onto it (` | HallucinoteAnalyzer` appended; return-only). Runs on
+    # every sweep for returns, but ``_return_name_restoration`` returns None when
+    # no suffix is present, so a clean return is read-only (no write, no churn) —
+    # which also self-heals a set dirtied by a pre-fix render. Tracks/master are
+    # never renamed by Live, so they are not touched.
+    if surface_kind == "return":
+        def _restore_return_name() -> None:
+            ret = context.song.return_tracks[surface_index - 1]
+            restored = _return_name_restoration(ret.name)
+            if restored is not None:
+                ret.name = restored
+        context.run_on_main(_restore_return_name)
 
     return AnalyzerInstance(
         surface_kind=surface_kind,

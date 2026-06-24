@@ -316,112 +316,106 @@ def test_plan_push_clip_isolates_by_session(conn, song, track, clip):
 # --- arrangement clips ---
 
 
-def test_plan_push_arrangement_skips_on_unlinked_track(
+def test_plan_push_arrangement_fresh_materialize_creates_and_fills(
     conn, song, session, track, clip
 ):
-    """W10-G post-Wave-0 normalization: planners skip-and-warn instead of
-    raising on unlinked deps. Wave 0's full-band-rock canary surfaced the
-    prior strict-raise as a Python traceback through the CLI when an
-    earlier phase failed partway — agent had no way to continue. Now the
-    row is skipped, a teaching note appears, and the rest of the
-    arrangement still planned (the agent can choose to abort if any row
-    skips, but the choice is theirs)."""
-    M.add_arrangement_clip(
-        conn, song_id=song, track_id=track, clip_id=clip, start_bar=1, end_bar=16
-    )
-    plan = push.plan_push_arrangement(conn, song_id=song, session_id=session)
-    assert plan.calls == []  # nothing emitted (track not linked)
-    assert any(
-        "not linked" in n and "plan_push_song_tracks" in n
-        for n in plan.notes
-    ), f"expected teaching note pointing at plan_push_song_tracks; got {plan.notes}"
-
-
-def test_plan_push_arrangement_skips_on_unlinked_clip(
-    conn, song, session, track, clip
-):
-    """When track IS linked but the session clip isn't, the note points
-    at the clip-create phase. Same skip-and-warn shape as the unlinked-
-    track case (W10-G)."""
-    M.link_db_to_ableton(
-        conn, session_id=session, db_kind="track", db_id=track, ableton_index=2
-    )
-    M.add_arrangement_clip(
-        conn, song_id=song, track_id=track, clip_id=clip, start_bar=1, end_bar=16
-    )
-    plan = push.plan_push_arrangement(conn, song_id=song, session_id=session)
-    assert plan.calls == []
-    assert any(
-        "not linked" in n and "clip-create phase" in n
-        for n in plan.notes
-    ), f"expected teaching note pointing at clip-create phase; got {plan.notes}"
-
-
-def test_plan_push_arrangement_partial_state_emits_linked_rows_only(
-    conn, song, session, track, clip,
-):
-    """W10-G: when some rows are linked and others aren't, the planner
-    emits calls for the linked ones and warns about the rest — partial
-    progress is the right shape (vs. all-or-nothing raising)."""
-    # Track is linked; only one of two clips is.
-    M.link_db_to_ableton(
-        conn, session_id=session, db_kind="track", db_id=track, ableton_index=1
-    )
-    M.link_db_to_ableton(
-        conn, session_id=session, db_kind="clip", db_id=clip, ableton_index=1,
-    )
-    # Add a second clip; do NOT link it.
-    other_clip = M.create_clip(
-        conn, track_id=track, slot=2, length_beats=16.0, name="other"
-    )
-    M.add_arrangement_clip(
-        conn, song_id=song, track_id=track, clip_id=clip,
-        start_bar=1, end_bar=5,
-    )
-    M.add_arrangement_clip(
-        conn, song_id=song, track_id=track, clip_id=other_clip,
-        start_bar=5, end_bar=9,
-    )
-    plan = push.plan_push_arrangement(conn, song_id=song, session_id=session)
-    assert len(plan.calls) == 1  # only the linked clip's placement
-    assert any("not linked" in n for n in plan.notes)
-
-
-def test_plan_push_arrangement_emits_one_duplicate_per_arrangement_clip(
-    conn, song, session, track, clip
-):
-    """W3-D: planner emits N ``ableton_clip(duplicate_to_arrangement, …)``
-    calls directly — one per arrangement_clips row. No more emulator
-    batch wrapper; no agent-side decomposition burden.
-
-    ``destination_bar`` (1-based) is converted to ``start_beats`` (cumulative
-    beats from song start) via the meter-aware walker.
-    """
+    """ARR-PROJ: a note-only placement materializes via create+fill — a FRESH
+    arrangement clip filled directly from the DB notes (``ableton_clip(action=
+    'create', location='arrangement')``), NOT ``duplicate_to_arrangement``. So
+    Live's B-24 overlap-split cannot occur and no ``replace_notes``-in-place
+    (the §6b-A orphan path) is used. Empty probe → no clear (fresh timeline)."""
     M.add_time_signature_point(
         conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
     )
     M.link_db_to_ableton(
         conn, session_id=session, db_kind="track", db_id=track, ableton_index=2
     )
+    aid = M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip, start_bar=1.0, end_bar=16.0
+    )
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track={2: []},  # track linked, timeline empty
+    )
+    assert len(plan.calls) == 1
+    call = plan.calls[0]
+    assert call.tool == "ableton_clip"
+    assert call.args["action"] == "create"
+    assert call.args["location"] == "arrangement"
+    assert call.args["kind"] == "midi"
+    assert call.args["track_index"] == 2
+    assert call.args["start_beats"] == 0.0  # bar 1 -> beat 0
+    assert call.args["length"] == 16.0  # clip.length_beats
+    assert call.args["name"] == "verse_drums"
+    assert len(call.args["notes"]) == 2  # the fixture's two notes
+    assert call.key == f"arrangement_clip:{aid}"
+    # No duplicate, no replace_notes anywhere.
+    assert all(c.args["action"] == "create" for c in plan.calls)
+
+
+def test_plan_push_arrangement_create_fill_needs_no_clip_link(
+    conn, song, session, track, clip
+):
+    """ARR-PROJ vs the old duplicate model: create+fill reads notes from the DB
+    and writes a fresh arrangement clip, so a note-only placement does NOT need
+    the session clip linked (the old duplicate path did). Only the TRACK link is
+    required."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
     M.link_db_to_ableton(
-        conn, session_id=session, db_kind="clip", db_id=clip, ableton_index=1
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=2
+    )
+    # clip deliberately NOT linked
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip, start_bar=1.0, end_bar=16.0
+    )
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track={2: []},
+    )
+    assert len(plan.calls) == 1
+    assert plan.calls[0].args["action"] == "create"
+
+
+def test_plan_push_arrangement_rematerialize_clears_descending_then_creates(
+    conn, song, session, track, clip
+):
+    """ARR-PROJ keystone: re-materializing onto an OCCUPIED timeline emits the
+    track's existing clips as descending-index deletes FIRST, then the
+    create+fill — clear-then-rebuild, never stack onto the old clips. This is
+    the structural reason the 2026-06-21 stacking witness (ARR-9X4T) cannot be
+    produced. Descending order keeps each delete valid against the pre-clear
+    snapshot (Live renumbers indices down after each delete)."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=2
     )
     aid = M.add_arrangement_clip(
         conn, song_id=song, track_id=track, clip_id=clip, start_bar=1.0, end_bar=16.0
     )
-    plan = push.plan_push_arrangement(conn, song_id=song, session_id=session)
-    assert len(plan.calls) == 1
-    call = plan.calls[0]
-    assert call.tool == "ableton_clip"
-    assert call.args == {
-        "action": "duplicate_to_arrangement",
-        "track_index": 2,
-        "clip_index": 1,
-        "start_beats": 0.0,  # bar 1 -> beat 0
-    }
-    assert call.key == f"arrangement_clip:{aid}"
-    # Pre-clear hygiene warning still surfaces.
-    assert any("clear existing arrangement clips" in n for n in plan.notes)
+    # Live already has 3 arrangement clips on track 2 (a prior push / hand edit).
+    live = {2: [
+        {"arrangement_clip_index": 1, "start_beats": 0.0},
+        {"arrangement_clip_index": 2, "start_beats": 16.0},
+        {"arrangement_clip_index": 3, "start_beats": 32.0},
+    ]}
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track=live,
+    )
+    # 3 deletes (descending index) THEN 1 create — exact dispatch order.
+    seq = [(c.args["action"], c.args.get("clip_index")) for c in plan.calls]
+    assert seq == [
+        ("delete", 3), ("delete", 2), ("delete", 1), ("create", None),
+    ]
+    deletes = [c for c in plan.calls if c.args["action"] == "delete"]
+    assert all(c.args["location"] == "arrangement" for c in deletes)
+    assert all(c.key.startswith("arrangement_clip_clear:") for c in deletes)
+    create = plan.calls[-1]
+    assert create.key == f"arrangement_clip:{aid}"
 
 
 def test_plan_push_arrangement_converts_bar_to_beats_per_meter(
@@ -434,22 +428,126 @@ def test_plan_push_arrangement_converts_bar_to_beats_per_meter(
     M.link_db_to_ableton(
         conn, session_id=session, db_kind="track", db_id=track, ableton_index=2
     )
-    M.link_db_to_ableton(
-        conn, session_id=session, db_kind="clip", db_id=clip, ableton_index=1
-    )
     M.add_arrangement_clip(
         conn, song_id=song, track_id=track, clip_id=clip,
         start_bar=17.0, end_bar=33.0,
     )
-    plan = push.plan_push_arrangement(conn, song_id=song, session_id=session)
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track={2: []},
+    )
+    assert plan.calls[0].args["action"] == "create"
     assert plan.calls[0].args["start_beats"] == 64.0
 
 
-def test_plan_push_arrangement_multiple_clips_emit_separate_calls(
+def test_plan_push_arrangement_multiple_placements_create_separate_calls(
     conn, song, session, track, clip
 ):
-    """Three arrangement placements → three independent duplicate calls.
-    Verifies the planner doesn't accidentally collapse them into one."""
+    """Three arrangement placements → three independent create+fill calls,
+    ascending start, distinct ``arrangement_clip:{db_id}`` keys (the planner
+    doesn't collapse them)."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=2
+    )
+    for bar in (1.0, 17.0, 33.0):
+        M.add_arrangement_clip(
+            conn, song_id=song, track_id=track, clip_id=clip,
+            start_bar=bar, end_bar=bar + 16.0,
+        )
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track={2: []},
+    )
+    creates = [c for c in plan.calls if c.args["action"] == "create"]
+    assert len(creates) == 3
+    beats = [c.args["start_beats"] for c in creates]
+    assert beats == [0.0, 64.0, 128.0]  # ascending start order
+    keys = {c.key for c in creates}
+    assert len(keys) == 3
+    assert all(k.startswith("arrangement_clip:") for k in keys)
+
+
+def test_plan_push_arrangement_skips_unlinked_track_entirely(
+    conn, song, session, track, clip
+):
+    """A track that isn't linked yet emits NOTHING (no clear, no create) and an
+    alert — the projection can't address it. (Normally the tracks phase links it
+    first.) The alert (operator-visible) is used, not a benign note, because a
+    whole track's content failed to materialize."""
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip, start_bar=1, end_bar=16
+    )
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track={},
+    )
+    assert plan.calls == []
+    assert any("not linked" in a for a in plan.alerts)
+
+
+def test_plan_push_arrangement_none_probe_emits_no_clear_alert(
+    conn, song, session, track, clip
+):
+    """No probe (``live_arrangement_clips_by_track=None``) → create+fill only,
+    NO clear, plus a loud alert that the timeline must be empty. The idempotency
+    guarantee holds only with the probe; the execute path always probes."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=2
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip, start_bar=1.0, end_bar=16.0
+    )
+    plan = push.plan_push_arrangement(conn, song_id=song, session_id=session)
+    assert all(c.args["action"] == "create" for c in plan.calls)
+    assert not any(c.args["action"] == "delete" for c in plan.calls)
+    assert any("WITHOUT a Live arrangement probe" in a for a in plan.alerts)
+
+
+def test_plan_push_arrangement_skips_track_absent_from_probe(
+    conn, song, session, track, clip
+):
+    """A probe WAS provided but this track's lane is ABSENT (the per-track probe
+    FAILED — distinct from a present-but-empty lane = genuinely no clips). The
+    lane state is unknown, so the planner skips it + alerts rather than
+    create+fill onto unprobed clips (which could stack — the failure the
+    projection prevents)."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=2
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip, start_bar=1.0, end_bar=16.0
+    )
+    # Probe provided but track 2's lane is ABSENT (only an unrelated lane probed).
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track={9: []},
+    )
+    assert plan.calls == []
+    assert any("the per-track probe failed" in a for a in plan.alerts)
+
+
+# --- arrangement projection: routing + §6a all-or-nothing ---
+
+
+def test_plan_push_arrangement_routes_envelope_bearing_to_duplicate(
+    conn, song, session, track, clip, monkeypatch
+):
+    """An envelope-bearing placement (its clip hosts a clip-bound envelope —
+    detected by :func:`envelope_hosting_clip_ids`) routes to
+    ``duplicate_to_arrangement`` onto the CLEARED region, NOT create+fill:
+    create+fill writes notes only and would drop the snapshot-copied clip
+    envelope (§5/§9). The duplicate route needs the clip linked in a session
+    slot. (The host-detection itself is unit-tested against real envelopes in
+    test_push_envelopes; here we stub it to isolate the planner's routing.)"""
     M.add_time_signature_point(
         conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
     )
@@ -459,198 +557,131 @@ def test_plan_push_arrangement_multiple_clips_emit_separate_calls(
     M.link_db_to_ableton(
         conn, session_id=session, db_kind="clip", db_id=clip, ableton_index=1
     )
-    for bar in (1.0, 17.0, 33.0):
-        M.add_arrangement_clip(
-            conn, song_id=song, track_id=track, clip_id=clip,
-            start_bar=bar, end_bar=bar + 16.0,
-        )
-    plan = push.plan_push_arrangement(conn, song_id=song, session_id=session)
-    assert len(plan.calls) == 3
-    beats = [c.args["start_beats"] for c in plan.calls]
-    assert sorted(beats) == [0.0, 64.0, 128.0]
-    # Each call has a distinct arrangement_clip:{db_id} key.
-    keys = {c.key for c in plan.calls}
-    assert len(keys) == 3
-    assert all(k.startswith("arrangement_clip:") for k in keys)
+    aid = M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip, start_bar=1.0, end_bar=16.0
+    )
+    monkeypatch.setattr(
+        "hallucinote.sync.push.arrangement.envelope_hosting_clip_ids",
+        lambda conn, song_id: {clip},
+    )
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track={2: []},
+    )
+    creates = [c for c in plan.calls if c.args["action"] == "create"]
+    dups = [c for c in plan.calls if c.args["action"] == "duplicate_to_arrangement"]
+    assert not creates, "envelope-bearing clip must NOT create+fill (would drop envelope)"
+    assert len(dups) == 1
+    assert dups[0].args == {
+        "action": "duplicate_to_arrangement",
+        "track_index": 2,
+        "clip_index": 1,
+        "start_beats": 0.0,
+    }
+    assert dups[0].key == f"arrangement_clip:{aid}"
 
 
-# --- arrangement idempotency (W10-A) ---
-
-
-def test_plan_push_arrangement_refreshes_notes_on_already_linked_placements(
-    conn, song, session, track, clip
+def test_plan_push_arrangement_all_or_nothing_on_unresolved_envelope_clip(
+    conn, song, session, track, clip, monkeypatch
 ):
-    """PSH-6W2J: a re-push must NOT re-duplicate an already-linked placement
-    (W10-A's idempotency intent), but it MUST refresh the placement's notes.
-
-    The pre-PSH-6W2J behavior `assert plan.calls == []` ENCODED THE BUG: an
-    arrangement clip is a distinct Live copy, so skipping the linked placement
-    entirely left it frozen at first-materialization — a later note edit to the
-    session clip never reached the arrangement (silent stale render/playback).
-    The corrected contract: emit exactly one `replace_notes`/`location=arrangement`
-    refresh (idempotent on placement — no `duplicate_to_arrangement`), keyed
-    `arrangement_clip_notes:` so apply records no new binding.
+    """§6a all-or-nothing: the clear is DESTRUCTIVE, so a track with an
+    envelope-bearing placement whose source clip isn't linked (needed for the
+    duplicate route) emits NOTHING — no clear, no rebuild — and an alert. Never
+    clear a track we cannot fully rebuild, or a re-push would wipe its clips and
+    fail to recreate the envelope-bearing one.
     """
     M.add_time_signature_point(
         conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
     )
     M.link_db_to_ableton(
-        conn, session_id=session, db_kind="track", db_id=track, ableton_index=2,
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=2
     )
-    M.link_db_to_ableton(
-        conn, session_id=session, db_kind="clip", db_id=clip, ableton_index=1,
+    # clip is the envelope host but is NOT linked → duplicate route can't resolve.
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip, start_bar=1.0, end_bar=16.0
     )
-    aid = M.add_arrangement_clip(
-        conn, song_id=song, track_id=track, clip_id=clip,
-        start_bar=1.0, end_bar=16.0,
+    monkeypatch.setattr(
+        "hallucinote.sync.push.arrangement.envelope_hosting_clip_ids",
+        lambda conn, song_id: {clip},
     )
-    # First push lands and apply_push_results records the binding.
-    push.apply_push_results(
-        conn,
-        [{
-            "key": f"arrangement_clip:{aid}",
-            "ok": True,
-            "tool": "ableton_clip",
-            "result": {"arrangement_clip_index": 3},
-        }],
-        session_id=session,
+    live = {2: [{"arrangement_clip_index": 1, "start_beats": 0.0}]}
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track=live,
     )
-    # Re-run the planner — it must refresh (not re-duplicate) the linked placement.
-    plan = push.plan_push_arrangement(conn, song_id=song, session_id=session)
-    assert len(plan.calls) == 1, (
-        f"re-push should emit exactly one note-refresh call, got: "
+    assert plan.calls == [], (
+        "no clear (and no rebuild) when the track can't be fully rebuilt; got: "
         f"{[c.args for c in plan.calls]}"
     )
-    call = plan.calls[0]
-    assert call.key == f"arrangement_clip_notes:{aid}"
-    assert call.tool == "ableton_clip"
-    assert call.args["action"] == "replace_notes"
-    assert call.args["location"] == "arrangement"
-    assert call.args["track_index"] == 2
-    assert call.args["clip_index"] == 3  # the recorded arrangement_clip_index
-    assert len(call.args["notes"]) == 2  # the `clip` fixture's two notes
-    # No re-duplication.
-    assert all(
-        c.args.get("action") != "duplicate_to_arrangement" for c in plan.calls
-    ), "must not re-duplicate an already-linked placement"
-    # Idempotency note reflects the refresh, not a silent skip.
     assert any(
-        "refreshed notes" in n and "no re-duplication" in n
-        for n in plan.notes
-    ), f"expected a refresh idempotency note, got: {plan.notes}"
+        "envelope-bearing" in a and "not linked" in a for a in plan.alerts
+    ), f"expected an all-or-nothing alert, got: {plan.alerts}"
 
 
-def test_plan_push_arrangement_partial_state_emits_unlinked_only(
-    conn, song, session, track, clip
+def test_plan_push_arrangement_audio_track_skipped_untouched(
+    conn, song, session
 ):
-    """W10-A: when SOME placements are linked and others aren't, only
-    the unlinked ones emit. Mixed-state re-runs (e.g., a partial
-    apply_push_results between two pushes) must not re-duplicate
-    already-pushed placements.
-    """
-    M.add_time_signature_point(
-        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    """An audio placement means an audio track: the whole track is left
+    UNTOUCHED (no clear) so manually-placed audio clips survive — audio-clip
+    arrangement push is CLP-AUD2 scope. A benign note (known scope gap, NOT an
+    alert) names it; clearing it would wipe audio we cannot rebuild."""
+    atrack = M.create_track(
+        conn, song_id=song, track_index=3, name="Vox", kind="audio",
     )
     M.link_db_to_ableton(
-        conn, session_id=session, db_kind="track", db_id=track, ableton_index=2,
+        conn, session_id=session, db_kind="track", db_id=atrack, ableton_index=3,
     )
-    M.link_db_to_ableton(
-        conn, session_id=session, db_kind="clip", db_id=clip, ableton_index=1,
-    )
-    aids = [
-        M.add_arrangement_clip(
-            conn, song_id=song, track_id=track, clip_id=clip,
-            start_bar=bar, end_bar=bar + 16.0,
-        )
-        for bar in (1.0, 17.0, 33.0)
-    ]
-    # First push lands for the first two placements only — the third
-    # never made it to apply (network blip, batched run cut short, etc).
-    push.apply_push_results(
-        conn,
-        [
-            {"key": f"arrangement_clip:{aids[0]}", "ok": True,
-             "tool": "ableton_clip", "result": {"arrangement_clip_index": 0}},
-            {"key": f"arrangement_clip:{aids[1]}", "ok": True,
-             "tool": "ableton_clip", "result": {"arrangement_clip_index": 1}},
-        ],
-        session_id=session,
-    )
-    plan = push.plan_push_arrangement(conn, song_id=song, session_id=session)
-    # PSH-6W2J: the two linked placements now emit note-refresh calls, and the
-    # third (unlinked) emits a duplicate. Exactly one duplicate; two refreshes.
-    dup_calls = [c for c in plan.calls if c.args["action"] == "duplicate_to_arrangement"]
-    refresh_calls = [c for c in plan.calls if c.args["action"] == "replace_notes"]
-    assert len(dup_calls) == 1
-    assert dup_calls[0].key == f"arrangement_clip:{aids[2]}"
-    assert sorted(c.key for c in refresh_calls) == sorted(
-        f"arrangement_clip_notes:{aids[i]}" for i in (0, 1)
-    )
-
-
-def test_plan_push_arrangement_clear_warn_only_for_unlinked_placements(
-    conn, song, session, track, clip
-):
-    """W10-A: the 'agent must clear existing arrangement clips' warn
-    targets the C3 paper-cut (user re-pushes onto a Live set whose
-    arrangement isn't empty). It should NOT fire when every placement
-    is already linked — that's the idempotent re-run case and there's
-    nothing to clear or duplicate.
-    """
-    M.add_time_signature_point(
-        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
-    )
-    M.link_db_to_ableton(
-        conn, session_id=session, db_kind="track", db_id=track, ableton_index=2,
-    )
-    M.link_db_to_ableton(
-        conn, session_id=session, db_kind="clip", db_id=clip, ableton_index=1,
-    )
-    aid = M.add_arrangement_clip(
-        conn, song_id=song, track_id=track, clip_id=clip,
-        start_bar=1.0, end_bar=16.0,
-    )
-    push.apply_push_results(
-        conn,
-        [{"key": f"arrangement_clip:{aid}", "ok": True,
-          "tool": "ableton_clip", "result": {"arrangement_clip_index": 0}}],
-        session_id=session,
-    )
-    plan = push.plan_push_arrangement(conn, song_id=song, session_id=session)
-    assert all(
-        "clear existing arrangement clips" not in n for n in plan.notes
-    ), (
-        "the 'must clear' warn must NOT fire when re-push has nothing to "
-        f"emit, but got: {plan.notes}"
-    )
-
-
-def test_plan_push_arrangement_clear_warn_still_fires_on_truly_new_push(
-    conn, song, session, track, clip
-):
-    """Counterpart to the above: the 'must clear' warn still surfaces
-    for the actual case it targets — a first-time push with unlinked
-    placements. We don't want to lose the C3 teaching just to suppress
-    the idempotent-case false fire.
-    """
-    M.add_time_signature_point(
-        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
-    )
-    M.link_db_to_ableton(
-        conn, session_id=session, db_kind="track", db_id=track, ableton_index=2,
-    )
-    M.link_db_to_ableton(
-        conn, session_id=session, db_kind="clip", db_id=clip, ableton_index=1,
+    aclip = M.create_audio_clip(
+        conn, track_id=atrack, slot=1, length_beats=16.0,
+        audio_file="assets/vox.wav", name="vox",
     )
     M.add_arrangement_clip(
-        conn, song_id=song, track_id=track, clip_id=clip,
+        conn, song_id=song, track_id=atrack, clip_id=aclip,
         start_bar=1.0, end_bar=16.0,
     )
-    plan = push.plan_push_arrangement(conn, song_id=song, session_id=session)
-    assert len(plan.calls) == 1
-    assert any(
-        "clear existing arrangement clips" in n for n in plan.notes
+    live = {3: [{"arrangement_clip_index": 1, "start_beats": 0.0}]}
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track=live,
     )
+    assert plan.calls == [], "audio track must be left untouched (no clear, no rebuild)"
+    assert any("audio" in n and "CLP-AUD2" in n for n in plan.notes)
+
+
+def test_plan_push_arrangement_sibling_track_unaffected_by_skip(
+    conn, song, session, track, clip
+):
+    """§6a all-or-nothing is PER TRACK: a skipped (unresolvable) track does NOT
+    prevent a sibling fully-resolved track from being cleared + rebuilt."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    # The fixture track is linked (Live index 2) → materializable.
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=2,
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip, start_bar=1.0, end_bar=16.0
+    )
+    # A second track, NOT linked → must be skipped without touching the first.
+    t2 = M.create_track(
+        conn, song_id=song, track_index=2, name="Bass",
+        instrument_uri="query:Bass#X",
+    )
+    c2 = M.create_clip(conn, track_id=t2, slot=1, length_beats=16.0, name="bass")
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=t2, clip_id=c2, start_bar=1.0, end_bar=16.0
+    )
+    live = {2: [{"arrangement_clip_index": 1, "start_beats": 0.0}]}
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track=live,
+    )
+    creates = [c for c in plan.calls if c.args["action"] == "create"]
+    assert len(creates) == 1, "the linked sibling track is still rebuilt"
+    assert creates[0].args["track_index"] == 2
+    # The unlinked track is skipped with an operator alert.
+    assert any("not linked" in a for a in plan.alerts)
 
 
 # --- PSH-6W2J: arrangement-copy note propagation ---
@@ -753,34 +784,11 @@ def test_plan_push_arrangement_clip_notes_skips_audio_source(
     assert plan.calls == []
 
 
-def test_plan_push_arrangement_unrefreshable_linked_placement_named_in_note(
-    conn, song, session, track, clip
-):
-    """A linked placement whose TRACK link is missing can't be refreshed; the
-    idempotency note must name the gap rather than claim everything was refreshed
-    (a silent stale copy is the whole bug PSH-6W2J fixes)."""
-    M.add_time_signature_point(
-        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
-    )
-    M.link_db_to_ableton(
-        conn, session_id=session, db_kind="clip", db_id=clip, ableton_index=1,
-    )
-    aid = M.add_arrangement_clip(
-        conn, song_id=song, track_id=track, clip_id=clip,
-        start_bar=1.0, end_bar=16.0,
-    )
-    # Record the arrangement_clip link but NOT the track link.
-    push.apply_push_results(
-        conn,
-        [{"key": f"arrangement_clip:{aid}", "ok": True, "tool": "ableton_clip",
-          "result": {"arrangement_clip_index": 0}}],
-        session_id=session,
-    )
-    plan = push.plan_push_arrangement(conn, song_id=song, session_id=session)
-    assert plan.calls == [], "no refresh emitted when the track link is missing"
-    assert any("not refreshed" in n for n in plan.notes), (
-        f"expected the note to name the unrefreshed placement, got: {plan.notes}"
-    )
+# ARR-PROJ Chunk 2: the old `plan_push_arrangement` refresh-in-place machinery
+# (replace_notes on already-linked placements) is DELETED — the projection model
+# always clears + rebuilds, so there is no "unrefreshable linked placement" case
+# to name. The scoped compose-loop propagation (plan_push_arrangement_clip_notes,
+# tested below) still uses the refresh path and is unchanged by Chunk 2.
 
 
 # --- check_coherence (W18-A) ---
@@ -982,6 +990,28 @@ def test_apply_results_links_arrangement_clip(conn, song, session, track, clip):
     )
 
 
+def test_apply_results_arrangement_clip_clear_is_ack_only(conn, session, track):
+    """ARR-PROJ Chunk 2: the projection planner's clear emits delete results
+    keyed `arrangement_clip_clear:{track}:{idx}`. apply_push_results must treat
+    it as ACK-ONLY (record no binding, do not raise on the unknown prefix) — the
+    delete carries no index to bind and the rebuild re-records the placement
+    under `arrangement_clip:`. Without the ack-only registration the arrangement
+    phase HALTS on the first clear result."""
+    # Must not raise (the unknown-key terminal raise is the bug this guards).
+    push.apply_push_results(
+        conn,
+        [
+            {"key": "arrangement_clip_clear:2:3", "ok": True,
+             "tool": "ableton_clip", "result": {"deleted": True}},
+        ],
+        session_id=session,
+    )
+    # No binding recorded for the clear key kind.
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="arrangement_clip", db_id="2:3"
+    ) is None
+
+
 def test_apply_results_accepts_cue_batch_ack(conn, song, session):
     """W3-B introduced `cue_batch:{song_id}` as the single-key result of
     the batched cue creation call. Apply must recognize the kind and
@@ -1109,4 +1139,168 @@ def test_aliases_today_at_or_below_ceiling():
         "MCP action, OR (b) document why it's a genuine emulation and bump "
         "the ceiling deliberately. Current entries: "
         f"{sorted(ALIASES_TODAY.keys())}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Emitted-key-kind contract — every key a sync planner emits must resolve in
+# its apply step. Bug-class guard for the device_param_override (2026-06-18) /
+# device_chain_props (2026-06-20) twins, generalized to BOTH the push apply
+# (apply_push_results) and the symmetric pull apply (apply_pull_results), which
+# share the same table-driven-dispatch-with-catch-all-raise shape.
+# ---------------------------------------------------------------------------
+
+
+# Planner keys whose KIND segment (the text before the first ':') is itself
+# f-string-interpolated, mapped to the concrete kinds each can produce. A static
+# source scan can't expand these, so they're declared here explicitly — and the
+# guard asserts BOTH directions (every template found in source is in the table;
+# every template in the table is still emitted), so a table can't silently rot.
+_PUSH_INTERPOLATED_KEY_EXPANSIONS: dict[str, set[str]] = {
+    # mix.py: per-field track mixer state via ableton_track(set_property).
+    "track_{db_field}": {
+        "track_volume", "track_pan", "track_mute",
+        "track_solo", "track_arm", "track_color",
+    },
+    # mix.py: per-field return mixer state via ableton_return(set_property)
+    # (returns have no arm).
+    "return_{db_field}": {
+        "return_volume", "return_pan", "return_mute",
+        "return_solo", "return_color",
+    },
+    # routing.py: per-direction track routing via ableton_track(set_*_routing).
+    "track_{direction}_routing": {
+        "track_output_routing", "track_input_routing",
+    },
+}
+
+_PULL_INTERPOLATED_KEY_EXPANSIONS: dict[str, set[str]] = {
+    # pull/devices.py: top-level device chain pulled per linked parent — the
+    # parent_kind is "track" or "return" (see _iter_linked_parents).
+    "{parent_kind}_devices": {"track_devices", "return_devices"},
+}
+
+
+def _emitted_key_kinds(planner_dir) -> tuple[set[str], set[str]]:
+    """Scan every planner module in ``planner_dir`` for the kind segment of each
+    emitted ``key=...`` literal. Returns ``(static_kinds, interpolated_kinds)``.
+
+    Robust because both the push and pull layers emit every key as an INLINE
+    string literal on a ``key=f"..."`` / ``key="..."`` line — no key is built in
+    a variable first (verified by grep at authoring time on both dirs), so a
+    source scan sees them all. The regex is quote-agnostic (single or double)
+    and ignores ``key=lambda`` sort keys and the apply-side error-message
+    f-strings (``key={key!r}`` — no quote right after ``key=``).
+    """
+    import re
+
+    pat = re.compile(r"""key=f?["']([^"']*)["']""")
+    static_kinds: set[str] = set()
+    interpolated_kinds: set[str] = set()
+    for module in sorted(planner_dir.glob("*.py")):
+        for literal in pat.findall(module.read_text()):
+            # The kind is the text before the first ':'. For interpolated keys
+            # (track_{db_field}:… / {parent_kind}_devices:…) the '{' lands in
+            # this segment.
+            kind = literal.split(":", 1)[0]
+            (interpolated_kinds if "{" in kind else static_kinds).add(kind)
+    return static_kinds, interpolated_kinds
+
+
+def _assert_every_emitted_kind_is_declared(
+    *, planner_dir, declared, expansions, must_find, side, declare_hint,
+):
+    """Shared core for the push/pull emitted-key-kind contract guards."""
+    static_kinds, interpolated_kinds = _emitted_key_kinds(planner_dir)
+
+    # Sanity: the scan actually found keys (a no-op scan would pass vacuously).
+    # Pin known kinds so each guard provably covers its bug-class anchor.
+    assert must_find <= static_kinds, (
+        f"the {side} emitted-key scan did not find {sorted(must_find)} — the "
+        "scan is broken, not the contract"
+    )
+
+    # Every interpolated kind template found in source must be expanded here…
+    unmapped = interpolated_kinds - set(expansions)
+    assert not unmapped, (
+        f"new interpolated {side} key kind(s) {sorted(unmapped)} — add their "
+        "concrete expansions to the expansion table in this test so the guard "
+        "can check each against the apply-side declarations."
+    )
+    # …and no stale entries (a removed interpolated key must drop its row).
+    stale = set(expansions) - interpolated_kinds
+    assert not stale, (
+        f"the {side} interpolated-key expansion table has entries no planner "
+        f"emits anymore: {sorted(stale)} — remove them."
+    )
+
+    concrete = set(static_kinds)
+    for template in interpolated_kinds:
+        concrete |= expansions[template]
+
+    undeclared = concrete - declared
+    assert not undeclared, (
+        f"{side} planner(s) emit key kind(s) {sorted(undeclared)} that the "
+        f"apply step does NOT resolve — a full {side} will CRASH in the "
+        "result-apply step the moment one is produced (see the "
+        f"device_param_override / device_chain_props bugs). {declare_hint}"
+    )
+
+
+def test_every_emitted_push_key_kind_is_declared():
+    """Every key kind the push planners emit MUST resolve in
+    ``apply_push_results`` — i.e. appear in ``_LINK_KINDS``, ``_ACK_ONLY_KINDS``,
+    or the dedicated ``perform_batch`` branch. Otherwise a full push CRASHES in
+    the result-apply step the moment that key is produced, halting every phase
+    after it (the song never finishes materializing).
+
+    This is the bug-class guard for two siblings that each shipped this exact
+    way: ``device_param_override`` (2026-06-18) and its direct twin
+    ``device_chain_props`` (2026-06-20) — a new planner-emitted key kind that
+    nobody declared on the apply side. The plan.py docstring already states the
+    contract ("every key kind the planner emits MUST appear in …"); this test
+    enforces it mechanically so the next sibling can't regress silently.
+    """
+    import pathlib
+
+    from hallucinote.sync.push import plan
+
+    declared = (
+        set(plan._LINK_KINDS)
+        | set(plan._ACK_ONLY_KINDS)
+        | {"perform_batch"}  # dedicated branch in apply_push_results
+    )
+    _assert_every_emitted_kind_is_declared(
+        planner_dir=pathlib.Path(plan.__file__).parent,
+        declared=declared,
+        expansions=_PUSH_INTERPOLATED_KEY_EXPANSIONS,
+        must_find={"device_param_override", "device_chain_props"},
+        side="push",
+        declare_hint=(
+            "Declare each in _LINK_KINDS or _ACK_ONLY_KINDS (or add a dedicated "
+            "branch) in sync/push/plan.py."
+        ),
+    )
+
+
+def test_every_emitted_pull_key_kind_is_declared():
+    """Symmetric guard for the PULL side: ``apply_pull_results`` is the inverse
+    twin of the push apply — the same table-driven dispatch
+    (``_HANDLERS``) with the same catch-all ``raise ValueError('unknown pull
+    result key kind …')``. An undeclared pull key would regress exactly the way
+    ``device_chain_props`` did on push: silent until it crashes a real pull.
+    Locking it here closes the bug class on both apply surfaces, not just the
+    one that happened to surface a report first.
+    """
+    import pathlib
+
+    from hallucinote.sync.pull import plan as pull_plan
+
+    _assert_every_emitted_kind_is_declared(
+        planner_dir=pathlib.Path(pull_plan.__file__).parent,
+        declared=set(pull_plan._HANDLERS),
+        expansions=_PULL_INTERPOLATED_KEY_EXPANSIONS,
+        must_find={"device_parameters", "device_sidechain_source"},
+        side="pull",
+        declare_hint="Declare each in _HANDLERS in sync/pull/plan.py.",
     )

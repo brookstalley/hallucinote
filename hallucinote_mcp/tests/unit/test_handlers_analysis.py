@@ -17,8 +17,8 @@ import soundfile as sf
 
 from hallucinote.db import mutations as M
 from hallucinote.db.connection import init_db
-from hallucinote_mcp.handlers import analysis as analysis_handlers
-from hallucinote_mcp.handlers.analysis import ANALYSIS_STATUS_FILENAME
+from hallucinote_mcp.server_side import analysis as analysis_handlers
+from hallucinote_mcp.server_side.analysis import ANALYSIS_STATUS_FILENAME
 
 
 SAMPLE_RATE = 48_000
@@ -518,6 +518,91 @@ def test_collect_stem_gains_keys_by_capture_surface_id_not_db_uuid():
     assert "uuid-aaa" not in gains
     assert gains["track:1"] == pytest.approx(live_fader_gain(0.85))  # ~unity
     assert gains["track:2"] == pytest.approx(live_fader_gain(0.5))   # ~-14 dB
+
+
+def test_collect_master_fader_volume_reads_master_row():
+    """MASTER-PREFADER-TP: the helper returns the kind='master' row's volume
+    (for the report's DELIVERED post-fader true-peak), and None when there's no
+    master row or its volume is NULL — so no false delivered number is fabricated.
+    """
+    from hallucinote.db.connection import init_db as _init
+
+    conn = _init(":memory:")
+    conn.execute("INSERT INTO songs (id, name) VALUES ('s1', 'demo')")
+    # A regular track must NOT be mistaken for the master.
+    conn.execute(
+        "INSERT INTO tracks (id, song_id, track_index, name, kind, volume) "
+        "VALUES ('uuid-trk', 's1', 1, '01 Drums', 'midi', 0.5)"
+    )
+    conn.execute(
+        "INSERT INTO tracks (id, song_id, track_index, name, kind, volume) "
+        "VALUES ('uuid-mst', 's1', 0, 'Master', 'master', 0.70)"
+    )
+    conn.commit()
+    assert analysis_handlers._collect_master_fader_volume(conn, "s1") == 0.70
+
+    # No master row → None.
+    conn.execute("INSERT INTO songs (id, name) VALUES ('s2', 'no-master')")
+    conn.execute(
+        "INSERT INTO tracks (id, song_id, track_index, name, kind, volume) "
+        "VALUES ('uuid-x', 's2', 1, '01', 'midi', 0.5)"
+    )
+    conn.commit()
+    assert analysis_handlers._collect_master_fader_volume(conn, "s2") is None
+
+    # Master row with NULL volume → None (no guess).
+    conn.execute("INSERT INTO songs (id, name) VALUES ('s3', 'null-master')")
+    conn.execute(
+        "INSERT INTO tracks (id, song_id, track_index, name, kind, volume) "
+        "VALUES ('uuid-m3', 's3', 0, 'Master', 'master', NULL)"
+    )
+    conn.commit()
+    assert analysis_handlers._collect_master_fader_volume(conn, "s3") is None
+    conn.close()
+
+
+def test_analyze_handler_surfaces_delivered_true_peak(synthetic_song: Path):
+    """End-to-end: a DB master row with a sub-unity fader → the report JSON
+    carries master_fader_volume + master_fader_db + delivered_true_peak_dbtp
+    (bus TP + the calibrated fader gain), and the result summary surfaces the
+    delivered peak alongside the (pre-fader bus) master true-peak."""
+    from hallucinote.audio.levels import live_fader_db
+
+    slug = "test-song"
+    db_path = synthetic_song / f"{slug}.db"
+    volume = 0.70  # below Live-12 unity (0.85) → attenuation
+    conn = init_db(db_path)
+    try:
+        song_id = conn.execute(
+            "SELECT id FROM songs WHERE name = ?", (slug,)
+        ).fetchone()["id"]
+        master_id = M.create_track(
+            conn, song_id=song_id, track_index=0, name="Master", kind="master",
+        )
+        M.set_track_mixer(conn, track_id=master_id, volume=volume)
+        conn.commit()
+    finally:
+        conn.close()
+
+    captures = _write_captures(
+        synthetic_song / "captures" / "20260528T140000Z", song_slug=slug,
+    )
+    result = analysis_handlers.analyze_handler(
+        None, song_slug=slug, captures_dir=str(captures),
+    )
+    report = json.loads(Path(result["report_path"]).read_text(encoding="utf-8"))
+
+    bus_tp = report["master"]["loudness"]["true_peak_dbtp"]
+    expected_db = live_fader_db(volume)
+    assert report["master_fader_volume"] == pytest.approx(volume)
+    assert report["master_fader_db"] == pytest.approx(expected_db)
+    assert report["delivered_true_peak_dbtp"] == pytest.approx(bus_tp + expected_db)
+
+    # Summary surfaces both the bus and the delivered number.
+    summary = result["summary"]
+    assert summary["master_true_peak_dbtp"] == pytest.approx(bus_tp)
+    assert summary["delivered_true_peak_dbtp"] == pytest.approx(bus_tp + expected_db)
+    assert summary["master_fader_db"] == pytest.approx(expected_db)
 
 
 def test_analyze_handler_picks_up_db_declared_reverb_intent(synthetic_song: Path):

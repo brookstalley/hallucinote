@@ -4,9 +4,206 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-23 — v1.6.0 catch-up: clusters shipped to develop since v1.5.0 without an individual change-log entry
+
+<!-- prawduct: type=feature | chunks=MICROTUNE,MCP-9R3T,MCP-5N8K,MCP-7F2K,MCP-7P3R,MCP-2K9F,MCP-8H4N,PSH-3K9D,PSH-8K3D,SYN-7N4K,IDX-5W2P,SYN-4R7P,SYN-9F4K,SYN-RENDER-RELINK,SYN-SCAFFOLD-MISLINK,SYN-RACK-PRESET-RELINK,ARR-ORPHAN,REC-4Z8Q,DOC-7K3M,DEC-CAP,master-true-peak,FK-clip-guard | scope=tuning,mcp-bridge,mcp-render,sync-push,sync-pull,db,analysis,methodology,docs,tests | status=shipped | release=v1.6.0 -->
+
+A consolidated entry for work that merged to `develop` between v1.5.0 (2026-06-17) and this
+release but never got its own change-log entry — reconstructed from commit history at release
+time so the v1.6.0 notes don't silently omit it. The six clusters that *do* have full detail
+(ARR-PROJ, ARR-CMPHALT, SYN-2D9K, RND-2R9K, PSH-3H8M, MCP-1V8K/PSH-PHASEORDER) keep their own
+entries below. One line per otherwise-unentered cluster:
+
+**MCP bridge — async + reliability**
+- **MCP-9R3T / MCP-5N8K** — `render` and `analyze` became async `start`/`status` actions; the synchronous `render` was retired; `/render-analyze` runs render+analyze out of the agent's context; start+poll is taught (PRs #182, #183, #185, #186).
+- **MCP-7F2K / MCP-7P3R** — handshake-fingerprint relocation, an arrangement-recovery path, and a transport-teaching correction (PR #183).
+- **MCP-2K9F / MCP-8H4N** — reliability papercuts: probe-set no-op exposure + version-mismatch self-diagnosis (PR #181).
+- arrangement clip `list` now carries `note_count` + `muted`, with a read signpost from `ableton_arrangement`.
+
+**Tuning — a new feature**
+- **MICROTUNE (TUN-4Q7W)** — alternate tunings as an isolated bolt-on: an integer-MIDI degree mapper into unchanged generators, a worked 19-EDO example, a gated lens caveat + drift-warn + push re-load instruction, the verify-api close, and the `/tuning-pull` command (Chunks 1–4).
+
+**Sync round-trip reliability**
+- **PSH-8K3D / SYN-7N4K / IDX-5W2P** — swell rebuild-reliability cluster (PR #180).
+- **PSH-3K9D** — push devices phase diff-reconciles (skips already-current params) + a mid-phase progress heartbeat.
+- **SYN-4R7P** — probe-and-link reconciles stale `arrangement_clip` links by position (PR #191).
+- **SYN-9F4K** — push devices phase fails loud on an empty rack (preset-didn't-load) instead of writing into nothing (PR #200).
+- **SYN-RENDER-RELINK** — probe-and-link / pull / capture all normalize the analyzer's render-rename suffix so a render no longer breaks relink.
+- **SYN-SCAFFOLD-MISLINK** — drop set-swap-mislinked track links onto a fresh default scaffold.
+- **SYN-RACK-PRESET-RELINK** — honor `.adg`/`.adv` as a standalone preset load source + a normalized-value pan retry; `device_chain_props` registered ack-only in `apply_push_results`.
+- **ARR-ORPHAN** — `replace_notes` is a true total-replace on arrangement clips (full-extent clear before set) (PR #202).
+- **FK-clip-guard** — `unlink_db_from_ableton` guarded against a dangling `events.clip_id` foreign key.
+
+**Analysis / lenses**
+- **master-true-peak** — delivered (post-fader) master true-peak in `MixReport` (PR #195).
+- **REC-4Z8Q** — recurrence matcher now matches zero-interval (repeated-pitch) motifs; **DOC-7K3M** closed in-code read-side doc gaps.
+
+**Methodology / framework**
+- **DEC-CAP** — decision capture wired into the iterate loop (`/compose-part` close + `/compose-review` / `/mix-review` backstops).
+- repo hygiene — untracked an accidental worktree gitlink + gitignored `.claude/worktrees/`.
+
+**Re-vendor: required** — 14 files under `_FINGERPRINT_PATHS` changed since v1.5.0 (`actions/`, `handlers/`, `schema.py`, `wire.py`). Marketplace consumers must re-run `/ableton-mcp-install` and fully quit + reopen Ableton Live.
+
+## 2026-06-23 — Device loads survive Arranger focus; push rejects bad phase names before any Live probe (MCP-1V8K, PSH-PHASEORDER)
+
+<!-- prawduct: type=fix | chunks=MCP-1V8K,PSH-PHASEORDER | scope=mcp-device,sync-push,tests | status=shipped | release=v1.6.0 -->
+
+Two quick-win bugfixes triaged from the incoming-bug batch. (The other two fresh "ready"
+items — BLD-RESET, RND-3W7P — were verified already-fixed in code and closed, not rebuilt.)
+
+- **MCP-1V8K** — `ableton_device(load)` silently no-opped when Live's focused view was
+  Arranger (the state every render leaves behind), bricking the push device phase,
+  `/song-pick-instruments`, and any interactive re-voice with a misleading "did not append"
+  error. `load_handler` now focuses Session before `browser.load_item` (the single affected
+  callsite — the nested-rack `Chain.insert_device` path is unaffected), and the silent-noop
+  teaching error now names the Arranger-view cause. Live-gated: `device.py` is in
+  `_FINGERPRINT_PATHS`, so it needs a re-vendor + handshake — operator-verification queued.
+- **PSH-PHASEORDER** — a typo'd `--only`/`--start-at`/`--stop-after` paid the full coherence
+  + arrangement Live probe (and could be masked by a stale-link coherence refusal) before
+  being rejected. Extracted a pure `validate_phase_targets()` from `_filter_phases`; the push
+  CLI runs it before any Live round-trip, so a bad phase name fails fast (exit 2) with the
+  valid-phase list and zero Live contact. `_filter_phases` delegates to the same function —
+  one rule. 4419 tests green.
+
+## 2026-06-23 — Device-phase no longer halts on orphaned device_parameters (SYN-2D9K)
+
+<!-- prawduct: type=fix | chunks=SYN-2D9K | scope=sync-push,capture,tests | status=shipped | release=v1.6.0 -->
+
+**Orphaned `device_parameters` from a device-class swap no longer HALT the push.**
+Swapping a track's instrument to a different device *class* between captures (e.g.
+`alien`'s Operator→Analog) left the prior class's params orphaned in the DB; `create_device`
+reuses the `device_id` (no CASCADE), replay's upsert never prunes, and a soft `--reset`
+preserves the device tables — so 92 orphans survived every rebuild and HALTed the devices
+phase with a misleading value-range hint.
+
+- **Ch1** — per-device param-SET reconcile in `_replay_devices`, mirroring the existing
+  pull-path reconcile: drop DB params absent from the snapshot's `params_dialed` via
+  `remove_device_parameter` (no new mutator, no schema change). Tri-state mirrors the
+  sidechain idiom: absent key = preserve; present (even empty) = authoritative/clear.
+- **Ch2** (defense-in-depth) — the device-phase orphan error is now taught engine-side at
+  the `push_execute` failure-record site (pure `_orphan_param_hint`, no MCP fingerprint flip).
+- **Safety** — verified no framework `build.py` path calls `set_device_parameter` (only
+  capture/pull do), so `params_dialed` is authoritative and the reconcile is data-loss-safe;
+  the cumulative Critic independently re-confirmed this. PR #204. 2991 engine tests green.
+
+## 2026-06-23 — Arrangement-integrity comparator stops false-halting a faithful push (ARR-CMPHALT)
+
+<!-- prawduct: type=fix | chunks=ARR-CMPHALT | scope=arrangement-verify,tests | status=shipped | release=v1.6.0 -->
+
+**The ARR-PROJ integrity assert no longer HARD-HALTs `execute --only arrangement` on a
+faithful materialization.** Two pure-module defects in `arrangement_compare.py`:
+
+- **Ch1** — same-pitch overlap-trim was unmodeled. Live's `set_notes` truncates an earlier
+  note when a same-pitch note starts before it ends; the comparator compared the DB's
+  untrimmed durations against Live's trimmed read-back. `_clamp_same_pitch_overlaps`
+  normalizes both note sets before grouping — only *shortens* durations, so a real
+  drop/orphan is still caught.
+- **Ch2** — `_bucket`'s `round()` was unstable at half-eps boundaries, splitting one onset
+  across `missing` + `extra`. Replaced exact-bucket-key set ops with key pairing + boundary
+  reconcile (composes with the wildness-stack collapse; a drifted twin reads as one
+  mismatch, not missing+extra).
+- **Safety** — the cumulative Critic adversarially proved the loosened detector still
+  catches real bulk-drop / orphan / dur-vel-drift (the cardinal risk of loosening a
+  detector). PR #203. 2985 engine tests green.
+
+## 2026-06-22 — Arrangement materialization is now a projection of the DB (ARR-PROJ)
+
+<!-- prawduct: type=feat | chunks=ARR-PROJ | scope=sync-push,arrangement-verify,cli,skills,docs,tests | status=shipped | release=v1.6.0 -->
+
+**Two foundational bugs retired by construction, not patched.** Thirteen months of
+arrangement whack-a-mole (stacking on re-materialize — ARR-9X4T; a silently-dropped
+track's notes — ARR-7H2N; the SYN-4R7P delete-by-hand recovery dance) traced to two
+design choices, not N bugs: `duplicate_to_arrangement`'s B-24 overlap-split, and a
+persistent *positional* `ableton_link` that Live renumbers out from under us. The fix
+reframes the arrangement as a **projection of the DB** — clear, then recreate — so both
+failure modes become impossible by construction rather than guarded against.
+
+- **Projection rebuild planner** (`sync/push/arrangement.py`): per track, clear its
+  arrangement clips (descending per-clip `delete`) then create+fill each placement from
+  the DB on a FRESH clip (`create_midi_clip` + `set_notes`), all-or-nothing per track
+  (probe-failure skips rather than stacks). `duplicate_to_arrangement` is retained ONLY
+  for envelope-bearing placements (the one Live constraint that needs it); audio uses the
+  existing path. Re-materialize onto an occupied timeline clears-then-rebuilds — the
+  ARR-9X4T stacking witness can no longer be produced.
+- **Integrity comparator** (`sync/arrangement_compare.py` + `arrangement_verify.py`): one
+  canonical DB-collapsed-set vs Live-arrangement-set comparator with three normalizations
+  (distinct-(pitch, ε-bucketed start) collapse — Live collapses same-(pitch,start) while
+  build.py legitimately stacks; float tolerance; note-content compare via the note API in
+  a fresh callback, never inline). Two consumers: a **push-time assert** wired after the
+  arrangement phase that HALTs (PARTIAL) on genuine corruption instead of reporting OK,
+  and a **`hallucinote verify-arrangement --song <slug>`** audit CLI (non-zero exit on any
+  divergence). Surfaces a `probe_failed` count as a benign warning so an all-probe-failed
+  verify is no longer indistinguishable from a clean pass.
+- **Reconcile subsystem removed** (`sync/push/probe.py`, net −392 lines): with rebuild as
+  the sole path, the SYN-4R7P positional-link reconcile (drop/keep/rebind-by-position) had
+  nothing left to protect — it only ever guarded the old `replace_notes`-refresh branch
+  that Chunk 2 replaced. Deleted outright; the `arrangement_clip` link is still written
+  fresh each push for the scoped PSH-6W2J refresh.
+- **Docs/skill** (`skills/ableton-push/SKILL.md`): the delete-then-re-duplicate recovery
+  dance is retired in favor of the idempotent clear+rebuild path; `verify-arrangement`
+  surfaced; the two 2026-06-21 incoming-bug reports archived RESOLVED.
+
+Five chunks (Chunk 6 bulk-clear-wire DROPPED — planner-deletes suffice, zero MCP
+fingerprint change). Live spike (Chunk 1) confirmed the model end-to-end on a real set
+(faithful, idempotent, drop-free). 4396 passed, 0 failed. Cumulative Critic clean (0
+blocking; two integrity-layer correctness warnings — silent-pass-on-probe-failure and a
+coincident-start false-halt — fixed at root). The full-path live e2e
+(`push execute --only arrangement --probe --song alien` + `verify-arrangement` + render)
+is queued in operator-verification.md (deferred, user-directed). Closes ARR-9X4T,
+ARR-7H2N, SYN-4R7P.
+
+## 2026-06-21 — perform_batch transport-stall watchdog + loop/punch reset (PSH-3H8M)
+
+<!-- prawduct: type=fix | chunks=PSH-3H8M | scope=mcp-perform,tests | status=shipped | release=v1.6.0 -->
+
+**Hang on a frozen transport, mitigated.** `perform_batch` could hang when the
+transport won't advance (manual stop, a loop region trapping the playhead, residual
+state from an interrupted prior perform). The span-proportional wall-clock ceiling
+(already live) means it no longer hangs *forever*, but for a long (8–11 min) perform
+that ceiling is ~16–33 min away — so a stalled transport still read as a black-box
+hang whose only exit was `kill -9`. This closes the residual:
+
+- **Fast non-advancement watchdog** (`_PERFORM_STALL_TIMEOUT_S = 15s`): the record
+  loop polls `current_song_time`; if it doesn't advance for 15 s it aborts with a
+  structured error naming the stuck beat, instead of waiting out the ceiling. Seeded
+  at `-inf` so the spin-up tick can't false-trip, and any real advance resets the
+  clock — a slow-but-advancing high-`slowdown_factor` pass never aborts.
+- **Pre-perform loop/punch reset**: `_arm_and_seek` saves then clears
+  `loop`/`punch_in`/`punch_out` (only flags actually set → no churn) and the `finally`
+  restores them, so a residual loop region can't trap the playhead and the user's set
+  isn't mutated.
+
+5 new unit tests (fast abort + named beat, no-false-positive while advancing,
+loop/punch clear-then-restore + ordering, clean-set no-churn, restore-on-abort). Live
+stall repro + loop-trap queued in operator-verification.md. **Still-open residual:**
+a `run_on_main`-blocked 0%-CPU sub-case needs a timeout on `run_on_main` itself (the
+watchdog runs between callbacks, so it can't fire while blocked inside one) — high
+blast radius, Live-only tunable; tracked on PSH-3H8M.
+
+## 2026-06-21 — Render no longer leaves RETURN-track names dirty (RND-2R9K)
+
+<!-- prawduct: type=fix | chunks=RND-2R9K | scope=mcp-render,tests | status=shipped | release=v1.6.0 -->
+
+**Residual name hygiene, fixed.** `ableton_render`'s analyzer auto-load made Live
+natively append ` | HallucinoteAnalyzer` to every RETURN track's name (a
+`browser.load_item` side effect Live applies to returns but not tracks/master), so
+a render left the user's set dirty. The functional half — the suffix defeating
+probe-and-link's return matcher — was already fixed defensively by SYN-RENDER-RELINK
+(`normalize_live_return_name` strips it at the read boundaries); this closes the
+residual so a render leaves the set byte-for-byte. The analyzer sweep
+(`hallucinote_mcp/analyzer/setup.py`) now restores each return's pre-load bare name
+after the load — `_return_name_restoration` strips Live's slot prefix + the analyzer
+suffix (the value a fresh push would set, per the W3-H/W4-C contract), runs read-only
+when the name is clean (no churn; self-heals a pre-fix-dirtied set), and is scoped to
+returns. The strip logic is a forced twin of `hallucinote.return_naming` (this package
+is engine-independent / runs Live-side, so it can't import the engine — a parity
+test locks the twin against drift). 8 new unit tests; full suite 4349 passed. Live
+round-trip (real rename; single- vs double-prefix on restore) queued in
+operator-verification.md.
+
 ## 2026-06-17 — Durable nested-param overrides on a preset_query device (SNP-2H9F)
 
-<!-- prawduct: type=feat | chunks=SNP-2H9F | scope=capture,db-schema,db-mutations,db-queries,sync-push,docs,tests | status=merged -->
+<!-- prawduct: type=feat | chunks=SNP-2H9F | scope=capture,db-schema,db-mutations,db-queries,sync-push,docs,tests | status=shipped | release=v1.5.0 -->
 
 **Silent durability loss, fixed.** A by-ear param tweak NESTED inside a rack loaded
 via `preset_query` reverted on every from-scratch rebuild: a preset device has only
@@ -46,7 +243,7 @@ non-corrupting), drum-rack-chain-props, bounded preset-cache if over-capture blo
 
 ## 2026-06-17 — Note edits now propagate to arrangement clips (PSH-6W2J)
 
-<!-- prawduct: type=fix | chunks=PSH-6W2J | scope=sync-push,queries,tests | | status=merged -->
+<!-- prawduct: type=fix | chunks=PSH-6W2J | scope=sync-push,queries,tests | status=shipped | release=v1.5.0 -->
 
 **Silent correctness bug.** An arrangement clip is a distinct Live copy of a
 session clip, made once by `duplicate_to_arrangement`. A later note edit pushed to
@@ -93,7 +290,7 @@ Resolves the report archived under
 
 ## 2026-06-17 — Songs-workspace bootstrap (`hallucinote init-workspace`) + two doc-only decisions
 
-<!-- prawduct: type=feat | chunks=WS-BOOTSTRAP | scope=cli,tools,skills,docs,backlog,artifacts,tests | | status=merged -->
+<!-- prawduct: type=feat | chunks=WS-BOOTSTRAP | scope=cli,tools,skills,docs,backlog,artifacts,tests | status=shipped | release=v1.5.0 -->
 
 Delivers the **author side** of the project-root contract. The reader
 (`hallucinote.workspace`) already discovered a `hallucinote.toml` marker, but
@@ -133,7 +330,7 @@ including CLI-level `--no-gitignore` coverage. Full suite green this session.
 
 ## 2026-06-16 — Analyzer-infra robustness: master device-param re-push + captures-dir recency (sun-zone-done mix pass)
 
-<!-- prawduct: type=fix | chunks=master-device-analyzer-aware,captures-dir-recency | scope=mcp-handlers,sync-push,analysis,tests | status=merged -->
+<!-- prawduct: type=fix | chunks=master-device-analyzer-aware,captures-dir-recency | scope=mcp-handlers,sync-push,analysis,tests | status=shipped | release=v1.5.0 -->
 
 **Re-vendor REQUIRED by the current fingerprint** — `handlers/analysis.py` is in
 `_FINGERPRINT_PATHS`, so the version handshake flags drift and prompts
@@ -173,7 +370,7 @@ Filed MCP-7F2K (fingerprint over-triggers re-vendor for server-internal changes)
 
 ## 2026-06-16 — Uniform node addressing (NODE-ADDR / DEV-9K7N) + release-prep: self-contained plugin, onboarding, M4L handling
 
-<!-- prawduct: type=feat | chunks=NODE-ADDR-B,NODE-ADDR-C,NODE-ADDR-D,NODE-ADDR-E,NODE-ADDR-F,PLUGIN-SELF-CONTAINED,ONBOARD-M4L | scope=node-features,mcp-handlers,capture,sync-pull,db-mutations,skills,docs,readme,pyproject,cli,hooks,project-state | status=merged -->
+<!-- prawduct: type=feat | chunks=NODE-ADDR-B,NODE-ADDR-C,NODE-ADDR-D,NODE-ADDR-E,NODE-ADDR-F,PLUGIN-SELF-CONTAINED,ONBOARD-M4L | scope=node-features,mcp-handlers,capture,sync-pull,db-mutations,skills,docs,readme,pyproject,cli,hooks,project-state | status=shipped | release=v1.5.0 -->
 
 **Re-vendor REQUIRED** — the wire shape changed (`_FINGERPRINT_PATHS` touched): uniform
 `node` addressing, the new `chain` terminal, and `set_chain_property`. Operator-verified
@@ -213,7 +410,7 @@ suite had masked. Plans: `.prawduct/artifacts/plans/{NODE-ADDR,PLUGIN-SELF-CONTA
 
 ## 2026-06-14 — Per-song attempt ledger (ATL-7K3M): `kind: attempt` + `/song-attempts`
 
-<!-- prawduct: type=feat | chunks=ATL-7K3M-ch1,ATL-7K3M-ch2 | scope=db-schema,markdown-refs,song-context,skills,docs,claude-md | status=merged -->
+<!-- prawduct: type=feat | chunks=ATL-7K3M-ch1,ATL-7K3M-ch2 | scope=db-schema,markdown-refs,song-context,skills,docs,claude-md | status=shipped | release=v1.5.0 -->
 
 **No re-vendor** — no `_FINGERPRINT_PATHS` touched (no MCP handler reads `markdown_refs`).
 A per-song ledger of *what was tried and how it turned out*, incl. reverted dead ends —

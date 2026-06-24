@@ -287,6 +287,13 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # set_parameter's raw `value`. Keep in sync with schema.sql's CREATE TABLEs.
     ("device_parameters", "value_raw", "REAL"),
     ("device_param_overrides", "value_raw", "REAL"),
+    # MICROTUNE (TUN-4Q7W): songs gain the alternate-tuning bolt-on columns. Both
+    # nullable, NULL = 12-TET (every existing song migrates to NULL, untouched).
+    # `tuning_ref` = song-relative path to the cached `.ascl`; `tuning_data` = the
+    # derived JSON blob the mapper / writer / drift-verify read. Set together by
+    # set_song_tuning; the core path reads neither. See hallucinote.tuning.
+    ("songs", "tuning_ref", "TEXT"),
+    ("songs", "tuning_data", "TEXT"),
 )
 
 

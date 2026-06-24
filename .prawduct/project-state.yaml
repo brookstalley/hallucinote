@@ -495,6 +495,16 @@ build_state:
 # RELIABILITY-CLUSTER (on this branch) are shipped/Critic-clean. Prior plans
 # RTE-1K9T (PR #163), ENV-9P4T (#161), ENV-8K2R/ENV-2T9K and the deleted
 # PSH-CLUSTER are shipped/stale; their plan dirs may be deleted.
+# Unset: build-plan-push-devices-diff shipped (PR #188) and its file was removed;
+# ARR-PROJ arrangement-materialization redesign (systemic). Plan authored 2026-06-22.
+# All 5 buildable chunks BUILT (headless) on plan/arr-proj-arrangement-materialization:
+# spike confirmed the projection model; projection planner + integrity comparator/assert/
+# verify-arrangement CLI built and green; Chunk 4 removed the positional-link reconcile;
+# Chunk 5 retired the SYN-4R7P doc/skill recovery dance. Remaining: cumulative-Critic PR
+# gate + the ARR-PROJ live e2e + the ARR-9X4T/ARR-7H2N backlog close at merge. See the
+# build-plan Status for the live state.
+# ARR-PROJ shipped (PR #201); ARR-CMPHALT (PR #203) + SYN-2D9K (PR #204) shipped
+# 2026-06-23 — no active build plan.
 active_build_plan: null
 
 # =============================================================================
@@ -512,12 +522,21 @@ active_build_plan: null
 # overwritten on next regen.
 
 scope_rollups:
+  arrangement-verify,tests:
+    chunks: ["ARR-CMPHALT"]
+    releases: ["v1.6.0"]
+  capture,db-schema,db-mutations,db-queries,sync-push,docs,tests:
+    chunks: ["SNP-2H9F"]
+    releases: ["v1.5.0"]
   capture,sync-push,snapshot,render,analysis,skills:
     chunks: ["BUG1A-analyzer-match", "BUG1B-strip", "BUG3-status-json", "BUG3-timeout-doc", "BUG4-params-dialed"]
     releases: ["v0.9.8"]
   capture,sync-push,sync-pull,render:
     chunks: ["SNP-8R4K-01", "SNP-8R4K-02", "SNP-8R4K-03", "SNP-8R4K-04"]
     releases: ["v0.9.7"]
+  cli,tools,skills,docs,backlog,artifacts,tests:
+    chunks: ["WS-BOOTSTRAP"]
+    releases: ["v1.5.0"]
   clip-audio:
     chunks: ["CLP-AUD1-01", "CLP-AUD1-02"]
     releases: ["v0.9.5"]
@@ -527,6 +546,9 @@ scope_rollups:
   db,sync-push,audio-analysis,mcp-bridge:
     chunks: ["AUD-2N6K", "ENV-2T9K", "ENV-8K2R", "MEL-1A7K-line", "SDC-7K3M", "SMP-7K2D-01", "SMP-7K2D-02"]
     releases: ["v0.9.6"]
+  db-schema,markdown-refs,song-context,skills,docs,claude-md:
+    chunks: ["ATL-7K3M-ch1", "ATL-7K3M-ch2"]
+    releases: ["v1.5.0"]
   mcp-actions,mcp-handlers,capture,sync-push,sync-pull,db-queries,skills,docs:
     chunks: ["DEEP-RACK-ADDR-1", "DEEP-RACK-ADDR-2", "DEEP-RACK-ADDR-3", "DEEP-RACK-ADDR-4", "PULL-DRIFT-DETECT"]
     releases: ["v0.9.8"]
@@ -545,6 +567,21 @@ scope_rollups:
   mcp-bridge,sync-push,db:
     chunks: ["ENV-9P4T-01", "ENV-9P4T-02"]
     releases: ["v0.9.5"]
+  mcp-device,sync-push,tests:
+    chunks: ["MCP-1V8K", "PSH-PHASEORDER"]
+    releases: ["v1.6.0"]
+  mcp-handlers,sync-push,analysis,tests:
+    chunks: ["captures-dir-recency", "master-device-analyzer-aware"]
+    releases: ["v1.5.0"]
+  mcp-perform,tests:
+    chunks: ["PSH-3H8M"]
+    releases: ["v1.6.0"]
+  mcp-render,tests:
+    chunks: ["RND-2R9K"]
+    releases: ["v1.6.0"]
+  node-features,mcp-handlers,capture,sync-pull,db-mutations,skills,docs,readme,pyproject,cli,hooks,project-state:
+    chunks: ["NODE-ADDR-B", "NODE-ADDR-C", "NODE-ADDR-D", "NODE-ADDR-E", "NODE-ADDR-F", "ONBOARD-M4L", "PLUGIN-SELF-CONTAINED"]
+    releases: ["v1.5.0"]
   plugin-distribution:
     chunks: ["INS-7V2D-cold-start-timeout"]
     releases: ["v0.9.4"]
@@ -563,12 +600,24 @@ scope_rollups:
   sync-pull,db-mutations,sync-push,tests:
     chunks: ["ENV-5R2J", "SYN-6T2W"]
     releases: ["v0.9.8"]
+  sync-push,arrangement-verify,cli,skills,docs,tests:
+    chunks: ["ARR-PROJ"]
+    releases: ["v1.6.0"]
+  sync-push,capture,tests:
+    chunks: ["SYN-2D9K"]
+    releases: ["v1.6.0"]
   sync-push,cli:
     chunks: ["PSH-2R7K", "PSH-5T9D"]
     releases: ["v0.9.7"]
   sync-push,db,mcp-bridge,skills:
     chunks: ["DPP-7H2K", "RTE-2P9X", "SKL-8N3V", "SYN-3C8K"]
     releases: ["v0.9.7"]
+  sync-push,queries,tests:
+    chunks: ["PSH-6W2J"]
+    releases: ["v1.5.0"]
+  tuning,mcp-bridge,mcp-render,sync-push,sync-pull,db,analysis,methodology,docs,tests:
+    chunks: ["ARR-ORPHAN", "DEC-CAP", "DOC-7K3M", "FK-clip-guard", "IDX-5W2P", "MCP-2K9F", "MCP-5N8K", "MCP-7F2K", "MCP-7P3R", "MCP-8H4N", "MCP-9R3T", "MICROTUNE", "PSH-3K9D", "PSH-8K3D", "REC-4Z8Q", "SYN-4R7P", "SYN-7N4K", "SYN-9F4K", "SYN-RACK-PRESET-RELINK", "SYN-RENDER-RELINK", "SYN-SCAFFOLD-MISLINK", "master-true-peak"]
+    releases: ["v1.6.0"]
 
 # =============================================================================
 # DERIVED VIEWS (enabled by default, v1.4+)
@@ -589,7 +638,7 @@ views_enabled: true
 backlog_format_version: 2
 
 # Stamped by /prawduct:backlog list/pick/triage — resolves the backlog-overdue-grooming advisory.
-backlog_last_groomed_at: 2026-06-13
+backlog_last_groomed_at: 2026-06-23
 
 # Distribution mode — set by /prawduct:migrate (v2.0.0 plugin cutover).
 # `plugin` tells the legacy file-sync hook to stand down (Chunk 8).

@@ -5,6 +5,92 @@
      be overwritten on next regen. See change-log.md for full per-release
      bodies; this file is a digest. -->
 
+## v1.6.0
+
+### tuning,mcp-bridge,mcp-render,sync-push,sync-pull,db,analysis,methodology,docs,tests
+
+**Entry:** 2026-06-23 — v1.6.0 catch-up: clusters shipped to develop since v1.5.0 without an individual change-log entry
+
+**Chunks shipped:** ARR-ORPHAN, DEC-CAP, DOC-7K3M, FK-clip-guard, IDX-5W2P, MCP-2K9F, MCP-5N8K, MCP-7F2K, MCP-7P3R, MCP-8H4N, MCP-9R3T, MICROTUNE, PSH-3K9D, PSH-8K3D, REC-4Z8Q, SYN-4R7P, SYN-7N4K, SYN-9F4K, SYN-RACK-PRESET-RELINK, SYN-RENDER-RELINK, SYN-SCAFFOLD-MISLINK, master-true-peak
+
+### mcp-device,sync-push,tests
+
+**Entry:** 2026-06-23 — Device loads survive Arranger focus; push rejects bad phase names before any Live probe (MCP-1V8K, PSH-PHASEORDER)
+
+**Chunks shipped:** MCP-1V8K, PSH-PHASEORDER
+
+### sync-push,capture,tests
+
+**Entry:** 2026-06-23 — Device-phase no longer halts on orphaned device_parameters (SYN-2D9K)
+
+**Chunks shipped:** SYN-2D9K
+
+### arrangement-verify,tests
+
+**Entry:** 2026-06-23 — Arrangement-integrity comparator stops false-halting a faithful push (ARR-CMPHALT)
+
+**Chunks shipped:** ARR-CMPHALT
+
+### sync-push,arrangement-verify,cli,skills,docs,tests
+
+**Entry:** 2026-06-22 — Arrangement materialization is now a projection of the DB (ARR-PROJ)
+
+**Chunks shipped:** ARR-PROJ
+
+### mcp-perform,tests
+
+**Entry:** 2026-06-21 — perform_batch transport-stall watchdog + loop/punch reset (PSH-3H8M)
+
+**Chunks shipped:** PSH-3H8M
+
+### mcp-render,tests
+
+**Entry:** 2026-06-21 — Render no longer leaves RETURN-track names dirty (RND-2R9K)
+
+**Chunks shipped:** RND-2R9K
+
+See `.prawduct/change-log.md` for full details.
+
+## v1.5.0
+
+### capture,db-schema,db-mutations,db-queries,sync-push,docs,tests
+
+**Entry:** 2026-06-17 — Durable nested-param overrides on a preset_query device (SNP-2H9F)
+
+**Chunks shipped:** SNP-2H9F
+
+### sync-push,queries,tests
+
+**Entry:** 2026-06-17 — Note edits now propagate to arrangement clips (PSH-6W2J)
+
+**Chunks shipped:** PSH-6W2J
+
+### cli,tools,skills,docs,backlog,artifacts,tests
+
+**Entry:** 2026-06-17 — Songs-workspace bootstrap (`hallucinote init-workspace`) + two doc-only decisions
+
+**Chunks shipped:** WS-BOOTSTRAP
+
+### mcp-handlers,sync-push,analysis,tests
+
+**Entry:** 2026-06-16 — Analyzer-infra robustness: master device-param re-push + captures-dir recency (sun-zone-done mix pass)
+
+**Chunks shipped:** captures-dir-recency, master-device-analyzer-aware
+
+### node-features,mcp-handlers,capture,sync-pull,db-mutations,skills,docs,readme,pyproject,cli,hooks,project-state
+
+**Entry:** 2026-06-16 — Uniform node addressing (NODE-ADDR / DEV-9K7N) + release-prep: self-contained plugin, onboarding, M4L handling
+
+**Chunks shipped:** NODE-ADDR-B, NODE-ADDR-C, NODE-ADDR-D, NODE-ADDR-E, NODE-ADDR-F, ONBOARD-M4L, PLUGIN-SELF-CONTAINED
+
+### db-schema,markdown-refs,song-context,skills,docs,claude-md
+
+**Entry:** 2026-06-14 — Per-song attempt ledger (ATL-7K3M): `kind: attempt` + `/song-attempts`
+
+**Chunks shipped:** ATL-7K3M-ch1, ATL-7K3M-ch2
+
+See `.prawduct/change-log.md` for full details.
+
 ## v0.9.8
 
 ### skills,docs,mcp-primer,claude-md

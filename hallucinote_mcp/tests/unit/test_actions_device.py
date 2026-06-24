@@ -138,17 +138,39 @@ class FakeBrowserRoot(FakeBrowserItem):
         self.children: list[FakeBrowserItem] = []
 
 
+class FakeApplicationView:
+    """Models Live's ``Application.View`` for device-load tests.
+
+    ``show_view(name)`` focuses a top-level view; ``current`` records which
+    one is focused. ``browser.load_item`` is view-sensitive — it silently
+    no-ops when Arranger is focused (MCP-1V8K), so the loader must focus
+    Session first. Defaults to Session so the pre-existing load tests (which
+    don't touch the view) keep exercising the happy path.
+    """
+
+    def __init__(self, current: str = "Session") -> None:
+        self.current = current
+        self.show_view_calls: list[str] = []
+
+    def show_view(self, name: str) -> None:
+        self.show_view_calls.append(name)
+        self.current = name
+
+
 class FakeBrowser:
     """Mirrors Live 12.4 browser behavior for device-load tests.
 
     ``load_item(item)`` appends a fresh device to whatever track is
-    currently set as ``song.view.selected_track``. Tests populate
+    currently set as ``song.view.selected_track`` — UNLESS Live's focused
+    view is Arranger, in which case the load silently no-ops (MCP-1V8K:
+    the state a render leaves behind). Tests populate
     ``audio_effects.children``, ``drums.children``, etc. with
     ``FakeBrowserItem`` instances and then call the load action.
     """
 
-    def __init__(self, song: "FakeSong"):
+    def __init__(self, song: "FakeSong", view: "FakeApplicationView"):
         self._song = song
+        self._view = view
         self.instruments = FakeBrowserRoot("Instruments")
         self.audio_effects = FakeBrowserRoot("Audio Effects")
         self.midi_effects = FakeBrowserRoot("MIDI Effects")
@@ -161,6 +183,9 @@ class FakeBrowser:
 
     def load_item(self, item: FakeBrowserItem) -> None:
         self.load_calls.append(item)
+        if self._view.current == "Arranger":
+            # Live silently no-ops a browser load when Arranger is focused.
+            return
         target = self._song.view.selected_track
         if target is None:
             raise RuntimeError(
@@ -172,7 +197,8 @@ class FakeBrowser:
 
 class FakeApplication:
     def __init__(self, song: "FakeSong"):
-        self.browser = FakeBrowser(song)
+        self.view = FakeApplicationView()
+        self.browser = FakeBrowser(song, self.view)
 
 
 class FakeSongView:
@@ -401,6 +427,32 @@ def test_load_appends_to_chain(loaded_actions):
     assert ctx.song.view.selected_track is ctx.song.tracks[0]
     # And the browser saw exactly one load_item call.
     assert len(ctx.application.browser.load_calls) == 1
+
+
+def test_load_focuses_session_view_when_arranger(loaded_actions):
+    """MCP-1V8K: a render leaves Live focused on Arranger, where
+    ``browser.load_item`` silently no-ops. The loader must focus Session
+    before loading so the post-render "load a device" sequence works on the
+    first try. Without the focus-Session step the FakeBrowser no-ops in
+    Arranger and the device never lands (the regression this guards)."""
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    # Simulate the post-render state: focus is on Arranger.
+    ctx.application.view.current = "Arranger"
+    _add_browser_item(ctx, "audio_effects", "Operator", uri="query:Operator")
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Operator"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True
+    # The loader focused Session before loading...
+    assert "Session" in ctx.application.view.show_view_calls
+    assert ctx.application.view.current == "Session"
+    # ...so the load actually landed (no silent Arranger no-op).
+    assert len(ctx.song.tracks[0].devices) == 1
+    assert resp.result["kind"] == "Operator"
 
 
 def test_load_response_carries_loaded_class_name(loaded_actions):
@@ -1047,6 +1099,65 @@ def test_load_browser_path_fallback_not_used_when_preset_uri_resolves(loaded_act
     assert resp.result["resolved_path"] == [
         "instruments", "Operator", "Bass", "Sub Bass",
     ]
+
+
+def test_load_browser_path_preset_file_loads_standalone(loaded_actions):
+    """SYN-RACK-PRESET-RELINK: a browser_path whose leaf is a preset FILE
+    (.adg/.adv) loads STANDALONE — no preset_uri / preset_query needed. The
+    common /song-snapshot case: capture can't probe preset_uri, so a rack
+    preset's only identity is its browser_path. Before this it loaded the bare
+    CLASS node (empty Drum Rack, 0 chains). The standalone path must resolve the
+    PRESET, not the class node — even with both present in the browser."""
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("Drums")]))
+    empty_rack = FakeBrowserItem(
+        "Drum Rack", uri="query:Drums#Empty", is_loadable=True,
+    )
+    kit = FakeBrowserItem(
+        "AG Techno Kit.adg", uri="query:Drums#FileId_KIT", is_loadable=True,
+    )
+    ctx.application.browser.drums.children.extend([empty_rack, kit])
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={
+                "node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"},
+                "kind": "Drum Rack",
+                # No preset_uri / preset_query — browser_path is the only identity.
+                "browser_path": ["drums", "AG Techno Kit.adg"],
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.to_dict()
+    # Resolves the PRESET, not the empty "Drum Rack" class node.
+    assert ctx.application.browser.load_calls[0].name == "AG Techno Kit.adg"
+    assert ctx.application.browser.load_calls[0].uri == "query:Drums#FileId_KIT"
+    assert resp.result["resolved_path"] == ["drums", "AG Techno Kit.adg"]
+
+
+def test_load_browser_path_preset_file_standalone_refuses_when_not_installed(
+    loaded_actions,
+):
+    """A standalone preset-file browser_path that resolves to nothing on this
+    machine (preset not installed at that path) refuses with a teaching error
+    naming the path — not a silent empty-rack load."""
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("Drums")]))
+    # drums root has no matching preset.
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={
+                "node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"},
+                "kind": "Drum Rack",
+                "browser_path": ["drums", "AG Techno Kit.adg"],
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "AG Techno Kit.adg" in err
+    assert "not be installed" in err
 
 
 def test_load_replace_in_place_succeeds(loaded_actions):

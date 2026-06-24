@@ -26,14 +26,17 @@ exists (see [§What a release means for the people running it](#what-a-release-m
 
 ## What "a release" is
 
-1. A **version bump** of the plugin (`.claude-plugin/plugin.json` `version`).
+1. A **version bump** of the product — root `pyproject.toml` is canonical, carried in
+   lockstep by `.claude-plugin/plugin.json`, `hallucinote_mcp/pyproject.toml`, and
+   `src/hallucinote/__init__.py` (parity-tested; see [§Version surfaces](#version-surfaces)).
 2. A `chore(release): vX` commit on `develop` that stamps the change-log + regenerates
    the derived views.
 3. A **`develop`→`main` merge commit** (`Release: merge develop into main — vX`).
 4. An **annotated tag** `vX` on that merge commit.
 
-Releases are versioned with a plain `vMAJOR.MINOR.PATCH` scheme on the **plugin**
-version. "Cut the next +0.0.1" = patch bump (e.g. `0.9.6` → `0.9.7`). The release
+Releases are versioned with a plain `vMAJOR.MINOR.PATCH` scheme on the canonical
+product version (root `pyproject.toml`). "Cut the next +0.0.1" = patch bump (e.g.
+`0.9.6` → `0.9.7`). The release
 bundles **everything on `develop` that isn't yet on `main`** — a release is a wholesale
 promotion of `develop`, not a cherry-pick. Check the scope before cutting:
 
@@ -68,11 +71,20 @@ scope=area1,area2 | status=shipped | release=vNEW`. Use a distinct chunk id when
 second half of an earlier chunk ships separately (e.g. `SDC-7K3M-pull` vs the already-
 shipped `SDC-7K3M`) so the rollups don't collide.
 
-### 2. Bump the plugin version
+### 2. Bump the product version (all four surfaces, in lockstep)
 
-Edit `.claude-plugin/plugin.json` `"version"` → `vNEW` (number only, no `v`).
-The engine version (`pyproject.toml`) moves **independently** and usually does *not*
-change — see [§Version surfaces](#version-surfaces).
+Since 1.5.0 the product version lives in **four files that must stay identical** —
+`tests/unit/test_version_parity.py` fails CI on any drift. Root `pyproject.toml` is the
+canonical source; set all four to `vNEW` (number only, no `v`):
+
+- `pyproject.toml` `[project].version` — **canonical**
+- `hallucinote_mcp/pyproject.toml` `[project].version`
+- `.claude-plugin/plugin.json` `"version"`
+- `src/hallucinote/__init__.py` `__version__`
+
+The handshake `BASE_VERSION` is **not** one of these — it is the wire-protocol epoch,
+deliberately decoupled from the product version (see
+[§Version surfaces](#version-surfaces) and step 5).
 
 ### 3. Regenerate derived views
 
@@ -87,8 +99,8 @@ and each build plan's `## Status`. Confirm the new `## vNEW` section in
 
 ### 4. Update the engine-pin row
 
-In [`docs/engine-pin.md`](engine-pin.md) (§"Current pin"), bump the **Plugin** row to
-`vNEW`. Bump the **Engine** row only if `pyproject.toml` actually changed.
+In [`docs/engine-pin.md`](engine-pin.md) (§"Current pin"), bump **both** the **Engine**
+and **Plugin** rows to `vNEW` — they move together now (step 2's lockstep).
 
 ### 5. Determine the re-vendor impact (do not skip — it's the consumer-facing fact)
 
@@ -109,14 +121,17 @@ having to diff.
 ### 6. Commit the release on `develop` and push
 
 ```sh
-git add .claude-plugin/plugin.json .prawduct/change-log.md .prawduct/project-state.yaml \
+git add pyproject.toml hallucinote_mcp/pyproject.toml src/hallucinote/__init__.py \
+        .claude-plugin/plugin.json .prawduct/change-log.md .prawduct/project-state.yaml \
         .prawduct/release-notes.md docs/engine-pin.md
 git commit -m "chore(release): vNEW — <headline>"   # body: clusters + Re-vendor verdict
 git push origin develop
 ```
 
-(Exactly these five files moved in the v0.9.6 and v0.9.7 release commits — it's the
-canonical release fileset.)
+(Exactly these eight files moved in the v1.6.0 release commit — it's the canonical
+release fileset. The first three are the lockstep product-version surfaces from step 2
+beyond `plugin.json`. `uv.lock` does **not** change on a version bump: `hallucinote` is
+an editable workspace member pinned by source, not by a recorded version.)
 
 ### 7. Promote `develop` → `main`
 
@@ -150,7 +165,7 @@ git checkout develop
 ```sh
 git rev-list --count origin/main..develop        # 0 — develop fully promoted
 git describe --tags --exact-match origin/main     # vNEW
-grep '"version"' .claude-plugin/plugin.json        # vNEW
+pytest tests/unit/test_version_parity.py -q        # all four product surfaces == vNEW
 ```
 
 Build plans for shipped clusters are **retained** (not deleted) — gitflow keeps them
@@ -159,22 +174,26 @@ pointing at an *unfinished* parked plan stays meaningful between releases.
 
 ## Version surfaces
 
-There are four version strings; they move on **different clocks**. Full rationale in
+There are **five** version strings. Four are the **product version** and move in
+**lockstep every release** (since 1.5.0; pinned identical by
+`tests/unit/test_version_parity.py`, which fails CI on drift). The fifth — the
+handshake — is on its **own clock**. Full rationale in
 [`docs/engine-pin.md`](engine-pin.md).
 
 | Surface | File | Moves when | Today |
 |---|---|---|---|
-| **Plugin** | `.claude-plugin/plugin.json` `version` | every release | `0.9.7` |
-| **Engine** (`hallucinote`) | `pyproject.toml` | the engine API changes | `0.9.0` |
-| **MCP server** (`hallucinote-mcp`) | `hallucinote_mcp/pyproject.toml` | rarely | `0.9.0` |
+| **Product** (canonical) | `pyproject.toml` `[project].version` | every release (lockstep) | `1.6.0` |
+| **MCP package** (`hallucinote-mcp`) | `hallucinote_mcp/pyproject.toml` | every release (lockstep) | `1.6.0` |
+| **Plugin manifest** | `.claude-plugin/plugin.json` `version` | every release (lockstep) | `1.6.0` |
+| **Engine dunder** (`hallucinote`) | `src/hallucinote/__init__.py` `__version__` | every release (lockstep) | `1.6.0` |
 | **Handshake** | `BASE_VERSION` + content fingerprint, `hallucinote_mcp/src/hallucinote_mcp/__init__.py` | any wire-shape file changes (`_FINGERPRINT_PATHS`) | `0.1.0+<12-hex>` |
 
-The plugin version is **marketing/changelog metadata**. The **handshake fingerprint** is
-what actually gates whether Live will talk to the server — and it is computed from file
-*content*, not from any version string. A release can bump the plugin version without
-flipping the fingerprint (docs/CLI/resources-only) **or** flip the fingerprint on a
-patch bump (any change under `actions/`, `handlers/`, `wire.py`, …). Always compute it
-(step 5); never infer it from the version number.
+The product version (all four lockstep surfaces) is **marketing/changelog metadata**.
+The **handshake fingerprint** is what actually gates whether Live will talk to the
+server — and it is computed from file *content*, not from any version string. A release
+can bump the product version without flipping the fingerprint (docs/CLI/resources-only)
+**or** flip the fingerprint on a patch bump (any change under `actions/`, `handlers/`,
+`wire.py`, …). Always compute it (step 5); never infer it from the version number.
 
 ## What a release means for the people running it
 
@@ -242,6 +261,11 @@ env, one source. See [`docs/engine-pin.md`](engine-pin.md).
 
 ## Worked example — v0.9.7
 
+> ⚠ v0.9.7 **predates** the 1.5.0 version-lockstep (step 2). The "engine stayed `0.9.0`"
+> line below is historically accurate for that release but is **no longer how a bump
+> works** — today all four product-version surfaces move together. Kept as a record, not
+> a template.
+
 - **Scope:** 5 clusters on `develop` since v0.9.6 (ROUNDTRIP sidechain pull-capture,
   RELIABILITY round-trip fixes, PSH-2R7K/5T9D, INS-3W8P, SNP-8R4K). Three had no
   change-log entry and were reconstructed at release time (step 1).
@@ -267,9 +291,9 @@ env, one source. See [`docs/engine-pin.md`](engine-pin.md).
 
 - [ ] `origin/main..develop` scope reviewed; every cluster has a change-log entry
 - [ ] change-log entries flipped to `status=shipped | release=vNEW`
-- [ ] `plugin.json` version bumped
+- [ ] all four product-version surfaces bumped to `vNEW` (`test_version_parity.py` green)
 - [ ] `prawduct-hook regen-views` run; `release-notes.md` `## vNEW` lists all clusters
-- [ ] `engine-pin.md` Plugin row bumped (Engine row if engine moved)
+- [ ] `engine-pin.md` Engine + Plugin rows bumped
 - [ ] **Re-vendor verdict computed (step 5) and recorded in the release commit + notes**
 - [ ] `chore(release): vNEW` committed + pushed to `develop`
 - [ ] `develop`→`main` `--no-ff` merge pushed

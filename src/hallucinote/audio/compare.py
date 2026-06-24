@@ -38,6 +38,19 @@ SIGNIFICANCE_DB: dict[str, float] = {
     "true_peak_dbtp": SIGNIFICANCE_DEFAULT_DB,
 }
 
+# PROVISIONAL timbre significance floors (AUD-8T3K). Unlike SIGNIFICANCE_DB —
+# calibrated against the sun-zone-done re-capture jitter set — there is no
+# render-jitter baseline for centroid / flatness / rolloff yet, so these are
+# conservative first guesses. Every timbre delta carries ``provisional: true``
+# so a consumer treats a "significant" timbre verdict as a hint, not a measured
+# noise/signal threshold. A re-capture-jitter calibration is a filed follow-up
+# (AUD-TIMBRE-CALIB); until then the raw before/after/delta is the honest signal.
+SIGNIFICANCE_TIMBRE: dict[str, float] = {
+    "spectral_centroid_hz": 50.0,   # Hz
+    "spectral_flatness": 0.02,      # 0..1 Wiener entropy
+    "spectral_rolloff_hz": 100.0,   # Hz
+}
+
 
 def ensure_comparable(
     schema_version: Any,
@@ -195,10 +208,35 @@ def _surface_deltas(
     current_surface: dict[str, Any],
     baseline_surface: dict[str, Any],
 ) -> list[dict[str, Any]]:
+    rows = _family_deltas(
+        current_surface, baseline_surface, "loudness", SIGNIFICANCE_DB,
+        provisional=False,
+    )
+    # Timbre deltas (AUD-8T3K) ride alongside loudness, flagged provisional. A
+    # surface with no timbre (silent stem → null, or a pre-timbre baseline that
+    # lacks the key) yields delta null / significant false — never a fabricated
+    # number, symmetric with the loudness null-sentinel handling.
+    rows.extend(_family_deltas(
+        current_surface, baseline_surface, "timbre", SIGNIFICANCE_TIMBRE,
+        provisional=True,
+    ))
+    return rows
+
+
+def _family_deltas(
+    current_surface: dict[str, Any],
+    baseline_surface: dict[str, Any],
+    family: str,
+    thresholds: dict[str, float],
+    *,
+    provisional: bool,
+) -> list[dict[str, Any]]:
+    current_metrics = current_surface.get(family) or {}
+    baseline_metrics = baseline_surface.get(family) or {}
     rows = []
-    for metric, threshold in SIGNIFICANCE_DB.items():
-        before = baseline_surface["loudness"][metric]
-        after = current_surface["loudness"][metric]
+    for metric, threshold in thresholds.items():
+        before = baseline_metrics.get(metric)
+        after = current_metrics.get(metric)
         if before is None or after is None:
             delta: float | None = None
             significant = False
@@ -215,6 +253,7 @@ def _surface_deltas(
                 "after": after,
                 "delta": delta,
                 "significant": significant,
+                "provisional": provisional,
             }
         )
     return rows

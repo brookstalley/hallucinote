@@ -31,12 +31,36 @@ def _loudness(
     }
 
 
-def _surface(track_id: str, kind: str = "track", name: str = "x", **loudness) -> dict:
+def _timbre(
+    spectral_centroid_hz: float | None = 1500.0,
+    spectral_flatness: float | None = 0.1,
+    spectral_rolloff_hz: float | None = 3000.0,
+) -> dict:
+    return {
+        "spectral_centroid_hz": spectral_centroid_hz,
+        "spectral_flatness": spectral_flatness,
+        "spectral_rolloff_hz": spectral_rolloff_hz,
+    }
+
+
+_DEFAULT_TIMBRE = object()
+
+
+def _surface(
+    track_id: str,
+    kind: str = "track",
+    name: str = "x",
+    *,
+    timbre: object = _DEFAULT_TIMBRE,
+    **loudness,
+) -> dict:
     return {
         "track_id": track_id,
         "surface_kind": kind,
         "surface_name": name,
         "loudness": _loudness(**loudness),
+        # ``timbre=None`` models a silent stem (null) or a pre-timbre baseline.
+        "timbre": _timbre() if timbre is _DEFAULT_TIMBRE else timbre,
     }
 
 
@@ -69,11 +93,15 @@ def test_identical_reports_diff_to_zero_and_insignificant():
     assert out["overshoot_count"] == {
         "before": 0, "after": 0, "delta": 0, "significant": False,
     }
-    # master (4 metrics) + track:1 (4 metrics)
-    assert len(out["deltas"]) == 8
+    # master + track:1, each with 4 loudness + 3 timbre metrics
+    assert len(out["deltas"]) == 14
     for row in out["deltas"]:
         assert row["delta"] == 0.0
         assert row["significant"] is False
+    # Loudness deltas are calibrated; timbre deltas are flagged provisional.
+    by_metric = {r["metric"]: r for r in out["deltas"]}
+    assert by_metric["lufs_i"]["provisional"] is False
+    assert by_metric["spectral_centroid_hz"]["provisional"] is True
 
 
 def test_significant_master_move_is_flagged_with_correct_sign():
@@ -132,6 +160,33 @@ def test_null_metric_on_either_side_yields_null_delta_never_a_crash():
     baseline = _report(stems=[_surface("track:1", lufs_i=None)])
     current = _report(stems=[_surface("track:1")])
     row = _find(diff_reports(current, baseline), "track:1", "lufs_i")
+    assert row["before"] is None
+    assert row["delta"] is None
+    assert row["significant"] is False
+
+
+def test_timbre_move_beyond_provisional_floor_is_flagged_provisional():
+    from hallucinote.audio.compare import SIGNIFICANCE_TIMBRE
+    baseline = _report()
+    current = _report(
+        master=_surface(
+            "master", "master", "Main",
+            timbre=_timbre(spectral_centroid_hz=1700.0),  # +200 Hz > 50 Hz floor
+        )
+    )
+    row = _find(diff_reports(current, baseline), "master", "spectral_centroid_hz")
+    assert row["delta"] == pytest.approx(200.0)
+    assert abs(row["delta"]) >= SIGNIFICANCE_TIMBRE["spectral_centroid_hz"]
+    assert row["significant"] is True
+    assert row["provisional"] is True   # never read as a calibrated verdict
+
+
+def test_timbre_null_on_either_side_yields_null_delta():
+    # A silent stem (timbre null) or a pre-timbre baseline diffs to an honest
+    # null timbre delta — never a fabricated number, like the loudness path.
+    baseline = _report(stems=[_surface("track:1", timbre=None)])
+    current = _report(stems=[_surface("track:1")])
+    row = _find(diff_reports(current, baseline), "track:1", "spectral_flatness")
     assert row["before"] is None
     assert row["delta"] is None
     assert row["significant"] is False

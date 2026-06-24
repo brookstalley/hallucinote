@@ -48,6 +48,7 @@ import numpy as np
 from .levels import live_fader_gain
 from .report import EnvelopeVerification
 from .section import BeatSampleMap
+from .timbre import spectral_centroid_hz
 
 # Beats measured on each side of a breakpoint, clamped to the neighbouring
 # breakpoints (so adjacent changes don't bleed into each other).
@@ -137,20 +138,6 @@ def _pan_gains(pan: float) -> tuple[float, float]:
     """Live pan (−1 hard left … +1 hard right) → constant-power (gL, gR)."""
     theta = (float(pan) + 1.0) * math.pi / 4.0
     return math.cos(theta), math.sin(theta)
-
-
-def _spectral_centroid_hz(mono: np.ndarray, sample_rate: int) -> float:
-    """Magnitude-weighted mean frequency (Hz) — a coarse but robust timbre
-    proxy. Distortion/brightness pushes it up; a darker setting pulls it down.
-    0.0 for an empty/silent window."""
-    if mono.size == 0:
-        return 0.0
-    spec = np.abs(np.fft.rfft(mono))
-    total = float(spec.sum())
-    if total <= 0.0:
-        return 0.0
-    freqs = np.fft.rfftfreq(mono.size, d=1.0 / sample_rate)
-    return float((freqs * spec).sum() / total)
 
 
 def _rms(mono: np.ndarray) -> float:
@@ -249,8 +236,8 @@ def verify_envelope_realization(
 
 
 def _verify_timbre(env, b_beat, before, after, sample_rate) -> EnvelopeVerification:
-    c_before = _spectral_centroid_hz(before, sample_rate)
-    c_after = _spectral_centroid_hz(after, sample_rate)
+    c_before = spectral_centroid_hz(before, sample_rate)
+    c_after = spectral_centroid_hz(after, sample_rate)
     rel = abs(c_after - c_before) / c_before if c_before > 0 else 0.0
     realized = rel >= _CENTROID_REL_THRESHOLD
     pct = rel * 100.0

@@ -35,10 +35,15 @@ from scipy.stats import ConstantInputWarning, spearmanr
 
 from .report import EnergyInversion, EnergyRealization, SectionEnergy
 
-# The correlate keys the lens ranks. Open by design (DR-3): a future
-# spectral-intensity correlate adds a key here without a shape change.
+# The correlate keys the lens ranks. Open by design (DR-3): a correlate adds a
+# key here without a shape change. SPECTRAL_CENTROID (AUD-8T3K) fills the slot
+# energy.py:38 reserved — section brightness as a spectral-intensity correlate
+# (brighter mixes read as more energetic). A neutral ρ, never a grade — like
+# loudness and onset density. (ARR-2S9D, when built, adds further keys the same
+# way; the registry is the coordination point, not a conflict.)
 LOUDNESS = "loudness"
 ONSET_DENSITY = "onset_density"
+SPECTRAL_CENTROID = "spectral_centroid"
 
 
 def _is_finite(x: "float | None") -> bool:

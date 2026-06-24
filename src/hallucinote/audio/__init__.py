@@ -47,6 +47,7 @@ from .report import (
     SectionEnergy,
     SectionMetrics,
     StemMetrics,
+    TimbreMetrics,
 )
 from .section import SectionWindow, TempoSegment
 
@@ -71,5 +72,6 @@ __all__ = [
     "SectionWindow",
     "StemMetrics",
     "TempoSegment",
+    "TimbreMetrics",
     "analyze_mix",
 ]

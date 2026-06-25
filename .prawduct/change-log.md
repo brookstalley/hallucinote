@@ -4,6 +4,31 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-06-24 — v1.6.1: standing timbre metrics (brightness · noisiness) in the mix report (AUD-8T3K)
+
+<!-- prawduct: type=feature | chunks=AUD-8T3K | scope=analysis,docs,tests | status=shipped | release=v1.6.1 -->
+
+Standing **timbre** per surface and per section in the mix report, so a directive like "make X
+brighter / noisier / grittier" is now verifiable against a number, not only by ear.
+
+- **AUD-8T3K** — new `audio/timbre.py` `measure_timbre()` → spectral **centroid · flatness ·
+  rolloff**, taken as the median over silence-gated frames (the gate makes the median fair for
+  sparse / percussive material, so a noisy single frame can't dominate). Flatness is computed
+  over **Bark bands** — raw FFT bins crush to ~0 for pitched material — and the Bark grid was
+  extracted to a behavior-preserving `audio/bark.py`; the centroid helper was lifted out of
+  `automation.py` and de-duplicated. `TimbreMetrics` rides per-stem **and** per-section
+  `StemMetrics` (NaN→null), surfaced through `compare.py` with thresholds flagged
+  `provisional: true`; section centroid is registered as the DR-3 `spectral_centroid` energy
+  correlate, so brightness ranks against declared energy. `SCHEMA_VERSION` stays `"1"`
+  (additive fields; the differ degrades gracefully against a pre-timbre baseline). Follow-up
+  **AUD-TIMBRE-CALIB** filed for the re-capture-jitter study that will drop the `provisional`
+  flag.
+- **Docs** — corrected the post-1.5.0 version-lockstep narrative in `docs/release-process.md`.
+
+**Re-vendor: not required** — no `_FINGERPRINT_PATHS` file changed since v1.6.0 (engine-side
+analysis + docs only). The auto-updated server and the existing vendored Remote Script still
+compute the same fingerprint; marketplace consumers need take no action.
+
 ## 2026-06-23 — v1.6.0 catch-up: clusters shipped to develop since v1.5.0 without an individual change-log entry
 
 <!-- prawduct: type=feature | chunks=MICROTUNE,MCP-9R3T,MCP-5N8K,MCP-7F2K,MCP-7P3R,MCP-2K9F,MCP-8H4N,PSH-3K9D,PSH-8K3D,SYN-7N4K,IDX-5W2P,SYN-4R7P,SYN-9F4K,SYN-RENDER-RELINK,SYN-SCAFFOLD-MISLINK,SYN-RACK-PRESET-RELINK,ARR-ORPHAN,REC-4Z8Q,DOC-7K3M,DEC-CAP,master-true-peak,FK-clip-guard | scope=tuning,mcp-bridge,mcp-render,sync-push,sync-pull,db,analysis,methodology,docs,tests | status=shipped | release=v1.6.0 -->

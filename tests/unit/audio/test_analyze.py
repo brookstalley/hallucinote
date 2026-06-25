@@ -121,6 +121,13 @@ def test_analyze_mix_produces_populated_mixreport_with_no_overshoots(tmp_path: P
     assert report.overshoots == []
     assert report.skipped_analyses[0]["kind"] == "reverb_verification"
     assert report.findings == []
+    # AUD-8T3K: every measured surface carries a standing timbre object.
+    assert report.master.timbre is not None
+    for stem in report.stems:
+        assert stem.timbre is not None
+        # Pink noise is broadband → a real centroid and a 0..1 flatness.
+        assert stem.timbre.spectral_centroid_hz > 0
+        assert 0.0 <= stem.timbre.spectral_flatness <= 1.0
 
 
 def test_analyze_mix_attributes_overshoot_to_loud_stem(tmp_path: Path):
@@ -701,8 +708,48 @@ def test_analyze_mix_populates_energy_realization(tmp_path: Path):
     assert er.correlate_rho["loudness"] == pytest.approx(1.0)
     assert [i for i in er.inversions if i.correlate == "loudness"] == []
     assert {s.start_beat for s in er.sections_ranked} == {0.0, 8.0}
+    # AUD-8T3K: the section centroid is registered as a DR-3 correlate. Same
+    # pink spectrum at two levels → ~equal centroid (tied) → ρ None, never NaN.
+    assert "spectral_centroid" in er.correlate_rho
+    rho = er.correlate_rho["spectral_centroid"]
+    assert rho is None or np.isfinite(rho)
     # Serializes under the strict-JSON backstop (None-or-finite, never nan).
     json.dumps(report.to_json_dict(), allow_nan=False)
+
+
+def test_analyze_mix_energy_realization_ranks_spectral_centroid(tmp_path: Path):
+    """AUD-8T3K DR-3: a dark-verse / bright-chorus render with declared
+    verse<chorus energy reads a monotonic spectral_centroid ρ — section
+    brightness tracked the declared arc, ranked beside loudness/onset density."""
+    duration_s = 4.0
+    dark = sine(200.0, duration_s / 2, amplitude=0.3)
+    bright = sine(5000.0, duration_s / 2, amplitude=0.3)
+    stem = concat(dark, bright)
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "01 Synth", stem)],
+        master_audio=stem.copy(),
+        start_at_beat=0.0,
+        stop_at_beat=16.0,
+    )
+    sections = [
+        SectionWindow(name="verse", start_beat=0.0, end_beat=8.0),
+        SectionWindow(name="chorus", start_beat=8.0, end_beat=16.0),
+    ]
+    declared_energy = [
+        SectionEnergy(start_beat=0.0, name="verse", energy=0.4),
+        SectionEnergy(start_beat=8.0, name="chorus", energy=0.9),
+    ]
+    report = analyze_mix(
+        captures_dir, sections=sections, declared_energy=declared_energy,
+    )
+
+    er = report.energy_realization
+    assert er is not None
+    # Measured verse centroid (200 Hz) < chorus (5 kHz), declared verse<chorus
+    # → monotonic ρ == 1.0 and zero centroid inversions.
+    assert er.correlate_rho["spectral_centroid"] == pytest.approx(1.0)
+    assert [i for i in er.inversions if i.correlate == "spectral_centroid"] == []
 
 
 def test_analyze_mix_skips_energy_realization_when_none_declared(tmp_path: Path):

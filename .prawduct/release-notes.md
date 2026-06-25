@@ -5,6 +5,16 @@
      be overwritten on next regen. See change-log.md for full per-release
      bodies; this file is a digest. -->
 
+## v1.6.1
+
+**Entry:** 2026-06-24 — v1.6.1: standing timbre metrics (brightness · noisiness) in the mix report (AUD-8T3K)
+
+**Chunks shipped:** AUD-8T3K
+
+**Scope:** analysis,docs,tests
+
+See `.prawduct/change-log.md` for full details.
+
 ## v1.6.0
 
 ### tuning,mcp-bridge,mcp-render,sync-push,sync-pull,db,analysis,methodology,docs,tests

@@ -503,9 +503,11 @@ build_state:
 # Chunk 5 retired the SYN-4R7P doc/skill recovery dance. Remaining: cumulative-Critic PR
 # gate + the ARR-PROJ live e2e + the ARR-9X4T/ARR-7H2N backlog close at merge. See the
 # build-plan Status for the live state.
-# ARR-PROJ shipped (PR #201); ARR-CMPHALT (PR #203) + SYN-2D9K (PR #204) shipped
-# 2026-06-23 — no active build plan.
-active_build_plan: null
+# AUD-8T3K shipped (PR #206, released in v1.6.1); no active build plan.
+# Left EMPTY (not the literal `null`): the regen-views/session-start pointer
+# reader treats the post-colon text as a path, so `null` resolves to
+# `.prawduct/null` and mis-fires the "missing build plan" advisory.
+active_build_plan:
 
 # =============================================================================
 # CHANGE LOG
@@ -522,6 +524,9 @@ active_build_plan: null
 # overwritten on next regen.
 
 scope_rollups:
+  analysis,docs,tests:
+    chunks: ["AUD-8T3K"]
+    releases: ["v1.6.1"]
   arrangement-verify,tests:
     chunks: ["ARR-CMPHALT"]
     releases: ["v1.6.0"]

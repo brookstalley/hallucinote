@@ -27,6 +27,7 @@ from hallucinote.audio.report import (
     SectionEnergy,
     SectionMetrics,
     StemMetrics,
+    TimbreMetrics,
 )
 
 
@@ -438,6 +439,53 @@ def test_nonfinite_sentinels_serialize_as_null_under_allow_nan_false():
     assert parsed["reverb_verifications"][0]["measured_rt60_s"] is None
     assert parsed["automation_verifications"][0]["before"] is None
     assert parsed["automation_verifications"][0]["after"] is None
+
+
+def test_timbre_serializes_when_present_and_is_null_when_absent():
+    """AUD-8T3K: a populated stem carries the timbre object; a stem without a
+    measured timbre (the default-None fixture path) serializes ``timbre: null``."""
+    with_timbre = StemMetrics(
+        "track:1", "track", "Drums", _make_loudness(),
+        timbre=TimbreMetrics(
+            spectral_centroid_hz=1820.0, spectral_flatness=0.42,
+            spectral_rolloff_hz=4100.0,
+        ),
+    )
+    without = StemMetrics("track:2", "track", "Pad", _make_loudness())  # timbre defaults None
+    report = MixReport(
+        song_slug="x", captures_dir="/tmp/x", captured_at="20260528T120000Z",
+        analyzer_signature="sig",
+        stems=[with_timbre, without], master=_make_stem(track_id="master"),
+    )
+    parsed = json.loads(json.dumps(report.to_json_dict(), allow_nan=False))
+    t = parsed["stems"][0]["timbre"]
+    assert t == {
+        "spectral_centroid_hz": 1820.0,
+        "spectral_flatness": 0.42,
+        "spectral_rolloff_hz": 4100.0,
+    }
+    assert parsed["stems"][1]["timbre"] is None
+
+
+def test_timbre_nan_sentinel_serializes_as_null():
+    """A silent surface measures an all-NaN TimbreMetrics; each field collapses
+    to JSON null via _finite_or_none, like the loudness -inf sentinel."""
+    nan = float("nan")
+    report = MixReport(
+        song_slug="x", captures_dir="/tmp/x", captured_at="20260528T120000Z",
+        analyzer_signature="sig",
+        stems=[StemMetrics(
+            "track:1", "track", "Silent", _make_loudness(),
+            timbre=TimbreMetrics(nan, nan, nan),
+        )],
+        master=_make_stem(track_id="master"),
+    )
+    parsed = json.loads(json.dumps(report.to_json_dict(), allow_nan=False))
+    assert parsed["stems"][0]["timbre"] == {
+        "spectral_centroid_hz": None,
+        "spectral_flatness": None,
+        "spectral_rolloff_hz": None,
+    }
 
 
 def test_master_fader_fields_default_none_and_serialize():

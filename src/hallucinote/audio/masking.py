@@ -50,16 +50,8 @@ from typing import Sequence
 
 import numpy as np
 
+from .bark import BarkMap, aggregate_to_bands, bark_band_map
 from .report import BedMasking, MaskingPair
-
-# Zwicker critical-band edges in Hz (Bark 1..24 lower edges + top). Standard
-# table from Zwicker & Fastl; bands are [edge[i], edge[i+1]). The DSP needs
-# critical-band resolution — coarser than attribution's 6 musical bands.
-_BARK_EDGES_HZ: tuple[float, ...] = (
-    0.0, 100.0, 200.0, 300.0, 400.0, 510.0, 630.0, 770.0, 920.0, 1080.0,
-    1270.0, 1480.0, 1720.0, 2000.0, 2320.0, 2700.0, 3150.0, 3700.0, 4400.0,
-    5300.0, 6400.0, 7700.0, 9500.0, 12000.0, 15500.0,
-)
 
 # Musical region labels (non-overlapping, by band-centre frequency) — the
 # engineer's vocabulary the goals doc asks the report to speak. Hz stays under
@@ -124,7 +116,7 @@ def analyze_masking_window(
     ranked by ``masked_fraction``, top-N, above ``reporting_floor``. ``bed`` is
     one entry per maskee vs the summed excitation of all other energized stems.
     """
-    bark = _bark_band_map(sample_rate, n_fft)
+    bark = bark_band_map(sample_rate, n_fft)
 
     # Per-stem band power [n_bands, n_frames] and spread excitation, keyed by id.
     # Drop stems that are silent or too short to STFT — they cannot mask and
@@ -185,7 +177,7 @@ def _ordered_pairs(
     order: list[str],
     powers: dict[str, np.ndarray],
     excitations: dict[str, np.ndarray],
-    bark: "_BarkMap",
+    bark: "BarkMap",
     *,
     masking_offset_db: float,
     gate_db: float,
@@ -212,7 +204,7 @@ def _bed_masking(
     order: list[str],
     powers: dict[str, np.ndarray],
     excitations: dict[str, np.ndarray],
-    bark: "_BarkMap",
+    bark: "BarkMap",
     *,
     masking_offset_db: float,
     gate_db: float,
@@ -236,7 +228,7 @@ def _masked_fraction(
     maskee_power: np.ndarray,
     gate_db: float,
     masking_offset_db: float,
-    bark: "_BarkMap",
+    bark: "BarkMap",
 ) -> tuple[float, str, tuple[float, float]]:
     """Fraction of the maskee's energized tiles the masker covers, + where.
 
@@ -266,33 +258,11 @@ def _masked_fraction(
 
 
 # --------------------------------------------------------------------------- #
-# Bark mapping + spreading function
+# Band power + spreading function
 # --------------------------------------------------------------------------- #
-
-@dataclass(frozen=True)
-class _BarkMap:
-    """Precomputed FFT-bin → Bark-band assignment for one (sr, n_fft)."""
-    n_bands: int
-    bin_band: np.ndarray   # [n_bins] band index per FFT bin (-1 = out of range)
-    edges_hz: np.ndarray   # [n_bands + 1] band edge frequencies
-
-
-def _bark_band_map(sample_rate: int, n_fft: int) -> _BarkMap:
-    nyq = sample_rate / 2.0
-    edges = [e for e in _BARK_EDGES_HZ if e < nyq]
-    # Cap the top band at Nyquist only when Nyquist falls *inside* the Bark
-    # range; when Nyquist is above the top edge (the 44.1/48 kHz case) the list
-    # already ends at the top edge, so appending would create a zero-width band.
-    if nyq < _BARK_EDGES_HZ[-1]:
-        edges.append(nyq)
-    edges_arr = np.asarray(edges, dtype=np.float64)
-    n_bands = len(edges_arr) - 1
-
-    freqs = np.fft.rfftfreq(n_fft, d=1.0 / sample_rate)
-    # Band index for each bin: edges[k] <= f < edges[k+1].
-    idx = np.searchsorted(edges_arr, freqs, side="right") - 1
-    idx[(freqs < edges_arr[0]) | (freqs >= edges_arr[-1])] = -1
-    return _BarkMap(n_bands=n_bands, bin_band=idx, edges_hz=edges_arr)
+# The Bark grid itself (BarkMap / bark_band_map / aggregate_to_bands) lives in
+# bark.py so timbre.py can share it without duplicating the bin→band map
+# (AUD-8T3K).
 
 
 def _band_power(
@@ -300,7 +270,7 @@ def _band_power(
     sample_rate: int,
     n_fft: int,
     hop_length: int,
-    bark: _BarkMap,
+    bark: BarkMap,
 ) -> np.ndarray:
     """STFT power summed into Bark bands → [n_bands, n_frames]."""
     import librosa
@@ -310,11 +280,7 @@ def _band_power(
         window="hann", center=True,
     )
     power = (np.abs(stft) ** 2).astype(np.float64)  # [n_bins, n_frames]
-    n_frames = power.shape[1]
-    band_power = np.zeros((bark.n_bands, n_frames), dtype=np.float64)
-    valid = bark.bin_band >= 0
-    np.add.at(band_power, bark.bin_band[valid], power[valid])
-    return band_power
+    return aggregate_to_bands(power, bark)
 
 
 def _spreading_matrix(n_bands: int) -> np.ndarray:

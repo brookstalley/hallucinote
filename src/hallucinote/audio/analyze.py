@@ -37,6 +37,7 @@ from .attribution import (
 from .io import CaptureSet, Surface, load_capture
 from .levels import apply_stem_gains, live_fader_db
 from .loudness import MIN_LOUDNESS_DURATION_S, measure_loudness
+from .timbre import measure_timbre
 from .cross_rhythm import (
     analyze_cross_rhythm_window,
     analyze_phasing_window,
@@ -44,7 +45,7 @@ from .cross_rhythm import (
 )
 from .automation import DeclaredEnvelope, verify_envelope_realization
 from .density import section_onset_density
-from .energy import LOUDNESS, ONSET_DENSITY, realize_energy
+from .energy import LOUDNESS, ONSET_DENSITY, SPECTRAL_CENTROID, realize_energy
 from .masking import analyze_masking_window
 from .report import (
     SCHEMA_VERSION,
@@ -346,6 +347,7 @@ def _measure_surface(surface) -> StemMetrics:
         surface_kind=surface.surface_kind,
         surface_name=surface.surface_name,
         loudness=loudness,
+        timbre=measure_timbre(surface.audio, surface.sample_rate),
     )
 
 
@@ -706,11 +708,24 @@ def _realize_energy(
 
     loudness_by_beat: dict[float, "float | None"] = {}
     density_by_beat: dict[float, "float | None"] = {}
+    centroid_by_beat: dict[float, "float | None"] = {}
     for sm in per_section:
         loudness_by_beat[sm.start_beat] = sm.master.loudness.lufs_s_median
         density_by_beat[sm.start_beat] = sm.onset_density
+        # Section brightness (AUD-8T3K, DR-3): the section MASTER's spectral
+        # centroid. None when no timbre was measured (silent window) — the lens
+        # excludes + names it like any unavailable correlate (W2).
+        centroid_by_beat[sm.start_beat] = (
+            sm.master.timbre.spectral_centroid_hz
+            if sm.master.timbre is not None
+            else None
+        )
 
-    measured = {LOUDNESS: loudness_by_beat, ONSET_DENSITY: density_by_beat}
+    measured = {
+        LOUDNESS: loudness_by_beat,
+        ONSET_DENSITY: density_by_beat,
+        SPECTRAL_CENTROID: centroid_by_beat,
+    }
     realization = realize_energy(
         declared, measured,
         surfacing_floor=_ENERGY_INVERSION_SURFACING_FLOOR,
@@ -859,6 +874,7 @@ def _measure_window(surface: Surface, window_slice: WindowSlice) -> StemMetrics:
         surface_kind=surface.surface_kind,
         surface_name=surface.surface_name,
         loudness=loudness,
+        timbre=measure_timbre(sliced, surface.sample_rate),
     )
 
 

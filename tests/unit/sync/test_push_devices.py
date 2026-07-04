@@ -758,7 +758,7 @@ def test_apply_push_results_accepts_device_parameter_as_ack(
     )
     # Existing device + track links survive; nothing else added.
     links = Q.get_ableton_links_for_session(conn, session)
-    kinds = sorted(l["db_kind"] for l in links)
+    kinds = sorted(link["db_kind"] for link in links)
     assert kinds == ["device", "track"]
 
 
@@ -799,7 +799,7 @@ def test_apply_push_results_accepts_device_param_override_as_ack(
     assert warnings == []
     # Existing device + track links survive; nothing else added (ack-only).
     links = Q.get_ableton_links_for_session(conn, session)
-    kinds = sorted(l["db_kind"] for l in links)
+    kinds = sorted(link["db_kind"] for link in links)
     assert kinds == ["device", "track"]
 
 
@@ -846,7 +846,7 @@ def test_apply_push_results_accepts_device_chain_props_as_ack(
     assert warnings == []
     # Existing device + track links survive; nothing else added (ack-only).
     links = Q.get_ableton_links_for_session(conn, session)
-    kinds = sorted(l["db_kind"] for l in links)
+    kinds = sorted(link["db_kind"] for link in links)
     assert kinds == ["device", "track"]
 
 
@@ -863,7 +863,7 @@ def test_plan_push_devices_handles_mixed_linked_unlinked(
     )
     cid = M.create_device_chain(conn, parent_track_id=linked_track)
     eq = M.create_device(conn, chain_id=cid, position=1, kind="EQ Eight", display_name="EQ")
-    comp = M.create_device(conn, chain_id=cid, position=2, kind="Compressor", display_name="Comp")
+    M.create_device(conn, chain_id=cid, position=2, kind="Compressor", display_name="Comp")
     M.link_db_to_ableton(
         conn, session_id=session, db_kind="device", db_id=eq, ableton_index=1,
     )

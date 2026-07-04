@@ -9,6 +9,7 @@ the same convention now, so the helper has to be reachable from both.
 from __future__ import annotations
 
 import re
+from typing import overload
 
 from hallucinote.analyzer_identity import ANALYZER_DEVICE_NAME
 
@@ -25,6 +26,12 @@ _RETURN_SLOT_PREFIX = re.compile(r"^[A-Z]-")
 _ANALYZER_NAME_SUFFIX = re.compile(
     rf"\s*\|\s*{re.escape(ANALYZER_DEVICE_NAME)}\s*$"
 )
+
+
+@overload
+def strip_return_slot_prefix(name: str) -> str: ...
+@overload
+def strip_return_slot_prefix(name: None) -> None: ...
 
 
 def strip_return_slot_prefix(name: str | None) -> str | None:

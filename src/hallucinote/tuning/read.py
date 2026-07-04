@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping, Sequence
+from typing import Any
 
 from hallucinote.tuning_probe import is_no_tuning_loaded
 
@@ -88,7 +89,7 @@ def read_tuning_system(raw: object) -> TuningData | None:
     return _extract_loaded_tuning(raw)
 
 
-def _require(raw: Mapping, key: str) -> object:
+def _require(raw: Mapping, key: str) -> Any:
     try:
         return raw[key]
     except (KeyError, TypeError) as exc:

@@ -11,11 +11,8 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from hallucinote.theory.model import (
-    MODES,
     QUALITIES,
-    Change,
     Chord,
-    Mode,
     Progression,
     mode,
     pc_name,

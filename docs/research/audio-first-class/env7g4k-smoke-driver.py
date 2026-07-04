@@ -14,10 +14,8 @@ smoke (the two-overlapping-window probe in
 """
 from __future__ import annotations
 
-import json
-import sys
 
-from hallucinote.db import init_db, mutations as M, queries as Q
+from hallucinote.db import init_db, mutations as M
 from hallucinote.sync import push
 from hallucinote_mcp import client, wire
 

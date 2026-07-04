@@ -233,8 +233,9 @@ class BeatSampleMap:
         all short-circuit on ``self.degenerate`` before touching these, so they
         only need to exist, but resetting them in one place keeps both
         degenerate branches in ``__init__`` consistent."""
-        self._beats = self._raw = None
-        self._bpm0s = self._slopes = None
+        # Accessors short-circuit on ``self.degenerate`` before touching these.
+        self._beats = self._raw = None  # type: ignore[assignment]
+        self._bpm0s = self._slopes = None  # type: ignore[assignment]
         self._raw_total = 0.0
 
     def beat_to_sample(self, beat: float) -> int:

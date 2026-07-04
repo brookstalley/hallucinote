@@ -277,6 +277,7 @@ def _resolve_envelope_session_clip(
                 other_covering_clip_ids.append(r["clip_id"])
     if matched is None:
         return None
+    assert matched_start is not None  # bound together with `matched` in the loop
     others = [
         _position_bar_to_beats(r["start_bar"], ts_points)
         for r in rows

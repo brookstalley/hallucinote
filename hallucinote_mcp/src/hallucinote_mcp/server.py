@@ -58,7 +58,7 @@ def _annotated_param_type(spec: schema.ParamSpec) -> Any:
     validation is unchanged; this widens the discovery surface only.
     """
     py_type = _PARAM_TYPE_MAP.get(spec.type, Any)
-    optional_type = Optional[py_type]
+    optional_type = Optional[py_type]  # type: ignore[valid-type]  # dynamic by design
 
     field_kwargs: dict[str, Any] = {"default": None}
     if spec.description:

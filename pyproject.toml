@@ -42,6 +42,10 @@ dev = [
     "pytest>=8.0",
     "pytest-xdist>=3.6",
     "hypothesis>=6.0",
+    # Lint + type gates (INF-2C4X). CI runs `uv run ruff check .` and
+    # `uv run mypy` from this env; config lives in [tool.ruff]/[tool.mypy] below.
+    "ruff>=0.15",
+    "mypy>=1.19",
 ]
 # (The vestigial `[live]` extra was dropped 2026-07-02 with a uv.lock re-lock —
 # the `[tool.uv.workspace]` below is what builds the one env with both packages.)
@@ -75,6 +79,119 @@ where = ["src"]
 # the empty decisions/ + annotations/ dirs the scaffold reproduces.
 [tool.setuptools.package-data]
 "hallucinote.tools" = ["templates/**/*", "templates/**/.gitkeep"]
+
+# --- lint (INF-2C4X) ------------------------------------------------------------
+# Pragmatic, high-signal ruleset: pyflakes (F) + the pycodestyle error classes
+# that catch real bugs (imports, statements, runtime errors), plus W and PLE
+# (Pylint errors), which the codebase is already clean on. Deliberately NOT
+# enforced: line length / formatting (no reformat crusade — existing code has
+# long doc-bearing lines) and import sorting.
+[tool.ruff]
+# Whole-repo lint (tests, tools, hooks, research drivers included) — same
+# breadth as `ruff check .` in CI.
+src = ["src", "hallucinote_mcp/src"]
+
+[tool.ruff.lint]
+select = [
+    "E4",  # imports
+    "E7",  # statements (comparison, semicolons, ambiguous names, lambda-assign)
+    "E9",  # runtime errors (syntax/io)
+    "F",   # pyflakes (unused/undefined names, f-strings, redefinitions)
+    "W",   # pycodestyle warnings (already clean)
+    "PLE", # pylint errors (already clean)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Package __init__ files are deliberate re-export surfaces (e.g.
+# db/mutations/__init__.py re-exposes the pre-split module's private helpers —
+# tests consume `M._delete_track` etc.). Unused-import there is the point.
+"**/__init__.py" = ["F401"]
+# build.py's tombstone path resolves per-kind delete mutators via
+# `globals()[verb]` (see its import-block comment) — every delete mutator must
+# be imported into the module namespace even though nothing references it
+# statically.
+"src/hallucinote/db/mutations/build.py" = ["F401"]
+# Deliberate mid-file import block — the file is organized in two banner-
+# separated halves (pure parsing vs M.create_device DB integration), each
+# with its own imports.
+"tests/unit/test_preset_query.py" = ["E402"]
+
+# --- types (INF-2C4X) -----------------------------------------------------------
+# Checks the two shipped packages (engine + MCP server). Source code only —
+# tests exercise contracts at runtime; typing them is not the gate. The config
+# is default-strictness mypy (annotated code IS checked; a regression in any
+# annotated signature fails CI) with scoped, commented relaxations below for
+# the known Optional-narrowing debt clusters. CI runs `uv run mypy` (files come
+# from this section).
+[tool.mypy]
+files = ["src/hallucinote", "hallucinote_mcp/src/hallucinote_mcp"]
+# Mirror the pytest pythonpath trick: force THIS checkout's sources so a git
+# worktree checks the local tree, not the editable-install .pth target.
+mypy_path = "src:hallucinote_mcp/src"
+explicit_package_bases = true
+# Floor of requires-python — flags 3.11+-only stdlib/syntax use.
+python_version = "3.10"
+
+# Stub-less third-party imports, ignored BY NAME — deliberately NOT a global
+# ignore_missing_imports, which would silently type any future unresolved
+# import as Any. Adding a dependency without stubs => list it here, on purpose.
+# (numpy, librosa, and mcp ship py.typed and are NOT listed — they resolve.)
+[[tool.mypy.overrides]]
+module = [
+    "pyloudnorm.*",      # no py.typed / stubs package
+    "pyroomacoustics.*", # no py.typed (used only for .experimental.rt60)
+    "scipy.*",           # scipy ships no complete stubs; scipy-stubs not a dep
+    "soundfile",         # no py.typed
+    "tomli",             # 3.10-only backfill; absent from the 3.11+ env mypy runs in
+]
+ignore_missing_imports = true
+
+# Optional-narrowing debt clusters: modules whose guards (validated wire
+# params, is-finite checks, correlated locals) are invisible to mypy, where a
+# per-line cleanup is disproportionate to this adoption pass. Only the listed
+# error codes are disabled, per module — everything else in these files is
+# still checked. Candidates for a follow-up annotation-tightening item.
+[[tool.mypy.overrides]]
+# Assembles PartPerformance kwargs via **dict[str, object] merge.
+module = "hallucinote.performance.lens"
+disable_error_code = ["arg-type"]
+
+[[tool.mypy.overrides]]
+# Live-pulled rows are Optional-typed but validated upstream of use.
+module = "hallucinote.capture"
+disable_error_code = ["arg-type", "index"]
+
+[[tool.mypy.overrides]]
+# `ref` and return-name lookups are narrowed by runtime shape checks.
+module = "hallucinote.sync.pull.mix"
+disable_error_code = ["arg-type", "str-unpack"]
+
+[[tool.mypy.overrides]]
+# Link-row dicts and analyzer-surface maps are shape-checked at runtime.
+module = "hallucinote.sync.push.probe"
+disable_error_code = ["arg-type", "union-attr"]
+
+[[tool.mypy.overrides]]
+# Envelope route targets are validated before resolution.
+module = "hallucinote.sync.push.envelopes"
+disable_error_code = ["arg-type", "assignment"]
+
+[[tool.mypy.overrides]]
+# Wire params + LOM objects: validated dynamically; lambdas capture LOM
+# attrs mypy can't infer ([misc] "Cannot infer type of lambda").
+module = "hallucinote_mcp.handlers.automation"
+disable_error_code = ["arg-type", "misc"]
+
+[[tool.mypy.overrides]]
+# min/max/compare chains over Optional floats guarded by earlier branches.
+module = "hallucinote_mcp.handlers.display_value"
+disable_error_code = ["operator", "type-var"]
+
+[[tool.mypy.overrides]]
+# Browser-path / rack-chain params are validated by the handlers' own
+# teaching errors before use.
+module = "hallucinote_mcp.handlers.device"
+disable_error_code = ["arg-type", "assignment", "union-attr"]
 
 [tool.pytest.ini_options]
 # Songs now live in their own repo (hallucinote-songs) with their own pytest

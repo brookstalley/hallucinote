@@ -4,7 +4,6 @@ from __future__ import annotations
 import pytest
 
 from hallucinote_mcp.dispatcher import dispatch
-from hallucinote_mcp.handlers import probe as probe_handlers
 from hallucinote_mcp.handlers.probe import (
     MAX_VECTOR_ITEMS,
     _request_differs,

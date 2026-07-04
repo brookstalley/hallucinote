@@ -15,10 +15,16 @@ import functools
 import json
 import sqlite3
 import uuid
-from typing import Any, Callable, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, TypeVar
 
 from hallucinote.db import events as E
 from hallucinote.db.connection import transaction
+
+if TYPE_CHECKING:
+    # Type-only: build.py imports from _core at runtime (the reverse edge
+    # would be a cycle); the "BuildSession | None" ContextVar annotation
+    # below needs the name for checkers.
+    from .build import BuildSession
 
 _F = TypeVar("_F", bound=Callable[..., Any])
 
@@ -80,6 +86,8 @@ class MutatorResult(str):
     return as a bare id (`tid = M.create_track(...)`) keep working unchanged.
     """
     __slots__ = ("kind",)
+
+    kind: str
 
     def __new__(cls, id_: str, kind: str) -> "MutatorResult":
         if kind not in {"created", "updated", "unchanged"}:

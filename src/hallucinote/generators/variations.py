@@ -141,6 +141,7 @@ def transpose_diatonic(
                 continue
             p = nearest_scale_pitch(p)  # snap
             d = degree_of(p)
+            assert d is not None  # nearest_scale_pitch snapped p into scale
         octave = (p - key_pc - intervals[d]) // 12
         new_octave, new_degree = divmod(octave * n_degrees + d + steps, n_degrees)
         m = _copy(note)

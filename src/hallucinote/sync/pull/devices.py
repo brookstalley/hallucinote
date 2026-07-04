@@ -857,7 +857,7 @@ def _apply_nested_rack_chains_for_device(
         )
         return
     if Q.get_ableton_link(
-        conn, session_id=session_id, db_kind=parent_kind, db_id=parent_id,
+        conn, session_id=session_id, db_kind=parent_kind, db_id=parent_id,  # type: ignore[arg-type]  # parent walked from a linked row
     ) is None:
         out.skipped_unlinked += 1
         out.warnings.append(

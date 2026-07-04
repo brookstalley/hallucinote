@@ -171,7 +171,7 @@ def test_create_device_preset_query_idempotent_unchanged(conn, song, track):
     """Idempotent re-create with the same preset_query is 'unchanged'."""
     cid = M.create_device_chain(conn, parent_track_id=track)
     q = {"root": "drums", "pattern": "909"}
-    d1 = M.create_device(
+    M.create_device(
         conn, chain_id=cid, position=1, kind="Drum Rack",
         display_name="K", preset_query=q,
     )

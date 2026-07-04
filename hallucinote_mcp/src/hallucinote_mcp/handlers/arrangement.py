@@ -365,7 +365,7 @@ def _create_one_cue_locked(
     position_beats: float,
     name: str | None,
     if_exists: str = "refuse",
-) -> dict[str, Any] | None:
+) -> dict[str, Any]:
     """Inner cue-creation routine — runs on the WORKER thread.
 
     **Caller invariants:**

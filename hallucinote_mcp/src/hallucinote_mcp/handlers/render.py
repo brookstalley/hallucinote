@@ -979,7 +979,7 @@ def _set_arm_on_all(
         node = device_handlers.build_node_addr(
             _surface_address(inst), device_index=inst.device_index,
         )
-        context.run_on_main(lambda node=node: device_handlers.set_parameter_handler(
+        context.run_on_main(lambda node=node: device_handlers.set_parameter_handler(  # type: ignore[misc]  # LOM-capturing lambda
             context,
             node=node,
             parameter_name="Arm",

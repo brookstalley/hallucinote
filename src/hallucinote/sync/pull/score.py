@@ -74,7 +74,8 @@ def _apply_cue_points_list(
     db_cues = list(Q.get_cue_points(conn, song_id))
     # Round to fixed precision for tolerant matching (1/1000 of a bar — way
     # finer than any musically meaningful cue placement).
-    pos_key = lambda pb: round(float(pb), 3)
+    def pos_key(pb):
+        return round(float(pb), 3)
     db_by_pos: dict[float, sqlite3.Row] = {pos_key(c["position_bar"]): c for c in db_cues}
     seen: set[float] = set()
 

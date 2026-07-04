@@ -114,7 +114,7 @@ def test_planner_track_and_return_emits_validate_against_dispatcher(conn):
     M.link_db_to_ableton(
         conn, session_id=sess, db_kind="track", db_id=tid, ableton_index=1
     )
-    rid = M.create_return(conn, song_id=sid, name="A-Reverb", position=1)
+    M.create_return(conn, song_id=sid, name="A-Reverb", position=1)
     # First pass: return is unlinked → planner emits create.
     plan = push.plan_push_mix(conn, song_id=sid, session_id=sess)
     track_property_calls = [
@@ -398,8 +398,12 @@ def test_planner_device_load_emit_validates_against_dispatcher(conn):
             self.children = ()
 
     class _Root:
-        def __init__(self, name): self.name = name; self.children = []
-        is_loadable = False; is_folder = True; uri = ""
+        def __init__(self, name):
+            self.name = name
+            self.children = []
+        is_loadable = False
+        is_folder = True
+        uri = ""
 
     class _Browser:
         def __init__(self, song):

@@ -95,7 +95,7 @@ def realize_energy(
         paired: list[tuple[SectionEnergy, float]] = []
         for sec in sections_ranked:
             val = by_beat.get(sec.start_beat)
-            if _is_finite(val):
+            if val is not None and _is_finite(val):
                 paired.append((sec, float(val)))
             else:
                 skipped.append(

@@ -115,7 +115,6 @@ def test_bed_catches_distributed_buildup_pairwise_misses():
     # B is a quiet wideband part. Each single bandlimited bed stem only covers
     # part of B's range, so no single pair fully masks it — but together they
     # blanket it. The bed mode must read higher than any single pair.
-    rng = np.random.default_rng(0)
     n = int(DUR * SR)
     t = np.arange(n) / SR
     # B: quiet sum of tones spanning body+presence.
@@ -159,7 +158,6 @@ def test_fraction_in_unit_interval():
 
 
 def test_perf_twelve_stems_within_budget():
-    rng = np.random.default_rng(1)
     stems = []
     for i in range(12):
         f = 100.0 * (i + 1)

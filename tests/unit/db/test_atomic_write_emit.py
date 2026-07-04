@@ -10,11 +10,13 @@ transaction on next open.
 """
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 
 from hallucinote.db import init_db, mutations as M
 from hallucinote.db import events as E
-from hallucinote.db.connection import transaction
+from hallucinote.db.connection import _TRANSACTION_DEPTH, connect, transaction
 from hallucinote.db.mutations import tracks as tracks_mod
 from hallucinote.db.mutations import notes as notes_mod
 
@@ -146,3 +148,92 @@ def test_replace_clip_notes_still_atomic_under_wrapper(conn, song, monkeypatch):
     monkeypatch.undo()
     rows = conn.execute("SELECT pitch FROM notes ORDER BY pitch").fetchall()
     assert [r["pitch"] for r in rows] == [60]  # original note survives intact
+
+
+# ---------------------------------------------------------------------------
+# Critic round: BEGIN IMMEDIATE (snapshot-upgrade exposure) + depth-counter
+# leak on COMMIT failure.
+# ---------------------------------------------------------------------------
+
+
+def test_concurrent_writer_queues_instead_of_failing_fast(tmp_path, monkeypatch):
+    """Two-writer topology (MCP server + build.py): the mutator transaction
+    must take the write lock at BEGIN (IMMEDIATE), not at its first write.
+
+    Under the old plain-DEFERRED BEGIN, conn A's mutator read (validation
+    SELECT / _emit's MAX(seq)) pinned a snapshot; conn B committing a write
+    in between made A's read-to-write upgrade fail IMMEDIATELY with
+    "database is locked" (busy_timeout is never consulted for a
+    stale-snapshot upgrade). With IMMEDIATE, the roles invert: B is the one
+    that queues on the busy handler while A completes.
+
+    The hook runs inside conn A's open mutator transaction (after BEGIN,
+    before A's writes) and attempts B's write there. Deterministic: pre-fix
+    B's write SUCCEEDED in the hook and A's own INSERT then failed fast;
+    post-fix B gets BUSY (50 ms cap) and A succeeds.
+    """
+    db_path = tmp_path / "two-writers.db"
+    conn_a = init_db(db_path)
+    song = M.create_song(conn_a, name="two-writer-song")
+    conn_b = connect(db_path)
+    conn_b.execute("PRAGMA busy_timeout = 50")
+    outcome: dict[str, str] = {}
+    real = tracks_mod._resolve_actor_and_request
+
+    def hooked(actor, request_id):
+        # Inside conn A's transaction: A has BEGUN but not yet written.
+        try:
+            conn_b.execute(
+                "UPDATE songs SET key = 'Zz' WHERE id = ?", (song,)
+            )
+            outcome["b"] = "wrote"
+        except sqlite3.OperationalError:
+            outcome["b"] = "busy"
+        return real(actor, request_id)
+
+    monkeypatch.setattr(tracks_mod, "_resolve_actor_and_request", hooked)
+    tid = M.create_track(conn_a, song_id=song, track_index=1, name="Drums")
+    monkeypatch.undo()
+
+    # A held the write lock from BEGIN: B queued and timed out, A succeeded.
+    assert outcome["b"] == "busy"
+    assert _count(conn_a, "tracks") == 1
+    assert _count(conn_a, "events", kind=E.TRACK_CREATED) == 1
+    assert tid
+    conn_b.close()
+    conn_a.close()
+
+
+class _CommitBoomConn:
+    """Stub connection: transaction() only needs `.execute` + a stable id().
+    COMMIT raises once, like a disk I/O error at commit time."""
+
+    def __init__(self):
+        self.calls: list[str] = []
+
+    def execute(self, sql, *args):
+        self.calls.append(sql)
+        if sql == "COMMIT":
+            raise sqlite3.OperationalError("disk I/O error")
+
+
+def test_commit_failure_does_not_leak_transaction_depth():
+    """If COMMIT itself raises, the depth counter must still unwind (a
+    leaked depth>=1 would make every later mutator on this connection
+    SAVEPOINT into a transaction nobody commits — silent write loss), and
+    the open transaction must be rolled back so the connection stays usable."""
+    fake = _CommitBoomConn()
+    with pytest.raises(sqlite3.OperationalError, match="disk I/O"):
+        with transaction(fake):
+            pass
+    assert _TRANSACTION_DEPTH.get(id(fake), 0) == 0
+    assert fake.calls == ["BEGIN IMMEDIATE", "COMMIT", "ROLLBACK"]
+    # The connection is reusable: a fresh transaction BEGINs at depth 0
+    # (it would raise "cannot start a transaction within a transaction"
+    # against a real connection had the rollback not happened).
+    fake2_calls_before = len(fake.calls)
+    with pytest.raises(sqlite3.OperationalError):
+        with transaction(fake):
+            pass
+    assert fake.calls[fake2_calls_before] == "BEGIN IMMEDIATE"
+    assert _TRANSACTION_DEPTH.get(id(fake), 0) == 0

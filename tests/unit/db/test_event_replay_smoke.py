@@ -515,3 +515,20 @@ def test_notes_gap_is_real_not_stale(folded):
     mat, fold, _seen = folded
     assert mat.execute("SELECT COUNT(*) AS n FROM notes").fetchone()["n"] > 0
     assert fold.execute("SELECT COUNT(*) AS n FROM notes").fetchone()["n"] == 0
+
+
+def test_emit_rejects_unknown_kind(tmp_path):
+    """The emit-site half of the exhaustiveness guarantee: `_emit` refuses a
+    kind that isn't an events.py constant, so an inline-string kind can't
+    even reach the log (the classification tests above guard the constants;
+    this guards the wire into them)."""
+    conn = init_db(tmp_path / "kinds.db")
+    try:
+        from hallucinote.db.mutations._core import _emit
+        with pytest.raises(ValueError, match="unknown event kind"):
+            _emit(conn, "totally_new_kind", {"x": 1})
+        # Sanity: E.KINDS is the derived closed set and covers a known kind.
+        assert E.SONG_CREATED in E.KINDS
+        assert "totally_new_kind" not in E.KINDS
+    finally:
+        conn.close()

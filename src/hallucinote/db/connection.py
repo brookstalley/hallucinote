@@ -149,6 +149,22 @@ def _migrate_events_drop_fks(conn: sqlite3.Connection) -> None:
     fks = conn.execute("PRAGMA foreign_key_list(events)").fetchall()
     if not fks:
         return  # fresh DB (no table -> empty list) or already migrated
+    # Guard: the copy below names exactly the 10 legacy columns. If a legacy
+    # events table ever carries anything else (a fork, a hand-patched DB),
+    # migrating would silently drop that column's data — fail loudly instead.
+    expected = ["id", "seq", "ts", "kind", "payload_json", "song_id",
+                "clip_id", "actor", "reason", "request_id"]
+    actual = [
+        r["name"]
+        for r in conn.execute("PRAGMA table_info(events)").fetchall()
+    ]
+    if sorted(actual) != sorted(expected):
+        raise RuntimeError(
+            "events FK migration refused: the legacy table's columns "
+            f"({actual}) don't match the expected 10 ({expected}). "
+            "Migrating would silently drop data in the unexpected "
+            "column(s) — extend _migrate_events_drop_fks to carry them."
+        )
     with transaction(conn):
         conn.execute(
             """CREATE TABLE events_new (
@@ -520,6 +536,17 @@ def transaction(conn: sqlite3.Connection) -> Iterator[None]:
     `id(conn)` (sqlite3.Connection doesn't permit attribute assignment); the
     per-thread backing keeps the counter from interleaving across threads.
 
+    **BEGIN IMMEDIATE, not DEFERRED** (EVT-6H9R hardening): every mutator
+    reads before it writes (validation SELECTs, `_emit`'s MAX(seq)). Under a
+    DEFERRED BEGIN in WAL, another connection committing between that read
+    and the first write makes the read-to-write snapshot upgrade fail
+    IMMEDIATELY with "database is locked" — `busy_timeout` is never consulted
+    for a stale-snapshot upgrade. IMMEDIATE takes the write lock at BEGIN, so
+    a concurrent writer queues on the busy handler instead (the MCP-server +
+    build.py two-writer topology). `transaction()` is write-path-only, so
+    the earlier lock costs no read concurrency (WAL readers never block on
+    the writer).
+
     Usage:
         with transaction(conn):
             conn.execute(...)
@@ -528,32 +555,48 @@ def transaction(conn: sqlite3.Connection) -> Iterator[None]:
     key = id(conn)
     depth = _TRANSACTION_DEPTH.get(key, 0)
     if depth == 0:
-        conn.execute("BEGIN")
+        conn.execute("BEGIN IMMEDIATE")
         _TRANSACTION_DEPTH[key] = 1
+        # The depth counter is popped in a `finally`: if COMMIT (or even
+        # ROLLBACK) itself raises, a leaked depth>=1 would make every later
+        # mutator on this connection SAVEPOINT into a transaction nobody
+        # commits — silent write loss. With the pop guaranteed, a broken
+        # connection fails LOUDLY on its next BEGIN instead.
         try:
-            yield
-        except BaseException:  # prawduct:ok-broad-except
-            # Roll back on ANY exception — including KeyboardInterrupt / SystemExit /
-            # asyncio.CancelledError — then re-raise. The DB must not be left in a
-            # half-written state because the user hit Ctrl-C mid-batch.
-            conn.execute("ROLLBACK")
+            try:
+                yield
+            except BaseException:  # prawduct:ok-broad-except
+                # Roll back on ANY exception — including KeyboardInterrupt /
+                # SystemExit / asyncio.CancelledError — then re-raise. The DB
+                # must not be left in a half-written state because the user
+                # hit Ctrl-C mid-batch.
+                conn.execute("ROLLBACK")
+                raise
+            try:
+                conn.execute("COMMIT")
+            except BaseException:  # prawduct:ok-broad-except
+                # A failed COMMIT (e.g. disk I/O error) leaves the
+                # transaction open — roll it back so the connection stays
+                # usable, then surface the COMMIT failure.
+                conn.execute("ROLLBACK")
+                raise
+        finally:
             _TRANSACTION_DEPTH.pop(key, None)
-            raise
-        conn.execute("COMMIT")
-        _TRANSACTION_DEPTH.pop(key, None)
     else:
         # Nested call — use a SAVEPOINT so inner failures don't poison the
         # outer transaction. SAVEPOINT names must be unique within a
-        # connection; depth makes them so.
+        # connection; depth makes them so. Depth restore mirrors the
+        # outermost branch's finally (a failed RELEASE must not leak depth).
         sp = f"sp_{depth}"
         conn.execute(f"SAVEPOINT {sp}")
         _TRANSACTION_DEPTH[key] = depth + 1
         try:
-            yield
-        except BaseException:  # prawduct:ok-broad-except
-            conn.execute(f"ROLLBACK TO SAVEPOINT {sp}")
+            try:
+                yield
+            except BaseException:  # prawduct:ok-broad-except
+                conn.execute(f"ROLLBACK TO SAVEPOINT {sp}")
+                conn.execute(f"RELEASE SAVEPOINT {sp}")
+                raise
             conn.execute(f"RELEASE SAVEPOINT {sp}")
+        finally:
             _TRANSACTION_DEPTH[key] = depth
-            raise
-        conn.execute(f"RELEASE SAVEPOINT {sp}")
-        _TRANSACTION_DEPTH[key] = depth

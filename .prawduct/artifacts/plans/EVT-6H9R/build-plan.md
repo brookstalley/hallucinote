@@ -21,7 +21,9 @@ both rows of a partially-applied multi-statement mutator).
   batches in `transaction(conn)` (apply_pull_results etc.) keep their batch
   atomicity — decorated mutators inside become savepoints.
 - Applied to EVERY state-writing public mutator (plus `_delete_track`) across
-  the domain modules. NOT applied to: pure helpers (`provenance_metadata`,
+  the domain modules — 59 decorated functions (Critic AST-verified; an
+  earlier summary said 55, an arithmetic slip). NOT applied to: pure helpers
+  (`provenance_metadata`,
   `performed_automation_fingerprint`, `_normalize_note`, `_latest_actor_for`),
   and the `request()` / `build_session()` context managers (their inner
   `create_request` / `close_request` calls are themselves decorated; a whole
@@ -129,6 +131,42 @@ replay-grade — `notes_inserted` / `clip_notes_replaced` / `note_updated` /
 `notes_deleted` / `notes_bulk_updated` carry ids and counts but not note
 content, and `request_created` omits prompt_text/metadata. The smoke test
 pins these as NOT_YET_FOLDED with reasons; payload enrichment is flip work.
+
+## Critic round (post-chunk-3): 2 WARNINGs + 2 NOTEs, all landed
+
+1. **WARNING — SQLITE_BUSY snapshot-upgrade exposure.** `transaction()`'s
+   plain DEFERRED `BEGIN` + every mutator's read-before-write meant that in
+   WAL, a second connection committing between the read and the write made
+   the snapshot upgrade fail IMMEDIATELY with "database is locked"
+   (busy_timeout is not consulted for a stale-snapshot upgrade; the
+   MCP-server + build.py two-writer topology is exactly this shape). FIX:
+   `BEGIN IMMEDIATE` at depth 0 — the write lock is taken at BEGIN, so
+   concurrent writers queue on the busy handler instead of one side failing
+   fast. Zero read-concurrency cost (transaction() is write-path-only; WAL
+   readers never block on the writer). Regression test
+   (`test_concurrent_writer_queues_instead_of_failing_fast`): a hook inside
+   conn A's mutator proves conn B's write gets BUSY (A holds the lock from
+   BEGIN) while A's mutator completes — under the old DEFERRED behavior B's
+   write succeeded and A's write was the one that failed. Deterministic (B
+   uses a 50 ms busy_timeout), no sleeps.
+2. **WARNING — `_emit` accepted arbitrary kind strings.** An inline-string
+   kind escaped both exhaustiveness guards (exactly how "song_content_reset"
+   drifted). FIX: `events.py` now derives `KINDS` (frozenset of every
+   UPPER_CASE string constant — adding a constant IS the registration step)
+   and `_emit` rejects any kind not in it. Grep confirmed no remaining
+   non-constant emitters (the one known case was fixed in chunk 3).
+3. **NOTE — depth-counter leak on COMMIT failure.** If COMMIT raised, the
+   `_TRANSACTION_DEPTH` pop never ran → the connection was stuck at
+   depth>=1 and every later mutator SAVEPOINTed into a transaction nobody
+   commits (silent write loss). FIX: pop moved to a `finally`; a failed
+   COMMIT also ROLLBACKs so the connection stays usable. The nested branch
+   got the symmetric `finally` depth-restore. Tested with a stub connection
+   whose COMMIT raises.
+4. **NOTE — migration copy list frozen at 10 columns.** A legacy `events`
+   table carrying an unexpected extra column would have its data silently
+   dropped by the recreate. FIX: `_migrate_events_drop_fks` asserts
+   `PRAGMA table_info(events)` matches the expected 10 names and refuses
+   loudly otherwise. Tested with a rogue-column legacy DB.
 
 ## Test-change log (rationale, per the tests-are-contracts rule)
 

@@ -119,6 +119,20 @@ ABLETON_LINK_SET = "ableton_link_set"
 # ableton_index no longer matches a Live entity in the fresh probe.
 ABLETON_LINK_REMOVED = "ableton_link_removed"
 
+# EVT-6H9R: the closed set of sanctioned event kinds — every UPPER_CASE
+# string constant above. `_emit` validates against this, so an inline-string
+# kind (how "song_content_reset" once drifted past the constants convention)
+# fails at the emit site instead of silently escaping the replay smoke
+# test's exhaustive classification. Derived, not hand-maintained: adding a
+# constant above is the whole registration step. Keep this ABOVE ACTORS so
+# the globals() scan reads as "everything defined so far" (non-str values
+# would be filtered anyway).
+KINDS = frozenset(
+    value
+    for name, value in globals().items()
+    if name.isupper() and isinstance(value, str)
+)
+
 # Valid actor values for events.actor / requests.actor.
 # 'build' marks rows created/updated by a song's build.py running under
 # M.build_session (W12-A). The build-session uses this actor to discriminate

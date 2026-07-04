@@ -172,6 +172,16 @@ def _emit(
     """
     if actor not in E.ACTORS:
         raise ValueError(f"invalid actor {actor!r}; expected one of {sorted(E.ACTORS)}")
+    # EVT-6H9R: kinds are a closed set — every kind must be a constant in
+    # hallucinote.db.events (the only sanctioned source). Inline strings used
+    # to slip past both the constants convention and the replay smoke test's
+    # exhaustive classification; now they fail at the emit site.
+    if kind not in E.KINDS:
+        raise ValueError(
+            f"unknown event kind {kind!r}: add a constant to "
+            "hallucinote/db/events.py (the sanctioned source of kinds) and "
+            "emit that — inline kind strings are not accepted"
+        )
     event_id = _uuid()
     seq = conn.execute("SELECT COALESCE(MAX(seq), 0) + 1 FROM events").fetchone()[0]
     conn.execute(

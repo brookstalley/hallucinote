@@ -186,3 +186,17 @@ def test_deleting_song_no_longer_nulls_event_lineage(conn):
         "SELECT song_id FROM events ORDER BY seq"
     ).fetchall()
     assert rows and all(r["song_id"] == song for r in rows)
+
+
+def test_migration_refuses_unexpected_legacy_columns(tmp_path):
+    """The copy list names exactly the 10 legacy columns; a legacy table
+    carrying anything else must fail LOUDLY instead of silently dropping
+    that column's data during the recreate."""
+    db_path = tmp_path / "rogue.db"
+    _make_legacy_db(db_path)
+    raw = sqlite3.connect(db_path)  # test-only surgery on the legacy shape
+    raw.execute("ALTER TABLE events ADD COLUMN rogue_notes TEXT")
+    raw.commit()
+    raw.close()
+    with pytest.raises(RuntimeError, match="rogue_notes|don't match"):
+        init_db(db_path)

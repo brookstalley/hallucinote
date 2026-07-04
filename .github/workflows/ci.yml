@@ -33,10 +33,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # uv pinned to the release the gates were verified against locally, so a
+      # future uv release can't flake `uv lock --check` independently of the
+      # repo. NOTE: 3.12 is the only interpreter CI exercises; requires-python
+      # floor is 3.10 (mypy's python_version=3.10 covers the floor statically,
+      # but no 3.10/3.11 runtime leg runs here — a deliberate single-runner
+      # trade-off).
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          version: "0.11.8"
           python-version: "3.12"
 
       - name: Lock check (uv.lock is current)

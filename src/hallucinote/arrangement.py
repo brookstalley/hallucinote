@@ -249,7 +249,11 @@ class Arrangement:
                     f"harmonic_plan() was registered on the arrangement"
                 )
             return self._harmonic_plan.slice(offset_beats, length_beats)
-        assert not isinstance(p, str)  # "inherit" handled above; other strs are invalid
+        if isinstance(p, str):
+            raise ValueError(
+                f"section {s.name!r} has invalid progression {p!r} — the only "
+                f"string form is 'inherit'"
+            )
         return p
 
     @staticmethod

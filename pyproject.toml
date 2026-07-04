@@ -131,7 +131,19 @@ mypy_path = "src:hallucinote_mcp/src"
 explicit_package_bases = true
 # Floor of requires-python — flags 3.11+-only stdlib/syntax use.
 python_version = "3.10"
-# librosa / pyloudnorm / pyroomacoustics / soundfile / mcp ship no stubs.
+
+# Stub-less third-party imports, ignored BY NAME — deliberately NOT a global
+# ignore_missing_imports, which would silently type any future unresolved
+# import as Any. Adding a dependency without stubs => list it here, on purpose.
+# (numpy, librosa, and mcp ship py.typed and are NOT listed — they resolve.)
+[[tool.mypy.overrides]]
+module = [
+    "pyloudnorm.*",      # no py.typed / stubs package
+    "pyroomacoustics.*", # no py.typed (used only for .experimental.rt60)
+    "scipy.*",           # scipy ships no complete stubs; scipy-stubs not a dep
+    "soundfile",         # no py.typed
+    "tomli",             # 3.10-only backfill; absent from the 3.11+ env mypy runs in
+]
 ignore_missing_imports = true
 
 # Optional-narrowing debt clusters: modules whose guards (validated wire

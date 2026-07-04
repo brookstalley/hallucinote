@@ -158,7 +158,6 @@ def test_fraction_in_unit_interval():
 
 
 def test_perf_twelve_stems_within_budget():
-    np.random.default_rng(1)
     stems = []
     for i in range(12):
         f = 100.0 * (i + 1)

@@ -105,6 +105,14 @@ decides). So "code vs snapshot for the same chain" is **not** a new conflict to
 invent — it's the existing actor precedence, applied to the mix layer. This is also
 the seam the future event-store flip rides on.
 
+> **Correction (2026-07-04, BAK-7D2V):** the paragraph above overclaims. Actor
+> precedence cannot arbitrate **pull vs snapshot-replay**, because *both* write as
+> `actor='sync'` — so a `build.py` re-run's `replay_capture` silently re-asserted
+> stale snapshot values over newer pulled live edits (the pull-durability hole).
+> The fix (a `captured_at`-anchored replay guard + the enforced pull→bake→build
+> staging contract) lives in
+> [`plans/BAK-7D2V/design.md`](./plans/BAK-7D2V/design.md).
+
 ---
 
 ## Pressure test — five real workflows

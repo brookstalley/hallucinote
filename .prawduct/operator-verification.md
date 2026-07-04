@@ -15,6 +15,32 @@ pending entries when `operator_verification_required: true`.
 
 ---
 
+## BAK-7D2V — pull-durability guard end-to-end in real Live (2026-07-04) — PENDING
+
+Headless-verified (guard tests incl. the pull_cli-apply audit scenario + the
+nested-chain-delete contract test), but the full pull→refuse→bake→pass loop has
+not run against real Live. Engine-side only (`capture.py`, scaffold, docs) — **no
+fingerprint flip, no re-vendor needed**. Design + refuse/warn matrix:
+`.prawduct/artifacts/plans/BAK-7D2V/design.md`.
+
+**Check (any song with a stamped `captured_at` snapshot — re-capture first if
+the song's snapshot predates BAK-7D2V — Ableton open, linked session):**
+1. Dial a knob in Live (e.g. a device parameter or a track fader).
+2. `/ableton-pull` the matching domain (`device-parameters` / `mix-state`) →
+   confirm the mutation applied (mutations ≥ 1).
+3. Run `python songs/<slug>/build.py` → expect **`StaleSnapshotError` refusal**
+   naming the pulled event(s), `/song-snapshot`, and `--force-replay` /
+   `allow_stale_snapshot=True`. Confirm the pulled value is untouched in the DB.
+4. Run `/song-snapshot` (confirm the diff shows the knob; overwrite) → run
+   `build.py` again → expect **clean pass** and the knob value surviving in the
+   DB (the bake disarmed the guard).
+5. `--force-replay` path: dial + pull again (guard re-armed), then
+   `python songs/<slug>/build.py --force-replay` → expect the REVERTING
+   UserWarning and the DB back at the snapshot value; a plain `build.py` after
+   that refuses again (forcing does not disarm — re-capture does).
+6. Legacy path (optional): on a song whose snapshot has no `captured_at`, pull
+   a knob and build → expect the warn-and-proceed path, not a refusal.
+
 ## MCP-1V8K — device load focuses Session view before browser.load_item (2026-06-23) — PASSED (agent-run live, 2026-06-23)
 
 **Verified live (agent-run, this session, Ableton Live 12 Suite, default set).** Re-vendored the

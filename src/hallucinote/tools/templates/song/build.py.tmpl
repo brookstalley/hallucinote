@@ -8,6 +8,10 @@ Section bar layout (1-based, 4/4 throughout — adjust if non-4/4):
 Run:
     python songs/{{slug}}/build.py            # state-converger: re-run is no-op if nothing changed
     python songs/{{slug}}/build.py --reset    # drop + rebuild from scratch
+    python songs/{{slug}}/build.py --force-replay
+        # consciously revert live edits pulled via /ableton-pull that are newer
+        # than captured_session.json (replay otherwise refuses; the durable fix
+        # is a re-capture via /song-snapshot — see StaleSnapshotError)
 """
 from __future__ import annotations
 
@@ -37,7 +41,7 @@ SNAPSHOT_PATH = Path(__file__).parent / "captured_session.json"
 # ---------------------------------------------------------------------------
 
 
-def build(reset: bool = False) -> str:
+def build(reset: bool = False, force_replay: bool = False) -> str:
     """Build the song. Returns the song_id (UUID hex).
 
     State-converger (W12-A): re-running with no source change is a no-op (zero net
@@ -58,6 +62,10 @@ def build(reset: bool = False) -> str:
             song_title="{{title}}",
             song_key={{key_literal}},
             actor="sync", reason="initial capture replay",
+            # BAK-7D2V: replay refuses (StaleSnapshotError) when the DB holds
+            # /ableton-pull edits newer than the snapshot; --force-replay is
+            # the conscious revert, /song-snapshot the durable fix.
+            allow_stale_snapshot=force_replay,
         )
 
         # Score-half: tempo, meter, sections, cue points.
@@ -176,5 +184,6 @@ def melody_report() -> MelodyReport:
 
 if __name__ == "__main__":
     reset = "--reset" in sys.argv
-    song_id = build(reset=reset)
+    force_replay = "--force-replay" in sys.argv
+    song_id = build(reset=reset, force_replay=force_replay)
     report(song_id)

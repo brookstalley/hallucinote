@@ -29,6 +29,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from hallucinote.capture import utc_now_eventlike
+
 
 # ---------------------------------------------------------------------------
 # Validation
@@ -203,6 +205,10 @@ def render_template(
         "section_table": section_table(req),
         "section_names_literal": section_names_literal,
         "slug_python": slug_to_python(req.slug),
+        # BAK-7D2V: stamp the synthetic snapshot with its authoring time so a
+        # brand-new song gets the exact (refusing) pull-durability guard from
+        # day one instead of the legacy warn-only path.
+        "captured_at": utc_now_eventlike(),
     }
     out = template
     for k, v in sub.items():

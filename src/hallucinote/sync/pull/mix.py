@@ -93,7 +93,8 @@ def plan_pull_mix(
         if track_at is None:
             plan.warn(
                 f"track {t['name']!r} ({t['id']}) not linked in session — "
-                "push it via plan_push_clip first, then re-run pull"
+                "push it via the tracks phase (plan_push_song_tracks) first, "
+                "then re-run pull"
             )
             continue
         any_linked_track = True

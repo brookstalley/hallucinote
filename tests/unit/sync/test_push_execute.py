@@ -359,7 +359,7 @@ def test_execute_track_link_visible_to_clip_phase_mid_run(
     track link must ALREADY be visible in the DB — otherwise plan_push_clips
     would have raised on the unlinked track. Catches a hypothetical regression
     where execute reads ableton_links once at start and never refreshes
-    (e.g. a refactor that pre-builds all thirteen plans before dispatching)."""
+    (e.g. a refactor that pre-builds all fourteen plans before dispatching)."""
     observed: list[bool] = []
     base_send = _make_send_fn()
 
@@ -2526,3 +2526,142 @@ def test_orphan_param_hint_silent_on_non_orphan_failures():
              err_msg="not found", parameter_name=None) is None
     assert f(tool="ableton_device", action="set_parameter",
              err_msg=None, parameter_name="X") is None
+
+
+# ---------------------------------------------------------------------------
+# SYN-8Q3F (c): apply-layer contract drift is a CONTROLLED halt, not a traceback
+# ---------------------------------------------------------------------------
+
+
+def _one_phase_with_novel_key(monkeypatch):
+    """Monkeypatch plan_push_song to a single phase whose planner emits a
+    ToolCall with a key kind NO apply table declares — the runtime shape of the
+    twice-shipped unknown-kind bug class (device_param_override 2026-06-18,
+    device_chain_props 2026-06-20). The wire call succeeds; the REAL
+    apply_push_results then raises its fail-loud ValueError."""
+    from hallucinote.sync import push
+
+    def fake_plan_push_song(conn, *, song_id, session_id, **kwargs):
+        def plan_fn():
+            plan = push.PushPlan()
+            plan.add(push.ToolCall(
+                tool="ableton_device",
+                args={"action": "set_parameter"},
+                key="warp_core:xyz",
+                purpose="novel key kind the apply layer does not know",
+            ))
+            return plan
+        return [push.PushPhase(
+            name="devices", plan_fn=plan_fn, description="novel-kind fixture",
+        )]
+
+    monkeypatch.setattr(push, "plan_push_song", fake_plan_push_song)
+
+
+def test_unknown_result_kind_halts_phase_controlled_not_traceback(
+    conn, song, session, state_dir, monkeypatch,
+):
+    """A genuinely-unknown result key kind must take the DELIBERATE path:
+    phase HALTED with the apply layer's teaching message in the errors file,
+    terminal state file written, request closed 'partial', EXIT_PARTIAL —
+    never an escaping ValueError (pre-SYN-8Q3F this was a raw traceback with
+    no state file and the request row left open; contract artifact V4)."""
+    from hallucinote.db import queries as Q
+
+    _one_phase_with_novel_key(monkeypatch)
+
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=_make_send_fn(),
+    )  # must NOT raise
+
+    assert result.outcome == "partial"
+    assert result.exit_code == push_execute.EXIT_PARTIAL
+    assert result.phase_halted == "devices"
+    halted = [p for p in result.phases if p.status == "halted"]
+    assert [p.name for p in halted] == ["devices"]
+
+    # Terminal state file written (the always-write-state contract held).
+    state = json.loads((state_dir / ".last-push-state.json").read_text())
+    assert state["outcome"] == "partial"
+    assert state["phase_halted"] == "devices"
+
+    # Errors file carries the apply-layer teaching message + the drift hint.
+    errors = json.loads((state_dir / ".last-push-errors.json").read_text())
+    apply_recs = [e for e in errors["errors"] if e["tool"] == "apply_push_results"]
+    assert len(apply_recs) == 1
+    assert "unknown push result key kind 'warp_core'" in apply_recs[0]["error"]
+    assert "KNOWN_RESULT_KEY_KINDS" in apply_recs[0]["hint"]
+
+    # The request row closed (outcome mirrors the halt) — not left open.
+    req = Q.get_latest_request_for_song(conn, song, kind="push")
+    assert req["outcome"] == "partial"
+
+
+def test_unknown_result_kind_records_nothing_for_the_batch(
+    conn, song, session, state_dir, monkeypatch,
+):
+    """The apply transaction rolls the WHOLE batch back on contract drift, so
+    no link row from the halted batch may survive (a half-recorded batch would
+    make the next push plan against phantom links)."""
+    _one_phase_with_novel_key(monkeypatch)
+    push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=_make_send_fn(),
+    )
+    links = Q.get_ableton_links_for_session(conn, session)
+    assert list(links) == []
+
+
+def test_known_result_key_kinds_is_the_union_of_the_apply_tables():
+    """KNOWN_RESULT_KEY_KINDS is the ONE registry (SYN-8Q3F): exactly the two
+    dispatch tables plus the dedicated perform_batch branch — so the static
+    emitted-kind guard, the apply dispatch, and the executor hint can never
+    disagree about what 'known' means."""
+    from hallucinote.sync.push import plan
+
+    assert plan.KNOWN_RESULT_KEY_KINDS == (
+        frozenset(plan._LINK_KINDS) | plan._ACK_ONLY_KINDS | {"perform_batch"}
+    )
+    # Adding an enum-member-equivalent (a new kind) without declaring it can't
+    # pass: the registry is DERIVED from the tables, and the static guard in
+    # test_push.py checks every planner-emitted kind against those tables.
+
+
+def test_errors_file_write_failure_still_closes_request(
+    conn, song, session, tiny_song, state_dir, monkeypatch,
+):
+    """SYN-8Q3F review W1: the terminal errors-file write runs before
+    close_request; if it raises (disk full / permissions), the request row must
+    STILL close with the push's outcome and the terminal state file must
+    already be on disk — an errors-file write failure must not reproduce the
+    V4 open-request symptom. The write failure itself still propagates (a
+    broken state_dir is operator-actionable)."""
+    import os as _os
+
+    real_replace = _os.replace
+
+    def failing_replace(src, dst, *a, **kw):
+        if str(dst).endswith(".last-push-errors.json"):
+            raise OSError(28, "No space left on device (simulated)")
+        return real_replace(src, dst, *a, **kw)
+
+    monkeypatch.setattr(push_execute.os, "replace", failing_replace)
+
+    # A per-call failure guarantees error_records is non-empty, so the
+    # errors-file write path (the failing one) is exercised.
+    bad_send = _make_send_fn(fail_keys={"ableton_clip:create"})
+    with pytest.raises(OSError):
+        push_execute.execute_push(
+            conn=conn, song_id=song, session_id=session,
+            state_dir=state_dir, send_fn=bad_send,
+        )
+
+    # The request row is CLOSED with the halt outcome, not left open.
+    req = Q.get_latest_request_for_song(conn, song, kind="push")
+    assert req["outcome"] == "partial"
+
+    # The terminal state file was flushed before the failing write.
+    state = json.loads((state_dir / ".last-push-state.json").read_text())
+    assert state["outcome"] == "partial"
+    assert state["current_phase"] is None  # terminal flush, not a mid-run one

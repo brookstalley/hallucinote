@@ -38,8 +38,8 @@ def plan_push_mix(
 
     Pre-conditions (planner warns; doesn't fix):
       - Tracks not yet linked in this session are flagged. Track creation
-        lives in ``plan_push_clip``; the agent typically pushes clips first
-        to create+link tracks, then pushes mix state.
+        lives in the ``tracks`` phase (``plan_push_song_tracks``, W3-C),
+        which runs before ``mix`` in the master push order.
       - Unlinked returns are emitted as ``ableton_return(action='create')``
         with the recorded name; apply records the new return_index when the
         call returns.
@@ -88,7 +88,8 @@ def plan_push_mix(
         if track_at is None:
             plan.warn(
                 f"track {t['name']!r} ({t['id']}) not linked in session — "
-                "create it via plan_push_clip first, then re-run plan_push_mix"
+                "create it via the tracks phase (plan_push_song_tracks) first, "
+                "then re-run plan_push_mix"
             )
             continue
 

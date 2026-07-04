@@ -44,7 +44,14 @@ _DEVICE_PARAM_KEY_PREFIX = "device_parameter:"
 def _floats_equal(a: float, b: float, *, rel: float = 1e-6, abs_: float = 1e-6) -> bool:
     """Live parameters are 32-bit floats; compare with a small absolute +
     relative tolerance so capture/round-trip representation noise doesn't read
-    as a change."""
+    as a change.
+
+    SYN-8Q3F: deliberately TIGHTER than the pull diff engine's 1e-3
+    (``pull/_core._FLOAT_EPS``) — a false EQUAL here silently skips a dialed
+    write (a wrong mix); pull's loose tolerance only avoids DB churn. The
+    directed invariant push-equal ⟹ pull-no-drift (per channel) is pinned by
+    ``tests/unit/sync/test_diff_float_semantics.py``; change either tolerance
+    only through that test. Rationale: sync-boundary-contract.md §Diff engines."""
     return abs(a - b) <= max(abs_, rel * max(abs(a), abs(b)))
 
 

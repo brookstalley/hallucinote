@@ -453,6 +453,31 @@ def test_restamp_disarms_guard_on_empty_diff(conn, monkeypatch):
         _replay(conn, snap)
 
 
+def test_pull_cli_execute_notice_fires_on_real_run_not_dry_run(
+    conn, db_path, tmp_path, capsys, monkeypatch,
+):
+    """The `execute` path: a real run stages the mix change and prints the
+    notice; `--dry-run` rolls the request + events back, so nothing is staged
+    and the notice must stay silent (the `if not args.dry_run` guard)."""
+    snap = _snapshot()
+    song_id, session_id, track_id = _built_song(conn, snap)
+    canned = [{"key": f"track_info:{track_id}", "ok": True, "tool": "probe",
+               "result": {"volume": 0.9, "panning": 0.0}}]
+    monkeypatch.setattr(pull_cli, "_execute_plan_via_mcp", lambda plan, **kw: canned)
+
+    rc = pull_cli.main([
+        "execute", "mix-state", session_id, "--db", str(db_path), "--dry-run",
+    ])
+    assert rc == 0
+    assert "mix-layer change" not in capsys.readouterr().err
+    assert Q.get_track(conn, track_id)["volume"] == pytest.approx(0.5)  # rolled back
+
+    rc = pull_cli.main(["execute", "mix-state", session_id, "--db", str(db_path)])
+    assert rc == 0
+    assert "mix-layer change" in capsys.readouterr().err
+    assert Q.get_track(conn, track_id)["volume"] == pytest.approx(0.9)
+
+
 def test_compile_snapshot_stamps_captured_at_in_events_ts_shape(conn):
     snap = compile_snapshot(
         session_info={"tempo": 120.0, "signature": "4/4",

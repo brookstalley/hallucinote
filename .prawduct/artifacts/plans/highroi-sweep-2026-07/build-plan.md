@@ -81,9 +81,16 @@ kind-set audit all locked in Chunk 1). No open design questions remain.
   `/song-snapshot` re-stamp offer + guard-disarmed statement; `/song-pick-instruments`
   + `docs/song-workflow.md` contract wording. BAK operator-verification extended
   (checks 7–8) — Live-gated, not built.
-- **Remaining before done:** commit Chunk C, run `/prawduct:critic cumulative`
-  (the PR gate), then reflection + backlog close. NEXT: `/prawduct:pr` (two PRs
-  recommended: `chore/changelog` = A; `feat/bak-7d2v` = B+C) when the user asks.
+
+**DONE — all governance complete (2026-07-04).** Branch `feat/highroi-sweep-2026-07`,
+HEAD `8a698c8`, 5 commits, working tree clean. Full suite **4511 passed / 2 skipped**
+(evidence re-stamped). Cumulative Critic (`a8cab6d`, base develop) + verify-resolutions
+(`59e4b23`) both blocking-free — PR gate satisfied; last delta since the chain record
+is a doc-only backlog dedup (`8a698c8`, auto-skipped by gates). All 3 backlog items
+shipped + archived on-branch. Reflection captured. **NEXT (user-triggered):**
+`/prawduct:pr` — two PRs recommended (`chore/changelog` = Chunk A; `feat/bak-7d2v` =
+Chunks B+C), or one if preferred. Then the Live operator-verification (BAK-7D2V
+checks 7–8 in operator-verification.md) when a session is attended.
 
 ---
 

@@ -71,8 +71,10 @@ for hand/first captures, but the deterministic in-code path is the default.
 """
 from __future__ import annotations
 
+import re
 import sqlite3
 import warnings
+from datetime import datetime, timezone
 from typing import Any
 
 from hallucinote.analyzer_identity import is_analyzer_device
@@ -93,6 +95,171 @@ SNAPSHOT_SCHEMA_VERSION = 1
 # Track types accepted in snapshot["tracks"][n]["type"]; mapped 1:1 to
 # `tracks.kind` in the DB. Unknown values raise; the snapshot is authoritative.
 _VALID_TRACK_TYPES = frozenset({"midi", "audio", "group"})
+
+
+# ---------------------------------------------------------------------------
+# BAK-7D2V — pull-durability guard (replay side)
+# ---------------------------------------------------------------------------
+# A `/ableton-pull` apply writes live edits into the (regenerable, git-ignored)
+# DB but never into `captured_session.json` — so the next build's
+# `replay_capture` would re-assert the stale snapshot over them, silently.
+# Both writers use actor='sync', so actor precedence can't see the conflict;
+# the reliable discriminator is provenance: pull applies run under a
+# `requests.kind='pull'` row and every event they emit carries that
+# request_id + song_id + ts. `replay_capture` refuses (StaleSnapshotError)
+# when such events are NEWER than the snapshot's `captured_at` stamp.
+# Design + refuse/warn matrix: .prawduct/artifacts/plans/BAK-7D2V/design.md.
+
+# Event kinds for state replay_capture re-asserts from the snapshot. A pulled
+# event OUTSIDE this set (clip-notes, envelopes, tempo/cue, routing, tuning,
+# ...) is state replay cannot revert, so it never arms the guard — this is
+# what keeps ordinary build.py-staging pulls from tripping it.
+#
+# Coverage contract (audited 2026-07-04; method + full table in
+# .prawduct/artifacts/plans/BAK-7D2V/design.md §"Kind-set audit"): for EVERY
+# mutator any pull apply handler calls (grep `M\.` over sync/pull/), the event
+# kind(s) it emits are either in this tuple (replay re-asserts that state) or
+# provably outside replay's write surface. Cascade-deleting mutators matter
+# most: delete_device_chain cascades its nested devices with NO per-device
+# events, so `device_chain_deleted` is the ONLY signal for a pulled
+# chain-removal that _replay_rack_chains would recreate. Re-run the audit when
+# adding a pull apply handler or extending replay's write surface.
+_REPLAY_ASSERTED_EVENT_KINDS: tuple[str, ...] = (
+    "song_created", "song_updated",
+    "track_created", "track_updated", "track_mixer_set",
+    "return_created", "return_updated",
+    "send_set", "send_removed",
+    "device_chain_created", "device_chain_deleted", "device_chain_props_set",
+    "device_created", "device_deleted",
+    "device_parameter_set", "device_parameter_removed",
+    "device_param_overrides_replaced", "device_sidechain_set",
+    "drum_pad_mappings_replaced",
+)
+
+# `captured_at` must be EXACTLY the events.ts shape
+# (strftime('%Y-%m-%dT%H:%M:%fZ'), i.e. YYYY-MM-DDTHH:MM:SS.mmmZ) for the
+# lexicographic comparison against event rows to be chronological. Anything
+# else — including an ISO stamp with a timezone OFFSET ("...T14:34:56+02:00",
+# which can compare up to +14h ahead of the equivalent UTC instant and would
+# silently defeat the guard) — takes the conservative legacy/warn path.
+_CAPTURED_AT_SHAPE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z")
+
+
+class StaleSnapshotError(RuntimeError):
+    """`replay_capture` refused to run: the DB holds pulled live edits newer
+    than the snapshot's `captured_at`, which the replay would silently revert.
+    The durable fix is a re-capture — `/song-snapshot` (diff + confirmed
+    overwrite of the canonical file), or `capture_cli execute` + copying the
+    `.refresh.json` it writes over `captured_session.json`. The
+    conscious-revert override is `allow_stale_snapshot=True`
+    (`--force-replay` in scaffolded build.py)."""
+
+
+def utc_now_eventlike() -> str:
+    """UTC now in the exact `events.ts` shape (`YYYY-MM-DDTHH:MM:SS.mmmZ`) so
+    string comparison against event rows is chronological comparison."""
+    now = datetime.now(timezone.utc)
+    return now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z"
+
+
+def _pulled_rows_newer_than(
+    conn: sqlite3.Connection, *, song_id: str, cutoff_ts: str | None,
+) -> list[sqlite3.Row]:
+    """Events from `kind='pull'` requests on this song whose kind replay
+    re-asserts, optionally restricted to those newer than ``cutoff_ts``.
+    Dry-run pulls roll back their request + events, so they leave no rows."""
+    placeholders = ", ".join("?" for _ in _REPLAY_ASSERTED_EVENT_KINDS)
+    sql = (
+        "SELECT e.seq, e.ts, e.kind FROM events e "
+        "JOIN requests r ON r.id = e.request_id "
+        "WHERE r.kind = 'pull' AND e.song_id = ? "
+        f"AND e.kind IN ({placeholders})"
+    )
+    params: list[Any] = [song_id, *_REPLAY_ASSERTED_EVENT_KINDS]
+    if cutoff_ts is not None:
+        sql += " AND e.ts > ?"
+        params.append(cutoff_ts)
+    sql += " ORDER BY e.ts"
+    return conn.execute(sql, params).fetchall()
+
+
+def _guard_stale_snapshot(
+    conn: sqlite3.Connection,
+    snapshot: dict[str, Any],
+    *,
+    song_id: str,
+    song_name: str,
+    allow_stale_snapshot: bool,
+) -> None:
+    """Refuse (or warn, per the BAK-7D2V matrix) before replay mutates anything.
+
+    Matrix:
+      * no pulled replay-asserted events        -> silent pass
+      * stamped snapshot, newer pulled events   -> raise StaleSnapshotError
+      * stamped + allow_stale_snapshot=True     -> UserWarning, proceed (revert)
+      * legacy snapshot (no/unparseable stamp)
+        with ANY pulled replay-asserted events  -> UserWarning, proceed
+        (no ordering evidence; refusing would permanently false-alarm every
+        previously-pulled song — the warning funnels to a stamping re-capture)
+    """
+    captured_at = snapshot.get("captured_at")
+    if not (isinstance(captured_at, str) and _CAPTURED_AT_SHAPE.fullmatch(captured_at)):
+        captured_at = None
+    rows = _pulled_rows_newer_than(conn, song_id=song_id, cutoff_ts=captured_at)
+    if not rows:
+        return
+
+    newest = rows[-1]
+    sample = ", ".join(f"{r['kind']} at {r['ts']} (seq {r['seq']})" for r in rows[-3:])
+    if captured_at is None:
+        warnings.warn(
+            f"replay_capture: snapshot for song {song_name!r} has no "
+            f"`captured_at` stamp, and the DB holds {len(rows)} pulled live "
+            f"edit(s) from `/ableton-pull` (latest: {sample}). Whether this "
+            "replay reverts them cannot be determined — if you pulled by-ear "
+            "work after this snapshot was captured, it is being overwritten "
+            "NOW. Re-capture to bake live edits durably and stamp the "
+            "snapshot so this check becomes exact: run `/song-snapshot` "
+            "(probe -> diff -> confirmed overwrite of captured_session.json), "
+            "or `python -m hallucinote.tools.capture_cli execute --song "
+            "<slug>` — note that writes captured_session.refresh.json, NOT "
+            "the canonical file: review/diff it, then copy it over "
+            "captured_session.json yourself. (A legacy file is never "
+            "auto-stamped — that would silently defeat the check.)",
+            UserWarning,
+            stacklevel=3,
+        )
+        return
+    if allow_stale_snapshot:
+        warnings.warn(
+            f"replay_capture: allow_stale_snapshot=True — REVERTING {len(rows)} "
+            f"pulled live edit(s) on song {song_name!r} newer than the "
+            f"snapshot ({captured_at}); latest: {sample}. This check fires "
+            "again on every build until the snapshot is re-captured.",
+            UserWarning,
+            stacklevel=3,
+        )
+        return
+    raise StaleSnapshotError(
+        f"replay_capture: REFUSING to replay a stale snapshot onto song "
+        f"{song_name!r}. The DB holds {len(rows)} live edit(s) pulled from "
+        f"Ableton via `/ableton-pull` / pull_cli that are NEWER than the "
+        f"snapshot's captured_at ({captured_at}) — newest: {sample} (event "
+        f"seq {newest['seq']}). Replaying now would silently revert that "
+        "by-ear work to the older snapshot values.\n"
+        "The durable fix: re-capture the snapshot first, then rebuild — run "
+        "`/song-snapshot` (probe -> diff -> confirmed overwrite of "
+        "captured_session.json), or `python -m "
+        "hallucinote.tools.capture_cli execute --song <slug>` and note that "
+        "writes captured_session.refresh.json, NOT the canonical file: "
+        "review/diff it (`capture_cli diff`), then copy it over "
+        "captured_session.json yourself.\n"
+        "To consciously revert the pulled edits instead, pass "
+        "`allow_stale_snapshot=True` to replay_capture (scaffolded build.py "
+        "exposes this as `--force-replay`). A forced replay does NOT clear "
+        "this check — it fires on every build until the snapshot is "
+        "re-captured."
+    )
 
 
 # Live device classes that own nested chains. Mirrors `_resolve_rack_chains`
@@ -600,8 +767,18 @@ def replay_capture(
     actor: str = "sync",
     request_id: str | None = None,
     reason: str | None = None,
+    allow_stale_snapshot: bool = False,
 ) -> str:
     """Replay a snapshot into a song in the DB. Returns the song_id.
+
+    BAK-7D2V — pull-durability guard: if the DB already holds live edits
+    pulled via `/ableton-pull` (events under a `requests.kind='pull'` request)
+    that are NEWER than the snapshot's `captured_at`, this replay would
+    silently revert them — so it raises :class:`StaleSnapshotError` before
+    mutating anything. Pass ``allow_stale_snapshot=True`` (scaffolded build.py:
+    ``--force-replay``) to consciously revert; re-capturing the snapshot is the
+    durable fix. Snapshots without a `captured_at` stamp (pre-BAK-7D2V) warn
+    instead of refusing — see `_guard_stale_snapshot` for the full matrix.
 
     W12-A: replay is idempotent — every underlying mutator (create_song,
     create_track, create_return, create_device_chain, create_device,
@@ -645,6 +822,19 @@ def replay_capture(
             "to clean + version-stamp the committed file.",
             UserWarning,
             stacklevel=2,
+        )
+
+    # BAK-7D2V: the guard must run BEFORE the first mutation (create_song is
+    # itself an upsert that touches the song row). A song that doesn't exist
+    # yet cannot have pulled state, so the guard only applies to re-replays.
+    existing_song = Q.get_song_by_name(conn, song_name)
+    if existing_song is not None:
+        _guard_stale_snapshot(
+            conn,
+            snapshot,
+            song_id=existing_song["id"],
+            song_name=song_name,
+            allow_stale_snapshot=allow_stale_snapshot,
         )
 
     song_id = M.create_song(
@@ -998,6 +1188,11 @@ def compile_snapshot(
         # so a consumer (and the at-rest cleanup) can tell a fresh capture from
         # a pre-SNP-8R4K one without inspecting device arrays.
         "snapshot_version": SNAPSHOT_SCHEMA_VERSION,
+        # BAK-7D2V — capture-time stamp in the events.ts shape; the replay-side
+        # pull-durability guard compares pulled events against it, and a fresh
+        # capture updating it is exactly what disarms the guard. Deliberately
+        # NOT back-stamped by migrate_snapshot (that would defeat the guard).
+        "captured_at": utc_now_eventlike(),
         "song": {
             "tempo": session_info.get("tempo"),
             "signature": session_info.get("signature"),
@@ -1578,6 +1773,12 @@ def migrate_snapshot(snapshot: dict[str, Any]) -> tuple[dict[str, Any], dict[str
     """Clean a committed snapshot at rest: drop `is_analyzer_device` entries +
     densely renumber survivors on every track and return, and stamp the schema
     version. Pure function — the input dict is never mutated.
+
+    BAK-7D2V: this deliberately does NOT stamp `captured_at` on a legacy file.
+    The content was captured at an unknown earlier time; stamping "now" would
+    assert it is newer than pulled live edits it doesn't contain, silently
+    defeating the replay-side pull-durability guard. Only a real capture
+    (`compile_snapshot`) stamps.
 
     Returns ``(cleaned_snapshot, report)``. The report announces what was
     stripped so the rewrite is never silent::

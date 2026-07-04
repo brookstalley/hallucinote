@@ -10,6 +10,7 @@ from ._core import (
     E,
     REQUEST_KINDS,
     REQUEST_OUTCOMES,
+    _atomic,
     _emit,
     _uuid,
     json,
@@ -87,6 +88,7 @@ def provenance_metadata(
 # ---------------------------------------------------------------------------
 
 
+@_atomic
 def create_request(
     conn: sqlite3.Connection,
     *,
@@ -161,6 +163,7 @@ def create_request(
     return rid
 
 
+@_atomic
 def close_request(
     conn: sqlite3.Connection,
     *,
@@ -264,6 +267,7 @@ def request(
         )
 
 
+@_atomic
 def record_markdown_ref(
     conn: sqlite3.Connection,
     *,

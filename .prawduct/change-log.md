@@ -6,7 +6,7 @@
 
 ## 2026-07-04 — CI: the four gates run off-laptop; lint/type debt to zero (INF-2C4X)
 
-<!-- prawduct: type=infrastructure | chunks=INF-2C4X | scope=ci,lint,types,tests | status=shipped | release=unreleased -->
+<!-- prawduct: type=infrastructure | chunks=INF-2C4X | scope=ci,lint,types,tests | status=shipped | release=v1.7.0 -->
 
 Closes audit rec #4 — "green" no longer means "someone remembered to run it locally."
 `.github/workflows/ci.yml` (push/PR to develop+main, ubuntu-latest, setup-uv pinned 0.11.8):
@@ -27,7 +27,7 @@ statically by mypy); first linux run of the audio half is unverified until the f
 
 ## 2026-07-04 — sync-boundary contract + ordering DAG + controlled unknown-kind halt (SYN-8Q3F, partial)
 
-<!-- prawduct: type=refactor | chunks=SYN-8Q3F | scope=sync,artifacts,tests | status=shipped | release=unreleased -->
+<!-- prawduct: type=refactor | chunks=SYN-8Q3F | scope=sync,artifacts,tests | status=shipped | release=v1.7.0 -->
 
 Audit rec #8 — the push boundary gets an explicit contract and a complexity budget instead of
 prose and point patches. Shipped via PR #211: **(a)** `sync-boundary-contract.md` — all **14**
@@ -50,7 +50,7 @@ now unblocked) + Chunk 06 violation triage. Two independent Critic reviews (0 bl
 
 ## 2026-07-04 — event-seed hardening: atomic write+emit, stable-ID event log, replay smoke test (EVT-6H9R)
 
-<!-- prawduct: type=feature | chunks=EVT-6H9R | scope=db,tests | status=shipped | release=unreleased -->
+<!-- prawduct: type=feature | chunks=EVT-6H9R | scope=db,tests | status=shipped | release=v1.7.0 -->
 
 Audit rec #9 — "harden the seed while it's cheap." Shipped via PR #208, three legs:
 **(1) atomic write+emit** — `@_atomic` on all 59 state-writing mutators wraps state-write +
@@ -74,7 +74,7 @@ Independent Critic: PASS; both WARNINGs + both NOTEs landed.
 
 ## 2026-07-04 — ceremony sweep: 4-obligation close-out, compacted governance mass, 30-day scrub (PRC-5W2N)
 
-<!-- prawduct: type=process | chunks=PRC-5W2N | scope=process,docs,skills | status=shipped | release=unreleased -->
+<!-- prawduct: type=process | chunks=PRC-5W2N | scope=process,docs,skills | status=shipped | release=v1.7.0 -->
 
 Audit rec #10 — the bookkeeping tax, cut. Shipped via PR #209 (sub-items b/d landed earlier on
 develop: one changelog surface at 6f2b0ba, main→develop back-merge at 50a66ae + now a mandatory
@@ -93,7 +93,7 @@ suspicion threshold 60d → **30d** (velocity + the BLG-7K2Q 4/8-already-shipped
 
 ## 2026-07-04 — pull-durability guard: replay refuses to silently revert pulled live edits (BAK-7D2V)
 
-<!-- prawduct: type=feature | chunks=BAK-7D2V | scope=capture,sync,docs,tests | status=shipped | release=unreleased -->
+<!-- prawduct: type=feature | chunks=BAK-7D2V | scope=capture,sync,docs,tests | status=shipped | release=v1.7.0 -->
 
 Closes the audit's #1 finding: `/ableton-pull` bakes live edits into the regenerable DB only,
 and the next `build.py`'s `replay_capture(captured_session.json)` silently re-asserted the

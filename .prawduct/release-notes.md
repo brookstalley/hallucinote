@@ -5,7 +5,7 @@
      be overwritten on next regen. See change-log.md for full per-release
      bodies; this file is a digest. -->
 
-## unreleased
+## v1.7.0
 
 ### ci,lint,types,tests
 

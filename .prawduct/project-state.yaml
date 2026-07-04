@@ -504,7 +504,7 @@ scope_rollups:
     releases: ["v1.5.0"]
   capture,sync,docs,tests:
     chunks: ["BAK-7D2V"]
-    releases: ["unreleased"]
+    releases: ["v1.7.0"]
   capture,sync-push,snapshot,render,analysis,skills:
     chunks: ["BUG1A-analyzer-match", "BUG1B-strip", "BUG3-status-json", "BUG3-timeout-doc", "BUG4-params-dialed"]
     releases: ["v0.9.8"]
@@ -513,7 +513,7 @@ scope_rollups:
     releases: ["v0.9.7"]
   ci,lint,types,tests:
     chunks: ["INF-2C4X"]
-    releases: ["unreleased"]
+    releases: ["v1.7.0"]
   cli,tools,skills,docs,backlog,artifacts,tests:
     chunks: ["WS-BOOTSTRAP"]
     releases: ["v1.5.0"]
@@ -528,7 +528,7 @@ scope_rollups:
     releases: ["v0.9.6"]
   db,tests:
     chunks: ["EVT-6H9R"]
-    releases: ["unreleased"]
+    releases: ["v1.7.0"]
   db-schema,markdown-refs,song-context,skills,docs,claude-md:
     chunks: ["ATL-7K3M-ch1", "ATL-7K3M-ch2"]
     releases: ["v1.5.0"]
@@ -573,13 +573,13 @@ scope_rollups:
     releases: ["v0.9.7"]
   process,docs,skills:
     chunks: ["PRC-5W2N"]
-    releases: ["unreleased"]
+    releases: ["v1.7.0"]
   skills,docs,mcp-primer,claude-md:
     chunks: ["discoverability-wiring", "song-workflow-spine"]
     releases: ["v0.9.8"]
   sync,artifacts,tests:
     chunks: ["SYN-8Q3F"]
-    releases: ["unreleased"]
+    releases: ["v1.7.0"]
   sync,snapshot,audio:
     chunks: ["AUD-3T6L", "SNP-4K7M"]
     releases: ["v0.9.8"]

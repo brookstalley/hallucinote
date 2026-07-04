@@ -129,12 +129,19 @@ silent-drop the table exists to prevent). Three layers close the class:
 | Pull drift diff | `pull/_core.py:21 _FLOAT_EPS = 1e-3`; `_floats_differ` :111-123 (absolute), `_normalized_values_match` :126-137, `_raw_values_match` :140-156 (relative, floored) | loose — absorbs Live display-rounding (0.6249 vs 0.6250) | a false DIFFER churns a DB row + event on every pull; a false SAME misses a sub-0.1% hand nudge (musically negligible). |
 
 **Cross-engine invariant (pinned by `tests/unit/sync/test_diff_float_semantics.py`):**
-push epsilon ≤ pull epsilon, i.e. any pair the push diff deems equal (skips the
-write) the pull diff must deem un-drifted — otherwise a captured set would
-oscillate: push skips the write, pull "detects" drift, mutates the DB, push then
-differs again. The reverse gap (pull-same but push-differ) is safe: one redundant
-write, then fixed-point. `arrangement_compare.py:44` (`DEFAULT_EPS_BEATS=1e-3`)
-is note-geometry comparison, not a param diff engine — out of this invariant.
+push-equal ⟹ pull-no-drift, **per channel** — any pair the push diff deems equal
+(skips the write) the pull matcher for that value's channel must deem un-drifted;
+otherwise a captured set churns: push skips the write, pull "detects" drift and
+mutates the DB. The reverse gap (pull-same but push-differ) is safe and expected:
+one redundant write, then fixed-point. **Channel boundary (found while pinning):**
+the invariant holds *raw-vs-raw* (both relative) and *unit-scale-vs-absolute*
+(bounded domain), but pairing push's relative 1e-6 against pull's ABSOLUTE
+matchers at raw magnitudes violates it (18000.0 vs 18000.016 is push-equal yet
+`_floats_differ`-drifted) — which is exactly why pull's raw channel uses the
+relative `_raw_values_match` (DEV-4P7R). The test pins that disagreement as a
+known boundary: any new pull comparison of raw-magnitude values must use the raw
+matcher. `arrangement_compare.py:44` (`DEFAULT_EPS_BEATS=1e-3`) is note-geometry
+comparison, not a param diff engine — out of this invariant.
 
 ---
 

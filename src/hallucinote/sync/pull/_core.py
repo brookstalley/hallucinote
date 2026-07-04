@@ -18,6 +18,18 @@ from ..geometry import (
 # Float tolerance for diff detection. 1e-3 means anything within ~0.1% of full
 # scale is a no-op — covers Live's display-rounding (e.g. 0.6249 vs 0.6250)
 # without papering over real moves.
+#
+# SYN-8Q3F: deliberately LOOSER than the push devices diff's 1e-6
+# (`push/device_param_diff._floats_equal`) — a false DIFFER here churns a DB
+# row + event on every pull; push's tight tolerance protects the mix instead.
+# Two rules keep the pair coherent (pinned by
+# tests/unit/sync/test_diff_float_semantics.py; rationale in
+# sync-boundary-contract.md §Diff engines):
+#   * push-equal ⟹ pull-no-drift, per channel — so a captured set can't
+#     oscillate between push-skip and pull-mutate;
+#   * the ABSOLUTE matchers below (_floats_differ / _normalized_values_match)
+#     are sound only on [0,1]-scale values; raw-magnitude values (a step
+#     index, a dB, an 18 kHz cutoff) MUST use _raw_values_match (DEV-4P7R).
 _FLOAT_EPS = 1e-3
 
 

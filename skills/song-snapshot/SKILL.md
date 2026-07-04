@@ -65,7 +65,16 @@ Run the diff CLI. It prints the structured diff as JSON to stdout and a one-scre
   songs/<slug>/captured_session.refresh.json
 ```
 
-**If exit 0 (no changes):** tell the user the snapshot is already up to date, delete the `.refresh` file, and stop.
+**If exit 0 (no changes):** the snapshot content already matches Live. Normally: tell the user it's up to date, delete the `.refresh` file, and stop.
+
+*Empty-diff re-stamp (BAK-7D2V).* One corner needs more: if a prior **mix** `/ableton-pull` is still un-baked — e.g. you pulled a knob change, then hand-reverted it in Live, so the content matches again but `build.py` still **refuses** (`StaleSnapshotError`, because the guard is armed by the pull *events*, not by content) — refresh the timestamp so the guard disarms without a content change:
+
+```bash
+"$PY" -m hallucinote.cli capture restamp --song <slug>
+rm songs/<slug>/captured_session.refresh.json
+```
+
+Only offer this when a pull might be in play (the user mentions a pull, or a build just refused). Ask: *"No content changed, but a prior pull may still be blocking `build.py` — refresh `captured_at` to disarm it? (yes / no)"* For a plain "did anything change?" check, just stop.
 
 **If exit 1 (changes present):** show the user the stderr summary (the human one-screen format). Don't dump the full JSON unless they ask — it can be thousands of lines for a complex song.
 
@@ -79,6 +88,7 @@ Then ask explicitly: *"overwrite `captured_session.json` with this refresh? (yes
     -o songs/<slug>/captured_session.json
   rm songs/<slug>/captured_session.refresh.json
   ```
+  After the overwrite, tell the user the mix bake is **durable and the replay guard is now disarmed**: `captured_session.json` is stamped newer than any pulled edit, so the next `build.py` runs clean (no `StaleSnapshotError`, nothing reverted).
 - **no** → delete the `.refresh` file and stop. Tell the user "no changes written."
 - **show full diff** → cat the stdout JSON and re-ask.
 

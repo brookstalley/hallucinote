@@ -54,6 +54,7 @@ from hallucinote.capture import (
     format_diff_summary,
     merge_snapshots,
     migrate_snapshot,
+    restamp_captured_at,
     snapshot_needs_migration,
 )
 
@@ -229,6 +230,39 @@ def _cmd_migrate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_restamp(args: argparse.Namespace) -> int:
+    """BAK-7D2V Chunk 3 — refresh a committed snapshot's ``captured_at`` in place
+    WITHOUT a content change, disarming the replay guard for the empty-diff
+    corner (a pull hand-reverted in Live so a re-capture shows no diff). The
+    `/song-snapshot` skill offers this when ``diff`` reports no changes but the
+    guard is still armed. Content is untouched; only the stamp moves."""
+    from hallucinote.workspace import resolve_song_dir
+
+    if args.song:
+        path = resolve_song_dir(args.song) / "captured_session.json"
+    elif args.path:
+        path = Path(args.path)
+    else:
+        print(
+            "error: capture restamp needs --song SLUG or a snapshot PATH",
+            file=sys.stderr,
+        )
+        return 2
+    if not path.exists():
+        print(f"error: snapshot not found: {path}", file=sys.stderr)
+        return 2
+
+    snapshot = json.loads(path.read_text())
+    old = snapshot.get("captured_at")
+    new = restamp_captured_at(snapshot)
+    path.write_text(json.dumps(snapshot, indent=2) + "\n")
+    print(
+        f"{path}: re-stamped captured_at {old!r} -> {new!r} "
+        "(content unchanged; the replay guard is now disarmed)."
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
     # The legacy --plan flag is preserved so older skill bodies / docs keep
@@ -302,6 +336,24 @@ def main(argv: list[str] | None = None) -> int:
         "path", help="Path to the captured_session.json to clean in place"
     )
     migrate_p.set_defaults(func=_cmd_migrate)
+
+    restamp_p = sub.add_parser(
+        "restamp",
+        help=(
+            "BAK-7D2V: refresh captured_at in place with NO content change, to "
+            "disarm the replay guard when a pull was hand-reverted in Live "
+            "(re-capture shows no diff). Used by /song-snapshot's empty-diff path."
+        ),
+    )
+    restamp_p.add_argument(
+        "--song", default=None,
+        help="song slug — re-stamps songs/<slug>/captured_session.json",
+    )
+    restamp_p.add_argument(
+        "path", nargs="?", default=None,
+        help="explicit snapshot path (escape hatch / tests); overridden by --song",
+    )
+    restamp_p.set_defaults(func=_cmd_restamp)
 
     args = p.parse_args(argv)
     if args.plan:

@@ -65,13 +65,25 @@ kind-set audit all locked in Chunk 1). No open design questions remain.
 
 ## Status
 
-- [ ] **Chunk A** — Change-log canonicalization + unreleased vocab (VEW-7T2C + VEW-9QH4)
-- [ ] **Chunk B** — BAK-7D2V Chunk 2: pull-side contract UX
-- [ ] **Chunk C** — BAK-7D2V Chunk 3: `/song-snapshot` loop-close (cumulative-final)
+- [x] **Chunk A** — Change-log canonicalization + unreleased vocab (VEW-7T2C + VEW-9QH4) — committed c6e0808
+- [x] **Chunk B** — BAK-7D2V Chunk 2: pull-side contract UX — committed bf2d444
+- [x] **Chunk C** — BAK-7D2V Chunk 3: `/song-snapshot` loop-close (cumulative-final)
 
-**Context:** Not started. Sequence rationale — Chunk A is independent,
-zero-code, no-Live, and banks two closed items; the BAK pair lands last so the
-higher-risk durability work gets the cumulative Critic pass as the final chunk.
+**Context:** All three chunks built + committed on `feat/highroi-sweep-2026-07`.
+- **A**: 34 legacy change-log tag lines canonicalized to `prawduct:` form (incl.
+  pipe-in-chunks-value fix + 3 foot-tag relocations), 10 `release=unreleased`→v1.5.0
+  (git-ancestry verified), unreleased vocab documented in the header. 74/76 entries
+  parse tagged (2 genuinely tag-less pre-v1.4.0 left as-is); 0 status/multiplicity
+  warnings against the live parser.
+- **B**: `pull_cli` durability notice via `capture.count_request_replay_asserted_events`
+  (reuses the guard's kind set); `/ableton-pull` reframed.
+- **C**: `capture_cli restamp` + `capture.restamp_captured_at` (empty-diff disarm);
+  `/song-snapshot` re-stamp offer + guard-disarmed statement; `/song-pick-instruments`
+  + `docs/song-workflow.md` contract wording. BAK operator-verification extended
+  (checks 7–8) — Live-gated, not built.
+- **Remaining before done:** commit Chunk C, run `/prawduct:critic cumulative`
+  (the PR gate), then reflection + backlog close. NEXT: `/prawduct:pr` (two PRs
+  recommended: `chore/changelog` = A; `feat/bak-7d2v` = B+C) when the user asks.
 
 ---
 

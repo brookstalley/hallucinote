@@ -40,6 +40,16 @@ the song's snapshot predates BAK-7D2V — Ableton open, linked session):**
    that refuses again (forcing does not disarm — re-capture does).
 6. Legacy path (optional): on a song whose snapshot has no `captured_at`, pull
    a knob and build → expect the warn-and-proceed path, not a refusal.
+7. **Chunk 2 — pull-side notice.** In step 2's `/ableton-pull`, confirm
+   `pull_cli` prints the durability notice on stderr ("N mix-layer change(s)
+   staged in the DB … the next `build.py` … will REFUSE … bake with
+   `/song-snapshot`"). Confirm a build.py-owned pull (e.g. `clip-notes`) and a
+   zero-change re-pull print NO such notice.
+8. **Chunk 3 — empty-diff re-stamp.** After a mix pull, hand-REVERT the knob in
+   Live so a fresh capture shows no diff; `build.py` still refuses (guard armed
+   by the pull events). Run `hallucinote.cli capture restamp --song <slug>` (or
+   accept `/song-snapshot`'s empty-diff offer) → `build.py` now passes clean,
+   content unchanged.
 
 ## MCP-1V8K — device load focuses Session view before browser.load_item (2026-06-23) — PASSED (agent-run live, 2026-06-23)
 

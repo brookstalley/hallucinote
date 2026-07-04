@@ -25,9 +25,11 @@ import warnings
 
 import pytest
 
+from hallucinote import capture as _capture
 from hallucinote.capture import (
     StaleSnapshotError,
     count_request_replay_asserted_events,
+    restamp_captured_at,
     utc_now_eventlike,
     compile_snapshot,
     replay_capture,
@@ -414,6 +416,41 @@ def test_pull_cli_apply_silent_when_nothing_changed(
     assert rc == 0
     err = capsys.readouterr().err
     assert "mix-layer change" not in err
+
+
+# ---------------------------------------------------------------------------
+# Chunk 3 (BAK-7D2V): empty-diff re-stamp disarms the guard
+# ---------------------------------------------------------------------------
+
+
+def test_restamp_captured_at_sets_newer_events_ts_stamp(conn):
+    snap = _snapshot(captured_at=OLD_STAMP)
+    returned = restamp_captured_at(snap)
+    import re
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z", returned)
+    assert snap["captured_at"] == returned
+    assert returned > OLD_STAMP
+
+
+def test_restamp_disarms_guard_on_empty_diff(conn, monkeypatch):
+    """The pull-then-hand-revert corner: the guard is armed by the pull EVENTS,
+    not by snapshot content, so a no-diff re-capture would still refuse.
+    Re-stamping the (unchanged) snapshot newer than the events disarms it —
+    without discarding via --force-replay. (Stamp pinned to a future value so
+    the test can't flake on Python-vs-SQLite sub-second clock skew.)"""
+    snap = _snapshot(captured_at=OLD_STAMP)
+    song_id, session_id, track_id = _built_song(conn, snap)
+    _pull_mix_tweak(conn, song_id=song_id, session_id=session_id,
+                    track_id=track_id)
+    with pytest.raises(StaleSnapshotError):
+        _replay(conn, snap)
+
+    monkeypatch.setattr(_capture, "utc_now_eventlike", lambda: FUTURE_STAMP)
+    restamp_captured_at(snap)
+    assert snap["captured_at"] == FUTURE_STAMP
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        _replay(conn, snap)
 
 
 def test_compile_snapshot_stamps_captured_at_in_events_ts_shape(conn):

@@ -162,6 +162,24 @@ def utc_now_eventlike() -> str:
     return now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z"
 
 
+def restamp_captured_at(snapshot: dict[str, Any]) -> str:
+    """Refresh ``snapshot['captured_at']`` to now (in place); return the new stamp.
+
+    The empty-diff re-stamp affordance (BAK-7D2V Chunk 3). The guard is armed by
+    pull EVENTS newer than the snapshot, not by snapshot content — so when a pull
+    was hand-reverted in Live and a fresh capture shows NO content diff,
+    ``replay_capture`` would still refuse even though replaying is value-safe.
+    Re-stamping the canonical snapshot newer than those events disarms the guard
+    with no content change — the clean exit for that corner, versus consciously
+    discarding via ``--force-replay``. Only a genuine capture or this explicit
+    re-stamp may move the stamp; ``migrate_snapshot`` deliberately never does
+    (stamping unknown-age content newer than pulls it lacks would defeat the
+    guard)."""
+    stamp = utc_now_eventlike()
+    snapshot["captured_at"] = stamp
+    return stamp
+
+
 def _pulled_rows_newer_than(
     conn: sqlite3.Connection, *, song_id: str, cutoff_ts: str | None,
 ) -> list[sqlite3.Row]:

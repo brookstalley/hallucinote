@@ -17,6 +17,29 @@
      pre-bumping a version (against `feedback_no_premature_version_bump`) or
      mislabeling in-flight work as an already-shipped version. -->
 
+## 2026-07-04 — Pull-durability loop-close: contract UX + /song-snapshot re-stamp (BAK-7D2V Chunks 2–3)
+
+<!-- prawduct: type=feature | chunks=B,C | scope=highroi-sweep | release=unreleased -->
+
+Closes the pull-durability item (Chunk 1's replay guard shipped in v1.7.0 / PR #210).
+**Chunk 2 — pull-side contract UX:** `pull_cli apply/execute` now print a durability
+notice on stderr after a mix-layer pull ("N change(s) staged in the regenerable DB
+only; the next `build.py` will REFUSE rather than revert — bake with `/song-snapshot`").
+It fires EXACTLY when the guard would, by reusing the guard's own
+`_REPLAY_ASSERTED_EVENT_KINDS` via new `capture.count_request_replay_asserted_events`
+(scoped to the just-applied pull's `request_id`) — no parallel domain whitelist to
+drift. Quiet on zero-change applies, build.py-owned domains, and dry-runs. The
+`/ableton-pull` skill is reframed (BAK-3M9T Chunk D): names the bake as the closing
+move and the refuse-not-revert behavior. **Chunk 3 — loop-close:** `capture_cli restamp`
+(+ `capture.restamp_captured_at`) refreshes `captured_at` in place with NO content
+change, disarming the guard for the pull-then-hand-revert corner; `/song-snapshot`
+offers it on an empty diff and states the guard is disarmed after a confirmed overwrite.
+`/song-pick-instruments` snapshots already carry `captured_at` (via `compile_snapshot`);
+`docs/song-workflow.md` names the enforced pull→bake→build contract. **Live operator-
+verification** (dial → pull → build refuses → snapshot → survives → force-replay reverts)
+is queued, not gated. Tests: notice fire/silence + helper discrimination + restamp
+disarm/idempotence.
+
 ## 2026-07-04 — Change-log tag canonicalization + unreleased vocab (VEW-7T2C, VEW-9QH4)
 
 <!-- prawduct: type=process | chunks=A | scope=highroi-sweep | release=unreleased -->

@@ -34,6 +34,38 @@ def _make_snap() -> dict:
     }
 
 
+def test_restamp_refreshes_captured_at_without_content_change(tmp_path: Path) -> None:
+    """BAK-7D2V Chunk 3: `restamp` moves captured_at forward (events.ts shape)
+    and leaves every other field byte-identical — the empty-diff guard disarm."""
+    import re
+
+    snap = _make_snap()
+    snap["captured_at"] = "2020-01-01T00:00:00.000Z"
+    path = tmp_path / "captured_session.json"
+    _write_snapshot(path, snap)
+
+    proc = _run("restamp", str(path))
+    assert proc.returncode == 0
+    after = json.loads(path.read_text())
+    assert re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z", after["captured_at"]
+    )
+    assert after["captured_at"] > "2020-01-01T00:00:00.000Z"
+    before = {k: v for k, v in snap.items() if k != "captured_at"}
+    after_content = {k: v for k, v in after.items() if k != "captured_at"}
+    assert after_content == before
+
+
+def test_restamp_missing_file_returns_two(tmp_path: Path) -> None:
+    proc = _run("restamp", str(tmp_path / "absent.json"))
+    assert proc.returncode == 2
+
+
+def test_restamp_no_target_returns_two() -> None:
+    proc = _run("restamp")
+    assert proc.returncode == 2
+
+
 def test_diff_exits_zero_on_identical(tmp_path: Path) -> None:
     snap = _make_snap()
     old = tmp_path / "old.json"

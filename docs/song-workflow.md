@@ -147,8 +147,17 @@ primitive — they write different targets:
 - `/ableton-pull` → the song `.db` (a **regenerable** build artifact). The
   lower-level **build.py-staging** primitive for build.py-owned domains (clip
   notes, automation) you fold into `build.py`. It is NOT a parallel mix bake:
-  `replay_capture` re-asserts the snapshot onto the DB every build, so a mix edit
-  you pull but don't `/song-snapshot` reverts on the next rebuild.
+  `replay_capture` re-asserts the snapshot onto the DB every build.
+
+**The contract is enforced (BAK-7D2V).** A mix edit you pull but don't
+`/song-snapshot` is no longer silently reverted — the next `build.py` **refuses
+to run** (`StaleSnapshotError`), and `pull_cli` prints a durability notice at
+pull time. So the loop is **pull → bake → build**: `/ableton-pull` (stage) →
+`/song-snapshot` (bake, which re-stamps the snapshot newer than the pull and
+disarms the guard) → `build.py` (runs clean). `build.py --force-replay`
+consciously discards the pulled edits instead. Build.py-owned pulls (notes,
+envelopes, tempo, cue, arrangement, tuning) never arm the guard — that's the
+sanctioned staging lane.
 
 Then loop back to compose or mix.
 

@@ -271,9 +271,70 @@ The body shape — **Context / Decision / Why / Narrative → sound** — is thi
 
 ### Where this is enforced
 
-- **`/compose-part`** closes a finished substantive move by filing the ADR (its *Record the decision* step).
-- **Delegation carries capture.** When sound-design/automation is delegated to a subagent, the subagent **returns** its rationale (context/decision/why) and the orchestrator files the ADR. Delegation must not launder the WHY away.
-- **`/compose-review` + `/mix-review`** run a completeness check (their DECISION-COMPLETENESS step): "N substantive `build.py`/snapshot changes since the last recorded decision — capture them?" — propose-and-react, the backstop for whatever slipped under execute-and-react pressure.
+ADR capture is obligation 3 of the **compose-pass close-out protocol** (next section): `/compose-part` files it at its close step, delegation returns the rationale for the orchestrator to file, and the `/compose-review` + `/mix-review` completeness sweep (obligation 4) is the backstop for whatever slipped under execute-and-react pressure.
+
+---
+
+## The compose-pass close-out protocol (the ONE bookkeeping checklist)
+
+A compose/mix pass carries **exactly four bookkeeping obligations** — two before touching a part, two at the close. This is the single close-out protocol: `/compose-part`, `/compose-review`, and `/mix-review` link here instead of each carrying its own list. Everything musical in those skills (feel, kit probing, one-axis-per-turn, fix order) is authorship, not bookkeeping, and stays there. Framework-repo bookkeeping (change-log entries, backlog closes) is **not** a compose-pass obligation — it belongs to the one ship-stamp commit (`.prawduct/backlog.md` header rule 1) when engine/skill code ships.
+
+**Before touching a part:**
+
+1. **Recall intent** — `/song-context <slug>`: declared intent at every altitude (song / section / element / review-workflow archetype).
+2. **Check the attempt ledger** — `/song-attempts` before re-touching a part any session worked before; don't re-propose a move the ledger shows failed.
+
+**At the close** (the finished-move boundary in the iterate loop; end of pass at a review checkpoint):
+
+3. **File each resolved move's outcome — one routing rule, four homes.** Route by what the entry records; a move files to exactly one home. Trivia (a velocity nudge, one level tweak) files nothing.
+
+   | The move… | Home | Discipline |
+   |---|---|---|
+   | was **kept** and is bright-line-substantive (table above) | `decisions/NN-*.md` ADR | file **silently** at the finished-move boundary (template above) — a deliverable component, never a stop-to-ask |
+   | was **tried and reverted / superseded** | `attempts/*.md` (`kind: attempt`) | **propose-and-react** — a one-line entry the user confirms, never an auto-written verdict; chain a correction with `related:` → what worked |
+   | **revealed intent** (incl. a reaction you reflected into intent) | `annotations/*.md` learn-back | write **immediately when revealed**, at the right altitude; never re-flag what the user settled |
+   | was a **tool failure** (push glitch, stale server, Live bug) | `incoming-bugs/` report | never an attempt — the ledger is musical-craft only |
+
+   **Delegation carries capture:** a subagent doing sound-design/automation **returns** its rationale, and the orchestrator routes it through this same rule — delegation must not launder the WHY (CLAUDE.md → *Rationale is authorship*).
+
+4. **Completeness sweep — review checkpoints only.** At `/compose-review` / `/mix-review`, scan what landed since the last recorded outcome (bright-line `build.py`/snapshot moves with no ADR; resolved moves with no attempt entry) and **propose** captures for what slipped — propose-and-react. The sweep is the backstop for obligation 3, never a substitute for capture in the loop.
+
+The three song-side homes write through `write_markdown_ref` (audit-threaded, FTS5-indexed — what makes `/song-context`, `/decisions`, and `/song-attempts` find them); `incoming-bugs/` is a plain markdown drop. The frontmatter schema is owned by [`../.prawduct/artifacts/song-conventions.md`](../.prawduct/artifacts/song-conventions.md); the decision template is above. Canonical annotation + attempt snippets:
+
+```python
+from pathlib import Path
+from hallucinote.markdown_refs import write_markdown_ref
+from hallucinote.db.connection import init_db, resolve_db_path
+conn = init_db(resolve_db_path("<slug>"))  # branch-aware; slug, not a path
+
+# Revealed intent → annotations/ (scope: time for a section; track-time for a part-in-section)
+write_markdown_ref(
+    conn,
+    path=Path("songs/<slug>/annotations/verse-holds-back.md"),
+    repo_root=Path("."),
+    frontmatter={"kind": "annotation", "scope": "time",
+                 "bars": [1, 17], "tags": ["verse", "structure", "contrast"]},
+    body="The verse deliberately holds back — kick + soft pad only — so the "
+         "chorus is the arrival. Don't flag the verse as 'empty'; the space is "
+         "the point.",
+    actor="llm", reason="learn-back from compose-review",
+)
+
+# Tried-and-reverted → attempts/ (outcome ∈ {worked, partial, failed};
+# resolution ∈ {kept, reverted, superseded})
+write_markdown_ref(
+    conn,
+    path=Path("songs/<slug>/attempts/2026-06-14-lead-octave-double.md"),
+    repo_root=Path("."),
+    frontmatter={"date": "2026-06-14", "kind": "attempt", "scope": "track",
+                 "track": "Lead", "outcome": "failed", "resolution": "reverted",
+                 "tags": ["arrangement", "doubling", "chorus"]},
+    body="Tried doubling the lead an octave up through the chorus to lift it — "
+         "muddied the 2–3 kHz band and buried it. Reverted; held the single line "
+         "and subtracted the pad instead (that worked).",
+    actor="llm", reason="attempt-log from compose-review",
+)
+```
 
 ---
 

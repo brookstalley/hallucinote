@@ -12,6 +12,11 @@ from __future__ import annotations
 SONG_CREATED = "song_created"
 SONG_UPDATED = "song_updated"
 SONG_TIMING_MODE_SET = "song_timing_mode_set"
+# W18-C soft reset: bulk wipe of a song's rebuild-by-build.py content
+# (score-half, clips/notes, automation); payload carries per-table delete
+# counts. Was an inline string literal in reset_song_content until EVT-6H9R
+# (constants here are the only sanctioned source of event kinds).
+SONG_CONTENT_RESET = "song_content_reset"
 # MICROTUNE (TUN-4Q7W): alternate-tuning bolt-on. Set when a song is bound to a
 # pulled non-12-TET tuning — records the cached .ascl ref + the derived blob.
 SONG_TUNING_SET = "song_tuning_set"
@@ -113,6 +118,20 @@ ABLETON_LINK_SET = "ableton_link_set"
 # W18-B: strict link reconciliation — probe-and-link removes links whose
 # ableton_index no longer matches a Live entity in the fresh probe.
 ABLETON_LINK_REMOVED = "ableton_link_removed"
+
+# EVT-6H9R: the closed set of sanctioned event kinds — every UPPER_CASE
+# string constant above. `_emit` validates against this, so an inline-string
+# kind (how "song_content_reset" once drifted past the constants convention)
+# fails at the emit site instead of silently escaping the replay smoke
+# test's exhaustive classification. Derived, not hand-maintained: adding a
+# constant above is the whole registration step. Keep this ABOVE ACTORS so
+# the globals() scan reads as "everything defined so far" (non-str values
+# would be filtered anyway).
+KINDS = frozenset(
+    value
+    for name, value in globals().items()
+    if name.isupper() and isinstance(value, str)
+)
 
 # Valid actor values for events.actor / requests.actor.
 # 'build' marks rows created/updated by a song's build.py running under

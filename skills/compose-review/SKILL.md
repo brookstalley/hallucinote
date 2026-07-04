@@ -208,82 +208,29 @@ Propose ranked options with a one-sentence why each. When you can, offer the
 A/B by ear ("here it is with / without — feel the difference?"). The user makes
 the call. **Never auto-apply** — the same reason `/mix-review` doesn't.
 
-### 5. LEARN-BACK — write what you learn, every time, at the right altitude
+### 5. CLOSE OUT — LEARN-BACK + file outcomes (the ONE bookkeeping checklist)
 
-When the user reveals intent — including a *reaction* you reflected into intent
-("yeah, the chorus should be the payoff") — write it back immediately via
-`hallucinote.markdown_refs.write_markdown_ref` (emits the audit event, threads
-the request). Choose the altitude:
+Close the pass through the **compose-pass close-out protocol**
+(`docs/song-authoring-conventions.md` → *The compose-pass close-out protocol* —
+one routing rule, four homes; templates + canonical snippets live there, not here):
 
-- **Section intent** — a `time`-scoped annotation with `bars` + a section tag:
-
-  ```python
-  from pathlib import Path
-  from hallucinote.markdown_refs import write_markdown_ref
-  from hallucinote.db.connection import init_db, resolve_db_path
-  conn = init_db(resolve_db_path("<slug>"))  # branch-aware; slug, not a path
-  write_markdown_ref(
-      conn,
-      path=Path("songs/<slug>/annotations/verse-holds-back.md"),
-      repo_root=Path("."),
-      frontmatter={"kind": "annotation", "scope": "time",
-                   "bars": [1, 17], "tags": ["verse", "structure", "contrast"]},
-      body="The verse deliberately holds back — kick + soft pad only — so the "
-           "chorus is the arrival. Don't flag the verse as 'empty'; the space is "
-           "the point.",
-      actor="llm", reason="learn-back from compose-review",
-  )
-  ```
-
-- **Song intent** — if a whole-song purpose is revealed and `<slug>.md` doesn't
-  capture it, add a `scope: song` annotation (or update `<slug>.md` /
-  `decisions/01-intent.md`). "What is this *for*?" is the song-altitude question.
-
-Next run, RECALL covers it and INTERPRET stays quiet. **Never re-flag** what the
-user already settled.
-
-### 6. LOG ATTEMPTS — record what you tried and how it turned out
-
-The learn-back above captures *intent* (where the song wants to land). The **attempt
-ledger** captures the *path* — a move you tried and how it resolved, **especially the
-reverted dead ends**, so a later pass doesn't re-try them. Different thing, same moment:
-when a compositional move is resolved this pass (kept / reverted / replaced), propose a
-one-line `kind: attempt` entry and let the user confirm (propose-and-react — don't
-auto-write a verdict). Query the ledger *before* re-touching a part via `/song-attempts`.
-
-```python
-write_markdown_ref(
-    conn,
-    path=Path("songs/<slug>/attempts/2026-06-14-lead-octave-double.md"),
-    repo_root=Path("."),
-    frontmatter={"date": "2026-06-14", "kind": "attempt", "scope": "track",
-                 "track": "Lead", "outcome": "failed", "resolution": "reverted",
-                 "tags": ["arrangement", "doubling", "chorus"]},
-    body="Tried doubling the lead an octave up through the chorus to lift it — "
-         "muddied the 2–3 kHz band and buried it. Reverted; held the single line "
-         "and subtracted the pad instead (that worked).",
-    actor="llm", reason="attempt-log from compose-review",
-)
-```
-
-`outcome` ∈ {worked, partial, failed}; `resolution` ∈ {kept, reverted, superseded}.
-Chain a correction by adding `related: ["songs/<slug>/attempts/<the-move-that-worked>.md"]`
-to the failed entry. Musical-craft only — a *tool* gripe (a push glitch, a Live bug) is an
-incoming-bug, not an attempt; revealed *intent* is an annotation, not an attempt.
-
-### 7. DECISION-COMPLETENESS — capture what the iterate loop didn't
-
-Capture is supposed to happen *in the loop* (`/compose-part` → *Record the decision*), but
-moves slip away under execute-and-react pressure — this is the backstop, not a substitute.
-Before you finish, scan what landed since the last `decisions/` entry: the **bright-line-
-substantive** moves in `build.py` / the snapshot (a feel/groove arc, a sound-design subsystem,
-a structural/form change, a committed musical landing, a transition/hand-off plan, baked mix
-levels — see `docs/song-authoring-conventions.md` → *Rationale is authorship*). For each one
-with no ADR, **propose** a one-line decision and let the user confirm — propose-and-react,
-never auto-write a verdict. File confirmed ones via the decision template (`write_markdown_ref`,
-`kind: decision`). Skip trivia (a velocity nudge, one level tweak). This records intent-as-
-*chosen* (what was kept and why) — distinct from §5's revealed intent (annotation) and §6's
-tried-and-reverted path (attempt).
+- **LEARN-BACK — revealed intent → `annotations/`.** When the user reveals intent —
+  including a *reaction* you reflected into intent ("yeah, the chorus should be the
+  payoff") — write it back **immediately** via `write_markdown_ref`, at the right
+  altitude (section = `time`-scoped + `bars`; whole-song purpose = `scope: song`, or
+  update `<slug>.md` / `decisions/01-intent.md`). Next run, RECALL covers it and
+  INTERPRET stays quiet — **never re-flag** what the user already settled.
+- **Resolved moves route by outcome.** A move *resolved this pass* (kept / reverted /
+  superseded) → propose a one-line `kind: attempt` entry (**propose-and-react** —
+  never auto-write a verdict; chain a correction with `related:` — the
+  `resolution: kept` entry is what closes the chain). A *kept* bright-line move
+  ALSO gets its `kind: decision` ADR. A *tool* gripe (push glitch, Live bug) →
+  `incoming-bugs/`, never an attempt.
+- **Completeness sweep — this checkpoint's backstop.** Capture is supposed to happen
+  *in the loop* (`/compose-part`'s close), but moves slip under execute-and-react
+  pressure: scan what landed since the last recorded outcome (bright-line
+  `build.py`/snapshot moves with no ADR; resolved moves with no attempt entry) and
+  **propose** captures for what slipped. Backstop, not a substitute.
 
 ## When to use this vs /mix-review
 

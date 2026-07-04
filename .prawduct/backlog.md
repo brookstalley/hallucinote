@@ -18,7 +18,9 @@ Prior-format discipline that still applies (load-bearing):
    run to confirm it's still pending — a file:line, a function to grep, a CLI
    to run, or a behavior to reproduce. Without it the item is unscrubable.
 3. **Trust-but-verify on scrub.** A scrub re-reads code against each item, not
-   just the item's text. Items with `added`/`reviewed` > 60 days are suspect.
+   just the item's text. Items with `added`/`reviewed` > 30 days are suspect.
+   (Tightened from 60d per the 2026-07-02 audit: this repo's velocity makes 60d
+   too slow — the BLG-7K2Q precedent found 4/8 `ready` items already shipped.)
 
 Metadata-bar field legend (canonical /backlog v2 format):
   effort/impact (S/M/L) · area · source (builder|critic|reflection|janitor|user)

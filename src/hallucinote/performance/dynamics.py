@@ -15,9 +15,9 @@ from the de-duplicated onset-event list the lens already builds, not raw notes.
 from __future__ import annotations
 
 import statistics
-from typing import Sequence
+from typing import Any, Sequence
 
-NoteDict = dict[str, object]
+NoteDict = dict[str, Any]  # same shape the lens/realization modules use
 
 # Velocity stdev (MIDI units) at/below which a part's dynamics read FLAT — many
 # notes at essentially one level. ~2 units is dynamically imperceptible; human

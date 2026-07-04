@@ -29,7 +29,7 @@ composer; ``vary``'s deltas come from the composer. Ruler, not stamp
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
 from hallucinote.db import mutations as M
@@ -249,7 +249,8 @@ class Arrangement:
                     f"harmonic_plan() was registered on the arrangement"
                 )
             return self._harmonic_plan.slice(offset_beats, length_beats)
-        return p  # a Progression
+        assert not isinstance(p, str)  # "inherit" handled above; other strs are invalid
+        return p
 
     @staticmethod
     def _resolve_key_mode(

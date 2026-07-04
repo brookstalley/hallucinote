@@ -25,7 +25,12 @@ import json
 from collections import Counter
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import TYPE_CHECKING, Mapping, Sequence
+
+if TYPE_CHECKING:
+    # Type-only: this module stays numpy-free at runtime (arrays arrive
+    # pre-loaded from .io), but its "np.ndarray" annotations need the name.
+    import numpy as np
 
 from .alignment import trim_to_common_length
 from .compare import diff_reports, ensure_comparable, resolve_baseline
@@ -411,7 +416,7 @@ def _run_reverb_verifications(
     verified — analyzed OK or no intent declared?").
     """
     if not declared_sends:
-        skipped = [{
+        skipped: list[dict] = [{
             "kind": "reverb_verification",
             "reason": (
                 "no declared RT60 sends — call "
@@ -430,7 +435,7 @@ def _run_reverb_verifications(
         by_return.setdefault(send.wet_return_track_id, []).append(send)
 
     verifications: list[ReverbVerification] = []
-    skipped: list[dict] = []
+    skipped = []
     # The dry input stops at the arrangement end; the ring-out follows.
     stop_sample = beat_map.beat_to_sample(capture.stop_at_beat)
 

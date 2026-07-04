@@ -307,7 +307,7 @@ def update_notes_by_tag(
         if velocity_delta is not None:
             new_vel = max(0, min(127, old_vel + velocity_delta))
         else:
-            new_vel = max(0, min(127, velocity_set))  # type: ignore[arg-type]
+            new_vel = max(0, min(127, velocity_set))  # type: ignore[arg-type, type-var]
         matched.append((r["id"], old_vel, new_vel))
 
     for note_id, _old, new_vel in matched:

@@ -1270,7 +1270,9 @@ def create_envelope(
 
     if target_kind == "clip_cc":
         try:
-            cc_number = int(parameter_path)
+            # A None parameter_path deliberately lands in the except arm
+            # (TypeError) and raises the teaching error below.
+            cc_number = int(parameter_path)  # type: ignore[arg-type]
         except (TypeError, ValueError) as exc:
             raise ValueError(
                 f"clip_cc parameter_path must be an integer CC number "

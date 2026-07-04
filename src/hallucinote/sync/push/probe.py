@@ -1076,7 +1076,7 @@ def check_coherence(
         # and the parent-level error is sufficient.
 
     if stale_track_links:
-        indexes = sorted({l["ableton_index"] for l in stale_track_links})
+        indexes = sorted({link["ableton_index"] for link in stale_track_links})
         result.add_error(
             kind="stale_track_links",
             detail=(
@@ -1094,7 +1094,7 @@ def check_coherence(
         )
 
     if stale_return_links:
-        indexes = sorted({l["ableton_index"] for l in stale_return_links})
+        indexes = sorted({link["ableton_index"] for link in stale_return_links})
         result.add_error(
             kind="stale_return_links",
             detail=(
@@ -1111,7 +1111,7 @@ def check_coherence(
         )
 
     if mislinked_scaffold_track_links:
-        indexes = sorted({l["ableton_index"] for l in mislinked_scaffold_track_links})
+        indexes = sorted({link["ableton_index"] for link in mislinked_scaffold_track_links})
         result.add_error(
             kind="mislinked_scaffold_track_links",
             detail=(

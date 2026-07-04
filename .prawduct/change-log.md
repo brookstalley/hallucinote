@@ -4,6 +4,131 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-07-04 — CI: the four gates run off-laptop; lint/type debt to zero (INF-2C4X)
+
+<!-- prawduct: type=infrastructure | chunks=INF-2C4X | scope=ci,lint,types,tests | status=shipped | release=v1.7.0 -->
+
+Closes audit rec #4 — "green" no longer means "someone remembered to run it locally."
+`.github/workflows/ci.yml` (push/PR to develop+main, ubuntu-latest, setup-uv pinned 0.11.8):
+`uv lock --check` → `uv sync --all-packages --all-extras --locked` → `ruff check .` → `mypy` →
+full **no-path** `python -m pytest` (the path-scoped form silently skips `hallucinote_mcp/tests`
+— the standing learning, now encoded in CI). ruff (`E4,E7,E9,F,W,PLE`, no formatter): 170
+findings → 0, re-export surfaces preserved via explicit aliases + commented per-file-ignores.
+mypy (both packages, 201 files, default strictness): 92 → 0 — ~40 genuine fixes, narrow
+commented override clusters for the Optional-narrowing debt (enumerated in pyproject as
+tightening targets), per-module `ignore_missing_imports` only for genuinely stub-less packages.
+The uv.lock re-lock + release-process lock-check/back-merge steps landed earlier on develop
+(6f2b0ba). Shipped via PR #212. Known-accepted: single 3.12 runner (3.10 floor covered
+statically by mypy); first linux run of the audio half is unverified until the first push
+(`HALLUCINOTE_SKIP_AUDIO=1` documented in the workflow header).
+
+**Re-vendor: required** — six `_FINGERPRINT_PATHS` files carry behavior-neutral lint/type edits
+(imports/comments/annotations; no wire-shape change) — the fingerprint flips at the next release.
+
+## 2026-07-04 — sync-boundary contract + ordering DAG + controlled unknown-kind halt (SYN-8Q3F, partial)
+
+<!-- prawduct: type=refactor | chunks=SYN-8Q3F | scope=sync,artifacts,tests | status=shipped | release=v1.7.0 -->
+
+Audit rec #8 — the push boundary gets an explicit contract and a complexity budget instead of
+prose and point patches. Shipped via PR #211: **(a)** `sync-boundary-contract.md` — all **14**
+push phases (code-derived; the prose said "thirteen") with ASSUME / RE-PROBE / failure-policy +
+file:line refs, enforced by a coverage test; contract violations recorded honestly (V2, V3, V6,
+V8 open — backlog-triage candidates in build-plan Chunk 06), not normalized. **(b)** phase
+ordering: `_PHASE_DEPS` + `validate_phase_order` at plan time (unknown dep / dep-after-dependent
+/ cycles raise before any request row); the tuple stays the single execution-order source, order
+pinned byte-identical against a literal historical tuple. **(c)** the unknown-result-kind halt
+class closed structurally: apply-layer contract-drift ValueErrors become a controlled phase halt
+(atomic errors file with teaching hint, terminal state file, request closed `partial` in a
+`finally`, EXIT_PARTIAL) — the class that was point-patched twice can't be a raw traceback
+again. **(e)** the two diff engines' float semantics DECIDED as intentionally asymmetric (push
+1e-6: false-EQUAL = wrong mix; pull 1e-3: false-DIFFER = DB churn) and pinned by cross-engine
+tests calling both real comparison functions, known channel boundaries documented. Deferred:
+**(d)** the `capture.py` split (Chunk 05 — was blocked on BAK-7D2V's parallel capture.py work,
+now unblocked) + Chunk 06 violation triage. Two independent Critic reviews (0 blocking).
+
+**Re-vendor: not required** — engine-side only; no `_FINGERPRINT_PATHS` file changed.
+
+## 2026-07-04 — event-seed hardening: atomic write+emit, stable-ID event log, replay smoke test (EVT-6H9R)
+
+<!-- prawduct: type=feature | chunks=EVT-6H9R | scope=db,tests | status=shipped | release=v1.7.0 -->
+
+Audit rec #9 — "harden the seed while it's cheap." Shipped via PR #208, three legs:
+**(1) atomic write+emit** — `@_atomic` on all 59 state-writing mutators wraps state-write +
+`_emit()` in the existing re-entrant `transaction()` (nested mutators join via SAVEPOINT; only
+the outermost commits); `transaction()` now opens `BEGIN IMMEDIATE` at depth 0 (closes a
+Critic-reproduced WAL stale-snapshot-upgrade fail-fast under the MCP-server+build.py two-writer
+topology) and unwinds its depth counter in a `finally` (a failed COMMIT can no longer strand the
+connection in savepoint limbo). Crash-injection tests prove no state-row-without-event.
+**(2) stable-ID event log** — `events.song_id/clip_id/request_id` FKs (ON DELETE SET NULL)
+dropped via a guarded, idempotent, transactional table-recreate migration in `init_db`; the
+audit log no longer loses lineage to a cascade. The PSH-3K9D dangling-clip guard (which existed
+only to dodge the FK) is gone; `delete_clip` now stamps `clip_id` on CLIP_DELETED.
+**(3) replay smoke test** — a representative mutator-built song's event log folds into a fresh
+DB and must converge with materialized state (12 tables); FOLDED ∪ NOT_YET_FOLDED must cover
+every event-kind constant, every FOLDED kind must be exercised, and `_emit` now validates `kind`
+against the constants-derived frozenset (inline-string kinds can't ship). The notes-payload gaps
+blocking full replay are pinned as a test + documented per-kind — the real EVT-4K8H blockers.
+Independent Critic: PASS; both WARNINGs + both NOTEs landed.
+
+**Re-vendor: not required** — engine-side only (`db/`); no `_FINGERPRINT_PATHS` file changed.
+
+## 2026-07-04 — ceremony sweep: 4-obligation close-out, compacted governance mass, 30-day scrub (PRC-5W2N)
+
+<!-- prawduct: type=process | chunks=PRC-5W2N | scope=process,docs,skills | status=shipped | release=v1.7.0 -->
+
+Audit rec #10 — the bookkeeping tax, cut. Shipped via PR #209 (sub-items b/d landed earlier on
+develop: one changelog surface at 6f2b0ba, main→develop back-merge at 50a66ae + now a mandatory
+release step): **(a)** `reflections.md` 724KB → 143KB, 112 pre-June entries archived byte-exact
+to the (gitignored, per-machine) `reflections-archive-2026H1.md`, 3 new distilled rules into
+`learnings.md`; **(c)** ship stamping batched — backlog-close + change-log + state-record = ONE
+commit (backlog header rule 1); **(e)** compose-pass bookkeeping: ~12 obligations across four
+stores → **4 obligations, one close-out protocol** in `docs/song-authoring-conventions.md`;
+`/compose-part`, `/compose-review`, `/mix-review` link to it instead of restating; all CLAUDE.md
+norms preserved (Critic caught + fixed the one drop: kept moves still file `resolution: kept`
+attempt entries so `related:` correction chains close); **(f)** `project-state.yaml` 50.2KB →
+40.0KB, dead-plan narrative relocated, EMPTY-not-null footnote intact; **(g)** backlog staleness
+suspicion threshold 60d → **30d** (velocity + the BLG-7K2Q 4/8-already-shipped precedent).
+
+**Re-vendor: not required** — no engine/MCP code changed.
+
+## 2026-07-04 — pull-durability guard: replay refuses to silently revert pulled live edits (BAK-7D2V)
+
+<!-- prawduct: type=feature | chunks=BAK-7D2V | scope=capture,sync,docs,tests | status=shipped | release=v1.7.0 -->
+
+Closes the audit's #1 finding: `/ableton-pull` bakes live edits into the regenerable DB only,
+and the next `build.py`'s `replay_capture(captured_session.json)` silently re-asserted the
+stale snapshot over them — both writers are `actor='sync'`, so actor precedence never saw the
+conflict. The only defense was an unenforced "remember to re-capture" ritual; it is now
+structural.
+
+- **Snapshots carry `captured_at`** — stamped by `compile_snapshot` (both `/song-snapshot` and
+  `capture_cli execute`) in the events-table timestamp shape; the song scaffold stamps its
+  synthetic snapshot too. `capture_cli migrate` deliberately never back-stamps a legacy file
+  (that would defeat the guard).
+- **`replay_capture` refuses** (`StaleSnapshotError`, before any mutation) when the DB holds
+  events from a `requests.kind='pull'` request, of a kind replay re-asserts (mix layer only —
+  staged clip-notes/tempo/tuning pulls never trip it), NEWER than `captured_at`. The message
+  names the offending rows, the durable fix (re-capture), and the override.
+- **Override:** `replay_capture(..., allow_stale_snapshot=True)`; scaffolded `build.py` exposes
+  it as `--force-replay`. Forcing is per-run consent — the guard re-arms until a re-capture.
+- **Legacy (unstamped) snapshots warn instead of refusing** — no ordering evidence exists, and a
+  permanent false alarm would teach users to force habitually; the warning funnels to a
+  stamping re-capture.
+- Full-fix design (enforced staging + one durable bake; write-through and actor-separation
+  alternatives rejected) at `.prawduct/artifacts/plans/BAK-7D2V/design.md`; corrects
+  `authorship-model.md`'s "code vs snapshot is not a new conflict" claim.
+- **Critic fixes:** pulled **nested-rack-chain deletions** now arm the guard
+  (`device_chain_deleted` added — the cascade kills nested devices event-less, so the chain
+  event is the sole signal; full pull-mutator→event-kind audit table in the design);
+  `captured_at` shape check is a **fullmatch** so a timezone-offset stamp (up to +14h ahead
+  lexicographically) takes the legacy/warn path instead of silently defeating the comparison;
+  refusal/warn messages spell the complete re-capture recipe (`capture_cli execute` writes
+  `captured_session.refresh.json`, NOT the canonical file); Live operator verification queued
+  in `.prawduct/operator-verification.md`.
+
+**Re-vendor: not required** — engine-side (`capture.py`, scaffold, docs); no
+`_FINGERPRINT_PATHS` file changed.
+
 ## 2026-06-24 — v1.6.1: standing timbre metrics (brightness · noisiness) in the mix report (AUD-8T3K)
 
 <!-- prawduct: type=feature | chunks=AUD-8T3K | scope=analysis,docs,tests | status=shipped | release=v1.6.1 -->

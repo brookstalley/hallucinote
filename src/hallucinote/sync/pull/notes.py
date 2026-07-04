@@ -284,9 +284,9 @@ def _apply_notes_for_clip(
             ).append(ins)
         pairs: list[tuple[dict[str, Any], dict[str, Any]]] = []
         for db_note in db_only:
-            mute_db = 1 if bool(db_note["mute"]) else 0
+            mute_key = 1 if bool(db_note["mute"]) else 0
             bucket = ins_pool.get(
-                (int(db_note["pitch"]), int(db_note["velocity"]), mute_db)
+                (int(db_note["pitch"]), int(db_note["velocity"]), mute_key)
             )
             if bucket:
                 pairs.append((db_note, bucket.pop(0)))

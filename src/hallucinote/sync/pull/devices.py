@@ -218,7 +218,8 @@ def plan_pull_devices(
         if parent_kind == "track":
             return (
                 f"track {row['name']!r} ({row['id']}) not linked in session — "
-                "push it via plan_push_clip first, then re-run pull"
+                "push it via the tracks phase (plan_push_song_tracks) first, "
+                "then re-run pull"
             )
         return (
             f"return {row['name']!r} ({row['id']}) not linked in session — skipping"
@@ -856,7 +857,7 @@ def _apply_nested_rack_chains_for_device(
         )
         return
     if Q.get_ableton_link(
-        conn, session_id=session_id, db_kind=parent_kind, db_id=parent_id,
+        conn, session_id=session_id, db_kind=parent_kind, db_id=parent_id,  # type: ignore[arg-type]  # parent walked from a linked row
     ) is None:
         out.skipped_unlinked += 1
         out.warnings.append(

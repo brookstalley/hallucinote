@@ -133,7 +133,7 @@ def test_plan_push_song_tracks_isolates_by_session(conn, song):
 def test_plan_push_song_tracks_propagates_instrument_uri(conn, song, session):
     """When a DB track has an instrument_uri, the create call carries it
     so apply_push_results can record the agent's follow-up device load."""
-    tid = M.create_track(
+    M.create_track(
         conn, song_id=song, track_index=1, name="Op",
         instrument_uri="query:Synths#Operator", kind="midi",
     )
@@ -797,7 +797,7 @@ def test_plan_push_arrangement_clip_notes_skips_audio_source(
 def test_check_coherence_ok_when_links_match_probe(conn, song, session):
     """Happy path: links written by probe-and-link match a fresh probe →
     coherence passes, execute is safe."""
-    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
     M.create_return(conn, song_id=song, name="Reverb", position=1)
     push.probe_and_link(
         conn, song_id=song, session_id=session,

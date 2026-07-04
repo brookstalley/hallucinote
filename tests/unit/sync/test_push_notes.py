@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from hallucinote.db import init_db, mutations as M, queries as Q
+from hallucinote.db import init_db, mutations as M
 from hallucinote.sync import push_notes
 
 
@@ -290,7 +290,6 @@ def test_connection_loss_aborts_and_records_partial_fingerprints(
     conn, session, linked_song, state_dir,
 ):
     # Raise on clip create — but A succeeds first, B raises.
-    send = _make_send_fn(raise_on={"ableton_clip:create"})
     # Force A to succeed by making the raise fire only on the 2nd call: use a
     # send that raises on create AFTER the first. Simpler: explicit order A,B
     # with a counting wrapper.

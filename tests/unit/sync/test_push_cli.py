@@ -6,12 +6,11 @@ The probe-and-link tests exercise the Python helper directly.
 
 End-to-end CLI drive simulates the skill's flow: probe-and-link →
 enumerate phases → for each phase emit a plan + synthesize results +
-apply. Exercises the full thirteen-phase loop through the CLI surface.
+apply. Exercises the full fourteen-phase loop through the CLI surface.
 """
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 
@@ -159,7 +158,7 @@ def test_probe_and_link_strips_render_analyzer_suffix_on_returns(conn, song, ses
 def test_probe_and_link_warns_on_duplicate_live_track_names(conn, song, session):
     """Two Live tracks with the same name → link to the first, note
     the ambiguity so the user can rename."""
-    tid = M.create_track(conn, song_id=song, track_index=1, name="FX", kind="midi")
+    M.create_track(conn, song_id=song, track_index=1, name="FX", kind="midi")
     result = push.probe_and_link(
         conn, song_id=song, session_id=session,
         live_tracks=[
@@ -930,7 +929,7 @@ def test_probe_and_link_binds_device_by_position_and_class(conn, song, session):
 def test_probe_and_link_binds_track_device(conn, song, session):
     """Track-side mirror of the return case."""
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
-    device_id = _make_chain_with_device(
+    _make_chain_with_device(
         conn, parent_track_id=tid, position=1, kind="Drum Rack",
     )
     result = push.probe_and_link(

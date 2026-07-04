@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import sys
 
-import pytest
 
 from hallucinote_mcp.cli import main as cli_main
 from hallucinote_mcp.cli.preflight import _build_report

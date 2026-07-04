@@ -16,7 +16,6 @@ from hallucinote.db import init_db
 from hallucinote.db import mutations as M
 from hallucinote.db import queries as Q
 from hallucinote.tuning import pull_cli
-from hallucinote.tuning.model import TuningData
 from hallucinote.tuning.read import TuningReadError
 from hallucinote.tuning.store import load_song_tuning
 

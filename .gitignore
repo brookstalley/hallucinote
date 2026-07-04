@@ -56,6 +56,7 @@ dist/
 .prawduct/.bug-inbox
 .prawduct/.sync-pending
 .prawduct/reflections.md
+.prawduct/reflections-archive-*.md
 .prawduct/sync-manifest.json
 .prawduct/artifacts/build-plan.md
 .claude/scheduled_tasks.lock

@@ -53,7 +53,8 @@ def plan_pull_arrangement_clips(
         if track_at is None:
             plan.warn(
                 f"track {t['name']!r} ({t['id']}) not linked in session — "
-                "push it via plan_push_clip first, then re-run pull"
+                "push it via the tracks phase (plan_push_song_tracks) first, "
+                "then re-run pull"
             )
             continue
         any_emitted = True
@@ -111,7 +112,8 @@ def plan_pull_session_clips(
         if track_at is None:
             plan.warn(
                 f"track {t['name']!r} ({t['id']}) not linked in session — "
-                "push it via plan_push_clip first, then re-run pull"
+                "push it via the tracks phase (plan_push_song_tracks) first, "
+                "then re-run pull"
             )
             continue
         any_emitted = True

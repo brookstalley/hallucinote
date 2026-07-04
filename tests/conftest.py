@@ -81,7 +81,7 @@ def pytest_report_header(config):
 #
 # Docs: https://hypothesis.readthedocs.io/
 
-from hypothesis import settings, HealthCheck
+from hypothesis import settings, HealthCheck  # noqa: E402  (deliberate section import — see banner above)
 
 # Both profiles disable the per-example wall-clock deadline (default 200ms):
 # under pytest-xdist the workers contend for CPU and an example that takes

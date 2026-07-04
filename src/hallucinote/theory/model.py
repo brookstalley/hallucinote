@@ -36,7 +36,7 @@ MIDI convention throughout: pitch number ``= 12 * (octave + 1) + pitch_class``
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Sequence
 
 from hallucinote.generators.primitives import chord_tones

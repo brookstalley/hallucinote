@@ -7,7 +7,6 @@ from __future__ import annotations
 import hallucinote.generators.variations as V
 from hallucinote.recurrence.match import (
     _MATCH_TOL,
-    MatchResult,
     match_all_in_layer,
     match_motif_in_window,
 )

@@ -132,7 +132,7 @@ def test_add_arrangement_clip_idempotent(conn):
 
 def test_create_section_idempotent(conn):
     sid = M.create_song(conn, name="s")
-    s1 = M.create_section(conn, song_id=sid, name="verse",
+    M.create_section(conn, song_id=sid, name="verse",
                           start_bar=1.0, end_bar=9.0)
     n1 = _event_count(conn)
     s2 = M.create_section(conn, song_id=sid, name="verse",
@@ -157,7 +157,7 @@ def test_section_repeated_name_distinct_at_different_bars(conn):
 
 def test_add_tempo_point_idempotent(conn):
     sid = M.create_song(conn, name="s")
-    p1 = M.add_tempo_point(conn, song_id=sid, start_bar=1.0, tempo_bpm=120.0)
+    M.add_tempo_point(conn, song_id=sid, start_bar=1.0, tempo_bpm=120.0)
     n1 = _event_count(conn)
     p2 = M.add_tempo_point(conn, song_id=sid, start_bar=1.0, tempo_bpm=120.0)
     assert p2.kind == "unchanged"
@@ -166,7 +166,7 @@ def test_add_tempo_point_idempotent(conn):
 
 def test_add_time_signature_point_idempotent(conn):
     sid = M.create_song(conn, name="s")
-    p1 = M.add_time_signature_point(
+    M.add_time_signature_point(
         conn, song_id=sid, start_bar=1.0, numerator=4, denominator=4,
     )
     n1 = _event_count(conn)
@@ -179,7 +179,7 @@ def test_add_time_signature_point_idempotent(conn):
 
 def test_add_cue_point_idempotent(conn):
     sid = M.create_song(conn, name="s")
-    c1 = M.add_cue_point(conn, song_id=sid, position_bar=1.0, name="intro")
+    M.add_cue_point(conn, song_id=sid, position_bar=1.0, name="intro")
     n1 = _event_count(conn)
     c2 = M.add_cue_point(conn, song_id=sid, position_bar=1.0, name="intro")
     assert c2.kind == "unchanged"
@@ -188,7 +188,7 @@ def test_add_cue_point_idempotent(conn):
 
 def test_create_return_idempotent(conn):
     sid = M.create_song(conn, name="s")
-    r1 = M.create_return(conn, song_id=sid, name="Reverb", position=1)
+    M.create_return(conn, song_id=sid, name="Reverb", position=1)
     n1 = _event_count(conn)
     r2 = M.create_return(conn, song_id=sid, name="Reverb", position=1)
     assert r2.kind == "unchanged"
@@ -198,7 +198,7 @@ def test_create_return_idempotent(conn):
 def test_create_device_chain_idempotent(conn):
     sid = M.create_song(conn, name="s")
     tid = M.create_track(conn, song_id=sid, track_index=1, name="T")
-    c1 = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    M.create_device_chain(conn, parent_track_id=tid, position=0)
     n1 = _event_count(conn)
     c2 = M.create_device_chain(conn, parent_track_id=tid, position=0)
     assert c2.kind == "unchanged"
@@ -209,7 +209,7 @@ def test_create_device_idempotent(conn):
     sid = M.create_song(conn, name="s")
     tid = M.create_track(conn, song_id=sid, track_index=1, name="T")
     cid = M.create_device_chain(conn, parent_track_id=tid)
-    d1 = M.create_device(conn, chain_id=cid, position=1, kind="EQ Eight",
+    M.create_device(conn, chain_id=cid, position=1, kind="EQ Eight",
                           display_name="EQ")
     n1 = _event_count(conn)
     d2 = M.create_device(conn, chain_id=cid, position=1, kind="EQ Eight",
@@ -224,7 +224,7 @@ def test_set_device_parameter_idempotent(conn):
     cid = M.create_device_chain(conn, parent_track_id=tid)
     did = M.create_device(conn, chain_id=cid, position=1, kind="EQ Eight",
                            display_name="EQ")
-    p1 = M.set_device_parameter(
+    M.set_device_parameter(
         conn, device_id=did, name="Freq", value_display="1.0kHz",
         value_normalized=0.5,
     )
@@ -240,8 +240,8 @@ def test_set_device_parameter_idempotent(conn):
 def test_create_envelope_idempotent(conn):
     sid = M.create_song(conn, name="s")
     tid = M.create_track(conn, song_id=sid, track_index=1, name="T")
-    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=16.0)
-    e1 = M.create_envelope(
+    M.create_clip(conn, track_id=tid, slot=1, length_beats=16.0)
+    M.create_envelope(
         conn, song_id=sid, target_kind="mixer_volume", target_track_id=tid,
     )
     n1 = _event_count(conn)
@@ -260,7 +260,7 @@ def test_create_envelope_idempotent(conn):
 def test_build_session_promotes_actor_to_build(conn):
     """Inside a build_session, default actor='system' becomes 'build'."""
     with M.build_session(conn, song_name="my-song"):
-        sid = M.create_song(conn, name="my-song")
+        M.create_song(conn, name="my-song")
     # The song-creation event should have actor='build', not 'system'.
     song_ev = next(e for e in _events(conn) if e["kind"] == "song_created")
     assert song_ev["actor"] == "build"
@@ -269,7 +269,7 @@ def test_build_session_promotes_actor_to_build(conn):
 def test_build_session_does_not_override_explicit_actor(conn):
     """Explicit actor='sync' (or anything non-default) survives the session."""
     with M.build_session(conn, song_name="my-song"):
-        sid = M.create_song(conn, name="my-song", actor="sync")
+        M.create_song(conn, name="my-song", actor="sync")
     song_ev = next(e for e in _events(conn) if e["kind"] == "song_created")
     assert song_ev["actor"] == "sync"
 
@@ -277,7 +277,7 @@ def test_build_session_does_not_override_explicit_actor(conn):
 def test_build_session_records_touches(conn):
     with M.build_session(conn, song_name="my-song") as bs:
         sid = M.create_song(conn, name="my-song")
-        tid = M.create_track(conn, song_id=sid, track_index=1, name="Drums")
+        M.create_track(conn, song_id=sid, track_index=1, name="Drums")
     # The session's touched-set has both entities by the end of the block.
     # We can't check bs.touched after exit (the test runs after the with-
     # block's cleanup which doesn't clear it), so check it inside.
@@ -343,10 +343,6 @@ def test_re_running_identical_build_produces_zero_state_changes(conn):
                               start_bar=1.0, end_bar=5.0)
 
     build()
-    event_count_after_first_build = _event_count(conn)
-    request_count_after_first_build = conn.execute(
-        "SELECT COUNT(*) AS n FROM requests"
-    ).fetchone()["n"]
 
     # Re-run — should produce ZERO state-change events.
     build()
@@ -358,7 +354,6 @@ def test_re_running_identical_build_produces_zero_state_changes(conn):
         e for e in events_after_second
         if e["kind"] not in ("request_created", "request_closed")
     ]
-    state_events_first = state_events_after_second[:event_count_after_first_build - 2 * request_count_after_first_build]
     # All state events come from the FIRST build; second build added none.
     # Easier assertion: no NEW state-change events between the two builds.
     state_event_count = len(state_events_after_second)
@@ -422,7 +417,7 @@ def test_tombstone_preserves_sync_actor_rows(conn):
     tombstone sweep even when build.py doesn't touch it."""
     sid = M.create_song(conn, name="s")
     # Simulate a pulled track.
-    pulled_tid = M.create_track(
+    M.create_track(
         conn, song_id=sid, track_index=99, name="PulledFromLive",
         actor="sync",
     )
@@ -555,7 +550,7 @@ def test_request_id_threaded_for_non_default_actor_inside_session(conn):
     trail can answer 'which build cycle produced this row?')."""
     with M.build_session(conn, song_name="s") as bs:
         # sync-actor event (mimics replay_capture inside build_session).
-        sid = M.create_song(conn, name="s", actor="sync")
+        M.create_song(conn, name="s", actor="sync")
     # Find the song_created event and verify its request_id matches bs.request_id.
     ev = conn.execute(
         "SELECT actor, request_id FROM events WHERE kind = 'song_created' "

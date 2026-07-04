@@ -10,7 +10,7 @@ return sends are out of scope for V1).
 from __future__ import annotations
 
 from ..handlers import return_ as return_handlers
-from ..schema import Action, LiveOp, ParamSpec, register
+from ..schema import Action, ParamSpec, register
 
 
 # ---------------------------------------------------------------------------

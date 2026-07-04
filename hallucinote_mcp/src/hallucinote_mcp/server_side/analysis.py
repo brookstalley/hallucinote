@@ -25,7 +25,14 @@ import datetime as dt
 import json
 import logging
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
+
+if TYPE_CHECKING:
+    # Type-only: sqlite3 is FORBIDDEN as a top-level runtime import here —
+    # this module is scanned by test_remote_script_import_safety (Live's
+    # embedded Python doesn't ship it). The "sqlite3.Connection" annotations
+    # below are lazy strings; checkers just need the name.
+    import sqlite3
 
 from ..dispatcher import LiveContext  # noqa: F401  (used in type hints)
 # jobs.py lives in the FINGERPRINTED handlers/ set (it runs in BOTH processes —
@@ -71,11 +78,13 @@ except ImportError:  # pragma: no cover - exercised in Live's vendored env
     analyze_mix = None  # type: ignore[assignment]
     is_stale = None  # type: ignore[assignment]
     loaded_signature = None  # type: ignore[assignment]
-    DeclaredEnvelope = None  # type: ignore[assignment]
-    DeclaredReverbSend = None  # type: ignore[assignment]
-    SectionEnergy = None  # type: ignore[assignment]
-    SectionWindow = None  # type: ignore[assignment]
-    TempoSegment = None  # type: ignore[assignment]
+    # The class names double as types, so mypy needs [misc] ("cannot assign
+    # to a type") on top of [assignment] for the None fallbacks.
+    DeclaredEnvelope = None  # type: ignore[assignment, misc]
+    DeclaredReverbSend = None  # type: ignore[assignment, misc]
+    SectionEnergy = None  # type: ignore[assignment, misc]
+    SectionWindow = None  # type: ignore[assignment, misc]
+    TempoSegment = None  # type: ignore[assignment, misc]
     Q = None  # type: ignore[assignment]
     init_db = None  # type: ignore[assignment]
     resolve_db_path = None  # type: ignore[assignment]
@@ -795,7 +804,7 @@ def analyze_start_handler(
     def _worker() -> None:
         try:
             result = analyze_fn(
-                None,
+                None,  # type: ignore[arg-type]  # no LiveContext server-side by design
                 song_slug=song_slug,
                 captures_dir=captures_dir,
                 compare_to=compare_to,

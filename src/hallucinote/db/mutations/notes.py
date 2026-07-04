@@ -7,6 +7,7 @@ from typing import Any, Sequence
 from ._core import (
     E,
     NoteDict,
+    _atomic,
     _emit,
     _resolve_actor_and_request,
     _touch_clip,
@@ -68,6 +69,7 @@ def _require_midi_clip(conn: sqlite3.Connection, clip_id: str, op: str) -> None:
         )
 
 
+@_atomic
 def insert_notes(
     conn: sqlite3.Connection,
     *,
@@ -107,6 +109,7 @@ def insert_notes(
     return new_ids
 
 
+@_atomic
 def replace_clip_notes(
     conn: sqlite3.Connection,
     *,
@@ -188,6 +191,7 @@ _NOTE_FIELDS = {
 }
 
 
+@_atomic
 def update_note(
     conn: sqlite3.Connection,
     *,
@@ -231,6 +235,7 @@ def update_note(
     )
 
 
+@_atomic
 def delete_notes(
     conn: sqlite3.Connection,
     *,
@@ -271,6 +276,7 @@ def delete_notes(
         )
 
 
+@_atomic
 def update_notes_by_tag(
     conn: sqlite3.Connection,
     *,
@@ -307,7 +313,7 @@ def update_notes_by_tag(
         if velocity_delta is not None:
             new_vel = max(0, min(127, old_vel + velocity_delta))
         else:
-            new_vel = max(0, min(127, velocity_set))  # type: ignore[arg-type]
+            new_vel = max(0, min(127, velocity_set))  # type: ignore[arg-type, type-var]
         matched.append((r["id"], old_vel, new_vel))
 
     for note_id, _old, new_vel in matched:

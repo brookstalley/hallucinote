@@ -426,9 +426,11 @@ def write_markdown_ref(
     projection rebuild is not a domain mutation.
     """
     if path.is_absolute():
-        relpath_obj = path.relative_to(repo_root)
+        # Validation only: raises ValueError when the absolute path escapes
+        # the repo root. The relative form itself is recomputed by
+        # load_markdown_doc below.
+        path.relative_to(repo_root)
     else:
-        relpath_obj = path
         path = repo_root / path
     text = _serialize_markdown(frontmatter, body)
     path.parent.mkdir(parents=True, exist_ok=True)

@@ -4,6 +4,12 @@ Every function here:
   1. Performs its state change.
   2. Emits an `events` row describing the change in the same transaction.
 
+The "same transaction" clause is enforced structurally (EVT-6H9R): every
+mutator is wrapped in `_core._atomic`, which runs the whole body inside
+`connection.transaction()`. State write and event emit commit together or
+not at all; nested mutator calls join the outermost transaction via
+SAVEPOINTs.
+
 Callers MUST use these instead of raw SQL. The discipline is the only thing
 that makes a future event-store flip cheap rather than a rewrite.
 

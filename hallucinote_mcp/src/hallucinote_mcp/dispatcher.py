@@ -162,12 +162,13 @@ def validate_params(action: schema.Action, params: dict[str, Any]) -> dict[str, 
                 f"{action.tool}({action.name!r}): param {name!r}={value!r} "
                 f"not in enum {list(spec.enum)}"
             )
-        if spec.minimum is not None and value < spec.minimum:
+        # `value` is a dynamically-typed wire param — this comparison IS the validation.
+        if spec.minimum is not None and value < spec.minimum:  # type: ignore[operator]
             raise ParamValidationError(
                 f"{action.tool}({action.name!r}): param {name!r}={value} "
                 f"below minimum {spec.minimum}"
             )
-        if spec.maximum is not None and value > spec.maximum:
+        if spec.maximum is not None and value > spec.maximum:  # type: ignore[operator]
             raise ParamValidationError(
                 f"{action.tool}({action.name!r}): param {name!r}={value} "
                 f"above maximum {spec.maximum}"

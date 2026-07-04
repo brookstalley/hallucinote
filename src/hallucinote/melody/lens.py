@@ -277,7 +277,7 @@ class SectionMelodyResult:
     def to_dict(self) -> dict[str, Any]:
         return {
             "section": self.section,
-            "lines": [l.to_dict() for l in self.lines],
+            "lines": [line.to_dict() for line in self.lines],
             "findings": [f.to_dict() for f in self.findings],
         }
 

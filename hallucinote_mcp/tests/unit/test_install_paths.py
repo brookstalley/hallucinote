@@ -14,7 +14,6 @@ from hallucinote_mcp.install_paths import (
     ANALYZER_AMXD_FILENAME,
     MCPConfigEntry,
     REMOTE_SCRIPT_EXCLUDE_DIRS_ANY,
-    REMOTE_SCRIPT_EXCLUDE_FILE_GLOBS_ANY,
     REMOTE_SCRIPT_EXCLUDE_TOP_LEVEL_FILES,
     analyzer_amxd_source_path,
     analyzer_install_dir,

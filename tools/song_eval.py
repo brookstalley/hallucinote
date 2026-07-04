@@ -60,7 +60,6 @@ from tools.scenario_eval import (
     ScenarioError,
     SCENARIOS_DIR,
     validate_result,
-    write_result,
 )
 
 # ---------------------------------------------------------------------------

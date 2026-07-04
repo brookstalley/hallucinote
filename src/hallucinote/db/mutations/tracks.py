@@ -7,6 +7,7 @@ from typing import Any
 from ._core import (
     E,
     MutatorResult,
+    _atomic,
     _emit,
     _record_touch_if_session,
     _resolve_actor_and_request,
@@ -18,6 +19,7 @@ from ._core import (
 TRACK_KINDS = frozenset({"midi", "audio", "master", "group"})
 
 
+@_atomic
 def create_track(
     conn: sqlite3.Connection,
     *,
@@ -98,6 +100,7 @@ def create_track(
 _MIXER_FIELDS = {"volume", "pan", "mute", "solo", "arm", "color"}
 
 
+@_atomic
 def set_track_mixer(
     conn: sqlite3.Connection,
     *,
@@ -232,6 +235,7 @@ def _validate_track_routing(
                 )
 
 
+@_atomic
 def set_track_routing(
     conn: sqlite3.Connection,
     *,
@@ -310,6 +314,7 @@ def set_track_routing(
     _touch_song(conn, row["song_id"])
 
 
+@_atomic
 def _delete_track(
     conn: sqlite3.Connection, *,
     track_id: str,

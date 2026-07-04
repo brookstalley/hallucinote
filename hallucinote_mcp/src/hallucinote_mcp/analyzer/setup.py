@@ -376,7 +376,7 @@ def strip_analyzers(context: LiveContext) -> StripResult:
             # delete bout AND the yield: only surfaces we actually touch
             # need Live's cascade to drain.
             continue
-        context.run_on_main(lambda idx=idx, plan=plan: device_handlers.delete_handler(
+        context.run_on_main(lambda idx=idx, plan=plan: device_handlers.delete_handler(  # type: ignore[misc]  # LOM-capturing lambda
             context,
             device_index=idx,
             **plan.track_address,

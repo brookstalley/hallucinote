@@ -837,6 +837,14 @@ CREATE INDEX IF NOT EXISTS idx_ableton_links_session ON ableton_links(session_id
 -- id   = UUID hex (canonical identity, stable across DBs)
 -- seq  = local monotonic order, regenerated on import (human-readable index)
 -- actor / reason / request_id = provenance for the change
+--
+-- EVT-6H9R: song_id / clip_id / request_id carry STABLE IDs, not live FKs.
+-- An append-only audit log must not lose lineage to a cascade — the original
+-- ON DELETE SET NULL references meant deleting a clip nulled clip_id on every
+-- event that ever touched it. The ids here may dangle (the referenced row can
+-- be deleted later); that is the point. Legacy DBs are migrated by
+-- `connection._migrate_events_drop_fks` (table-recreate; SQLite can't ALTER
+-- an FK away).
 
 CREATE TABLE IF NOT EXISTS events (
     id              TEXT PRIMARY KEY,
@@ -844,11 +852,11 @@ CREATE TABLE IF NOT EXISTS events (
     ts              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     kind            TEXT NOT NULL,
     payload_json    TEXT NOT NULL,
-    song_id         TEXT REFERENCES songs(id) ON DELETE SET NULL,
-    clip_id         TEXT REFERENCES clips(id) ON DELETE SET NULL,
+    song_id         TEXT,           -- stable id, no FK (see EVT-6H9R note above)
+    clip_id         TEXT,           -- stable id, no FK
     actor           TEXT NOT NULL,
     reason          TEXT,
-    request_id      TEXT REFERENCES requests(id) ON DELETE SET NULL
+    request_id      TEXT            -- stable id, no FK
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_seq ON events(seq);

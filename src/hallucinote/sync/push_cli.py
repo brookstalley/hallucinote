@@ -1,7 +1,7 @@
 """CLI bridge between the ``/ableton-push`` skill and the pure Python push layer.
 
 Mirror of :mod:`hallucinote.sync.pull_cli`. The push side has a more
-elaborate flow because :func:`push.plan_push_song` returns thirteen ordered
+elaborate flow because :func:`push.plan_push_song` returns fourteen ordered
 phases (vs. pull's flat domain set), and probe-and-link runs before
 the phases to bind any Live tracks/returns that already match DB rows.
 
@@ -33,7 +33,7 @@ Subcommands:
            ProbeAndLinkResult JSON. Re-runnable.
 
     push_cli execute [session_id] (--song SLUG | --db PATH) [--state-dir D]
-        -> W10-E2: dispatches the full thirteen-phase push directly against
+        -> W10-E2: dispatches the full fourteen-phase push directly against
            Live's Remote Script via :mod:`hallucinote_mcp.client`,
            bypassing the agent's tool-use channel. Writes
            ``.last-push-state.json`` (always) + ``.last-push-errors.json``
@@ -692,7 +692,7 @@ def _resume_phase_from_state(state_dir: Path) -> str | None:
 
 
 def _cmd_execute(args: argparse.Namespace) -> int:
-    """W10-E2: dispatch the full thirteen-phase push directly against Live's
+    """W10-E2: dispatch the full fourteen-phase push directly against Live's
     Remote Script, bypassing the agent's tool-use channel.
 
     See ``.prawduct/artifacts/push-execute-design.md`` for the contract.
@@ -1037,7 +1037,7 @@ def _cmd_cleanup_default_scaffold(args: argparse.Namespace) -> int:
         live_tracks=live_tracks,
         live_returns=live_returns,
         actor="sync",
-        reason=args.reason or f"cleanup-default-scaffold pre-probe",
+        reason=args.reason or "cleanup-default-scaffold pre-probe",
     )
 
     cleanup_plan = push.plan_cleanup_default_scaffold(
@@ -1191,7 +1191,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="hallucinote.sync.push_cli")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    p_phases = sub.add_parser("phases", help="emit the thirteen-phase metadata list")
+    p_phases = sub.add_parser("phases", help="emit the fourteen-phase metadata list")
     p_phases.add_argument("session_id", nargs="?", default=None,
                    help="ableton_sessions.id (omit to auto-select the "
                         "only/most-recent session in the DB; WFL-7Q2N)")
@@ -1263,7 +1263,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p_exec = sub.add_parser(
         "execute",
-        help="W10-E2: dispatch the full thirteen-phase push directly against Live "
+        help="W10-E2: dispatch the full fourteen-phase push directly against Live "
              "(bypasses agent tool-use channel for bulk-data phases)",
     )
     p_exec.add_argument("session_id", nargs="?", default=None,

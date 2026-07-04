@@ -197,6 +197,12 @@ def test_scaffolded_captured_session_is_valid_json(tmp_path):
     # SNP-8R4K: a freshly-scaffolded snapshot is version-stamped so its first
     # build doesn't false-trigger the pre-SNP-8R4K migration warning.
     assert snap["snapshot_version"] == 1
+    # BAK-7D2V: stamped with authoring time (events.ts shape) so a new song
+    # gets the exact (refusing) pull-durability guard, not the legacy
+    # warn-only path.
+    assert re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z", snap["captured_at"]
+    )
 
 
 def test_scaffolded_build_py_imports_cleanly(tmp_path):
@@ -210,6 +216,17 @@ def test_scaffolded_build_py_imports_cleanly(tmp_path):
     assert callable(mod.build)
     assert callable(mod.report)
     assert callable(mod.melody_report)
+
+
+def test_scaffolded_build_py_plumbs_force_replay(tmp_path):
+    """BAK-7D2V: the scaffolded build.py exposes the pull-durability guard's
+    conscious-revert override as --force-replay -> allow_stale_snapshot."""
+    req = _basic_req(slug="force-replay-test")
+    result = scaffold_song(req, songs_root=tmp_path)
+    src = (result.song_dir / "build.py").read_text()
+    assert '"--force-replay" in sys.argv' in src
+    assert "allow_stale_snapshot=force_replay" in src
+    assert "force_replay: bool = False" in src
 
 
 def test_scaffolded_build_py_carries_the_melodic_profile_example(tmp_path):

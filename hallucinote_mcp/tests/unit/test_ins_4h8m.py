@@ -17,7 +17,6 @@ from __future__ import annotations
 import hashlib
 import pathlib
 
-import pytest
 
 from hallucinote_mcp import install_ops as ops
 from hallucinote_mcp import install_paths as P

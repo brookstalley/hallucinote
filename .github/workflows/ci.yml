@@ -1,0 +1,58 @@
+# CI (INF-2C4X) — the four gates every PR into develop/main must pass:
+#   1. uv lock --check   — lockfile discipline (the plugin runs `uv run --frozen`,
+#                          so a stale uv.lock ships stale deps; see
+#                          docs/release-process.md step 6)
+#   2. ruff check .      — lint (config: [tool.ruff] in pyproject.toml)
+#   3. mypy              — types (config: [tool.mypy] in pyproject.toml)
+#   4. python -m pytest  — the FULL no-path suite. Never pass a path argument:
+#                          testpaths covers tests/ AND hallucinote_mcp/tests/,
+#                          and a path-scoped run silently skips the other half.
+#
+# No Ableton/Live is needed: `ableton`-marked tests are opt-in (default-skip,
+# see conftest.py) and the MCP-server tests use fakes. The audio/DSP stack
+# (numpy/scipy/librosa/soundfile) is pure-pip on linux. If the native audio
+# suite ever proves unstable on runners, HALLUCINOTE_SKIP_AUDIO=1 is the
+# existing opt-out (conftest.py) — prefer fixing the instability first.
+
+name: CI
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Lock check (uv.lock is current)
+        run: uv lock --check
+
+      # One env for everything: the workspace (engine + hallucinote_mcp) plus
+      # the dev extras (pytest, pytest-xdist, hypothesis, ruff, mypy).
+      # --locked = install exactly what uv.lock records, never re-resolve.
+      - name: Sync workspace (all packages + dev extras)
+        run: uv sync --all-packages --all-extras --locked
+
+      - name: Ruff (lint)
+        run: uv run --no-sync ruff check .
+
+      - name: Mypy (types)
+        run: uv run --no-sync mypy
+
+      - name: Tests (full suite, no path argument)
+        run: uv run --no-sync python -m pytest

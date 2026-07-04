@@ -135,7 +135,9 @@ lock stale, and the plugin launches with `uv run --frozen`, which uses the lock 
 After the version bump, run `uv lock` and confirm `uv lock --check` passes before
 committing; add `uv.lock` to the release commit when it changed. The lock drifted
 unnoticed across three releases before this step existed — v1.6.1 shipped with the
-lock still recording 0.9.0.)
+lock still recording 0.9.0. CI now enforces `uv lock --check` on every push/PR to
+`develop` and `main` (`.github/workflows/ci.yml`), so a stale lock can no longer
+reach a release unnoticed.)
 
 ### 7. Promote `develop` → `main`
 

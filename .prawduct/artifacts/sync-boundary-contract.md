@@ -41,7 +41,7 @@ probe, and every prior phase that creates X halted the push if it failed.
 | Arrangement probe (`_probe_live_arrangement_clips_via_mcp`, push_cli.py:798-808) | per-track Live arrangement clip inventory, feeding the projection's clear | a per-track probe failure leaves the lane out of the map; the arrangement planner then skips that track with an alert (arrangement.py:191-202) rather than guess |
 | `probe_and_link` (separate subcommand, NOT run by execute; push/probe.py:360-748) | name-matched track/return links; W20-A device links by (parent, position, class); W18-B/SYN-3C8K/SYN-SCAFFOLD-MISLINK stale-link reconciliation | additive only (never deletes Live entities); duplicate names link-first + note; case near-matches noted, not linked |
 
-## Executor cross-phase contract (`push_execute.execute_push`, push_execute.py:640-1564)
+## Executor cross-phase contract (`push_execute.execute_push`, push_execute.py:640-1576)
 
 - **Phase-bounded error accumulation** (module docstring :15-19): within a phase
   every call runs and per-call failures accumulate (`_dispatch_calls`, :936-1103);
@@ -61,8 +61,9 @@ probe, and every prior phase that creates X halted the push if it failed.
 - **State file always written** (`_flush_state`, :742-797): at every phase start,
   on mid-phase heartbeat (every 25 calls, :59), and terminally — atomic replace.
   `.last-push-errors.json` only on errors (stale one deleted on clean re-run,
-  :1532-1537). The push is one attributed request row, closed with
-  ok/partial/failed (:716-727, :1544-1556). **A contract-drift `ValueError` from
+  :1547-1548). The push is one attributed request row, closed with
+  ok/partial/failed (:716-727, :1549-1567 — try/finally: the errors-file
+  write cannot leave the request open, review W1). **A contract-drift `ValueError` from
   the apply layer is converted to a controlled phase halt (SYN-8Q3F Chunk 03) —
   see §Apply.**
 - **Per-phase special-case passes** (complexity-budget rule 4 — new entries must
@@ -140,7 +141,10 @@ matchers at raw magnitudes violates it (18000.0 vs 18000.016 is push-equal yet
 `_floats_differ`-drifted) — which is exactly why pull's raw channel uses the
 relative `_raw_values_match` (DEV-4P7R). The test pins that disagreement as a
 known boundary: any new pull comparison of raw-magnitude values must use the raw
-matcher. `arrangement_compare.py:44` (`DEFAULT_EPS_BEATS=1e-3`) is note-geometry
+matcher. One unsampled corner remains: push's normalized branch compares in RAW
+space after projection (`device_param_diff.py:104-111`), so for a pathological
+parameter range with |hi| >> hi−lo (ratio ≳1000) the same boundary exists inside
+push's own normalized compare — realistic Live params sit well inside it. `arrangement_compare.py:44` (`DEFAULT_EPS_BEATS=1e-3`) is note-geometry
 comparison, not a param diff engine — out of this invariant.
 
 ---
@@ -341,6 +345,15 @@ plan.py:217-219, arrangement.py:491-507.)*
   path (moved to `plan_push_song_tracks` in W3-C): push/mix.py:91 (+ its
   docstring :39-42), pull/mix.py:96, pull/clips.py:56,115, pull/devices.py:221.
   Not test-pinned; corrected to name the tracks phase.
+- **V8 (open, behavior): apply-layer non-ValueError raises reproduce V4.**
+  The Chunk 03 halt net catches `ValueError` only; a `sqlite3.IntegrityError`
+  from inside the apply transaction (e.g. `link_db_to_ableton`'s events
+  INSERT against a row deleted mid-cycle — the PSH-3K9D bug-#2 shape) still
+  escapes `execute_push` as a raw traceback with the request row left open.
+  The transaction rollback still protects DB state, so not blocking — but
+  the V4 closure is ValueError-deep, not exception-deep. Candidate for the
+  V2 / Chunk-06 controlled-halt treatment; decide catch-widening there,
+  with a DISTINCT hint (an integrity error is not "declare the kind").
 - **V6 (open, prose): device_sidechain's deferral message names the wrong
   mechanism.** devices.py:687-690 says an unlinked device's sidechain is
   "deferred to the devices-convergence re-plan" — the convergence pass re-runs

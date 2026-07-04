@@ -1519,37 +1519,49 @@ def execute_push(
     phase_progress = None
     _flush_state(current_phase=None)
 
+    # SYN-8Q3F review W1: the errors-file write must never leave the request
+    # row open. Before this, a write failure here (disk full / permissions)
+    # raised BEFORE close_request — reproducing the V4 symptom (open request +
+    # escaping exception) one step after the class was closed. try/finally
+    # guarantees close_request runs (the exception still propagates — a broken
+    # state_dir is operator-actionable); the write itself gets the same atomic
+    # temp + os.replace treatment as the state file, so a concurrent reader
+    # never sees a torn errors file.
     top_patterns: list[dict[str, Any]] = []
-    if error_records:
-        grouped = _group_errors(error_records)
-        errors_payload = {
-            "ts": _now_iso(),
-            "phase": halt_phase,
-            "errors": error_records,
-            "grouped_by_error": grouped,
-        }
-        errors_file.write_text(json.dumps(errors_payload, indent=2) + "\n")
-        # Keep top 3 patterns for the CLI summary.
-        top_patterns = grouped[:3]
-    else:
-        # Make sure a stale errors file from a prior partial run doesn't
-        # confuse the agent reading state after a clean re-push.
-        if errors_file.exists():
-            errors_file.unlink()
-
-    # W23-C: close the request with the outcome the push reached.
-    # request_outcome maps the push's tri-state (ok / partial / connection_lost)
-    # onto REQUEST_OUTCOMES (ok / partial / failed). connection_lost lands as
-    # 'failed' because nothing further could happen; partial keeps its name.
-    request_outcome = {"ok": "ok", "partial": "partial",
-                       "connection_lost": "failed"}[outcome]
-    M.close_request(
-        conn,
-        request_id=request_id,
-        outcome=request_outcome,
-        actor=actor,
-        reason=reason,
-    )
+    try:
+        if error_records:
+            grouped = _group_errors(error_records)
+            errors_payload = {
+                "ts": _now_iso(),
+                "phase": halt_phase,
+                "errors": error_records,
+                "grouped_by_error": grouped,
+            }
+            tmp = errors_file.with_name(f".{errors_file.name}.tmp-{os.getpid()}")
+            tmp.write_text(json.dumps(errors_payload, indent=2) + "\n")
+            os.replace(tmp, errors_file)
+            # Keep top 3 patterns for the CLI summary.
+            top_patterns = grouped[:3]
+        else:
+            # Make sure a stale errors file from a prior partial run doesn't
+            # confuse the agent reading state after a clean re-push.
+            if errors_file.exists():
+                errors_file.unlink()
+    finally:
+        # W23-C: close the request with the outcome the push reached.
+        # request_outcome maps the push's tri-state (ok / partial /
+        # connection_lost) onto REQUEST_OUTCOMES (ok / partial / failed).
+        # connection_lost lands as 'failed' because nothing further could
+        # happen; partial keeps its name.
+        request_outcome = {"ok": "ok", "partial": "partial",
+                           "connection_lost": "failed"}[outcome]
+        M.close_request(
+            conn,
+            request_id=request_id,
+            outcome=request_outcome,
+            actor=actor,
+            reason=reason,
+        )
 
     return ExecuteResult(
         outcome=outcome,

@@ -39,7 +39,8 @@ Critic mode: cumulative-final (chunks are small/structural; roll up at PR time p
   "thirteen-phase"/13 prose on the files touched. Tests: today's 14-name order
   validates and is byte-identical to the historical tuple; a reversed pair,
   an undeclared-dep graph, and a cyclic graph are rejected. Done when: suite
-  green with no existing-test edits.
+  green with no existing assertion changed (three existing test files got
+  thirteen→fourteen docstring-prose edits only).
 - [x] Chunk 03 — **(c) Unknown-result-kind: deliberate runtime policy.**
   `push/plan.py`: `KNOWN_RESULT_KEY_KINDS` registry constant
   (= `_LINK_KINDS ∪ _ACK_ONLY_KINDS ∪ {perform_batch}`) used by the apply
@@ -71,7 +72,11 @@ Critic mode: cumulative-final (chunks are small/structural; roll up at PR time p
   artifact's violations section, the two behavior-relevant ones: (V2) a plan_fn
   raise (e.g. clips' W3-C strict ValueError under `--only clips`) escapes
   `execute_push` as a traceback — same class as the pre-Chunk-03 apply raise;
-  convert to a controlled halt. (V3) the mix phase still owns a second
+  convert to a controlled halt — and (V8, review W2) widen the same
+  treatment past ValueError: an apply-layer sqlite3.IntegrityError still
+  escapes as a raw traceback with the request row open (rollback protects
+  state); decide catch-widening there with a distinct, non-'declare the
+  kind' hint. (V3) the mix phase still owns a second
   return-CREATE path duplicating the returns phase. Plus the one remaining
   prose fix (V6 — V5 was fixed inline, V7 by Chunk 02's docstring rewrite).
   File as backlog items rather than building silently.

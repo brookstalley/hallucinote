@@ -2626,3 +2626,42 @@ def test_known_result_key_kinds_is_the_union_of_the_apply_tables():
     # Adding an enum-member-equivalent (a new kind) without declaring it can't
     # pass: the registry is DERIVED from the tables, and the static guard in
     # test_push.py checks every planner-emitted kind against those tables.
+
+
+def test_errors_file_write_failure_still_closes_request(
+    conn, song, session, tiny_song, state_dir, monkeypatch,
+):
+    """SYN-8Q3F review W1: the terminal errors-file write runs before
+    close_request; if it raises (disk full / permissions), the request row must
+    STILL close with the push's outcome and the terminal state file must
+    already be on disk — an errors-file write failure must not reproduce the
+    V4 open-request symptom. The write failure itself still propagates (a
+    broken state_dir is operator-actionable)."""
+    import os as _os
+
+    real_replace = _os.replace
+
+    def failing_replace(src, dst, *a, **kw):
+        if str(dst).endswith(".last-push-errors.json"):
+            raise OSError(28, "No space left on device (simulated)")
+        return real_replace(src, dst, *a, **kw)
+
+    monkeypatch.setattr(push_execute.os, "replace", failing_replace)
+
+    # A per-call failure guarantees error_records is non-empty, so the
+    # errors-file write path (the failing one) is exercised.
+    bad_send = _make_send_fn(fail_keys={"ableton_clip:create"})
+    with pytest.raises(OSError):
+        push_execute.execute_push(
+            conn=conn, song_id=song, session_id=session,
+            state_dir=state_dir, send_fn=bad_send,
+        )
+
+    # The request row is CLOSED with the halt outcome, not left open.
+    req = Q.get_latest_request_for_song(conn, song, kind="push")
+    assert req["outcome"] == "partial"
+
+    # The terminal state file was flushed before the failing write.
+    state = json.loads((state_dir / ".last-push-state.json").read_text())
+    assert state["outcome"] == "partial"
+    assert state["current_phase"] is None  # terminal flush, not a mid-run one

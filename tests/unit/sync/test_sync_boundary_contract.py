@@ -20,6 +20,9 @@ _ARTIFACT = (
 )
 
 # One phase section per phase: "### <ordinal>. `<phase_name>`".
+# NOTE: this guard enforces section EXISTENCE and ORDER only — it cannot
+# judge whether a section's ASSUME/RE-PROBE/failure-policy content is still
+# accurate. Content freshness is the Critic's / reviewer's job.
 _SECTION_RE = re.compile(r"^### (\d+)\. `([a-z_]+)`", re.MULTILINE)
 
 

@@ -122,12 +122,59 @@ Cheapest reliable discriminator, verified against the schema:
 - **Kind filter** (`_REPLAY_ASSERTED_EVENT_KINDS` in `capture.py`): only event
   kinds for state `replay_capture` actually re-asserts (track/return identity +
   mixer, sends, device chains/devices/params/param-overrides/sidechain, chain
-  props). Pulled state replay *cannot* revert — clip-notes, envelopes, tempo
-  map, cue points, arrangement, tuning (`tuning/pull_cli.py` also opens
+  props, **including `device_chain_deleted`** — see the audit below). Pulled
+  state replay *cannot* revert — clip-notes, envelopes, tempo map, cue points,
+  arrangement, track routing, tuning (`tuning/pull_cli.py` also opens
   `kind='pull'` requests) — never trips the guard. This is what keeps ordinary
   build.py-staging pulls (the sanctioned use of `/ableton-pull`) unbricked.
 - Dry-run pulls roll back their request + events (`_DryRunRollback`), so they
   leave no signal — correct.
+
+### Kind-set audit (Critic-driven re-audit, 2026-07-04)
+
+The Critic found the original tuple missed **pulled nested-rack-chain
+deletions**: removing a chain inside a Rack in Live and pulling `devices` /
+`nested-rack-chains` calls `M.delete_device_chain`
+(`sync/pull/devices.py:1019`), which emits ONLY `device_chain_deleted` — the
+cascade removes the chain's nested devices with **no per-device events** — and
+`_replay_rack_chains` unconditionally recreates every snapshot-declared chain.
+Guard didn't fire; deletion silently reverted. Fixed by adding
+`device_chain_deleted`, then re-auditing the whole tuple.
+
+**Method:** enumerate every mutator any pull apply handler can call
+(`grep -o 'M\.[a-z_]*(' src/hallucinote/sync/pull/*.py`, all domains +
+`tuning/pull_cli.py`), map each to the event kind(s) it emits, and mark
+whether `replay_capture` re-asserts that state — if yes, the kind MUST be in
+the tuple. Cascade-deleting mutators were checked specifically for whether the
+parent event is the only signal. Re-run this audit whenever a pull apply
+handler is added or replay's write surface grows.
+
+| Pull-called mutator (sync/pull/) | Event kind(s) | Replay re-asserts? | In tuple |
+|---|---|---|---|
+| `set_track_mixer` (mix.py) | `track_mixer_set` | yes (mixer) | ✅ |
+| `update_return` (mix.py) | `return_updated` | yes (returns) | ✅ |
+| `set_send_level` / `remove_send` (mix.py) | `send_set` / `send_removed` | yes (sends) | ✅ |
+| `create_device_chain` (devices.py) | `device_chain_created` | yes (chains) | ✅ |
+| **`delete_device_chain` (devices.py:1019)** | **`device_chain_deleted`** (cascade: nested devices die event-less — sole signal) | **yes** — `_replay_rack_chains` recreates every snapshot chain | ✅ **added by this audit (the BLOCKING gap)** |
+| `create_device` / `delete_device` (devices.py) | `device_created` / `device_deleted` | yes (devices) | ✅ |
+| `set_device_parameter` / `remove_device_parameter` (devices.py) | `device_parameter_set` / `device_parameter_removed` | yes (params) | ✅ |
+| `set_device_sidechain` (devices.py) | `device_sidechain_set` | yes | ✅ |
+| `set_chain_properties` (devices.py) | `device_chain_props_set` | yes (choke/out_note/chain mixer) | ✅ |
+| `set_track_routing` (mix.py) | `track_routing_set` | **no** — replay does not ingest track routing (capture reads device *input* routing only, which lands as `device_sidechain_set`) | correctly excluded |
+| `add/update_tempo_point`, `add/update_time_signature_point` (mix.py) | `tempo_point_*` / `time_signature_point_*` | no — score-half is build.py-owned; replay never writes it | correctly excluded |
+| `add_cue_point` / `remove_cue_point` (score.py) | `cue_point_added/removed` | no | correctly excluded |
+| `update_clip` / `delete_clip` / `remove_arrangement_clip` (clips.py) | `clip_updated/deleted` / `arrangement_clip_removed` | no — replay ignores clips/arrangement | correctly excluded |
+| `update_note` / `insert_notes` / `delete_notes` (notes.py) | `note_updated` / `notes_inserted` / `notes_deleted` | no | correctly excluded |
+| `delete_envelope` / `replace_breakpoints` (envelopes.py) | `envelope_deleted` / `breakpoints_replaced` | no — replay does not ingest envelopes | correctly excluded |
+| tuning pull (`tuning/pull_cli.py`) | `song_tuning_set` | no — replay does not touch tuning | correctly excluded |
+
+Kinds in the tuple that pull currently never emits (`song_created/updated`,
+`track_created/updated`, `return_created`, `device_param_overrides_replaced`,
+`drum_pad_mappings_replaced`) are harmless over-coverage: the request-kind
+join gates first, so they can never trip a non-pull cycle, and they
+future-proof against pull growing those writes. Pull deletes no tracks or
+returns today, so `track_deleted` / `return_deleted` have no pull emitter; if
+pull ever gains those deletes, this audit's method flags the addition.
 
 ### Timestamp: `captured_at` on the snapshot
 
@@ -135,6 +182,11 @@ Cheapest reliable discriminator, verified against the schema:
   emitted only `snapshot_version` + content). Added: `captured_at`, UTC ISO in
   the exact `events.ts` format (`YYYY-MM-DDTHH:MM:SS.mmmZ`) so a lexicographic
   string comparison is a correct chronological comparison against event rows.
+  The shape check is a **fullmatch** on exactly that format: a
+  timezone-*offset* stamp (`...T14:34:56+02:00`) can compare up to +14h ahead
+  of the equivalent UTC instant and would silently defeat the guard, so any
+  non-exact form (offset, missing millis, garbage) takes the conservative
+  legacy/warn path instead of being compared.
 - Stamped in `compile_snapshot` — the single assembly point used by both
   `assemble_snapshot_via_probes` (capture_cli execute / `/song-snapshot`) and
   any hand-orchestrated `capture_plan` assembly. `merge_snapshots` takes `new`
@@ -176,9 +228,15 @@ Cheapest reliable discriminator, verified against the schema:
 
 ### Known imprecisions (accepted for the interim guard, documented)
 
-- *Pull → hand-revert in Live → capture shows no diff → user skips overwrite*:
-  guard stays armed even though replay would now be value-identical. Rare;
-  `--force-replay` or accepting the no-op overwrite (which re-stamps) resolves it.
+- *Pull → hand-revert in Live → capture shows no diff*: guard stays armed even
+  though replay would now be value-identical. Rare; **the current exit for this
+  corner is `--force-replay`** (safe here by construction — replay writes the
+  same values back). `/song-snapshot` today hard-stops on an empty diff, so
+  "accept a no-op overwrite to re-stamp" is NOT an available path yet — adding
+  a re-stamp affordance for the no-diff case is **Chunk 3 work** (the skill
+  must offer "no content changes; refresh `captured_at` anyway?").
+  `capture_cli execute` + hand-copying the refresh over the canonical file
+  also re-stamps, for users comfortable with the two-step recipe.
 - Event-vs-file clock: `captured_at` uses Python's UTC clock, `events.ts`
   SQLite's — same machine in this single-user tool; sub-second skew only
   matters in the seconds right around a capture, where either outcome is safe.
@@ -200,9 +258,12 @@ Cheapest reliable discriminator, verified against the schema:
    so the skill itself tells the user the bake is the closing move.
 3. **Chunk 3 — `/song-snapshot` closes the loop**: after a confirmed overwrite,
    the skill states the guard is disarmed ("snapshot now newer than all pulled
-   state"); `/song-pick-instruments` stamps `captured_at` on hand-authored
-   snapshots; docs (`snapshot-schema.md`, `/song-workflow`) name the
-   pull→bake→build contract in one place (done for snapshot-schema in Chunk 1).
+   state"); the skill offers a **re-stamp on an empty diff** ("no content
+   changes; refresh `captured_at` anyway?" — closes the pull→hand-revert corner
+   without `--force-replay`); `/song-pick-instruments` stamps `captured_at` on
+   hand-authored snapshots; docs (`snapshot-schema.md`, `/song-workflow`) name
+   the pull→bake→build contract in one place (done for snapshot-schema in
+   Chunk 1).
 4. **Operator verification (Live-gated)**: real Live session — dial a knob,
    `/ableton-pull` device-parameters, run `build.py` → observe refusal; run
    `/song-snapshot` → build passes and the knob survives; `--force-replay` →

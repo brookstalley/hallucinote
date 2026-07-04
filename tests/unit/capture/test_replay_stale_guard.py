@@ -200,6 +200,42 @@ def test_fresh_capture_after_pull_disarms_the_guard(conn):
     assert Q.get_track(conn, track_id)["volume"] == pytest.approx(0.9)
 
 
+def test_pulled_nested_chain_deletion_trips_the_guard(conn):
+    """Critic BLOCKING repro: removing a chain inside a Rack in Live and
+    pulling devices calls M.delete_device_chain (sync/pull/devices.py), which
+    emits ONLY device_chain_deleted — the cascade removes the chain's nested
+    devices with NO per-device events — and _replay_rack_chains recreates
+    every snapshot-declared chain. The chain-delete event is therefore the
+    sole signal and MUST arm the guard."""
+    snap = _snapshot(captured_at=OLD_STAMP)
+    snap["tracks"][0]["devices"] = [{
+        "index": 1, "name": "Kit", "class": "Drum Rack",
+        "chains": [{"chain_index": 1, "name": "Kick", "devices": []}],
+    }]
+    song_id, session_id, track_id = _built_song(conn, snap)
+
+    top_chain = Q.get_device_chains_for_track(conn, track_id)[0]
+    rack = Q.get_devices_for_chain(conn, top_chain["id"])[0]
+    nested = Q.get_device_chains_for_rack_device(conn, rack["id"])
+    assert len(nested) == 1  # the snapshot-declared "Kick" chain
+
+    # The pull path: user deleted the chain in Live; pull reconciles the DB.
+    request_id = M.create_request(
+        conn, actor="sync", intent="pull nested-rack-chains", kind="pull",
+        song_id=song_id,
+    )
+    M.delete_device_chain(
+        conn, chain_id=nested[0]["id"], actor="sync", request_id=request_id,
+    )
+    M.close_request(conn, request_id=request_id, outcome="ok", actor="sync")
+    assert Q.get_device_chains_for_rack_device(conn, rack["id"]) == []
+
+    with pytest.raises(StaleSnapshotError, match="device_chain_deleted"):
+        _replay(conn, snap)
+    # Not silently recreated: the pulled deletion survives the refusal.
+    assert Q.get_device_chains_for_rack_device(conn, rack["id"]) == []
+
+
 def test_pulled_non_replay_asserted_domain_does_not_trip(conn):
     """A pull of state replay cannot revert (e.g. score globals staged for
     build.py) must not arm the guard — /ableton-pull's sanctioned staging use."""
@@ -277,6 +313,24 @@ def test_legacy_snapshot_without_pulls_is_silent(conn):
 
 def test_unparseable_captured_at_is_treated_as_legacy(conn):
     snap = _snapshot(captured_at="yesterday-ish")
+    song_id, session_id, track_id = _built_song(conn, snap)
+    _pull_mix_tweak(conn, song_id=song_id, session_id=session_id,
+                    track_id=track_id)
+    with pytest.warns(UserWarning, match="no `captured_at`"):
+        _replay(conn, snap)
+
+
+def test_timezone_offset_captured_at_takes_the_legacy_path(conn):
+    """Critic WARNING repro: an ISO stamp with a timezone OFFSET
+    ("...T14:34:56+02:00") passes a prefix-shape check but compares
+    lexicographically up to +14h ahead of UTC events.ts — which would
+    silently defeat the guard (events look 'older' than the stamp). A
+    non-exact shape must take the conservative legacy/warn path, never the
+    stamped comparison."""
+    # An offset stamp lexicographically AHEAD of any event this test emits:
+    # if the guard (wrongly) compared it, no event would be "newer" and the
+    # replay would pass silently — the exact silent defeat under test.
+    snap = _snapshot(captured_at="2999-01-01T00:00:00+02:00")
     song_id, session_id, track_id = _built_song(conn, snap)
     _pull_mix_tweak(conn, song_id=song_id, session_id=session_id,
                     track_id=track_id)

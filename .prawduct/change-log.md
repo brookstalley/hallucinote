@@ -30,6 +30,14 @@ structural.
 - Full-fix design (enforced staging + one durable bake; write-through and actor-separation
   alternatives rejected) at `.prawduct/artifacts/plans/BAK-7D2V/design.md`; corrects
   `authorship-model.md`'s "code vs snapshot is not a new conflict" claim.
+- **Critic fixes:** pulled **nested-rack-chain deletions** now arm the guard
+  (`device_chain_deleted` added — the cascade kills nested devices event-less, so the chain
+  event is the sole signal; full pull-mutator→event-kind audit table in the design);
+  `captured_at` shape check is a **fullmatch** so a timezone-offset stamp (up to +14h ahead
+  lexicographically) takes the legacy/warn path instead of silently defeating the comparison;
+  refusal/warn messages spell the complete re-capture recipe (`capture_cli execute` writes
+  `captured_session.refresh.json`, NOT the canonical file); Live operator verification queued
+  in `.prawduct/operator-verification.md`.
 
 **Re-vendor: not required** — engine-side (`capture.py`, scaffold, docs); no
 `_FINGERPRINT_PATHS` file changed.

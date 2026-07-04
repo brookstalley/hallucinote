@@ -111,31 +111,47 @@ _VALID_TRACK_TYPES = frozenset({"midi", "audio", "group"})
 # Design + refuse/warn matrix: .prawduct/artifacts/plans/BAK-7D2V/design.md.
 
 # Event kinds for state replay_capture re-asserts from the snapshot. A pulled
-# event OUTSIDE this set (clip-notes, envelopes, tempo/cue, tuning, ...) is
-# state replay cannot revert, so it never arms the guard — this is what keeps
-# ordinary build.py-staging pulls from tripping it.
+# event OUTSIDE this set (clip-notes, envelopes, tempo/cue, routing, tuning,
+# ...) is state replay cannot revert, so it never arms the guard — this is
+# what keeps ordinary build.py-staging pulls from tripping it.
+#
+# Coverage contract (audited 2026-07-04; method + full table in
+# .prawduct/artifacts/plans/BAK-7D2V/design.md §"Kind-set audit"): for EVERY
+# mutator any pull apply handler calls (grep `M\.` over sync/pull/), the event
+# kind(s) it emits are either in this tuple (replay re-asserts that state) or
+# provably outside replay's write surface. Cascade-deleting mutators matter
+# most: delete_device_chain cascades its nested devices with NO per-device
+# events, so `device_chain_deleted` is the ONLY signal for a pulled
+# chain-removal that _replay_rack_chains would recreate. Re-run the audit when
+# adding a pull apply handler or extending replay's write surface.
 _REPLAY_ASSERTED_EVENT_KINDS: tuple[str, ...] = (
     "song_created", "song_updated",
     "track_created", "track_updated", "track_mixer_set",
     "return_created", "return_updated",
     "send_set", "send_removed",
-    "device_chain_created", "device_chain_props_set",
+    "device_chain_created", "device_chain_deleted", "device_chain_props_set",
     "device_created", "device_deleted",
     "device_parameter_set", "device_parameter_removed",
     "device_param_overrides_replaced", "device_sidechain_set",
     "drum_pad_mappings_replaced",
 )
 
-# `captured_at` must be lexicographically comparable with events.ts
-# (strftime('%Y-%m-%dT%H:%M:%fZ')); anything else is treated as legacy.
-_CAPTURED_AT_SHAPE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
+# `captured_at` must be EXACTLY the events.ts shape
+# (strftime('%Y-%m-%dT%H:%M:%fZ'), i.e. YYYY-MM-DDTHH:MM:SS.mmmZ) for the
+# lexicographic comparison against event rows to be chronological. Anything
+# else — including an ISO stamp with a timezone OFFSET ("...T14:34:56+02:00",
+# which can compare up to +14h ahead of the equivalent UTC instant and would
+# silently defeat the guard) — takes the conservative legacy/warn path.
+_CAPTURED_AT_SHAPE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z")
 
 
 class StaleSnapshotError(RuntimeError):
     """`replay_capture` refused to run: the DB holds pulled live edits newer
     than the snapshot's `captured_at`, which the replay would silently revert.
-    The durable fix is a re-capture (`/song-snapshot` / `capture_cli execute`);
-    the conscious-revert override is `allow_stale_snapshot=True`
+    The durable fix is a re-capture — `/song-snapshot` (diff + confirmed
+    overwrite of the canonical file), or `capture_cli execute` + copying the
+    `.refresh.json` it writes over `captured_session.json`. The
+    conscious-revert override is `allow_stale_snapshot=True`
     (`--force-replay` in scaffolded build.py)."""
 
 
@@ -187,7 +203,7 @@ def _guard_stale_snapshot(
         previously-pulled song — the warning funnels to a stamping re-capture)
     """
     captured_at = snapshot.get("captured_at")
-    if not (isinstance(captured_at, str) and _CAPTURED_AT_SHAPE.match(captured_at)):
+    if not (isinstance(captured_at, str) and _CAPTURED_AT_SHAPE.fullmatch(captured_at)):
         captured_at = None
     rows = _pulled_rows_newer_than(conn, song_id=song_id, cutoff_ts=captured_at)
     if not rows:
@@ -202,11 +218,14 @@ def _guard_stale_snapshot(
             f"edit(s) from `/ableton-pull` (latest: {sample}). Whether this "
             "replay reverts them cannot be determined — if you pulled by-ear "
             "work after this snapshot was captured, it is being overwritten "
-            "NOW. Re-capture (`/song-snapshot`, or `python -m "
-            "hallucinote.tools.capture_cli execute --song <slug>`) to bake "
-            "live edits durably and stamp the snapshot so this check becomes "
-            "exact. (A legacy file is never auto-stamped — that would "
-            "silently defeat the check.)",
+            "NOW. Re-capture to bake live edits durably and stamp the "
+            "snapshot so this check becomes exact: run `/song-snapshot` "
+            "(probe -> diff -> confirmed overwrite of captured_session.json), "
+            "or `python -m hallucinote.tools.capture_cli execute --song "
+            "<slug>` — note that writes captured_session.refresh.json, NOT "
+            "the canonical file: review/diff it, then copy it over "
+            "captured_session.json yourself. (A legacy file is never "
+            "auto-stamped — that would silently defeat the check.)",
             UserWarning,
             stacklevel=3,
         )
@@ -228,9 +247,13 @@ def _guard_stale_snapshot(
         f"snapshot's captured_at ({captured_at}) — newest: {sample} (event "
         f"seq {newest['seq']}). Replaying now would silently revert that "
         "by-ear work to the older snapshot values.\n"
-        "The durable fix: re-capture the snapshot first (`/song-snapshot`, or "
-        "`python -m hallucinote.tools.capture_cli execute --song <slug>`) so "
-        "the live edits ship in captured_session.json, then rebuild.\n"
+        "The durable fix: re-capture the snapshot first, then rebuild — run "
+        "`/song-snapshot` (probe -> diff -> confirmed overwrite of "
+        "captured_session.json), or `python -m "
+        "hallucinote.tools.capture_cli execute --song <slug>` and note that "
+        "writes captured_session.refresh.json, NOT the canonical file: "
+        "review/diff it (`capture_cli diff`), then copy it over "
+        "captured_session.json yourself.\n"
         "To consciously revert the pulled edits instead, pass "
         "`allow_stale_snapshot=True` to replay_capture (scaffolded build.py "
         "exposes this as `--force-replay`). A forced replay does NOT clear "

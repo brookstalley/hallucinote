@@ -183,6 +183,30 @@ def _pulled_rows_newer_than(
     return conn.execute(sql, params).fetchall()
 
 
+def count_request_replay_asserted_events(
+    conn: sqlite3.Connection, *, request_id: str,
+) -> int:
+    """How many events emitted under ``request_id`` are of a kind
+    ``replay_capture`` re-asserts — i.e. mix-layer state a stale snapshot would
+    later silently revert.
+
+    ``pull_cli`` calls this right after a pull apply to fire its durability
+    notice EXACTLY when the replay guard would fire on the next build: same kind
+    set (:data:`_REPLAY_ASSERTED_EVENT_KINDS`), same per-request provenance, no
+    parallel domain whitelist to drift out of sync with the guard. Scoping by
+    ``request_id`` (not ``song_id``) restricts the count to the just-applied
+    pull, so it reflects what THIS pull staged, not history."""
+    placeholders = ", ".join("?" for _ in _REPLAY_ASSERTED_EVENT_KINDS)
+    sql = (
+        "SELECT COUNT(*) FROM events "
+        f"WHERE request_id = ? AND kind IN ({placeholders})"
+    )
+    row = conn.execute(
+        sql, [request_id, *_REPLAY_ASSERTED_EVENT_KINDS],
+    ).fetchone()
+    return int(row[0])
+
+
 def _guard_stale_snapshot(
     conn: sqlite3.Connection,
     snapshot: dict[str, Any],

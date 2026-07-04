@@ -83,6 +83,32 @@ class _DryRunRollback(Exception):
     Never propagates past ``_cmd_execute``."""
 
 
+def _warn_durability_if_mix_layer(conn, *, request_id: str, prog: str) -> None:
+    """Print the BAK-7D2V durability contract to stderr iff this pull apply
+    staged mix-layer state the next ``build.py`` replay would revert.
+
+    Fires EXACTLY when the replay guard would: it reuses the guard's own kind
+    set via :func:`capture.count_request_replay_asserted_events` (same
+    ``requests.kind='pull'`` provenance), so pulls of build.py-owned domains
+    (clip-notes, envelopes, tempo/cue, arrangement, tuning) — which replay
+    never re-asserts — stay quiet, and a zero-change apply stays quiet. Written
+    to stderr so it never pollutes the JSON report on stdout that wrappers
+    parse."""
+    from hallucinote.capture import count_request_replay_asserted_events
+
+    n = count_request_replay_asserted_events(conn, request_id=request_id)
+    if n <= 0:
+        return
+    sys.stderr.write(
+        f"{prog}: {n} mix-layer change(s) staged in the DB (regenerable) only "
+        "— NOT yet durable. The next `build.py` replay will REFUSE to run "
+        "(StaleSnapshotError) rather than silently revert them. Bake them into "
+        "the durable snapshot with `/song-snapshot` (or `capture_cli execute` "
+        "+ copy the .refresh.json over captured_session.json) before the next "
+        "build.\n"
+    )
+
+
 _DOMAINS = {
     "mix-state":          pull.plan_pull_mix,
     "score-globals":      pull.plan_pull_score_globals,
@@ -225,6 +251,7 @@ def _cmd_apply(args: argparse.Namespace) -> int:
     M.close_request(conn, request_id=request_id, outcome="ok", actor="sync")
     json.dump(out.to_dict(), sys.stdout, indent=2)
     sys.stdout.write("\n")
+    _warn_durability_if_mix_layer(conn, request_id=request_id, prog="pull_cli apply")
     # PULL-DRIFT-DETECT: same fail-loud guard as `execute` — unreadable probes
     # mean drift could not be determined, so don't let exit 0 read as "in sync".
     if out.unreadable > 0:
@@ -384,6 +411,12 @@ def _cmd_execute(args: argparse.Namespace) -> int:
     }
     json.dump(out, sys.stdout, indent=2)
     sys.stdout.write("\n")
+    # A dry-run rolled the request + its events back, so nothing was staged —
+    # the durability contract only applies to a real apply.
+    if not args.dry_run:
+        _warn_durability_if_mix_layer(
+            conn, request_id=request_id, prog=f"pull_cli execute domain={args.domain}",
+        )
     # PULL-DRIFT-DETECT: probes that couldn't be read mean we could NOT
     # determine drift — exit non-zero so a wrapper (the /ableton-pull skill)
     # never mistakes an unreadable run for

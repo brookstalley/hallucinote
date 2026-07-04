@@ -27,6 +27,7 @@ import pytest
 
 from hallucinote.capture import (
     StaleSnapshotError,
+    count_request_replay_asserted_events,
     utc_now_eventlike,
     compile_snapshot,
     replay_capture,
@@ -341,6 +342,78 @@ def test_timezone_offset_captured_at_takes_the_legacy_path(conn):
 # ---------------------------------------------------------------------------
 # The capture side: compile_snapshot stamps captured_at
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Chunk 2 (BAK-7D2V): the pull-side durability notice fires exactly when the
+# guard would — same kind set, same per-request provenance.
+# ---------------------------------------------------------------------------
+
+
+def test_count_helper_counts_only_replay_asserted_kinds(conn):
+    """The notice's discriminator: a mix tweak (track_mixer_set) counts; a
+    build.py-owned domain staged under a pull request (tempo point) does not —
+    the same asymmetry the guard uses."""
+    snap = _snapshot()
+    song_id, session_id, track_id = _built_song(conn, snap)
+
+    rid_mix = _pull_mix_tweak(conn, song_id=song_id, session_id=session_id,
+                              track_id=track_id)
+    assert count_request_replay_asserted_events(conn, request_id=rid_mix) == 1
+
+    rid_tempo = M.create_request(
+        conn, actor="sync", intent="pull tempo", kind="pull", song_id=song_id,
+    )
+    M.add_tempo_point(
+        conn, song_id=song_id, start_bar=1.0, tempo_bpm=133.0,
+        actor="sync", request_id=rid_tempo,
+    )
+    M.close_request(conn, request_id=rid_tempo, outcome="ok", actor="sync")
+    assert count_request_replay_asserted_events(conn, request_id=rid_tempo) == 0
+
+
+def _run_apply(db_path, tmp_path, *, song_id, session_id, track_id, volume):
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(json.dumps({
+        "song_id": song_id, "session_id": session_id, "domain": "mix-state",
+    }))
+    results_path = tmp_path / "results.json"
+    results_path.write_text(json.dumps([
+        {"key": f"track_info:{track_id}", "ok": True, "tool": "probe",
+         "result": {"volume": volume, "panning": 0.0}},
+    ]))
+    return pull_cli.main([
+        "apply", session_id, "--db", str(db_path),
+        "--plan", str(plan_path), "--results", str(results_path),
+    ])
+
+
+def test_pull_cli_apply_prints_durability_notice_on_mix_change(
+    conn, db_path, tmp_path, capsys,
+):
+    snap = _snapshot()
+    song_id, session_id, track_id = _built_song(conn, snap)
+    rc = _run_apply(db_path, tmp_path, song_id=song_id, session_id=session_id,
+                    track_id=track_id, volume=0.9)
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "mix-layer change" in err
+    assert "/song-snapshot" in err
+    assert "REFUSE" in err
+
+
+def test_pull_cli_apply_silent_when_nothing_changed(
+    conn, db_path, tmp_path, capsys,
+):
+    """A no-op apply (probe value == DB value) stages no events, so the notice
+    must not fire — otherwise it cries wolf on every in-sync pull."""
+    snap = _snapshot()
+    song_id, session_id, track_id = _built_song(conn, snap)
+    rc = _run_apply(db_path, tmp_path, song_id=song_id, session_id=session_id,
+                    track_id=track_id, volume=0.5)  # 0.5 == the built value
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "mix-layer change" not in err
 
 
 def test_compile_snapshot_stamps_captured_at_in_events_ts_shape(conn):

@@ -17,9 +17,9 @@ $ARGUMENTS
 `/ableton-pull` writes to the song **`.db`**, which is a **regenerable build
 artifact**: every `build.py` runs `replay_capture(captured_session.json)`, which
 re-asserts the snapshot onto the DB. So a pulled **mix** edit (params, sends,
-mixer, sidechain) **reverts on the next `build.py`** unless it is also in the
-durable snapshot. `/ableton-pull` is therefore the lower-level **build.py-staging
-primitive**, NOT a parallel mix bake:
+mixer, sidechain) is not durable on its own — it lives only in the regenerable
+DB. `/ableton-pull` is therefore the lower-level **build.py-staging primitive**,
+NOT a parallel mix bake:
 
 - **Durable mix bake → `/song-snapshot`.** The single mix bake — instrument params,
   sends, device chains, and **sidechain sources** land in the git-tracked
@@ -29,6 +29,16 @@ primitive**, NOT a parallel mix bake:
   authorship home for notes/score). Its mix-domain pulls (`mix-state`,
   `device-parameters`, …) are a quick DB-only ingest / inspection; to make them
   durable, run `/song-snapshot` after.
+
+> **The bake is the closing move (BAK-7D2V).** A mix-domain pull left un-baked
+> is not silently reverted anymore — the next `build.py` **REFUSES to run**
+> (`StaleSnapshotError`) rather than re-assert the stale snapshot over your
+> pulled edits. After such a pull, `pull_cli` prints a durability notice on
+> stderr naming the fix. Close the loop with **`/song-snapshot`** (which
+> re-stamps `captured_session.json` newer than the pull and disarms the guard);
+> only reach for `build.py --force-replay` to *consciously discard* the pulled
+> edits. Build.py-owned pulls (clip-notes, envelopes, tempo, cue, arrangement,
+> tuning) never arm the guard — that's the sanctioned staging lane.
 
 ## Conflict policy
 

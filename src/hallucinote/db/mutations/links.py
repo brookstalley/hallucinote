@@ -5,6 +5,7 @@ import sqlite3
 
 from ._core import (
     E,
+    _atomic,
     _emit,
     _uuid,
 )
@@ -15,6 +16,7 @@ from ._core import (
 # ---------------------------------------------------------------------------
 
 
+@_atomic
 def reset_song_content(
     conn: sqlite3.Connection,
     *,
@@ -122,7 +124,9 @@ def reset_song_content(
         request_id=request_id,
         reason=reason or "reset_song_content (W18-C soft reset)",
     )
-    conn.commit()
+    # No explicit commit: @_atomic owns the transaction (EVT-6H9R) — the
+    # autocommit-era `conn.commit()` here would commit early and break the
+    # wrapper's COMMIT.
     return counts
 
 
@@ -136,6 +140,7 @@ ABLETON_LINK_KINDS = frozenset({
 })
 
 
+@_atomic
 def create_ableton_session(
     conn: sqlite3.Connection,
     *,
@@ -168,6 +173,7 @@ def create_ableton_session(
     return sid
 
 
+@_atomic
 def link_db_to_ableton(
     conn: sqlite3.Connection,
     *,
@@ -227,6 +233,7 @@ def link_db_to_ableton(
     )
 
 
+@_atomic
 def unlink_db_from_ableton(
     conn: sqlite3.Connection,
     *,

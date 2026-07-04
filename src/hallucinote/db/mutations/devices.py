@@ -19,6 +19,7 @@ from .tracks import TRACK_KINDS
 from ._core import (
     E,
     MutatorResult,
+    _atomic,
     _emit,
     _record_touch_if_session,
     _resolve_actor_and_request,
@@ -39,6 +40,7 @@ from ._core import (
 # parent rack device.
 
 
+@_atomic
 def create_device_chain(
     conn: sqlite3.Connection,
     *,
@@ -163,6 +165,7 @@ _CHAIN_PROP_FIELDS: tuple[str, ...] = (
 )
 
 
+@_atomic
 def set_chain_properties(
     conn: sqlite3.Connection,
     *,
@@ -288,6 +291,7 @@ def set_chain_properties(
     return MutatorResult(chain_id, "updated")
 
 
+@_atomic
 def delete_device_chain(
     conn: sqlite3.Connection,
     *,
@@ -323,6 +327,7 @@ def delete_device_chain(
         _touch_song(conn, song_id)
 
 
+@_atomic
 def create_device(
     conn: sqlite3.Connection,
     *,
@@ -489,6 +494,7 @@ def create_device(
     return MutatorResult(device_id, "created")
 
 
+@_atomic
 def set_device_sidechain(
     conn: sqlite3.Connection,
     *,
@@ -588,6 +594,7 @@ def _resolve_device_song(
     )
 
 
+@_atomic
 def delete_device(
     conn: sqlite3.Connection,
     *,
@@ -613,6 +620,7 @@ def delete_device(
         _touch_song(conn, song_id)
 
 
+@_atomic
 def set_device_parameter(
     conn: sqlite3.Connection,
     *,
@@ -743,6 +751,7 @@ def set_device_parameter(
     return MutatorResult(param_id, result_kind)
 
 
+@_atomic
 def remove_device_parameter(
     conn: sqlite3.Connection,
     *,
@@ -787,6 +796,7 @@ def remove_device_parameter(
 # with a single event.
 
 
+@_atomic
 def replace_drum_pad_mappings(
     conn: sqlite3.Connection,
     *,
@@ -914,6 +924,7 @@ def _canonical_override_path(path: Any) -> list[dict[str, int]]:
     return out
 
 
+@_atomic
 def replace_device_param_overrides(
     conn: sqlite3.Connection,
     *,
@@ -1183,6 +1194,7 @@ def _envelope_track_kind_refusal(target_kind: str, host_kind: str) -> str:
     )
 
 
+@_atomic
 def create_envelope(
     conn: sqlite3.Connection,
     *,
@@ -1384,6 +1396,7 @@ def create_envelope(
     return MutatorResult(env_id, "created")
 
 
+@_atomic
 def delete_envelope(
     conn: sqlite3.Connection,
     *,
@@ -1425,6 +1438,7 @@ def _resolve_envelope_song(
     return row["song_id"], row["target_clip_id"]
 
 
+@_atomic
 def add_breakpoint(
     conn: sqlite3.Connection,
     *,
@@ -1471,6 +1485,7 @@ def add_breakpoint(
     return bp_id
 
 
+@_atomic
 def remove_breakpoint(
     conn: sqlite3.Connection,
     *,
@@ -1504,6 +1519,7 @@ def remove_breakpoint(
         _touch_song(conn, song_id)
 
 
+@_atomic
 def replace_breakpoints(
     conn: sqlite3.Connection,
     *,
@@ -1633,6 +1649,7 @@ def performed_automation_fingerprint(
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+@_atomic
 def record_performed_automation(
     conn: sqlite3.Connection,
     *,
@@ -1715,6 +1732,7 @@ def record_performed_automation(
     return MutatorResult(row_id, state)
 
 
+@_atomic
 def create_enum_envelope(
     conn: sqlite3.Connection,
     *,

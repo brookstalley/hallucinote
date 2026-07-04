@@ -59,7 +59,10 @@ release (`git describe --tags --abbrev=0 main`), `vNEW` = the bump.
 
 Each cluster in `origin/main..develop` needs a `.prawduct/change-log.md` entry. Entries
 authored on feature branches are **statusless**, then `prawduct-hook stamp-merged`
-flips them to `status=merged` at merge time. At release:
+flips them to `status=merged` at merge time. On the feature branch, the entry lands
+inside the single **ship-stamp commit** (change-log entry + backlog close + any
+project-state record, batched — see `.prawduct/backlog.md` header rule 1, PRC-5W2N).
+At release:
 
 - For each `status=merged` entry being released: change `status=merged` →
   `status=shipped` and add `| release=vNEW` to the `<!-- prawduct: … -->` tag line.

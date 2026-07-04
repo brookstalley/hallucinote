@@ -10,10 +10,12 @@ including the "Verifiable signal:" probes the prior format required.
 
 Prior-format discipline that still applies (load-bearing):
 
-1. **Close-in-the-same-PR.** When a PR ships work resolving a backlog item,
-   set its status to `shipped` with `closed-by:` in the SAME PR. The git log is
-   the audit trail. Critic + PR reviewer flag PRs that ship work matching an
-   open item without closing it.
+1. **Close-in-the-same-PR — as ONE ship-stamp commit.** When a PR ships work
+   resolving a backlog item, land the whole ship-stamp as a single commit on
+   the branch: the backlog close (`status: shipped` + `closed-by:`), the
+   change-log entry, and any project-state record together — never three
+   bookkeeping commits (PRC-5W2N). The git log is the audit trail. Critic +
+   PR reviewer flag PRs that ship work matching an open item without closing it.
 2. **Verifiable signal required.** Every item names a probe a future scrub can
    run to confirm it's still pending — a file:line, a function to grep, a CLI
    to run, or a behavior to reproduce. Without it the item is unscrubable.

@@ -476,7 +476,7 @@ build_state:
 # Left EMPTY (not the literal `null`): the regen-views/session-start pointer
 # reader treats the post-colon text as a path, so `null` resolves to
 # `.prawduct/null` and mis-fires the "missing build plan" advisory.
-active_build_plan:
+active_build_plan: .prawduct/artifacts/plans/highroi-sweep-2026-07/build-plan.md
 
 # =============================================================================
 # CHANGE LOG
@@ -627,7 +627,7 @@ views_enabled: true
 backlog_format_version: 2
 
 # Stamped by /prawduct:backlog list/pick/triage — resolves the backlog-overdue-grooming advisory.
-backlog_last_groomed_at: 2026-06-23
+backlog_last_groomed_at: 2026-07-04
 
 # Distribution mode — set by /prawduct:migrate (v2.0.0 plugin cutover).
 # `plugin` tells the legacy file-sync hook to stand down (Chunk 8).

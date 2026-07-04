@@ -1101,18 +1101,50 @@ def execute_push(
                 _emit_progress(f"[{phase_name}] {done}/{total} call(s)…")
         return results, False
 
-    def _apply_results(batch: list[dict[str, Any]], phase_name: str) -> None:
+    def _apply_results(batch: list[dict[str, Any]], phase_name: str) -> bool:
         """Apply successes regardless of failure mix — push is idempotent and
         link rows must be live before the next phase (or the devices-phase
-        convergence pass) plans."""
-        apply_warnings = push.apply_push_results(
-            conn,
-            batch,
-            session_id=session_id,
-            actor=actor,
-            request_id=request_id,
-            reason=reason or f"push_cli execute phase={phase_name}",
-        )
+        convergence pass) plans.
+
+        Returns ``True`` when apply recorded cleanly. SYN-8Q3F (c): a
+        ``ValueError`` from the apply layer is planner↔apply CONTRACT DRIFT —
+        an unknown result key kind (the twice-shipped device_param_override /
+        device_chain_props class), a malformed key, or a perform arc missing
+        its arc_id. The apply transaction has already rolled the whole batch
+        back, so nothing from this phase is recorded. Historically this raise
+        escaped ``execute_push`` as a raw traceback — no terminal state file,
+        request row left open (contract artifact, violation V4). Now it is the
+        deliberate fail-loud-WITH-CONTEXT path: record the teaching message +
+        hint and return ``False`` so the caller halts the phase through the
+        normal ``_halt`` machinery (state file written, later phases PENDING,
+        request closed ``partial``, exit ``EXIT_PARTIAL``)."""
+        try:
+            apply_warnings = push.apply_push_results(
+                conn,
+                batch,
+                session_id=session_id,
+                actor=actor,
+                request_id=request_id,
+                reason=reason or f"push_cli execute phase={phase_name}",
+            )
+        except ValueError as exc:
+            error_records.append({
+                "key": None,
+                "tool": "apply_push_results",
+                "action": "apply",
+                "args_summary": {"phase": phase_name, "results": len(batch)},
+                "error": f"{type(exc).__name__}: {exc}",
+                "hint": (
+                    "planner↔apply contract drift — the results carried a key "
+                    "the apply layer cannot resolve, so NOTHING from this "
+                    "phase's batch was recorded (the transaction rolled back). "
+                    "Declare the kind in _LINK_KINDS / _ACK_ONLY_KINDS (see "
+                    "KNOWN_RESULT_KEY_KINDS in sync/push/plan.py), then re-run "
+                    "execute (idempotent — Live-side writes already landed and "
+                    "re-link on the next pass)."
+                ),
+            })
+            return False
         # Apply-layer warnings (e.g. a perform whose write Live could
         # not verify — nothing recorded, next push retries) ride the
         # errors file so the agent sees them. They don't flip the
@@ -1127,6 +1159,7 @@ def execute_push(
                 "error": w,
                 "hint": None,
             })
+        return True
 
     def _drain_plan_warnings(plan_obj) -> None:
         """SYN-9F2L: a planner records an operator-actionable, non-fatal warning
@@ -1288,8 +1321,13 @@ def execute_push(
 
         # For connection-lost the dispatch stopped before any subsequent ok
         # rows could accumulate, so applying what we have is safe.
+        # SYN-8Q3F (c): apply_ok=False means the apply layer hit contract
+        # drift (unknown/malformed result key kind) — the batch rolled back
+        # and the phase must halt below (after the connection-lost check,
+        # which is the more actionable outcome when both fire).
+        apply_ok = True
         if results:
-            _apply_results(results, phase.name)
+            apply_ok = _apply_results(results, phase.name)
 
         # SYN-9F4K: record any main-dispatch empty-rack failures AFTER apply
         # (they're diagnosis, not wire results). Their ok=False entries make
@@ -1307,6 +1345,7 @@ def execute_push(
         if (
             phase.name == "devices"
             and not connection_lost
+            and apply_ok
             and results
             and all(r.get("ok") for r in results)
         ):
@@ -1346,7 +1385,7 @@ def execute_push(
                     )
                     results.extend(extra_results)
                     if extra_results:
-                        _apply_results(extra_results, phase.name)
+                        apply_ok = _apply_results(extra_results, phase.name)
 
         calls_ok = sum(1 for r in results if r.get("ok"))
         calls_failed = sum(1 for r in results if not r.get("ok"))
@@ -1355,6 +1394,19 @@ def execute_push(
             _halt(
                 phase.name, idx, outcome_label="connection_lost",
                 exit_code_val=EXIT_CONNECTION_LOST, calls_ok=calls_ok,
+                calls_failed=calls_failed + 1,
+            )
+            break
+
+        if not apply_ok:
+            # SYN-8Q3F (c): apply-layer contract drift. The wire calls may all
+            # have succeeded (calls_failed can be 0), but NOTHING from this
+            # phase was recorded — halting is mandatory or later phases would
+            # plan against links that were never written. The +1 counts the
+            # apply failure itself (mirrors the connection-lost convention).
+            _halt(
+                phase.name, idx, outcome_label="partial",
+                exit_code_val=EXIT_PARTIAL, calls_ok=calls_ok,
                 calls_failed=calls_failed + 1,
             )
             break

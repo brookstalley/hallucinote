@@ -117,7 +117,7 @@ def reset_song_content(
 
     _emit(
         conn,
-        "song_content_reset",
+        E.SONG_CONTENT_RESET,
         {"counts": counts},
         song_id=song_id,
         actor=actor,

@@ -113,9 +113,22 @@ would surface only at flip time (EVT-4K8H).
 
 ## Status
 
-- [ ] Chunk 1 — atomic write+emit
-- [ ] Chunk 2 — events FK drop + migration
-- [ ] Chunk 3 — replay smoke test
+- [x] Chunk 1 — atomic write+emit (54f2e00; suite 4441 green)
+- [x] Chunk 2 — events FK drop + migration (b4b420f; suite 4447 green)
+- [x] Chunk 3 — replay smoke test (this commit; full no-path suite 4452
+      passed / 2 skipped)
+
+Chunk 3 note: fix-what-you-find — `reset_song_content` emitted the literal
+string "song_content_reset" instead of an `events.py` constant (the sanctioned
+source per that module's convention, and required for the smoke test's
+exhaustive kind classification). Added `E.SONG_CONTENT_RESET` and switched the
+emit; the string value is unchanged.
+
+Chunk 3 finding (for EVT-4K8H): the notes events are audit-grade, not
+replay-grade — `notes_inserted` / `clip_notes_replaced` / `note_updated` /
+`notes_deleted` / `notes_bulk_updated` carry ids and counts but not note
+content, and `request_created` omits prompt_text/metadata. The smoke test
+pins these as NOT_YET_FOLDED with reasons; payload enrichment is flip work.
 
 ## Test-change log (rationale, per the tests-are-contracts rule)
 

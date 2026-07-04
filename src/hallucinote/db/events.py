@@ -12,6 +12,11 @@ from __future__ import annotations
 SONG_CREATED = "song_created"
 SONG_UPDATED = "song_updated"
 SONG_TIMING_MODE_SET = "song_timing_mode_set"
+# W18-C soft reset: bulk wipe of a song's rebuild-by-build.py content
+# (score-half, clips/notes, automation); payload carries per-table delete
+# counts. Was an inline string literal in reset_song_content until EVT-6H9R
+# (constants here are the only sanctioned source of event kinds).
+SONG_CONTENT_RESET = "song_content_reset"
 # MICROTUNE (TUN-4Q7W): alternate-tuning bolt-on. Set when a song is bound to a
 # pulled non-12-TET tuning — records the cached .ascl ref + the derived blob.
 SONG_TUNING_SET = "song_tuning_set"

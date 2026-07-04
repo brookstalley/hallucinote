@@ -283,12 +283,13 @@ one routing rule, four homes; templates + canonical snippets live there, not her
   `blend-group`/`density` + topical tags; `scope: track`/`track-time`/`time`);
   body = the intent in the user's terms + the why. Next run, step 1 recalls it and
   step 3 stays quiet — **never re-flag** what the user already settled.
-- **Resolved mix moves route by outcome.** A move *tried and reverted / superseded*
-  this pass → propose a one-line `kind: attempt` entry (**propose-and-react** —
-  never auto-write a verdict; chain the correction with `related:` — the
-  bagpipe-notch case: *notch failed → reverted → gated instead*, so the next pass
-  starts from the gate, not the notch). A *kept* bright-line move → a
-  `kind: decision` ADR. A *tool* failure (stale server, push glitch) →
+- **Resolved mix moves route by outcome.** A move *resolved this pass* (kept /
+  reverted / superseded) → propose a one-line `kind: attempt` entry
+  (**propose-and-react** — never auto-write a verdict; chain the correction with
+  `related:` — the bagpipe-notch case: *notch failed → reverted → gated instead
+  (kept)*, two entries, the `resolution: kept` gate closing the chain — so the
+  next pass starts from the gate, not the notch). A *kept* bright-line move ALSO
+  gets its `kind: decision` ADR. A *tool* failure (stale server, push glitch) →
   `incoming-bugs/`, never an attempt.
 - **Completeness sweep — this checkpoint's backstop.** Scan the bright-line mix
   moves in the snapshot since the last recorded outcome (baked levels that define

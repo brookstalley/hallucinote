@@ -220,10 +220,11 @@ one routing rule, four homes; templates + canonical snippets live there, not her
   altitude (section = `time`-scoped + `bars`; whole-song purpose = `scope: song`, or
   update `<slug>.md` / `decisions/01-intent.md`). Next run, RECALL covers it and
   INTERPRET stays quiet — **never re-flag** what the user already settled.
-- **Resolved moves route by outcome.** A move *tried and reverted / superseded* this
-  pass → propose a one-line `kind: attempt` entry (**propose-and-react** — never
-  auto-write a verdict; chain a correction with `related:`). A *kept* bright-line
-  move → a `kind: decision` ADR. A *tool* gripe (push glitch, Live bug) →
+- **Resolved moves route by outcome.** A move *resolved this pass* (kept / reverted /
+  superseded) → propose a one-line `kind: attempt` entry (**propose-and-react** —
+  never auto-write a verdict; chain a correction with `related:` — the
+  `resolution: kept` entry is what closes the chain). A *kept* bright-line move
+  ALSO gets its `kind: decision` ADR. A *tool* gripe (push glitch, Live bug) →
   `incoming-bugs/`, never an attempt.
 - **Completeness sweep — this checkpoint's backstop.** Capture is supposed to happen
   *in the loop* (`/compose-part`'s close), but moves slip under execute-and-react

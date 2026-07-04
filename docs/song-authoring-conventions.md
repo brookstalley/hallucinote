@@ -286,12 +286,12 @@ A compose/mix pass carries **exactly four bookkeeping obligations** — two befo
 
 **At the close** (the finished-move boundary in the iterate loop; end of pass at a review checkpoint):
 
-3. **File each resolved move's outcome — one routing rule, four homes.** Route by what the entry records; a move files to exactly one home. Trivia (a velocity nudge, one level tweak) files nothing.
+3. **File each resolved move's outcome — one routing rule, four homes.** Route by what the entry records — a kept bright-line move legitimately produces BOTH its ADR (the kept-and-why) and its chain-closing attempt entry (the path). Trivia (a velocity nudge, one level tweak) files nothing.
 
    | The move… | Home | Discipline |
    |---|---|---|
    | was **kept** and is bright-line-substantive (table above) | `decisions/NN-*.md` ADR | file **silently** at the finished-move boundary (template above) — a deliverable component, never a stop-to-ask |
-   | was **tried and reverted / superseded** | `attempts/*.md` (`kind: attempt`) | **propose-and-react** — a one-line entry the user confirms, never an auto-written verdict; chain a correction with `related:` → what worked |
+   | **resolved this pass** (kept / reverted / superseded) | `attempts/*.md` (`kind: attempt`) | **propose-and-react** — a one-line entry the user confirms, never an auto-written verdict; chain a correction with `related:` → what worked (the `resolution: kept` entry is what closes the chain — and the only home for a kept move below the bright line) |
    | **revealed intent** (incl. a reaction you reflected into intent) | `annotations/*.md` learn-back | write **immediately when revealed**, at the right altitude; never re-flag what the user settled |
    | was a **tool failure** (push glitch, stale server, Live bug) | `incoming-bugs/` report | never an attempt — the ledger is musical-craft only |
 

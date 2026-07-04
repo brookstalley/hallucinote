@@ -470,8 +470,9 @@ build_state:
 #   SMP-7K2D — chunks 1-2 + no-Live 5 done; probe chunk 0 + push chunks 3-4 pending.
 #   ARR-PROJ — all 5 headless chunks built on plan/arr-proj-arrangement-materialization;
 #     cumulative-Critic PR gate + live e2e + ARR-9X4T/ARR-7H2N backlog close remain.
-# Shipped/stale plan history relocated to .prawduct/reflections-archive-2026H1.md
-# (PRC-5W2N, 2026-07-04); git history of this file has the full narrative.
+# Shipped/stale plan history: the git history of this file (pre-2026-07-04,
+# PRC-5W2N trim) has the full narrative; a per-machine copy also sits in the
+# gitignored reflections archive where present.
 # Left EMPTY (not the literal `null`): the regen-views/session-start pointer
 # reader treats the post-colon text as a path, so `null` resolves to
 # `.prawduct/null` and mis-fires the "missing build plan" advisory.

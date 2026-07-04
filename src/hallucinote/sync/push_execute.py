@@ -1,6 +1,6 @@
 """W10-E2: bulk push dispatcher that bypasses the agent's tool-use channel.
 
-The thirteen-phase push planner emits plans the agent has historically dispatched
+The fourteen-phase push planner emits plans the agent has historically dispatched
 itself via MCP tool calls. For large songs that's the v1.0 ceiling: each call
 ships its full args (notably ``notes=[…]``) as inline JSON inside the agent's
 tool-use block, burning agent context budget per call. A 29-clip song measured
@@ -653,7 +653,7 @@ def execute_push(
     progress_fn: Callable[[str], None] | None = None,
     live_arrangement_clips_by_track: dict[int, list[dict]] | None = None,
 ) -> ExecuteResult:
-    """Run the full thirteen-phase push, dispatching each call via ``send_fn``.
+    """Run the full fourteen-phase push, dispatching each call via ``send_fn``.
 
     ``send_fn`` defaults to :func:`hallucinote_mcp.client.send`. Tests pass
     their own to avoid touching the MCP package or Live.
@@ -1101,18 +1101,51 @@ def execute_push(
                 _emit_progress(f"[{phase_name}] {done}/{total} call(s)…")
         return results, False
 
-    def _apply_results(batch: list[dict[str, Any]], phase_name: str) -> None:
+    def _apply_results(batch: list[dict[str, Any]], phase_name: str) -> bool:
         """Apply successes regardless of failure mix — push is idempotent and
         link rows must be live before the next phase (or the devices-phase
-        convergence pass) plans."""
-        apply_warnings = push.apply_push_results(
-            conn,
-            batch,
-            session_id=session_id,
-            actor=actor,
-            request_id=request_id,
-            reason=reason or f"push_cli execute phase={phase_name}",
-        )
+        convergence pass) plans.
+
+        Returns ``True`` when apply recorded cleanly. SYN-8Q3F (c): a
+        ``ValueError`` from the apply layer is planner↔apply CONTRACT DRIFT —
+        an unknown result key kind (the twice-shipped device_param_override /
+        device_chain_props class), a malformed key, or a perform arc missing
+        its arc_id. The apply transaction has already rolled the whole batch
+        back, so nothing from this phase is recorded. Historically this raise
+        escaped ``execute_push`` as a raw traceback — no terminal state file,
+        request row left open (contract artifact, violation V4). Now it is the
+        deliberate fail-loud-WITH-CONTEXT path: record the teaching message +
+        hint and return ``False`` so the caller halts the phase through the
+        normal ``_halt`` machinery (state file written, later phases PENDING,
+        request closed ``partial``, exit ``EXIT_PARTIAL``)."""
+        try:
+            apply_warnings = push.apply_push_results(
+                conn,
+                batch,
+                session_id=session_id,
+                actor=actor,
+                request_id=request_id,
+                reason=reason or f"push_cli execute phase={phase_name}",
+            )
+        except ValueError as exc:
+            error_records.append({
+                "key": None,
+                "tool": "apply_push_results",
+                "action": "apply",
+                "args_summary": {"phase": phase_name, "results": len(batch)},
+                "error": f"{type(exc).__name__}: {exc}",
+                "hint": (
+                    "apply-layer failure — usually planner↔apply contract "
+                    "drift (an undeclared result key kind; the error names "
+                    "the cause). NOTHING from this batch was recorded (it "
+                    "rolled back). For an undeclared kind, declare it in "
+                    "_LINK_KINDS / _ACK_ONLY_KINDS (see "
+                    "KNOWN_RESULT_KEY_KINDS in sync/push/plan.py), then re-run "
+                    "execute (idempotent — Live-side writes already landed and "
+                    "re-link on the next pass)."
+                ),
+            })
+            return False
         # Apply-layer warnings (e.g. a perform whose write Live could
         # not verify — nothing recorded, next push retries) ride the
         # errors file so the agent sees them. They don't flip the
@@ -1127,6 +1160,7 @@ def execute_push(
                 "error": w,
                 "hint": None,
             })
+        return True
 
     def _drain_plan_warnings(plan_obj) -> None:
         """SYN-9F2L: a planner records an operator-actionable, non-fatal warning
@@ -1288,8 +1322,13 @@ def execute_push(
 
         # For connection-lost the dispatch stopped before any subsequent ok
         # rows could accumulate, so applying what we have is safe.
+        # SYN-8Q3F (c): apply_ok=False means the apply layer hit contract
+        # drift (unknown/malformed result key kind) — the batch rolled back
+        # and the phase must halt below (after the connection-lost check,
+        # which is the more actionable outcome when both fire).
+        apply_ok = True
         if results:
-            _apply_results(results, phase.name)
+            apply_ok = _apply_results(results, phase.name)
 
         # SYN-9F4K: record any main-dispatch empty-rack failures AFTER apply
         # (they're diagnosis, not wire results). Their ok=False entries make
@@ -1307,6 +1346,7 @@ def execute_push(
         if (
             phase.name == "devices"
             and not connection_lost
+            and apply_ok
             and results
             and all(r.get("ok") for r in results)
         ):
@@ -1346,7 +1386,7 @@ def execute_push(
                     )
                     results.extend(extra_results)
                     if extra_results:
-                        _apply_results(extra_results, phase.name)
+                        apply_ok = _apply_results(extra_results, phase.name)
 
         calls_ok = sum(1 for r in results if r.get("ok"))
         calls_failed = sum(1 for r in results if not r.get("ok"))
@@ -1355,6 +1395,19 @@ def execute_push(
             _halt(
                 phase.name, idx, outcome_label="connection_lost",
                 exit_code_val=EXIT_CONNECTION_LOST, calls_ok=calls_ok,
+                calls_failed=calls_failed + 1,
+            )
+            break
+
+        if not apply_ok:
+            # SYN-8Q3F (c): apply-layer contract drift. The wire calls may all
+            # have succeeded (calls_failed can be 0), but NOTHING from this
+            # phase was recorded — halting is mandatory or later phases would
+            # plan against links that were never written. The +1 counts the
+            # apply failure itself (mirrors the connection-lost convention).
+            _halt(
+                phase.name, idx, outcome_label="partial",
+                exit_code_val=EXIT_PARTIAL, calls_ok=calls_ok,
                 calls_failed=calls_failed + 1,
             )
             break
@@ -1466,37 +1519,49 @@ def execute_push(
     phase_progress = None
     _flush_state(current_phase=None)
 
+    # SYN-8Q3F review W1: the errors-file write must never leave the request
+    # row open. Before this, a write failure here (disk full / permissions)
+    # raised BEFORE close_request — reproducing the V4 symptom (open request +
+    # escaping exception) one step after the class was closed. try/finally
+    # guarantees close_request runs (the exception still propagates — a broken
+    # state_dir is operator-actionable); the write itself gets the same atomic
+    # temp + os.replace treatment as the state file, so a concurrent reader
+    # never sees a torn errors file.
     top_patterns: list[dict[str, Any]] = []
-    if error_records:
-        grouped = _group_errors(error_records)
-        errors_payload = {
-            "ts": _now_iso(),
-            "phase": halt_phase,
-            "errors": error_records,
-            "grouped_by_error": grouped,
-        }
-        errors_file.write_text(json.dumps(errors_payload, indent=2) + "\n")
-        # Keep top 3 patterns for the CLI summary.
-        top_patterns = grouped[:3]
-    else:
-        # Make sure a stale errors file from a prior partial run doesn't
-        # confuse the agent reading state after a clean re-push.
-        if errors_file.exists():
-            errors_file.unlink()
-
-    # W23-C: close the request with the outcome the push reached.
-    # request_outcome maps the push's tri-state (ok / partial / connection_lost)
-    # onto REQUEST_OUTCOMES (ok / partial / failed). connection_lost lands as
-    # 'failed' because nothing further could happen; partial keeps its name.
-    request_outcome = {"ok": "ok", "partial": "partial",
-                       "connection_lost": "failed"}[outcome]
-    M.close_request(
-        conn,
-        request_id=request_id,
-        outcome=request_outcome,
-        actor=actor,
-        reason=reason,
-    )
+    try:
+        if error_records:
+            grouped = _group_errors(error_records)
+            errors_payload = {
+                "ts": _now_iso(),
+                "phase": halt_phase,
+                "errors": error_records,
+                "grouped_by_error": grouped,
+            }
+            tmp = errors_file.with_name(f".{errors_file.name}.tmp-{os.getpid()}")
+            tmp.write_text(json.dumps(errors_payload, indent=2) + "\n")
+            os.replace(tmp, errors_file)
+            # Keep top 3 patterns for the CLI summary.
+            top_patterns = grouped[:3]
+        else:
+            # Make sure a stale errors file from a prior partial run doesn't
+            # confuse the agent reading state after a clean re-push.
+            if errors_file.exists():
+                errors_file.unlink()
+    finally:
+        # W23-C: close the request with the outcome the push reached.
+        # request_outcome maps the push's tri-state (ok / partial /
+        # connection_lost) onto REQUEST_OUTCOMES (ok / partial / failed).
+        # connection_lost lands as 'failed' because nothing further could
+        # happen; partial keeps its name.
+        request_outcome = {"ok": "ok", "partial": "partial",
+                           "connection_lost": "failed"}[outcome]
+        M.close_request(
+            conn,
+            request_id=request_id,
+            outcome=request_outcome,
+            actor=actor,
+            reason=reason,
+        )
 
     return ExecuteResult(
         outcome=outcome,

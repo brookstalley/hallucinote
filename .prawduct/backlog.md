@@ -10,15 +10,19 @@ including the "Verifiable signal:" probes the prior format required.
 
 Prior-format discipline that still applies (load-bearing):
 
-1. **Close-in-the-same-PR.** When a PR ships work resolving a backlog item,
-   set its status to `shipped` with `closed-by:` in the SAME PR. The git log is
-   the audit trail. Critic + PR reviewer flag PRs that ship work matching an
-   open item without closing it.
+1. **Close-in-the-same-PR — as ONE ship-stamp commit.** When a PR ships work
+   resolving a backlog item, land the whole ship-stamp as a single commit on
+   the branch: the backlog close (`status: shipped` + `closed-by:`), the
+   change-log entry, and any project-state record together — never three
+   bookkeeping commits (PRC-5W2N). The git log is the audit trail. Critic +
+   PR reviewer flag PRs that ship work matching an open item without closing it.
 2. **Verifiable signal required.** Every item names a probe a future scrub can
    run to confirm it's still pending — a file:line, a function to grep, a CLI
    to run, or a behavior to reproduce. Without it the item is unscrubable.
 3. **Trust-but-verify on scrub.** A scrub re-reads code against each item, not
-   just the item's text. Items with `added`/`reviewed` > 60 days are suspect.
+   just the item's text. Items with `added`/`reviewed` > 30 days are suspect.
+   (Tightened from 60d per the 2026-07-02 audit: this repo's velocity makes 60d
+   too slow — the BLG-7K2Q precedent found 4/8 `ready` items already shipped.)
 
 Metadata-bar field legend (canonical /backlog v2 format):
   effort/impact (S/M/L) · area · source (builder|critic|reflection|janitor|user)

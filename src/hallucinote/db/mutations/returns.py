@@ -9,6 +9,7 @@ from hallucinote.return_naming import strip_return_slot_prefix
 from ._core import (
     E,
     MutatorResult,
+    _atomic,
     _emit,
     _record_touch_if_session,
     _resolve_actor_and_request,
@@ -17,6 +18,7 @@ from ._core import (
 )
 
 
+@_atomic
 def create_return(
     conn: sqlite3.Connection,
     *,
@@ -97,6 +99,7 @@ def create_return(
 _RETURN_FIELDS = {"name", "position", "volume", "pan", "mute", "solo", "color"}
 
 
+@_atomic
 def update_return(
     conn: sqlite3.Connection,
     *,
@@ -139,6 +142,7 @@ def update_return(
     _touch_song(conn, row["song_id"])
 
 
+@_atomic
 def delete_return(
     conn: sqlite3.Connection,
     *,
@@ -165,6 +169,7 @@ def delete_return(
     _touch_song(conn, row["song_id"])
 
 
+@_atomic
 def set_send_level(
     conn: sqlite3.Connection,
     *,
@@ -225,6 +230,7 @@ def set_send_level(
     _touch_song(conn, track_row["song_id"])
 
 
+@_atomic
 def set_send_intended_rt60(
     conn: sqlite3.Connection,
     *,
@@ -289,6 +295,7 @@ def set_send_intended_rt60(
     _touch_song(conn, row["song_id"])
 
 
+@_atomic
 def remove_send(
     conn: sqlite3.Connection,
     *,

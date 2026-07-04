@@ -270,82 +270,32 @@ When you do recommend, rank musically (the order working engineers prefer):
 Propose ranked options with rationale. Let the user choose. The industry
 consensus is unanimous that auto-applying produces generic, formulaic mixes.
 
-### 5. LEARN-BACK — write what you learn, every time
+### 5. CLOSE OUT — LEARN-BACK + file outcomes (the ONE bookkeeping checklist)
 
-When the user reveals intent in conversation ("no, the organ's meant to be a
-wash there" / "yeah the lead has to cut"), **write it back immediately** as a
-markdown annotation — do not just honor it in the moment. This is what makes the
-next review feel like the producer who already knows the record.
+Close the pass through the **compose-pass close-out protocol**
+(`docs/song-authoring-conventions.md` → *The compose-pass close-out protocol* —
+one routing rule, four homes; templates + canonical snippets live there, not here):
 
-Use `hallucinote.markdown_refs.write_markdown_ref` (emits the audit event,
-threads the request). Frontmatter: `kind: annotation`, `scope: track`/
-`track-time` (or `time` for a relational/section feel), the `track` name, `bars`
-if section-scoped, and the controlled `tags` (`focal`/`submerged`/`blend-group`/
-`density` + topical tags). Body: the intent in the user's terms + the why.
-
-Example (Python via Bash):
-
-```python
-from pathlib import Path
-from hallucinote.markdown_refs import write_markdown_ref
-from hallucinote.db.connection import init_db, resolve_db_path
-conn = init_db(resolve_db_path("<slug>"))  # branch-aware; slug, not a path
-write_markdown_ref(
-    conn,
-    path=Path("songs/<slug>/annotations/organ-submerged-chorus.md"),
-    repo_root=Path("."),
-    frontmatter={"kind": "annotation", "scope": "track-time",
-                 "track": "04 Organ", "bars": [17, 25],
-                 "tags": ["organ", "submerged", "chorus"]},
-    body="Organ is a pad wash under the chorus — meant to sit behind the lead, "
-         "not cut. Don't flag it being masked here.",
-    actor="llm", reason="learn-back from mix-review",
-)
-```
-
-Next run, step 1 recalls it and step 3 stays quiet. **Never re-flag** what the
-user already settled.
-
-### 6. LOG ATTEMPTS — record the mix moves you tried and how they turned out
-
-Learn-back captures *intent*; the **attempt ledger** captures the *path* — a mix move you
-tried and how it resolved, **especially the reverted dead ends** (the bagpipe-notch case:
-*tried a notch → still overwhelmed → reverted → gated instead*). When a move resolves this
-pass (kept / reverted / replaced), propose a one-line `kind: attempt` entry, propose-and-
-react — so the next mix pass starts from the gate, not the notch. Query before you re-touch
-a part via `/song-attempts`.
-
-```python
-write_markdown_ref(
-    conn,
-    path=Path("songs/<slug>/attempts/2026-06-14-bagpipes-notch.md"),
-    repo_root=Path("."),
-    frontmatter={"date": "2026-06-14", "kind": "attempt", "scope": "track",
-                 "track": "Bagpipes", "outcome": "failed", "resolution": "reverted",
-                 "tags": ["mix", "notch-filter", "masking"],
-                 "related": ["songs/<slug>/attempts/2026-06-14-bagpipes-gate.md"]},
-    body="v12: notch at ~2.2 kHz still let the chanter overwhelm the vocal and "
-         "hollowed the tone. Reverted; gated under the vocal phrases instead (kept).",
-    actor="llm", reason="attempt-log from mix-review",
-)
-```
-
-`outcome` ∈ {worked, partial, failed}; `resolution` ∈ {kept, reverted, superseded}; chain
-a correction with `related:` → the entry that worked. Musical-craft only — a *tool* failure
-(stale server, push glitch) is an incoming-bug, not an attempt; revealed *intent* is an
-annotation.
-
-### 7. DECISION-COMPLETENESS — capture the mix decisions that didn't get recorded
-
-The backstop for decisions made between checkpoints under execute-and-react pressure. Before
-you finish, scan the **bright-line-substantive** mix moves that landed in the snapshot since
-the last `decisions/` entry: baked mix levels that define the sound, a sidechain that shapes
-the groove, a return/reverb design, a committed balance where one element is meant to win (see
-`docs/song-authoring-conventions.md` → *Rationale is authorship*). For each with no ADR,
-**propose** a one-line decision and let the user confirm — propose-and-react, never auto-write.
-File confirmed ones via the decision template (`write_markdown_ref`, `kind: decision`). Skip
-trivia. This records the *kept-and-why* (decision) — distinct from §5's revealed intent
-(annotation) and §6's tried-and-reverted path (attempt).
+- **LEARN-BACK — revealed intent → `annotations/`.** When the user reveals intent
+  in conversation ("no, the organ's meant to be a wash there"), write it back
+  **immediately** via `write_markdown_ref` — do not just honor it in the moment.
+  Frontmatter carries the mix-intent tag vocabulary (`focal`/`submerged`/
+  `blend-group`/`density` + topical tags; `scope: track`/`track-time`/`time`);
+  body = the intent in the user's terms + the why. Next run, step 1 recalls it and
+  step 3 stays quiet — **never re-flag** what the user already settled.
+- **Resolved mix moves route by outcome.** A move *resolved this pass* (kept /
+  reverted / superseded) → propose a one-line `kind: attempt` entry
+  (**propose-and-react** — never auto-write a verdict; chain the correction with
+  `related:` — the bagpipe-notch case: *notch failed → reverted → gated instead
+  (kept)*, two entries, the `resolution: kept` gate closing the chain — so the
+  next pass starts from the gate, not the notch). A *kept* bright-line move ALSO
+  gets its `kind: decision` ADR. A *tool* failure (stale server, push glitch) →
+  `incoming-bugs/`, never an attempt.
+- **Completeness sweep — this checkpoint's backstop.** Scan the bright-line mix
+  moves in the snapshot since the last recorded outcome (baked levels that define
+  the sound, a groove-shaping sidechain, a return/reverb design, a committed
+  balance) and **propose** captures for any with no ADR. Backstop, not a
+  substitute for capture in the loop.
 
 ## Refreshing the analysis
 

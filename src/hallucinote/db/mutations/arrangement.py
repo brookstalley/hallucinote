@@ -6,6 +6,7 @@ import sqlite3
 from ._core import (
     E,
     MutatorResult,
+    _atomic,
     _emit,
     _record_touch_if_session,
     _require_bar_floor,
@@ -20,6 +21,7 @@ from ._core import (
 # ---------------------------------------------------------------------------
 
 
+@_atomic
 def add_arrangement_clip(
     conn: sqlite3.Connection,
     *,
@@ -90,6 +92,7 @@ def add_arrangement_clip(
     return MutatorResult(aid, "created")
 
 
+@_atomic
 def remove_arrangement_clip(
     conn: sqlite3.Connection,
     *,
@@ -121,6 +124,7 @@ def remove_arrangement_clip(
 # ---------------------------------------------------------------------------
 
 
+@_atomic
 def add_cue_point(
     conn: sqlite3.Connection,
     *,
@@ -188,6 +192,7 @@ def add_cue_point(
     return MutatorResult(pid, "created")
 
 
+@_atomic
 def remove_cue_point(
     conn: sqlite3.Connection,
     *,

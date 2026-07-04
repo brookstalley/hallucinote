@@ -16,6 +16,8 @@ The snapshot is a JSON document describing the mix layout of an Ableton Live set
 {
   "_note":           "(optional) free-form author note",
   "_capture_status": "(optional) free-form provenance tag",
+  "snapshot_version": 1,
+  "captured_at":     "2026-07-04T12:34:56.789Z",
   "song":    { ... },
   "returns": [ ... ],
   "tracks":  [ ... ]
@@ -23,6 +25,9 @@ The snapshot is a JSON document describing the mix layout of an Ableton Live set
 ```
 
 `_note` and `_capture_status` keys (and any other `_`-prefixed keys) are informational; `replay_capture` ignores them.
+
+- `snapshot_version` (**SNP-8R4K**) — intentional schema version, stamped by `compile_snapshot` and asserted/repaired by `capture_cli migrate`.
+- `captured_at` (**BAK-7D2V**) — UTC capture timestamp in the events-table shape (`YYYY-MM-DDTHH:MM:SS.mmmZ`), stamped by `compile_snapshot` on every capture. This is the anchor for the **pull-durability guard**: `replay_capture` refuses (`StaleSnapshotError`) when the DB holds live edits pulled via `/ableton-pull` that are *newer* than this stamp — a replay would otherwise silently revert them to the stale snapshot values. The durable fix is a re-capture (which refreshes the stamp and so disarms the guard); the conscious-revert override is `replay_capture(..., allow_stale_snapshot=True)` (`--force-replay` in scaffolded `build.py`). A snapshot **without** the stamp (legacy, or hand-authored) warns instead of refusing; `capture_cli migrate` deliberately never back-stamps it. Hand-authors may set it to authoring time. Design: `.prawduct/artifacts/plans/BAK-7D2V/design.md`.
 
 ---
 

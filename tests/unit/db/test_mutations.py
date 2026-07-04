@@ -1037,11 +1037,15 @@ def test_link_db_to_ableton_rejects_unknown_kind(conn, song, track):
 
 
 def test_unlink_clip_link_survives_deleted_clip_row(conn, song, track, clip):
-    """FK-GUARD: a clip link is reconciled away precisely when its clip row is
-    GONE from the DB (a --reset rebuild / session-reused Live-set swap). Stamping
-    the audit event's clip_id with the now-dangling id used to violate
-    events.clip_id's FK on INSERT and crash probe-and-link. unlink must now
-    succeed and stamp clip_id=NULL while preserving the id in the payload."""
+    """A clip link reconciled away AFTER its clip row is gone (a --reset
+    rebuild / session-reused Live-set swap) must succeed AND keep lineage.
+
+    History: events.clip_id used to be a live FK (ON DELETE SET NULL), so the
+    PSH-3K9D guard stamped clip_id=NULL for dangling ids to dodge an
+    IntegrityError on INSERT. EVT-6H9R dropped the FK — the column now carries
+    the stable id unconditionally. (The pre-EVT-6H9R `clip_id is None`
+    assertion here was the FK workaround's behavior, not a product contract;
+    the contract — no audit information lost — is strengthened.)"""
     sess = M.create_ableton_session(conn, song_id=song, name="draft")
     M.link_db_to_ableton(
         conn, session_id=sess, db_kind="clip", db_id=clip, ableton_index=2,
@@ -1050,7 +1054,6 @@ def test_unlink_clip_link_survives_deleted_clip_row(conn, song, track, clip):
     conn.execute("DELETE FROM clips WHERE id = ?", (clip,))
     assert Q.get_clip(conn, clip) is None
 
-    # Pre-fix: sqlite3.IntegrityError: FOREIGN KEY constraint failed.
     removed = M.unlink_db_from_ableton(
         conn, session_id=sess, db_kind="clip", db_id=clip,
     )
@@ -1059,20 +1062,21 @@ def test_unlink_clip_link_survives_deleted_clip_row(conn, song, track, clip):
         conn, session_id=sess, db_kind="clip", db_id=clip,
     ) is None
 
-    # The audit event recorded clip_id=NULL (clip gone) but kept the id in db_id.
+    # EVT-6H9R: the audit event carries the stable (dangling) clip id on the
+    # column AND in payload.db_id — the row being gone loses no lineage.
     ev = conn.execute(
         "SELECT clip_id, payload_json FROM events WHERE kind = ? "
         "ORDER BY seq DESC LIMIT 1",
         (E.ABLETON_LINK_REMOVED,),
     ).fetchone()
     assert ev is not None
-    assert ev["clip_id"] is None
+    assert ev["clip_id"] == clip
     assert json.loads(ev["payload_json"])["db_id"] == clip
 
 
 def test_unlink_existing_clip_link_stamps_clip_id(conn, song, track, clip):
-    """The normal case is unchanged: unlinking a clip whose row still exists
-    stamps the event's clip_id (provenance intact)."""
+    """Unlinking a clip whose row still exists stamps the event's clip_id
+    (stamping is unconditional since EVT-6H9R dropped the events FKs)."""
     sess = M.create_ableton_session(conn, song_id=song, name="draft")
     M.link_db_to_ableton(
         conn, session_id=sess, db_kind="clip", db_id=clip, ableton_index=2,

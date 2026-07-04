@@ -6,7 +6,7 @@ The probe-and-link tests exercise the Python helper directly.
 
 End-to-end CLI drive simulates the skill's flow: probe-and-link →
 enumerate phases → for each phase emit a plan + synthesize results +
-apply. Exercises the full thirteen-phase loop through the CLI surface.
+apply. Exercises the full fourteen-phase loop through the CLI surface.
 """
 from __future__ import annotations
 

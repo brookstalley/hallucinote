@@ -1,6 +1,6 @@
 """Tests for W4-D: ``plan_push_song`` master orchestrator + ``plan_push_clips``.
 
-The orchestrator returns thirteen ordered :class:`PushPhase` objects, each
+The orchestrator returns fourteen ordered :class:`PushPhase` objects, each
 carrying a ``plan_fn`` thunk that produces a fresh ``PushPlan`` from
 current DB state. Tests pin:
 
@@ -307,7 +307,7 @@ def filled_song(conn, song, session):
 
 
 def test_end_to_end_drive_links_every_entity(conn, song, session, filled_song):
-    """Drive all thirteen phases with fake-applied results between each.
+    """Drive all fourteen phases with fake-applied results between each.
     Verifies the contract: each phase, given that prior phases' results
     applied, produces a clean plan that strict-link-precondition planners
     accept without raising. Pin the post-drive link state to detect

@@ -218,7 +218,8 @@ def plan_pull_devices(
         if parent_kind == "track":
             return (
                 f"track {row['name']!r} ({row['id']}) not linked in session — "
-                "push it via plan_push_clip first, then re-run pull"
+                "push it via the tracks phase (plan_push_song_tracks) first, "
+                "then re-run pull"
             )
         return (
             f"return {row['name']!r} ({row['id']}) not linked in session — skipping"

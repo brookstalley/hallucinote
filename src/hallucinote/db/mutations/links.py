@@ -5,6 +5,7 @@ import sqlite3
 
 from ._core import (
     E,
+    _atomic,
     _emit,
     _uuid,
 )
@@ -15,6 +16,7 @@ from ._core import (
 # ---------------------------------------------------------------------------
 
 
+@_atomic
 def reset_song_content(
     conn: sqlite3.Connection,
     *,
@@ -115,14 +117,16 @@ def reset_song_content(
 
     _emit(
         conn,
-        "song_content_reset",
+        E.SONG_CONTENT_RESET,
         {"counts": counts},
         song_id=song_id,
         actor=actor,
         request_id=request_id,
         reason=reason or "reset_song_content (W18-C soft reset)",
     )
-    conn.commit()
+    # No explicit commit: @_atomic owns the transaction (EVT-6H9R) — the
+    # autocommit-era `conn.commit()` here would commit early and break the
+    # wrapper's COMMIT.
     return counts
 
 
@@ -136,6 +140,7 @@ ABLETON_LINK_KINDS = frozenset({
 })
 
 
+@_atomic
 def create_ableton_session(
     conn: sqlite3.Connection,
     *,
@@ -168,6 +173,7 @@ def create_ableton_session(
     return sid
 
 
+@_atomic
 def link_db_to_ableton(
     conn: sqlite3.Connection,
     *,
@@ -227,6 +233,7 @@ def link_db_to_ableton(
     )
 
 
+@_atomic
 def unlink_db_from_ableton(
     conn: sqlite3.Connection,
     *,
@@ -264,21 +271,12 @@ def unlink_db_from_ableton(
     song_row = conn.execute(
         "SELECT song_id FROM ableton_sessions WHERE id = ?", (session_id,)
     ).fetchone()
-    # FK-GUARD: a clip link is reconciled away precisely when its clip row is GONE
-    # from the DB — a `build.py --reset` rebuild or a Live-set swap that reuses the
-    # session (the SYN-3C8K cascade in probe_and_link drops clip links whose clip
-    # row no longer exists). Stamping the event's `clip_id` with that now-dangling
-    # id violates `events.clip_id`'s FK to `clips(id)` on INSERT
-    # (sqlite3.IntegrityError, which crashed probe-and-link mid-reconcile). Only
-    # stamp `clip_id` when the clip row still exists; the unlinked id is preserved
-    # in the event payload's `db_id` regardless, so no audit information is lost.
-    clip_id_for_event: str | None = None
-    if db_kind == "clip":
-        clip_exists = conn.execute(
-            "SELECT 1 FROM clips WHERE id = ?", (db_id,)
-        ).fetchone() is not None
-        if clip_exists:
-            clip_id_for_event = db_id
+    # EVT-6H9R: `events.clip_id` is a stable id, not a live FK, so a clip link
+    # reconciled away AFTER its clip row is gone (a `build.py --reset` rebuild
+    # or a Live-set swap that reuses the session) stamps the now-dangling id
+    # unconditionally — lineage preserved. The PSH-3K9D-era guard that only
+    # stamped when the clip row still existed was an FK workaround (the SET
+    # NULL FK rejected dangling ids on INSERT); it died with the FK.
     _emit(
         conn,
         E.ABLETON_LINK_REMOVED,
@@ -290,7 +288,7 @@ def unlink_db_from_ableton(
             "ableton_index": ableton_index,
         },
         song_id=song_row["song_id"] if song_row else None,
-        clip_id=clip_id_for_event,
+        clip_id=db_id if db_kind == "clip" else None,
         actor=actor,
         request_id=request_id,
         reason=reason,

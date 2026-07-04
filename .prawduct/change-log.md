@@ -4,6 +4,44 @@
      This file is separate from project-state.yaml to reduce merge conflicts
      when multiple branches add entries simultaneously. -->
 
+## 2026-07-04 — pull-durability guard: replay refuses to silently revert pulled live edits (BAK-7D2V)
+
+<!-- prawduct: type=feature | chunks=BAK-7D2V | scope=capture,sync,docs,tests | status=shipped | release=unreleased -->
+
+Closes the audit's #1 finding: `/ableton-pull` bakes live edits into the regenerable DB only,
+and the next `build.py`'s `replay_capture(captured_session.json)` silently re-asserted the
+stale snapshot over them — both writers are `actor='sync'`, so actor precedence never saw the
+conflict. The only defense was an unenforced "remember to re-capture" ritual; it is now
+structural.
+
+- **Snapshots carry `captured_at`** — stamped by `compile_snapshot` (both `/song-snapshot` and
+  `capture_cli execute`) in the events-table timestamp shape; the song scaffold stamps its
+  synthetic snapshot too. `capture_cli migrate` deliberately never back-stamps a legacy file
+  (that would defeat the guard).
+- **`replay_capture` refuses** (`StaleSnapshotError`, before any mutation) when the DB holds
+  events from a `requests.kind='pull'` request, of a kind replay re-asserts (mix layer only —
+  staged clip-notes/tempo/tuning pulls never trip it), NEWER than `captured_at`. The message
+  names the offending rows, the durable fix (re-capture), and the override.
+- **Override:** `replay_capture(..., allow_stale_snapshot=True)`; scaffolded `build.py` exposes
+  it as `--force-replay`. Forcing is per-run consent — the guard re-arms until a re-capture.
+- **Legacy (unstamped) snapshots warn instead of refusing** — no ordering evidence exists, and a
+  permanent false alarm would teach users to force habitually; the warning funnels to a
+  stamping re-capture.
+- Full-fix design (enforced staging + one durable bake; write-through and actor-separation
+  alternatives rejected) at `.prawduct/artifacts/plans/BAK-7D2V/design.md`; corrects
+  `authorship-model.md`'s "code vs snapshot is not a new conflict" claim.
+- **Critic fixes:** pulled **nested-rack-chain deletions** now arm the guard
+  (`device_chain_deleted` added — the cascade kills nested devices event-less, so the chain
+  event is the sole signal; full pull-mutator→event-kind audit table in the design);
+  `captured_at` shape check is a **fullmatch** so a timezone-offset stamp (up to +14h ahead
+  lexicographically) takes the legacy/warn path instead of silently defeating the comparison;
+  refusal/warn messages spell the complete re-capture recipe (`capture_cli execute` writes
+  `captured_session.refresh.json`, NOT the canonical file); Live operator verification queued
+  in `.prawduct/operator-verification.md`.
+
+**Re-vendor: not required** — engine-side (`capture.py`, scaffold, docs); no
+`_FINGERPRINT_PATHS` file changed.
+
 ## 2026-06-24 — v1.6.1: standing timbre metrics (brightness · noisiness) in the mix report (AUD-8T3K)
 
 <!-- prawduct: type=feature | chunks=AUD-8T3K | scope=analysis,docs,tests | status=shipped | release=v1.6.1 -->

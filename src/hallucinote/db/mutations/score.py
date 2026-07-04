@@ -7,6 +7,7 @@ from typing import Any
 from ._core import (
     E,
     MutatorResult,
+    _atomic,
     _emit,
     _record_touch_if_session,
     _require_bar_floor,
@@ -21,6 +22,7 @@ from ._core import (
 # ---------------------------------------------------------------------------
 
 
+@_atomic
 def create_section(
     conn: sqlite3.Connection,
     *,
@@ -108,6 +110,7 @@ def create_section(
 _SECTION_FIELDS = {"name", "start_bar", "end_bar", "color", "notes_md", "energy"}
 
 
+@_atomic
 def update_section(
     conn: sqlite3.Connection,
     *,
@@ -150,6 +153,7 @@ def update_section(
     _touch_song(conn, row["song_id"])
 
 
+@_atomic
 def delete_section(
     conn: sqlite3.Connection,
     *,
@@ -183,6 +187,7 @@ def delete_section(
 TEMPO_RAMP_KINDS = frozenset({"linear", "hold"})
 
 
+@_atomic
 def add_tempo_point(
     conn: sqlite3.Connection,
     *,
@@ -254,6 +259,7 @@ def add_tempo_point(
 _TEMPO_POINT_FIELDS = {"tempo_bpm", "ramp"}
 
 
+@_atomic
 def update_tempo_point(
     conn: sqlite3.Connection,
     *,
@@ -298,6 +304,7 @@ def update_tempo_point(
     _touch_song(conn, row["song_id"])
 
 
+@_atomic
 def remove_tempo_point(
     conn: sqlite3.Connection,
     *,
@@ -329,6 +336,7 @@ def remove_tempo_point(
 # ---------------------------------------------------------------------------
 
 
+@_atomic
 def add_time_signature_point(
     conn: sqlite3.Connection,
     *,
@@ -432,6 +440,7 @@ def add_time_signature_point(
 _TIME_SIGNATURE_POINT_FIELDS = {"numerator", "denominator"}
 
 
+@_atomic
 def update_time_signature_point(
     conn: sqlite3.Connection,
     *,
@@ -491,6 +500,7 @@ def update_time_signature_point(
     _touch_song(conn, row["song_id"])
 
 
+@_atomic
 def remove_time_signature_point(
     conn: sqlite3.Connection,
     *,

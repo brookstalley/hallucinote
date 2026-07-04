@@ -128,10 +128,14 @@ git commit -m "chore(release): vNEW — <headline>"   # body: clusters + Re-vend
 git push origin develop
 ```
 
-(Exactly these eight files moved in the v1.6.0 release commit — it's the canonical
-release fileset. The first three are the lockstep product-version surfaces from step 2
-beyond `plugin.json`. `uv.lock` does **not** change on a version bump: `hallucinote` is
-an editable workspace member pinned by source, not by a recorded version.)
+(These eight files plus `uv.lock` are the canonical release fileset. The first three
+are the lockstep product-version surfaces from step 2 beyond `plugin.json`. `uv.lock`
+**does** record the workspace members' versions — a bump without a re-lock leaves the
+lock stale, and the plugin launches with `uv run --frozen`, which uses the lock as-is.
+After the version bump, run `uv lock` and confirm `uv lock --check` passes before
+committing; add `uv.lock` to the release commit when it changed. The lock drifted
+unnoticed across three releases before this step existed — v1.6.1 shipped with the
+lock still recording 0.9.0.)
 
 ### 7. Promote `develop` → `main`
 
@@ -158,7 +162,16 @@ Tags are **annotated** and sit on the **`main`-side merge commit** (not the
 git tag -a vNEW <main-merge-sha> -m "vNEW — <headline>"
 git push origin vNEW
 git checkout develop
+git merge origin/main -m "Merge origin/main back into develop — vNEW release commit"
+git push origin develop
 ```
+
+The back-merge is **mandatory**, not optional tidiness: `main` accumulates the
+release merge commits, and without returning them `develop` drifts "behind" main
+by every release ever cut (it reached 15 commits before this step existed). The
+back-merge introduces no file content — `develop` is strictly ahead in content —
+it only reconciles history so `git rev-list --left-right --count main...develop`
+reads `0 <N>` instead of `<releases> <N>`.
 
 ### 9. Verify
 

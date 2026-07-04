@@ -43,15 +43,8 @@ dev = [
     "pytest-xdist>=3.6",
     "hypothesis>=6.0",
 ]
-# LEGACY (PLUGIN-SELF-CONTAINED): build.py's push path imports the MCP client
-# transport lazily. The plugin now ships BOTH packages in one uv env and skills run
-# the engine via the server's own interpreter, so there's no standalone song-repo
-# `pip install` to satisfy — this extra is vestigial (kept to avoid a uv.lock
-# re-lock; safe to drop in a later cleanup). The `[tool.uv.workspace]` below is what
-# actually builds the one env with both packages.
-live = [
-    "hallucinote-mcp>=0.9",
-]
+# (The vestigial `[live]` extra was dropped 2026-07-02 with a uv.lock re-lock —
+# the `[tool.uv.workspace]` below is what builds the one env with both packages.)
 
 # --- uv workspace (INS-7V2D) ---------------------------------------------------
 # The plugin bundles BOTH the engine (this package) and the MCP server

@@ -1,10 +1,18 @@
 # Changelog
 
-All notable changes to Hallucinote are recorded here. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project
-follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+> **Superseded as of v1.6.0.** The release record now lives in
+> [`.prawduct/release-notes.md`](.prawduct/release-notes.md) (generated from
+> `.prawduct/change-log.md`, which carries the full per-release bodies). This
+> file is preserved as the hand-written history through v1.5.0 and is no
+> longer maintained.
 
-## [Unreleased]
+The format below follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
+the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [1.6.0] — 2026-06-23 (excerpt — full scope in the release notes)
+
+The entries below were drafted here as "Unreleased" and shipped in v1.6.0's
+catch-up window; v1.6.0 contained substantially more (see release notes).
 
 ### Fixed — swell rebuild-reliability cluster (dogfood)
 

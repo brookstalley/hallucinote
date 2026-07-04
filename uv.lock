@@ -470,7 +470,7 @@ wheels = [
 
 [[package]]
 name = "hallucinote"
-version = "0.9.0"
+version = "1.6.1"
 source = { editable = "." }
 dependencies = [
     { name = "librosa" },
@@ -490,13 +490,9 @@ dev = [
     { name = "pytest" },
     { name = "pytest-xdist" },
 ]
-live = [
-    { name = "hallucinote-mcp" },
-]
 
 [package.metadata]
 requires-dist = [
-    { name = "hallucinote-mcp", marker = "extra == 'live'", editable = "hallucinote_mcp" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.0" },
     { name = "librosa", specifier = ">=0.10" },
     { name = "numpy", specifier = ">=1.26" },
@@ -508,11 +504,11 @@ requires-dist = [
     { name = "soundfile", specifier = ">=0.12" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0" },
 ]
-provides-extras = ["dev", "live"]
+provides-extras = ["dev"]
 
 [[package]]
 name = "hallucinote-mcp"
-version = "0.9.0"
+version = "1.6.1"
 source = { editable = "hallucinote_mcp" }
 dependencies = [
     { name = "mcp" },

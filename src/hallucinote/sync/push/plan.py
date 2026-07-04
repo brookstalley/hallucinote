@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from hallucinote.db import mutations as M
@@ -41,16 +41,26 @@ class PushPhase:
     ``name`` is the stable identifier the push skill uses for logging
     and for keying status to phases. Don't rename — tests and the
     skill prose pin these strings.
+
+    ``depends_on`` (SYN-8Q3F) is the phase's DECLARED dependency set —
+    the names of the phases whose applied results this phase's planner
+    assumes (link rows, provisioned scenes, materialized arrangement).
+    Populated from :data:`_PHASE_DEPS`; :func:`validate_phase_order`
+    proves the execution order satisfies it. Dependencies live in data,
+    not prose — see ``.prawduct/artifacts/sync-boundary-contract.md``
+    for each phase's full ASSUME / RE-PROBE contract.
     """
     name: str
     plan_fn: Callable[[], PushPlan]
     description: str
+    depends_on: frozenset[str] = frozenset()
 
 
-# The thirteen phases of the master push, in execution order. Order is
-# load-bearing — see :func:`plan_push_song` for the dependency
-# rationale per phase. This tuple is the single source of truth; tests
-# pin both the names and the count.
+# The fourteen phases of the master push, in execution order. Order is
+# load-bearing — the dependency rationale per phase is DECLARED in
+# :data:`_PHASE_DEPS` below (and validated against this tuple by
+# :func:`validate_phase_order`). This tuple is the single source of
+# truth for order; tests pin both the names and the count.
 _PHASE_NAMES: tuple[str, ...] = (
     "tempo_map",
     "time_signature_map",
@@ -69,6 +79,116 @@ _PHASE_NAMES: tuple[str, ...] = (
 )
 
 
+# SYN-8Q3F: the declared dependency graph — the ordering constraints that used
+# to live only in plan_push_song's docstring, as data. ``phase -> the phases
+# whose APPLIED results its planner assumes``. Only real dependencies are
+# declared (a planner reading link rows / provisioned state another phase
+# creates); pure convention (tempo before tracks) is carried by the tuple
+# order alone. Rationale per edge:
+#
+#   clips        <- tracks (W3-C strict raise on unlinked track),
+#                   scenes (slot N needs >= N scenes — SYN-4P2D).
+#   mix          <- tracks, returns (set_property/set_send address by link).
+#   devices      <- tracks, returns (chains hang off linked parents).
+#   routing      <- tracks (source + track-route target links),
+#                   mix (declared order in RTE-1K9T: routing runs after mix),
+#                   devices (a MIDI track exposes AUDIO output routing — the
+#                   only kind that targets a submaster bus — only once its
+#                   instrument is loaded; RTE-2P9X fresh-push fix).
+#   device_sidechain <- tracks (source resolved to a track that must exist),
+#                   devices (the device must exist + be linked — SDC-7K3M).
+#   envelopes    <- tracks, returns, clips (session-clip hosting), devices
+#                   (device_parameter targets).
+#   performed_automation <- tracks, returns, devices (arc addressing).
+#   arrangement  <- tracks (placement lanes), clips (duplicate source for
+#                   envelope-bearing placements), envelopes (W4-A: the clip
+#                   envelope must exist on the session clip BEFORE
+#                   duplicate_to_arrangement snapshots it).
+#   cues         <- arrangement (Live clamps set_or_delete_cue to
+#                   [0, song.last_event_time] — W3-I).
+#
+# performed_automation vs arrangement have NO declared edge: arrangement
+# clears CLIPS only, perform writes automation lanes — their relative order is
+# convention (the tuple), not dependency.
+_PHASE_DEPS: dict[str, frozenset[str]] = {
+    "tempo_map": frozenset(),
+    "time_signature_map": frozenset(),
+    "tracks": frozenset(),
+    "returns": frozenset(),
+    "scenes": frozenset(),
+    "clips": frozenset({"tracks", "scenes"}),
+    "mix": frozenset({"tracks", "returns"}),
+    "devices": frozenset({"tracks", "returns"}),
+    "routing": frozenset({"tracks", "mix", "devices"}),
+    "device_sidechain": frozenset({"tracks", "devices"}),
+    "envelopes": frozenset({"tracks", "returns", "clips", "devices"}),
+    "performed_automation": frozenset({"tracks", "returns", "devices"}),
+    "arrangement": frozenset({"tracks", "clips", "envelopes"}),
+    "cues": frozenset({"arrangement"}),
+}
+
+
+class PhaseOrderError(ValueError):
+    """The declared phase order contradicts the declared dependency graph
+    (or the graph itself is malformed: unknown phase, undeclared phase, a
+    dependency naming no known phase, or a cycle — which, for a total order,
+    always surfaces as a dep-after-dependent violation)."""
+
+
+def validate_phase_order(
+    names: tuple[str, ...] | list[str],
+    deps: dict[str, frozenset[str]],
+) -> None:
+    """Prove ``names`` (the declared execution order) satisfies ``deps``.
+
+    SYN-8Q3F: the executor runs the declared tuple order (stable, human-chosen);
+    this validator is the machine check that the tuple is a valid topological
+    order of the declared graph. Checks, in order:
+
+    1. ``deps`` declares exactly the phases in ``names`` (no missing, no stale
+       entries — a new phase MUST declare its dependency set, even if empty).
+    2. Every dependency names a known phase.
+    3. Every dependency appears BEFORE its dependent. For a total order this
+       also rejects cycles: a cycle cannot be linearized, so at least one of
+       its edges must point forward.
+
+    Raises :class:`PhaseOrderError` with a teaching message on any violation.
+    """
+    name_list = list(names)
+    name_set = set(name_list)
+    if len(name_list) != len(name_set):
+        raise PhaseOrderError(f"duplicate phase name in order: {name_list!r}")
+
+    undeclared = name_set - set(deps)
+    if undeclared:
+        raise PhaseOrderError(
+            f"phase(s) {sorted(undeclared)} declare no dependency set — add "
+            "an entry (frozenset() if none) to _PHASE_DEPS."
+        )
+    stale = set(deps) - name_set
+    if stale:
+        raise PhaseOrderError(
+            f"_PHASE_DEPS declares unknown phase(s) {sorted(stale)} — not in "
+            "the phase order; remove or rename the entries."
+        )
+
+    index = {name: i for i, name in enumerate(name_list)}
+    for name in name_list:
+        for dep in sorted(deps[name]):
+            if dep not in name_set:
+                raise PhaseOrderError(
+                    f"phase {name!r} depends on unknown phase {dep!r} "
+                    f"(known: {name_list!r})."
+                )
+            if index[dep] >= index[name]:
+                raise PhaseOrderError(
+                    f"phase {name!r} depends on {dep!r}, which does not run "
+                    f"before it (order: {name_list!r}). Reorder the phases, "
+                    "or fix the declared dependency — a cycle can never be "
+                    "ordered."
+                )
+
+
 def plan_push_song(
     conn: sqlite3.Connection,
     *,
@@ -77,93 +197,33 @@ def plan_push_song(
     perform_slowdown_factor: float = 1.0,
     live_arrangement_clips_by_track: dict[int, list[dict]] | None = None,
 ) -> list[PushPhase]:
-    """Master orchestration: return the thirteen phases of a full song push, in order.
+    """Master orchestration: return the fourteen phases of a full song push, in order.
 
     Each :class:`PushPhase` carries a ``plan_fn`` thunk that produces a
     fresh :class:`PushPlan` from current DB state at call time. The
     push skill (W4-E) iterates the list, for each phase calling
-    ``plan_fn()`` → executing the calls via MCP → recording results via
-    :func:`apply_push_results` → moving to the next phase. Each
+    ``plan_fn()`` -> executing the calls via MCP -> recording results via
+    :func:`apply_push_results` -> moving to the next phase. Each
     successive phase sees the ``ableton_links`` the prior phase wrote.
 
-    Phase order (load-bearing):
+    Ordering is DECLARED DATA (SYN-8Q3F): the execution order is
+    :data:`_PHASE_NAMES`; the dependencies each phase asserts (with
+    per-edge rationale) are :data:`_PHASE_DEPS`; :func:`validate_phase_order`
+    proves at construction time that the order satisfies the graph. Each
+    phase's full boundary contract -- what it ASSUMES from prior phases vs
+    what it RE-PROBES from Live, and its failure/halt policy -- lives in
+    ``.prawduct/artifacts/sync-boundary-contract.md``.
 
-      1. ``tempo_map`` — :func:`plan_push_tempo_map`. No link deps.
-      2. ``time_signature_map`` — :func:`plan_push_time_signature_map`.
-         No link deps.
-      3. ``tracks`` — :func:`plan_push_song_tracks`. Creates+links
-         every unlinked non-master track. Prerequisite for clips, mix,
-         devices, envelopes, arrangement.
-      4. ``returns`` — :func:`plan_push_song_returns`. Creates+links
-         every unlinked return. Prerequisite for mix sends, return-side
-         devices, return-side envelopes.
-      5. ``scenes`` — :func:`plan_push_scenes`. Ensures the set has at
-         least ``max session-clip slot`` scenes (= clip slots per track)
-         before ``clips`` creates section clips. Emits one idempotent
-         ``ableton_scene(action='ensure_count')`` call; deficit math runs
-         Live-side. No link deps. Prerequisite for ``clips`` — without it,
-         a song with more sections than the set has scenes hits a raw
-         per-clip ``IndexError`` at clip-create (SYN-4P2D).
-      6. ``clips`` — :func:`plan_push_clips`. Creates+links every
-         session clip. Needs tracks linked (raises otherwise per W3-C
-         strict contract). Prerequisite for envelopes (session-clip
-         hosting) and arrangement (duplicate source).
-      7. ``mix`` — :func:`plan_push_mix`. Pushes mixer state + sends.
-         Needs tracks + returns linked. No clip dep.
-      8. ``devices`` — :func:`plan_push_devices`. Loads instruments +
-         effects and sets parameters. Needs tracks + returns linked.
-         Prerequisite for ``device_parameter`` envelopes (need the
-         target device linked). Runs BEFORE ``routing``: a MIDI track
-         exposes *audio* output routing — the only kind that can target an
-         audio submaster bus like PRE-MAIN — only once it has an instrument,
-         so instruments must load before routing resolves (fresh-push fix).
-      9. ``routing`` — :func:`plan_push_routing`. Materializes per-track
-         output/input routing + monitor state (RTE-1K9T; the PRE-MAIN
-         submaster pattern). After ``devices`` (instrument-bearing MIDI
-         tracks have audio output routing to target the bus) and after
-         ``mix``. Needs tracks linked — the source track AND any track-route
-         target are created in the ``tracks`` phase. Idempotent re-emit like
-         ``mix``/``devices`` (no fingerprint gate, D7).
-      9b. ``device_sidechain`` — :func:`plan_push_device_sidechain`.
-          Materializes a device's sidechain SOURCE routing (SDC-7K3M) via
-          ``ableton_device(set_input_routing)``, resolving the DB source-track
-          FK to its Live display_name. AFTER ``devices`` — the device must
-          exist + be linked before its input routing can be set. The S/C
-          On/Gain params ride the ``devices`` phase as ordinary parameters;
-          this restores the one piece they can't carry (the source). Ack-only.
-      10. ``envelopes`` — :func:`plan_push_envelopes`. Writes envelopes
-         on the SESSION clip per W4-A: ``duplicate_to_arrangement`` is
-         a snapshot copy, so the envelope must exist on the session
-         clip BEFORE arrangement runs. Needs tracks + clips + returns
-         + devices linked.
-      11. ``performed_automation`` — :func:`plan_push_performed_automation`.
-          Gesture-records master/group/return-side arcs into arrangement
-          automation (ENV-7G4K), fingerprint-gated. Needs tracks +
-          returns + devices linked. Realtime: the transport plays each
-          changed arc's span (the plan names the wall-clock cost).
-      12. ``arrangement`` — :func:`plan_push_arrangement` (ARR-PROJ). Projects
-          the DB onto the arrangement: per track, CLEAR its existing clips (from
-          ``live_arrangement_clips_by_track``, the execute-path probe) then
-          create+fill each placement from the DB (note-only) — idempotent, no
-          B-24 stacking. Envelope-bearing placements duplicate onto the cleared
-          region to keep their snapshot-copied clip envelopes (W4-A). Needs
-          tracks linked; envelope-bearing/audio placements need clips linked.
-      13. ``cues`` — :func:`plan_push_cue_points`. Creates cue points.
-          Must run AFTER arrangement: Live's ``set_or_delete_cue`` is
-          clamped to ``[0, song.last_event_time]``; cues placed before
-          arrangement exists get rejected.
-
-    Sections (``plan_push_sections``) is NOT included: it emits no
+    Sections (``plan_push_sections``) is NOT a phase: it emits no
     canonical calls (Live has no section-marker concept distinct from
     cue points). Run it separately to surface its warn if needed.
 
-    Returns 13 phases regardless of whether the song actually has
-    content for each phase — empty phases produce a plan with a
-    ``no … to push`` warn instead of an empty plan, so the skill's
-    progress reporting can distinguish "ran cleanly with nothing to
-    do" from "phase skipped". Idempotent: running the full sequence a
-    second time produces empty plans (all link prereqs satisfied;
-    each planner's already-linked branch is a no-op).
+    Returns all 14 phases regardless of whether the song actually has
+    content for each phase -- an empty phase's plan is either bare-empty
+    or carries a ``no ... to push`` warn; the executor reports both as
+    SKIPPED. Idempotent: running the full sequence a second time
+    produces empty plans (all link prereqs satisfied; each planner's
+    already-linked branch is a no-op).
     """
     phases = (
         PushPhase(
@@ -271,7 +331,13 @@ def plan_push_song(
         raise RuntimeError(
             "plan_push_song phase order drifted from _PHASE_NAMES; update both."
         )
-    return list(phases)
+    # SYN-8Q3F: prove the declared order satisfies the declared dependency
+    # graph (unknown phase / undeclared phase / dep-after-dependent / cycle
+    # all raise PhaseOrderError), then stamp each phase with its declared
+    # deps so downstream consumers (executor, skills, tests) read ordering
+    # constraints as data, not prose.
+    validate_phase_order(_PHASE_NAMES, _PHASE_DEPS)
+    return [replace(p, depends_on=_PHASE_DEPS[p.name]) for p in phases]
 
 
 # ---------------------------------------------------------------------------
@@ -395,6 +461,25 @@ _ACK_ONLY_KINDS: frozenset[str] = frozenset({
     # arrangement phase before any clip is rebuilt.
     "arrangement_clip_clear",
 })
+
+
+# SYN-8Q3F (c): the ONE registry of result key kinds the apply layer resolves —
+# `_LINK_KINDS` (binding writes) + `_ACK_ONLY_KINDS` (no DB write) + the
+# dedicated `perform_batch` branch. Three layers keep this exhaustive so the
+# twice-shipped unknown-kind halt class (`device_param_override` 2026-06-18,
+# `device_chain_props` 2026-06-20) stays closed:
+#   1. the static emitted-kind guard (test_push.py
+#      test_every_emitted_push_key_kind_is_declared) fails the suite when any
+#      planner emits a kind outside this registry;
+#   2. apply_push_results raises ValueError (fail-loud, teaching message) on a
+#      kind outside it — reachable only from a non-planner result source or
+#      cross-version skew once (1) holds;
+#   3. the executor converts that raise into a CONTROLLED phase halt
+#      (push_execute._apply_results) — state file written, request closed —
+#      instead of the raw traceback it used to be (contract artifact, V4).
+KNOWN_RESULT_KEY_KINDS: frozenset[str] = (
+    frozenset(_LINK_KINDS) | _ACK_ONLY_KINDS | frozenset({"perform_batch"})
+)
 
 
 def apply_push_results(
@@ -531,7 +616,8 @@ def apply_push_results(
                 continue
 
             raise ValueError(
-                f"unknown push result key kind {kind!r} (full key={key!r}). "
+                f"unknown push result key kind {kind!r} (full key={key!r}); "
+                f"known kinds: {sorted(KNOWN_RESULT_KEY_KINDS)}. "
                 "Declare it in _LINK_KINDS / _ACK_ONLY_KINDS (or add a "
                 "dedicated branch like 'perform_batch') in sync/push/plan.py."
             )

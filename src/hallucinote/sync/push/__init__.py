@@ -127,10 +127,14 @@ from .probe import (
 )
 from .plan import (
     PushPhase,
+    PhaseOrderError,
     _PHASE_NAMES,
+    _PHASE_DEPS,
+    validate_phase_order,
     plan_push_song,
     _LINK_KINDS,
     _ACK_ONLY_KINDS,
+    KNOWN_RESULT_KEY_KINDS,
     apply_push_results,
 )
 
@@ -215,9 +219,13 @@ __all__ = [
     "check_coherence",
     # Orchestrator + apply
     "PushPhase",
+    "PhaseOrderError",
     "_PHASE_NAMES",
+    "_PHASE_DEPS",
+    "validate_phase_order",
     "plan_push_song",
     "_LINK_KINDS",
     "_ACK_ONLY_KINDS",
+    "KNOWN_RESULT_KEY_KINDS",
     "apply_push_results",
 ]

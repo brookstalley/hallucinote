@@ -359,7 +359,7 @@ def test_execute_track_link_visible_to_clip_phase_mid_run(
     track link must ALREADY be visible in the DB — otherwise plan_push_clips
     would have raised on the unlinked track. Catches a hypothetical regression
     where execute reads ableton_links once at start and never refreshes
-    (e.g. a refactor that pre-builds all thirteen plans before dispatching)."""
+    (e.g. a refactor that pre-builds all fourteen plans before dispatching)."""
     observed: list[bool] = []
     base_send = _make_send_fn()
 

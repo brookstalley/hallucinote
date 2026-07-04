@@ -406,6 +406,10 @@ def delete_clip(
         E.CLIP_DELETED,
         {"clip_id": clip_id, "track_id": row["track_id"]},
         song_id=row["song_id"],
+        # EVT-6H9R: events.clip_id is a stable id, not a live FK — stamping
+        # the just-deleted id is now possible (pre-migration the FK rejected
+        # it) and keeps the events.clip_id lineage column complete.
+        clip_id=clip_id,
         actor=actor,
         request_id=request_id,
         reason=reason,

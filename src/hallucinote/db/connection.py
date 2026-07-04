@@ -86,6 +86,7 @@ def init_db(db_path: str | Path) -> sqlite3.Connection:
     _check_schema_canary()
     conn = connect(db_path)
     _rebuild_disposable_tables(conn)
+    _migrate_events_drop_fks(conn)
     conn.executescript(_SCHEMA_PATH.read_text())
     _ensure_added_columns(conn)
     return conn
@@ -120,6 +121,69 @@ def _rebuild_disposable_tables(conn: sqlite3.Connection) -> None:
     if md_rows and "outcome" not in {r["name"] for r in md_rows}:
         conn.execute("DROP TABLE markdown_refs")
         conn.execute("DROP TABLE IF EXISTS markdown_refs_fts")
+
+
+def _migrate_events_drop_fks(conn: sqlite3.Connection) -> None:
+    """EVT-6H9R: drop the ON DELETE SET NULL FKs from a legacy `events` table.
+
+    The audit log is append-only and must not lose lineage to a cascade: the
+    original ``song_id`` / ``clip_id`` / ``request_id`` columns were live FKs
+    with ``ON DELETE SET NULL``, so deleting a clip nulled ``clip_id`` on
+    every event that ever touched it. The new shape (see ``schema.sql``)
+    carries stable ids with NO foreign keys — the ids may dangle after the
+    referenced row is deleted; that is the point.
+
+    SQLite cannot ALTER a foreign key away, so this is the table-recreate
+    pattern: build the new-shape table, copy every row byte-for-byte (same
+    ids, seqs, timestamps, payloads), drop the old table, rename, recreate
+    the indexes. Runs before ``schema.sql``'s ``CREATE TABLE IF NOT EXISTS``
+    so a fresh DB never enters here (no ``events`` table yet) and a migrated
+    DB is already final-shape when the script runs.
+
+    Detection: ``PRAGMA foreign_key_list(events)`` non-empty. Idempotent —
+    the migrated table has no FKs, so re-open is a no-op. Safe with
+    ``PRAGMA foreign_keys=ON``: no table references ``events``, and the new
+    table has no outgoing FKs to check during the copy. The whole rebuild is
+    one transaction, so a crash mid-migration leaves the legacy table intact.
+    """
+    fks = conn.execute("PRAGMA foreign_key_list(events)").fetchall()
+    if not fks:
+        return  # fresh DB (no table -> empty list) or already migrated
+    with transaction(conn):
+        conn.execute(
+            """CREATE TABLE events_new (
+                   id              TEXT PRIMARY KEY,
+                   seq             INTEGER NOT NULL UNIQUE,
+                   ts              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                   kind            TEXT NOT NULL,
+                   payload_json    TEXT NOT NULL,
+                   song_id         TEXT,
+                   clip_id         TEXT,
+                   actor           TEXT NOT NULL,
+                   reason          TEXT,
+                   request_id      TEXT
+               )"""
+        )
+        conn.execute(
+            """INSERT INTO events_new
+                   (id, seq, ts, kind, payload_json, song_id, clip_id,
+                    actor, reason, request_id)
+               SELECT id, seq, ts, kind, payload_json, song_id, clip_id,
+                      actor, reason, request_id
+               FROM events"""
+        )
+        conn.execute("DROP TABLE events")
+        conn.execute("ALTER TABLE events_new RENAME TO events")
+        # Self-contained: the old indexes died with the old table. schema.sql
+        # would recreate them right after, but the migration must leave a
+        # complete table regardless of what runs next.
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_events_seq ON events(seq)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_events_kind ON events(kind)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_events_song ON events(song_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_events_clip ON events(clip_id)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_events_request ON events(request_id)"
+        )
 
 
 # Column additions that post-date the original schema CREATE statements.

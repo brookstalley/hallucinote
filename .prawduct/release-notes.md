@@ -5,6 +5,40 @@
      be overwritten on next regen. See change-log.md for full per-release
      bodies; this file is a digest. -->
 
+## unreleased
+
+### ci,lint,types,tests
+
+**Entry:** 2026-07-04 — CI: the four gates run off-laptop; lint/type debt to zero (INF-2C4X)
+
+**Chunks shipped:** INF-2C4X
+
+### sync,artifacts,tests
+
+**Entry:** 2026-07-04 — sync-boundary contract + ordering DAG + controlled unknown-kind halt (SYN-8Q3F, partial)
+
+**Chunks shipped:** SYN-8Q3F
+
+### db,tests
+
+**Entry:** 2026-07-04 — event-seed hardening: atomic write+emit, stable-ID event log, replay smoke test (EVT-6H9R)
+
+**Chunks shipped:** EVT-6H9R
+
+### process,docs,skills
+
+**Entry:** 2026-07-04 — ceremony sweep: 4-obligation close-out, compacted governance mass, 30-day scrub (PRC-5W2N)
+
+**Chunks shipped:** PRC-5W2N
+
+### capture,sync,docs,tests
+
+**Entry:** 2026-07-04 — pull-durability guard: replay refuses to silently revert pulled live edits (BAK-7D2V)
+
+**Chunks shipped:** BAK-7D2V
+
+See `.prawduct/change-log.md` for full details.
+
 ## v1.6.1
 
 **Entry:** 2026-06-24 — v1.6.1: standing timbre metrics (brightness · noisiness) in the mix report (AUD-8T3K)

@@ -502,12 +502,18 @@ scope_rollups:
   capture,db-schema,db-mutations,db-queries,sync-push,docs,tests:
     chunks: ["SNP-2H9F"]
     releases: ["v1.5.0"]
+  capture,sync,docs,tests:
+    chunks: ["BAK-7D2V"]
+    releases: ["unreleased"]
   capture,sync-push,snapshot,render,analysis,skills:
     chunks: ["BUG1A-analyzer-match", "BUG1B-strip", "BUG3-status-json", "BUG3-timeout-doc", "BUG4-params-dialed"]
     releases: ["v0.9.8"]
   capture,sync-push,sync-pull,render:
     chunks: ["SNP-8R4K-01", "SNP-8R4K-02", "SNP-8R4K-03", "SNP-8R4K-04"]
     releases: ["v0.9.7"]
+  ci,lint,types,tests:
+    chunks: ["INF-2C4X"]
+    releases: ["unreleased"]
   cli,tools,skills,docs,backlog,artifacts,tests:
     chunks: ["WS-BOOTSTRAP"]
     releases: ["v1.5.0"]
@@ -520,6 +526,9 @@ scope_rollups:
   db,sync-push,audio-analysis,mcp-bridge:
     chunks: ["AUD-2N6K", "ENV-2T9K", "ENV-8K2R", "MEL-1A7K-line", "SDC-7K3M", "SMP-7K2D-01", "SMP-7K2D-02"]
     releases: ["v0.9.6"]
+  db,tests:
+    chunks: ["EVT-6H9R"]
+    releases: ["unreleased"]
   db-schema,markdown-refs,song-context,skills,docs,claude-md:
     chunks: ["ATL-7K3M-ch1", "ATL-7K3M-ch2"]
     releases: ["v1.5.0"]
@@ -562,9 +571,15 @@ scope_rollups:
   plugin-distribution,mcp-bridge:
     chunks: ["INS-3W8P"]
     releases: ["v0.9.7"]
+  process,docs,skills:
+    chunks: ["PRC-5W2N"]
+    releases: ["unreleased"]
   skills,docs,mcp-primer,claude-md:
     chunks: ["discoverability-wiring", "song-workflow-spine"]
     releases: ["v0.9.8"]
+  sync,artifacts,tests:
+    chunks: ["SYN-8Q3F"]
+    releases: ["unreleased"]
   sync,snapshot,audio:
     chunks: ["AUD-3T6L", "SNP-4K7M"]
     releases: ["v0.9.8"]

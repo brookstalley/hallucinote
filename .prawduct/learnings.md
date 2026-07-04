@@ -282,3 +282,15 @@ generous `MCP_TIMEOUT`; a pre-warm hook is best-effort, not the mitigation.**
 ## A Live-side change OUTSIDE `_FINGERPRINT_PATHS` ships silently — the handshake won't tell you to re-vendor
 
 **When you change Remote-Script-executed code that is NOT under `_FINGERPRINT_PATHS` (`wire/schema/dispatcher/actions/handlers/remote_script`) — e.g. `analyzer/setup.py`, which runs Live-side via `runs_on_worker=True` + `run_on_main` — the server content fingerprint does NOT flip, so `/ableton-mcp-install` and the version handshake report `matched` even against a STALE vendored Remote Script that lacks your change. Do NOT trust the version match to signal that a re-vendor is needed: force it (relaunch dev-mode so running==disk → `/ableton-mcp-install` → reopen Live, which caches Control Surface modules at startup) and say so explicitly in the operator-verification entry, because the usual "fingerprint flips → re-vendor" reminder is silent here. (RND-2R9K, 2026-06-21)**
+
+## Critic-clean is not PR-ready — Critic and the independent PR reviewer catch different bug classes
+
+**When a chunk has passed Critic review, still run the independent PR reviewer before merge and treat both as required, not redundant — Critic evaluates whether the diff itself is correct in isolation, while the PR reviewer's broader lens catches unchanged-but-should-have-changed siblings and edge cases Critic reasoned were "hypothetical" but are actually reachable (the v0.9.0 empty-`display_name` substring bug Critic dismissed as unreachable, the dead `sys.path` shims in PR #133). Skipping either layer reliably lets through what the other would have caught. (Extracted from 2026-05-19 → 2026-06-03 reflections during the PRC-5W2N archive sweep, 2026-07-04)**
+
+## An expensive restart/reload cycle only pays off if you batch every fix into it
+
+**When the next verification step requires an expensive external restart (a Live relaunch, an MCP reconnect/re-vendor, a Max patcher reload), read through the code and identify EVERY fix you can find before triggering the restart, then land them all in one cycle — fix-one/restart/see-what's-next/repeat amortizes very poorly against that cost (batching saved 3 Live-restart cycles in one 2026-05-27 session; three independent sessions that day rediscovered the same rule). (Extracted from 2026-05-27 reflections during the PRC-5W2N archive sweep, 2026-07-04)**
+
+## A structural gate that keeps getting carved around needs escalation, not another carve-out
+
+**When the same broken hook/gate recurs across many PRs or sessions (the `check-operator-verification` ModuleNotFoundError across 6+ PRs; the gitflow base-detection bug that resolved `main` before `develop` biting three times), stop treating each hit as a one-off exception — escalate it to an actual upstream fix, because the accumulating carve-outs are evidence the gate is no longer a trustworthy safety net and every exception trains you to override it. (Extracted from 2026-05-20 → 2026-06-04 reflections during the PRC-5W2N archive sweep, 2026-07-04)**

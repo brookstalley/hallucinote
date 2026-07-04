@@ -7,6 +7,8 @@ truth the calibration evidence froze (see compare.py docstring).
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from hallucinote.audio.compare import (

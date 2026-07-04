@@ -33,7 +33,6 @@ import ast
 import pathlib
 import queue
 import threading
-import time
 from typing import Any
 
 import pytest

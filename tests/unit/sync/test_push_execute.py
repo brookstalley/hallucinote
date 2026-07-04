@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from pathlib import Path
 
 import pytest
 
@@ -2223,11 +2222,11 @@ def test_progress_fn_emits_per_phase_lines(conn, song, session, tiny_song, state
         progress_fn=lines.append,
     )
     # Phases that dispatch announce a start + a finish; skips announce a skip.
-    assert any(l.startswith("[tracks] running") for l in lines)
-    assert any(l.startswith("[tracks] ok") for l in lines)
-    assert any(l.startswith("[clips] running") for l in lines)
-    assert any(l.startswith("[clips] ok") for l in lines)
-    assert any("skipped" in l for l in lines)
+    assert any(ln.startswith("[tracks] running") for ln in lines)
+    assert any(ln.startswith("[tracks] ok") for ln in lines)
+    assert any(ln.startswith("[clips] running") for ln in lines)
+    assert any(ln.startswith("[clips] ok") for ln in lines)
+    assert any("skipped" in ln for ln in lines)
 
 
 def test_state_file_is_pollable_midrun(conn, song, session, tiny_song, state_dir):

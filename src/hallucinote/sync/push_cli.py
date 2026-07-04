@@ -1037,7 +1037,7 @@ def _cmd_cleanup_default_scaffold(args: argparse.Namespace) -> int:
         live_tracks=live_tracks,
         live_returns=live_returns,
         actor="sync",
-        reason=args.reason or f"cleanup-default-scaffold pre-probe",
+        reason=args.reason or "cleanup-default-scaffold pre-probe",
     )
 
     cleanup_plan = push.plan_cleanup_default_scaffold(

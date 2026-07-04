@@ -132,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
         song_id = _resolve_song_id(conn, args.song)
         if song_id is None:
             print(
-                f"no song found in DB"
+                "no song found in DB"
                 + (f" matching slug {args.song!r}" if args.song else ""),
                 file=sys.stderr,
             )

@@ -14,7 +14,6 @@ import importlib.util
 import sys
 from pathlib import Path
 
-import pytest
 
 import hallucinote_mcp
 from hallucinote_mcp import BASE_VERSION, __version__

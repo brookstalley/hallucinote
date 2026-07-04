@@ -11,7 +11,7 @@ from hallucinote.capture import (
     migrate_snapshot, preserve_browser_paths, replay_capture,
     snapshot_needs_migration,
 )
-from hallucinote.db import events as E, init_db, mutations as M, queries as Q
+from hallucinote.db import events as E, init_db, queries as Q
 from hallucinote.return_naming import strip_return_slot_prefix
 
 # Several fixtures in this module deliberately use Live's `<letter>-` prefixed
@@ -299,7 +299,7 @@ def _snapshot_with_devices() -> dict:
 
 
 def test_replay_creates_top_level_chain_per_parent(conn):
-    sid = replay_capture(conn, _snapshot_with_devices(), song_name="t")
+    replay_capture(conn, _snapshot_with_devices(), song_name="t")
     # 1 track chain + 1 return chain = 2 chains.
     chains = conn.execute("SELECT * FROM device_chains").fetchall()
     assert len(chains) == 2

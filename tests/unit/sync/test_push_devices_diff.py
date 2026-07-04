@@ -17,7 +17,6 @@ import pytest
 
 from hallucinote.db import init_db, mutations as M
 from hallucinote.sync import push, push_execute
-from hallucinote.sync.push._core import build_node_addr
 from hallucinote.sync.push.device_param_diff import (
     param_matches_live,
     partition_unchanged_device_params,

@@ -8,10 +8,7 @@ from __future__ import annotations
 import hallucinote.generators.variations as V
 from hallucinote.arrangement import Arrangement
 from hallucinote.recurrence.lens import (
-    MotifRecall,
     RecurrenceFinding,
-    RecurrenceReport,
-    SectionRecurrence,
     SectionRecurrenceInput,
     analyze_arrangement,
     analyze_recurrence,

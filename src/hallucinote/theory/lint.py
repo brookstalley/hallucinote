@@ -46,10 +46,10 @@ pairwise-interval analysis is a later read-side lens over the same NoteDicts.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Literal, Mapping, Sequence
 
-from hallucinote.theory.model import Mode, Progression, pc_name
+from hallucinote.theory.model import Progression, pc_name
 
 NoteDict = dict[str, Any]
 
@@ -129,7 +129,7 @@ class SectionHarmony:
             "declared_distinct_chords": self.declared_distinct_chords,
             "sounded_distinct_chords": self.sounded_distinct_chords,
             "harmonic_stasis": self.harmonic_stasis,
-            "layers": [l.to_dict() for l in self.layers],
+            "layers": [layer.to_dict() for layer in self.layers],
             "findings": [f.to_dict() for f in self.findings],
         }
 

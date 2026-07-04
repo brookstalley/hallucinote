@@ -11,7 +11,6 @@ import time
 
 import pytest
 
-from hallucinote_mcp import schema
 from hallucinote_mcp.client import send as client_send
 from hallucinote_mcp.remote_script.server import RemoteScriptServer
 from hallucinote_mcp.schema import Action, LiveOp, ParamSpec

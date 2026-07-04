@@ -348,7 +348,7 @@ def test_get_latest_report_returns_most_recent_json(synthetic_song: Path):
         song_slug="test-song",
     )
     # Build one report
-    first = analysis_handlers.analyze_handler(
+    analysis_handlers.analyze_handler(
         None, song_slug="test-song", captures_dir=str(captures),
     )
     # Build a second report (handler timestamps the filename — wait a tick

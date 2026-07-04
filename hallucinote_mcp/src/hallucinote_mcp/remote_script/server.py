@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import socket
 import threading
-from typing import Any, Callable
+from typing import Callable
 
 import dataclasses
 

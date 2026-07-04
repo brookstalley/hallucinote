@@ -27,7 +27,6 @@ from .install_paths import (
     REMOTE_SCRIPT_EXCLUDE_FILE_GLOBS_ANY,
     REMOTE_SCRIPT_EXCLUDE_TOP_LEVEL_FILES,
     package_root,
-    remote_script_install_dir,
     remote_script_stub_text,
 )
 

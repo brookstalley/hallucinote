@@ -63,7 +63,6 @@ def test_migration_adds_preset_query_to_pre_sweepb_devices_table(tmp_path: Path)
     a DB created BEFORE Sweep B (no preset_query column) must gain the
     column via _ADDED_COLUMNS on the next init_db open, not crash when
     create_device is called."""
-    import sqlite3
 
     db_path = tmp_path / "pre-sweepb.db"
     # Simulate a v0.9.0 DB: build the devices table without preset_query.

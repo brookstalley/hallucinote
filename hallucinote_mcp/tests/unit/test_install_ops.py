@@ -28,18 +28,22 @@ def _make_source(tmp_path):
     # Anchored exclude: package-root server.py (FastMCP-dependent) must NOT copy.
     (root / "server.py").write_text("import fastmcp\n", encoding="utf-8")
     # Kept package dirs.
-    actions = root / "actions"; actions.mkdir()
+    actions = root / "actions"
+    actions.mkdir()
     (actions / "__init__.py").write_text("# kept\n", encoding="utf-8")
     # remote_script/ is kept — including its OWN server.py (the Control Surface server).
-    rs = root / "remote_script"; rs.mkdir()
+    rs = root / "remote_script"
+    rs.mkdir()
     for name in ("__init__.py", "_control_surface.py", "server.py", "dispatch.py"):
         (rs / name).write_text("# kept\n", encoding="utf-8")
     # A nested kept dir with content (resources-like).
-    res = root / "resources" / "guides"; res.mkdir(parents=True)
+    res = root / "resources" / "guides"
+    res.mkdir(parents=True)
     (res / "error-recovery.md").write_text("# kept\n", encoding="utf-8")
     # Any-position excluded dirs.
     for d in ("cli", "tests", "m4l", "__pycache__"):
-        sub = root / d; sub.mkdir()
+        sub = root / d
+        sub.mkdir()
         (sub / "thing.py").write_text("# excluded\n", encoding="utf-8")
     # Excluded *.pyc at root and nested.
     (root / "stale.pyc").write_text("x", encoding="utf-8")

@@ -16,7 +16,7 @@ from hallucinote.capture import (
     replay_capture,
     _capture_nested_chains,
 )
-from hallucinote.db import init_db, mutations as M, queries as Q
+from hallucinote.db import init_db, queries as Q
 
 
 @pytest.fixture

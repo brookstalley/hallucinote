@@ -6,7 +6,6 @@ import threading
 
 import pytest
 
-from hallucinote_mcp import wire
 from hallucinote_mcp.wire import (
     FrameError,
     Request,

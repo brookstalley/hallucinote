@@ -1666,7 +1666,6 @@ def test_read_envelope_mixer_volume_round_trip(loaded_actions):
     # Reconstruct: expect breakpoints near 0.0, 1.0, 2.5 with values
     # 0.5, 0.8, 0.3 (step localization is within resolution_beats).
     bps = r["breakpoints"]
-    times = [bp["time_beats"] for bp in bps]
     values = [bp["value"] for bp in bps]
     # At least one breakpoint with each written value should surface.
     assert any(abs(v - 0.5) < 1e-6 for v in values)
@@ -1705,7 +1704,6 @@ def test_read_envelope_device_parameter_round_trip(loaded_actions):
     """Cross-target-kind canary: device_parameter read works too."""
     ctx, _clip = _track_with_clip()
     # Set up a device with a parameter on the track.
-    from typing import Any as _Any
     track = ctx.song.tracks[0]
     param = FakeParam("Threshold", 0.5)
 

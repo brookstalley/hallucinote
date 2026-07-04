@@ -417,7 +417,7 @@ def test_plan_push_clips_prefixes_per_clip_warnings(
     M.link_db_to_ableton(
         conn, session_id=session, db_kind="track", db_id=track, ableton_index=1,
     )
-    c = M.create_clip(conn, track_id=track, slot=1, length_beats=4.0, name="loop_a")
+    M.create_clip(conn, track_id=track, slot=1, length_beats=4.0, name="loop_a")
 
     real = push.plan_push_clip
 

@@ -2874,7 +2874,8 @@ def test_apply_device_parameters_property_round_trip(entries):
     - range == [0,1] -> value_normalized within ``_FLOAT_EPS``, value_raw NULL
     """
     from hallucinote.db import init_db
-    import tempfile, os
+    import tempfile
+    import os
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
     try:
@@ -4597,7 +4598,7 @@ def test_skill_allowed_tools_cover_every_planner_emitted_tool(
     every planner emits its full set of probes.
     """
     from pathlib import Path
-    from hallucinote.sync import pull, pull_cli
+    from hallucinote.sync import pull_cli
 
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
     _link_track(conn, session=session, db_id=tid, ableton_index=2)

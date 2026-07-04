@@ -10,7 +10,6 @@ CLI tests redirect the config paths so they never touch the real ~/.claude.json.
 from __future__ import annotations
 
 import json
-import pathlib
 
 import pytest
 

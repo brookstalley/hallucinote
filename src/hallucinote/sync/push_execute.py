@@ -1135,10 +1135,11 @@ def execute_push(
                 "args_summary": {"phase": phase_name, "results": len(batch)},
                 "error": f"{type(exc).__name__}: {exc}",
                 "hint": (
-                    "planner↔apply contract drift — the results carried a key "
-                    "the apply layer cannot resolve, so NOTHING from this "
-                    "phase's batch was recorded (the transaction rolled back). "
-                    "Declare the kind in _LINK_KINDS / _ACK_ONLY_KINDS (see "
+                    "apply-layer failure — usually planner↔apply contract "
+                    "drift (an undeclared result key kind; the error names "
+                    "the cause). NOTHING from this batch was recorded (it "
+                    "rolled back). For an undeclared kind, declare it in "
+                    "_LINK_KINDS / _ACK_ONLY_KINDS (see "
                     "KNOWN_RESULT_KEY_KINDS in sync/push/plan.py), then re-run "
                     "execute (idempotent — Live-side writes already landed and "
                     "re-link on the next pass)."

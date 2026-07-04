@@ -91,7 +91,6 @@ _PHASE_NAMES: tuple[str, ...] = (
 #   mix          <- tracks, returns (set_property/set_send address by link).
 #   devices      <- tracks, returns (chains hang off linked parents).
 #   routing      <- tracks (source + track-route target links),
-#                   mix (declared order in RTE-1K9T: routing runs after mix),
 #                   devices (a MIDI track exposes AUDIO output routing — the
 #                   only kind that targets a submaster bus — only once its
 #                   instrument is loaded; RTE-2P9X fresh-push fix).
@@ -107,9 +106,10 @@ _PHASE_NAMES: tuple[str, ...] = (
 #   cues         <- arrangement (Live clamps set_or_delete_cue to
 #                   [0, song.last_event_time] — W3-I).
 #
-# performed_automation vs arrangement have NO declared edge: arrangement
-# clears CLIPS only, perform writes automation lanes — their relative order is
-# convention (the tuple), not dependency.
+# performed_automation vs arrangement have NO declared edge (arrangement
+# clears CLIPS only; perform writes automation lanes), and routing-after-mix
+# is likewise undeclared (the routing planner reads nothing mix applies) —
+# both are tuple-order convention (RTE-1K9T chose the order), not dependency.
 _PHASE_DEPS: dict[str, frozenset[str]] = {
     "tempo_map": frozenset(),
     "time_signature_map": frozenset(),
@@ -119,7 +119,7 @@ _PHASE_DEPS: dict[str, frozenset[str]] = {
     "clips": frozenset({"tracks", "scenes"}),
     "mix": frozenset({"tracks", "returns"}),
     "devices": frozenset({"tracks", "returns"}),
-    "routing": frozenset({"tracks", "mix", "devices"}),
+    "routing": frozenset({"tracks", "devices"}),
     "device_sidechain": frozenset({"tracks", "devices"}),
     "envelopes": frozenset({"tracks", "returns", "clips", "devices"}),
     "performed_automation": frozenset({"tracks", "returns", "devices"}),

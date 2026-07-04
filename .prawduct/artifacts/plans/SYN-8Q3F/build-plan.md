@@ -72,7 +72,8 @@ Critic mode: cumulative-final (chunks are small/structural; roll up at PR time p
   raise (e.g. clips' W3-C strict ValueError under `--only clips`) escapes
   `execute_push` as a traceback — same class as the pre-Chunk-03 apply raise;
   convert to a controlled halt. (V3) the mix phase still owns a second
-  return-CREATE path duplicating the returns phase. Plus prose-only fixes (V5–V7).
+  return-CREATE path duplicating the returns phase. Plus the one remaining
+  prose fix (V6 — V5 was fixed inline, V7 by Chunk 02's docstring rewrite).
   File as backlog items rather than building silently.
 
 Context: Chunks 1–4 built 2026-07-04 in worktree `feat/syn-8q3f-structural`

@@ -98,7 +98,10 @@ def test_load_bearing_edges_are_declared():
     assert {"tracks", "scenes"} <= _PHASE_DEPS["clips"]          # W3-C, SYN-4P2D
     assert {"tracks", "returns"} <= _PHASE_DEPS["mix"]
     assert {"tracks", "returns"} <= _PHASE_DEPS["devices"]
-    assert {"devices", "mix"} <= _PHASE_DEPS["routing"]          # RTE-2P9X
+    assert {"tracks", "devices"} <= _PHASE_DEPS["routing"]       # RTE-2P9X
+    # routing-after-mix is tuple-order convention (RTE-1K9T), NOT a declared
+    # dep — the routing planner reads nothing the mix phase applies.
+    assert "mix" not in _PHASE_DEPS["routing"]
     assert {"devices"} <= _PHASE_DEPS["device_sidechain"]        # SDC-7K3M
     assert {"clips", "devices"} <= _PHASE_DEPS["envelopes"]
     assert {"devices"} <= _PHASE_DEPS["performed_automation"]

@@ -5,7 +5,7 @@ The artifact records what each phase ASSUMES vs RE-PROBES and its failure/halt
 policy. Adding a phase to ``_PHASE_NAMES`` without documenting its contract is
 exactly the quirk-first growth the audit flagged — so it fails the suite instead
 of rotting silently. (The dependency half of the rule is ``_PHASE_DEPS`` +
-``validate_phase_order``, tested in ``test_push_song.py``.)
+``validate_phase_order``, tested in ``test_push_phase_deps.py``.)
 """
 from __future__ import annotations
 

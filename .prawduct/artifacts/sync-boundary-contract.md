@@ -41,41 +41,41 @@ probe, and every prior phase that creates X halted the push if it failed.
 | Arrangement probe (`_probe_live_arrangement_clips_via_mcp`, push_cli.py:798-808) | per-track Live arrangement clip inventory, feeding the projection's clear | a per-track probe failure leaves the lane out of the map; the arrangement planner then skips that track with an alert (arrangement.py:191-202) rather than guess |
 | `probe_and_link` (separate subcommand, NOT run by execute; push/probe.py:360-748) | name-matched track/return links; W20-A device links by (parent, position, class); W18-B/SYN-3C8K/SYN-SCAFFOLD-MISLINK stale-link reconciliation | additive only (never deletes Live entities); duplicate names link-first + note; case near-matches noted, not linked |
 
-## Executor cross-phase contract (`push_execute.execute_push`, push_execute.py:640-1510)
+## Executor cross-phase contract (`push_execute.execute_push`, push_execute.py:640-1564)
 
 - **Phase-bounded error accumulation** (module docstring :15-19): within a phase
   every call runs and per-call failures accumulate (`_dispatch_calls`, :936-1103);
-  at the phase boundary any failure **halts** (`_halt`, :1178-1204 — later phases
+  at the phase boundary any failure **halts** (`_halt`, :1179-1205 — later phases
   PENDING). No internal retry; re-running `execute` IS the retry (push idempotent).
 - **Connection loss halts immediately** mid-batch (:967-982, `_CONNECTION_EXCS` =
   `LiveConnectionError`/`OSError` only, :684-690) → outcome `connection_lost`,
   exit 2. Other exceptions from `send_fn` deliberately propagate (wire-protocol
   bugs must not be mislabeled connection loss).
-- **Plan errors halt pre-dispatch** (:1236-1255): a planner's `plan.errors`
+- **Plan errors halt pre-dispatch** (:1237-1256): a planner's `plan.errors`
   (hard authoring error, `_core.py:57-63`) halts the phase with zero calls
   dispatched — the DB describes something unmaterializable.
-- **Apply between phases** (:1324-1332, `_apply_results` :1104-1163): successes
+- **Apply between phases** (:1325-1333, `_apply_results` :1104-1164): successes
   are applied even on a failed phase, so link rows are live for the next
   plan/convergence. Apply-layer warnings ride the errors file without flipping
   the phase.
 - **State file always written** (`_flush_state`, :742-797): at every phase start,
   on mid-phase heartbeat (every 25 calls, :59), and terminally — atomic replace.
   `.last-push-errors.json` only on errors (stale one deleted on clean re-run,
-  :1531-1536). The push is one attributed request row, closed with
-  ok/partial/failed (:716-727, :1543-1555). **A contract-drift `ValueError` from
+  :1532-1537). The push is one attributed request row, closed with
+  ok/partial/failed (:716-727, :1544-1556). **A contract-drift `ValueError` from
   the apply layer is converted to a controlled phase halt (SYN-8Q3F Chunk 03) —
   see §Apply.**
 - **Per-phase special-case passes** (complexity-budget rule 4 — new entries must
   be added here):
   - *devices*: diff-reconcile — re-probe `get_parameters` per device, drop
-    already-current `device_parameter:` writes (:1276-1292 →
+    already-current `device_parameter:` writes (:1277-1293 →
     `device_param_diff.py`; skip-on-confident-equal, keep-on-any-doubt).
   - *devices*: empty-rack guard — re-probe `get_device_chains` for each rack a
     nested write addresses; drop doomed writes, synthesize ONE clear failure
-    (:1293-1305 main pass, :1363-1381 convergence pass → `empty_rack_guard.py`;
+    (:1294-1306 main pass, :1364-1382 convergence pass → `empty_rack_guard.py`;
     suppress-on-confident-empty, keep-on-any-doubt).
   - *devices*: convergence re-plan — after an all-ok pass, re-run the planner once
-    so params of devices loaded THIS pass land same-push (:1334-1391, SYN-9F2L).
+    so params of devices loaded THIS pass land same-push (:1335-1392, SYN-9F2L).
   - *devices*: post-phase pad probe — best-effort `pad_info` per linked Drum Rack,
     persisted via `M.replace_drum_pad_mappings`; never affects the outcome
     (:491-583, :804-826; runs on ok AND skipped, not on halt).
@@ -84,12 +84,12 @@ probe, and every prior phase that creates X halted the push if it failed.
     (:415-488 SYN-9F2L); orphan-param hint rewrite (:261-281 SYN-2D9K).
   - *arrangement*: post-phase integrity assert — FRESH re-probe of every clip's
     audible note set vs the DB collapsed set; HALT on silent corruption; per-clip
-    probe failures degrade to a benign "N unverified" warning (:1422-1506,
+    probe failures degrade to a benign "N unverified" warning (:1423-1507,
     ARR-PROJ Chunk 3).
   - *cues*: handler-deferred cues (`skipped_out_of_range`) surface as benign
     warnings, never failures (:1039-1064, SYN-6B4Q).
   - *pre-loop*: alt-tuning notices (gated, inert for tuning_ref NULL;
-    :1206-1217, MICROTUNE).
+    :1207-1218, MICROTUNE).
 
 ## Apply layer (`push/plan.py:485-623 apply_push_results`)
 
@@ -125,8 +125,8 @@ silent-drop the table exists to prevent). Three layers close the class:
 
 | Engine | Site | Semantics | Failure asymmetry that justifies it |
 |---|---|---|---|
-| Push devices diff | `push/device_param_diff.py:44-48 _floats_equal` | `abs(a-b) <= max(1e-6, 1e-6·max(abs a, abs b))` — tight, rel+abs | a false EQUAL silently skips a dialed write (wrong mix); a false DIFFER is one redundant write. Skip only on proven equality. |
-| Pull drift diff | `pull/_core.py:21 _FLOAT_EPS = 1e-3`; `_floats_differ` :111-123 (absolute), `_normalized_values_match` :126-137, `_raw_values_match` :140-156 (relative, floored) | loose — absorbs Live display-rounding (0.6249 vs 0.6250) | a false DIFFER churns a DB row + event on every pull; a false SAME misses a sub-0.1% hand nudge (musically negligible). |
+| Push devices diff | `push/device_param_diff.py:44-55 _floats_equal` | `abs(a-b) <= max(1e-6, 1e-6·max(abs a, abs b))` — tight, rel+abs | a false EQUAL silently skips a dialed write (wrong mix); a false DIFFER is one redundant write. Skip only on proven equality. |
+| Pull drift diff | `pull/_core.py:33 _FLOAT_EPS = 1e-3`; `_floats_differ` :123-135 (absolute), `_normalized_values_match` :138-149, `_raw_values_match` :152-168 (relative, floored) | loose — absorbs Live display-rounding (0.6249 vs 0.6250) | a false DIFFER churns a DB row + event on every pull; a false SAME misses a sub-0.1% hand nudge (musically negligible). |
 
 **Cross-engine invariant (pinned by `tests/unit/sync/test_diff_float_semantics.py`):**
 push-equal ⟹ pull-no-drift, **per channel** — any pair the push diff deems equal
@@ -318,7 +318,7 @@ plan.py:217-219, arrangement.py:491-507.)*
   vs 14 names in `_PHASE_NAMES` (the `device_sidechain` "9b." splice). Fixed on
   the files the chunk already touches.
 - **V2 (open, behavior): a plan_fn raise escapes the executor as a raw
-  traceback.** `plan = phase.plan_fn()` (push_execute.py:1228) is uncaught, so
+  traceback.** `plan = phase.plan_fn()` (push_execute.py:1229) is uncaught, so
   the clips planner's W3-C strict `ValueError` (clips.py:72-80) — reachable via
   `--only clips` / `--start-at clips` against unlinked tracks — and the envelopes
   unknown-target-kind raise (envelopes.py:159-162) bypass the terminal state
@@ -339,7 +339,7 @@ plan.py:217-219, arrangement.py:491-507.)*
 - **V5 (fixed inline, prose): stale "via plan_push_clip" guidance.** Five
   operator-facing strings still named `plan_push_clip` as the track-creation
   path (moved to `plan_push_song_tracks` in W3-C): push/mix.py:91 (+ its
-  docstring :39-42), pull/mix.py:96, pull/clips.py:56,114, pull/devices.py:221.
+  docstring :39-42), pull/mix.py:96, pull/clips.py:56,115, pull/devices.py:221.
   Not test-pinned; corrected to name the tracks phase.
 - **V6 (open, prose): device_sidechain's deferral message names the wrong
   mechanism.** devices.py:687-690 says an unlinked device's sidechain is
@@ -348,12 +348,12 @@ plan.py:217-219, arrangement.py:491-507.)*
   `device_sidechain` PHASE plans after the devices phase's apply. The branch is
   near-unreachable on the gated path (a failed load halts devices). → Chunk 06
   (message fix).
-- **V7 (open, prose): `plan_push_song` docstring overclaims the warn-not-empty
-  convention.** plan.py:160-166 says every empty phase carries a "no … to push"
-  warn; `plan_push_song_tracks`/`_returns` return a bare empty plan when fully
-  linked (tracks.py:44-45) and `plan_push_arrangement_clip_notes` emits neither.
-  The executor treats both identically (SKIPPED), so behavior is fine — align the
-  prose or the planners. → Chunk 06.
+- **V7 (fixed in SYN-8Q3F Chunk 02, prose): `plan_push_song` docstring
+  overclaimed the warn-not-empty convention.** The base-revision docstring said
+  every empty phase carries a "no … to push" warn; `plan_push_song_tracks`/
+  `_returns` return a bare empty plan when fully linked (tracks.py:44-45) and
+  `plan_push_arrangement_clip_notes` emits neither. The Chunk 02 docstring
+  rewrite (plan.py:222-228) now states both shapes are reported SKIPPED.
 
 **Residual risk (documented design, not a violation):**
 - **R1:** the coherence gate validates only track/return links; a stale *device*

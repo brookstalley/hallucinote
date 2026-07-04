@@ -7,6 +7,7 @@ import sqlite3
 from ._core import (
     E,
     MutatorResult,
+    _atomic,
     _emit,
     _record_touch_if_session,
     _resolve_actor_and_request,
@@ -21,6 +22,7 @@ TIMING_MODES = frozenset({"native", "grid"})
 _SLUG_RE = re.compile(r"[a-z0-9_-]+")
 
 
+@_atomic
 def create_song(
     conn: sqlite3.Connection,
     *,
@@ -101,6 +103,7 @@ def create_song(
     return MutatorResult(sid, "created")
 
 
+@_atomic
 def set_song_timing_mode(
     conn: sqlite3.Connection,
     *,
@@ -139,6 +142,7 @@ def set_song_timing_mode(
     )
 
 
+@_atomic
 def set_song_tuning(
     conn: sqlite3.Connection,
     *,

@@ -11,13 +11,45 @@ so the package can never form an import cycle through it.
 from __future__ import annotations
 
 import contextvars
+import functools
 import json
 import sqlite3
 import uuid
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 from hallucinote.db import events as E
 from hallucinote.db.connection import transaction
+
+_F = TypeVar("_F", bound=Callable[..., Any])
+
+
+def _atomic(fn: _F) -> _F:
+    """Make a mutator's state-write + event-emit commit together (EVT-6H9R).
+
+    Connections are opened in autocommit (`connection.connect`,
+    `isolation_level=None`), so without this wrapper each statement inside a
+    mutator commits individually — a crash between the state write and the
+    `_emit()` call leaves a state row with no event (or, for multi-statement
+    mutators, a half-applied write). Wrapping the whole mutator body in the
+    canonical `connection.transaction()` helper closes that window: on ANY
+    exception the entire mutation (state + event) rolls back; a killed process
+    leaves an uncommitted WAL transaction that SQLite discards on next open.
+
+    Reentrancy: `transaction()` nests via SAVEPOINTs, so a mutator calling
+    another mutator (or a caller batching mutators inside its own
+    `transaction(conn)`) composes — inner calls join the outermost
+    transaction and only the outermost COMMITs.
+
+    Applies to every state-writing mutator in this package. Convention: the
+    connection is the first positional argument (see the package docstring).
+    """
+
+    @functools.wraps(fn)
+    def wrapper(conn: sqlite3.Connection, *args: Any, **kwargs: Any) -> Any:
+        with transaction(conn):
+            return fn(conn, *args, **kwargs)
+
+    return wrapper  # type: ignore[return-value]
 
 
 # ---------------------------------------------------------------------------
@@ -140,6 +172,16 @@ def _emit(
     """
     if actor not in E.ACTORS:
         raise ValueError(f"invalid actor {actor!r}; expected one of {sorted(E.ACTORS)}")
+    # EVT-6H9R: kinds are a closed set — every kind must be a constant in
+    # hallucinote.db.events (the only sanctioned source). Inline strings used
+    # to slip past both the constants convention and the replay smoke test's
+    # exhaustive classification; now they fail at the emit site.
+    if kind not in E.KINDS:
+        raise ValueError(
+            f"unknown event kind {kind!r}: add a constant to "
+            "hallucinote/db/events.py (the sanctioned source of kinds) and "
+            "emit that — inline kind strings are not accepted"
+        )
     event_id = _uuid()
     seq = conn.execute("SELECT COALESCE(MAX(seq), 0) + 1 FROM events").fetchone()[0]
     conn.execute(
@@ -200,6 +242,7 @@ __all__ = [
     "NoteDict",
     "REQUEST_KINDS",
     "REQUEST_OUTCOMES",
+    "_atomic",
     "_current_build_session",
     "_emit",
     "_record_touch_if_session",

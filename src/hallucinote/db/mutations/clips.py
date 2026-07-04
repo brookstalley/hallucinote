@@ -7,6 +7,7 @@ from typing import Any
 from ._core import (
     E,
     MutatorResult,
+    _atomic,
     _emit,
     _record_touch_if_session,
     _resolve_actor_and_request,
@@ -67,6 +68,7 @@ def _validate_audio_fields(fields: dict[str, Any]) -> None:
         )
 
 
+@_atomic
 def create_clip(
     conn: sqlite3.Connection,
     *,
@@ -168,6 +170,7 @@ def create_clip(
     return MutatorResult(cid, "created")
 
 
+@_atomic
 def create_audio_clip(
     conn: sqlite3.Connection,
     *,
@@ -313,6 +316,7 @@ _AUDIO_CLIP_UPDATE_FIELDS = frozenset({
 })
 
 
+@_atomic
 def update_clip(
     conn: sqlite3.Connection,
     *,
@@ -380,6 +384,7 @@ def update_clip(
     _touch_song(conn, row["song_id"])
 
 
+@_atomic
 def delete_clip(
     conn: sqlite3.Connection,
     *,
@@ -401,6 +406,10 @@ def delete_clip(
         E.CLIP_DELETED,
         {"clip_id": clip_id, "track_id": row["track_id"]},
         song_id=row["song_id"],
+        # EVT-6H9R: events.clip_id is a stable id, not a live FK — stamping
+        # the just-deleted id is now possible (pre-migration the FK rejected
+        # it) and keeps the events.clip_id lineage column complete.
+        clip_id=clip_id,
         actor=actor,
         request_id=request_id,
         reason=reason,

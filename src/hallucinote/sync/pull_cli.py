@@ -29,7 +29,10 @@ auto-selected and echoed on stderr.
 `domain` is one of:
   - `mix-state`         — track + return + master mixer state + sends
                           (also free-ride ingests global tempo + signature)
-  - `score-globals`     — global tempo + signature only (bar-1 rows in each map)
+  - `score-globals`     — global tempo + signature (bar-1 rows in each map),
+                          plus master volume/pan as a free ride-along (one
+                          `session(action='info')` probe carries both), so this
+                          domain CAN arm the replay guard
   - `cue-points`        — arrangement cue point positions (names gap-flagged)
   - `devices`           — top-level device chain on each linked track + return
                           (positional kind/display_name diff). Nested rack

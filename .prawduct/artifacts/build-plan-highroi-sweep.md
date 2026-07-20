@@ -184,23 +184,31 @@ attended — check 9 specifically exercises the blind-spot pull the Critic found
 - **Type:** cumulative-final
 - **Deliverables** (per design §"Chunked build plan" item 3):
   1. `skills/song-snapshot/SKILL.md` — after a confirmed overwrite, state the
-     guard is disarmed ("snapshot now newer than all pulled state"). Add a
-     **re-stamp-on-empty-diff** affordance: where the skill currently hard-stops
-     on exit 0 (SKILL.md:68, "no changes → delete refresh, stop"), offer "no
-     content changes; refresh `captured_at` anyway?" — closes the
-     pull→hand-revert-in-Live corner without `--force-replay`.
+     guard is disarmed ("snapshot now newer than all pulled state"). On an empty
+     diff, **bake the refresh** — write the freshly captured content over the
+     canonical file — closing the pull→hand-revert-in-Live corner without
+     `--force-replay`.
+     *(Superseded as built: this deliverable originally specified a
+     **re-stamp-on-empty-diff** affordance — "no content changes; refresh
+     `captured_at` anyway?". That was built and rejected in review: an empty
+     diff does not prove the on-disk file is current, so moving the stamp
+     without writing bytes disarms the guard on an unproven file. See the
+     Status block and `plans/BAK-7D2V/design.md` §"Known imprecisions".)*
   2. `src/hallucinote/capture.py` — the code path backing the empty-diff
-     re-stamp: refresh `captured_at` on the canonical snapshot without a content
-     change (the skill's affordance needs a real CLI/entry it can call;
-     `compile_snapshot`/`captured_at` live here from Chunk 1).
+     bake (`merge_snapshots`), so the stamp is always backed by captured bytes;
+     `compile_snapshot`/`captured_at` live here from Chunk 1.
   3. `skills/song-pick-instruments/SKILL.md` — stamp `captured_at` (authoring
      time) on hand-authored snapshots, per design (absent → legacy handling).
   4. Docs: `docs/snapshot-schema.md` (done in Chunk 1) + `/song-workflow` name
      the pull→bake→build contract in one place.
 - **Done when:**
-  1. Unit test: empty-diff re-stamp updates `captured_at` with no content diff;
-     a subsequent `replay_capture` no longer raises `StaleSnapshotError` for the
-     re-baked song. Acceptance criteria met.
+  1. Unit test: the empty-diff path BAKES the refresh (canonical file rewritten
+     from the fresh capture, `captured_at` advanced with it); a subsequent
+     `replay_capture` no longer raises `StaleSnapshotError` for the re-baked
+     song. Acceptance criteria met. *(Was "empty-diff re-stamp updates
+     `captured_at` with no content diff" — inverted by the review reversal
+     described in Deliverable 1; a stamp with no content write is exactly the
+     unsound case.)*
   2. Commit the chunk, then `/prawduct:critic cumulative` against
      `merge-base...HEAD` (the one cumulative pass — this is the `/prawduct:pr
      create` gate); blocking findings resolved.

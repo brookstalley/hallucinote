@@ -1,6 +1,6 @@
 # BAK-7D2V — Pull durability: close the general pull→replay silent-revert hole
 
-`stage: design` · 2026-07-04 · successor to the BAK-3M9T umbrella (its "Option 1 —
+`stage: shipped` · 2026-07-04 (shipped 2026-07-20) · successor to the BAK-3M9T umbrella (its "Option 1 —
 one durable bake" decision STANDS and this design operates inside it; see
 [`../BAK-3M9T/requirements.md`](../BAK-3M9T/requirements.md))
 

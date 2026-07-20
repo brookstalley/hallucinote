@@ -1495,9 +1495,10 @@ Full suite 2881 passed. Cumulative Critic + independent PR review both clean (0 
 <!-- prawduct: chunks=AUD-6R2M,AUD-4S8T,AUD-8H2M | status=shipped | release=v0.9.2 | scope=audio-verification -->
 
 Branch `fix/reverb-rt60-decay-tail` (off `develop`). Made the audio analyzer's
-verification surfaces trustworthy on real multi-track songs. (Shipped in v1.5.0;
+verification surfaces trustworthy on real multi-track songs. (Shipped in v0.9.2;
 tagged `release=unreleased` at author time pending a release cut, flipped to the
-real version by VEW-9QH4. Live re-render validation of the real reverb tail + the
+real version by VEW-9QH4 — first resolved to v1.5.0, corrected to v0.9.2 in PR
+review once the two concurrent version tracks were untangled. Live re-render validation of the real reverb tail + the
 Amp-flip is deferred to the user.)
 
 - **Reverb RT60 — per-return decay-tail (AUD-6R2M).** Replaced the multi-source

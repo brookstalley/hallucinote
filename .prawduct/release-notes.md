@@ -133,42 +133,6 @@ See `.prawduct/change-log.md` for full details.
 
 **Chunks shipped:** ATL-7K3M-ch1, ATL-7K3M-ch2
 
-### friction-basket
-
-**Entry:** 2026-06-10 — DOC-5W8B: REQUIREMENTS.md auto-regen after device-changing push
-
-**Chunks shipped:** FRICTION-01, FRICTION-02, FRICTION-03
-
-### aud-4w7k
-
-**Entry:** 2026-06-10 — AUD-4W7K chunk 2: db_seq provenance + seq resolver + surfacing sweep
-
-**Chunks shipped:** AUD-4W7K-01, AUD-4W7K-02
-
-### aud-3f8m
-
-**Entry:** 2026-06-10 — AUD-3F8M chunk 2: mixer_pan verified via master L−R balance
-
-**Chunks shipped:** AUD-3F8M-01, AUD-3F8M-02
-
-### install-hardening
-
-**Entry:** 2026-06-04 — Install hardening: every install mutation in tested, atomic Python
-
-**Chunks shipped:** install-hardening
-
-### tools-dont-narrow-the-art+helpers-dry
-
-**Entry:** 2026-06-03 — Tools-don't-narrow-the-art (gate verdicts / generator altitude / review workflow) + helpers DRY
-
-**Chunks shipped:** GEN-1S4K, LNT-1V9K, REV-2W8K, chunk0, helpers
-
-### audio-verification
-
-**Entry:** 2026-06-02 — Audio verification correctness: reverb RT60 + automation realization
-
-**Chunks shipped:** AUD-4S8T, AUD-6R2M, AUD-8H2M
-
 See `.prawduct/change-log.md` for full details.
 
 ## v0.9.8
@@ -287,6 +251,24 @@ See `.prawduct/change-log.md` for full details.
 
 **Chunks shipped:** CLP-AUD1-01, CLP-AUD1-02
 
+### friction-basket
+
+**Entry:** 2026-06-10 — DOC-5W8B: REQUIREMENTS.md auto-regen after device-changing push
+
+**Chunks shipped:** FRICTION-01, FRICTION-02, FRICTION-03
+
+### aud-4w7k
+
+**Entry:** 2026-06-10 — AUD-4W7K chunk 2: db_seq provenance + seq resolver + surfacing sweep
+
+**Chunks shipped:** AUD-4W7K-01, AUD-4W7K-02
+
+### aud-3f8m
+
+**Entry:** 2026-06-10 — AUD-3F8M chunk 2: mixer_pan verified via master L−R balance
+
+**Chunks shipped:** AUD-3F8M-01, AUD-3F8M-02
+
 See `.prawduct/change-log.md` for full details.
 
 ## v0.9.4
@@ -317,11 +299,29 @@ See `.prawduct/change-log.md` for full details.
 
 ## v0.9.2
 
+### backlog-low-cost-sweep
+
 **Entry:** 2026-06-04 — Backlog low-cost sweep: ~13 items fixed in parallel (file-disjoint clusters)
 
 **Chunks shipped:** backlog-low-cost-sweep
 
-**Scope:** backlog-low-cost-sweep
+### install-hardening
+
+**Entry:** 2026-06-04 — Install hardening: every install mutation in tested, atomic Python
+
+**Chunks shipped:** install-hardening
+
+### tools-dont-narrow-the-art+helpers-dry
+
+**Entry:** 2026-06-03 — Tools-don't-narrow-the-art (gate verdicts / generator altitude / review workflow) + helpers DRY
+
+**Chunks shipped:** GEN-1S4K, LNT-1V9K, REV-2W8K, chunk0, helpers
+
+### audio-verification
+
+**Entry:** 2026-06-02 — Audio verification correctness: reverb RT60 + automation realization
+
+**Chunks shipped:** AUD-4S8T, AUD-6R2M, AUD-8H2M
 
 See `.prawduct/change-log.md` for full details.
 

@@ -788,6 +788,82 @@ sections only via explicit `/backlog update` calls.
 
   Files the item `docs/dev-vs-use-coexistence.md:77-85` promised ("filed for sign-off... backlog: the install cluster, alongside INS-3W8P") but that was never actually created — INS-3W8P has since shipped and no switch-skill item exists (verified 2026-07-07). Switching between dev and music-session activities = re-vendor the Remote Script to the target worktree's fingerprint + restart Live; today that is an ad-hoc dance. The skill: (a) confirm which worktree's server is active (via `ableton://server/info`, the INS-3W8P resource), (b) re-vendor the matching Remote Script (`--from-package-root` + `--require-server-version`, so it structurally can't vendor a divergent copy), (c) print the "quit + reopen Live, then `/mcp`" steps plus the current fingerprints. **Gate: the doc deliberately deferred this until the topology choice is signed off** (its recommendation: two worktrees + drop the marketplace install on the dev machine) — design depends on that decision, so `stage: requirements` until the user locks topology. Natural home for MCP-6D3V's tiered-restart logic, and the direct beneficiary of INS-5J9C's quit-relaxation (the switch could then be fully agent-driven up to the Live restart). (re-vendor/restart workflow analysis + dev-vs-use-coexistence.md, 2026-07-07)
 
+- **[DOC-9R4T]** User-facing docs still describe the pre-BAK-7D2V world — quickstart §4 + faq.md:47 walk users into the hard-refuse
+  `effort: S · impact: M · area: docs · source: critic · added: 2026-07-20 · status: open · stage: ready · related: BAK-7D2V, DOC-6K1V, SKL-2M8W · refs: docs/quickstart.md#4-pull-manual-edits-back-optional, docs/faq.md`
+
+  **PR #213 Critic review — deferred warning (not blocking).** BAK-7D2V shipped the pull-durability guard: a mix-layer `/ableton-pull` arms `StaleSnapshotError` and the next `build.py` **hard-refuses** until the pull is baked via `/song-snapshot`. Two user-facing docs still teach the old model:
+
+  - **`docs/quickstart.md` §4** ("Pull manual edits back") tells the user that if they "tweak faders, mutes, or sends directly in Live and want to keep them," run `/hallucinote:ableton-pull` — full stop, no bake step. That is the *exact* case that now arms the guard, so a reader who follows the quickstart literally gets a refused build on their next `build.py` with no forewarning. §4 needs the follow-on step (`/hallucinote:song-snapshot` to bake, or a one-line "this arms a guard until you bake" note).
+  - **`docs/faq.md`:47** still reads "(a DB-only bake would revert on rebuild)" — describing the silent-revert failure mode as live. Post-BAK-7D2V it does not silently revert; it *refuses*. The parenthetical needs rewording to the refuse-then-bake reality.
+
+  **Scope: docs only** — no code change. Keep the two surfaces consistent with each other and with `docs/snapshot-schema.md`'s `captured_at` section (which is already correct).
+
+  **Verifiable signal:** `docs/quickstart.md` §4 names the bake step (or the guard) in the fader/mute/send path, and `grep -n "would revert on rebuild" docs/faq.md` returns nothing. (PR #213 Critic review, 2026-07-20)
+
+- **[SKL-2M8W]** `/song-snapshot` empty-diff block inverts its own ask-then-run invariant — `capture merge` over the canonical file is printed before its trigger condition and consent prompt
+  `effort: S · impact: M · area: skills · source: critic · added: 2026-07-20 · status: open · stage: ready · related: BAK-7D2V, DOC-9R4T · refs: skills/song-snapshot/SKILL.md`
+
+  **PR #213 Critic review — deferred warning (not blocking).** In `skills/song-snapshot/SKILL.md` Step 2, the empty-diff bake path (BAK-7D2V) presents its runnable block in the wrong order for an agent reading top-down:
+
+  1. "*If exit 0 (no changes)*" → normally stop.
+  2. "*Empty-diff bake (BAK-7D2V)*" prose + **the `capture merge … -o songs/<slug>/captured_session.json` bash block** (writes the canonical, git-tracked snapshot).
+  3. …*then* the "Write the refresh — never just move the timestamp" rationale.
+  4. …*then* the actual gate: "**Only offer this when a pull might be in play** (the user mentions a pull, or a build just refused). Ask: *'…bake the fresh capture to disarm it? (yes / no)'*"
+
+  So the runnable command that overwrites the canonical file appears **before** both its trigger condition and its yes/no consent prompt. Everywhere else the skill holds the ask-then-run invariant — the exit-1 path asks "overwrite `captured_session.json` with this refresh? (yes / no / show full diff)" *before* showing the merge block. An agent that executes as it reads bakes without asking.
+
+  **Fix: reorder only** — hoist the trigger condition + the yes/no prompt above the bash block; keep the "never just move the timestamp" rationale (it is load-bearing, and `tests/unit/test_song_snapshot_empty_diff_bake.py` pins that this path must not use `capture restamp`). No behavior change, no test change expected.
+
+  **Verifiable signal:** in `skills/song-snapshot/SKILL.md`, the line offset of the empty-diff `capture merge` fence is **greater** than the offset of its "Only offer this when a pull might be in play" / yes-no prompt; `tests/unit/test_song_snapshot_empty_diff_bake.py` still passes. (PR #213 Critic review, 2026-07-20)
+
+- **[DOC-6K1V]** `capture_cli` module docstring (= the argparse description users see) omits `restamp` and `merge`
+  `effort: S · impact: S · area: docs · source: critic · added: 2026-07-20 · status: open · stage: ready · related: BAK-5T2N, DOC-9R4T · refs: src/hallucinote/tools/capture_cli.py`
+
+  **PR #213 Critic review — deferred warning (not blocking).** `src/hallucinote/tools/capture_cli.py`'s module docstring is rendered as the argparse `description`, so it *is* the `--help` text. Its "CLI subcommands:" list enumerates `execute --song`, `--plan`, `diff`, and `migrate` — but **not** `merge` (the subcommand `/song-snapshot` drives on both the exit-0 bake path and the exit-1 overwrite path) and **not** `restamp` (shipped in BAK-7D2V Chunk 3). The docstring's own Workflow step 3 already *mentions* merge in prose ("``diff`` the refresh against the committed snapshot; on confirm, ``merge`` + overwrite"), which makes the omission from the enumerated list an inconsistency inside a single docstring, not just a gap.
+
+  **Fix: docstring only** — add `merge` and `restamp` entries to the "CLI subcommands:" list in the same style as the others (one line of what it does + where its output goes). Coordinate with **BAK-5T2N**: if `restamp` is deleted, this item covers only `merge`; if it is kept, its docstring entry should carry the "deliberate operator override, not part of the normal loop" framing.
+
+  **Verifiable signal:** `python -m hallucinote.cli capture --help` lists every subcommand the parser registers — i.e. the set named in the docstring equals the set in `add_parser` calls. (Worth a cheap unit test asserting that set equality, so the docstring can't silently drift from the parser again.) (PR #213 Critic review, 2026-07-20)
+
+- **[SYN-4X7P]** `boundary-patterns.md` describes `pull_cli` as stdout-JSON only — the contract-bearing stderr channel is undocumented
+  `effort: S · impact: S · area: sync · source: critic · added: 2026-07-20 · status: open · stage: ready · related: BAK-7D2V, SYN-8Q3F · refs: .prawduct/artifacts/boundary-patterns.md, src/hallucinote/sync/pull_cli.py`
+
+  **PR #213 Critic review — deferred warning (not blocking).** `.prawduct/artifacts/boundary-patterns.md` (Pull Planner / Result API section) describes the bridge purely in stdout-JSON terms: "`pull_cli.py` is the JSON-over-stdio bridge the skill calls: `plan` emits the PullPlan, `apply` consumes plan + results and returns an `ApplyResult` summary." That was accurate before BAK-7D2V.
+
+  It is now incomplete: `pull_cli` has a **second, contract-bearing output channel on stderr** that the consumer is *required to relay* to the user — `src/hallucinote/sync/pull_cli.py` prints the BAK-7D2V durability contract to stderr iff the apply touched the mix layer (see the helper at ~:87, deliberately on stderr "so it never pollutes the JSON report on stdout that wrappers parse", plus the session-auto-select echo at ~:27). A wrapper written against this artifact alone would consume stdout, discard stderr, and silently swallow the message that tells the user their pull must be baked or the next build refuses — reintroducing the surprise BAK-7D2V exists to remove.
+
+  **Fix: artifact only** — document the two-channel contract in the Pull Planner section (stdout = machine-parseable JSON report; stderr = human/contract text the consumer MUST relay, not just log-and-drop), and add it to the section's "When changing this surface" bullets so the obligation survives future edits. Same two-channel shape already exists on `capture_cli diff` (JSON stdout + human summary stderr) — worth stating once as a house pattern rather than per-CLI.
+
+  **Verifiable signal:** `grep -n "stderr" .prawduct/artifacts/boundary-patterns.md` hits the Pull Planner section, and the relay obligation is stated as a consumer requirement (not merely as "a summary is also printed"). (PR #213 Critic review, 2026-07-20)
+
+- **[BLG-3H9D]** BAK-7D2V closure note is stale — describes the superseded empty-diff re-stamp design and miscounts the operator checks
+  `effort: S · impact: S · area: governance · source: critic · added: 2026-07-20 · status: open · stage: ready · related: BAK-7D2V, BAK-5T2N · refs: .prawduct/backlog.md, .prawduct/operator-verification.md`
+
+  **PR #213 Critic review — deferred warning (not blocking).** The archived **BAK-7D2V** item's closure note in `.prawduct/backlog.md` (Archive section) is wrong on two counts, and it is the record a future scrub will trust:
+
+  1. It says Chunk 3 shipped "`/song-snapshot` **empty-diff re-stamp** closing the loop." That design was **superseded during the same branch** — the re-stamp approach was replaced by *baking the fresh capture* precisely because an empty diff does not prove the on-disk snapshot is current (the diff never inspects sidechain sources, drum-pad mappings, or per-chain authored props, so stamping the stale file forward would disarm the guard over old values). `tests/unit/test_song_snapshot_empty_diff_bake.py` now *pins* that this path must NOT use `capture restamp`. The closure note still advertises the design the tests forbid.
+  2. It says "Only Live operator-verification (**checks 7–8**) remains," but `.prawduct/operator-verification.md` carries **checks 7–9**. Anyone reconciling the remaining Live verification against the note runs one check short.
+
+  **Fix: rewrite the two sentences of the closure note** (`/prawduct:backlog update BAK-7D2V …`, body edit) to describe the shipped empty-diff **bake** and the correct check range. Non-destructive — the preserved original item body below the note stays verbatim.
+
+  **Verifiable signal:** `grep -n "re-stamp\|checks 7–8" .prawduct/backlog.md` returns nothing in the BAK-7D2V entry, and the note's check range matches the count of numbered checks in `.prawduct/operator-verification.md`. (PR #213 Critic review, 2026-07-20)
+
+- **[BAK-5T2N]** `capture restamp` has no sanctioned caller and is undiscoverable — delete it, or record why it's kept
+  `effort: S · impact: S · area: snapshot/sync · source: critic · added: 2026-07-20 · status: open · stage: ready · related: BAK-7D2V, DOC-6K1V, BLG-3H9D · refs: src/hallucinote/tools/capture_cli.py, docs/snapshot-schema.md, .prawduct/artifacts/plans/BAK-7D2V/design.md`
+
+  **PR #213 Critic review — deferred note (not blocking); filed separately from the five docs warnings because it needs a disposition call, not an edit.** `capture restamp` (+ `capture.restamp_captured_at`) shipped in BAK-7D2V Chunk 3 as the empty-diff affordance. That design was then superseded: the empty-diff path **bakes the fresh capture** instead, and `tests/unit/test_song_snapshot_empty_diff_bake.py` asserts the skill must not use `restamp`. Current state:
+
+  - **No sanctioned caller.** Every in-repo reference is either a test, a design/plan/change-log record, or `.prawduct/operator-verification.md`:57 warning *against* a bare `restamp`. The design doc (`.prawduct/artifacts/plans/BAK-7D2V/design.md`:247) says it "survives only as a deliberate override and REFUSES an unstamped snapshot."
+  - **Undiscoverable outside `--help`.** `docs/snapshot-schema.md`:30 enumerates the `StaleSnapshotError` exits — re-capture (durable) and `allow_stale_snapshot=True` / `--force-replay` (conscious revert) — and was **not** updated to mention `restamp` as a third exit. It is also missing from the `capture_cli` docstring (**DOC-6K1V**). So an operator can only find it by reading `--help` or the source.
+
+  **Pick one at implement time (both branches fully specified):**
+  - **Delete** — remove the subcommand + `restamp_captured_at` + their tests; the bake path is the only sanctioned way to disarm the guard, and a dangerous override nobody is told about is worse than no override. Cleanest and most consistent with the shipped tests.
+  - **Keep + document** — add it to `docs/snapshot-schema.md`:30's list of guard exits as an explicitly-fenced third path ("moves the stamp WITHOUT re-capturing; only safe when you know nothing replay re-asserts has changed — see operator-verification.md:57"), plus the DOC-6K1V docstring entry.
+
+  Recommendation is *keep + document* only if a concrete operator scenario can be named that the bake path doesn't already serve; otherwise delete. Do not leave it in the third state (present, unreferenced, undocumented).
+
+  **Verifiable signal:** either `grep -rn "restamp" src/ docs/` returns nothing, or `docs/snapshot-schema.md` lists `restamp` among the `StaleSnapshotError` exits with its safety fence — and in the keep case, `capture --help` names it (DOC-6K1V). (PR #213 Critic review, 2026-07-20)
+
 ## Promoted
 
 - **[SMP-7K2D]** Sample-instrument + the playback-parameter model — author a Simpler/Sampler with an assigned sample file from build.py/DB (the swell buried-"we" keystone primitive; absorbs the cluster)

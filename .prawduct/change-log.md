@@ -5,8 +5,11 @@
      when multiple branches add entries simultaneously.
 
      TAG-LINE FORM (canonical — the lifecycle tooling only reads this shape).
-     One HTML comment at the HEAD of the entry body (before any prose):
-         <!-- prawduct: type=<t> | chunks=<a,b,c> | scope=<tag> | status=<s> | release=<r> -->
+     One HTML comment at the HEAD of the entry body (before any prose), wrapping
+     exactly this payload (NOTE: delimiters written as words, because a literal
+     closing delimiter here would end THIS comment early — HTML comments do not
+     nest, and that bug hid the paragraph below as visible body text):
+         open-comment prawduct: type=<t> | chunks=<a,b,c> | scope=<tag> | status=<s> | release=<r> close-comment
      Pipe ` | ` separates keys; `chunks` is a COMMA list (never pipe — pipe is the
      key delimiter); keys are freeform (unknown keys are preserved). A tag line
      placed after prose is treated as body text, not metadata.
@@ -104,14 +107,26 @@ spot and merge's coverage of it + a doc-drift lock on the skill's empty-diff com
 
 The lifecycle tooling (`TAG_LINE_RE` / stamp-merged / regen-views in the plugin's
 `lib/views.py`) now sees the whole log. Swept 34 historical tag lines from the
-pre-canonical `<!-- chunks=… status=… -->` space-delimited form to the canonical
-`<!-- prawduct: … | … -->` pipe-delimited form: added the `prawduct:` prefix,
+pre-canonical space-delimited form (`chunks=… status=…`) to the canonical
+pipe-delimited `prawduct:` form: added the `prawduct:` prefix,
 converted key separators to ` | `, and fixed `chunks=A|B|C` values (pipe collides
 with the key delimiter → truncated chunk lists) to comma form. Relocated 3
 foot-positioned tag lines (v0.9.0–v1.1.0 entries) to the entry head so the parser
 reads them as metadata. Resolved 10 `release=unreleased status=shipped` entries to
-`release=v1.5.0` (verified via git ancestry: each is an ancestor of v1.5.0 but not
-v1.4.0). Documented the `release=unreleased`→flip-at-release vocab in the change-log
+the release that FIRST contained each commit — 7 to `release=v0.9.5`, 3 to
+`release=v0.9.2`. **Corrected during PR review:** the first pass resolved all 10 to
+`v1.5.0` on the rule "ancestor of v1.5.0 but not of v1.4.0", which is not the same
+question as *which release shipped it*. This repo ran two concurrent version tracks
+— the v0.9.x series is chronologically LATER than v1.2.0–v1.4.0 (v0.9.5 is
+2026-06-12; v1.4.0 is 2026-05-28) and the two only converged at v1.5.0, whose tag
+subject is "version-track unification". So a commit can sit outside v1.4.0 while
+already having shipped in v0.9.2/v0.9.5. Use `git tag --contains <sha> | sort -V |
+head -1`, never an ancestor test against one later tag. Re-verified per scope
+(friction-basket/AUD-4W7K/AUD-3F8M → v0.9.5; install-hardening/tools-don't-narrow/
+audio-verification → v0.9.2); this also keeps these entries consistent with
+un-flipped siblings from the same window (e.g. INS-7V2D → v0.9.3) instead of
+splitting one release window across two `release-notes.md` sections.
+Documented the `release=unreleased`→flip-at-release vocab in the change-log
 header (VEW-9QH4). Result: **every entry but 2** parses as tagged (75 of 77 at this
 branch's tip; the count moves as entries land); the 2 remaining are
 genuinely tag-less pre-v1.4.0 entries (never carried a tag — left untouched rather
@@ -1205,7 +1220,7 @@ CLP-AUD2 redefined; ENV-8H1T reduced; ENV-4M2T partially superseded; new ENV-7G4
 
 ## 2026-06-10 — DOC-5W8B: REQUIREMENTS.md auto-regen after device-changing push
 
-<!-- prawduct: chunks=FRICTION-03 | status=shipped | release=v1.5.0 | scope=friction-basket -->
+<!-- prawduct: chunks=FRICTION-03 | status=shipped | release=v0.9.5 | scope=friction-basket -->
 
 `push_cli execute --song <slug>` now regenerates `songs/<slug>/REQUIREMENTS.md`
 whenever the devices phase applied at least one call — including pushes that
@@ -1218,7 +1233,7 @@ code is never masked. `docs/collaboration.md` handoff checklist updated.
 
 ## 2026-06-10 — WFL-7Q2N: session-ID auto-discovery in push/pull CLIs
 
-<!-- prawduct: chunks=FRICTION-02 | status=shipped | release=v1.5.0 | scope=friction-basket -->
+<!-- prawduct: chunks=FRICTION-02 | status=shipped | release=v0.9.5 | scope=friction-basket -->
 
 `session_id` may now be omitted on every session-taking `push_cli` /
 `pull_cli` subcommand. `sync/session_resolve.resolve_session_id` resolves
@@ -1233,7 +1248,7 @@ xdist load) by setting `deadline=None` in both profiles.
 
 ## 2026-06-10 — PSH-4E2W: push failure prints halt cause + next step
 
-<!-- prawduct: chunks=FRICTION-01 | status=shipped | release=v1.5.0 | scope=friction-basket -->
+<!-- prawduct: chunks=FRICTION-01 | status=shipped | release=v0.9.5 | scope=friction-basket -->
 
 `push_cli execute` failures previously printed only the errors-file path plus
 bare "top error patterns", forcing a read of `.last-push-errors.json` on every
@@ -1248,7 +1263,7 @@ test-pinned (large payloads can never leak past the 60-char grouping prefix).
 
 ## 2026-06-10 — AUD-4W7K chunk 2: db_seq provenance + seq resolver + surfacing sweep
 
-<!-- prawduct: chunks=AUD-4W7K-02 | status=shipped | release=v1.5.0 | scope=aud-4w7k -->
+<!-- prawduct: chunks=AUD-4W7K-02 | status=shipped | release=v0.9.5 | scope=aud-4w7k -->
 
 The seq keying layer: the MCP server reads the song's latest audit-log seq
 at render-forward time (`server._attach_render_db_seq` — the render handler
@@ -1265,7 +1280,7 @@ recipe, spike decision-record updates. AUD-4W7K complete pending merge.
 
 ## 2026-06-10 — AUD-4W7K chunk 1: compare_to baseline diffs via explicit path
 
-<!-- prawduct: chunks=AUD-4W7K-01 | status=shipped | release=v1.5.0 | scope=aud-4w7k -->
+<!-- prawduct: chunks=AUD-4W7K-01 | status=shipped | release=v0.9.5 | scope=aud-4w7k -->
 
 `MixReport.compare_to` is no longer a reserved skeleton: `audio/compare.py`
 diffs two serialized reports — per-surface loudness deltas keyed by
@@ -1279,7 +1294,7 @@ overshoots→0). Seq keying lands next chunk.
 
 ## 2026-06-10 — AUD-3F8M chunk 2: mixer_pan verified via master L−R balance
 
-<!-- prawduct: chunks=AUD-3F8M-02 | status=shipped | release=v1.5.0 | scope=aud-3f8m -->
+<!-- prawduct: chunks=AUD-3F8M-02 | status=shipped | release=v0.9.5 | scope=aud-3f8m -->
 
 `mixer_pan` joins `mixer_volume` on the master-bus verification path:
 constant-power pan gains × the stem's static fader gain (threaded from
@@ -1293,7 +1308,7 @@ module docs). AUD-3F8M complete pending merge.
 
 ## 2026-06-10 — AUD-3F8M chunk 1: mixer_volume verified via master-bus windowing
 
-<!-- prawduct: chunks=AUD-3F8M-01 | status=shipped | release=v1.5.0 | scope=aud-3f8m -->
+<!-- prawduct: chunks=AUD-3F8M-01 | status=shipped | release=v0.9.5 | scope=aud-3f8m -->
 
 `mixer_volume` envelopes are no longer skipped as post-fader-invisible:
 `audio/automation.py` windows the MASTER (post-fader sum) around each
@@ -1410,7 +1425,7 @@ write-boundary hardened; backlog reconciled).
 
 ## 2026-06-04 — Install hardening: every install mutation in tested, atomic Python
 
-<!-- prawduct: chunks=install-hardening | status=shipped | release=v1.5.0 | scope=install-hardening -->
+<!-- prawduct: chunks=install-hardening | status=shipped | release=v0.9.2 | scope=install-hardening -->
 
 Moved every `/ableton-mcp-install` + `/ableton-mcp-uninstall` filesystem and
 MCP-config mutation out of hand-authored skill shell into tested, atomic,
@@ -1447,7 +1462,7 @@ adjacent but unresolved — left open.
 
 ## 2026-06-03 — Tools-don't-narrow-the-art (gate verdicts / generator altitude / review workflow) + helpers DRY
 
-<!-- prawduct: chunks=LNT-1V9K,GEN-1S4K,REV-2W8K,helpers,chunk0 | status=shipped | release=v1.5.0 | scope=tools-dont-narrow-the-art+helpers-dry -->
+<!-- prawduct: chunks=LNT-1V9K,GEN-1S4K,REV-2W8K,helpers,chunk0 | status=shipped | release=v0.9.2 | scope=tools-dont-narrow-the-art+helpers-dry -->
 
 One thesis across four pieces: a build-time lens/helper is a **ruler, not a stamp** —
 it measures and asks; it never vetoes a deliberate choice or makes the musical decision.
@@ -1477,7 +1492,7 @@ Full suite 2881 passed. Cumulative Critic + independent PR review both clean (0 
 
 ## 2026-06-02 — Audio verification correctness: reverb RT60 + automation realization
 
-<!-- prawduct: chunks=AUD-6R2M,AUD-4S8T,AUD-8H2M | status=shipped | release=v1.5.0 | scope=audio-verification -->
+<!-- prawduct: chunks=AUD-6R2M,AUD-4S8T,AUD-8H2M | status=shipped | release=v0.9.2 | scope=audio-verification -->
 
 Branch `fix/reverb-rt60-decay-tail` (off `develop`). Made the audio analyzer's
 verification surfaces trustworthy on real multi-track songs. (Shipped in v1.5.0;

@@ -159,7 +159,11 @@ is **pull → bake → build**: `/ableton-pull` (stage) → `/song-snapshot` (ba
 which writes a fresh capture stamped newer than the pull and so disarms the
 guard) → `build.py` (runs clean). `build.py --force-replay` consciously discards
 the pulled edits instead. Build.py-owned pulls (notes, envelopes, tempo, cue,
-arrangement, tuning) never arm the guard — that's the sanctioned staging lane.
+arrangement, tuning) do not themselves arm the guard — that's the sanctioned
+staging lane. The exception worth knowing: `score-globals` shares one probe with
+master volume/pan ingest, so a "tempo-only" pull arms the guard whenever the
+master fader or pan drifted. Arming follows the event kinds a pull actually
+emitted, not the domain you asked for — so trust the durability notice.
 
 Then loop back to compose or mix.
 

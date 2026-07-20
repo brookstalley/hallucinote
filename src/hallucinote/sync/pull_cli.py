@@ -90,9 +90,17 @@ def _warn_durability_if_mix_layer(conn, *, request_id: str, prog: str) -> None:
     Fires on exactly the EVENT KINDS that arm the replay guard: it reuses the
     guard's own kind set via
     :func:`capture.count_request_replay_asserted_events` (same
-    ``requests.kind='pull'`` provenance), so pulls of build.py-owned domains
-    (clip-notes, envelopes, tempo/cue, arrangement, tuning) — which replay
-    never re-asserts — stay quiet, and a zero-change apply stays quiet.
+    ``requests.kind='pull'`` provenance), so a pull whose mutations replay
+    never re-asserts (clip-notes, envelopes, tempo/cue, arrangement, tuning)
+    stays quiet, and a zero-change apply stays quiet.
+
+    Kinds, not domains — and ``score-globals`` is why that distinction is load
+    bearing. Its probe is ``ableton_session(action='info')``, which also
+    ingests master volume/pan as a ride-along; that path calls
+    ``M.set_track_mixer`` and emits ``track_mixer_set``, which IS in the
+    guard's kind set. So a "tempo-only" pull DOES arm the guard whenever the
+    master fader or pan drifted. Counting emitted events rather than
+    classifying the requested domain is what keeps this correct.
 
     Kind parity, not outcome parity: what the guard then DOES with those events
     depends on the snapshot, so the notice text is careful to say the refusal is

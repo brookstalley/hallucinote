@@ -513,16 +513,16 @@ scope_rollups:
     releases: ["v1.6.0"]
   aud-3f8m:
     chunks: ["AUD-3F8M-01", "AUD-3F8M-02"]
-    releases: ["v1.5.0"]
+    releases: ["v0.9.5"]
   aud-4w7k:
     chunks: ["AUD-4W7K-01", "AUD-4W7K-02"]
-    releases: ["v1.5.0"]
+    releases: ["v0.9.5"]
   audio-analysis-mvp:
     chunks: ["1", "2", "2a", "2b-partial", "3", "3-followup", "section-windowing"]
     releases: ["v1.4.0"]
   audio-verification:
     chunks: ["AUD-4S8T", "AUD-6R2M", "AUD-8H2M"]
-    releases: ["v1.5.0"]
+    releases: ["v0.9.2"]
   backlog-low-cost-sweep:
     chunks: ["backlog-low-cost-sweep"]
     releases: ["v0.9.2"]
@@ -576,10 +576,10 @@ scope_rollups:
     releases: ["v1.4.0"]
   friction-basket:
     chunks: ["FRICTION-01", "FRICTION-02", "FRICTION-03"]
-    releases: ["v1.5.0"]
+    releases: ["v0.9.5"]
   install-hardening:
     chunks: ["install-hardening"]
-    releases: ["v1.5.0"]
+    releases: ["v0.9.2"]
   iteration-loop-polish+backlog-discipline:
     chunks: ["P1", "P2", "P3", "P4", "P5", "P6"]
     releases: ["v1.4.0"]
@@ -678,7 +678,7 @@ scope_rollups:
     releases: ["v1.5.0"]
   tools-dont-narrow-the-art+helpers-dry:
     chunks: ["GEN-1S4K", "LNT-1V9K", "REV-2W8K", "chunk0", "helpers"]
-    releases: ["v1.5.0"]
+    releases: ["v0.9.2"]
   tuning,mcp-bridge,mcp-render,sync-push,sync-pull,db,analysis,methodology,docs,tests:
     chunks: ["ARR-ORPHAN", "DEC-CAP", "DOC-7K3M", "FK-clip-guard", "IDX-5W2P", "MCP-2K9F", "MCP-5N8K", "MCP-7F2K", "MCP-7P3R", "MCP-8H4N", "MCP-9R3T", "MICROTUNE", "PSH-3K9D", "PSH-8K3D", "REC-4Z8Q", "SYN-4R7P", "SYN-7N4K", "SYN-9F4K", "SYN-RACK-PRESET-RELINK", "SYN-RENDER-RELINK", "SYN-SCAFFOLD-MISLINK", "master-true-peak"]
     releases: ["v1.6.0"]

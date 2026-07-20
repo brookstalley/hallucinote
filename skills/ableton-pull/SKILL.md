@@ -41,8 +41,12 @@ NOT a parallel mix bake:
 > fresh capture over `captured_session.json`, stamped newer than the pull, and
 > so disarms the guard); only reach for `build.py --force-replay` to
 > *consciously discard* the pulled edits. Build.py-owned pulls (clip-notes,
-> envelopes, tempo, cue, arrangement, tuning) never arm the guard — that's the
-> sanctioned staging lane.
+> envelopes, tempo, cue, arrangement, tuning) do not themselves arm the guard —
+> that's the sanctioned staging lane. **One exception, and it is easy to trip:**
+> `score-globals` shares its probe with master volume/pan ingest, so a
+> "tempo-only" pull arms the guard whenever the master fader or pan drifted.
+> Trust the notice, not the domain you asked for — arming is decided by the
+> event kinds a pull actually emitted.
 
 ## Conflict policy
 
@@ -51,7 +55,7 @@ NOT a parallel mix bake:
 ## Available domains
 
 - `mix-state` — track volume / pan / mute / solo / arm / color, return volume / pan, master volume / pan, sends. Also ingests global tempo + signature (free ride-along).
-- `score-globals` — global tempo + signature ONLY (bar-1 rows). Cheaper than `mix-state` if that's all you've changed.
+- `score-globals` — global tempo + signature (bar-1 rows), plus master volume / pan as a free ride-along (one `ableton_session(action='info')` probe carries all of it). Cheaper than `mix-state` if that's all you've changed — but because of the master ride-along it can still arm the replay guard.
 - `cue-points` — arrangement cue positions + names. Name diffs are informational warnings (DB-side names are user-authoritative).
 - `devices` — top-level device chain on each linked track + return: positional `(kind, display_name)` diff. Nested chains live in `nested-rack-chains`; per-device parameter VALUES live in `device-parameters`.
 - `nested-rack-chains` — one level of nested chains under each rack device. Run after `devices`. Recursively nested racks deferred.

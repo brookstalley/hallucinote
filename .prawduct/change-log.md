@@ -89,7 +89,8 @@ foot-positioned tag lines (v0.9.0–v1.1.0 entries) to the entry head so the par
 reads them as metadata. Resolved 10 `release=unreleased status=shipped` entries to
 `release=v1.5.0` (verified via git ancestry: each is an ancestor of v1.5.0 but not
 v1.4.0). Documented the `release=unreleased`→flip-at-release vocab in the change-log
-header (VEW-9QH4). Result: **72 of 74 entries** parse as tagged; the 2 remaining are
+header (VEW-9QH4). Result: **every entry but 2** parses as tagged (75 of 77 at this
+branch's tip; the count moves as entries land); the 2 remaining are
 genuinely tag-less pre-v1.4.0 entries (never carried a tag — left untouched rather
 than fabricate chunk IDs). Verified against the live parser for both visibility and
 per-entry chunk-id integrity. **Framework-coupled deferral:** the parser itself lives

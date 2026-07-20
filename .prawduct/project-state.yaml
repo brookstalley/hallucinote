@@ -405,8 +405,8 @@ artifact_manifest:
       version: 3
       depends_on: [project-preferences]
     - name: build-plan
-      file_path: .prawduct/artifacts/build-plan.md
-      version: 1
+      file_path: .prawduct/artifacts/build-plan-highroi-sweep.md
+      version: 2
       depends_on: [project-preferences, boundary-patterns]
     - name: arrangement-model
       file_path: .prawduct/artifacts/arrangement-model.md
@@ -465,7 +465,7 @@ artifact_manifest:
 build_state:
   source_root: "src/hallucinote/"
 
-# Active build plan pointer (.prawduct/-relative). Currently no active plan.
+# Active build plan pointer (.prawduct/-relative).
 # In-flight plans with pending Live-gated work (see each plan's Status section):
 #   SMP-7K2D — chunks 1-2 + no-Live 5 done; probe chunk 0 + push chunks 3-4 pending.
 #   ARR-PROJ — all 5 headless chunks built on plan/arr-proj-arrangement-materialization;
@@ -473,10 +473,16 @@ build_state:
 # Shipped/stale plan history: the git history of this file (pre-2026-07-04,
 # PRC-5W2N trim) has the full narrative; a per-machine copy also sits in the
 # gitignored reflections archive where present.
-# Left EMPTY (not the literal `null`): the regen-views/session-start pointer
-# reader treats the post-colon text as a path, so `null` resolves to
+# When cleared, leave EMPTY (not the literal `null`): the regen-views/session-start
+# pointer reader treats the post-colon text as a path, so `null` resolves to
 # `.prawduct/null` and mis-fires the "missing build plan" advisory.
-active_build_plan: .prawduct/artifacts/build-plan.md
+#
+# Named `build-plan-<scope>.md`, not the generic `build-plan.md`: regen-views'
+# scope->plan resolver globs `artifacts/*.md` non-recursively (a plan nested in
+# `artifacts/plans/<id>/` is invisible to it and regen-views then refuses to write
+# ANY view), and on gitflow a plan must survive until the develop->main release —
+# so the generic name would be contended by the next plan authored in that window.
+active_build_plan: .prawduct/artifacts/build-plan-highroi-sweep.md
 
 # =============================================================================
 # CHANGE LOG

@@ -83,9 +83,10 @@ kind-set audit all locked in Chunk 1). No open design questions remain.
 **Context:** All three chunks built + committed on `feat/highroi-sweep-2026-07`.
 - **A**: 34 legacy change-log tag lines canonicalized to `prawduct:` form (incl.
   pipe-in-chunks-value fix + 3 foot-tag relocations), 10 `release=unreleased`→v1.5.0
-  (git-ancestry verified), unreleased vocab documented in the header. 74/76 entries
-  parse tagged (2 genuinely tag-less pre-v1.4.0 left as-is); 0 status/multiplicity
-  warnings against the live parser.
+  (git-ancestry verified), unreleased vocab documented in the header. 75/77 entries
+  parse tagged as of this branch's tip (2 genuinely tag-less 2026-05-17 entries left
+  as-is); 0 status/multiplicity warnings against the live parser. The total moves as
+  entries land — the invariant is "every entry but those 2", not a fixed count.
 - **B**: `pull_cli` durability notice via `capture.count_request_replay_asserted_events`
   (reuses the guard's kind set); `/ableton-pull` reframed.
 - **C**: `/song-snapshot`'s empty-diff path BAKES the fresh capture (`capture merge`)

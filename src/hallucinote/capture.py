@@ -165,16 +165,25 @@ def utc_now_eventlike() -> str:
 def restamp_captured_at(snapshot: dict[str, Any]) -> str:
     """Refresh ``snapshot['captured_at']`` to now (in place); return the new stamp.
 
-    The empty-diff re-stamp affordance (BAK-7D2V Chunk 3). The guard is armed by
-    pull EVENTS newer than the snapshot, not by snapshot content — so when a pull
-    was hand-reverted in Live and a fresh capture shows NO content diff,
-    ``replay_capture`` would still refuse even though replaying is value-safe.
-    Re-stamping the canonical snapshot newer than those events disarms the guard
-    with no content change — the clean exit for that corner, versus consciously
-    discarding via ``--force-replay``. Only a genuine capture or this explicit
-    re-stamp may move the stamp; ``migrate_snapshot`` deliberately never does
-    (stamping unknown-age content newer than pulls it lacks would defeat the
-    guard)."""
+    The guard is armed by pull EVENTS newer than the snapshot, not by snapshot
+    content, so re-stamping the canonical snapshot newer than those events
+    disarms it with no content change (BAK-7D2V).
+
+    This is an operator override, not a workflow step: it ASSERTS that the
+    on-disk content already matches Live, and nothing here can verify that
+    assertion. An empty ``diff_snapshots`` result does not verify it either —
+    the diff compares device identity, dialed parameters, and chain names, but
+    never device sidechain source, drum-pad mappings, or ``chain_authored_props``,
+    all of which replay re-asserts. A pull touching only those fields diffs clean
+    over a stale file, so re-stamping there would silently revert it. Baking a
+    real capture is the durable fix (``/song-snapshot`` merges the fresh refresh
+    over the canonical file, carrying those fields AND a fresh stamp);
+    ``--force-replay`` is the conscious-discard path, and it re-warns every build
+    rather than disarming permanently.
+
+    Only a genuine capture or this explicit re-stamp may move the stamp;
+    ``migrate_snapshot`` deliberately never does (stamping unknown-age content
+    newer than pulls it lacks would defeat the guard)."""
     stamp = utc_now_eventlike()
     snapshot["captured_at"] = stamp
     return stamp

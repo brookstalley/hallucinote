@@ -231,11 +231,20 @@ def _cmd_migrate(args: argparse.Namespace) -> int:
 
 
 def _cmd_restamp(args: argparse.Namespace) -> int:
-    """BAK-7D2V Chunk 3 — refresh a committed snapshot's ``captured_at`` in place
-    WITHOUT a content change, disarming the replay guard for the empty-diff
-    corner (a pull hand-reverted in Live so a re-capture shows no diff). The
-    `/song-snapshot` skill offers this when ``diff`` reports no changes but the
-    guard is still armed. Content is untouched; only the stamp moves."""
+    """Refresh a committed snapshot's ``captured_at`` in place WITHOUT a content
+    change, disarming the replay guard (BAK-7D2V).
+
+    This is a deliberate operator override, NOT a safe default, and no workflow
+    reaches for it automatically: moving the stamp asserts that the on-disk
+    content already matches Live, and nothing here can verify that. An empty
+    ``capture diff`` is NOT such a verification — the diff never compares device
+    sidechain sources, drum-pad mappings, or per-chain authored props, all of
+    which replay re-asserts, so a pull touching only those fields diffs clean
+    while the file is stale. Re-stamping over that state silently reverts the
+    pulled work on the next build. Prefer baking a real capture (`/song-snapshot`,
+    which merges the fresh refresh over the canonical file); prefer
+    ``--force-replay`` when you consciously want to discard pulled edits, since
+    it re-warns on every build instead of disarming the guard permanently."""
     from hallucinote.workspace import resolve_song_dir
 
     if args.song:
@@ -259,6 +268,14 @@ def _cmd_restamp(args: argparse.Namespace) -> int:
     print(
         f"{path}: re-stamped captured_at {old!r} -> {new!r} "
         "(content unchanged; the replay guard is now disarmed)."
+    )
+    print(
+        "warning: this asserts the on-disk snapshot already matches Live — "
+        "nothing verified that. If a pull touched a device sidechain source, "
+        "drum-pad mapping, or chain authored prop, those values are still "
+        "stale here and the next build will silently revert them. Bake a real "
+        "capture with `/song-snapshot` instead when you can.",
+        file=sys.stderr,
     )
     return 0
 
@@ -341,8 +358,9 @@ def main(argv: list[str] | None = None) -> int:
         "restamp",
         help=(
             "BAK-7D2V: refresh captured_at in place with NO content change, to "
-            "disarm the replay guard when a pull was hand-reverted in Live "
-            "(re-capture shows no diff). Used by /song-snapshot's empty-diff path."
+            "disarm the replay guard. Deliberate operator override — it asserts "
+            "the on-disk content already matches Live and cannot verify it. "
+            "Prefer /song-snapshot (bakes a real capture) or --force-replay."
         ),
     )
     restamp_p.add_argument(

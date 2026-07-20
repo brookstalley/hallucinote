@@ -101,11 +101,13 @@ def _warn_durability_if_mix_layer(conn, *, request_id: str, prog: str) -> None:
         return
     sys.stderr.write(
         f"{prog}: {n} mix-layer change(s) staged in the DB (regenerable) only "
-        "— NOT yet durable. The next `build.py` replay will REFUSE to run "
-        "(StaleSnapshotError) rather than silently revert them. Bake them into "
-        "the durable snapshot with `/song-snapshot` (or `capture_cli execute` "
-        "+ copy the .refresh.json over captured_session.json) before the next "
-        "build.\n"
+        "— NOT yet durable. If the song's snapshot carries a `captured_at` "
+        "stamp, the next `build.py` replay will REFUSE to run "
+        "(StaleSnapshotError) rather than silently revert them; a legacy "
+        "snapshot with no stamp gives no ordering evidence, so replay only "
+        "WARNS and reverts them. Either way, bake them into the durable "
+        "snapshot with `/song-snapshot` (or `capture_cli execute` + copy the "
+        ".refresh.json over captured_session.json) before the next build.\n"
     )
 
 

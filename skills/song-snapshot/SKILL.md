@@ -7,7 +7,7 @@ description: Refresh a song's `captured_session.json` against the currently open
 
 > **Running engine commands.** The engine ships in the plugin's uv env. Resolve `$PY` once from `ableton://server/info`'s `python`; the `hallucinote …` commands below run as `"$PY" -m hallucinote.cli …`. See [`docs/running-the-engine.md`](../../docs/running-the-engine.md).
 
-You refresh `songs/<slug>/captured_session.json` from the currently open Ableton set, with a diff confirmation before overwrite. The snapshot is the seed for `build.py`'s `replay_capture(...)` — it captures the **mix layout** (tracks, returns, sends, device chains, dialed instrument parameters, **device sidechain sources**, and nested rack chains to any depth). This is the **single durable mix bake**: what it captures lands in the git-tracked `captured_session.json` and reproduces on the next `build.py` — unlike `/ableton-pull`, which writes only the regenerable DB (a DB-only mix pull reverts on the next build). Everything else (clips, notes, envelopes, arrangement, cues) is owned by `build.py` and is intentionally NOT touched.
+You refresh `songs/<slug>/captured_session.json` from the currently open Ableton set, with a diff confirmation before overwrite. The snapshot is the seed for `build.py`'s `replay_capture(...)` — it captures the **mix layout** (tracks, returns, sends, device chains, dialed instrument parameters, **device sidechain sources**, and nested rack chains to any depth). This is the **single durable mix bake**: what it captures lands in the git-tracked `captured_session.json` and reproduces on the next `build.py` — unlike `/ableton-pull`, which writes only the regenerable DB (a DB-only mix pull is not durable — the next `build.py` refuses with `StaleSnapshotError` rather than replaying over it, and on a legacy snapshot with no `captured_at` stamp it warns and reverts). Everything else (clips, notes, envelopes, arrangement, cues) is owned by `build.py` and is intentionally NOT touched.
 
 ## When to run this
 
@@ -67,14 +67,19 @@ Run the diff CLI. It prints the structured diff as JSON to stdout and a one-scre
 
 **If exit 0 (no changes):** the snapshot content already matches Live. Normally: tell the user it's up to date, delete the `.refresh` file, and stop.
 
-*Empty-diff re-stamp (BAK-7D2V).* One corner needs more: if a prior **mix** `/ableton-pull` is still un-baked — e.g. you pulled a knob change, then hand-reverted it in Live, so the content matches again but `build.py` still **refuses** (`StaleSnapshotError`, because the guard is armed by the pull *events*, not by content) — refresh the timestamp so the guard disarms without a content change:
+*Empty-diff bake (BAK-7D2V).* One corner needs more: if a prior **mix** `/ableton-pull` is still un-baked — e.g. you pulled a knob change, then hand-reverted it in Live, so the content matches again but `build.py` still **refuses** (`StaleSnapshotError`, because the guard is armed by the pull *events*, not by content) — bake the refresh you just captured so the guard disarms:
 
 ```bash
-"$PY" -m hallucinote.cli capture restamp --song <slug>
+"$PY" -m hallucinote.cli capture merge \
+  songs/<slug>/captured_session.json \
+  songs/<slug>/captured_session.refresh.json \
+  -o songs/<slug>/captured_session.json
 rm songs/<slug>/captured_session.refresh.json
 ```
 
-Only offer this when a pull might be in play (the user mentions a pull, or a build just refused). Ask: *"No content changed, but a prior pull may still be blocking `build.py` — refresh `captured_at` to disarm it? (yes / no)"* For a plain "did anything change?" check, just stop.
+**Write the refresh — never just move the timestamp.** An empty diff does NOT prove the on-disk snapshot carries everything replay will re-assert: the diff compares device identity, dialed parameters, and chain names, but the snapshot ALSO carries device sidechain sources, drum-pad mappings, and per-chain authored props (volume/pan/mute/solo/choke_group/out_note) that `replay_capture` re-asserts and the diff never looks at. A pull that touched only those fields produces an empty diff, so stamping the stale file forward would disarm the guard over old values and let the next build silently revert the by-ear work — exactly the failure this guard exists to prevent. The merge above takes the fresh capture as its base, so it carries those fields AND a fresh `captured_at`.
+
+Only offer this when a pull might be in play (the user mentions a pull, or a build just refused). Ask: *"No content changed in the diff, but a prior pull may still be blocking `build.py` — bake the fresh capture to disarm it? (yes / no)"* For a plain "did anything change?" check, just stop.
 
 **If exit 1 (changes present):** show the user the stderr summary (the human one-screen format). Don't dump the full JSON unless they ask — it can be thousands of lines for a complex song.
 

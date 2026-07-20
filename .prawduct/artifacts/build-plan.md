@@ -65,9 +65,18 @@ kind-set audit all locked in Chunk 1). No open design questions remain.
 
 ## Status
 
-- [x] **Chunk A** — Change-log canonicalization + unreleased vocab (VEW-7T2C + VEW-9QH4) — committed c6e0808
-- [x] **Chunk B** — BAK-7D2V Chunk 2: pull-side contract UX — committed bf2d444
-- [x] **Chunk C** — BAK-7D2V Chunk 3: `/song-snapshot` loop-close (cumulative-final)
+> **These checkboxes are a DERIVED view of release state, not build state.** This
+> plan sets `views_enabled`, so `regen-views` rewrites the boxes from each chunk's
+> change-log `status=` tag. All three chunks are built, committed, and reviewed —
+> but their change-log entries are statusless (release-pending) while the work sits
+> on `develop`, so the boxes read unticked. The `develop→main` release stamps
+> `status=shipped` and re-runs `regen-views`, which ticks them. Do not hand-edit
+> them to `[x]`; that only gets overwritten. The Context block below is the
+> authoritative build state.
+
+- [ ] Chunk A: Change-log canonicalization + unreleased vocab (VEW-7T2C + VEW-9QH4) — committed c6e0808
+- [ ] Chunk B: BAK-7D2V Chunk 2: pull-side contract UX — committed bf2d444
+- [ ] Chunk C: BAK-7D2V Chunk 3: `/song-snapshot` loop-close (cumulative-final)
 
 **Context:** All three chunks built + committed on `feat/highroi-sweep-2026-07`.
 - **A**: 34 legacy change-log tag lines canonicalized to `prawduct:` form (incl.
@@ -77,20 +86,33 @@ kind-set audit all locked in Chunk 1). No open design questions remain.
   warnings against the live parser.
 - **B**: `pull_cli` durability notice via `capture.count_request_replay_asserted_events`
   (reuses the guard's kind set); `/ableton-pull` reframed.
-- **C**: `capture_cli restamp` + `capture.restamp_captured_at` (empty-diff disarm);
-  `/song-snapshot` re-stamp offer + guard-disarmed statement; `/song-pick-instruments`
-  + `docs/song-workflow.md` contract wording. BAK operator-verification extended
-  (checks 7–8) — Live-gated, not built.
+- **C**: `/song-snapshot`'s empty-diff path BAKES the fresh capture (`capture merge`)
+  to disarm the guard; `capture_cli restamp` + `capture.restamp_captured_at` survive as
+  a documented operator override. `/song-pick-instruments` + `docs/song-workflow.md`
+  contract wording. BAK operator-verification extended (checks 7–9) — Live-gated,
+  not built.
 
-**DONE — all governance complete (2026-07-04).** Branch `feat/highroi-sweep-2026-07`,
-HEAD `8a698c8`, 5 commits, working tree clean. Full suite **4511 passed / 2 skipped**
-(evidence re-stamped). Cumulative Critic (`a8cab6d`, base develop) + verify-resolutions
-(`59e4b23`) both blocking-free — PR gate satisfied; last delta since the chain record
-is a doc-only backlog dedup (`8a698c8`, auto-skipped by gates). All 3 backlog items
-shipped + archived on-branch. Reflection captured. **NEXT (user-triggered):**
-`/prawduct:pr` — two PRs recommended (`chore/changelog` = Chunk A; `feat/bak-7d2v` =
-Chunks B+C), or one if preferred. Then the Live operator-verification (BAK-7D2V
-checks 7–8 in operator-verification.md) when a session is attended.
+**DONE — all governance complete (2026-07-20).** Branch `feat/highroi-sweep-2026-07`,
+base `origin/develop`, working tree clean, full suite **green**. Chunks A–C plus a
+repo-hygiene sweep (gitignore contract reconcile, four 2026-07-07 backlog items, three
+2026-07-11 incoming-bug reports, stale remote branches deleted) — its own `type=process`
+change-log entry.
+
+The 2026-07-20 cumulative Critic (base develop) raised **1 blocking finding**, now
+resolved: Chunk C's empty-diff path re-stamped `captured_at` on the STALE snapshot, and
+an empty `capture diff` does not prove freshness — the diff never compares device
+sidechain sources, drum-pad mappings, or per-chain authored props, all of which replay
+re-asserts. A pull touching only those fields would have diffed clean, disarmed the
+guard over old values, and let the next build silently revert the pulled work. Fixed by
+baking the refresh via `capture merge`; locked by a doc-drift test on the skill's
+commands plus paired tests pinning the diff's blind spot and merge's coverage of it.
+Three Critic warnings also folded in: the REFUSE prose is now conditional on a
+`captured_at` stamp (a legacy unstamped snapshot warns and still reverts), `regen-views`
+was run after Chunk A's tag-line sweep, and this Status block is current.
+
+**NEXT (user-triggered):** `/prawduct:pr` → `develop`. Then the Live
+operator-verification (checks 7–9 in `operator-verification.md`) when a session is
+attended — check 9 specifically exercises the blind-spot pull the Critic found.
 
 ---
 

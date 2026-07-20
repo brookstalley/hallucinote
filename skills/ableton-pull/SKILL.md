@@ -31,14 +31,18 @@ NOT a parallel mix bake:
   durable, run `/song-snapshot` after.
 
 > **The bake is the closing move (BAK-7D2V).** A mix-domain pull left un-baked
-> is not silently reverted anymore — the next `build.py` **REFUSES to run**
+> is not silently reverted anymore — provided the snapshot carries a
+> `captured_at` stamp, the next `build.py` **REFUSES to run**
 > (`StaleSnapshotError`) rather than re-assert the stale snapshot over your
-> pulled edits. After such a pull, `pull_cli` prints a durability notice on
-> stderr naming the fix. Close the loop with **`/song-snapshot`** (which
-> re-stamps `captured_session.json` newer than the pull and disarms the guard);
-> only reach for `build.py --force-replay` to *consciously discard* the pulled
-> edits. Build.py-owned pulls (clip-notes, envelopes, tempo, cue, arrangement,
-> tuning) never arm the guard — that's the sanctioned staging lane.
+> pulled edits. (A legacy snapshot with no stamp gives replay no ordering
+> evidence, so it only **warns** and still reverts — baking is what makes the
+> check exact.) After such a pull, `pull_cli` prints a durability notice on
+> stderr naming the fix. Close the loop with **`/song-snapshot`** (which bakes a
+> fresh capture over `captured_session.json`, stamped newer than the pull, and
+> so disarms the guard); only reach for `build.py --force-replay` to
+> *consciously discard* the pulled edits. Build.py-owned pulls (clip-notes,
+> envelopes, tempo, cue, arrangement, tuning) never arm the guard — that's the
+> sanctioned staging lane.
 
 ## Conflict policy
 

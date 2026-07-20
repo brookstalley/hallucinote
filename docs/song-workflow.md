@@ -150,14 +150,16 @@ primitive — they write different targets:
   `replay_capture` re-asserts the snapshot onto the DB every build.
 
 **The contract is enforced (BAK-7D2V).** A mix edit you pull but don't
-`/song-snapshot` is no longer silently reverted — the next `build.py` **refuses
-to run** (`StaleSnapshotError`), and `pull_cli` prints a durability notice at
-pull time. So the loop is **pull → bake → build**: `/ableton-pull` (stage) →
-`/song-snapshot` (bake, which re-stamps the snapshot newer than the pull and
-disarms the guard) → `build.py` (runs clean). `build.py --force-replay`
-consciously discards the pulled edits instead. Build.py-owned pulls (notes,
-envelopes, tempo, cue, arrangement, tuning) never arm the guard — that's the
-sanctioned staging lane.
+`/song-snapshot` is no longer silently reverted — as long as the snapshot
+carries a `captured_at` stamp, the next `build.py` **refuses to run**
+(`StaleSnapshotError`), and `pull_cli` prints a durability notice at pull time.
+(A legacy snapshot with no stamp leaves replay no ordering evidence, so it warns
+and still reverts; baking once makes the check exact from then on.) So the loop
+is **pull → bake → build**: `/ableton-pull` (stage) → `/song-snapshot` (bake,
+which writes a fresh capture stamped newer than the pull and so disarms the
+guard) → `build.py` (runs clean). `build.py --force-replay` consciously discards
+the pulled edits instead. Build.py-owned pulls (notes, envelopes, tempo, cue,
+arrangement, tuning) never arm the guard — that's the sanctioned staging lane.
 
 Then loop back to compose or mix.
 

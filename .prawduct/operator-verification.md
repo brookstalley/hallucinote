@@ -45,11 +45,17 @@ the song's snapshot predates BAK-7D2V — Ableton open, linked session):**
    staged in the DB … the next `build.py` … will REFUSE … bake with
    `/song-snapshot`"). Confirm a build.py-owned pull (e.g. `clip-notes`) and a
    zero-change re-pull print NO such notice.
-8. **Chunk 3 — empty-diff re-stamp.** After a mix pull, hand-REVERT the knob in
-   Live so a fresh capture shows no diff; `build.py` still refuses (guard armed
-   by the pull events). Run `hallucinote.cli capture restamp --song <slug>` (or
-   accept `/song-snapshot`'s empty-diff offer) → `build.py` now passes clean,
-   content unchanged.
+8. **Empty-diff bake.** After a mix pull, hand-REVERT the knob in Live so a
+   fresh capture shows no diff; `build.py` still refuses (guard armed by the
+   pull events). Accept `/song-snapshot`'s empty-diff offer → it merges the
+   fresh refresh over `captured_session.json` → `build.py` now passes clean.
+9. **Empty-diff bake covers undiffed fields.** The case above with a pull that
+   the diff is BLIND to: pull a device sidechain source (or a drum-pad mapping /
+   chain authored prop), leave it in place, and re-capture — `capture diff` exits
+   0 even though the on-disk snapshot is stale. Accept the same offer → confirm
+   `captured_session.json` now carries the PULLED value (not the old one) and the
+   next `build.py` preserves it. A bare `capture restamp` here would disarm the
+   guard over the stale value; confirm it prints its override warning.
 
 ## MCP-1V8K — device load focuses Session view before browser.load_item (2026-06-23) — PASSED (agent-run live, 2026-06-23)
 

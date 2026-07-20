@@ -17,28 +17,59 @@
      pre-bumping a version (against `feedback_no_premature_version_bump`) or
      mislabeling in-flight work as an already-shipped version. -->
 
-## 2026-07-04 — Pull-durability loop-close: contract UX + /song-snapshot re-stamp (BAK-7D2V Chunks 2–3)
+## 2026-07-20 — Repo hygiene sweep: gitignore contract, stale branches, untracked reports
+
+<!-- prawduct: type=process | scope=highroi-sweep | release=unreleased -->
+
+Local and remote git hygiene. `.gitignore` reconciled with the prawduct session-file
+contract via `prawduct-hook update-gitignore`: adds `.critic-active`,
+`.critic-partials/`, and `.session-base-tree` (session state that was landing as
+untracked noise), and un-ignores `.prawduct/artifacts/build-plan.md`, which is
+tracked-by-contract. Four backlog items written during the 2026-07-07 re-vendor/restart
+analysis (MCP-6D3V, INS-8F2R, INS-5J9C, INS-7Q4Y) and three 2026-07-11 incoming-bug
+reports were sitting uncommitted on disk — both now landed, the reports pending triage
+per the usual triage→archive loop. On the remote: `fix/syn-9f4k-empty-rack-fail-loud`
+deleted (merged via PR #200) and the stale tracking ref for
+`fix/quickwin-cluster-mcp1v8k-pshphaseorder` pruned (squash-merged as PR #205), leaving
+origin at `main` + `develop` + the active branch. Dropped a stash from the deleted
+`fix/snp-8r4k-live-chunks` branch, verified subsumed (the `mix → devices → routing`
+phase reorder it held is present in HEAD).
+
+## 2026-07-04 — Pull-durability loop-close: contract UX + /song-snapshot empty-diff bake (BAK-7D2V Chunks 2–3)
 
 <!-- prawduct: type=feature | chunks=B,C | scope=highroi-sweep | release=unreleased -->
 
 Closes the pull-durability item (Chunk 1's replay guard shipped in v1.7.0 / PR #210).
 **Chunk 2 — pull-side contract UX:** `pull_cli apply/execute` now print a durability
 notice on stderr after a mix-layer pull ("N change(s) staged in the regenerable DB
-only; the next `build.py` will REFUSE rather than revert — bake with `/song-snapshot`").
+only; on a stamped snapshot the next `build.py` will REFUSE rather than revert — bake
+with `/song-snapshot`"). The notice, the `/ableton-pull` skill, and `docs/song-workflow.md`
+all state the refusal as conditional on a `captured_at` stamp: a legacy unstamped
+snapshot gives replay no ordering evidence, so it warns and still reverts.
 It fires EXACTLY when the guard would, by reusing the guard's own
 `_REPLAY_ASSERTED_EVENT_KINDS` via new `capture.count_request_replay_asserted_events`
 (scoped to the just-applied pull's `request_id`) — no parallel domain whitelist to
 drift. Quiet on zero-change applies, build.py-owned domains, and dry-runs. The
 `/ableton-pull` skill is reframed (BAK-3M9T Chunk D): names the bake as the closing
-move and the refuse-not-revert behavior. **Chunk 3 — loop-close:** `capture_cli restamp`
-(+ `capture.restamp_captured_at`) refreshes `captured_at` in place with NO content
-change, disarming the guard for the pull-then-hand-revert corner; `/song-snapshot`
-offers it on an empty diff and states the guard is disarmed after a confirmed overwrite.
+move and the refuse-not-revert behavior. **Chunk 3 — loop-close:** `/song-snapshot`
+closes the pull-then-hand-revert corner, where the guard is armed by pull EVENTS but a
+fresh capture shows no content diff. On an empty diff it now BAKES the refresh it just
+captured (`capture merge` over `captured_session.json`), which disarms the guard and
+carries a fresh `captured_at`. It deliberately does NOT merely re-stamp: an empty
+`capture diff` does not prove the snapshot is current, because the diff never compares
+device sidechain sources, drum-pad mappings, or per-chain authored props — all of which
+replay re-asserts. A pull touching only those fields diffs clean, so a re-stamp would
+disarm the guard over stale values and let the next build silently revert the pulled
+work (found by Critic review before merge). `capture_cli restamp` (+
+`capture.restamp_captured_at`) survives as an explicit operator override for when no
+capture is possible, now documented as such and warning that it asserts freshness it
+cannot verify; `--force-replay` remains the conscious-discard path.
 `/song-pick-instruments` snapshots already carry `captured_at` (via `compile_snapshot`);
 `docs/song-workflow.md` names the enforced pull→bake→build contract. **Live operator-
-verification** (dial → pull → build refuses → snapshot → survives → force-replay reverts)
-is queued, not gated. Tests: notice fire/silence + helper discrimination + restamp
-disarm/idempotence.
+verification** (dial → pull → build refuses → snapshot → survives → force-replay reverts,
+plus a pull the diff is blind to) is queued, not gated. Tests: notice fire/silence +
+helper discrimination + restamp disarm/idempotence + the diff's replay-asserted blind
+spot and merge's coverage of it + a doc-drift lock on the skill's empty-diff commands.
 
 ## 2026-07-04 — Change-log tag canonicalization + unreleased vocab (VEW-7T2C, VEW-9QH4)
 

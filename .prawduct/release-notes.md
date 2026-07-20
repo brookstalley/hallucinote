@@ -133,6 +133,42 @@ See `.prawduct/change-log.md` for full details.
 
 **Chunks shipped:** ATL-7K3M-ch1, ATL-7K3M-ch2
 
+### friction-basket
+
+**Entry:** 2026-06-10 — DOC-5W8B: REQUIREMENTS.md auto-regen after device-changing push
+
+**Chunks shipped:** FRICTION-01, FRICTION-02, FRICTION-03
+
+### aud-4w7k
+
+**Entry:** 2026-06-10 — AUD-4W7K chunk 2: db_seq provenance + seq resolver + surfacing sweep
+
+**Chunks shipped:** AUD-4W7K-01, AUD-4W7K-02
+
+### aud-3f8m
+
+**Entry:** 2026-06-10 — AUD-3F8M chunk 2: mixer_pan verified via master L−R balance
+
+**Chunks shipped:** AUD-3F8M-01, AUD-3F8M-02
+
+### install-hardening
+
+**Entry:** 2026-06-04 — Install hardening: every install mutation in tested, atomic Python
+
+**Chunks shipped:** install-hardening
+
+### tools-dont-narrow-the-art+helpers-dry
+
+**Entry:** 2026-06-03 — Tools-don't-narrow-the-art (gate verdicts / generator altitude / review workflow) + helpers DRY
+
+**Chunks shipped:** GEN-1S4K, LNT-1V9K, REV-2W8K, chunk0, helpers
+
+### audio-verification
+
+**Entry:** 2026-06-02 — Audio verification correctness: reverb RT60 + automation realization
+
+**Chunks shipped:** AUD-4S8T, AUD-6R2M, AUD-8H2M
+
 See `.prawduct/change-log.md` for full details.
 
 ## v0.9.8
@@ -266,5 +302,137 @@ See `.prawduct/change-log.md` for full details.
 **Entry:** 2026-06-04 — INS-7V2D follow-up: MCP cold-start startup timeout fix (`MCP_TIMEOUT`)
 
 **Chunks shipped:** INS-7V2D-cold-start-timeout
+
+See `.prawduct/change-log.md` for full details.
+
+## v0.9.3
+
+**Entry:** 2026-06-04 — INS-7V2D: plugin-bundled MCP server via uv (version-locked)
+
+**Chunks shipped:** INS-7V2D
+
+**Scope:** plugin-distribution
+
+See `.prawduct/change-log.md` for full details.
+
+## v0.9.2
+
+**Entry:** 2026-06-04 — Backlog low-cost sweep: ~13 items fixed in parallel (file-disjoint clusters)
+
+**Chunks shipped:** backlog-low-cost-sweep
+
+**Scope:** backlog-low-cost-sweep
+
+See `.prawduct/change-log.md` for full details.
+
+## v1.4.0
+
+### arrangement-model
+
+**Entry:** 2026-05-30 — Arrangement model + sun-zone-done flagship (Chunks 1–5)
+
+**Chunks shipped:** arrangement-1-5
+
+### bulk-note-authoring
+
+**Entry:** 2026-05-29 — Bulk note-authoring: scoped push + /compose-part + inline guardrail (B1–B4)
+
+**Chunks shipped:** bulk-notes-B1-B4
+
+### masking-analyzer
+
+**Entry:** 2026-05-29 — Masking analyzer + intent architecture + timing feel (C1–C7)
+
+**Chunks shipped:** masking-C1-C7
+
+### audio-analysis-mvp
+
+**Entry:** 2026-05-28 — Section-windowed audio analysis: `MixReport.per_section`
+
+**Chunks shipped:** 1, 2, 2a, 2b-partial, 3, 3-followup, section-windowing
+
+### mutator-event-shape+test-coverage+wire-schema-enrichment+fingerprint-binary-safety
+
+**Entry:** 2026-05-23 — Hygiene wave: P0 delete_notes + migrate tests + P1 JSONSchema enrichment + P3 fingerprint NUL-sniff
+
+**Chunks shipped:** hygiene
+
+### enum-envelope-authoring+device-load-post-condition+w13a-fallback-identity
+
+**Entry:** 2026-05-22 — Arc 7-tail: enum envelopes + device-load hardening + W13-A fallback identity (E1+E2+E3)
+
+**Chunks shipped:** E1, E2, E3
+
+### envelope-polish+nested-rack-tombstone+device-load-class+mutator-prefix-strip+mcp-auto-mutate
+
+**Entry:** 2026-05-22 — Arc 7: production polish (P1, P4, P5, P7) + Arc 2 / B5 (MCP auto-mutate)
+
+**Chunks shipped:** B5, P1, P4, P5, P7, backlog-scrub
+
+### song-author-hygiene+kit-strict+negative-beats-refusal
+
+**Entry:** 2026-05-22 — Arc 6: song-author hygiene tail (H1–H5)
+
+**Chunks shipped:** H1, H2, H3, H4, H5, backlog-scrub
+
+### iteration-loop-polish+backlog-discipline
+
+**Entry:** 2026-05-22 — Arc 5: iteration-loop polish (P1–P6)
+
+**Chunks shipped:** P1, P2, P3, P4, P5, P6
+
+### loader-display-name-convention
+
+**Entry:** 2026-05-22 — Arc 4 / D4: structural display-name shift (delete _CLASS_TO_DISPLAY)
+
+**Chunks shipped:** D4-1, D4-2, D4-3, D4-4, D4-5, D4-6, D4-7
+
+### arc-2-live-verification-fallout
+
+**Entry:** 2026-05-21 — Fix: annotation handler crashed Live's Remote Script load
+
+**Chunks shipped:** hotfix
+
+### compose-validation-r2-followons
+
+**Entry:** 2026-05-21 — Arc 3: Compose-time validation, round 2 (R-2 follow-ons)
+
+**Chunks shipped:** C1, C2, C3
+
+### provenance+annotations-mcp+dev-ergonomics
+
+**Entry:** 2026-05-21 — Arc 2: Provenance + annotations MCP + dev-loop dispatcher bypass
+
+**Chunks shipped:** B2, B3-resid, B4, B5, Q1
+
+See `.prawduct/change-log.md` for full details.
+
+## v1.1.0
+
+**Entry:** 2026-05-21 — Arc 1: Drum Rack pad-mapping discovery + push-loop residuals
+
+**Chunks shipped:** A1-resid, A2-resid, A3, A5
+
+**Scope:** push-reliability+drum-mapping
+
+See `.prawduct/change-log.md` for full details.
+
+## v1.0.1
+
+**Entry:** 2026-05-20 — R-1 + R-2: cue idempotency, scaffold cleanup CLI, compat preset_query validation
+
+**Chunks shipped:** R-1, R-2
+
+**Scope:** push-reliability+compose-time-validation
+
+See `.prawduct/change-log.md` for full details.
+
+## v0.9.0
+
+**Entry:** 2026-05-20 — v0.9.0 milestone: cross-machine portability + first tagged release
+
+**Chunks shipped:** W13-B, W13-C, hygiene
+
+**Scope:** cross-machine-portability+v0.9.0-cut
 
 See `.prawduct/change-log.md` for full details.

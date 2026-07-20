@@ -17,6 +17,29 @@
      pre-bumping a version (against `feedback_no_premature_version_bump`) or
      mislabeling in-flight work as an already-shipped version. -->
 
+## 2026-07-20 — Provenance tests no longer assert ambient git state (first red PR-CI run)
+
+<!-- prawduct: type=bugfix | scope=highroi-sweep | release=unreleased -->
+
+`test_provenance_metadata_captures_standard_signals` asserted `"branch" in meta`
+against whatever checkout the suite happened to run from. `actions/checkout` checks a
+`pull_request` out at the **detached merge commit**, so `git symbolic-ref --short HEAD`
+exits non-zero and `provenance_metadata()` correctly drops `branch` — the helper is
+documented best-effort. The test, not the code, held the false premise that a git
+checkout is always on a branch. It went unseen from 2026-05-21 (PR #74) because CI's
+`push:` runs on develop check out a real branch ref; PR #213 was the first
+`pull_request:` run to exercise it.
+
+All four provenance tests now build a throwaway one-commit repo and `chdir` into it, so
+the branch name is a *known* value rather than an ambient one — which makes them
+stronger, not weaker: `test_build_session_auto_captures_metadata` previously settled for
+`"git_sha" in meta or "branch" in meta` and now pins auto-capture to the real probe by
+asserting the controlled branch name. Added the missing halves of the documented
+contract as regression tests: detached HEAD drops `branch` while keeping `git_sha`, and
+a non-git cwd drops both while keeping `hostname`. Reproduced against a real detached
+worktree (old test fails, new passes) rather than trusting the local attached checkout.
+Suite 4523 → 4526.
+
 ## 2026-07-20 — Repo hygiene sweep: gitignore contract, stale branches, untracked reports
 
 <!-- prawduct: type=process | scope=highroi-sweep | release=unreleased -->

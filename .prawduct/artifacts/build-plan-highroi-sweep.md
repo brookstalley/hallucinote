@@ -88,9 +88,11 @@ kind-set audit all locked in Chunk 1). No open design questions remain.
   resolved by FIRST-CONTAINING-TAG — 7→v0.9.5, 3→v0.9.2 (corrected in PR review
   from an initial all-10→v1.5.0; the "ancestor of v1.5.0 but not v1.4.0" test
   answers a different question, and this repo ran two concurrent version tracks
-  that only converged at v1.5.0), unreleased vocab documented in the header. 75/77 entries
-  parse tagged as of this branch's tip (2 genuinely tag-less 2026-05-17 entries left
-  as-is); 0 status/multiplicity warnings against the live parser. The total moves as
+  that only converged at v1.5.0), unreleased vocab documented in the header.
+  Every entry parses tagged except the 2 genuinely tag-less 2026-05-17 ones,
+  which are left as-is; 0 status/multiplicity warnings against the live parser.
+  Stated as an invariant rather than a count, since the absolute pair drifts as
+  entries land. The total moves as
   entries land — the invariant is "every entry but those 2", not a fixed count.
 - **B**: `pull_cli` durability notice via `capture.count_request_replay_asserted_events`
   (reuses the guard's kind set); `/ableton-pull` reframed.

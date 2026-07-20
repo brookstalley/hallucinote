@@ -347,8 +347,8 @@ def test_timezone_offset_captured_at_takes_the_legacy_path(conn):
 
 
 # ---------------------------------------------------------------------------
-# Chunk 2 (BAK-7D2V): the pull-side durability notice fires exactly when the
-# guard would — same kind set, same per-request provenance.
+# The pull-side durability notice fires exactly when the guard would — same
+# kind set, same per-request provenance.
 # ---------------------------------------------------------------------------
 
 
@@ -419,7 +419,15 @@ def test_pull_cli_apply_silent_when_nothing_changed(
 
 
 # ---------------------------------------------------------------------------
-# Chunk 3 (BAK-7D2V): empty-diff re-stamp disarms the guard
+# `restamp_captured_at` — the API-level operator override.
+#
+# NOT the sanctioned empty-diff path: `/song-snapshot` BAKES the fresh capture
+# (`capture merge`) instead, because an empty `capture diff` does not prove the
+# on-disk snapshot is current — it never compares device sidechain sources,
+# drum-pad mappings, or per-chain authored props, all of which replay
+# re-asserts. Stamping a stale file forward would disarm the guard over old
+# values. These tests pin the override's mechanics only; the CLI surface
+# refuses an unstamped file.
 # ---------------------------------------------------------------------------
 
 
@@ -433,11 +441,12 @@ def test_restamp_captured_at_sets_newer_events_ts_stamp(conn):
 
 
 def test_restamp_disarms_guard_on_empty_diff(conn, monkeypatch):
-    """The pull-then-hand-revert corner: the guard is armed by the pull EVENTS,
-    not by snapshot content, so a no-diff re-capture would still refuse.
-    Re-stamping the (unchanged) snapshot newer than the events disarms it —
-    without discarding via --force-replay. (Stamp pinned to a future value so
-    the test can't flake on Python-vs-SQLite sub-second clock skew.)"""
+    """The guard is armed by the pull EVENTS, not by snapshot content, so a
+    no-diff re-capture would still refuse; stamping the snapshot newer than
+    those events disarms it. This pins the override's MECHANICS — it is not an
+    endorsement of stamping as the empty-diff exit (see the section note above:
+    that path bakes instead). (Stamp pinned to a future value so the test can't
+    flake on Python-vs-SQLite sub-second clock skew.)"""
     snap = _snapshot(captured_at=OLD_STAMP)
     song_id, session_id, track_id = _built_song(conn, snap)
     _pull_mix_tweak(conn, song_id=song_id, session_id=session_id,

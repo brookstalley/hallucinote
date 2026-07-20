@@ -1,7 +1,7 @@
 # BAK-7D2V — Pull durability: close the general pull→replay silent-revert hole
 
-`stage: design` · 2026-07-04 · successor to the BAK-3M9T umbrella (its "Option 1 —
-one durable bake" decision STANDS and this design operates inside it; see
+`stage: shipped` · 2026-07-04 (shipped 2026-07-20) · successor to the BAK-3M9T
+umbrella (its "Option 1 — one durable bake" decision STANDS and this design operates inside it; see
 [`../BAK-3M9T/requirements.md`](../BAK-3M9T/requirements.md))
 
 ## The hole (verified in code)
@@ -229,14 +229,28 @@ pull ever gains those deletes, this audit's method flags the addition.
 ### Known imprecisions (accepted for the interim guard, documented)
 
 - *Pull → hand-revert in Live → capture shows no diff*: guard stays armed even
-  though replay would now be value-identical. Rare; **the current exit for this
-  corner is `--force-replay`** (safe here by construction — replay writes the
-  same values back). `/song-snapshot` today hard-stops on an empty diff, so
-  "accept a no-op overwrite to re-stamp" is NOT an available path yet — adding
-  a re-stamp affordance for the no-diff case is **Chunk 3 work** (the skill
-  must offer "no content changes; refresh `captured_at` anyway?").
-  `capture_cli execute` + hand-copying the refresh over the canonical file
-  also re-stamps, for users comfortable with the two-step recipe.
+  though replay would now be value-identical. Rare.
+
+  **RESOLVED — and the resolution reversed this section's original proposal.**
+  As designed, this corner's exit was `--force-replay`, with a *re-stamp on an
+  empty diff* ("no content changes; refresh `captured_at` anyway?") planned as
+  Chunk 3 work. That was built and then rejected in review: re-stamping asserts
+  the snapshot matches Live using an empty diff as the evidence, but an empty
+  diff does not prove the on-disk file is current — it only proves the freshly
+  captured state matches what the differ compared. Moving the timestamp without
+  writing the bytes therefore disarms the guard on an unproven file, which is
+  the exact failure the guard exists to prevent.
+
+  **What shipped instead:** `/song-snapshot`'s empty-diff path *bakes* the
+  refresh — it writes the freshly captured content over the canonical file via
+  `capture merge`, so the stamp is backed by bytes that were actually captured.
+  `capture restamp` survives only as a deliberate override and REFUSES an
+  unstamped file rather than back-stamping one. `--force-replay` remains the
+  discard-the-pulled-edits path, not the re-stamp path.
+
+  This artifact outlives the build plan (the plan is scope-named and deleted at
+  the develop→main release), so the reversal is recorded here rather than only
+  in the plan's Status block.
 - Event-vs-file clock: `captured_at` uses Python's UTC clock, `events.ts`
   SQLite's — same machine in this single-user tool; sub-second skew only
   matters in the seconds right around a capture, where either outcome is safe.
@@ -258,9 +272,11 @@ pull ever gains those deletes, this audit's method flags the addition.
    so the skill itself tells the user the bake is the closing move.
 3. **Chunk 3 — `/song-snapshot` closes the loop**: after a confirmed overwrite,
    the skill states the guard is disarmed ("snapshot now newer than all pulled
-   state"); the skill offers a **re-stamp on an empty diff** ("no content
-   changes; refresh `captured_at` anyway?" — closes the pull→hand-revert corner
-   without `--force-replay`); `/song-pick-instruments` stamps `captured_at` on
+   state"); on an empty diff the skill **bakes the refresh** — writing the
+   freshly captured content over the canonical file via `capture merge`, so the
+   stamp is backed by captured bytes (this superseded the originally-designed
+   "re-stamp on an empty diff"; see *Known imprecisions* above for why a
+   timestamp-only refresh was rejected); `/song-pick-instruments` stamps `captured_at` on
    hand-authored snapshots; docs (`snapshot-schema.md`, `/song-workflow`) name
    the pull→bake→build contract in one place (done for snapshot-schema in
    Chunk 1).

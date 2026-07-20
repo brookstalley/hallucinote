@@ -80,6 +80,8 @@ Reject unknown modes with a teaching error listing the valid choices.
 
    Do NOT delegate to `/song-snapshot` — that skill refreshes existing snapshots from probes and can't see `resolved_path` (Live doesn't track per-device browser origin after load). Only the just-loaded flow has these values in hand.
 
+   `compile_snapshot` stamps `captured_at` (authoring time) automatically, so this hand-authored snapshot participates in the pull-durability guard from birth (BAK-7D2V) — a later mix `/ableton-pull` correctly registers as newer.
+
 7. **For unrestricted mode:** tell the user explicitly the song is not strict-portable.
 
 ## Live vs offline

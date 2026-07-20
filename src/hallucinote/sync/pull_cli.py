@@ -29,7 +29,10 @@ auto-selected and echoed on stderr.
 `domain` is one of:
   - `mix-state`         — track + return + master mixer state + sends
                           (also free-ride ingests global tempo + signature)
-  - `score-globals`     — global tempo + signature only (bar-1 rows in each map)
+  - `score-globals`     — global tempo + signature (bar-1 rows in each map),
+                          plus master volume/pan as a free ride-along (one
+                          `session(action='info')` probe carries both), so this
+                          domain CAN arm the replay guard
   - `cue-points`        — arrangement cue point positions (names gap-flagged)
   - `devices`           — top-level device chain on each linked track + return
                           (positional kind/display_name diff). Nested rack
@@ -81,6 +84,47 @@ class _DryRunRollback(Exception):
     """Internal sentinel — raised inside ``transaction(conn)`` to force a
     rollback after the diff has been computed for ``--dry-run`` mode.
     Never propagates past ``_cmd_execute``."""
+
+
+def _warn_durability_if_mix_layer(conn, *, request_id: str, prog: str) -> None:
+    """Print the BAK-7D2V durability contract to stderr iff this pull apply
+    staged mix-layer state the next ``build.py`` replay would revert.
+
+    Fires on exactly the EVENT KINDS that arm the replay guard: it reuses the
+    guard's own kind set via
+    :func:`capture.count_request_replay_asserted_events` (same
+    ``requests.kind='pull'`` provenance), so a pull whose mutations replay
+    never re-asserts (clip-notes, envelopes, tempo/cue, arrangement, tuning)
+    stays quiet, and a zero-change apply stays quiet.
+
+    Kinds, not domains — and ``score-globals`` is why that distinction is load
+    bearing. Its probe is ``ableton_session(action='info')``, which also
+    ingests master volume/pan as a ride-along; that path calls
+    ``M.set_track_mixer`` and emits ``track_mixer_set``, which IS in the
+    guard's kind set. So a "tempo-only" pull DOES arm the guard whenever the
+    master fader or pan drifted. Counting emitted events rather than
+    classifying the requested domain is what keeps this correct.
+
+    Kind parity, not outcome parity: what the guard then DOES with those events
+    depends on the snapshot, so the notice text is careful to say the refusal is
+    conditional on a usable ``captured_at`` (an unstamped legacy snapshot leaves
+    replay no ordering evidence, so it warns and still reverts). Written to
+    stderr so it never pollutes the JSON report on stdout that wrappers parse."""
+    from hallucinote.capture import count_request_replay_asserted_events
+
+    n = count_request_replay_asserted_events(conn, request_id=request_id)
+    if n <= 0:
+        return
+    sys.stderr.write(
+        f"{prog}: {n} mix-layer change(s) staged in the DB (regenerable) only "
+        "— NOT yet durable. If the song's snapshot carries a `captured_at` "
+        "stamp, the next `build.py` replay will REFUSE to run "
+        "(StaleSnapshotError) rather than silently revert them; a legacy "
+        "snapshot with no stamp gives no ordering evidence, so replay only "
+        "WARNS and reverts them. Either way, bake them into the durable "
+        "snapshot with `/song-snapshot` (or `capture_cli execute` + copy the "
+        ".refresh.json over captured_session.json) before the next build.\n"
+    )
 
 
 _DOMAINS = {
@@ -225,6 +269,7 @@ def _cmd_apply(args: argparse.Namespace) -> int:
     M.close_request(conn, request_id=request_id, outcome="ok", actor="sync")
     json.dump(out.to_dict(), sys.stdout, indent=2)
     sys.stdout.write("\n")
+    _warn_durability_if_mix_layer(conn, request_id=request_id, prog="pull_cli apply")
     # PULL-DRIFT-DETECT: same fail-loud guard as `execute` — unreadable probes
     # mean drift could not be determined, so don't let exit 0 read as "in sync".
     if out.unreadable > 0:
@@ -384,6 +429,12 @@ def _cmd_execute(args: argparse.Namespace) -> int:
     }
     json.dump(out, sys.stdout, indent=2)
     sys.stdout.write("\n")
+    # A dry-run rolled the request + its events back, so nothing was staged —
+    # the durability contract only applies to a real apply.
+    if not args.dry_run:
+        _warn_durability_if_mix_layer(
+            conn, request_id=request_id, prog=f"pull_cli execute domain={args.domain}",
+        )
     # PULL-DRIFT-DETECT: probes that couldn't be read mean we could NOT
     # determine drift — exit non-zero so a wrapper (the /ableton-pull skill)
     # never mistakes an unreadable run for

@@ -58,7 +58,6 @@ dist/
 .prawduct/reflections.md
 .prawduct/reflections-archive-*.md
 .prawduct/sync-manifest.json
-.prawduct/artifacts/build-plan.md
 .claude/scheduled_tasks.lock
 
 # E2E push-test ephemera (Wave 3 throwaway artifacts until ableton-push skill ships)
@@ -100,3 +99,8 @@ tests/scenarios/results/*
 
 # Prawduct plugin version marker (per-repo last-seen)
 .prawduct/.prawduct-version
+
+# Prawduct session files
+.prawduct/.critic-active
+.prawduct/.critic-partials/
+.prawduct/.session-base-tree

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import subprocess
 
 import pytest
 
@@ -1249,20 +1250,71 @@ def test_request_context_manager_propagates_new_fields(conn, song):
     assert row["outcome"] == "ok"
 
 
-def test_provenance_metadata_captures_standard_signals():
-    """The auto-captured metadata helper must produce a dict with the
-    expected keys when the environment supports them. git_sha + branch
-    + hostname all hit best-effort probes; a non-git environment drops
-    git_sha/branch silently."""
+def _throwaway_repo(path, *, branch):
+    """A hermetic one-commit git repo checked out on `branch`.
+
+    `provenance_metadata()` probes git in the *process* working directory,
+    so exercising it means chdir-ing into a repo we control rather than
+    reading whatever checkout the suite happens to run from. Mirrors the
+    same helper in test_resolve_db_path.py: `-c commit.gpgsign=false`
+    keeps the throwaway commit from inheriting ambient signing config.
+    `checkout -b` (rather than `init -b`) names the branch without
+    requiring a git new enough for `init --initial-branch`.
+    """
+    path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q"], cwd=path, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t",
+         "-c", "commit.gpgsign=false", "commit",
+         "--allow-empty", "-q", "-m", "initial"],
+        cwd=path, check=True,
+    )
+    subprocess.run(["git", "checkout", "-q", "-b", branch], cwd=path, check=True)
+    return path
+
+
+def test_provenance_metadata_captures_standard_signals(tmp_path, monkeypatch):
+    """On a branch checkout the helper reports git_sha, branch and hostname.
+
+    Asserted against a repo the test builds, not the ambient checkout: the
+    branch name is only knowable — and only *present* — when the caller
+    controls the working tree.
+    """
+    repo = _throwaway_repo(tmp_path / "repo", branch="provenance-probe")
+    monkeypatch.chdir(repo)
     meta = M.provenance_metadata()
     # Hostname should always succeed.
-    assert "hostname" in meta
-    # In this repo (we're running tests from a git checkout), git_sha
-    # and branch should be present.
-    assert "git_sha" in meta
-    assert "branch" in meta
+    assert isinstance(meta["hostname"], str) and len(meta["hostname"]) > 0
     assert isinstance(meta["git_sha"], str) and len(meta["git_sha"]) > 0
-    assert isinstance(meta["branch"], str) and len(meta["branch"]) > 0
+    assert meta["branch"] == "provenance-probe"
+
+
+def test_provenance_metadata_drops_branch_on_detached_head(tmp_path, monkeypatch):
+    """Detached HEAD has no branch to report, so the key drops — the sha
+    and hostname still land.
+
+    Not a corner case: `actions/checkout` checks pull requests out at the
+    detached merge commit, and any local `git checkout <sha>` does the
+    same. Provenance is observational, so an absent branch is recorded as
+    absent rather than raising or inventing a placeholder.
+    """
+    repo = _throwaway_repo(tmp_path / "repo", branch="provenance-probe")
+    subprocess.run(["git", "checkout", "-q", "--detach"], cwd=repo, check=True)
+    monkeypatch.chdir(repo)
+    meta = M.provenance_metadata()
+    assert "branch" not in meta
+    assert isinstance(meta["git_sha"], str) and len(meta["git_sha"]) > 0
+    assert isinstance(meta["hostname"], str) and len(meta["hostname"]) > 0
+
+
+def test_provenance_metadata_outside_a_git_checkout(tmp_path, monkeypatch):
+    """Outside a repo both git probes fail; the helper degrades to the
+    signals it can still get rather than propagating the failure."""
+    monkeypatch.chdir(tmp_path)
+    meta = M.provenance_metadata()
+    assert "git_sha" not in meta
+    assert "branch" not in meta
+    assert isinstance(meta["hostname"], str) and len(meta["hostname"]) > 0
 
 
 def test_provenance_metadata_merges_extras():
@@ -1275,11 +1327,19 @@ def test_provenance_metadata_merges_extras():
     assert meta["session_id"] == "abc"
 
 
-def test_build_session_auto_captures_metadata(conn):
+def test_build_session_auto_captures_metadata(conn, tmp_path, monkeypatch):
     """Every compose cycle should get the standard platform context for
     free — without this, build.py callers would have to remember to opt
-    in to provenance and most wouldn't."""
+    in to provenance and most wouldn't.
+
+    Run from a repo the test controls so the captured branch is a known
+    value: that pins auto-capture to the real probe, where asserting
+    against the ambient checkout would only prove the suite runs from
+    some git worktree.
+    """
     import json
+
+    monkeypatch.chdir(_throwaway_repo(tmp_path / "repo", branch="provenance-probe"))
 
     with M.build_session(conn, song_name="provenance-test") as bs:
         # Drive at least one mutator so the song row exists for tombstone.
@@ -1293,8 +1353,8 @@ def test_build_session_auto_captures_metadata(conn):
     assert row["metadata_json"] is not None
     meta = json.loads(row["metadata_json"])
     assert "hostname" in meta
-    # In CI / git checkout, git fields are present.
-    assert "git_sha" in meta or "branch" in meta
+    assert meta["branch"] == "provenance-probe"
+    assert isinstance(meta["git_sha"], str) and len(meta["git_sha"]) > 0
 
 
 def test_build_session_propagates_prompt_text_and_parent(conn):

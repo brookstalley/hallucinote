@@ -87,13 +87,18 @@ def _warn_durability_if_mix_layer(conn, *, request_id: str, prog: str) -> None:
     """Print the BAK-7D2V durability contract to stderr iff this pull apply
     staged mix-layer state the next ``build.py`` replay would revert.
 
-    Fires EXACTLY when the replay guard would: it reuses the guard's own kind
-    set via :func:`capture.count_request_replay_asserted_events` (same
+    Fires on exactly the EVENT KINDS that arm the replay guard: it reuses the
+    guard's own kind set via
+    :func:`capture.count_request_replay_asserted_events` (same
     ``requests.kind='pull'`` provenance), so pulls of build.py-owned domains
     (clip-notes, envelopes, tempo/cue, arrangement, tuning) — which replay
-    never re-asserts — stay quiet, and a zero-change apply stays quiet. Written
-    to stderr so it never pollutes the JSON report on stdout that wrappers
-    parse."""
+    never re-asserts — stay quiet, and a zero-change apply stays quiet.
+
+    Kind parity, not outcome parity: what the guard then DOES with those events
+    depends on the snapshot, so the notice text is careful to say the refusal is
+    conditional on a usable ``captured_at`` (an unstamped legacy snapshot leaves
+    replay no ordering evidence, so it warns and still reverts). Written to
+    stderr so it never pollutes the JSON report on stdout that wrappers parse."""
     from hallucinote.capture import count_request_replay_asserted_events
 
     n = count_request_replay_asserted_events(conn, request_id=request_id)

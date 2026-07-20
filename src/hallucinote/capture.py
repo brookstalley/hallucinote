@@ -164,6 +164,11 @@ def has_usable_captured_at(snapshot: dict[str, Any]) -> bool:
 class StaleSnapshotError(RuntimeError):
     """`replay_capture` refused to run: the DB holds pulled live edits newer
     than the snapshot's `captured_at`, which the replay would silently revert.
+
+    Raised only when the snapshot carries a usable stamp to compare against —
+    without one there is no ordering evidence, so the guard warns and proceeds
+    rather than refusing (see :func:`_guard_stale_snapshot`'s matrix).
+
     The durable fix is a re-capture — `/song-snapshot` (diff + confirmed
     overwrite of the canonical file), or `capture_cli execute` + copying the
     `.refresh.json` it writes over `captured_session.json`. The
@@ -269,9 +274,9 @@ def _guard_stale_snapshot(
         (no ordering evidence; refusing would permanently false-alarm every
         previously-pulled song — the warning funnels to a stamping re-capture)
     """
-    captured_at = snapshot.get("captured_at")
-    if not (isinstance(captured_at, str) and _CAPTURED_AT_SHAPE.fullmatch(captured_at)):
-        captured_at = None
+    captured_at = (
+        snapshot.get("captured_at") if has_usable_captured_at(snapshot) else None
+    )
     rows = _pulled_rows_newer_than(conn, song_id=song_id, cutoff_ts=captured_at)
     if not rows:
         return

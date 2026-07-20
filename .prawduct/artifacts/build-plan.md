@@ -6,7 +6,7 @@ version: 2
 # change-log entries `scope=highroi-sweep`.
 scope: highroi-sweep
 depends_on:
-  - artifact: BAK-7D2V/design.md   # Chunks B–C are the shipped BAK design's Chunks 2–3
+  - artifact: .prawduct/artifacts/plans/BAK-7D2V/design.md   # Chunks B–C are the shipped BAK design's Chunks 2–3
 last_validated: null
 ---
 
@@ -25,7 +25,7 @@ at the Chunk A / Chunk B boundary.
 - **BAK-7D2V** (S/L, **top priority**) — the pull-durability remainder:
   Chunk 2 (pull-side contract UX) + Chunk 3 (`/song-snapshot` loop-close).
   Chunk 1 (the replay guard) already shipped via PR #210. Full design:
-  [`../BAK-7D2V/design.md`](../BAK-7D2V/design.md) — chunks below are that
+  [`.prawduct/artifacts/plans/BAK-7D2V/design.md`](.prawduct/artifacts/plans/BAK-7D2V/design.md) — chunks below are that
   artifact's Chunks 2–3, not re-derived here (link, don't summarize).
 
 ## Requirements Confidence
@@ -34,14 +34,14 @@ at the Chunk A / Chunk B boundary.
 
 **Why:** VEW items are mechanical edits to one tracked file (`.prawduct/change-log.md`)
 with a verifiable parse signal; BAK Chunks 2–3 are already fully specified in
-the shipped `BAK-7D2V/design.md` (chosen alternative C, refuse/warn matrix,
+the shipped `.prawduct/artifacts/plans/BAK-7D2V/design.md` (chosen alternative C, refuse/warn matrix,
 kind-set audit all locked in Chunk 1). No open design questions remain.
 
 **Open assumptions / unknowns:**
 
 - `[ASSUMPTION: the unreleased-work tag vocab is release=unreleased, flipped to the real vX.Y.Z at release cut (mirrors how v1.4.0 tags were hand-flipped, and how several historical entries already read release=unreleased) | LOW impact | user can override the token/mechanic before Chunk A]`
 - `[ASSUMPTION: historical entries tagged `status=shipped release=unreleased` get their real shipped version resolved via git archaeology (tag-range containing the chunk); any genuinely undeterminable pre-v1.4.0 entry is marked release=pre-v1.4.0-untracked rather than assigned a fabricated version — never invent a version | MED impact | user can correct any specific flip]`
-- `[ASSUMPTION: the framework-coupled tooling halves of both VEW items — the TAG_LINE_RE / stamp-merged / regen-views parser in the plugin-provided `tools/product-hook` (NOT tracked in this repo; confirmed `git ls-files tools/` shows only 5 migrate/eval scripts) — are OUT of scope here and land with the upstream prawduct sync per memory project_prawduct_framework_authorship. This plan delivers only the in-repo change-log + docs halves | MED impact | user can redirect to also touch the upstream checkout]`
+- `[ASSUMPTION: the framework-coupled tooling halves of both VEW items — the TAG_LINE_RE / stamp-merged / regen-views parser in the plugin-provided `product-hook` (upstream, NOT tracked in this repo; confirmed `git ls-files tools/` shows only 5 migrate/eval scripts) — are OUT of scope here and land with the upstream prawduct sync per memory project_prawduct_framework_authorship. This plan delivers only the in-repo change-log + docs halves | MED impact | user can redirect to also touch the upstream checkout]`
 - `[ASSUMPTION: BAK operator-verification (dial-a-knob → pull → build refuses → snapshot → survives) is Live-gated and queued to operator-verification.md, NOT part of the autonomous build — the code/skill/doc deliverables are fully testable headless | LOW impact | user can attend a live session to drain it]`
 - `[ASSUMPTION: ship as two PRs (VEW hygiene / BAK durability); could be one if preferred | LOW impact | user can override at PR time]`
 
@@ -116,7 +116,7 @@ attended — check 9 specifically exercises the blind-spot pull the Critic found
 
 ---
 
-## Chunk A — Change-log canonicalization + unreleased vocab
+### Chunk A: Change-log canonicalization + unreleased vocab
 
 - **Items:** VEW-7T2C (form) + VEW-9QH4 (vocab + backfill) — coupled; one pass
   over `.prawduct/change-log.md`.
@@ -144,7 +144,7 @@ attended — check 9 specifically exercises the blind-spot pull the Critic found
      the finding either way; do not silently claim "none missing").
 - **Done when:**
   1. Live-parser check: every tagged entry matches `TAG_LINE_RE` from the
-     2.2.3 plugin `tools/product-hook`; `grep -c '<!-- prawduct:'` equals the
+     2.2.3 plugin's `product-hook` (upstream; not tracked here); `grep -c '<!-- prawduct:'` equals the
      total tagged-entry count.
   2. Every post-v1.4.0 develop commit range is accounted for (entry exists, or
      explicitly noted why not).
@@ -152,9 +152,9 @@ attended — check 9 specifically exercises the blind-spot pull the Critic found
   4. Committed; chunk marked [x] in Status.
 - **Not in scope:** the plugin-side parser/regen-views changes (framework-coupled).
 
-## Chunk B — BAK-7D2V Chunk 2: pull-side contract UX
+### Chunk B: BAK-7D2V Chunk 2: pull-side contract UX
 
-- **Items:** BAK-7D2V (Chunk 2 of [`../BAK-7D2V/design.md`](../BAK-7D2V/design.md)).
+- **Items:** BAK-7D2V (Chunk 2 of [`.prawduct/artifacts/plans/BAK-7D2V/design.md`](.prawduct/artifacts/plans/BAK-7D2V/design.md)).
 - **Type:** code
 - **Critic mode:** chunk
 - **Deliverables** (per design §"Chunked build plan" item 2):
@@ -177,9 +177,9 @@ attended — check 9 specifically exercises the blind-spot pull the Critic found
 - **Visual change:** yes (pull_cli stdout wording) → queue an operator-verification
   entry for the live notice.
 
-## Chunk C — BAK-7D2V Chunk 3: `/song-snapshot` loop-close
+### Chunk C: BAK-7D2V Chunk 3: `/song-snapshot` loop-close
 
-- **Items:** BAK-7D2V (Chunk 3 of [`../BAK-7D2V/design.md`](../BAK-7D2V/design.md)) — closes the item.
+- **Items:** BAK-7D2V (Chunk 3 of [`.prawduct/artifacts/plans/BAK-7D2V/design.md`](.prawduct/artifacts/plans/BAK-7D2V/design.md)) — closes the item.
 - **Type:** cumulative-final
 - **Deliverables** (per design §"Chunked build plan" item 3):
   1. `skills/song-snapshot/SKILL.md` — after a confirmed overwrite, state the
@@ -233,4 +233,4 @@ merge time handles either shape.
   (memory: project_prawduct_framework_authorship).
 - BAK "Open refinements" from the design: disarm-after-forced-replay
   (row-granular), guard for build.py-owned pulled domains — explicitly deferred
-  in `BAK-7D2V/design.md`, not reopened here.
+  in `.prawduct/artifacts/plans/BAK-7D2V/design.md`, not reopened here.

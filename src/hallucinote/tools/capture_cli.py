@@ -235,9 +235,15 @@ def _cmd_restamp(args: argparse.Namespace) -> int:
     """Refresh a committed snapshot's ``captured_at`` in place WITHOUT a content
     change, disarming the replay guard (BAK-7D2V).
 
-    This is a deliberate operator override, NOT a safe default, and no workflow
-    reaches for it automatically: moving the stamp asserts that the on-disk
-    content already matches Live, and nothing here can verify that. An empty
+    Refuses (exit 2) unless the snapshot already carries a usable `captured_at`.
+    Back-stamping an unstamped/legacy file is the one case that is strictly worse
+    than doing nothing: replay reads an unusable stamp as "no ordering evidence"
+    and warns before reverting, so the user at least SEES it — stamping moves
+    replay to its silent-pass branch and destroys that last signal.
+
+    Otherwise this is a deliberate operator override, NOT a safe default, and no
+    workflow reaches for it automatically: moving the stamp asserts that the
+    on-disk content already matches Live, and nothing here can verify that. An empty
     ``capture diff`` is NOT such a verification — the diff never compares device
     sidechain sources, drum-pad mappings, or per-chain authored props, all of
     which replay re-asserts, so a pull touching only those fields diffs clean
@@ -376,7 +382,8 @@ def main(argv: list[str] | None = None) -> int:
             "BAK-7D2V: refresh captured_at in place with NO content change, to "
             "disarm the replay guard. Deliberate operator override — it asserts "
             "the on-disk content already matches Live and cannot verify it. "
-            "Prefer /song-snapshot (bakes a real capture) or --force-replay."
+            "Refuses a snapshot with no usable captured_at (back-stamping one "
+            "silences replay's warning). Prefer /song-snapshot or --force-replay."
         ),
     )
     restamp_p.add_argument(

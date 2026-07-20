@@ -62,9 +62,12 @@ device sidechain sources, drum-pad mappings, or per-chain authored props — all
 replay re-asserts. A pull touching only those fields diffs clean, so a re-stamp would
 disarm the guard over stale values and let the next build silently revert the pulled
 work (found by Critic review before merge). `capture_cli restamp` (+
-`capture.restamp_captured_at`) survives as an explicit operator override for when no
-capture is possible, now documented as such and warning that it asserts freshness it
-cannot verify; `--force-replay` remains the conscious-discard path.
+`capture.restamp_captured_at`) survives as an explicit operator override on an
+ALREADY-stamped snapshot, warning that it asserts freshness it cannot verify. It now
+REFUSES (exit 2) a snapshot with no usable `captured_at`: replay reads an unusable
+stamp as "no ordering evidence" and warns before reverting, so back-stamping one
+would trade that last signal for a silent pass. `--force-replay` remains the
+conscious-discard path, and re-warns every build rather than disarming permanently.
 `/song-pick-instruments` snapshots already carry `captured_at` (via `compile_snapshot`);
 `docs/song-workflow.md` names the enforced pull→bake→build contract. **Live operator-
 verification** (dial → pull → build refuses → snapshot → survives → force-replay reverts,

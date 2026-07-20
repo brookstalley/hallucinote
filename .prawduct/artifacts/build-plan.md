@@ -6,7 +6,9 @@ version: 2
 # change-log entries `scope=highroi-sweep`.
 scope: highroi-sweep
 depends_on:
-  - artifact: .prawduct/artifacts/plans/BAK-7D2V/design.md   # Chunks B–C are the shipped BAK design's Chunks 2–3
+  # Chunks B–C are the shipped BAK design's Chunks 2–3.
+  - artifact: design
+    path: .prawduct/artifacts/plans/BAK-7D2V/design.md
 last_validated: null
 ---
 
@@ -25,7 +27,7 @@ at the Chunk A / Chunk B boundary.
 - **BAK-7D2V** (S/L, **top priority**) — the pull-durability remainder:
   Chunk 2 (pull-side contract UX) + Chunk 3 (`/song-snapshot` loop-close).
   Chunk 1 (the replay guard) already shipped via PR #210. Full design:
-  [`.prawduct/artifacts/plans/BAK-7D2V/design.md`](.prawduct/artifacts/plans/BAK-7D2V/design.md) — chunks below are that
+  [`.prawduct/artifacts/plans/BAK-7D2V/design.md`](plans/BAK-7D2V/design.md) — chunks below are that
   artifact's Chunks 2–3, not re-derived here (link, don't summarize).
 
 ## Requirements Confidence
@@ -121,7 +123,6 @@ attended — check 9 specifically exercises the blind-spot pull the Critic found
 - **Items:** VEW-7T2C (form) + VEW-9QH4 (vocab + backfill) — coupled; one pass
   over `.prawduct/change-log.md`.
 - **Type:** doc-only
-- **Critic mode:** chunk
 - **Deliverables:**
   1. Every historical non-`prawduct:` tag line (`<!-- chunks=… status=… release=… scope=… -->`,
      ~35 of 73 today) rewritten to the canonical
@@ -154,9 +155,8 @@ attended — check 9 specifically exercises the blind-spot pull the Critic found
 
 ### Chunk B: BAK-7D2V Chunk 2: pull-side contract UX
 
-- **Items:** BAK-7D2V (Chunk 2 of [`.prawduct/artifacts/plans/BAK-7D2V/design.md`](.prawduct/artifacts/plans/BAK-7D2V/design.md)).
+- **Items:** BAK-7D2V (Chunk 2 of [`.prawduct/artifacts/plans/BAK-7D2V/design.md`](plans/BAK-7D2V/design.md)).
 - **Type:** code
-- **Critic mode:** chunk
 - **Deliverables** (per design §"Chunked build plan" item 2):
   1. `src/hallucinote/sync/pull_cli.py` — after a mix-domain apply with
      mutations > 0 (`_cmd_apply` / `_cmd_execute`), print the durability notice:
@@ -179,7 +179,7 @@ attended — check 9 specifically exercises the blind-spot pull the Critic found
 
 ### Chunk C: BAK-7D2V Chunk 3: `/song-snapshot` loop-close
 
-- **Items:** BAK-7D2V (Chunk 3 of [`.prawduct/artifacts/plans/BAK-7D2V/design.md`](.prawduct/artifacts/plans/BAK-7D2V/design.md)) — closes the item.
+- **Items:** BAK-7D2V (Chunk 3 of [`.prawduct/artifacts/plans/BAK-7D2V/design.md`](plans/BAK-7D2V/design.md)) — closes the item.
 - **Type:** cumulative-final
 - **Deliverables** (per design §"Chunked build plan" item 3):
   1. `skills/song-snapshot/SKILL.md` — after a confirmed overwrite, state the

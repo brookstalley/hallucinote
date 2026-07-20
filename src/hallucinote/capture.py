@@ -239,11 +239,16 @@ def count_request_replay_asserted_events(
     later silently revert.
 
     ``pull_cli`` calls this right after a pull apply to fire its durability
-    notice EXACTLY when the replay guard would fire on the next build: same kind
-    set (:data:`_REPLAY_ASSERTED_EVENT_KINDS`), same per-request provenance, no
-    parallel domain whitelist to drift out of sync with the guard. Scoping by
-    ``request_id`` (not ``song_id``) restricts the count to the just-applied
-    pull, so it reflects what THIS pull staged, not history."""
+    notice on exactly the event KINDS that arm the replay guard: same kind set
+    (:data:`_REPLAY_ASSERTED_EVENT_KINDS`), same per-request provenance, no
+    parallel domain whitelist to drift out of sync with the guard.
+
+    Kind parity, not outcome parity — a non-zero count means the guard WILL be
+    armed on the next build, but whether it then refuses or merely warns depends
+    on the snapshot carrying a usable ``captured_at`` (see
+    :func:`_guard_stale_snapshot`'s matrix). Scoping by ``request_id`` (not
+    ``song_id``) restricts the count to the just-applied pull, so it reflects
+    what THIS pull staged, not history."""
     placeholders = ", ".join("?" for _ in _REPLAY_ASSERTED_EVENT_KINDS)
     sql = (
         "SELECT COUNT(*) FROM events "

@@ -1498,7 +1498,8 @@ Branch `fix/reverb-rt60-decay-tail` (off `develop`). Made the audio analyzer's
 verification surfaces trustworthy on real multi-track songs. (Shipped in v0.9.2;
 tagged `release=unreleased` at author time pending a release cut, flipped to the
 real version by VEW-9QH4 — first resolved to v1.5.0, corrected to v0.9.2 in PR
-review once the two concurrent version tracks were untangled. Live re-render validation of the real reverb tail + the
+review once the two concurrent version tracks were untangled. Live re-render
+validation of the real reverb tail + the
 Amp-flip is deferred to the user.)
 
 - **Reverb RT60 — per-return decay-tail (AUD-6R2M).** Replaced the multi-source

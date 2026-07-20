@@ -58,8 +58,10 @@ kind-set audit all locked in Chunk 1). No open design questions remain.
   live schema, not prose — feedback_validate_template_against_live_schema.)
 - **Chunks B–C** — headless unit tests exercise the new pull_cli print path
   (mix-domain apply with mutations > 0 emits the durability notice; zero-change
-  and non-mix pulls stay quiet) and the capture re-stamp path (empty-diff
-  re-stamp refreshes `captured_at` without content change). Skill/doc prose is
+  and non-mix pulls stay quiet) and the empty-diff BAKE path (`capture merge`
+  rewrites the canonical snapshot from the fresh capture, so `captured_at`
+  advances with content that was actually captured — the originally-planned
+  timestamp-only re-stamp was rejected in review). Skill/doc prose is
   reviewed for the pull→bake→build contract wording. Live end-to-end is queued
   as operator-verification, not gated in the build.
 - Full green: `python -m pytest` with **no path arg** (memory:
@@ -82,8 +84,11 @@ kind-set audit all locked in Chunk 1). No open design questions remain.
 
 **Context:** All three chunks built + committed on `feat/highroi-sweep-2026-07`.
 - **A**: 34 legacy change-log tag lines canonicalized to `prawduct:` form (incl.
-  pipe-in-chunks-value fix + 3 foot-tag relocations), 10 `release=unreleased`→v1.5.0
-  (git-ancestry verified), unreleased vocab documented in the header. 75/77 entries
+  pipe-in-chunks-value fix + 3 foot-tag relocations), 10 `release=unreleased`
+  resolved by FIRST-CONTAINING-TAG — 7→v0.9.5, 3→v0.9.2 (corrected in PR review
+  from an initial all-10→v1.5.0; the "ancestor of v1.5.0 but not v1.4.0" test
+  answers a different question, and this repo ran two concurrent version tracks
+  that only converged at v1.5.0), unreleased vocab documented in the header. 75/77 entries
   parse tagged as of this branch's tip (2 genuinely tag-less 2026-05-17 entries left
   as-is); 0 status/multiplicity warnings against the live parser. The total moves as
   entries land — the invariant is "every entry but those 2", not a fixed count.

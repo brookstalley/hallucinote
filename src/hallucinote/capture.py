@@ -145,6 +145,22 @@ _REPLAY_ASSERTED_EVENT_KINDS: tuple[str, ...] = (
 _CAPTURED_AT_SHAPE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z")
 
 
+def has_usable_captured_at(snapshot: dict[str, Any]) -> bool:
+    """True when the snapshot's ``captured_at`` is present and parseable — i.e.
+    the guard can order it against pulled events instead of falling back to the
+    legacy warn-and-proceed branch.
+
+    The one public read of :data:`_CAPTURED_AT_SHAPE`, so callers that must
+    distinguish a stamped snapshot from a legacy one (the guard itself, and the
+    re-stamp override, which refuses on an unstamped file) share one definition
+    of "usable" rather than re-deriving the shape.
+    """
+    captured_at = snapshot.get("captured_at")
+    return bool(
+        isinstance(captured_at, str) and _CAPTURED_AT_SHAPE.fullmatch(captured_at)
+    )
+
+
 class StaleSnapshotError(RuntimeError):
     """`replay_capture` refused to run: the DB holds pulled live edits newer
     than the snapshot's `captured_at`, which the replay would silently revert.

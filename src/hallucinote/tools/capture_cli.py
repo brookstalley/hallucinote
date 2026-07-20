@@ -52,6 +52,7 @@ from hallucinote.capture import (
     capture_plan,
     diff_snapshots,
     format_diff_summary,
+    has_usable_captured_at,
     merge_snapshots,
     migrate_snapshot,
     restamp_captured_at,
@@ -263,6 +264,21 @@ def _cmd_restamp(args: argparse.Namespace) -> int:
 
     snapshot = json.loads(path.read_text())
     old = snapshot.get("captured_at")
+    # Refuse on an absent/malformed stamp. Replay treats an unstamped snapshot as
+    # "no ordering evidence" and takes its warn-and-proceed branch — the user at
+    # least SEES that pulled edits are being overwritten. Back-stamping one moves
+    # it to the silent-pass branch instead, destroying the only signal in the one
+    # case this tool cannot reason about. (Same reason `migrate_snapshot` never
+    # stamps: dating unknown-age content defeats the guard.)
+    if not has_usable_captured_at(snapshot):
+        print(
+            f"error: {path} has no usable `captured_at` stamp ({old!r}). "
+            "Re-stamping it would silence the replay guard's warning without "
+            "any evidence the content is current — capture the snapshot "
+            "instead (`/song-snapshot`), which stamps it correctly.",
+            file=sys.stderr,
+        )
+        return 2
     new = restamp_captured_at(snapshot)
     path.write_text(json.dumps(snapshot, indent=2) + "\n")
     print(

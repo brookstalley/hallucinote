@@ -46,10 +46,11 @@ only; on a stamped snapshot the next `build.py` will REFUSE rather than revert �
 with `/song-snapshot`"). The notice, the `/ableton-pull` skill, and `docs/song-workflow.md`
 all state the refusal as conditional on a `captured_at` stamp: a legacy unstamped
 snapshot gives replay no ordering evidence, so it warns and still reverts.
-It fires EXACTLY when the guard would, by reusing the guard's own
+It fires on the same EVENT KINDS the guard arms on, by reusing the guard's own
 `_REPLAY_ASSERTED_EVENT_KINDS` via new `capture.count_request_replay_asserted_events`
 (scoped to the just-applied pull's `request_id`) — no parallel domain whitelist to
-drift. Quiet on zero-change applies, build.py-owned domains, and dry-runs. The
+drift. (Kind parity, not outcome parity: what the guard then DOES with those events
+depends on the snapshot's stamp — refuse when stamped, warn-and-revert when not.) Quiet on zero-change applies, build.py-owned domains, and dry-runs. The
 `/ableton-pull` skill is reframed (BAK-3M9T Chunk D): names the bake as the closing
 move and the refuse-not-revert behavior. **Chunk 3 — loop-close:** `/song-snapshot`
 closes the pull-then-hand-revert corner, where the guard is armed by pull EVENTS but a

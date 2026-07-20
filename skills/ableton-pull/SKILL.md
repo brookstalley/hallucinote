@@ -145,6 +145,8 @@ Otherwise show the user:
 - Each line from `details` (human-readable diffs — `track 'Drums' volume: 0.6 -> 0.75`).
 - Warnings. For the `clip-notes` "look moved" warning, add: *"If you nudge or restretch a note in Ableton and pull, the diff is correctly modeled as delete + insert — the note picks up a fresh UUID. If annotations/events keyed to the prior UUID matter, undo in Ableton and edit DB-side by the original UUID instead."*
 
+- **The durability notice, whenever `pull_cli` printed one on stderr** (it fires only for mix-layer changes that arm the replay guard). Relay it — this is the closing instruction of the pull, not incidental chatter: the pulled edits live in the regenerable DB only, and the user must bake them with `/song-snapshot` before the next `build.py`. Say so in your own words and offer to run the bake now.
+
 If `mutations == 0` with no warnings AND `unreadable == 0`, say "DB already matches Ableton — no changes needed."
 
 ## Failure modes

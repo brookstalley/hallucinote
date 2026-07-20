@@ -56,6 +56,36 @@ def test_restamp_refreshes_captured_at_without_content_change(tmp_path: Path) ->
     assert after_content == before
 
 
+@pytest.mark.parametrize(
+    "stamp",
+    [None, "", "not-a-timestamp", "2020-01-01T00:00:00Z", "2020-01-01 00:00:00.000Z"],
+    ids=["absent", "empty", "garbage", "no-millis", "space-separator"],
+)
+def test_restamp_refuses_an_unstamped_or_malformed_snapshot(
+    tmp_path: Path, stamp,
+) -> None:
+    """Back-stamping a snapshot the guard cannot order is strictly worse than
+    doing nothing. Replay treats an unusable `captured_at` as "no ordering
+    evidence" and takes its warn-and-proceed branch, so the user at least SEES
+    that pulled edits are being overwritten; stamping it moves replay to the
+    silent-pass branch and destroys that last signal. Refuse instead, and leave
+    the file untouched."""
+    snap = _make_snap()
+    if stamp is not None:
+        snap["captured_at"] = stamp
+    path = tmp_path / "captured_session.json"
+    _write_snapshot(path, snap)
+    original = path.read_text()
+
+    proc = _run("restamp", str(path))
+    assert proc.returncode == 2, (
+        f"restamp must refuse a {stamp!r} stamp — back-stamping it silences the "
+        "replay guard with no evidence the content is current"
+    )
+    assert path.read_text() == original, "refused restamp must not write"
+    assert "captured_at" in proc.stderr
+
+
 def test_restamp_missing_file_returns_two(tmp_path: Path) -> None:
     proc = _run("restamp", str(tmp_path / "absent.json"))
     assert proc.returncode == 2

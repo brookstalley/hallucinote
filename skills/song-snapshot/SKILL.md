@@ -110,6 +110,20 @@ What the diff does NOT see, because the snapshot doesn't carry it:
 
 If the user expects these to surface, they're using the wrong tool — tell them.
 
+What the diff does not see even though the snapshot DOES carry it — and replay
+re-asserts it:
+
+- A device's sidechain source (`sidechain_source` / `sidechain_source_channel`).
+- Drum-pad mappings (`drum_pads`).
+- Per-chain authored props (volume/pan/mute/solo/choke_group/out_note).
+
+This category is the dangerous one: the diff summary you show at the confirm
+prompt under-reports what the overwrite will actually change, and an empty diff
+does not mean the on-disk snapshot is current. Never treat exit 0 as proof the
+snapshot is fresh — that's why the empty-diff path above bakes the capture rather
+than just moving the timestamp. When one of these fields is what changed, say so
+plainly: the write is correct and desirable, the *summary* just can't itemize it.
+
 ## After overwrite
 
 Note the timestamp / git status to the user. If the snapshot is tracked in git (`songs/<slug>/captured_session.json` typically is), suggest they review and commit it themselves — this skill never commits on its own.

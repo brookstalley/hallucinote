@@ -185,12 +185,28 @@ When changing this surface:
   injects `db_seq` into the render request because only the server side can
   read the song DB.
 - **Consumers**: `audio/io.py` `load_capture` → `analyze_mix` (stamps `db_seq`
-  into the MixReport), `resolve_baseline` (seq → report resolution).
+  into the MixReport), `resolve_baseline` (seq → report resolution),
+  `hallucinote/takes.py` `recency_key` (retention ordering — see Deleter).
+- **Deleter**: `hallucinote/takes.py` (`plan_sweep`/`execute_sweep`), driven
+  automatically from `server._sweep_stale_takes` at render start and manually
+  from `hallucinote captures prune`. This is the manifest's only *destructive*
+  consumer, and it recursively removes the take directory the manifest lives in.
 - **Contract**: `db_seq` crosses three runtimes (server reads → vendored
   handler writes → engine loads). It is best-effort provenance: absent/null on
   old manifests and when the song DB can't be read — consumers must treat
   `db_seq=None` as "unknown", never an error. Field additions are additive
   (same policy as MixReport JSON).
+- **`captured_at` is load-bearing for a destructive decision.** It is the
+  primary key of `recency_key`, which orders takes for BOTH the analysis
+  selector (`_latest_captures_dir` — which take gets analyzed) and the retention
+  sweep (which takes get deleted). Two consequences for anyone touching it:
+  (1) the two readers must never fork the ordering, so `recency_key` has exactly
+  one definition and the analysis handler imports it — a test pins that they
+  agree; (2) a manifest whose `captured_at` is missing or malformed falls back to
+  mtime then dir name, which *changes a take's delete priority* — so weakening
+  the field's write path is a data-loss risk, not a cosmetic one. The presence of
+  `manifest.json` is itself the "this directory is a take" predicate: a
+  subdirectory without one is never enumerated and therefore never swept.
 
 ### Remote Script Version Handshake + Server Identity (`hallucinote_mcp/__init__.py`, `resources/`, `cli/`)
 

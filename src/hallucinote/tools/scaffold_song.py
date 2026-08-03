@@ -29,6 +29,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from hallucinote import workspace
 from hallucinote.capture import utc_now_eventlike
 
 
@@ -37,17 +38,14 @@ from hallucinote.capture import utc_now_eventlike
 # ---------------------------------------------------------------------------
 
 
-SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+# Re-exported from `workspace`, which owns the definition because a slug is a
+# path segment and the slug→path resolvers live there — one rule, so a caller
+# that resolves a slug into a directory it will delete under can't be validating
+# against a looser copy.
+SLUG_RE = workspace.SLUG_RE
+validate_slug = workspace.validate_slug
+
 SIGNATURE_RE = re.compile(r"^(\d+)/(\d+)$")
-
-
-def validate_slug(slug: str) -> None:
-    if not SLUG_RE.fullmatch(slug):
-        raise ValueError(
-            f"invalid slug {slug!r}: must match [a-z0-9][a-z0-9_-]* "
-            "(lowercase letters, digits, hyphens, underscores; no leading "
-            "hyphen or underscore; no uppercase, no spaces, no dots)"
-        )
 
 
 def parse_signature(signature: str) -> tuple[int, int]:

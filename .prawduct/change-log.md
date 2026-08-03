@@ -20,6 +20,72 @@
      pre-bumping a version (against `feedback_no_premature_version_bump`) or
      mislabeling in-flight work as an already-shipped version. -->
 
+## 2026-08-03 — Capture takes get a rolling window (renders no longer grow without bound)
+
+<!-- prawduct: type=feature | chunks=1,2,3,4 | scope=aud-2d6t | release=unreleased -->
+
+Nothing in the tree ever deleted a capture. Every `ableton_render` wrote a take to
+`songs/<slug>/captures/<ts>/` — a 48 kHz stereo 32-bit-float WAV per track, return and
+master, ~23 MB per surface-minute — and every take was kept forever. A reported
+real-world song had takes reaching ~4 GB each.
+
+The audio format is not the lever and was left alone: float32 is what lets the master
+overshoot analysis measure above 0 dBFS at all (`audio/attribution.py`). Retention is
+the lever, and it is safe because captures are **write-once, read-once**: the render
+writes them, `ableton_analysis` reads them once and emits a self-contained MixReport to
+`songs/<slug>/analysis/<ts>.json`, and baseline comparison resolves against those JSONs
+(`audio.compare.resolve_baseline` keys on `db_seq`) — never re-opening a WAV. The
+MixReport trail is the audit log of mix evolution and is never swept; what a sweep costs
+is re-analyzing one specific take with different parameters.
+
+New `hallucinote.takes` owns the window, split plan-then-execute the way the sync layer
+splits `PushPlan` from execution: `plan_sweep` classifies every take while writing
+nothing, `execute_sweep` removes what the plan named and collects per-take failures
+rather than letting one locked directory strand the rest. Two guards never sweep — a
+`.pinned` take (which also does not consume a keep slot, so pinning a reference can't
+silently evict a working take) and a take whose `status.json` still reads
+`state="running"`. It lives at the package top level, not under `hallucinote.audio`,
+because that package eagerly imports the numpy/librosa stack and the MCP server is
+stdlib-only at startup — the same constraint that placed `paths.py`.
+
+The sweep runs automatically in `server.py` before an `ableton_render(start)` is
+forwarded, keeping the newest 2 takes. Render start is the one moment no take is in
+flight (one render at a time), so it cannot race a capture. Scope is always the song's
+own captures root, never the parent of a caller-supplied `output_dir`, and the incoming
+dir is protected explicitly; the whole thing is best-effort, so disk hygiene can never
+cost a capture. `HALLUCINOTE_CAPTURE_KEEP` sets the window, `HALLUCINOTE_CAPTURE_SWEEP=0`
+turns it off.
+
+`hallucinote captures list | prune | pin | unpin` is the operator surface. `prune`
+requires an explicit `--song` or `--all` — reading is safe and defaults to everything,
+but deleting gigabytes is not what a forgotten argument should do — and `--dry-run`
+previews. `recency_key` was hoisted out of the analysis handler's `_capture_recency_key`
+into `takes` so the sweep's ordering and the analysis selector's "newest take" are one
+definition; had they drifted, a sweep could have deleted the take the next analysis
+would have chosen.
+
+`/render-analyze` also carries a **when-to-pin policy**, recorded here because it is
+shipped agent behavior a maintainer would otherwise find only in a commit body: pin on
+expressed intent to keep a take (not on a nickname or a compliment), and say so when you
+do. A pin is permanent *and* free of a keep slot — `plan_sweep` appends pinned takes to
+`kept` before the budget decrement — so pinning on weak signals would re-create the
+unbounded growth this window exists to bound.
+
+Departs from backlog AUD-2D6T's proposed shape (a manual `tools/audio-prune`): a manual
+tool relies on the operator remembering, which is the regime that produced the 4 GB
+takes. The CLI is kept, but the sweep is automatic. Retention policy (auto-sweep, keep
+2) chosen by the user 2026-08-03. Server-side only — `server.py` and
+`server_side/analysis.py` are outside `_FINGERPRINT_PATHS`, so no Live re-vendor.
+
+**Verified against real data**, not only fixtures: on this repo's own
+`songs/missing/captures/` (one 406.3 MB take), `captures list` reported it,
+`prune --keep 0 --dry-run` named it and removed nothing, `pin` followed by a real
+`prune --keep 0` left it untouched ("nothing to prune (1 take(s) kept)"), and
+`unpin` restored it — so the pin guard was exercised against a take that would
+otherwise have been deleted. The AUTOMATIC render-path sweep is unit-tested
+against a faked `client.send` but needs a live render to confirm end-to-end; it
+is queued in `.prawduct/operator-verification.md`.
+
 ## 2026-07-20 — Provenance tests no longer assert ambient git state (first red PR-CI run)
 
 <!-- prawduct: type=bugfix | scope=highroi-sweep | release=unreleased -->

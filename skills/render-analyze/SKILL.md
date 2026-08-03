@@ -8,6 +8,8 @@ disable-model-invocation: false
 
 # /render-analyze — render + analyze, the poll loops kept out of your context
 
+> **Running engine commands.** The engine ships in the plugin's uv env. Resolve `$PY` once from `ableton://server/info`'s `python`; the `hallucinote …` commands below run as `"$PY" -m hallucinote.cli …`. See [`docs/running-the-engine.md`](../../docs/running-the-engine.md).
+
 A full render is realtime (minutes) and a many-surface analyze can exceed the
 60 s tool-call timeout, so both are **start + poll** actions (see
 `ableton://guides/conventions` "Long-running actions = start + poll"). Driving
@@ -74,6 +76,41 @@ step — usually **`/mix-review <slug>`** to interpret the report against the
 song's intent (this skill produces the report; `/mix-review` reads it). If the
 subagent returned a `failed` error, relay the teaching message + the fix, don't
 silently re-run.
+
+## Capture retention — old takes are swept automatically
+
+Each render writes a take to `songs/<slug>/captures/<ts>/` holding a
+32-bit-float WAV per track, return and master — roughly 23 MB per
+surface-minute, so a full-length multi-track song costs gigabytes per take.
+**Render start** applies a rolling window: it keeps the **2 newest takes that
+already exist** and removes the rest, then the render adds its own — so a song
+settles at **3 takes on disk** after each render. This is safe because the
+MixReport in `songs/<slug>/analysis/` is the durable measurement — analysis reads
+a take once and writes a self-contained JSON, and `--compare` resolves against
+those JSONs, never the audio. Reports are never swept.
+
+**Pin when the user expresses intent to keep this take** — they say to keep or
+save it, or they ask to come back to it later. Don't wait to be asked in those
+words; the window is silent and irreversible —
+**an unpinned take survives the next two renders and is removed at the start
+of the third**. But pin on *that* signal only, not on a passing compliment or a
+nickname: a pin is permanent and does **not** consume a keep slot, so pinning
+liberally re-creates the unbounded growth this window exists to stop. **Say so
+when you pin**, and name the unpin (`captures unpin <dir>`) — an unmentioned pin
+is a gigabyte the user never agreed to keep:
+
+```
+"$PY" -m hallucinote.cli captures pin songs/<slug>/captures/<ts>
+```
+
+`"$PY" -m hallucinote.cli captures list` shows what's on disk;
+`… captures prune --song <slug> --dry-run` previews a sweep.
+
+`HALLUCINOTE_CAPTURE_KEEP` changes the window and `HALLUCINOTE_CAPTURE_SWEEP=0`
+disables the automatic sweep — but both are read by the **MCP server process**,
+so they must be set in the `env` block of this server's entry in the user's
+Claude settings, not exported in a terminal. The server logs
+`retention sweep disabled` at INFO when the opt-out actually reached it.
 
 ## Why a subagent (not inline, not a CLI)
 

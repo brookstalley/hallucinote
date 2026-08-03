@@ -26,10 +26,20 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 logger = logging.getLogger("hallucinote.workspace")
+
+# What a song slug may contain. Defined HERE, next to the slug→path resolvers,
+# because a slug is only ever meaningful as a path segment: ``resolve_song_dir``
+# joins it straight onto a root, and ``pathlib`` join semantics make an ABSOLUTE
+# slug replace the root outright (``Path("songs") / "/etc"`` is ``/etc``) while
+# ``..`` segments walk out of the songs tree. Any caller that turns a slug into a
+# path it will then read — or DELETE under — must run it through
+# :func:`validate_slug` first; the character class alone forecloses both escapes.
+SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
 MARKER_FILENAME = "hallucinote.toml"
 ENV_SONGS_ROOT = "HALLUCINOTE_SONGS_ROOT"
@@ -40,6 +50,19 @@ LAYOUT_SONG = "song"  # the marker's directory IS one song
 _VALID_LAYOUTS = (LAYOUT_MONOREPO, LAYOUT_SONG)
 
 _LEGACY_SONGS_ROOT = "songs"
+
+
+def validate_slug(slug: str) -> None:
+    """Raise ``ValueError`` unless ``slug`` is a safe single path segment.
+
+    See :data:`SLUG_RE` for why this is a path-safety guard, not just a
+    style rule."""
+    if not SLUG_RE.fullmatch(slug):
+        raise ValueError(
+            f"invalid slug {slug!r}: must match [a-z0-9][a-z0-9_-]* "
+            "(lowercase letters, digits, hyphens, underscores; no leading "
+            "hyphen or underscore; no uppercase, no spaces, no dots)"
+        )
 
 
 @dataclass(frozen=True)

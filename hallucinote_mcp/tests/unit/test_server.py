@@ -1059,3 +1059,72 @@ def test_render_start_sweep_scoped_to_the_song_not_an_arbitrary_output_dir(
 
     assert {p.name for p in elsewhere.iterdir()} == {f"take-{i}" for i in range(4)}
     assert {p.name for p in captures.iterdir()} == {"song-take-3", "song-take-2"}
+
+
+def test_render_start_refuses_a_traversal_slug_before_sweeping(
+    tmp_path, monkeypatch, caplog,
+):
+    """A malicious/typo'd song_slug must never aim the sweep outside the song
+    tree. `Path("songs") / "/abs"` is `/abs`, so an absolute slug would
+    otherwise replace the songs root entirely."""
+    import logging
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("HALLUCINOTE_CAPTURE_SWEEP", raising=False)
+    # Seeded under <victim>/captures because that is exactly where an absolute
+    # slug lands the sweep: resolve_song_dir(slug) / "captures". Without the
+    # validation these three are swept down to two.
+    victim = tmp_path / "victim" / "captures"
+    _seed_take(victim, "precious", "20260601T000000Z")
+    _seed_take(victim, "precious-2", "20260602T000000Z")
+    _seed_take(victim, "precious-3", "20260603T000000Z")
+
+    with caplog.at_level(logging.WARNING):
+        send = _render_start(
+            {
+                "song_slug": str(tmp_path / "victim"),
+                "output_dir": str(victim / "new"),
+            }
+        )
+
+    assert {p.name for p in victim.iterdir()} == {
+        "precious", "precious-2", "precious-3",
+    }
+    assert send.called, "the render itself is not the sweep's business to block"
+
+
+def test_render_start_logs_when_the_sweep_is_disabled(tmp_path, monkeypatch, caplog):
+    """A silent no-op looks identical to an env var that never reached this
+    process, so the opt-out confirms itself in the log."""
+    import logging
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HALLUCINOTE_CAPTURE_SWEEP", "0")
+
+    with caplog.at_level(logging.INFO, logger="hallucinote_mcp"):
+        _render_start({"song_slug": "demo"})
+
+    assert "retention sweep disabled" in caplog.text
+
+
+def test_sweep_env_name_matches_the_engine_constant():
+    """server.py names the var literally (it must read correctly even with no
+    engine installed); this pins it to the engine's definition."""
+    from hallucinote.takes import ENV_SWEEP
+    from hallucinote_mcp.server import _CAPTURE_SWEEP_ENV
+
+    assert _CAPTURE_SWEEP_ENV == ENV_SWEEP
+
+
+def test_render_start_sweep_names_the_takes_it_removed(tmp_path, monkeypatch, caplog):
+    """The log is the only record a take existed once its directory is gone."""
+    import logging
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("HALLUCINOTE_CAPTURE_KEEP", raising=False)
+    monkeypatch.delenv("HALLUCINOTE_CAPTURE_SWEEP", raising=False)
+    captures = tmp_path / "songs" / "demo" / "captures"
+    for i in range(4):
+        _seed_take(captures, f"take-{i}", f"2026060{i}T000000Z")
+
+    with caplog.at_level(logging.INFO, logger="hallucinote_mcp"):
+        _render_start({"song_slug": "demo"})
+
+    assert "take-0" in caplog.text and "take-1" in caplog.text

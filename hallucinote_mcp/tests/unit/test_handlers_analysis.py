@@ -1317,3 +1317,47 @@ def test_analyze_handler_compare_to_unknown_seq_teaches(synthetic_song: Path):
             None, song_slug="test-song", captures_dir=str(captures),
             compare_to=99,
         )
+
+
+def test_latest_captures_dir_agrees_with_the_retention_sweeps_ordering(
+    tmp_path, monkeypatch,
+):
+    """The analysis selector and the retention sweep must rank takes IDENTICALLY.
+
+    They are two readers of one ordering (`hallucinote.takes.recency_key`). If
+    they ever disagreed, a sweep keeping "the newest N" could delete the very
+    dir `_latest_captures_dir` would then pick — silently analyzing a take that
+    no longer exists. Pinned here with a hand-named dir, the case that breaks
+    naive name-ordering ('v' sorts above every '2026…').
+    """
+    # `analysis_handlers` is imported at module scope on purpose: importing the
+    # `server_side` PACKAGE from inside a test re-runs its `__init__`, which
+    # re-registers every action and raises once a registry-isolating fixture has
+    # reset that state.
+    from hallucinote import takes as T
+
+    captures = tmp_path / "songs" / "demo" / "captures"
+    stamps = {
+        "v4-seam-verse2": "20260101T000000Z",
+        "20260607T035338Z": "20260607T035338Z",
+        "20260302T000000Z": "20260302T000000Z",
+    }
+    for name, stamp in stamps.items():
+        d = captures / name
+        d.mkdir(parents=True)
+        (d / "manifest.json").write_text(
+            json.dumps({"captured_at": stamp}), encoding="utf-8"
+        )
+    monkeypatch.setattr(
+        analysis_handlers, "_resolve_song_dir", lambda slug: tmp_path / "songs" / slug
+    )
+
+    selector_pick = analysis_handlers._latest_captures_dir("demo")
+    sweep_order = T.list_takes(captures)
+
+    assert sweep_order[0].path == selector_pick, (
+        "the sweep's newest take must be the one analysis would select"
+    )
+    # And the survivor of a keep=1 sweep is exactly what the selector picks.
+    plan = T.plan_sweep(captures, keep=1)
+    assert [t.path for t in plan.kept] == [selector_pick]

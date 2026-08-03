@@ -1,3 +1,11 @@
+---
+artifact: build-plan
+version: 1
+scope: AUD-2D6T, aud-2d6t-capture-retention
+depends_on: []
+last_validated: null
+---
+
 # AUD-2D6T — Build Plan (audio-capture take retention)
 
 Backlog: `AUD-2D6T` (rolling window + pinned takes, `stage: ready`, filed
@@ -5,6 +13,18 @@ Backlog: `AUD-2D6T` (rolling window + pinned takes, `stage: ready`, filed
 §"Departure from the backlog item" below.
 
 **Critic mode:** cumulative at the end (small chunks, one coherent surface).
+
+## Requirements Confidence: **High**
+
+The problem is a measured fact (nothing in the tree deletes a captures dir; the
+sizes are computed from the WAVs' own 48 kHz/stereo/float32 headers), the safety
+argument is verified by grep (`audio/io.py:load_capture_set` is the sole reader
+of a captures dir, and `resolve_baseline` keys on the analysis JSONs), and the
+one genuinely open choice — the retention policy, which auto-deletes
+multi-gigabyte artifacts — was put to the user and answered before any code was
+written. `scope:` above carries the branch's last segment alongside the item id
+so branch→plan inference resolves; the id alone never matches a
+`feat/<id>-<words>` branch name.
 
 **Context (cross-session handoff):** User reported renders reaching ~4 GB each
 with no cleanup. Retention policy chosen by the user 2026-08-03: **auto-sweep at
@@ -71,6 +91,20 @@ retention", "pin this take"), which also avoids colliding with the existing
 The sweep's ordering and `_latest_captures_dir`'s selection must agree: a sweep
 that ordered takes differently could delete the take the next analysis would
 have picked. That is a correctness coupling, not a DRY preference.
+
+**A song slug is validated before it can reach a delete** (added after Critic
+review, which found the hole). `resolve_song_dir` joins the slug straight onto a
+songs root, and `pathlib` join semantics make an *absolute* slug replace that
+root outright (`Path("songs") / "/etc"` is `/etc`) while `..` segments walk out
+of the songs tree — either would aim `execute_sweep` at a directory unrelated to
+the song, contradicting this plan's own "never an unrelated directory" claim.
+`takes.captures_root_for_slug` is the single choke point: it validates then
+resolves, and both slug-taking entry points (the render path and the CLI) go
+through it, so validation cannot be forgotten at one of them. `SLUG_RE` /
+`validate_slug` moved from `tools/scaffold_song.py` into `workspace.py` — the
+module that owns slug→path resolution should own what a valid slug is, so a
+caller resolving a slug into a directory it will delete under can't be checking
+against a looser copy.
 
 **Configuration by environment variable**, matching `HALLUCINOTE_SONGS_ROOT`:
 `HALLUCINOTE_CAPTURE_KEEP` (int, default 2) and `HALLUCINOTE_CAPTURE_SWEEP`
@@ -141,7 +175,10 @@ the absolutize contract).
 **Deliverable:** `src/hallucinote/tools/captures_cli.py` + registration in
 `cli.py`'s `_SUBCOMMANDS` / `_SUMMARY`:
 - `hallucinote captures list [--song SLUG]` — takes with size, age, pinned and
-  analyzed flags, plus the total on disk.
+  in-flight flags, plus the total on disk. (An `analyzed` flag was considered
+  and dropped: computing it means scanning `analysis/*.json` for a matching
+  `captures_dir`, and it informs no decision the sweep makes — pinning is the
+  mechanism for "keep this one".)
 - `hallucinote captures prune [--song SLUG | --all] [--keep N] [--dry-run]` —
   `--dry-run` prints the plan and exits 0 having written nothing.
 - `hallucinote captures pin <take-dir>` / `unpin <take-dir>`.

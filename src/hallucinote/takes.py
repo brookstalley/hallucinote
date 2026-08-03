@@ -37,6 +37,8 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+from hallucinote.workspace import resolve_song_dir, validate_slug
+
 # Written by the render handler into each take dir; also the completion
 # heartbeat. ``state`` is "running" mid-render and "done"/"error" at the end.
 STATUS_FILENAME = "status.json"
@@ -99,6 +101,24 @@ class SweepResult:
     # (take path, error message) for takes that could not be removed. Collected
     # rather than raised so one locked directory can't abandon the rest.
     failures: tuple[tuple[Path, str], ...]
+
+
+def captures_root_for_slug(slug: str) -> Path:
+    """The captures root for ``slug``, refusing a slug that isn't path-safe.
+
+    THE choke point between a caller-supplied song slug and a recursive delete.
+    ``resolve_song_dir`` joins the slug straight onto a songs root, and
+    ``pathlib`` join semantics let an absolute slug replace that root outright
+    (``Path("songs") / "/etc"`` is ``/etc``) while ``..`` segments walk out of
+    the songs tree — either would aim a sweep at a directory that has nothing to
+    do with the song. Every slug-taking entry point (the render path and the
+    CLI) resolves through here, so validation cannot be forgotten at one of
+    them.
+
+    Raises ``ValueError`` (via :func:`workspace.validate_slug`) on a bad slug.
+    """
+    validate_slug(slug)
+    return resolve_song_dir(slug) / "captures"
 
 
 def recency_key(take_dir: Path) -> tuple[str, float, str]:
@@ -318,6 +338,7 @@ __all__ = [
     "SweepPlan",
     "SweepResult",
     "Take",
+    "captures_root_for_slug",
     "execute_sweep",
     "format_bytes",
     "keep_from_env",

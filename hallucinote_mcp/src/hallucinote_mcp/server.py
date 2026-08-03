@@ -387,6 +387,12 @@ def _attach_render_db_seq(request: Request) -> Request:
     return dataclasses.replace(request, params=params)
 
 
+# Named here rather than imported from the engine so the disabled-path log line
+# below reads correctly even in an MCP-only install where `hallucinote` is
+# absent; the engine's `takes.ENV_SWEEP` is the same string, asserted by a test.
+_CAPTURE_SWEEP_ENV = "HALLUCINOTE_CAPTURE_SWEEP"
+
+
 def _sweep_stale_takes(request: Request) -> None:
     """Apply the capture-retention window before this render writes a new take.
 
@@ -411,13 +417,13 @@ def _sweep_stale_takes(request: Request) -> None:
     """
     try:
         from hallucinote.takes import (
+            captures_root_for_slug,
             execute_sweep,
             format_bytes,
             keep_from_env,
             plan_sweep,
             sweep_enabled,
         )
-        from hallucinote.workspace import resolve_song_dir
     except ImportError:
         return
 
@@ -425,13 +431,23 @@ def _sweep_stale_takes(request: Request) -> None:
     if not isinstance(song_slug, str) or not song_slug:
         return
     if not sweep_enabled():
+        # Log it: an operator who set the opt-out needs confirmation it reached
+        # THIS process. The var must be exported to the MCP server (the `env`
+        # block of the Claude settings entry), not just to a shell — and a
+        # silent no-op looks identical to a var that never arrived.
+        logger.info(
+            "render: capture retention sweep disabled by %s; takes will "
+            "accumulate for %r", _CAPTURE_SWEEP_ENV, song_slug,
+        )
         return
 
     try:
-        song_dir = resolve_song_dir(song_slug)
-        if not song_dir.is_absolute():
-            song_dir = pathlib.Path(os.getcwd()) / song_dir
-        captures_root = song_dir / "captures"
+        # Resolves AND validates the slug — a slug is a path segment, and an
+        # absolute or dot-dot slug would otherwise aim the sweep outside the
+        # song tree entirely.
+        captures_root = captures_root_for_slug(song_slug)
+        if not captures_root.is_absolute():
+            captures_root = pathlib.Path(os.getcwd()) / captures_root
 
         protect: list[pathlib.Path] = []
         outgoing = request.params.get("output_dir")
@@ -443,12 +459,15 @@ def _sweep_stale_takes(request: Request) -> None:
             return
         result = execute_sweep(plan)
         if result.removed:
+            # Name what was destroyed, not just how many: this log is the only
+            # record that a given take ever existed once its directory is gone.
             logger.info(
                 "render: swept %d stale capture take(s) for %r, freeing %s "
-                "(keeping the newest %d; pin a take with a .pinned file to "
-                "keep it permanently)",
+                "(kept the newest %d; pin a take with a .pinned file to keep "
+                "it permanently). Removed: %s",
                 len(result.removed), song_slug,
                 format_bytes(result.freed_bytes), plan.keep,
+                ", ".join(p.name for p in result.removed),
             )
         for path, err in result.failures:
             logger.warning("render: could not remove stale take %s: %s", path, err)

@@ -38,6 +38,7 @@ from hallucinote.takes import (
     ENV_SWEEP,
     PIN_FILENAME,
     Take,
+    captures_root_for_slug,
     execute_sweep,
     format_bytes,
     keep_from_env,
@@ -49,11 +50,8 @@ from hallucinote.workspace import (
     LAYOUT_SONG,
     find_workspace,
     resolve_song_dir,
+    validate_slug,
 )
-
-
-def _captures_root(slug: str) -> Path:
-    return resolve_song_dir(slug) / "captures"
 
 
 def _unknown_song(slug: str) -> bool:
@@ -61,8 +59,10 @@ def _unknown_song(slug: str) -> bool:
 
     Worth refusing rather than reporting "nothing to prune": a typo'd slug would
     otherwise look like a successful sweep that found nothing, and the operator
-    would believe disk was reclaimed when it wasn't.
+    would believe disk was reclaimed when it wasn't. A slug that isn't even
+    path-safe raises out of `validate_slug` before any path is built.
     """
+    validate_slug(slug)
     return not resolve_song_dir(slug).is_dir()
 
 
@@ -113,7 +113,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
         return 0
     grand_total = 0
     for slug in slugs:
-        takes = list_takes(_captures_root(slug))
+        takes = list_takes(captures_root_for_slug(slug))
         total = sum(t.size_bytes for t in takes)
         grand_total += total
         print(f"{slug} — {len(takes)} take(s), {format_bytes(total)}")
@@ -142,7 +142,7 @@ def _cmd_prune(args: argparse.Namespace) -> int:
     total_removed = 0
     failed = False
     for slug in slugs:
-        root = _captures_root(slug)
+        root = captures_root_for_slug(slug)
         plan = plan_sweep(root, keep=keep, force=args.force)
         if not plan.sweep:
             print(f"{slug}: nothing to prune ({len(plan.kept)} take(s) kept)")
@@ -242,7 +242,14 @@ def main(argv: list[str] | None = None) -> int:
     if getattr(args, "keep", None) is not None and args.keep < 0:
         print("error: --keep must be >= 0", file=sys.stderr)
         return 2
-    return int(args.func(args))
+    try:
+        return int(args.func(args))
+    except ValueError as exc:
+        # A slug that isn't path-safe (absolute, dot-dot, uppercase, …) is
+        # refused before any directory is resolved. Surface it as a usage
+        # error rather than a traceback.
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":  # pragma: no cover - console entry

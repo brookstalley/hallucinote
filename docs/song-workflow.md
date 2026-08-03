@@ -127,19 +127,28 @@ your context. This is the expensive real-time step — it feeds the next checkpo
 **Capture retention.** Each render writes one take to `songs/<slug>/captures/<ts>/`
 — a 32-bit-float WAV per track, return and master, roughly 23 MB per
 surface-minute, so a full-length multi-track song costs gigabytes per take. A
-rolling window runs automatically at render start: the newest **2** takes survive
-and older ones are removed. Deleting an old take is safe because the durable
-measurement is the MixReport in `songs/<slug>/analysis/` — analysis reads a take
-once and writes a self-contained JSON, and baseline comparison (`compare_to`)
-resolves against those JSONs, never the audio. Reports are never swept; what a
-sweep costs is re-analyzing that specific take with different parameters.
+rolling window runs automatically **at render start**: it keeps the **2 newest
+takes already on disk** and removes the rest, then the render writes its own — so
+a song settles at **3 takes** after each render. (`hallucinote captures prune
+--keep 2` run on its own leaves 2, because no new take follows it.) Deleting an
+old take is safe because the durable measurement is the MixReport in
+`songs/<slug>/analysis/` — analysis reads a take once and writes a self-contained
+JSON, and baseline comparison (`compare_to`) resolves against those JSONs, never
+the audio. Reports are never swept; what a sweep costs is re-analyzing that
+specific take with different parameters.
 
 To keep a reference take permanently, pin it — `hallucinote captures pin
 songs/<slug>/captures/<ts>` (pinned takes are skipped by every sweep and don't
-consume a keep slot). `hallucinote captures list` shows what's on disk and
-`hallucinote captures prune --song <slug> --dry-run` previews a sweep without
-deleting. Set `HALLUCINOTE_CAPTURE_KEEP` to change the window, or
-`HALLUCINOTE_CAPTURE_SWEEP=0` to turn the automatic sweep off entirely.
+consume a keep slot). An unpinned take is gone after two more renders.
+`hallucinote captures list` shows what's on disk and `hallucinote captures prune
+--song <slug> --dry-run` previews a sweep without deleting.
+
+`HALLUCINOTE_CAPTURE_KEEP` changes the window and `HALLUCINOTE_CAPTURE_SWEEP=0`
+turns the automatic sweep off. Both are read by the **MCP server process**, so to
+affect the automatic sweep they must be set in the `env` block of this server's
+entry in the user's Claude settings — exporting them in a terminal reaches the
+CLI but not the server. The server logs `retention sweep disabled` at INFO when
+the opt-out reached it, so the setting confirms itself.
 
 ### 7 — Read the mix ⭐ `/mix-review`
 The single read-side surface over all audio analyses. It reads rendered audio, so

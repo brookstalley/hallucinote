@@ -287,6 +287,56 @@ def test_sweep_only_reaches_immediate_subdirs_of_the_captures_root(tmp_path):
     assert list(captures.iterdir()) == []
 
 
+# --- slug → root is the choke point before any delete ----------------------
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "/etc",                 # absolute: pathlib join DISCARDS the songs root
+        "../../../tmp",         # dot-dot: walks out of the songs tree
+        "demo/../../elsewhere",
+        "..",
+        "Demo",                 # uppercase — not a real slug
+        "with space",
+        ".hidden",
+    ],
+)
+def test_captures_root_for_slug_refuses_an_unsafe_slug(bad, monkeypatch, tmp_path):
+    """A slug reaches a recursive delete, so it must be a safe path segment.
+
+    `Path("songs") / "/etc"` is `/etc` — an absolute slug silently replaces the
+    songs root and would aim the sweep at an unrelated directory.
+    """
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(ValueError, match="invalid slug"):
+        T.captures_root_for_slug(bad)
+
+
+def test_captures_root_for_slug_resolves_a_good_slug(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("HALLUCINOTE_SONGS_ROOT", raising=False)
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+
+    root = T.captures_root_for_slug("demo")
+
+    assert root.parts[-3:] == ("songs", "demo", "captures")
+
+
+def test_an_absolute_slug_cannot_aim_the_sweep_outside_the_song_tree(
+    monkeypatch, tmp_path,
+):
+    """End-to-end: the escape the validation exists to close."""
+    monkeypatch.chdir(tmp_path)
+    victim = tmp_path / "victim"
+    _make_take(victim, "precious", captured_at="20260601T000000Z")
+
+    with pytest.raises(ValueError, match="invalid slug"):
+        T.captures_root_for_slug(str(victim))
+
+    assert (victim / "precious").exists()
+
+
 # --- configuration ---------------------------------------------------------
 
 

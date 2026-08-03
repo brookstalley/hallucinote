@@ -8,6 +8,8 @@ disable-model-invocation: false
 
 # /render-analyze — render + analyze, the poll loops kept out of your context
 
+> **Running engine commands.** The engine ships in the plugin's uv env. Resolve `$PY` once from `ableton://server/info`'s `python`; the `hallucinote …` commands below run as `"$PY" -m hallucinote.cli …`. See [`docs/running-the-engine.md`](../../docs/running-the-engine.md).
+
 A full render is realtime (minutes) and a many-surface analyze can exceed the
 60 s tool-call timeout, so both are **start + poll** actions (see
 `ableton://guides/conventions` "Long-running actions = start + poll"). Driving
@@ -79,23 +81,30 @@ silently re-run.
 
 Each render writes a take to `songs/<slug>/captures/<ts>/` holding a
 32-bit-float WAV per track, return and master — roughly 23 MB per
-surface-minute, so a full-length multi-track song costs gigabytes per take. The
-render start applies a rolling window: the **2 newest takes survive**, older ones
-are removed. This is safe because the MixReport in `songs/<slug>/analysis/` is
-the durable measurement — analysis reads a take once and writes a self-contained
-JSON, and `--compare` resolves against those JSONs, never the audio. Reports are
-never swept.
+surface-minute, so a full-length multi-track song costs gigabytes per take.
+**Render start** applies a rolling window: it keeps the **2 newest takes that
+already exist** and removes the rest, then the render adds its own — so a song
+settles at **3 takes on disk** after each render. This is safe because the
+MixReport in `songs/<slug>/analysis/` is the durable measurement — analysis reads
+a take once and writes a self-contained JSON, and `--compare` resolves against
+those JSONs, never the audio. Reports are never swept.
 
 If the user wants a take kept as a permanent reference (a mix they may want to
-re-analyze differently later), pin it rather than relying on the window:
+re-analyze differently later), pin it rather than relying on the window —
+**an unpinned take is gone after two more renders**:
 
 ```
-hallucinote captures pin songs/<slug>/captures/<ts>
+"$PY" -m hallucinote.cli captures pin songs/<slug>/captures/<ts>
 ```
 
-`hallucinote captures list` shows what's on disk; `hallucinote captures prune
---song <slug> --dry-run` previews a sweep. `HALLUCINOTE_CAPTURE_KEEP` changes the
-window and `HALLUCINOTE_CAPTURE_SWEEP=0` disables the automatic sweep.
+`"$PY" -m hallucinote.cli captures list` shows what's on disk;
+`… captures prune --song <slug> --dry-run` previews a sweep.
+
+`HALLUCINOTE_CAPTURE_KEEP` changes the window and `HALLUCINOTE_CAPTURE_SWEEP=0`
+disables the automatic sweep — but both are read by the **MCP server process**,
+so they must be set in the `env` block of this server's entry in the user's
+Claude settings, not exported in a terminal. The server logs
+`retention sweep disabled` at INFO when the opt-out actually reached it.
 
 ## Why a subagent (not inline, not a CLI)
 

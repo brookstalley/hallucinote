@@ -71,6 +71,27 @@ def test_list_marks_pinned_and_in_flight_takes(workspace, capsys):
     assert "in-flight" in out
 
 
+def test_enumeration_follows_the_songs_root_env_var(workspace, monkeypatch, capsys):
+    """`--all` must scan the SAME root `resolve_song_dir` resolves per-slug.
+
+    `resolve_song_dir` checks $HALLUCINOTE_SONGS_ROOT before any workspace
+    marker. Enumerating via the marker alone would scan a directory renders
+    never write to, and `prune --all` would silently prune nothing.
+    """
+    elsewhere = workspace / "elsewhere"
+    _seed_take(elsewhere / "gamma" / "captures", "t0", "20260601T000000Z")
+    _seed_take(elsewhere / "gamma" / "captures", "t1", "20260602T000000Z")
+    # A decoy at the legacy location, which must NOT be what gets enumerated.
+    _seed_take(_captures(workspace, "decoy"), "t0", "20260601T000000Z")
+    monkeypatch.setenv("HALLUCINOTE_SONGS_ROOT", str(elsewhere))
+
+    assert captures_cli.discover_song_slugs() == ["gamma"]
+
+    assert captures_cli.main(["prune", "--all", "--keep", "1"]) == 0
+    assert {p.name for p in (elsewhere / "gamma" / "captures").iterdir()} == {"t1"}
+    assert (_captures(workspace, "decoy") / "t0").exists()
+
+
 def test_list_with_no_song_walks_every_song(workspace, capsys):
     _seed_take(_captures(workspace, "alpha"), "t0", "20260601T000000Z")
     _seed_take(_captures(workspace, "beta"), "t0", "20260601T000000Z")

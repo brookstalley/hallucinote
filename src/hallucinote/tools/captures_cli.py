@@ -28,6 +28,7 @@ you forget an argument.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -43,7 +44,12 @@ from hallucinote.takes import (
     list_takes,
     plan_sweep,
 )
-from hallucinote.workspace import find_workspace, resolve_song_dir
+from hallucinote.workspace import (
+    ENV_SONGS_ROOT,
+    LAYOUT_SONG,
+    find_workspace,
+    resolve_song_dir,
+)
 
 
 def _captures_root(slug: str) -> Path:
@@ -61,16 +67,24 @@ def _unknown_song(slug: str) -> bool:
 
 
 def discover_song_slugs() -> list[str]:
-    """Every song in the workspace that has a captures directory.
+    """Every song with a captures directory, from the songs root renders use.
 
-    Resolved through the workspace marker so it matches where renders actually
-    write; falls back to the legacy ``songs/`` layout when no marker is present.
+    Mirrors ``workspace.resolve_song_dir``'s precedence exactly —
+    ``$HALLUCINOTE_SONGS_ROOT``, then a ``hallucinote.toml`` marker, then the
+    legacy ``songs/`` — because the two must agree on WHERE songs live. If this
+    enumerated a different root than the per-slug resolver, ``--all`` would scan
+    a directory renders never write to and silently prune nothing.
+
     A single-song workspace reports its own slug.
     """
-    ws = find_workspace()
-    if ws is not None and ws.layout == "song":
-        return [ws.slug] if ws.slug else []
-    root = (ws.root / ws.songs_root) if ws is not None else Path("songs")
+    env = os.environ.get(ENV_SONGS_ROOT)
+    if env:
+        root = Path(env)
+    else:
+        ws = find_workspace()
+        if ws is not None and ws.layout == LAYOUT_SONG:
+            return [ws.slug] if ws.slug else []
+        root = (ws.root / ws.songs_root) if ws is not None else Path("songs")
     if not root.is_dir():
         return []
     return sorted(

@@ -78,9 +78,9 @@ kind-set audit all locked in Chunk 1). No open design questions remain.
 > them to `[x]`; that only gets overwritten. The Context block below is the
 > authoritative build state.
 
-- [ ] Chunk A: Change-log canonicalization + unreleased vocab (VEW-7T2C + VEW-9QH4) — committed c6e0808
-- [ ] Chunk B: BAK-7D2V Chunk 2: pull-side contract UX — committed bf2d444
-- [ ] Chunk C: BAK-7D2V Chunk 3: `/song-snapshot` loop-close (cumulative-final)
+- [x] Chunk A: Change-log canonicalization + unreleased vocab (VEW-7T2C + VEW-9QH4) — committed c6e0808
+- [x] Chunk B: BAK-7D2V Chunk 2: pull-side contract UX — committed bf2d444
+- [x] Chunk C: BAK-7D2V Chunk 3: `/song-snapshot` loop-close (cumulative-final)
 
 **Context:** All three chunks built + committed on `feat/highroi-sweep-2026-07`.
 - **A**: 34 legacy change-log tag lines canonicalized to `prawduct:` form (incl.

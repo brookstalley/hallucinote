@@ -5,6 +5,22 @@
      be overwritten on next regen. See change-log.md for full per-release
      bodies; this file is a digest. -->
 
+## v1.7.1
+
+### aud-2d6t
+
+**Entry:** 2026-08-03 — Capture takes get a rolling window (renders no longer grow without bound)
+
+**Chunks shipped:** 1, 2, 3, 4
+
+### highroi-sweep
+
+**Entry:** 2026-07-20 — Provenance tests no longer assert ambient git state (first red PR-CI run)
+
+**Chunks shipped:** A, B, C
+
+See `.prawduct/change-log.md` for full details.
+
 ## v1.7.0
 
 ### ci,lint,types,tests

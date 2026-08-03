@@ -139,10 +139,10 @@ is not a candidate surface for this knob regardless.
 > them to `[x]`; that only gets overwritten. The Context line below is the
 > authoritative build state.
 
-- [ ] Chunk 1 — Retention core (`src/hallucinote/takes.py`): take enumeration, keep/sweep classification, pin + in-flight guards, plan/execute split
-- [ ] Chunk 2 — Auto-sweep on the render path (`hallucinote_mcp/.../server.py`): sweep the song's captures root before forwarding a render
-- [ ] Chunk 3 — `hallucinote captures` CLI: `list` / `prune` with `--keep`, `--dry-run`, plus `pin` / `unpin`
-- [ ] Chunk 4 — Docs + backlog close: workflow docs, skill note, AUD-2D6T closed
+- [x] Chunk 1 — Retention core (`src/hallucinote/takes.py`): take enumeration, keep/sweep classification, pin + in-flight guards, plan/execute split
+- [x] Chunk 2 — Auto-sweep on the render path (`hallucinote_mcp/.../server.py`): sweep the song's captures root before forwarding a render
+- [x] Chunk 3 — `hallucinote captures` CLI: `list` / `prune` with `--keep`, `--dry-run`, plus `pin` / `unpin`
+- [x] Chunk 4 — Docs + backlog close: workflow docs, skill note, AUD-2D6T closed
 
 **Context:** all four chunks are built and committed on
 `feat/aud-2d6t-capture-retention`, with the full suite green (the count lives in

@@ -22,7 +22,7 @@
 
 ## 2026-08-03 — Capture takes get a rolling window (renders no longer grow without bound)
 
-<!-- prawduct: type=feature | chunks=1,2,3,4 | scope=aud-2d6t | release=unreleased -->
+<!-- prawduct: type=feature | chunks=1,2,3,4 | scope=aud-2d6t | status=shipped | release=v1.7.1 -->
 
 Nothing in the tree ever deleted a capture. Every `ableton_render` wrote a take to
 `songs/<slug>/captures/<ts>/` — a 48 kHz stereo 32-bit-float WAV per track, return and
@@ -88,7 +88,7 @@ is queued in `.prawduct/operator-verification.md`.
 
 ## 2026-07-20 — Provenance tests no longer assert ambient git state (first red PR-CI run)
 
-<!-- prawduct: type=bugfix | scope=highroi-sweep | release=unreleased -->
+<!-- prawduct: type=bugfix | scope=highroi-sweep | status=shipped | release=v1.7.1 -->
 
 `test_provenance_metadata_captures_standard_signals` asserted `"branch" in meta`
 against whatever checkout the suite happened to run from. `actions/checkout` checks a
@@ -111,7 +111,7 @@ Suite 4523 → 4526.
 
 ## 2026-07-20 — Repo hygiene sweep: gitignore contract, stale branches, untracked reports
 
-<!-- prawduct: type=process | scope=highroi-sweep | release=unreleased -->
+<!-- prawduct: type=process | scope=highroi-sweep | status=shipped | release=v1.7.1 -->
 
 Local and remote git hygiene. `.gitignore` reconciled with the prawduct session-file
 contract via `prawduct-hook update-gitignore`: adds `.critic-active`,
@@ -129,7 +129,7 @@ phase reorder it held is present in HEAD).
 
 ## 2026-07-04 — Pull-durability loop-close: contract UX + /song-snapshot empty-diff bake (BAK-7D2V Chunks 2–3)
 
-<!-- prawduct: type=feature | chunks=B,C | scope=highroi-sweep | release=unreleased -->
+<!-- prawduct: type=feature | chunks=B,C | scope=highroi-sweep | status=shipped | release=v1.7.1 -->
 
 Closes the pull-durability item (Chunk 1's replay guard shipped in v1.7.0 / PR #210).
 **Chunk 2 — pull-side contract UX:** `pull_cli apply/execute` now print a durability
@@ -169,7 +169,7 @@ spot and merge's coverage of it + a doc-drift lock on the skill's empty-diff com
 
 ## 2026-07-04 — Change-log tag canonicalization + unreleased vocab (VEW-7T2C, VEW-9QH4)
 
-<!-- prawduct: type=process | chunks=A | scope=highroi-sweep | release=unreleased -->
+<!-- prawduct: type=process | chunks=A | scope=highroi-sweep | status=shipped | release=v1.7.1 -->
 
 The lifecycle tooling (`TAG_LINE_RE` / stamp-merged / regen-views in the plugin's
 `lib/views.py`) now sees the whole log. Swept 34 historical tag lines from the

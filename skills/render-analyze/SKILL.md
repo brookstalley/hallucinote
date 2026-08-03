@@ -75,6 +75,28 @@ song's intent (this skill produces the report; `/mix-review` reads it). If the
 subagent returned a `failed` error, relay the teaching message + the fix, don't
 silently re-run.
 
+## Capture retention — old takes are swept automatically
+
+Each render writes a take to `songs/<slug>/captures/<ts>/` holding a
+32-bit-float WAV per track, return and master — roughly 23 MB per
+surface-minute, so a full-length multi-track song costs gigabytes per take. The
+render start applies a rolling window: the **2 newest takes survive**, older ones
+are removed. This is safe because the MixReport in `songs/<slug>/analysis/` is
+the durable measurement — analysis reads a take once and writes a self-contained
+JSON, and `--compare` resolves against those JSONs, never the audio. Reports are
+never swept.
+
+If the user wants a take kept as a permanent reference (a mix they may want to
+re-analyze differently later), pin it rather than relying on the window:
+
+```
+hallucinote captures pin songs/<slug>/captures/<ts>
+```
+
+`hallucinote captures list` shows what's on disk; `hallucinote captures prune
+--song <slug> --dry-run` previews a sweep. `HALLUCINOTE_CAPTURE_KEEP` changes the
+window and `HALLUCINOTE_CAPTURE_SWEEP=0` disables the automatic sweep.
+
 ## Why a subagent (not inline, not a CLI)
 
 The render/analyze poll loops are pure plumbing — dozens of `running` statuses

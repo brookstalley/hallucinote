@@ -124,6 +124,23 @@ poll"), so `/render-analyze` delegates their poll loops to a subagent and hands
 back only the MixReport summary + `report_path` — keeping the plumbing out of
 your context. This is the expensive real-time step — it feeds the next checkpoint.
 
+**Capture retention.** Each render writes one take to `songs/<slug>/captures/<ts>/`
+— a 32-bit-float WAV per track, return and master, roughly 23 MB per
+surface-minute, so a full-length multi-track song costs gigabytes per take. A
+rolling window runs automatically at render start: the newest **2** takes survive
+and older ones are removed. Deleting an old take is safe because the durable
+measurement is the MixReport in `songs/<slug>/analysis/` — analysis reads a take
+once and writes a self-contained JSON, and baseline comparison (`compare_to`)
+resolves against those JSONs, never the audio. Reports are never swept; what a
+sweep costs is re-analyzing that specific take with different parameters.
+
+To keep a reference take permanently, pin it — `hallucinote captures pin
+songs/<slug>/captures/<ts>` (pinned takes are skipped by every sweep and don't
+consume a keep slot). `hallucinote captures list` shows what's on disk and
+`hallucinote captures prune --song <slug> --dry-run` previews a sweep without
+deleting. Set `HALLUCINOTE_CAPTURE_KEEP` to change the window, or
+`HALLUCINOTE_CAPTURE_SWEEP=0` to turn the automatic sweep off entirely.
+
 ### 7 — Read the mix ⭐ `/mix-review`
 The single read-side surface over all audio analyses. It reads rendered audio, so
 it **needs Max for Live** (Live Suite, or the M4L add-on); `/compose-review` is the

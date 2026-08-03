@@ -232,6 +232,7 @@ def handle_tool_call(
     if request.tool == "ableton_render" and request.action == "start":
         request = _absolutize_render_output_dir(request)
         request = _attach_render_db_seq(request)
+        _sweep_stale_takes(request)
 
     # Forward to the Remote Script with a per-action read-timeout (MCP-4T6Y):
     # render is unbounded (full-arrangement playback), ensure_loaded gets a
@@ -384,6 +385,78 @@ def _attach_render_db_seq(request: Request) -> Request:
         return request
     params["db_seq"] = seq
     return dataclasses.replace(request, params=params)
+
+
+def _sweep_stale_takes(request: Request) -> None:
+    """Apply the capture-retention window before this render writes a new take.
+
+    Renders are 48 kHz / stereo / 32-bit float across every track, return and
+    the master — ~23 MB per surface-minute, so a full-length multi-track song
+    costs gigabytes per take. Nothing else deletes them, so without this the
+    song's ``captures/`` grows without bound. Retention runs HERE, at render
+    start, because it is the one moment no take is in flight: the job registry
+    allows one render at a time, so the sweep cannot race a capture, and a take
+    the operator may still want to re-analyze survives until the window moves.
+
+    Scope is deliberately the song's OWN captures root — never the parent of a
+    caller-supplied ``output_dir``. A caller may point a render anywhere; deriving
+    the sweep target from that path would let an unrelated directory be swept.
+    The dir this render is about to write is protected explicitly, so a rerun
+    into an existing timestamp can't delete itself.
+
+    Best-effort and never render-affecting: disk hygiene must not cost a
+    capture, so any failure logs and lets the render proceed. Silently a no-op
+    when the engine isn't importable (a uvx MCP-only install), mirroring
+    ``_absolutize_render_output_dir``'s fallback.
+    """
+    try:
+        from hallucinote.takes import (
+            execute_sweep,
+            format_bytes,
+            keep_from_env,
+            plan_sweep,
+            sweep_enabled,
+        )
+        from hallucinote.workspace import resolve_song_dir
+    except ImportError:
+        return
+
+    song_slug = request.params.get("song_slug")
+    if not isinstance(song_slug, str) or not song_slug:
+        return
+    if not sweep_enabled():
+        return
+
+    try:
+        song_dir = resolve_song_dir(song_slug)
+        if not song_dir.is_absolute():
+            song_dir = pathlib.Path(os.getcwd()) / song_dir
+        captures_root = song_dir / "captures"
+
+        protect: list[pathlib.Path] = []
+        outgoing = request.params.get("output_dir")
+        if isinstance(outgoing, str) and outgoing:
+            protect.append(pathlib.Path(outgoing))
+
+        plan = plan_sweep(captures_root, keep=keep_from_env(), protect=protect)
+        if not plan.sweep:
+            return
+        result = execute_sweep(plan)
+        if result.removed:
+            logger.info(
+                "render: swept %d stale capture take(s) for %r, freeing %s "
+                "(keeping the newest %d; pin a take with a .pinned file to "
+                "keep it permanently)",
+                len(result.removed), song_slug,
+                format_bytes(result.freed_bytes), plan.keep,
+            )
+        for path, err in result.failures:
+            logger.warning("render: could not remove stale take %s: %s", path, err)
+    except Exception:  # prawduct:allow prawduct/broad-except -- retention is best-effort disk hygiene; a render must never fail because the sweep did
+        logger.warning(
+            "render: capture retention sweep failed for %r; proceeding with "
+            "the render (disk may keep growing)", song_slug, exc_info=True,
+        )
 
 
 def _collect_tool_params(tool_name: str) -> list[schema.ParamSpec]:

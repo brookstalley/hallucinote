@@ -73,6 +73,11 @@ try:
     # the song's time_signature_map so meter changes accumulate exactly. Both
     # section windows and tempo-map segments are positioned through it.
     from hallucinote.sync.push import _position_bar_to_beats
+    # The canonical "newest take" ordering, shared with the retention sweep
+    # (`hallucinote.takes`). The two MUST agree: a sweep that ordered takes
+    # differently from this selector could delete the very take the next
+    # analysis would have chosen.
+    from hallucinote.takes import recency_key
     _HAS_HALLUCINOTE = True
 except ImportError:  # pragma: no cover - exercised in Live's vendored env
     analyze_mix = None  # type: ignore[assignment]
@@ -89,6 +94,7 @@ except ImportError:  # pragma: no cover - exercised in Live's vendored env
     init_db = None  # type: ignore[assignment]
     resolve_db_path = None  # type: ignore[assignment]
     _position_bar_to_beats = None  # type: ignore[assignment]
+    recency_key = None  # type: ignore[assignment]
     _HAS_HALLUCINOTE = False
 
 # `track_id_for_surface` is the canonical DB-UUID → capture-surface-ID
@@ -121,30 +127,20 @@ def _resolve_song_dir(song_slug: str) -> Path:
 def _capture_recency_key(captures_dir: Path) -> tuple[str, float, str]:
     """Recency sort key for a captures dir, robust to NON-ISO dir names.
 
-    Renders name their dirs ISO-8601 (``20260527T200614Z``), but a dir may also
-    be hand-named for a focused capture (e.g. ``v4-seam-verse2-chorus2``). Keying
-    on the dir NAME assumed ISO-only naming, so a hand-named dir silently
-    shadowed the newest render: ``'v'`` (0x76) sorts ABOVE every ``2026…``
-    timestamp (0x32), and ``max(by name)`` picked the stale ``v4-…`` dir — the
-    analysis then read the wrong (often tiny, single-section) audio while every
-    timestamped full-song render was ignored.
+    Delegates to ``hallucinote.takes.recency_key``, which owns the definition so
+    the retention sweep and this selector can never disagree about which take is
+    newest. Kept as a named local so the reason this ordering exists stays
+    readable here: renders name their dirs ISO-8601 (``20260527T200614Z``), but a
+    dir may also be hand-named for a focused capture (e.g.
+    ``v4-seam-verse2-chorus2``), and keying on the dir NAME let such a dir
+    silently shadow the newest render — ``'v'`` (0x76) sorts ABOVE every
+    ``2026…`` timestamp (0x32), so ``max(by name)`` picked the stale ``v4-…``
+    dir and the analysis read the wrong (often tiny, single-section) audio.
 
-    So key on the manifest's recorded ``captured_at`` — the TRUE capture time,
-    naming-independent, and itself ISO-8601 so it still sorts chronologically.
-    Fall back to the manifest mtime, then the dir name, when ``captured_at`` is
-    absent (an old or partial manifest)."""
-    manifest = captures_dir / "manifest.json"
-    captured_at = ""
-    try:
-        data = json.loads(manifest.read_text(encoding="utf-8"))
-        captured_at = str(data.get("captured_at") or "")
-    except (OSError, ValueError):
-        pass
-    try:
-        mtime = manifest.stat().st_mtime
-    except OSError:
-        mtime = 0.0
-    return (captured_at, mtime, captures_dir.name)
+    Only ever called after the ``_HAS_HALLUCINOTE`` gate (via
+    :func:`_latest_captures_dir` from ``analyze_handler``), so the guarded
+    import is always resolved by the time this runs."""
+    return recency_key(captures_dir)
 
 
 def _latest_captures_dir(song_slug: str) -> Path:

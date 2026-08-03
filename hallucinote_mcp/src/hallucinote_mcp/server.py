@@ -232,6 +232,7 @@ def handle_tool_call(
     if request.tool == "ableton_render" and request.action == "start":
         request = _absolutize_render_output_dir(request)
         request = _attach_render_db_seq(request)
+        _sweep_stale_takes(request)
 
     # Forward to the Remote Script with a per-action read-timeout (MCP-4T6Y):
     # render is unbounded (full-arrangement playback), ensure_loaded gets a
@@ -384,6 +385,107 @@ def _attach_render_db_seq(request: Request) -> Request:
         return request
     params["db_seq"] = seq
     return dataclasses.replace(request, params=params)
+
+
+# Named here rather than imported from the engine so the disabled-path log line
+# below reads correctly even in an MCP-only install where `hallucinote` is
+# absent; the engine's `takes.ENV_SWEEP` is the same string, asserted by a test.
+_CAPTURE_SWEEP_ENV = "HALLUCINOTE_CAPTURE_SWEEP"
+
+
+def _sweep_stale_takes(request: Request) -> None:
+    """Apply the capture-retention window before this render writes a new take.
+
+    Renders are 48 kHz / stereo / 32-bit float across every track, return and
+    the master — ~23 MB per surface-minute, so a full-length multi-track song
+    costs gigabytes per take. Nothing else deletes them, so without this the
+    song's ``captures/`` grows without bound. Retention runs HERE, at render
+    start, because it is the one moment no take is in flight: the job registry
+    allows one render at a time, so the sweep cannot race a capture, and a take
+    the operator may still want to re-analyze survives until the window moves.
+
+    Scope is deliberately the song's OWN captures root — never the parent of a
+    caller-supplied ``output_dir``. A caller may point a render anywhere; deriving
+    the sweep target from that path would let an unrelated directory be swept.
+    The dir this render is about to write is protected explicitly, so a rerun
+    into an existing timestamp can't delete itself.
+
+    Best-effort and never render-affecting: disk hygiene must not cost a
+    capture, so any failure logs and lets the render proceed. When the engine
+    isn't importable (a uvx MCP-only install) this can never sweep at all, so
+    that branch logs at INFO rather than returning silently — unlike
+    ``_absolutize_render_output_dir``'s genuinely silent fallback, the condition
+    is permanent, and takes would otherwise pile up with no explanation anywhere.
+    """
+    try:
+        from hallucinote.takes import (
+            captures_root_for_slug,
+            execute_sweep,
+            format_bytes,
+            keep_from_env,
+            plan_sweep,
+            sweep_enabled,
+        )
+    except ImportError:
+        # An MCP-only install (uvx, no engine) can never sweep — and unlike the
+        # env opt-out, that condition is PERMANENT, so say it rather than let
+        # captures pile up with no explanation anywhere.
+        logger.info(
+            "render: capture retention unavailable — the hallucinote engine "
+            "isn't importable in this server, so takes will accumulate. Prune "
+            "with `hallucinote captures prune` from an engine checkout."
+        )
+        return
+
+    song_slug = request.params.get("song_slug")
+    if not isinstance(song_slug, str) or not song_slug:
+        return
+    if not sweep_enabled():
+        # Log it: an operator who set the opt-out needs confirmation it reached
+        # THIS process. The var must be exported to the MCP server (the `env`
+        # block of the Claude settings entry), not just to a shell — and a
+        # silent no-op looks identical to a var that never arrived.
+        logger.info(
+            "render: capture retention sweep disabled by %s; takes will "
+            "accumulate for %r", _CAPTURE_SWEEP_ENV, song_slug,
+        )
+        return
+
+    try:
+        # Resolves AND validates the slug — a slug is a path segment, and an
+        # absolute or dot-dot slug would otherwise aim the sweep outside the
+        # song tree entirely.
+        captures_root = captures_root_for_slug(song_slug)
+        if not captures_root.is_absolute():
+            captures_root = pathlib.Path(os.getcwd()) / captures_root
+
+        protect: list[pathlib.Path] = []
+        outgoing = request.params.get("output_dir")
+        if isinstance(outgoing, str) and outgoing:
+            protect.append(pathlib.Path(outgoing))
+
+        plan = plan_sweep(captures_root, keep=keep_from_env(), protect=protect)
+        if not plan.sweep:
+            return
+        result = execute_sweep(plan)
+        if result.removed:
+            # Name what was destroyed, not just how many: this log is the only
+            # record that a given take ever existed once its directory is gone.
+            logger.info(
+                "render: swept %d stale capture take(s) for %r, freeing %s "
+                "(kept the newest %d; pin a take with a .pinned file to keep "
+                "it permanently). Removed: %s",
+                len(result.removed), song_slug,
+                format_bytes(result.freed_bytes), plan.keep,
+                ", ".join(p.name for p in result.removed),
+            )
+        for path, err in result.failures:
+            logger.warning("render: could not remove stale take %s: %s", path, err)
+    except Exception:  # prawduct:allow prawduct/broad-except -- retention is best-effort disk hygiene; a render must never fail because the sweep did
+        logger.warning(
+            "render: capture retention sweep failed for %r; proceeding with "
+            "the render (disk may keep growing)", song_slug, exc_info=True,
+        )
 
 
 def _collect_tool_params(tool_name: str) -> list[schema.ParamSpec]:

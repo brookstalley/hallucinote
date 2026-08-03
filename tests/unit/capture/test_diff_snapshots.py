@@ -451,3 +451,102 @@ def test_merge_non_sticky_fields_use_new_value() -> None:
     new["tracks"][0]["volume"] = 0.5
     merged = merge_snapshots(old, new)
     assert merged["tracks"][0]["volume"] == 0.5
+
+
+# ---------- the diff's replay-asserted blind spot (BAK-7D2V) ----------
+#
+# `capture diff` exiting 0 does NOT prove the on-disk snapshot carries
+# everything `replay_capture` will re-assert. The diff compares device identity
+# (name/class/kind/guess_uri), `params_dialed`, and chain `name` — but capture
+# also writes device sidechain sources, drum-pad mappings, and per-chain
+# authored props, and replay re-asserts all of them. A pull touching only those
+# fields therefore diffs clean over a STALE file.
+#
+# That gap is why the empty-diff path must bake the fresh capture (merge) rather
+# than just move `captured_at` forward: re-stamping would disarm the replay
+# guard while the old values sit on disk, and the next build would silently
+# revert the pulled work — the exact failure the guard exists to prevent.
+#
+# These two tests pin both halves: the diff really is blind to these fields, and
+# merge really does carry them through from the fresh capture.
+
+
+def _seed_rack_chain(snap: dict) -> None:
+    """Give the Drum Rack a captured chain subtree on BOTH sides, so the
+    authored-prop case mutates an existing chain rather than adding a subtree
+    (adding one IS structural, and the diff rightly reports it)."""
+    snap["tracks"][0]["devices"][0]["chains"] = [
+        {"chain_index": 0, "name": "Kick", "devices": [],
+         "choke_group": 1, "out_note": 40, "volume": 0.7},
+    ]
+
+
+def _undiffed_field_cases() -> list[tuple]:
+    """(label, seed, mutate) for snapshot state replay re-asserts but diff
+    ignores. `seed` applies to both sides; `mutate` only to the fresh capture."""
+    return [
+        (
+            "device sidechain source",
+            lambda s: None,
+            lambda s: s["tracks"][1]["devices"][0].update(
+                {"sidechain_source": "Drums", "sidechain_source_channel": "Post FX"}
+            ),
+        ),
+        (
+            "drum pad mapping",
+            lambda s: None,
+            lambda s: s["tracks"][0]["devices"][0].__setitem__(
+                "drum_pads", [{"chain_name": "Kick", "midi_note": 36}]
+            ),
+        ),
+        (
+            "chain authored props",
+            _seed_rack_chain,
+            lambda s: s["tracks"][0]["devices"][0]["chains"][0].update(
+                {"choke_group": 2, "out_note": 41, "volume": 0.4}
+            ),
+        ),
+    ]
+
+
+def _old_and_new(seed, mutate) -> tuple[dict, dict]:
+    old = _base_snapshot()
+    seed(old)
+    new = copy.deepcopy(old)
+    mutate(new)
+    return old, new
+
+
+@pytest.mark.parametrize(
+    "label,seed,mutate", _undiffed_field_cases(), ids=lambda v: v if isinstance(v, str) else "",
+)
+def test_diff_is_blind_to_replay_asserted_fields(label, seed, mutate) -> None:
+    """Documents the blind spot: these fields change, the diff still reports
+    nothing. If a future change makes the diff see one of them, this test fails
+    loudly — that is a WIDENING of safety, and the fix is to update this test
+    plus the `/song-snapshot` prose that explains the gap."""
+    old, new = _old_and_new(seed, mutate)
+    assert new != old, f"{label}: mutator did not change the snapshot"
+    assert diff_snapshots(old, new) == {}, (
+        f"{label}: diff now sees this field — the empty-diff blind spot has "
+        "narrowed; update this test and the /song-snapshot explanation"
+    )
+
+
+@pytest.mark.parametrize(
+    "label,seed,mutate", _undiffed_field_cases(), ids=lambda v: v if isinstance(v, str) else "",
+)
+def test_merge_carries_replay_asserted_fields_the_diff_cannot_see(
+    label, seed, mutate,
+) -> None:
+    """The empty-diff bake is correct BECAUSE merge takes the fresh capture as
+    its base: fields the diff never compared still land on disk. Re-stamping the
+    old file would not."""
+    from hallucinote.capture import merge_snapshots
+    old, new = _old_and_new(seed, mutate)
+    assert diff_snapshots(old, new) == {}, f"{label}: precondition — diff is blind"
+    merged = merge_snapshots(old, new)
+    assert merged["tracks"] == new["tracks"], (
+        f"{label}: merge dropped a replay-asserted field the diff cannot see — "
+        "the empty-diff bake would leave stale values on disk"
+    )

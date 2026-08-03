@@ -15,6 +15,34 @@ pending entries when `operator_verification_required: true`.
 
 ---
 
+## AUD-2D6T — automatic capture sweep fires on a real render (2026-08-03) — PENDING
+
+The CLI half is verified against this repo's real `songs/missing/captures/` (406 MB
+take: `list` reported it, `--dry-run` named it and removed nothing, `pin` then
+`prune --keep 0` left it intact, `unpin` restored it). The AUTOMATIC half —
+`server._sweep_stale_takes` firing inside `handle_tool_call` before an
+`ableton_render(start)` is forwarded — is covered by unit tests against a faked
+`client.send` but has never run against a live Ableton render.
+
+Server-side only (`server.py`, `server_side/analysis.py`) — both are outside
+`_FINGERPRINT_PATHS`, so **no re-vendor and no Remote Script change**.
+
+**Check (a song with 3+ existing takes, Ableton open, linked session):**
+1. `hallucinote captures list --song <slug>` → note the take names and total size.
+2. `/render-analyze <slug>` (or `ableton_render(action='start', song_slug=…)`).
+3. While/after it runs, `hallucinote captures list --song <slug>` again → expect
+   the 2 newest prior takes plus the new one (3 total), the older ones gone.
+4. Confirm the MCP server log carries `swept N stale capture take(s)` naming the
+   removed dirs.
+5. Pin a take (`hallucinote captures pin songs/<slug>/captures/<ts>`), render
+   again, confirm the pinned take survives and did not consume a keep slot.
+6. Set `HALLUCINOTE_CAPTURE_SWEEP=0` in the server's `env` block, restart the
+   server, render → expect `retention sweep disabled` in the log and no removals.
+
+**Why it can't be headless-verified:** step 2 needs a real transport pass; the
+sweep's trigger point is the live render dispatch, not a function a test can
+call in the same ordering against a real Live session.
+
 ## BAK-7D2V — pull-durability guard end-to-end in real Live (2026-07-04) — PENDING
 
 Headless-verified (guard tests incl. the pull_cli-apply audit scenario + the
@@ -40,6 +68,22 @@ the song's snapshot predates BAK-7D2V — Ableton open, linked session):**
    that refuses again (forcing does not disarm — re-capture does).
 6. Legacy path (optional): on a song whose snapshot has no `captured_at`, pull
    a knob and build → expect the warn-and-proceed path, not a refusal.
+7. **Chunk 2 — pull-side notice.** In step 2's `/ableton-pull`, confirm
+   `pull_cli` prints the durability notice on stderr ("N mix-layer change(s)
+   staged in the DB … the next `build.py` … will REFUSE … bake with
+   `/song-snapshot`"). Confirm a build.py-owned pull (e.g. `clip-notes`) and a
+   zero-change re-pull print NO such notice.
+8. **Empty-diff bake.** After a mix pull, hand-REVERT the knob in Live so a
+   fresh capture shows no diff; `build.py` still refuses (guard armed by the
+   pull events). Accept `/song-snapshot`'s empty-diff offer → it merges the
+   fresh refresh over `captured_session.json` → `build.py` now passes clean.
+9. **Empty-diff bake covers undiffed fields.** The case above with a pull that
+   the diff is BLIND to: pull a device sidechain source (or a drum-pad mapping /
+   chain authored prop), leave it in place, and re-capture — `capture diff` exits
+   0 even though the on-disk snapshot is stale. Accept the same offer → confirm
+   `captured_session.json` now carries the PULLED value (not the old one) and the
+   next `build.py` preserves it. A bare `capture restamp` here would disarm the
+   guard over the stale value; confirm it prints its override warning.
 
 ## MCP-1V8K — device load focuses Session view before browser.load_item (2026-06-23) — PASSED (agent-run live, 2026-06-23)
 

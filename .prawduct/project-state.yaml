@@ -405,8 +405,8 @@ artifact_manifest:
       version: 3
       depends_on: [project-preferences]
     - name: build-plan
-      file_path: .prawduct/artifacts/build-plan.md
-      version: 1
+      file_path: .prawduct/artifacts/build-plan-highroi-sweep.md
+      version: 2
       depends_on: [project-preferences, boundary-patterns]
     - name: arrangement-model
       file_path: .prawduct/artifacts/arrangement-model.md
@@ -465,7 +465,7 @@ artifact_manifest:
 build_state:
   source_root: "src/hallucinote/"
 
-# Active build plan pointer (.prawduct/-relative). Currently no active plan.
+# Active build plan pointer (.prawduct/-relative).
 # In-flight plans with pending Live-gated work (see each plan's Status section):
 #   SMP-7K2D — chunks 1-2 + no-Live 5 done; probe chunk 0 + push chunks 3-4 pending.
 #   ARR-PROJ — all 5 headless chunks built on plan/arr-proj-arrangement-materialization;
@@ -473,10 +473,16 @@ build_state:
 # Shipped/stale plan history: the git history of this file (pre-2026-07-04,
 # PRC-5W2N trim) has the full narrative; a per-machine copy also sits in the
 # gitignored reflections archive where present.
-# Left EMPTY (not the literal `null`): the regen-views/session-start pointer
-# reader treats the post-colon text as a path, so `null` resolves to
+# When cleared, leave EMPTY (not the literal `null`): the regen-views/session-start
+# pointer reader treats the post-colon text as a path, so `null` resolves to
 # `.prawduct/null` and mis-fires the "missing build plan" advisory.
-active_build_plan:
+#
+# Named `build-plan-<scope>.md`, not the generic `build-plan.md`: regen-views'
+# scope->plan resolver globs `artifacts/*.md` non-recursively (a plan nested in
+# `artifacts/plans/<id>/` is invisible to it and regen-views then refuses to write
+# ANY view), and on gitflow a plan must survive until the develop->main release —
+# so the generic name would be contended by the next plan authored in that window.
+active_build_plan: .prawduct/artifacts/plans/AUD-2D6T/build-plan.md
 
 # =============================================================================
 # CHANGE LOG
@@ -496,9 +502,36 @@ scope_rollups:
   analysis,docs,tests:
     chunks: ["AUD-8T3K"]
     releases: ["v1.6.1"]
+  arc-2-live-verification-fallout:
+    chunks: ["hotfix"]
+    releases: ["v1.4.0"]
+  arrangement-model:
+    chunks: ["arrangement-1-5"]
+    releases: ["v1.4.0"]
   arrangement-verify,tests:
     chunks: ["ARR-CMPHALT"]
     releases: ["v1.6.0"]
+  aud-2d6t:
+    chunks: ["1", "2", "3", "4"]
+    releases: ["v1.7.1"]
+  aud-3f8m:
+    chunks: ["AUD-3F8M-01", "AUD-3F8M-02"]
+    releases: ["v0.9.5"]
+  aud-4w7k:
+    chunks: ["AUD-4W7K-01", "AUD-4W7K-02"]
+    releases: ["v0.9.5"]
+  audio-analysis-mvp:
+    chunks: ["1", "2", "2a", "2b-partial", "3", "3-followup", "section-windowing"]
+    releases: ["v1.4.0"]
+  audio-verification:
+    chunks: ["AUD-4S8T", "AUD-6R2M", "AUD-8H2M"]
+    releases: ["v0.9.2"]
+  backlog-low-cost-sweep:
+    chunks: ["backlog-low-cost-sweep"]
+    releases: ["v0.9.2"]
+  bulk-note-authoring:
+    chunks: ["bulk-notes-B1-B4"]
+    releases: ["v1.4.0"]
   capture,db-schema,db-mutations,db-queries,sync-push,docs,tests:
     chunks: ["SNP-2H9F"]
     releases: ["v1.5.0"]
@@ -523,6 +556,12 @@ scope_rollups:
   compose-loop-reliability:
     chunks: ["CLR-A-01", "CLR-A-02", "CLR-A-03", "CLR-A-04", "CLR-A-05"]
     releases: ["v0.9.5"]
+  compose-validation-r2-followons:
+    chunks: ["C1", "C2", "C3"]
+    releases: ["v1.4.0"]
+  cross-machine-portability+v0.9.0-cut:
+    chunks: ["W13-B", "W13-C", "hygiene"]
+    releases: ["v0.9.0"]
   db,sync-push,audio-analysis,mcp-bridge:
     chunks: ["AUD-2N6K", "ENV-2T9K", "ENV-8K2R", "MEL-1A7K-line", "SDC-7K3M", "SMP-7K2D-01", "SMP-7K2D-02"]
     releases: ["v0.9.6"]
@@ -532,6 +571,30 @@ scope_rollups:
   db-schema,markdown-refs,song-context,skills,docs,claude-md:
     chunks: ["ATL-7K3M-ch1", "ATL-7K3M-ch2"]
     releases: ["v1.5.0"]
+  enum-envelope-authoring+device-load-post-condition+w13a-fallback-identity:
+    chunks: ["E1", "E2", "E3"]
+    releases: ["v1.4.0"]
+  envelope-polish+nested-rack-tombstone+device-load-class+mutator-prefix-strip+mcp-auto-mutate:
+    chunks: ["B5", "P1", "P4", "P5", "P7", "backlog-scrub"]
+    releases: ["v1.4.0"]
+  friction-basket:
+    chunks: ["FRICTION-01", "FRICTION-02", "FRICTION-03"]
+    releases: ["v0.9.5"]
+  highroi-sweep:
+    chunks: ["A", "B", "C"]
+    releases: ["v1.7.1"]
+  install-hardening:
+    chunks: ["install-hardening"]
+    releases: ["v0.9.2"]
+  iteration-loop-polish+backlog-discipline:
+    chunks: ["P1", "P2", "P3", "P4", "P5", "P6"]
+    releases: ["v1.4.0"]
+  loader-display-name-convention:
+    chunks: ["D4-1", "D4-2", "D4-3", "D4-4", "D4-5", "D4-6", "D4-7"]
+    releases: ["v1.4.0"]
+  masking-analyzer:
+    chunks: ["masking-C1-C7"]
+    releases: ["v1.4.0"]
   mcp-actions,mcp-handlers,capture,sync-push,sync-pull,db-queries,skills,docs:
     chunks: ["DEEP-RACK-ADDR-1", "DEEP-RACK-ADDR-2", "DEEP-RACK-ADDR-3", "DEEP-RACK-ADDR-4", "PULL-DRIFT-DETECT"]
     releases: ["v0.9.8"]
@@ -562,21 +625,36 @@ scope_rollups:
   mcp-render,tests:
     chunks: ["RND-2R9K"]
     releases: ["v1.6.0"]
+  mutator-event-shape+test-coverage+wire-schema-enrichment+fingerprint-binary-safety:
+    chunks: ["hygiene"]
+    releases: ["v1.4.0"]
   node-features,mcp-handlers,capture,sync-pull,db-mutations,skills,docs,readme,pyproject,cli,hooks,project-state:
     chunks: ["NODE-ADDR-B", "NODE-ADDR-C", "NODE-ADDR-D", "NODE-ADDR-E", "NODE-ADDR-F", "ONBOARD-M4L", "PLUGIN-SELF-CONTAINED"]
     releases: ["v1.5.0"]
   plugin-distribution:
-    chunks: ["INS-7V2D-cold-start-timeout"]
-    releases: ["v0.9.4"]
+    chunks: ["INS-7V2D", "INS-7V2D-cold-start-timeout"]
+    releases: ["v0.9.3", "v0.9.4"]
   plugin-distribution,mcp-bridge:
     chunks: ["INS-3W8P"]
     releases: ["v0.9.7"]
   process,docs,skills:
     chunks: ["PRC-5W2N"]
     releases: ["v1.7.0"]
+  provenance+annotations-mcp+dev-ergonomics:
+    chunks: ["B2", "B3-resid", "B4", "B5", "Q1"]
+    releases: ["v1.4.0"]
+  push-reliability+compose-time-validation:
+    chunks: ["R-1", "R-2"]
+    releases: ["v1.0.1"]
+  push-reliability+drum-mapping:
+    chunks: ["A1-resid", "A2-resid", "A3", "A5"]
+    releases: ["v1.1.0"]
   skills,docs,mcp-primer,claude-md:
     chunks: ["discoverability-wiring", "song-workflow-spine"]
     releases: ["v0.9.8"]
+  song-author-hygiene+kit-strict+negative-beats-refusal:
+    chunks: ["H1", "H2", "H3", "H4", "H5", "backlog-scrub"]
+    releases: ["v1.4.0"]
   sync,artifacts,tests:
     chunks: ["SYN-8Q3F"]
     releases: ["v1.7.0"]
@@ -604,6 +682,9 @@ scope_rollups:
   sync-push,queries,tests:
     chunks: ["PSH-6W2J"]
     releases: ["v1.5.0"]
+  tools-dont-narrow-the-art+helpers-dry:
+    chunks: ["GEN-1S4K", "LNT-1V9K", "REV-2W8K", "chunk0", "helpers"]
+    releases: ["v0.9.2"]
   tuning,mcp-bridge,mcp-render,sync-push,sync-pull,db,analysis,methodology,docs,tests:
     chunks: ["ARR-ORPHAN", "DEC-CAP", "DOC-7K3M", "FK-clip-guard", "IDX-5W2P", "MCP-2K9F", "MCP-5N8K", "MCP-7F2K", "MCP-7P3R", "MCP-8H4N", "MCP-9R3T", "MICROTUNE", "PSH-3K9D", "PSH-8K3D", "REC-4Z8Q", "SYN-4R7P", "SYN-7N4K", "SYN-9F4K", "SYN-RACK-PRESET-RELINK", "SYN-RENDER-RELINK", "SYN-SCAFFOLD-MISLINK", "master-true-peak"]
     releases: ["v1.6.0"]
@@ -627,7 +708,7 @@ views_enabled: true
 backlog_format_version: 2
 
 # Stamped by /prawduct:backlog list/pick/triage — resolves the backlog-overdue-grooming advisory.
-backlog_last_groomed_at: 2026-06-23
+backlog_last_groomed_at: 2026-07-04
 
 # Distribution mode — set by /prawduct:migrate (v2.0.0 plugin cutover).
 # `plugin` tells the legacy file-sync hook to stand down (Chunk 8).

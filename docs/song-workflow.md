@@ -124,6 +124,40 @@ poll"), so `/render-analyze` delegates their poll loops to a subagent and hands
 back only the MixReport summary + `report_path` — keeping the plumbing out of
 your context. This is the expensive real-time step — it feeds the next checkpoint.
 
+**Capture retention.** Each render writes one take to `songs/<slug>/captures/<ts>/`
+— a 32-bit-float WAV per track, return and master, roughly 23 MB per
+surface-minute, so a full-length multi-track song costs gigabytes per take. A
+rolling window runs automatically **at render start**: it keeps the **2 newest
+takes already on disk** and removes the rest, then the render writes its own — so
+a song settles at **3 takes** after each render. (`hallucinote captures prune
+--keep 2` run on its own leaves 2, because no new take follows it.) Deleting an
+old take is safe because the durable measurement is the MixReport in
+`songs/<slug>/analysis/` — analysis reads a take once and writes a self-contained
+JSON, and baseline comparison (`compare_to`) resolves against those JSONs, never
+the audio. Reports are never swept; what a sweep costs is re-analyzing that
+specific take with different parameters.
+
+To keep a reference take permanently, pin it — `hallucinote captures pin
+songs/<slug>/captures/<ts>` (pinned takes are skipped by every sweep and don't
+consume a keep slot). An unpinned take survives the next two renders and
+is removed at the start of the third.
+`hallucinote captures list` shows what's on disk and `hallucinote captures prune
+--song <slug> --dry-run` previews a sweep without deleting.
+
+> **Agents: `hallucinote` is not on your PATH.** The engine ships inside the
+> plugin's uv env, so these read as `"$PY" -m hallucinote.cli captures …` with
+> `$PY` resolved from `ableton://server/info` — see
+> [`running-the-engine.md`](running-the-engine.md). This matters most for `pin`:
+> a `command not found` there is silent, and the take it was meant to protect is
+> swept at a later render.
+
+`HALLUCINOTE_CAPTURE_KEEP` changes the window and `HALLUCINOTE_CAPTURE_SWEEP=0`
+turns the automatic sweep off. Both are read by the **MCP server process**, so to
+affect the automatic sweep they must be set in the `env` block of this server's
+entry in the user's Claude settings — exporting them in a terminal reaches the
+CLI but not the server. The server logs `retention sweep disabled` at INFO when
+the opt-out reached it, so the setting confirms itself.
+
 ### 7 — Read the mix ⭐ `/mix-review`
 The single read-side surface over all audio analyses. It reads rendered audio, so
 it **needs Max for Live** (Live Suite, or the M4L add-on); `/compose-review` is the
@@ -147,8 +181,23 @@ primitive — they write different targets:
 - `/ableton-pull` → the song `.db` (a **regenerable** build artifact). The
   lower-level **build.py-staging** primitive for build.py-owned domains (clip
   notes, automation) you fold into `build.py`. It is NOT a parallel mix bake:
-  `replay_capture` re-asserts the snapshot onto the DB every build, so a mix edit
-  you pull but don't `/song-snapshot` reverts on the next rebuild.
+  `replay_capture` re-asserts the snapshot onto the DB every build.
+
+**The contract is enforced (BAK-7D2V).** A mix edit you pull but don't
+`/song-snapshot` is no longer silently reverted — as long as the snapshot
+carries a `captured_at` stamp, the next `build.py` **refuses to run**
+(`StaleSnapshotError`), and `pull_cli` prints a durability notice at pull time.
+(A legacy snapshot with no stamp leaves replay no ordering evidence, so it warns
+and still reverts; baking once makes the check exact from then on.) So the loop
+is **pull → bake → build**: `/ableton-pull` (stage) → `/song-snapshot` (bake,
+which writes a fresh capture stamped newer than the pull and so disarms the
+guard) → `build.py` (runs clean). `build.py --force-replay` consciously discards
+the pulled edits instead. Build.py-owned pulls (notes, envelopes, tempo, cue,
+arrangement, tuning) do not themselves arm the guard — that's the sanctioned
+staging lane. The exception worth knowing: `score-globals` shares one probe with
+master volume/pan ingest, so a "tempo-only" pull arms the guard whenever the
+master fader or pan drifted. Arming follows the event kinds a pull actually
+emitted, not the domain you asked for — so trust the durability notice.
 
 Then loop back to compose or mix.
 

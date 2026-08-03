@@ -145,9 +145,30 @@ _REPLAY_ASSERTED_EVENT_KINDS: tuple[str, ...] = (
 _CAPTURED_AT_SHAPE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z")
 
 
+def has_usable_captured_at(snapshot: dict[str, Any]) -> bool:
+    """True when the snapshot's ``captured_at`` is present and parseable — i.e.
+    the guard can order it against pulled events instead of falling back to the
+    legacy warn-and-proceed branch.
+
+    The one public read of :data:`_CAPTURED_AT_SHAPE`, so callers that must
+    distinguish a stamped snapshot from a legacy one (the guard itself, and the
+    re-stamp override, which refuses on an unstamped file) share one definition
+    of "usable" rather than re-deriving the shape.
+    """
+    captured_at = snapshot.get("captured_at")
+    return bool(
+        isinstance(captured_at, str) and _CAPTURED_AT_SHAPE.fullmatch(captured_at)
+    )
+
+
 class StaleSnapshotError(RuntimeError):
     """`replay_capture` refused to run: the DB holds pulled live edits newer
     than the snapshot's `captured_at`, which the replay would silently revert.
+
+    Raised only when the snapshot carries a usable stamp to compare against —
+    without one there is no ordering evidence, so the guard warns and proceeds
+    rather than refusing (see :func:`_guard_stale_snapshot`'s matrix).
+
     The durable fix is a re-capture — `/song-snapshot` (diff + confirmed
     overwrite of the canonical file), or `capture_cli execute` + copying the
     `.refresh.json` it writes over `captured_session.json`. The
@@ -160,6 +181,33 @@ def utc_now_eventlike() -> str:
     string comparison against event rows is chronological comparison."""
     now = datetime.now(timezone.utc)
     return now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z"
+
+
+def restamp_captured_at(snapshot: dict[str, Any]) -> str:
+    """Refresh ``snapshot['captured_at']`` to now (in place); return the new stamp.
+
+    The guard is armed by pull EVENTS newer than the snapshot, not by snapshot
+    content, so re-stamping the canonical snapshot newer than those events
+    disarms it with no content change (BAK-7D2V).
+
+    This is an operator override, not a workflow step: it ASSERTS that the
+    on-disk content already matches Live, and nothing here can verify that
+    assertion. An empty ``diff_snapshots`` result does not verify it either —
+    the diff compares device identity, dialed parameters, and chain names, but
+    never device sidechain source, drum-pad mappings, or ``chain_authored_props``,
+    all of which replay re-asserts. A pull touching only those fields diffs clean
+    over a stale file, so re-stamping there would silently revert it. Baking a
+    real capture is the durable fix (``/song-snapshot`` merges the fresh refresh
+    over the canonical file, carrying those fields AND a fresh stamp);
+    ``--force-replay`` is the conscious-discard path, and it re-warns every build
+    rather than disarming permanently.
+
+    Only a genuine capture or this explicit re-stamp may move the stamp;
+    ``migrate_snapshot`` deliberately never does (stamping unknown-age content
+    newer than pulls it lacks would defeat the guard)."""
+    stamp = utc_now_eventlike()
+    snapshot["captured_at"] = stamp
+    return stamp
 
 
 def _pulled_rows_newer_than(
@@ -183,6 +231,35 @@ def _pulled_rows_newer_than(
     return conn.execute(sql, params).fetchall()
 
 
+def count_request_replay_asserted_events(
+    conn: sqlite3.Connection, *, request_id: str,
+) -> int:
+    """How many events emitted under ``request_id`` are of a kind
+    ``replay_capture`` re-asserts — i.e. mix-layer state a stale snapshot would
+    later silently revert.
+
+    ``pull_cli`` calls this right after a pull apply to fire its durability
+    notice on exactly the event KINDS that arm the replay guard: same kind set
+    (:data:`_REPLAY_ASSERTED_EVENT_KINDS`), same per-request provenance, no
+    parallel domain whitelist to drift out of sync with the guard.
+
+    Kind parity, not outcome parity — a non-zero count means the guard WILL be
+    armed on the next build, but whether it then refuses or merely warns depends
+    on the snapshot carrying a usable ``captured_at`` (see
+    :func:`_guard_stale_snapshot`'s matrix). Scoping by ``request_id`` (not
+    ``song_id``) restricts the count to the just-applied pull, so it reflects
+    what THIS pull staged, not history."""
+    placeholders = ", ".join("?" for _ in _REPLAY_ASSERTED_EVENT_KINDS)
+    sql = (
+        "SELECT COUNT(*) FROM events "
+        f"WHERE request_id = ? AND kind IN ({placeholders})"
+    )
+    row = conn.execute(
+        sql, [request_id, *_REPLAY_ASSERTED_EVENT_KINDS],
+    ).fetchone()
+    return int(row[0])
+
+
 def _guard_stale_snapshot(
     conn: sqlite3.Connection,
     snapshot: dict[str, Any],
@@ -202,9 +279,9 @@ def _guard_stale_snapshot(
         (no ordering evidence; refusing would permanently false-alarm every
         previously-pulled song — the warning funnels to a stamping re-capture)
     """
-    captured_at = snapshot.get("captured_at")
-    if not (isinstance(captured_at, str) and _CAPTURED_AT_SHAPE.fullmatch(captured_at)):
-        captured_at = None
+    captured_at = (
+        snapshot.get("captured_at") if has_usable_captured_at(snapshot) else None
+    )
     rows = _pulled_rows_newer_than(conn, song_id=song_id, cutoff_ts=captured_at)
     if not rows:
         return

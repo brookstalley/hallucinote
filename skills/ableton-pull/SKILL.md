@@ -17,9 +17,9 @@ $ARGUMENTS
 `/ableton-pull` writes to the song **`.db`**, which is a **regenerable build
 artifact**: every `build.py` runs `replay_capture(captured_session.json)`, which
 re-asserts the snapshot onto the DB. So a pulled **mix** edit (params, sends,
-mixer, sidechain) **reverts on the next `build.py`** unless it is also in the
-durable snapshot. `/ableton-pull` is therefore the lower-level **build.py-staging
-primitive**, NOT a parallel mix bake:
+mixer, sidechain) is not durable on its own — it lives only in the regenerable
+DB. `/ableton-pull` is therefore the lower-level **build.py-staging primitive**,
+NOT a parallel mix bake:
 
 - **Durable mix bake → `/song-snapshot`.** The single mix bake — instrument params,
   sends, device chains, and **sidechain sources** land in the git-tracked
@@ -30,6 +30,24 @@ primitive**, NOT a parallel mix bake:
   `device-parameters`, …) are a quick DB-only ingest / inspection; to make them
   durable, run `/song-snapshot` after.
 
+> **The bake is the closing move (BAK-7D2V).** A mix-domain pull left un-baked
+> is not silently reverted anymore — provided the snapshot carries a
+> `captured_at` stamp, the next `build.py` **REFUSES to run**
+> (`StaleSnapshotError`) rather than re-assert the stale snapshot over your
+> pulled edits. (A legacy snapshot with no stamp gives replay no ordering
+> evidence, so it only **warns** and still reverts — baking is what makes the
+> check exact.) After such a pull, `pull_cli` prints a durability notice on
+> stderr naming the fix. Close the loop with **`/song-snapshot`** (which bakes a
+> fresh capture over `captured_session.json`, stamped newer than the pull, and
+> so disarms the guard); only reach for `build.py --force-replay` to
+> *consciously discard* the pulled edits. Build.py-owned pulls (clip-notes,
+> envelopes, tempo, cue, arrangement, tuning) do not themselves arm the guard —
+> that's the sanctioned staging lane. **One exception, and it is easy to trip:**
+> `score-globals` shares its probe with master volume/pan ingest, so a
+> "tempo-only" pull arms the guard whenever the master fader or pan drifted.
+> Trust the notice, not the domain you asked for — arming is decided by the
+> event kinds a pull actually emitted.
+
 ## Conflict policy
 
 **Ableton wins, always (V1).** Any field that differs is overwritten with Ableton's value. Mutations carry `actor='sync'` and `reason="pull from session <session_id>"`. Three-way merge is deferred (see `docs/VISION.md`).
@@ -37,7 +55,7 @@ primitive**, NOT a parallel mix bake:
 ## Available domains
 
 - `mix-state` — track volume / pan / mute / solo / arm / color, return volume / pan, master volume / pan, sends. Also ingests global tempo + signature (free ride-along).
-- `score-globals` — global tempo + signature ONLY (bar-1 rows). Cheaper than `mix-state` if that's all you've changed.
+- `score-globals` — global tempo + signature (bar-1 rows), plus master volume / pan as a free ride-along (one `ableton_session(action='info')` probe carries all of it). Cheaper than `mix-state` if that's all you've changed — but because of the master ride-along it can still arm the replay guard.
 - `cue-points` — arrangement cue positions + names. Name diffs are informational warnings (DB-side names are user-authoritative).
 - `devices` — top-level device chain on each linked track + return: positional `(kind, display_name)` diff. Nested chains live in `nested-rack-chains`; per-device parameter VALUES live in `device-parameters`.
 - `nested-rack-chains` — one level of nested chains under each rack device. Run after `devices`. Recursively nested racks deferred.
@@ -130,6 +148,8 @@ Otherwise show the user:
 - Total counts (`<N> mutations applied, <M> no-ops, <K> skipped (unlinked)`).
 - Each line from `details` (human-readable diffs — `track 'Drums' volume: 0.6 -> 0.75`).
 - Warnings. For the `clip-notes` "look moved" warning, add: *"If you nudge or restretch a note in Ableton and pull, the diff is correctly modeled as delete + insert — the note picks up a fresh UUID. If annotations/events keyed to the prior UUID matter, undo in Ableton and edit DB-side by the original UUID instead."*
+
+- **The durability notice, whenever `pull_cli` printed one on stderr** (it fires only for mix-layer changes that arm the replay guard). Relay it — this is the closing instruction of the pull, not incidental chatter: the pulled edits live in the regenerable DB only, and the user must bake them with `/song-snapshot` before the next `build.py`. Say so in your own words and offer to run the bake now.
 
 If `mutations == 0` with no warnings AND `unreadable == 0`, say "DB already matches Ableton — no changes needed."
 

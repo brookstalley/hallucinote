@@ -2,7 +2,205 @@
 
 <!-- Append new entries at the top. Each entry is a ## section.
      This file is separate from project-state.yaml to reduce merge conflicts
-     when multiple branches add entries simultaneously. -->
+     when multiple branches add entries simultaneously.
+
+     TAG-LINE FORM (canonical — the lifecycle tooling only reads this shape).
+     One HTML comment at the HEAD of the entry body (before any prose), wrapping
+     exactly this payload (NOTE: delimiters written as words, because a literal
+     closing delimiter here would end THIS comment early — HTML comments do not
+     nest, and that bug hid the paragraph below as visible body text):
+         open-comment prawduct: type=<t> | chunks=<a,b,c> | scope=<tag> | status=<s> | release=<r> close-comment
+     Pipe ` | ` separates keys; `chunks` is a COMMA list (never pipe — pipe is the
+     key delimiter); keys are freeform (unknown keys are preserved). A tag line
+     placed after prose is treated as body text, not metadata.
+
+     RELEASE VOCAB for in-flight work (VEW-9QH4): tag `release=unreleased` while the
+     work sits on develop with no release cut. At release cut, flip it to the real
+     `release=vX.Y.Z` (mirrors how v1.4.0/v1.5.0 tags were flipped). This avoids
+     pre-bumping a version (against `feedback_no_premature_version_bump`) or
+     mislabeling in-flight work as an already-shipped version. -->
+
+## 2026-08-03 — Capture takes get a rolling window (renders no longer grow without bound)
+
+<!-- prawduct: type=feature | chunks=1,2,3,4 | scope=aud-2d6t | status=shipped | release=v1.7.1 -->
+
+Nothing in the tree ever deleted a capture. Every `ableton_render` wrote a take to
+`songs/<slug>/captures/<ts>/` — a 48 kHz stereo 32-bit-float WAV per track, return and
+master, ~23 MB per surface-minute — and every take was kept forever. A reported
+real-world song had takes reaching ~4 GB each.
+
+The audio format is not the lever and was left alone: float32 is what lets the master
+overshoot analysis measure above 0 dBFS at all (`audio/attribution.py`). Retention is
+the lever, and it is safe because captures are **write-once, read-once**: the render
+writes them, `ableton_analysis` reads them once and emits a self-contained MixReport to
+`songs/<slug>/analysis/<ts>.json`, and baseline comparison resolves against those JSONs
+(`audio.compare.resolve_baseline` keys on `db_seq`) — never re-opening a WAV. The
+MixReport trail is the audit log of mix evolution and is never swept; what a sweep costs
+is re-analyzing one specific take with different parameters.
+
+New `hallucinote.takes` owns the window, split plan-then-execute the way the sync layer
+splits `PushPlan` from execution: `plan_sweep` classifies every take while writing
+nothing, `execute_sweep` removes what the plan named and collects per-take failures
+rather than letting one locked directory strand the rest. Two guards never sweep — a
+`.pinned` take (which also does not consume a keep slot, so pinning a reference can't
+silently evict a working take) and a take whose `status.json` still reads
+`state="running"`. It lives at the package top level, not under `hallucinote.audio`,
+because that package eagerly imports the numpy/librosa stack and the MCP server is
+stdlib-only at startup — the same constraint that placed `paths.py`.
+
+The sweep runs automatically in `server.py` before an `ableton_render(start)` is
+forwarded, keeping the newest 2 takes. Render start is the one moment no take is in
+flight (one render at a time), so it cannot race a capture. Scope is always the song's
+own captures root, never the parent of a caller-supplied `output_dir`, and the incoming
+dir is protected explicitly; the whole thing is best-effort, so disk hygiene can never
+cost a capture. `HALLUCINOTE_CAPTURE_KEEP` sets the window, `HALLUCINOTE_CAPTURE_SWEEP=0`
+turns it off.
+
+`hallucinote captures list | prune | pin | unpin` is the operator surface. `prune`
+requires an explicit `--song` or `--all` — reading is safe and defaults to everything,
+but deleting gigabytes is not what a forgotten argument should do — and `--dry-run`
+previews. `recency_key` was hoisted out of the analysis handler's `_capture_recency_key`
+into `takes` so the sweep's ordering and the analysis selector's "newest take" are one
+definition; had they drifted, a sweep could have deleted the take the next analysis
+would have chosen.
+
+`/render-analyze` also carries a **when-to-pin policy**, recorded here because it is
+shipped agent behavior a maintainer would otherwise find only in a commit body: pin on
+expressed intent to keep a take (not on a nickname or a compliment), and say so when you
+do. A pin is permanent *and* free of a keep slot — `plan_sweep` appends pinned takes to
+`kept` before the budget decrement — so pinning on weak signals would re-create the
+unbounded growth this window exists to bound.
+
+Departs from backlog AUD-2D6T's proposed shape (a manual `tools/audio-prune`): a manual
+tool relies on the operator remembering, which is the regime that produced the 4 GB
+takes. The CLI is kept, but the sweep is automatic. Retention policy (auto-sweep, keep
+2) chosen by the user 2026-08-03. Server-side only — `server.py` and
+`server_side/analysis.py` are outside `_FINGERPRINT_PATHS`, so no Live re-vendor.
+
+**Verified against real data**, not only fixtures: on this repo's own
+`songs/missing/captures/` (one 406.3 MB take), `captures list` reported it,
+`prune --keep 0 --dry-run` named it and removed nothing, `pin` followed by a real
+`prune --keep 0` left it untouched ("nothing to prune (1 take(s) kept)"), and
+`unpin` restored it — so the pin guard was exercised against a take that would
+otherwise have been deleted. The AUTOMATIC render-path sweep is unit-tested
+against a faked `client.send` but needs a live render to confirm end-to-end; it
+is queued in `.prawduct/operator-verification.md`.
+
+## 2026-07-20 — Provenance tests no longer assert ambient git state (first red PR-CI run)
+
+<!-- prawduct: type=bugfix | scope=highroi-sweep | status=shipped | release=v1.7.1 -->
+
+`test_provenance_metadata_captures_standard_signals` asserted `"branch" in meta`
+against whatever checkout the suite happened to run from. `actions/checkout` checks a
+`pull_request` out at the **detached merge commit**, so `git symbolic-ref --short HEAD`
+exits non-zero and `provenance_metadata()` correctly drops `branch` — the helper is
+documented best-effort. The test, not the code, held the false premise that a git
+checkout is always on a branch. It went unseen from 2026-05-21 (PR #74) because CI's
+`push:` runs on develop check out a real branch ref; PR #213 was the first
+`pull_request:` run to exercise it.
+
+All four provenance tests now build a throwaway one-commit repo and `chdir` into it, so
+the branch name is a *known* value rather than an ambient one — which makes them
+stronger, not weaker: `test_build_session_auto_captures_metadata` previously settled for
+`"git_sha" in meta or "branch" in meta` and now pins auto-capture to the real probe by
+asserting the controlled branch name. Added the missing halves of the documented
+contract as regression tests: detached HEAD drops `branch` while keeping `git_sha`, and
+a non-git cwd drops both while keeping `hostname`. Reproduced against a real detached
+worktree (old test fails, new passes) rather than trusting the local attached checkout.
+Suite 4523 → 4526.
+
+## 2026-07-20 — Repo hygiene sweep: gitignore contract, stale branches, untracked reports
+
+<!-- prawduct: type=process | scope=highroi-sweep | status=shipped | release=v1.7.1 -->
+
+Local and remote git hygiene. `.gitignore` reconciled with the prawduct session-file
+contract via `prawduct-hook update-gitignore`: adds `.critic-active`,
+`.critic-partials/`, and `.session-base-tree` (session state that was landing as
+untracked noise), and un-ignores `.prawduct/artifacts/build-plan.md`, which is
+tracked-by-contract. Four backlog items written during the 2026-07-07 re-vendor/restart
+analysis (MCP-6D3V, INS-8F2R, INS-5J9C, INS-7Q4Y) and three 2026-07-11 incoming-bug
+reports were sitting uncommitted on disk — both now landed, the reports pending triage
+per the usual triage→archive loop. On the remote: `fix/syn-9f4k-empty-rack-fail-loud`
+deleted (merged via PR #200) and the stale tracking ref for
+`fix/quickwin-cluster-mcp1v8k-pshphaseorder` pruned (squash-merged as PR #205), leaving
+origin at `main` + `develop` + the active branch. Dropped a stash from the deleted
+`fix/snp-8r4k-live-chunks` branch, verified subsumed (the `mix → devices → routing`
+phase reorder it held is present in HEAD).
+
+## 2026-07-04 — Pull-durability loop-close: contract UX + /song-snapshot empty-diff bake (BAK-7D2V Chunks 2–3)
+
+<!-- prawduct: type=feature | chunks=B,C | scope=highroi-sweep | status=shipped | release=v1.7.1 -->
+
+Closes the pull-durability item (Chunk 1's replay guard shipped in v1.7.0 / PR #210).
+**Chunk 2 — pull-side contract UX:** `pull_cli apply/execute` now print a durability
+notice on stderr after a mix-layer pull ("N change(s) staged in the regenerable DB
+only; on a stamped snapshot the next `build.py` will REFUSE rather than revert — bake
+with `/song-snapshot`"). The notice, the `/ableton-pull` skill, and `docs/song-workflow.md`
+all state the refusal as conditional on a `captured_at` stamp: a legacy unstamped
+snapshot gives replay no ordering evidence, so it warns and still reverts.
+It fires on the same EVENT KINDS the guard arms on, by reusing the guard's own
+`_REPLAY_ASSERTED_EVENT_KINDS` via new `capture.count_request_replay_asserted_events`
+(scoped to the just-applied pull's `request_id`) — no parallel domain whitelist to
+drift. (Kind parity, not outcome parity: what the guard then DOES with those events
+depends on the snapshot's stamp — refuse when stamped, warn-and-revert when not.) Quiet on zero-change applies, build.py-owned domains, and dry-runs. The
+`/ableton-pull` skill is reframed (BAK-3M9T Chunk D): names the bake as the closing
+move and the refuse-not-revert behavior. **Chunk 3 — loop-close:** `/song-snapshot`
+closes the pull-then-hand-revert corner, where the guard is armed by pull EVENTS but a
+fresh capture shows no content diff. On an empty diff it now BAKES the refresh it just
+captured (`capture merge` over `captured_session.json`), which disarms the guard and
+carries a fresh `captured_at`. It deliberately does NOT merely re-stamp: an empty
+`capture diff` does not prove the snapshot is current, because the diff never compares
+device sidechain sources, drum-pad mappings, or per-chain authored props — all of which
+replay re-asserts. A pull touching only those fields diffs clean, so a re-stamp would
+disarm the guard over stale values and let the next build silently revert the pulled
+work (found by Critic review before merge). `capture_cli restamp` (+
+`capture.restamp_captured_at`) survives as an explicit operator override on an
+ALREADY-stamped snapshot, warning that it asserts freshness it cannot verify. It now
+REFUSES (exit 2) a snapshot with no usable `captured_at`: replay reads an unusable
+stamp as "no ordering evidence" and warns before reverting, so back-stamping one
+would trade that last signal for a silent pass. `--force-replay` remains the
+conscious-discard path, and re-warns every build rather than disarming permanently.
+`/song-pick-instruments` snapshots already carry `captured_at` (via `compile_snapshot`);
+`docs/song-workflow.md` names the enforced pull→bake→build contract. **Live operator-
+verification** (dial → pull → build refuses → snapshot → survives → force-replay reverts,
+plus a pull the diff is blind to) is queued, not gated. Tests: notice fire/silence +
+helper discrimination + restamp disarm/idempotence + the diff's replay-asserted blind
+spot and merge's coverage of it + a doc-drift lock on the skill's empty-diff commands.
+
+## 2026-07-04 — Change-log tag canonicalization + unreleased vocab (VEW-7T2C, VEW-9QH4)
+
+<!-- prawduct: type=process | chunks=A | scope=highroi-sweep | status=shipped | release=v1.7.1 -->
+
+The lifecycle tooling (`TAG_LINE_RE` / stamp-merged / regen-views in the plugin's
+`lib/views.py`) now sees the whole log. Swept 34 historical tag lines from the
+pre-canonical space-delimited form (`chunks=… status=…`) to the canonical
+pipe-delimited `prawduct:` form: added the `prawduct:` prefix,
+converted key separators to ` | `, and fixed `chunks=A|B|C` values (pipe collides
+with the key delimiter → truncated chunk lists) to comma form. Relocated 3
+foot-positioned tag lines (v0.9.0–v1.1.0 entries) to the entry head so the parser
+reads them as metadata. Resolved 10 `release=unreleased status=shipped` entries to
+the release that FIRST contained each commit — 7 to `release=v0.9.5`, 3 to
+`release=v0.9.2`. **Corrected during PR review:** the first pass resolved all 10 to
+`v1.5.0` on the rule "ancestor of v1.5.0 but not of v1.4.0", which is not the same
+question as *which release shipped it*. This repo ran two concurrent version tracks
+— the v0.9.x series is chronologically LATER than v1.2.0–v1.4.0 (v0.9.5 is
+2026-06-12; v1.4.0 is 2026-05-28) and the two only converged at v1.5.0, whose tag
+subject is "version-track unification". So a commit can sit outside v1.4.0 while
+already having shipped in v0.9.2/v0.9.5. Use `git tag --contains <sha> | sort -V |
+head -1`, never an ancestor test against one later tag. Re-verified per scope
+(friction-basket/AUD-4W7K/AUD-3F8M → v0.9.5; install-hardening/tools-don't-narrow/
+audio-verification → v0.9.2); this also keeps these entries consistent with
+un-flipped siblings from the same window (e.g. INS-7V2D → v0.9.3) instead of
+splitting one release window across two `release-notes.md` sections.
+Documented the `release=unreleased`→flip-at-release vocab in the change-log
+header (VEW-9QH4). Result: **every entry but 2** parses as tagged (75 of 77 at this
+branch's tip; the count moves as entries land); the 2 remaining are
+genuinely tag-less pre-v1.4.0 entries (never carried a tag — left untouched rather
+than fabricate chunk IDs). Verified against the live parser for both visibility and
+per-entry chunk-id integrity. **Framework-coupled deferral:** the parser itself lives
+in the plugin (not this repo) — no tooling change here. No post-v1.7.0 unreleased
+commits exist (develop == main at v1.7.0), so the "missing entries" audit is
+trivially satisfied.
 
 ## 2026-07-04 — CI: the four gates run off-laptop; lint/type debt to zero (INF-2C4X)
 
@@ -1088,7 +1286,7 @@ CLP-AUD2 redefined; ENV-8H1T reduced; ENV-4M2T partially superseded; new ENV-7G4
 
 ## 2026-06-10 — DOC-5W8B: REQUIREMENTS.md auto-regen after device-changing push
 
-<!-- chunks=FRICTION-03 status=shipped release=unreleased scope=friction-basket -->
+<!-- prawduct: chunks=FRICTION-03 | status=shipped | release=v0.9.5 | scope=friction-basket -->
 
 `push_cli execute --song <slug>` now regenerates `songs/<slug>/REQUIREMENTS.md`
 whenever the devices phase applied at least one call — including pushes that
@@ -1101,7 +1299,7 @@ code is never masked. `docs/collaboration.md` handoff checklist updated.
 
 ## 2026-06-10 — WFL-7Q2N: session-ID auto-discovery in push/pull CLIs
 
-<!-- chunks=FRICTION-02 status=shipped release=unreleased scope=friction-basket -->
+<!-- prawduct: chunks=FRICTION-02 | status=shipped | release=v0.9.5 | scope=friction-basket -->
 
 `session_id` may now be omitted on every session-taking `push_cli` /
 `pull_cli` subcommand. `sync/session_resolve.resolve_session_id` resolves
@@ -1116,7 +1314,7 @@ xdist load) by setting `deadline=None` in both profiles.
 
 ## 2026-06-10 — PSH-4E2W: push failure prints halt cause + next step
 
-<!-- chunks=FRICTION-01 status=shipped release=unreleased scope=friction-basket -->
+<!-- prawduct: chunks=FRICTION-01 | status=shipped | release=v0.9.5 | scope=friction-basket -->
 
 `push_cli execute` failures previously printed only the errors-file path plus
 bare "top error patterns", forcing a read of `.last-push-errors.json` on every
@@ -1131,7 +1329,7 @@ test-pinned (large payloads can never leak past the 60-char grouping prefix).
 
 ## 2026-06-10 — AUD-4W7K chunk 2: db_seq provenance + seq resolver + surfacing sweep
 
-<!-- chunks=AUD-4W7K-02 status=shipped release=unreleased scope=aud-4w7k -->
+<!-- prawduct: chunks=AUD-4W7K-02 | status=shipped | release=v0.9.5 | scope=aud-4w7k -->
 
 The seq keying layer: the MCP server reads the song's latest audit-log seq
 at render-forward time (`server._attach_render_db_seq` — the render handler
@@ -1148,7 +1346,7 @@ recipe, spike decision-record updates. AUD-4W7K complete pending merge.
 
 ## 2026-06-10 — AUD-4W7K chunk 1: compare_to baseline diffs via explicit path
 
-<!-- chunks=AUD-4W7K-01 status=shipped release=unreleased scope=aud-4w7k -->
+<!-- prawduct: chunks=AUD-4W7K-01 | status=shipped | release=v0.9.5 | scope=aud-4w7k -->
 
 `MixReport.compare_to` is no longer a reserved skeleton: `audio/compare.py`
 diffs two serialized reports — per-surface loudness deltas keyed by
@@ -1162,7 +1360,7 @@ overshoots→0). Seq keying lands next chunk.
 
 ## 2026-06-10 — AUD-3F8M chunk 2: mixer_pan verified via master L−R balance
 
-<!-- chunks=AUD-3F8M-02 status=shipped release=unreleased scope=aud-3f8m -->
+<!-- prawduct: chunks=AUD-3F8M-02 | status=shipped | release=v0.9.5 | scope=aud-3f8m -->
 
 `mixer_pan` joins `mixer_volume` on the master-bus verification path:
 constant-power pan gains × the stem's static fader gain (threaded from
@@ -1176,7 +1374,7 @@ module docs). AUD-3F8M complete pending merge.
 
 ## 2026-06-10 — AUD-3F8M chunk 1: mixer_volume verified via master-bus windowing
 
-<!-- chunks=AUD-3F8M-01 status=shipped release=unreleased scope=aud-3f8m -->
+<!-- prawduct: chunks=AUD-3F8M-01 | status=shipped | release=v0.9.5 | scope=aud-3f8m -->
 
 `mixer_volume` envelopes are no longer skipped as post-fader-invisible:
 `audio/automation.py` windows the MASTER (post-fader sum) around each
@@ -1217,7 +1415,7 @@ unit tests pin the config-op and hook semantics.
 
 ## 2026-06-04 — INS-7V2D: plugin-bundled MCP server via uv (version-locked)
 
-<!-- chunks=INS-7V2D status=shipped release=v0.9.3 scope=plugin-distribution -->
+<!-- prawduct: chunks=INS-7V2D | status=shipped | release=v0.9.3 | scope=plugin-distribution -->
 
 The Claude Code plugin now **bundles the `hallucinote-mcp` server** and launches it via
 `uv run --frozen --all-packages --project ${CLAUDE_PLUGIN_ROOT}` from a committed `uv.lock`
@@ -1237,7 +1435,7 @@ on a clean machine + the plugin-update rebuild cycle.
 
 ## 2026-06-04 — Backlog low-cost sweep: ~13 items fixed in parallel (file-disjoint clusters)
 
-<!-- chunks=backlog-low-cost-sweep status=shipped release=v0.9.2 scope=backlog-low-cost-sweep -->
+<!-- prawduct: chunks=backlog-low-cost-sweep | status=shipped | release=v0.9.2 | scope=backlog-low-cost-sweep -->
 
 A parallel sweep of the low-cost / no-Live tier of the backlog, executed as seven
 file-disjoint clusters (verify-against-current-code, then surgical fix + narrow
@@ -1293,7 +1491,7 @@ write-boundary hardened; backlog reconciled).
 
 ## 2026-06-04 — Install hardening: every install mutation in tested, atomic Python
 
-<!-- chunks=install-hardening status=shipped release=unreleased scope=install-hardening -->
+<!-- prawduct: chunks=install-hardening | status=shipped | release=v0.9.2 | scope=install-hardening -->
 
 Moved every `/ableton-mcp-install` + `/ableton-mcp-uninstall` filesystem and
 MCP-config mutation out of hand-authored skill shell into tested, atomic,
@@ -1330,7 +1528,7 @@ adjacent but unresolved — left open.
 
 ## 2026-06-03 — Tools-don't-narrow-the-art (gate verdicts / generator altitude / review workflow) + helpers DRY
 
-<!-- chunks=LNT-1V9K,GEN-1S4K,REV-2W8K,helpers,chunk0 status=shipped release=unreleased scope=tools-dont-narrow-the-art+helpers-dry -->
+<!-- prawduct: chunks=LNT-1V9K,GEN-1S4K,REV-2W8K,helpers,chunk0 | status=shipped | release=v0.9.2 | scope=tools-dont-narrow-the-art+helpers-dry -->
 
 One thesis across four pieces: a build-time lens/helper is a **ruler, not a stamp** —
 it measures and asks; it never vetoes a deliberate choice or makes the musical decision.
@@ -1360,11 +1558,13 @@ Full suite 2881 passed. Cumulative Critic + independent PR review both clean (0 
 
 ## 2026-06-02 — Audio verification correctness: reverb RT60 + automation realization
 
-<!-- chunks=AUD-6R2M,AUD-4S8T,AUD-8H2M status=shipped release=unreleased scope=audio-verification -->
+<!-- prawduct: chunks=AUD-6R2M,AUD-4S8T,AUD-8H2M | status=shipped | release=v0.9.2 | scope=audio-verification -->
 
 Branch `fix/reverb-rt60-decay-tail` (off `develop`). Made the audio analyzer's
-verification surfaces trustworthy on real multi-track songs. (`release=unreleased`:
-post-v1.4.0 work, no release cut yet — see backlog VEW-9QH4. Live re-render
+verification surfaces trustworthy on real multi-track songs. (Shipped in v0.9.2;
+tagged `release=unreleased` at author time pending a release cut, flipped to the
+real version by VEW-9QH4 — first resolved to v1.5.0, corrected to v0.9.2 in PR
+review once the two concurrent version tracks were untangled. Live re-render
 validation of the real reverb tail + the Amp-flip is deferred to the user.)
 
 - **Reverb RT60 — per-return decay-tail (AUD-6R2M).** Replaced the multi-source
@@ -1393,7 +1593,7 @@ pre-existing, user-acknowledged-out-of-scope gap in a different song, deselected
 
 ## 2026-05-30 — Arrangement model + sun-zone-done flagship (Chunks 1–5)
 
-<!-- chunks=arrangement-1-5 status=shipped release=v1.4.0 scope=arrangement-model -->
+<!-- prawduct: chunks=arrangement-1-5 | status=shipped | release=v1.4.0 | scope=arrangement-model -->
 
 The `feature/sun-zone-done-flagship` branch. A new song-structure subsystem
 (`hallucinote.arrangement`) plus its first full demonstration: sun-zone-done
@@ -1434,7 +1634,7 @@ Cumulative `/critic`: 3 warnings + 1 note, no BLOCKING — all resolved. Full su
 
 ## 2026-05-29 — Bulk note-authoring: scoped push + /compose-part + inline guardrail (B1–B4)
 
-<!-- chunks=bulk-notes-B1-B4 status=shipped release=v1.4.0 scope=bulk-note-authoring -->
+<!-- prawduct: chunks=bulk-notes-B1-B4 | status=shipped | release=v1.4.0 | scope=bulk-note-authoring -->
 
 The `feature/bulk-note-authoring` branch. **Notes are authored as code, never as
 data-in-context**: the LLM writes the smallest correct generator expression, a
@@ -1476,7 +1676,7 @@ B1/B1b (1 cumulative), B2/B3, and B4 — all clean at completion.
 
 ## 2026-05-29 — Masking analyzer + intent architecture + timing feel (C1–C7)
 
-<!-- chunks=masking-C1-C7 status=shipped release=v1.4.0 scope=masking-analyzer -->
+<!-- prawduct: chunks=masking-C1-C7 | status=shipped | release=v1.4.0 | scope=masking-analyzer -->
 
 The `feature/masking-analyzer` branch: the section-scoped, intent-aware audio
 analyses no commercial meter can produce — measurement DSP that stays neutral,
@@ -1521,7 +1721,7 @@ Full suite 2248 → 2251.
 
 ## 2026-05-28 — Section-windowed audio analysis: `MixReport.per_section`
 
-<!-- chunks=section-windowing status=shipped release=v1.4.0 scope=audio-analysis-mvp -->
+<!-- prawduct: chunks=section-windowing | status=shipped | release=v1.4.0 | scope=audio-analysis-mvp -->
 
 First post-MVP item off the audio-analysis roadmap (spike §9 deferred
 #1). The same loudness metrics, scoped to each named section instead of
@@ -1576,7 +1776,7 @@ variable-tempo-accurate windowing carried forward as a P1 follow-on.
 
 ## 2026-05-28 — Audio Analysis MVP follow-on: `sends.intended_rt60_s` schema + loudness helper unification
 
-<!-- chunks=3-followup status=shipped release=v1.4.0 scope=audio-analysis-mvp -->
+<!-- prawduct: chunks=3-followup | status=shipped | release=v1.4.0 | scope=audio-analysis-mvp -->
 
 Two small bundled chunks against `develop` after the Chunk 3 squash-merge
 (d4d2387 on develop).
@@ -1627,7 +1827,7 @@ push/pull don't touch it (intent is composer authorship, not Live state).
 
 ## 2026-05-28 — Audio Analysis MVP, Chunk 3 (3-A + 3-B + 3-C) — analysis pipeline + `ableton_analysis` MCP tool
 
-<!-- chunks=3 status=shipped release=v1.4.0 scope=audio-analysis-mvp -->
+<!-- prawduct: chunks=3 | status=shipped | release=v1.4.0 | scope=audio-analysis-mvp -->
 
 Chunk 3 sub-chunks 3-A, 3-B, and 3-C closed. The analysis half of the
 audio-analysis MVP is now built: captures dirs produced by
@@ -1775,7 +1975,7 @@ would have triggered it.
 
 ## 2026-05-27 — Audio Analysis MVP, Chunk 2 close-out — multi-analyzer simultaneous capture verified
 
-<!-- chunks=2 status=shipped release=v1.4.0 scope=audio-analysis-mvp -->
+<!-- prawduct: chunks=2 | status=shipped | release=v1.4.0 | scope=audio-analysis-mvp -->
 
 Chunk 2 — Capture pipeline — closed. Multi-analyzer simultaneous capture
 verified end-to-end on reggae-metal song in Live 12.4 at 180 BPM:
@@ -1873,7 +2073,7 @@ for sidecar version-discovery.
 
 ## 2026-05-26 — Audio Analysis MVP, Chunk 2 sub-chunk 2B partial — in-Live recording-path verification
 
-<!-- chunks=2b-partial status=shipped release=v1.4.0 scope=audio-analysis-mvp -->
+<!-- prawduct: chunks=2b-partial | status=shipped | release=v1.4.0 | scope=audio-analysis-mvp -->
 
 Sub-chunk 2B's recording-path half shipped. The HallucinoteAnalyzer
 `.amxd` was extended in Max's GUI to the Chunk 2 contract, and the
@@ -1948,7 +2148,7 @@ authoring + verification work.
 
 ## 2026-05-26 — Audio Analysis MVP, Chunk 2 sub-chunk 2A — Python deliverables for the capture pipeline
 
-<!-- chunks=2a status=shipped release=v1.4.0 scope=audio-analysis-mvp -->
+<!-- prawduct: chunks=2a | status=shipped | release=v1.4.0 | scope=audio-analysis-mvp -->
 
 Sub-chunk 2A of Chunk 2 closed with the full Python-side surface for
 the audio-capture pipeline. M4L authoring + in-Live verification (sub-
@@ -2001,7 +2201,7 @@ Test impact: +66 unit tests across `analyzer/*`, `actions_render`,
 
 ## 2026-05-26 — Audio Analysis MVP, Chunk 1 — Plumbing proof-of-life shipped
 
-<!-- chunks=1 status=shipped release=v1.4.0 scope=audio-analysis-mvp -->
+<!-- prawduct: chunks=1 | status=shipped | release=v1.4.0 | scope=audio-analysis-mvp -->
 
 Chunk 1 of the audio-analysis MVP closed with track-only proof-of-life
 verified in Live: `HallucinoteAnalyzer.amxd` (Max for Live audio effect)
@@ -2040,7 +2240,7 @@ deliverable). Full test suite green: 2033 passed in 18.42 s.
 
 ## 2026-05-23 — Hygiene wave: P0 delete_notes + migrate tests + P1 JSONSchema enrichment + P3 fingerprint NUL-sniff
 
-<!-- chunks=hygiene status=shipped release=v1.4.0 scope=mutator-event-shape+test-coverage+wire-schema-enrichment+fingerprint-binary-safety -->
+<!-- prawduct: chunks=hygiene | status=shipped | release=v1.4.0 | scope=mutator-event-shape+test-coverage+wire-schema-enrichment+fingerprint-binary-safety -->
 
 Five backlog items closed in one feature branch (fix/hygiene-wave-p0-p1-p3),
 each with tightly-scoped regression tests, accurate root-cause commit
@@ -2115,7 +2315,7 @@ cumulative-Critic and PR-review gates clean.
 
 ## 2026-05-22 — Arc 7-tail: enum envelopes + device-load hardening + W13-A fallback identity (E1+E2+E3)
 
-<!-- chunks=E1|E2|E3 status=shipped release=v1.4.0 scope=enum-envelope-authoring+device-load-post-condition+w13a-fallback-identity -->
+<!-- prawduct: chunks=E1,E2,E3 | status=shipped | release=v1.4.0 | scope=enum-envelope-authoring+device-load-post-condition+w13a-fallback-identity -->
 
 Three chunks bundled per the user's "one PR for the bundle" direction,
 all empirically scoped from the 2026-05-22 Live-side probing session.
@@ -2184,7 +2384,7 @@ branch (parked v1.5 framework WIP per
 
 ## 2026-05-22 — Arc 7: production polish (P1, P4, P5, P7) + Arc 2 / B5 (MCP auto-mutate)
 
-<!-- chunks=P1|P4|P5|P7|B5|backlog-scrub status=shipped release=v1.4.0 scope=envelope-polish+nested-rack-tombstone+device-load-class+mutator-prefix-strip+mcp-auto-mutate -->
+<!-- prawduct: chunks=P1,P4,P5,P7,B5,backlog-scrub | status=shipped | release=v1.4.0 | scope=envelope-polish+nested-rack-tombstone+device-load-class+mutator-prefix-strip+mcp-auto-mutate -->
 
 Arc 7 production-polish chunks bundled per the user's "one PR for
 several fixes" direction; P2 / P3 / P6 collapsed to documentation-only
@@ -2237,7 +2437,7 @@ Suite: 1904/1904 passing (+31 from the 1873 baseline at Arc 6 tail).
 
 ## 2026-05-22 — Arc 6: song-author hygiene tail (H1–H5)
 
-<!-- chunks=H1|H2|H3|H4|H5|backlog-scrub status=shipped release=v1.4.0 scope=song-author-hygiene+kit-strict+negative-beats-refusal -->
+<!-- prawduct: chunks=H1,H2,H3,H4,H5,backlog-scrub | status=shipped | release=v1.4.0 | scope=song-author-hygiene+kit-strict+negative-beats-refusal -->
 
 Five small chunks closing song-author-side polish items the cumulative
 PR reviewer surfaced.
@@ -2279,7 +2479,7 @@ Suite: 1873/1873 passing (+3 from Arc 5 baseline, after Critic-driven fix-up tes
 
 ## 2026-05-22 — Arc 5: iteration-loop polish (P1–P6)
 
-<!-- chunks=P1|P2|P3|P4|P5|P6 status=shipped release=v1.4.0 scope=iteration-loop-polish+backlog-discipline -->
+<!-- prawduct: chunks=P1,P2,P3,P4,P5,P6 | status=shipped | release=v1.4.0 | scope=iteration-loop-polish+backlog-discipline -->
 
 Six small chunks of polish closing iteration-loop pain points after
 Arcs 2–4 shipped, plus structural backlog-accuracy discipline added
@@ -2316,7 +2516,7 @@ Suite: 1870/1870 passing.
 
 ## 2026-05-22 — Arc 4 / D4: structural display-name shift (delete _CLASS_TO_DISPLAY)
 
-<!-- chunks=D4-1|D4-2|D4-3|D4-4|D4-5|D4-6|D4-7 status=shipped release=v1.4.0 scope=loader-display-name-convention -->
+<!-- prawduct: chunks=D4-1,D4-2,D4-3,D4-4,D4-5,D4-6,D4-7 | status=shipped | release=v1.4.0 | scope=loader-display-name-convention -->
 
 D4 verification surfaced a deeper problem than the spec called for.
 Live merged Phaser+Flanger in 12.x and minted a new internal class
@@ -2373,7 +2573,7 @@ behavior regressions; the functions they covered no longer exist).
 
 ## 2026-05-21 — Fix: annotation handler crashed Live's Remote Script load
 
-<!-- chunks=hotfix status=shipped release=v1.4.0 scope=arc-2-live-verification-fallout -->
+<!-- prawduct: chunks=hotfix | status=shipped | release=v1.4.0 | scope=arc-2-live-verification-fallout -->
 
 Arc 2's `ableton_annotation` handler imported `sqlite3` at module
 load. Live 12.x's embedded Python ships without the `_sqlite3` C
@@ -2415,7 +2615,7 @@ reopen Live, then `/mcp` to respawn the MCP subprocess.
 
 ## 2026-05-21 — Arc 3: Compose-time validation, round 2 (R-2 follow-ons)
 
-<!-- chunks=C1|C2|C3 status=shipped release=v1.4.0 scope=compose-validation-r2-followons -->
+<!-- prawduct: chunks=C1,C2,C3 | status=shipped | release=v1.4.0 | scope=compose-validation-r2-followons -->
 
 R-2 (v1.0.1) shipped the pure module `compat.classify_preset_query`
 and the `browser_dry_runs` map plumbing through `check_song`, but left
@@ -2483,7 +2683,7 @@ Suite: 1876/1876 passing (was 1842 — 34 net new tests).
 
 ## 2026-05-21 — Arc 2: Provenance + annotations MCP + dev-loop dispatcher bypass
 
-<!-- chunks=Q1|B3-resid|B2|B4|B5 status=shipped release=v1.4.0 scope=provenance+annotations-mcp+dev-ergonomics -->
+<!-- prawduct: chunks=Q1,B3-resid,B2,B4,B5 | status=shipped | release=v1.4.0 | scope=provenance+annotations-mcp+dev-ergonomics -->
 
 After a Wave 8 audit found that B1 had already shipped wholesale and
 B3/B5 were partial, Arc 2 reduced to: Q1 (dev-loop dispatcher param)
@@ -2568,6 +2768,8 @@ will fire on first compose-time use).
 
 ## 2026-05-21 — Arc 1: Drum Rack pad-mapping discovery + push-loop residuals
 
+<!-- prawduct: chunks=A3,A1-resid,A2-resid,A5 | status=shipped | release=v1.1.0 | scope=push-reliability+drum-mapping -->
+
 **A3 (substantive) — Drum Rack pad-mapping discovery.** Closes the
 sun-zone-done Hot Rod Kit cautionary tale (metal sections clanging on
 cowbell because GM-default ride at note 51 lands on Hot Rod's "Cowbell
@@ -2626,10 +2828,10 @@ section rewritten with audit-accurate scope.
 
 Suite: main 1788 (+30) + MCP 664 (+3) = 2452 passing, 0 failed.
 
-<!-- chunks=A3|A1-resid|A2-resid|A5 status=shipped release=v1.1.0 scope=push-reliability+drum-mapping -->
-
 
 ## 2026-05-20 — R-1 + R-2: cue idempotency, scaffold cleanup CLI, compat preset_query validation
+
+<!-- prawduct: chunks=R-1,R-2 | status=shipped | release=v1.0.1 | scope=push-reliability+compose-time-validation -->
 
 **R-1.1 — Cue push idempotency.** `ableton_arrangement(cue_create /
 cue_create_batch)` gains `if_exists={"refuse", "skip"}`. Single-cue
@@ -2685,10 +2887,10 @@ RESOLVED tags pointing at the chunk that closed them.
 
 Suite: main 1758 (+31) + MCP 661 (+8) = 2419 passing, 0 failed.
 
-<!-- chunks=R-1|R-2 status=shipped release=v1.0.1 scope=push-reliability+compose-time-validation -->
-
 
 ## 2026-05-20 — v0.9.0 milestone: cross-machine portability + first tagged release
+
+<!-- prawduct: chunks=W13-B,W13-C,hygiene | status=shipped | release=v0.9.0 | scope=cross-machine-portability+v0.9.0-cut -->
 
 First user-facing tagged release. Bundles W13-B (missing-plugin detection
 + REQUIREMENTS.md + push preflight refuse-and-confirm), W13-C
@@ -2716,8 +2918,6 @@ Suite 1510 → 1549 (+39 tests, ~11.8s). All four canary songs
 (`falling-walking`, `full-band-rock`, `solo-piano-ambient`,
 `odd-meter-experimental`) have REQUIREMENTS.md generated — all-native,
 no install needed.
-
-<!-- chunks=W13-B|W13-C|hygiene status=shipped release=v0.9.0 scope=cross-machine-portability+v0.9.0-cut -->
 
 ## 2026-05-17 — `arrangement` → `arrangement_clip` rename
 

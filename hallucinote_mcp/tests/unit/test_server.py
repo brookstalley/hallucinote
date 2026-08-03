@@ -898,3 +898,258 @@ def test_annotated_param_type_any_is_explicit_not_fallback():
     from hallucinote_mcp.server import _PARAM_TYPE_MAP
     from typing import Any
     assert _PARAM_TYPE_MAP["any"] is Any
+
+
+# ---------------------------------------------------------------------------
+# Capture retention on the render path.
+#
+# Renders write 32-bit-float WAVs per surface — gigabytes per take on a real
+# song — and nothing else deletes them. handle_tool_call sweeps the song's
+# captures root before forwarding a render, keeping the newest N takes. These
+# tests pin what must survive: the incoming take, pinned takes, and (when the
+# sweep fails outright) the render itself.
+# ---------------------------------------------------------------------------
+
+
+def _seed_take(captures_root, name, captured_at, *, pinned=False):
+    """A take dir shaped like a real render's output."""
+    import json
+    take = captures_root / name
+    take.mkdir(parents=True)
+    (take / "manifest.json").write_text(
+        json.dumps({"schema_version": "1", "captured_at": captured_at}),
+        encoding="utf-8",
+    )
+    (take / "master.wav").write_bytes(b"\0" * 4096)
+    if pinned:
+        (take / ".pinned").write_text("", encoding="utf-8")
+    return take
+
+
+def _render_start(params):
+    from hallucinote_mcp.wire import Response
+    forwarded = Response(ok=True, result={"status": "ok"})
+    with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
+        handle_tool_call("ableton_render", "start", params)
+    return send
+
+
+def test_render_start_sweeps_stale_takes_keeping_the_newest_two(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("HALLUCINOTE_CAPTURE_KEEP", raising=False)
+    monkeypatch.delenv("HALLUCINOTE_CAPTURE_SWEEP", raising=False)
+    captures = tmp_path / "songs" / "demo" / "captures"
+    for i in range(5):
+        _seed_take(captures, f"take-{i}", f"2026060{i}T000000Z")
+
+    _render_start({"song_slug": "demo"})
+
+    survivors = sorted(p.name for p in captures.iterdir())
+    # The two newest takes, plus the dir this render is about to write.
+    assert "take-4" in survivors and "take-3" in survivors
+    assert "take-0" not in survivors
+    assert "take-1" not in survivors
+    assert "take-2" not in survivors
+
+
+def test_render_start_never_sweeps_the_dir_it_is_about_to_write(
+    tmp_path, monkeypatch,
+):
+    """A rerun into an existing timestamp must not delete its own target."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("HALLUCINOTE_CAPTURE_KEEP", raising=False)
+    monkeypatch.setenv("HALLUCINOTE_CAPTURE_SWEEP", "1")
+    captures = tmp_path / "songs" / "demo" / "captures"
+    # The incoming dir already exists AND is the oldest, so a naive keep-2
+    # sweep would delete it out from under the render.
+    incoming = _seed_take(captures, "incoming", "20260101T000000Z")
+    for i in range(3):
+        _seed_take(captures, f"take-{i}", f"2026060{i}T000000Z")
+
+    _render_start({"song_slug": "demo", "output_dir": str(incoming)})
+
+    assert incoming.exists()
+
+
+def test_render_start_keeps_pinned_takes(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("HALLUCINOTE_CAPTURE_KEEP", raising=False)
+    monkeypatch.delenv("HALLUCINOTE_CAPTURE_SWEEP", raising=False)
+    captures = tmp_path / "songs" / "demo" / "captures"
+    _seed_take(captures, "reference", "20260101T000000Z", pinned=True)
+    for i in range(4):
+        _seed_take(captures, f"take-{i}", f"2026060{i}T000000Z")
+
+    _render_start({"song_slug": "demo"})
+
+    assert (captures / "reference").exists()
+
+
+def test_render_start_sweep_respects_the_keep_env_var(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HALLUCINOTE_CAPTURE_KEEP", "1")
+    monkeypatch.delenv("HALLUCINOTE_CAPTURE_SWEEP", raising=False)
+    captures = tmp_path / "songs" / "demo" / "captures"
+    for i in range(4):
+        _seed_take(captures, f"take-{i}", f"2026060{i}T000000Z")
+
+    _render_start({"song_slug": "demo"})
+
+    survivors = {p.name for p in captures.iterdir() if p.name.startswith("take-")}
+    assert survivors == {"take-3"}
+
+
+def test_render_start_sweep_disabled_by_env_keeps_everything(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HALLUCINOTE_CAPTURE_SWEEP", "0")
+    captures = tmp_path / "songs" / "demo" / "captures"
+    for i in range(5):
+        _seed_take(captures, f"take-{i}", f"2026060{i}T000000Z")
+
+    _render_start({"song_slug": "demo"})
+
+    survivors = {p.name for p in captures.iterdir() if p.name.startswith("take-")}
+    assert survivors == {f"take-{i}" for i in range(5)}
+
+
+def test_render_proceeds_when_the_sweep_raises(tmp_path, monkeypatch, caplog):
+    """Disk hygiene must never cost a capture."""
+    import logging
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("HALLUCINOTE_CAPTURE_SWEEP", raising=False)
+
+    def _boom(*a, **kw):
+        raise OSError("disk on fire")
+
+    monkeypatch.setattr("hallucinote.takes.plan_sweep", _boom)
+    with caplog.at_level(logging.WARNING):
+        send = _render_start({"song_slug": "demo"})
+
+    assert send.called, "the render must still be forwarded"
+    assert "retention sweep failed" in caplog.text
+
+
+def test_render_start_sweep_scoped_to_the_song_not_an_arbitrary_output_dir(
+    tmp_path, monkeypatch,
+):
+    """An output_dir outside the song's captures root must not cause a sweep
+    of whatever directory happens to contain it.
+
+    Asserts both halves, so it can't pass by sweeping nothing at all: the
+    unrelated directory is untouched AND the song's own captures root is still
+    swept on the same call.
+    """
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("HALLUCINOTE_CAPTURE_KEEP", raising=False)
+    monkeypatch.delenv("HALLUCINOTE_CAPTURE_SWEEP", raising=False)
+    elsewhere = tmp_path / "elsewhere"
+    for i in range(4):
+        _seed_take(elsewhere, f"take-{i}", f"2026060{i}T000000Z")
+    captures = tmp_path / "songs" / "demo" / "captures"
+    for i in range(4):
+        _seed_take(captures, f"song-take-{i}", f"2026060{i}T000000Z")
+
+    _render_start(
+        {"song_slug": "demo", "output_dir": str(elsewhere / "new-take")}
+    )
+
+    assert {p.name for p in elsewhere.iterdir()} == {f"take-{i}" for i in range(4)}
+    assert {p.name for p in captures.iterdir()} == {"song-take-3", "song-take-2"}
+
+
+def test_render_start_refuses_a_traversal_slug_before_sweeping(
+    tmp_path, monkeypatch, caplog,
+):
+    """A malicious/typo'd song_slug must never aim the sweep outside the song
+    tree. `Path("songs") / "/abs"` is `/abs`, so an absolute slug would
+    otherwise replace the songs root entirely."""
+    import logging
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("HALLUCINOTE_CAPTURE_SWEEP", raising=False)
+    # Seeded under <victim>/captures because that is exactly where an absolute
+    # slug lands the sweep: resolve_song_dir(slug) / "captures". Without the
+    # validation these three are swept down to two.
+    victim = tmp_path / "victim" / "captures"
+    _seed_take(victim, "precious", "20260601T000000Z")
+    _seed_take(victim, "precious-2", "20260602T000000Z")
+    _seed_take(victim, "precious-3", "20260603T000000Z")
+
+    with caplog.at_level(logging.WARNING):
+        send = _render_start(
+            {
+                "song_slug": str(tmp_path / "victim"),
+                "output_dir": str(victim / "new"),
+            }
+        )
+
+    assert {p.name for p in victim.iterdir()} == {
+        "precious", "precious-2", "precious-3",
+    }
+    assert send.called, "the render itself is not the sweep's business to block"
+
+
+def test_render_start_logs_when_the_sweep_is_disabled(tmp_path, monkeypatch, caplog):
+    """A silent no-op looks identical to an env var that never reached this
+    process, so the opt-out confirms itself in the log."""
+    import logging
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HALLUCINOTE_CAPTURE_SWEEP", "0")
+
+    with caplog.at_level(logging.INFO, logger="hallucinote_mcp"):
+        _render_start({"song_slug": "demo"})
+
+    assert "retention sweep disabled" in caplog.text
+
+
+def test_sweep_env_name_matches_the_engine_constant():
+    """server.py names the var literally (it must read correctly even with no
+    engine installed); this pins it to the engine's definition."""
+    from hallucinote.takes import ENV_SWEEP
+    from hallucinote_mcp.server import _CAPTURE_SWEEP_ENV
+
+    assert _CAPTURE_SWEEP_ENV == ENV_SWEEP
+
+
+def test_render_start_sweep_names_the_takes_it_removed(tmp_path, monkeypatch, caplog):
+    """The log is the only record a take existed once its directory is gone."""
+    import logging
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("HALLUCINOTE_CAPTURE_KEEP", raising=False)
+    monkeypatch.delenv("HALLUCINOTE_CAPTURE_SWEEP", raising=False)
+    captures = tmp_path / "songs" / "demo" / "captures"
+    for i in range(4):
+        _seed_take(captures, f"take-{i}", f"2026060{i}T000000Z")
+
+    with caplog.at_level(logging.INFO, logger="hallucinote_mcp"):
+        _render_start({"song_slug": "demo"})
+
+    assert "take-0" in caplog.text and "take-1" in caplog.text
+
+
+def test_render_start_logs_when_the_engine_is_unavailable(
+    tmp_path, monkeypatch, caplog,
+):
+    """An MCP-only install can never sweep, and that condition is PERMANENT —
+    so it says so rather than letting captures pile up unexplained."""
+    import builtins
+    import logging
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("HALLUCINOTE_CAPTURE_SWEEP", raising=False)
+
+    real_import = builtins.__import__
+
+    def _no_takes(name, *a, **kw):
+        if name == "hallucinote.takes":
+            raise ImportError("no engine here")
+        return real_import(name, *a, **kw)
+
+    monkeypatch.setattr(builtins, "__import__", _no_takes)
+    with caplog.at_level(logging.INFO, logger="hallucinote_mcp"):
+        send = _render_start({"song_slug": "demo"})
+
+    assert "capture retention unavailable" in caplog.text
+    assert send.called

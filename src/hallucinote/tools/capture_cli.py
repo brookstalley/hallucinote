@@ -52,8 +52,10 @@ from hallucinote.capture import (
     capture_plan,
     diff_snapshots,
     format_diff_summary,
+    has_usable_captured_at,
     merge_snapshots,
     migrate_snapshot,
+    restamp_captured_at,
     snapshot_needs_migration,
 )
 
@@ -229,6 +231,77 @@ def _cmd_migrate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_restamp(args: argparse.Namespace) -> int:
+    """Refresh a committed snapshot's ``captured_at`` in place WITHOUT a content
+    change, disarming the replay guard (BAK-7D2V).
+
+    Refuses (exit 2) unless the snapshot already carries a usable `captured_at`.
+    Back-stamping an unstamped/legacy file is the one case that is strictly worse
+    than doing nothing: replay reads an unusable stamp as "no ordering evidence"
+    and warns before reverting, so the user at least SEES it — stamping moves
+    replay to its silent-pass branch and destroys that last signal.
+
+    Otherwise this is a deliberate operator override, NOT a safe default, and no
+    workflow reaches for it automatically: moving the stamp asserts that the
+    on-disk content already matches Live, and nothing here can verify that. An empty
+    ``capture diff`` is NOT such a verification — the diff never compares device
+    sidechain sources, drum-pad mappings, or per-chain authored props, all of
+    which replay re-asserts, so a pull touching only those fields diffs clean
+    while the file is stale. Re-stamping over that state silently reverts the
+    pulled work on the next build. Prefer baking a real capture (`/song-snapshot`,
+    which merges the fresh refresh over the canonical file); prefer
+    ``--force-replay`` when you consciously want to discard pulled edits, since
+    it re-warns on every build instead of disarming the guard permanently."""
+    from hallucinote.workspace import resolve_song_dir
+
+    if args.song:
+        path = resolve_song_dir(args.song) / "captured_session.json"
+    elif args.path:
+        path = Path(args.path)
+    else:
+        print(
+            "error: capture restamp needs --song SLUG or a snapshot PATH",
+            file=sys.stderr,
+        )
+        return 2
+    if not path.exists():
+        print(f"error: snapshot not found: {path}", file=sys.stderr)
+        return 2
+
+    snapshot = json.loads(path.read_text())
+    old = snapshot.get("captured_at")
+    # Refuse on an absent/malformed stamp. Replay treats an unstamped snapshot as
+    # "no ordering evidence" and takes its warn-and-proceed branch — the user at
+    # least SEES that pulled edits are being overwritten. Back-stamping one moves
+    # it to the silent-pass branch instead, destroying the only signal in the one
+    # case this tool cannot reason about. (Same reason `migrate_snapshot` never
+    # stamps: dating unknown-age content defeats the guard.)
+    if not has_usable_captured_at(snapshot):
+        print(
+            f"error: {path} has no usable `captured_at` stamp ({old!r}). "
+            "Re-stamping it would silence the replay guard's warning without "
+            "any evidence the content is current — capture the snapshot "
+            "instead (`/song-snapshot`), which stamps it correctly.",
+            file=sys.stderr,
+        )
+        return 2
+    new = restamp_captured_at(snapshot)
+    path.write_text(json.dumps(snapshot, indent=2) + "\n")
+    print(
+        f"{path}: re-stamped captured_at {old!r} -> {new!r} "
+        "(content unchanged; the replay guard is now disarmed)."
+    )
+    print(
+        "warning: this asserts the on-disk snapshot already matches Live — "
+        "nothing verified that. If a pull touched a device sidechain source, "
+        "drum-pad mapping, or chain authored prop, those values are still "
+        "stale here and the next build will silently revert them. Bake a real "
+        "capture with `/song-snapshot` instead when you can.",
+        file=sys.stderr,
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
     # The legacy --plan flag is preserved so older skill bodies / docs keep
@@ -302,6 +375,26 @@ def main(argv: list[str] | None = None) -> int:
         "path", help="Path to the captured_session.json to clean in place"
     )
     migrate_p.set_defaults(func=_cmd_migrate)
+
+    restamp_p = sub.add_parser(
+        "restamp",
+        help=(
+            "BAK-7D2V: refresh captured_at in place with NO content change, to "
+            "disarm the replay guard. Deliberate operator override — it asserts "
+            "the on-disk content already matches Live and cannot verify it. "
+            "Refuses a snapshot with no usable captured_at (back-stamping one "
+            "silences replay's warning). Prefer /song-snapshot or --force-replay."
+        ),
+    )
+    restamp_p.add_argument(
+        "--song", default=None,
+        help="song slug — re-stamps songs/<slug>/captured_session.json",
+    )
+    restamp_p.add_argument(
+        "path", nargs="?", default=None,
+        help="explicit snapshot path (escape hatch / tests); overridden by --song",
+    )
+    restamp_p.set_defaults(func=_cmd_restamp)
 
     args = p.parse_args(argv)
     if args.plan:

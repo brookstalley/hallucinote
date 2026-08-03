@@ -144,6 +144,13 @@ is removed at the start of the third.
 `hallucinote captures list` shows what's on disk and `hallucinote captures prune
 --song <slug> --dry-run` previews a sweep without deleting.
 
+> **Agents: `hallucinote` is not on your PATH.** The engine ships inside the
+> plugin's uv env, so these read as `"$PY" -m hallucinote.cli captures …` with
+> `$PY` resolved from `ableton://server/info` — see
+> [`running-the-engine.md`](running-the-engine.md). This matters most for `pin`:
+> a `command not found` there is silent, and the take it was meant to protect is
+> swept at a later render.
+
 `HALLUCINOTE_CAPTURE_KEEP` changes the window and `HALLUCINOTE_CAPTURE_SWEEP=0`
 turns the automatic sweep off. Both are read by the **MCP server process**, so to
 affect the automatic sweep they must be set in the `env` block of this server's

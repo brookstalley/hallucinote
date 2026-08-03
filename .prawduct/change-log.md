@@ -64,6 +64,13 @@ into `takes` so the sweep's ordering and the analysis selector's "newest take" a
 definition; had they drifted, a sweep could have deleted the take the next analysis
 would have chosen.
 
+`/render-analyze` also carries a **when-to-pin policy**, recorded here because it is
+shipped agent behavior a maintainer would otherwise find only in a commit body: pin on
+expressed intent to keep a take (not on a nickname or a compliment), and say so when you
+do. A pin is permanent *and* free of a keep slot — `plan_sweep` appends pinned takes to
+`kept` before the budget decrement — so pinning on weak signals would re-create the
+unbounded growth this window exists to bound.
+
 Departs from backlog AUD-2D6T's proposed shape (a manual `tools/audio-prune`): a manual
 tool relies on the operator remembering, which is the regime that produced the 4 GB
 takes. The CLI is kept, but the sweep is automatic. Retention policy (auto-sweep, keep

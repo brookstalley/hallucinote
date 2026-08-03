@@ -27,10 +27,11 @@ written.
 `scope:` above is the single key `aud-2d6t`, matching what the change-log entry
 and the scope rollups use, so the ledger and the views join on one string. It is
 deliberately NOT a comma list — nothing splits one, so a list is parsed as a
-single opaque key that matches nothing. Note that branch→plan inference cannot
-resolve this plan regardless: it requires an unchecked chunk, and every chunk
-here is done, so attribution comes from the `active_build_plan` pointer (updated
-in the same commit).
+single opaque key that matches nothing. Attribution comes from the
+`active_build_plan` pointer (updated in the same commit) rather than from
+branch→plan inference over the `## Status` boxes: those boxes are a derived view
+of *release* state, not build state (see §Status), so while this work is
+release-pending they say nothing about which chunks are actually built.
 
 **Context (cross-session handoff):** User reported renders reaching ~4 GB each
 with no cleanup. Retention policy chosen by the user 2026-08-03: **auto-sweep at
@@ -117,16 +118,33 @@ not a second copy of this one.)
 
 **Configuration by environment variable**, matching `HALLUCINOTE_SONGS_ROOT`:
 `HALLUCINOTE_CAPTURE_KEEP` (int, default 2) and `HALLUCINOTE_CAPTURE_SWEEP`
-(`0` disables the automatic sweep entirely). This repo has no
-`project-preferences.md`, and the knob must be readable from both the engine CLI
-and the MCP server process.
+(`0` disables the automatic sweep entirely). The knob must be readable from both
+the engine CLI and a running MCP server process, and a markdown preferences file
+cannot configure a live process — `.prawduct/artifacts/project-preferences.md`
+records *governance* preferences for the agent, not runtime configuration, so it
+is not a candidate surface for this knob regardless.
 
 ## Status
 
-- [x] **1 — Retention core** (`src/hallucinote/takes.py`) — take enumeration, keep/sweep classification, pin + in-flight guards, plan/execute split
-- [x] **2 — Auto-sweep on the render path** (`hallucinote_mcp/.../server.py`) — sweep the song's captures root before forwarding a render
-- [x] **3 — `hallucinote captures` CLI** — `list` / `prune` with `--keep`, `--dry-run`, `--pin`, `--unpin`
-- [x] **4 — Docs + backlog close** — workflow docs, skill note, AUD-2D6T closed
+> **These checkboxes are a DERIVED view of release state, not build state.** This
+> plan sets `views_enabled`, so `regen-views` rewrites the boxes from each chunk's
+> change-log `status=` tag. All four chunks are built, committed and reviewed —
+> but the change-log entry is statusless (release-pending) while the work sits on
+> `develop`, so the boxes read unticked. The `develop→main` release stamps
+> `status=shipped` and re-runs `regen-views`, which ticks them. Do not hand-edit
+> them to `[x]`; that only gets overwritten. The Context line below is the
+> authoritative build state.
+
+- [ ] Chunk 1 — Retention core (`src/hallucinote/takes.py`): take enumeration, keep/sweep classification, pin + in-flight guards, plan/execute split
+- [ ] Chunk 2 — Auto-sweep on the render path (`hallucinote_mcp/.../server.py`): sweep the song's captures root before forwarding a render
+- [ ] Chunk 3 — `hallucinote captures` CLI: `list` / `prune` with `--keep`, `--dry-run`, plus `pin` / `unpin`
+- [ ] Chunk 4 — Docs + backlog close: workflow docs, skill note, AUD-2D6T closed
+
+**Context:** all four chunks are built and committed on
+`feat/aud-2d6t-capture-retention`; the suite is green at 4614 passed / 2 skipped.
+The literal `Chunk N` prefix above is required by the views parser — an item that
+omits it is invisible to the roster, and `regen-views` then withholds this
+scope's Status view rather than silently writing a partial one.
 
 ## Chunk 1 — Retention core
 

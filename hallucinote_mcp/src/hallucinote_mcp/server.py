@@ -411,9 +411,11 @@ def _sweep_stale_takes(request: Request) -> None:
     into an existing timestamp can't delete itself.
 
     Best-effort and never render-affecting: disk hygiene must not cost a
-    capture, so any failure logs and lets the render proceed. Silently a no-op
-    when the engine isn't importable (a uvx MCP-only install), mirroring
-    ``_absolutize_render_output_dir``'s fallback.
+    capture, so any failure logs and lets the render proceed. When the engine
+    isn't importable (a uvx MCP-only install) this can never sweep at all, so
+    that branch logs at INFO rather than returning silently — unlike
+    ``_absolutize_render_output_dir``'s genuinely silent fallback, the condition
+    is permanent, and takes would otherwise pile up with no explanation anywhere.
     """
     try:
         from hallucinote.takes import (

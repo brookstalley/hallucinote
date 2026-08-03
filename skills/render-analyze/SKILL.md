@@ -89,12 +89,15 @@ MixReport in `songs/<slug>/analysis/` is the durable measurement — analysis re
 a take once and writes a self-contained JSON, and `--compare` resolves against
 those JSONs, never the audio. Reports are never swept.
 
-**Pin a take whenever the user calls this render a reference point** — they say
-to keep it, they name it ("the good one", "the v4 mix"), or they ask to come back
-to it later. Don't wait to be asked for a pin; the window is silent and
-irreversible —
+**Pin when the user expresses intent to keep this take** — they say to keep or
+save it, or they ask to come back to it later. Don't wait to be asked in those
+words; the window is silent and irreversible —
 **an unpinned take survives the next two renders and is removed at the start
-of the third**:
+of the third**. But pin on *that* signal only, not on a passing compliment or a
+nickname: a pin is permanent and does **not** consume a keep slot, so pinning
+liberally re-creates the unbounded growth this window exists to stop. **Say so
+when you pin**, and name the unpin (`captures unpin <dir>`) — an unmentioned pin
+is a gigabyte the user never agreed to keep:
 
 ```
 "$PY" -m hallucinote.cli captures pin songs/<slug>/captures/<ts>

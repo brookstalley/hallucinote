@@ -28,10 +28,13 @@ written.
 and the scope rollups use, so the ledger and the views join on one string. It is
 deliberately NOT a comma list — nothing splits one, so a list is parsed as a
 single opaque key that matches nothing. Attribution comes from the
-`active_build_plan` pointer (updated in the same commit) rather than from
-branch→plan inference over the `## Status` boxes: those boxes are a derived view
-of *release* state, not build state (see §Status), so while this work is
-release-pending they say nothing about which chunks are actually built.
+`active_build_plan` pointer (updated in the same commit), because branch→plan
+inference cannot reach this plan: `infer_scope_from_branch` matches the branch's
+*whole name* and its *last segment* against declared `scope:` keys, and neither
+`feat/aud-2d6t-capture-retention` nor `aud-2d6t-capture-retention` equals
+`aud-2d6t`, so it returns `None` without ever consulting the Status boxes. A
+branch named exactly for the scope key would match — the mismatch here is the
+branch's trailing `-capture-retention`, not anything about this plan's state.
 
 **Context (cross-session handoff):** User reported renders reaching ~4 GB each
 with no cleanup. Retention policy chosen by the user 2026-08-03: **auto-sweep at
@@ -127,8 +130,9 @@ is not a candidate surface for this knob regardless.
 ## Status
 
 > **These checkboxes are a DERIVED view of release state, not build state.** This
-> plan sets `views_enabled`, so `regen-views` rewrites the boxes from each chunk's
-> change-log `status=` tag. All four chunks are built, committed and reviewed —
+> repo sets `views_enabled` (in `project-state.yaml`, repo-wide — not a per-plan
+> key), so `regen-views` rewrites the boxes from each chunk's change-log
+> `status=` tag. All four chunks are built, committed and reviewed —
 > but the change-log entry is statusless (release-pending) while the work sits on
 > `develop`, so the boxes read unticked. The `develop→main` release stamps
 > `status=shipped` and re-runs `regen-views`, which ticks them. Do not hand-edit
@@ -141,7 +145,9 @@ is not a candidate surface for this knob regardless.
 - [ ] Chunk 4 — Docs + backlog close: workflow docs, skill note, AUD-2D6T closed
 
 **Context:** all four chunks are built and committed on
-`feat/aud-2d6t-capture-retention`; the suite is green at 4614 passed / 2 skipped.
+`feat/aud-2d6t-capture-retention`, with the full suite green (the count lives in
+`.prawduct/.test-evidence.json`, which is written by the run itself — copying it
+into prose here would only go stale).
 The literal `Chunk N` prefix above is required by the views parser — an item that
 omits it is invisible to the roster, and `regen-views` then withholds this
 scope's Status view rather than silently writing a partial one.

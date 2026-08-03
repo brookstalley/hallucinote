@@ -89,9 +89,12 @@ MixReport in `songs/<slug>/analysis/` is the durable measurement — analysis re
 a take once and writes a self-contained JSON, and `--compare` resolves against
 those JSONs, never the audio. Reports are never swept.
 
-If the user wants a take kept as a permanent reference (a mix they may want to
-re-analyze differently later), pin it rather than relying on the window —
-**an unpinned take is gone after two more renders**:
+**Pin a take whenever the user calls this render a reference point** — they say
+to keep it, they name it ("the good one", "the v4 mix"), or they ask to come back
+to it later. Don't wait to be asked for a pin; the window is silent and
+irreversible —
+**an unpinned take survives the next two renders and is removed at the start
+of the third**:
 
 ```
 "$PY" -m hallucinote.cli captures pin songs/<slug>/captures/<ts>

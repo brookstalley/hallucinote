@@ -1,7 +1,7 @@
 ---
 artifact: build-plan
 version: 1
-scope: AUD-2D6T, aud-2d6t-capture-retention
+scope: aud-2d6t
 depends_on: []
 last_validated: null
 ---
@@ -22,9 +22,15 @@ argument is verified by grep (`audio/io.py:load_capture_set` is the sole reader
 of a captures dir, and `resolve_baseline` keys on the analysis JSONs), and the
 one genuinely open choice — the retention policy, which auto-deletes
 multi-gigabyte artifacts — was put to the user and answered before any code was
-written. `scope:` above carries the branch's last segment alongside the item id
-so branch→plan inference resolves; the id alone never matches a
-`feat/<id>-<words>` branch name.
+written.
+
+`scope:` above is the single key `aud-2d6t`, matching what the change-log entry
+and the scope rollups use, so the ledger and the views join on one string. It is
+deliberately NOT a comma list — nothing splits one, so a list is parsed as a
+single opaque key that matches nothing. Note that branch→plan inference cannot
+resolve this plan regardless: it requires an unchecked chunk, and every chunk
+here is done, so attribution comes from the `active_build_plan` pointer (updated
+in the same commit).
 
 **Context (cross-session handoff):** User reported renders reaching ~4 GB each
 with no cleanup. Retention policy chosen by the user 2026-08-03: **auto-sweep at
@@ -104,7 +110,10 @@ through it, so validation cannot be forgotten at one of them. `SLUG_RE` /
 `validate_slug` moved from `tools/scaffold_song.py` into `workspace.py` — the
 module that owns slug→path resolution should own what a valid slug is, so a
 caller resolving a slug into a directory it will delete under can't be checking
-against a looser copy.
+against a looser copy. (`db/mutations/songs.py` keeps its own looser
+`[a-z0-9_-]+` check on a song *name*: that is a DB-column constraint, not a path
+guard, and nothing joins it onto a filesystem root — so it is an adjacent rule,
+not a second copy of this one.)
 
 **Configuration by environment variable**, matching `HALLUCINOTE_SONGS_ROOT`:
 `HALLUCINOTE_CAPTURE_KEEP` (int, default 2) and `HALLUCINOTE_CAPTURE_SWEEP`

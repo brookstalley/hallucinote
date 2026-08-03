@@ -425,6 +425,14 @@ def _sweep_stale_takes(request: Request) -> None:
             sweep_enabled,
         )
     except ImportError:
+        # An MCP-only install (uvx, no engine) can never sweep — and unlike the
+        # env opt-out, that condition is PERMANENT, so say it rather than let
+        # captures pile up with no explanation anywhere.
+        logger.info(
+            "render: capture retention unavailable — the hallucinote engine "
+            "isn't importable in this server, so takes will accumulate. Prune "
+            "with `hallucinote captures prune` from an engine checkout."
+        )
         return
 
     song_slug = request.params.get("song_slug")

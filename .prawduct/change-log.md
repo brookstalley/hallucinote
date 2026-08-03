@@ -22,7 +22,7 @@
 
 ## 2026-08-03 — Capture takes get a rolling window (renders no longer grow without bound)
 
-<!-- prawduct: type=feature | chunks=1,2,3,4 | scope=aud-2d6t | status=complete | release=unreleased -->
+<!-- prawduct: type=feature | chunks=1,2,3,4 | scope=aud-2d6t | release=unreleased -->
 
 Nothing in the tree ever deleted a capture. Every `ableton_render` wrote a take to
 `songs/<slug>/captures/<ts>/` — a 48 kHz stereo 32-bit-float WAV per track, return and
@@ -69,6 +69,15 @@ tool relies on the operator remembering, which is the regime that produced the 4
 takes. The CLI is kept, but the sweep is automatic. Retention policy (auto-sweep, keep
 2) chosen by the user 2026-08-03. Server-side only — `server.py` and
 `server_side/analysis.py` are outside `_FINGERPRINT_PATHS`, so no Live re-vendor.
+
+**Verified against real data**, not only fixtures: on this repo's own
+`songs/missing/captures/` (one 406.3 MB take), `captures list` reported it,
+`prune --keep 0 --dry-run` named it and removed nothing, `pin` followed by a real
+`prune --keep 0` left it untouched ("nothing to prune (1 take(s) kept)"), and
+`unpin` restored it — so the pin guard was exercised against a take that would
+otherwise have been deleted. The AUTOMATIC render-path sweep is unit-tested
+against a faked `client.send` but needs a live render to confirm end-to-end; it
+is queued in `.prawduct/operator-verification.md`.
 
 ## 2026-07-20 — Provenance tests no longer assert ambient git state (first red PR-CI run)
 

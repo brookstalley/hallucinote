@@ -15,6 +15,34 @@ pending entries when `operator_verification_required: true`.
 
 ---
 
+## AUD-2D6T — automatic capture sweep fires on a real render (2026-08-03) — PENDING
+
+The CLI half is verified against this repo's real `songs/missing/captures/` (406 MB
+take: `list` reported it, `--dry-run` named it and removed nothing, `pin` then
+`prune --keep 0` left it intact, `unpin` restored it). The AUTOMATIC half —
+`server._sweep_stale_takes` firing inside `handle_tool_call` before an
+`ableton_render(start)` is forwarded — is covered by unit tests against a faked
+`client.send` but has never run against a live Ableton render.
+
+Server-side only (`server.py`, `server_side/analysis.py`) — both are outside
+`_FINGERPRINT_PATHS`, so **no re-vendor and no Remote Script change**.
+
+**Check (a song with 3+ existing takes, Ableton open, linked session):**
+1. `hallucinote captures list --song <slug>` → note the take names and total size.
+2. `/render-analyze <slug>` (or `ableton_render(action='start', song_slug=…)`).
+3. While/after it runs, `hallucinote captures list --song <slug>` again → expect
+   the 2 newest prior takes plus the new one (3 total), the older ones gone.
+4. Confirm the MCP server log carries `swept N stale capture take(s)` naming the
+   removed dirs.
+5. Pin a take (`hallucinote captures pin songs/<slug>/captures/<ts>`), render
+   again, confirm the pinned take survives and did not consume a keep slot.
+6. Set `HALLUCINOTE_CAPTURE_SWEEP=0` in the server's `env` block, restart the
+   server, render → expect `retention sweep disabled` in the log and no removals.
+
+**Why it can't be headless-verified:** step 2 needs a real transport pass; the
+sweep's trigger point is the live render dispatch, not a function a test can
+call in the same ordering against a real Live session.
+
 ## BAK-7D2V — pull-durability guard end-to-end in real Live (2026-07-04) — PENDING
 
 Headless-verified (guard tests incl. the pull_cli-apply audit scenario + the

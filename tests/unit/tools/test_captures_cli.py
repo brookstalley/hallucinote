@@ -221,6 +221,60 @@ def test_prune_never_touches_the_songs_durable_files(workspace):
     assert (song / "analysis" / "report.json").exists()
 
 
+@pytest.mark.parametrize(
+    "bad", ["/tmp", "../../elsewhere", "demo/../..", "..", "Demo", "with space"]
+)
+def test_prune_refuses_a_slug_that_is_not_path_safe(workspace, capsys, bad):
+    """The CLI half of the traversal guard.
+
+    `resolve_song_dir` joins the slug onto a songs root and pathlib lets an
+    ABSOLUTE slug replace that root outright, so an unvalidated --song would aim
+    the prune at an arbitrary directory. Exercised through main() because that
+    is the operator's actual entry point.
+    """
+    victim = workspace / "victim" / "captures"
+    for i in range(3):
+        _seed_take(victim, f"precious-{i}", f"2026060{i}T000000Z")
+
+    assert captures_cli.main(["prune", "--song", bad, "--keep", "0"]) == 2
+
+    assert "invalid slug" in capsys.readouterr().err
+    assert len(list(victim.iterdir())) == 3
+
+
+def test_prune_refuses_an_absolute_slug_aimed_at_a_real_captures_root(
+    workspace, capsys,
+):
+    """The concrete escape: <abs>/captures is exactly where the sweep lands."""
+    victim_song = workspace / "victim"
+    victim = victim_song / "captures"
+    for i in range(3):
+        _seed_take(victim, f"precious-{i}", f"2026060{i}T000000Z")
+
+    assert captures_cli.main(
+        ["prune", "--song", str(victim_song), "--keep", "0"]
+    ) == 2
+
+    assert len(list(victim.iterdir())) == 3
+
+
+def test_list_refuses_a_slug_that_is_not_path_safe(workspace, capsys):
+    assert captures_cli.main(["list", "--song", "../../etc"]) == 2
+    assert "invalid slug" in capsys.readouterr().err
+
+
+def test_prune_names_the_takes_it_removed(workspace, capsys):
+    """Once the directories are gone this output is the only record."""
+    captures = _captures(workspace)
+    for i in range(3):
+        _seed_take(captures, f"take-{i}", f"2026060{i}T000000Z")
+
+    captures_cli.main(["prune", "--song", "demo", "--keep", "1"])
+
+    out = capsys.readouterr().out
+    assert "demo/take-0" in out and "demo/take-1" in out
+
+
 # --- pin / unpin -----------------------------------------------------------
 
 

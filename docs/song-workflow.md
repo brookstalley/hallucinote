@@ -139,7 +139,8 @@ specific take with different parameters.
 
 To keep a reference take permanently, pin it — `hallucinote captures pin
 songs/<slug>/captures/<ts>` (pinned takes are skipped by every sweep and don't
-consume a keep slot). An unpinned take is gone after two more renders.
+consume a keep slot). An unpinned take survives the next two renders and
+is removed at the start of the third.
 `hallucinote captures list` shows what's on disk and `hallucinote captures prune
 --song <slug> --dry-run` previews a sweep without deleting.
 

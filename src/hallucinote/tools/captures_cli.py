@@ -140,6 +140,7 @@ def _cmd_prune(args: argparse.Namespace) -> int:
 
     total_freed = 0
     total_removed = 0
+    removed_names: list[str] = []
     failed = False
     for slug in slugs:
         root = captures_root_for_slug(slug)
@@ -158,6 +159,7 @@ def _cmd_prune(args: argparse.Namespace) -> int:
         result = execute_sweep(plan)
         total_removed += len(result.removed)
         total_freed += result.freed_bytes
+        removed_names.extend(f"{slug}/{p.name}" for p in result.removed)
         for path, err in result.failures:
             failed = True
             print(f"  FAILED to remove {path}: {err}", file=sys.stderr)
@@ -166,7 +168,12 @@ def _cmd_prune(args: argparse.Namespace) -> int:
         print("\n(dry run — nothing was removed)")
         return 0
     if total_removed:
-        print(f"\nremoved {total_removed} take(s), freed {format_bytes(total_freed)}")
+        # Name them, not just count them: once the directories are gone this
+        # output is the only record they existed.
+        print(
+            f"\nremoved {total_removed} take(s), freed {format_bytes(total_freed)}: "
+            + ", ".join(removed_names)
+        )
     return 1 if failed else 0
 
 

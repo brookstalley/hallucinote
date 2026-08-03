@@ -35,6 +35,7 @@ To run a song's `build.py` (it imports `hallucinote`), run it with the same inte
 | `pull …`        | `python -m hallucinote.sync.pull_cli …` |
 | `compat …`      | `python -m hallucinote.sync.compat …` |
 | `capture …`     | `python -m hallucinote.tools.capture_cli …` |
+| `captures …`    | `python -m hallucinote.tools.captures_cli …` (render-take retention: list/prune/pin) |
 | `context …`     | `python -m hallucinote.tools.song_context …` |
 | `decisions …`   | `python -m hallucinote.tools.decisions_cli …` |
 | `melody …` / `recurrence …` | the symbolic lenses (`tools.melody_lens` / `tools.recurrence_lens`) |

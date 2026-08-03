@@ -1128,3 +1128,28 @@ def test_render_start_sweep_names_the_takes_it_removed(tmp_path, monkeypatch, ca
         _render_start({"song_slug": "demo"})
 
     assert "take-0" in caplog.text and "take-1" in caplog.text
+
+
+def test_render_start_logs_when_the_engine_is_unavailable(
+    tmp_path, monkeypatch, caplog,
+):
+    """An MCP-only install can never sweep, and that condition is PERMANENT —
+    so it says so rather than letting captures pile up unexplained."""
+    import builtins
+    import logging
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("HALLUCINOTE_CAPTURE_SWEEP", raising=False)
+
+    real_import = builtins.__import__
+
+    def _no_takes(name, *a, **kw):
+        if name == "hallucinote.takes":
+            raise ImportError("no engine here")
+        return real_import(name, *a, **kw)
+
+    monkeypatch.setattr(builtins, "__import__", _no_takes)
+    with caplog.at_level(logging.INFO, logger="hallucinote_mcp"):
+        send = _render_start({"song_slug": "demo"})
+
+    assert "capture retention unavailable" in caplog.text
+    assert send.called

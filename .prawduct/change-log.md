@@ -22,7 +22,7 @@
 
 ## 2026-08-06 — Internal bug reports leave the public record; the backlog id becomes their provenance
 
-<!-- prawduct: type=chore | chunks=C3 | scope=pub-ready | status=shipped | release=unreleased -->
+<!-- prawduct: type=chore | chunks=C3 | scope=pub-ready | release=unreleased -->
 
 The first pass at "get the internal bug inbox out of the public repo" ignored the raw
 drop-zone and kept `incoming-bugs/archives/` tracked, because ~130 references from
@@ -48,7 +48,7 @@ the prefix, not the full path.
 
 ## 2026-08-06 — The repo gets ready to be public
 
-<!-- prawduct: type=chore | chunks=C1,C2,C3,C4,C5,C6 | scope=pub-ready | status=shipped | release=unreleased -->
+<!-- prawduct: type=chore | chunks=C1,C2,C3,C4,C5,C6 | scope=pub-ready | release=unreleased -->
 
 An audit ahead of making the repo public found the engineering substrate sound — 4614
 tests green, ruff/mypy/uv-lock clean, CI real and gating four things, no secrets, MIT

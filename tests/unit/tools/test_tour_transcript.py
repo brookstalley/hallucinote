@@ -25,8 +25,10 @@ from tools.tour_transcript import (
     UnknownRecordType,
     assert_publishable,
     build_excerpt,
+    latest_session,
     load,
     redact,
+    repo_root_of,
     render,
     select,
     to_turns,
@@ -247,6 +249,30 @@ def test_home_paths_are_fixed_by_redaction_not_left_to_the_gate(tmp_path: Path) 
     path = tmp_path / "t.jsonl"
     path.write_text(json.dumps(record) + "\n")
     assert "~/y" in build_excerpt(path, Path("/nowhere"))
+
+
+# --- source resolution -------------------------------------------------------
+
+
+def test_latest_session_picks_the_newest_transcript(tmp_path: Path) -> None:
+    older, newer = tmp_path / "a.jsonl", tmp_path / "b.jsonl"
+    older.write_text("{}\n")
+    newer.write_text("{}\n")
+    import os
+
+    os.utime(older, (1_000_000, 1_000_000))
+    os.utime(newer, (2_000_000, 2_000_000))
+    assert latest_session(tmp_path) == newer
+
+
+def test_latest_session_errors_on_an_empty_project_dir(tmp_path: Path) -> None:
+    with pytest.raises(TranscriptError, match="no .* transcripts"):
+        latest_session(tmp_path)
+
+
+def test_repo_root_of_falls_back_when_not_a_git_repo(tmp_path: Path) -> None:
+    """A non-repo directory is not an error — the home collapse still applies."""
+    assert repo_root_of(tmp_path) == tmp_path
 
 
 # --- selection and rendering -------------------------------------------------

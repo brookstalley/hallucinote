@@ -28,7 +28,8 @@ does not ship.
 Usage::
 
     python tools/tour_transcript.py --session <path.jsonl> --out excerpt.md
-    python tools/tour_transcript.py --project-dir ~/.claude/projects/<slug> --turns 3
+    python tools/tour_transcript.py --project-dir ~/.claude/projects/<slug> \
+        --start-at "make the drums drag" --exchanges 2
 """
 
 from __future__ import annotations
@@ -154,7 +155,6 @@ class Turn:
     """One rendered contribution: a prompt, or an assistant response."""
 
     role: str
-    timestamp: str
     text: str
     tool_lines: tuple[str, ...]
 
@@ -286,7 +286,6 @@ def to_turns(records: list[dict], repo_root: Path) -> list[Turn]:
         turns.append(
             Turn(
                 role=str(rtype),
-                timestamp=str(record.get("timestamp", "")),
                 text="\n\n".join(texts),
                 tool_lines=tuple(tools),
             )

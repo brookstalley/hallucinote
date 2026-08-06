@@ -926,7 +926,7 @@ sections only via explicit `/backlog update` calls.
   **Verifiable signal:** either `grep -rn "restamp" src/ docs/` returns nothing, or `docs/snapshot-schema.md` lists `restamp` among the `StaleSnapshotError` exits with its safety fence — and in the keep case, `capture --help` names it (DOC-6K1V). (PR #213 Critic review, 2026-07-20)
 
 - **[DOC-8V3Q]** README ships a placeholder hero; the deferral has no durable home
-  `effort: S · impact: M · area: docs · source: review · added: 2026-08-06 · status: open · stage: requirements · refs: README.md, docs/assets/hero.svg, .prawduct/artifacts/tour-walkthrough-design.md`
+  `effort: S · impact: M · area: docs · source: review · added: 2026-08-06 · status: open · stage: requirements · refs: README.md, docs/assets/hero.svg, .prawduct/artifacts/tour-walkthrough-design.md (forward ref — on branch docs/tour-walkthrough, unmerged; resolves on merge)`
 
   **From the independent PR review of `chore/public-readiness` (PUB-READY) — deferred, not blocking.** `README.md`:5 carries a placeholder SVG plus the HTML comment `<!-- HERO: replace docs/assets/hero.svg with a real screen capture before release — a prompt typed into Claude Code on the left, an Ableton Live set filling in on the right. -->`, rendered two lines later as `![A prompt, and the Ableton Live set it built](docs/assets/hero.svg)`.
 
@@ -955,6 +955,8 @@ sections only via explicit `/backlog update` calls.
 
 ## Archive
 
+Closed investigations — no fix possible / structural-close on Ableton's roadmap. Kept for search so a future scrub doesn't re-open them without new evidence. Status `dropped` = investigated and intentionally not pursued; `shipped` = built and closed.
+
 - **[PRC-6N2X]** Decide: rewrite git history, or record acceptance, before the repo goes public
   `effort: M · impact: M · area: process · source: review · added: 2026-08-06 · reviewed: 2026-08-06 · status: shipped · stage: ready · closed-by: chore/public-readiness (PUB-READY) · related: COL-4T8J · refs: .prawduct/project-state.yaml, .prawduct/artifacts/plans/PUB-READY/build-plan.md, .prawduct/change-log.md`
 
@@ -979,9 +981,7 @@ sections only via explicit `/backlog update` calls.
 
   **Stage: requirements** — the choice, its blast radius (SHA invalidation across backlog `closed-by:` refs, change-log entries, and any external clone), and where the acceptance record lives all need writing down before anyone runs a command; route to `/prawduct:methodology discovery`.
 
-  **Verifiable signal:** either `git log --all -S'/Users/' --oneline | wc -l` returns `0` (rewrite path), **or** a dated owner decision recording the acceptance exists under `.prawduct/` and this item is archived citing it (accept path). (PUB-READY PR review, 2026-08-06)
-
-Closed investigations — no fix possible / structural-close on Ableton's roadmap. Kept for search so a future scrub doesn't re-open them without new evidence. Status `dropped` = investigated and intentionally not pursued; `shipped` = built and closed.
+  **Verifiable signal:** either the history no longer carries the strings (rewrite path — note the obvious probe `git log <rev> -S'/Users/' --oneline` cannot reach `0` while any commit *discussing* the exposure exists, this item included, so a rewrite would be judged by inspecting the affected blobs, not by that count), **or** a dated owner decision recording the acceptance exists under `.prawduct/` and this item is archived citing it (accept path). (PUB-READY PR review, 2026-08-06)
 
 - **[VEW-9QH4]** Change-log entries missing for post-v1.4.0 unreleased batch + no release-tag vocab for unreleased work
   `effort: S · impact: M · area: views · source: critic · added: 2026-05-29 · status: shipped · related: VEW-3M8F · stage: ready · closed-by: highroi-sweep-2026-07 · reviewed: 2026-07-04`

@@ -90,8 +90,8 @@ classification:
       url: "https://github.com/uisato/ableton-mcp-extended"
       relevance: "Original 52-tool MCP surface hallucinote-mcp greenfields away from (Wave M)"
       relationship: reference
-    - name: "Cordyceps (Claude ↔ Grasshopper)"
-      relevance: "Action-dispatch + discovery-layered tool design; docs/mcp-tool-design.md §2"
+    - name: "A sibling MCP project (Claude ↔ Grasshopper)"
+      relevance: "Action-dispatch + discovery-layered tool design; docs/archive/mcp-tool-design.md §2"
       relationship: reference
     - name: "MCP tool-count research (Anthropic, Speakeasy, Copilot)"
       relevance: "Effectiveness degrades past ~25 tools; drove the 52→10 consolidation (docs/mcp-tool-design.md §1.2)"
@@ -643,6 +643,9 @@ scope_rollups:
   provenance+annotations-mcp+dev-ergonomics:
     chunks: ["B2", "B3-resid", "B4", "B5", "Q1"]
     releases: ["v1.4.0"]
+  pub-ready:
+    chunks: ["C1", "C2", "C3", "C4", "C5", "C6"]
+    releases: []
   push-reliability+compose-time-validation:
     chunks: ["R-1", "R-2"]
     releases: ["v1.0.1"]

@@ -20,6 +20,49 @@
      pre-bumping a version (against `feedback_no_premature_version_bump`) or
      mislabeling in-flight work as an already-shipped version. -->
 
+## 2026-08-06 — The repo gets ready to be public
+
+<!-- prawduct: type=chore | chunks=C1,C2,C3,C4,C5,C6 | scope=pub-ready | status=shipped -->
+
+An audit ahead of making the repo public found the engineering substrate sound — 4614
+tests green, ruff/mypy/uv-lock clean, CI real and gating four things, no secrets, MIT
+LICENSE and CONTRIBUTING present, every README link resolving, develop and main in sync
+at v1.7.1. What it also found was six classes of exposure that only matter once
+strangers can read the tree.
+
+The sharpest was a reference disclosing a *private* sibling project's local filesystem
+path and file inventory, inside an archived design doc that cites that project ~20 times
+as the precedent for the 13-tool surface. Deleting the discussion would have gutted the
+doc; the project's repo URL had already been deliberately redacted, so the name was
+anonymized and only the pointer removed. Fifteen hardcoded `/Users/<name>/...` paths
+across six files went the same way.
+
+`SECURITY.md` states the trust model rather than implying one, and its central claim is
+uncomfortable on purpose: a song's `build.py` is executable Python, so building someone
+else's song runs their code with your privileges. That is the feature — it is what makes
+a song forkable and reproducible — so reports of the form "build.py runs arbitrary code"
+are working-as-designed. The line that *is* defended: song **data** must never reach
+execution without someone running `build.py`.
+
+`architecture.md` and `api-contract.md` were both *required* by recorded structural
+characteristics and both absent. They now name the four-runtime topology, why the
+process boundary into Live is forced rather than chosen, and the three tracked API
+decisions — fingerprint-not-semver versioning, the errors-teach model (the consumer is
+an LLM, so an error is the next turn's input), and a deprecation policy that refuses to
+build compatibility shims for consumers that do not exist.
+
+The `incoming-bugs/` decision inverted under investigation. Untracking it wholesale
+would have dangled ~130 references from shipped source comments, tests and plans that
+cite `archives/` as provenance — so only the raw drop-zone is ignored. That dig also
+turned up 11 refs in shipped source and tests still naming pre-archive paths, silently
+stale since those files were archived.
+
+Deliberately not done: the hero image is still a placeholder, deferred to a dedicated
+pass with a new demo song showing the full create → push → arrange flow. And the
+`project-state.yaml` / `learnings.md` size-compaction advisories were declined with
+reasoning rather than half-executed — `learnings.md` is already 70 rules averaging 695
+bytes, and compacting further means deleting rules.
+
 ## 2026-08-03 — Capture takes get a rolling window (renders no longer grow without bound)
 
 <!-- prawduct: type=feature | chunks=1,2,3,4 | scope=aud-2d6t | status=shipped | release=v1.7.1 -->

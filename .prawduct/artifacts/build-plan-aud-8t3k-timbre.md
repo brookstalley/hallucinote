@@ -118,4 +118,4 @@ against a pre-timbre baseline), matching the established no-bump-on-additive
 convention. Calibration follow-up filed as **AUD-TIMBRE-CALIB**. Remaining:
 cumulative Critic (independent Agent — worktree is gate-blind from the primary
 session), then commit. No Live dependency; no operator-verification entry needed.
-Worktree at `/Users/brookstalley/source/hallucinote-aud8t3k`.
+Worktree at `<worktree>`.

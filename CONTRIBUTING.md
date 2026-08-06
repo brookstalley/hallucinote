@@ -104,3 +104,15 @@ check before bundling unrelated edits to them into a feature PR.
 Open a GitHub issue with what you did, what you expected, and what happened.
 For install/bridge problems, include the output of
 `python -m hallucinote_mcp.cli preflight`.
+
+**Security problems are the exception — don't open an issue.** Report them
+privately through GitHub Security Advisories or the email in
+[`SECURITY.md`](SECURITY.md), which also explains what is and isn't in scope
+(notably: a song's `build.py` executing is by design, so review a `build.py`
+before building a song you cloned from someone else).
+
+## Code of conduct
+
+Participation here is covered by our [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)
+(Contributor Covenant 2.1). Report unacceptable behavior to the address listed
+there.

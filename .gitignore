@@ -104,3 +104,15 @@ tests/scenarios/results/*
 .prawduct/.critic-active
 .prawduct/.critic-partials/
 .prawduct/.session-base-tree
+
+# Incoming bug-report drop-zone, including archives/ — local working notes, never
+# published (owner decision 2026-08-06, at the point the repo went public). Raw
+# triage reports enter the public record as BACKLOG ITEMS via /prawduct:backlog,
+# and the backlog id is their citable provenance; see project-preferences.md
+# "Incoming-bugs triage". Nothing tracked may cite a path in here — it would
+# dangle for every reader without the local file.
+incoming-bugs/
+
+# Prawduct session files
+.prawduct/.critic-partials-archive/
+.prawduct/.handoff-notes.md

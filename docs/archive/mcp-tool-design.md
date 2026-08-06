@@ -75,13 +75,13 @@ When the LLM has 52 tools to choose from, three failure modes appear:
 
 ---
 
-## 2. The Cordyceps Precedent
+## 2. The Sibling-Project Precedent
 
-The sibling project [`cordyceps`](https://github.com/...) bridges Claude to Rhino Grasshopper. Its design has been refined through real bugs (cluster-editor corruption, see `CHANGELOG.md` v1.4.6–v1.4.9) and lands at a pattern we should copy almost verbatim. Key takeaways from a deep read of the codebase:
+A sibling project of ours bridges Claude to Rhino Grasshopper. Its design has been refined through real bugs (cluster-editor corruption, over its v1.4.6–v1.4.9 line) and lands at a pattern we should copy almost verbatim. Key takeaways from a deep read of the codebase:
 
 ### 2.1 Numbers
 
-- **7 unified tools, 111 actions** ([README.md line 128](https://github.com/...)): *"Cordyceps provides 7 tools with 110+ actions — consolidated to minimize context window usage."*
+- **7 unified tools, 111 actions** (from its README): *"It provides 7 tools with 110+ actions — consolidated to minimize context window usage."*
 - 95% smaller tool-list response vs one-tool-per-action; tool-definition tokens drop from ~10K to ~2K range.
 
 ### 2.2 The Unified Tool pattern
@@ -92,7 +92,7 @@ Each tool has one MCP entry point (`gh_canvas`, `gh_wire`, `gh_document`, `gh_sc
 
 ### 2.3 Discovery layered, not flat
 
-Cordyceps stacks **four discovery mechanisms**, each at a different granularity:
+That project stacks **four discovery mechanisms**, each at a different granularity:
 
 1. **Server instructions.** On `initialize`, the server returns a primer string listing all tool names with their action names and the 3 most-load-bearing warnings (`McpServer.cs:545–571`). Agent's first read.
 2. **Per-tool help.** `tool(action='help')` returns structured JSON with every action, required/optional params, an example, and tips. Agent's go-to during use.
@@ -101,7 +101,7 @@ Cordyceps stacks **four discovery mechanisms**, each at a different granularity:
 
 ### 2.4 Error responses teach
 
-Cordyceps' errors carry recovery information (`Core/UnifiedToolHelpers.cs:82–133`):
+Its errors carry recovery information:
 
 ```json
 {
@@ -118,7 +118,7 @@ The agent gets the valid action list, the missing params, an example, and a self
 
 ### 2.5 The anti-pattern gallery — gold
 
-Cordyceps explicitly names anti-patterns it has burned through. From `BestPracticesGuide.md`:
+It explicitly names anti-patterns it has burned through, in its own best-practices guide:
 
 | Don't | Do |
 |---|---|
@@ -132,24 +132,24 @@ These are not hypotheticals; they're scars. The doc surfaces them so future buil
 
 ### 2.6 Documentation as contract
 
-Cordyceps treats documentation as part of the API. `CLAUDE.md` lines 88–102 list a mandatory audit checklist for every code change: tool help metadata, server instructions, knowledge guides, resource registry, prompt templates, common-errors guide, CHANGELOG. The contract is: **if the action surface changes, all seven targets get updated together.**
+It treats documentation as part of the API: its CLAUDE.md lists a mandatory audit checklist for every code change: tool help metadata, server instructions, knowledge guides, resource registry, prompt templates, common-errors guide, CHANGELOG. The contract is: **if the action surface changes, all seven targets get updated together.**
 
 ---
 
 ## 3. Principles
 
-These are the rules we'll hold the redesign to. Each is borrowed from cordyceps, the external research, or both, and bears a one-line reason.
+These are the rules we'll hold the redesign to. Each is borrowed from that sibling project, the external research, or both, and bears a one-line reason.
 
-1. **Tools are a budget. Aim for ≤10.** Empirical evidence and Anthropic's own threshold both point here. (Cordyceps: 7. Block: 2. Copilot: 13.)
+1. **Tools are a budget. Aim for ≤10.** Empirical evidence and Anthropic's own threshold both point here. (Sibling project: 7. Block: 2. Copilot: 13.)
 2. **One tool per domain, many actions per tool.** Action dispatch is the consolidation engine. Domains in AbletonMCP are obvious: session, track, return, clip, note, device, automation, arrangement, browser, plus a meta-tool.
 3. **Resources for read-only state and reference data.** Anything that doesn't take a parameter (browser tree, plugin list, session snapshot) or only takes a slow-changing identifier (device parameter catalogs) belongs in resources. Resources don't compete with tools for selection.
 4. **Prompts for multi-step workflows.** Anything an agent does in a recognizable 3-5-step sequence is a prompt. "Create a MIDI track, load an instrument, name the track, set initial volume" is one prompt, not four tool calls.
 5. **Self-service help (`action='help'`) on every tool.** The action metadata IS the documentation — no drift between code and docs because both read the same structure.
-6. **Errors teach.** Every error response carries: the valid action list, required/optional params, an example, and a recovery hint. Inspired by cordyceps + Alpic.<sup>[4]</sup>
+6. **Errors teach.** Every error response carries: the valid action list, required/optional params, an example, and a recovery hint. Inspired by the sibling project + Alpic.<sup>[4]</sup>
 7. **Names are prompts.** `ableton_track(action='set_property')` reads cleanly to the LLM. `do_track_thing(action='vol')` does not. Be specific.
 8. **Hard constraints visible everywhere.** Anything the agent must not do (e.g., "`add_notes_to_clip` REPLACES the clip's notes") goes in: the tool's help text, the server instructions, a resource, and the error message when misuse is detected. Repetition beats subtle.
 9. **Stable identifiers, additive evolution.** Tool names never change. Actions never change (deprecated, yes; renamed, no). New actions are added freely. This is how Hallucinote's existing alias table can evolve cleanly.
-10. **Validate at the boundary.** Use typed enums for action and property strings. Coerce string-encoded numbers (cordyceps v1.4.9 lesson). Don't trust the agent to enforce constraints — fail loudly at the MCP boundary.
+10. **Validate at the boundary.** Use typed enums for action and property strings. Coerce string-encoded numbers (a lesson from the sibling project). Don't trust the agent to enforce constraints — fail loudly at the MCP boundary.
 
 ---
 
@@ -190,7 +190,7 @@ Total: ~94 actions in 10 tools. (Note: `ableton_help` was considered and dropped
 | `stop` | — | `stop_playback` |
 | `seek` | `bar: int 1-based`, `beat: float 0-based` | `set_song_time` |
 | `set_arrangement_loop` | `enabled`, `start_bar`, `end_bar` | `set_arrangement_loop` |
-| `snapshot` | `name` | new — cordyceps-style state save (try-and-rollback workflow) |
+| `snapshot` | `name` | new — sibling-project-style state save (try-and-rollback workflow) |
 | `revert` | `name` | new — restore a snapshot by name |
 | `list_snapshots` | — | new — list saved snapshots for this session |
 
@@ -390,7 +390,7 @@ The agent must invoke workflow recipes autonomously mid-conversation — that's 
 
 ## 7. Discovery Strategy
 
-Four layers, descending in granularity, mirroring cordyceps:
+Four layers, descending in granularity, mirroring that sibling project:
 
 ### 7.1 Server instructions (initialize)
 
@@ -434,7 +434,7 @@ This is the agent's first read on every session. ~250 tokens to orient against a
 
 ### 7.2 Per-tool help
 
-`tool(action='help')` returns the tool's action menu with required/optional params, examples, tips. Generated from a metadata layer (analog to cordyceps' `UnifiedToolInfo`) that's the single source of truth shared with the dispatch.
+`tool(action='help')` returns the tool's action menu with required/optional params, examples, tips. Generated from a metadata layer (analog to the sibling project's unified tool-info layer) that's the single source of truth shared with the dispatch.
 
 ### 7.3 Resources
 
@@ -463,7 +463,7 @@ Every error response carries the four recovery hints:
 
 ## 8. Error Design — Concrete Patterns
 
-Drawing from cordyceps + Alpic + MCPcat:<sup>[4],[6]</sup>
+Drawing from the sibling project + Alpic + MCPcat:<sup>[4],[6]</sup>
 
 ### 8.1 Patterns to adopt
 
@@ -739,10 +739,10 @@ Naming these so we don't reinvent them.
 
 1. **Backwards compat scope.** Narrow tools (in the old fork) stay parallel through M-7; removed in M-8. Hallucinote is the only known consumer. Confirm this scope before M-1 begins.
 2. **Note pull when gap #4 lands.** The `ableton_note` tool design here assumes note IDs become available. Validate against whatever shape the MCP gap fix actually delivers — adjust the action signatures before exposing them.
-3. **Drum-rack chains.** Cordyceps handles nested clusters carefully. AbletonMCP's nested rack chains (`InstrumentGroupDevice`, `DrumGroupDevice`) are the analog — should `ableton_device` action `info` recurse into chains, or is that a separate action `chain_info`? Lean toward recursive `info` with a depth parameter.
+3. **Drum-rack chains.** The sibling project handles nested clusters carefully. AbletonMCP's nested rack chains (`InstrumentGroupDevice`, `DrumGroupDevice`) are the analog — should `ableton_device` action `info` recurse into chains, or is that a separate action `chain_info`? Lean toward recursive `info` with a depth parameter.
 4. **Resource caching semantics.** `ableton://session/snapshot` — every read scans Live, or cached? Caching helps performance but risks staleness during agent edits. Probably: no cache, re-scan on every read; agents stay light because they call `info` actions for specific slices instead.
 5. ~~**Prompt vs Tool boundary.** `create_midi_track_with_instrument` is a prompt in this design.~~ **RESOLVED (v0.9):** the prompts went away entirely — they became Claude Code skills (`/track-new-with-instrument`, etc.) because MCP prompts are not assistant-callable in Claude Code. See §6.
-6. **Snapshot semantics for `ableton_session(action='snapshot')`.** Two interpretations: (a) Live's native undo history checkpoint, lightweight; (b) full `.als` save-as for branching workflows. Cordyceps uses (a). Lean toward (a) for V1; (b) is more ambitious and might prefer to live in a separate `ableton_project` tool.
+6. **Snapshot semantics for `ableton_session(action='snapshot')`.** Two interpretations: (a) Live's native undo history checkpoint, lightweight; (b) full `.als` save-as for branching workflows. The sibling project uses (a). Lean toward (a) for V1; (b) is more ambitious and might prefer to live in a separate `ableton_project` tool.
 7. ~~**Quantize and swing folding.**~~ **RESOLVED (Wave M-3, 2026-05-17).** Quantize, swing, and groove operations are NOT MCP actions. They are pure-math transforms of a note array that live in Hallucinote (Python/SQL space) where the DB-as-source-of-truth makes them testable, cross-DAW portable, and round-trippable as DB-row templates. Pre-grooved notes push via `ableton_clip(action='replace_notes', ...)`. See §6.2.
 
 ---
@@ -753,12 +753,12 @@ These are the load-bearing choices, captured so we can revisit later if needed.
 
 | Decision | Rationale | Alternatives considered |
 |---|---|---|
-| 10 unified tools, not 5, not 20 | Cordyceps lands at 7 with comparable domain complexity. 10 keeps domain boundaries clean (session ≠ track ≠ clip ≠ device); fewer would force awkward overlap. | 5 (forced overlap), 15 (under-collapsed) |
-| Action dispatch with string enums | Matches cordyceps; concrete + LLM-readable; preserves typed validation per action | Single-tool-per-action (current), free-form query (Block), nested commands |
+| 10 unified tools, not 5, not 20 | The sibling project lands at 7 with comparable domain complexity. 10 keeps domain boundaries clean (session ≠ track ≠ clip ≠ device); fewer would force awkward overlap. | 5 (forced overlap), 15 (under-collapsed) |
+| Action dispatch with string enums | Matches the sibling project; concrete + LLM-readable; preserves typed validation per action | Single-tool-per-action (current), free-form query (Block), nested commands |
 | Browser → resources | Static, parametric, used-on-every-load. Resources don't crowd selection space. | Keep as tool (current); accept the selection-space cost |
 | `ableton_note` exists even though blocked | Stable surface for agents; "blocked" responses teach the gap | Omit until gap #4 lands; problem: surprises agents who don't read the gap doc |
-| Aliases for one major version | Cordyceps practice; gives consumers time to migrate | Hard cutover (breaks Hallucinote at the moment of release) |
-| Errors carry valid_actions + example + hint | Cordyceps + Alpic both converge on this; measurable accuracy lift | Bare error string (status quo) |
+| Aliases for one major version | Sibling-project practice; gives consumers time to migrate | Hard cutover (breaks Hallucinote at the moment of release) |
+| Errors carry valid_actions + example + hint | The sibling project + Alpic both converge on this; measurable accuracy lift | Bare error string (status quo) |
 | Greenfield code in monorepo (`hallucinote_mcp/` directory in this repo), drop fork relationship | Greenfield code, not greenfield repo — separable decisions. Monorepo gives atomic cross-component PRs (M-N + H-N land together), one CI pipeline, no version-pinning drift. Tight coupling with Hallucinote justifies same-repo. Architecture A (both server + Remote Script rewritten) lets infrastructure be built around new dispatch from day one. | New separate repo (over-architected for tight coupling, adds coordination ceremony); in-place rename + squash of fork (less work but retains fork shape); Architecture B (server-only consolidation) — defers Remote Script work but creates transitional bugs |
 | Declarative-first dispatch with handler escape hatches | ~60-70% of Live ops are pure property/method calls; shared Python dataclass schema makes adding new ops a schema-edit, not a code-edit. Handler escape preserves expressiveness for complex cases. | Pure declarative (insufficient for snapshot/render/etc.); pure imperative (loses the "add new actions without touching dispatcher" property the user explicitly asked for) |
 | Repo name = `hallucinote-mcp` | "Tight integration with our core product" call. Binds MCP to product identity; signals "this is part of Hallucinote." | `live-mcp` (too generic, doesn't signal product binding); `hallucinote-live-bridge` (verbose) |
@@ -853,4 +853,3 @@ A separate design pass will firm up the shape when that chunk approaches.
 9. [Block — Playbook for Designing MCP Servers](https://engineering.block.xyz/blog/blocks-playbook-for-designing-mcp-servers)
 10. [Zeo — MCP Server Architecture: State Management](https://zeo.org/resources/blog/mcp-server-architecture-state-management-security-tool-orchestration)
 11. [Eclipsesource — MCP and Context Overload](https://eclipsesource.com/blogs/2026/01/22/mcp-context-overload/)
-12. Cordyceps source: `/Users/brookstalley/source/cordyceps` — internal reference implementation. Key files: `Tools/Unified/*.cs`, `Core/UnifiedToolHelpers.cs`, `Resources/ResourceRegistry.cs`, `Prompts/PromptRegistry.cs`, `McpServer.cs`, `Knowledge/*.md`, `CHANGELOG.md`.

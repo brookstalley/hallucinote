@@ -6,13 +6,13 @@ The design + build-plan are an honest, well-scoped coherence/decision umbrella t
 covers the verifiable signal without inventing code, axes, or unrequested verdicts.
 
 Artifacts reviewed:
-- `/Users/brookstalley/source/hallucinote/.prawduct/artifacts/plans/ARR-8P5K/design.md`
-- `/Users/brookstalley/source/hallucinote/.prawduct/artifacts/plans/ARR-8P5K/build-plan.md`
-- `/Users/brookstalley/source/hallucinote/.prawduct/artifacts/plans/ARR-8P5K/research.md`
+- `.prawduct/artifacts/plans/ARR-8P5K/design.md`
+- `.prawduct/artifacts/plans/ARR-8P5K/build-plan.md`
+- `.prawduct/artifacts/plans/ARR-8P5K/research.md`
 
 Checked against (source of truth):
-- `/Users/brookstalley/source/hallucinote/.prawduct/artifacts/arrangement-model.md` (taxonomy section + meter mentions + "NOT modeled" list + discontinuity section)
-- `/Users/brookstalley/source/hallucinote/.prawduct/backlog.md` (ARR-8P5K, ARR-7M3D, ARR-9K4T, MEL-1A7K, ARR-4M3T, ARR-3R8F, ARR-1H9C, ARR-2B6K)
+- `.prawduct/artifacts/arrangement-model.md` (taxonomy section + meter mentions + "NOT modeled" list + discontinuity section)
+- `.prawduct/backlog.md` (ARR-8P5K, ARR-7M3D, ARR-9K4T, MEL-1A7K, ARR-4M3T, ARR-3R8F, ARR-1H9C, ARR-2B6K)
 - `src/hallucinote/performance/` and `src/hallucinote/melody/lens.py` (sibling-shipped claims)
 
 ---

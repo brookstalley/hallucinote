@@ -90,11 +90,11 @@ classification:
       url: "https://github.com/uisato/ableton-mcp-extended"
       relevance: "Original 52-tool MCP surface hallucinote-mcp greenfields away from (Wave M)"
       relationship: reference
-    - name: "Cordyceps (Claude ↔ Grasshopper)"
-      relevance: "Action-dispatch + discovery-layered tool design; docs/mcp-tool-design.md §2"
+    - name: "A sibling MCP project (Claude ↔ Grasshopper)"
+      relevance: "Action-dispatch + discovery-layered tool design; docs/archive/mcp-tool-design.md §2"
       relationship: reference
     - name: "MCP tool-count research (Anthropic, Speakeasy, Copilot)"
-      relevance: "Effectiveness degrades past ~25 tools; drove the 52→10 consolidation (docs/mcp-tool-design.md §1.2)"
+      relevance: "Effectiveness degrades past ~25 tools; drove the 52→10 consolidation (docs/archive/mcp-tool-design.md §1.2)"
       relationship: reference
 
 # =============================================================================
@@ -238,7 +238,7 @@ technical_decisions:
       alternatives_considered: "DB-authoritative (rejected — punishes manual edits in Ableton); three-way merge (deferred — premature without multi-collaborator workflows)."
       date: "2026-05-16 (Wave 3 pull-side sync)"
     - decision: "W11-A `hallucinote://` resources: shared `hallucinote-core` package, slug-in-URI addressing, LOM-mirrored hierarchy, always-requery (no caching)"
-      rationale: "Four interlocking choices: (a) shared core read-API package both `hallucinote` and `hallucinote-mcp` depend on (deliberate public-contract boundary); (b) song slug explicit in every URI (cwd-based resolution unreliable across multi-song sessions); (c) URI shape mirrors the `ableton://` hierarchy (one mental model); (d) handlers re-read SQLite per request (caching invalidated by concurrent mutation). Full rationale in this file's git history (pre-2026-07-04) and docs/mcp-tool-design.md."
+      rationale: "Four interlocking choices: (a) shared core read-API package both `hallucinote` and `hallucinote-mcp` depend on (deliberate public-contract boundary); (b) song slug explicit in every URI (cwd-based resolution unreliable across multi-song sessions); (c) URI shape mirrors the `ableton://` hierarchy (one mental model); (d) handlers re-read SQLite per request (caching invalidated by concurrent mutation). Full rationale in this file's git history (pre-2026-07-04) and docs/archive/mcp-tool-design.md."
       alternatives_considered: "Direct import of hallucinote (tight coupling), parallel reader (drift), cwd-based song resolution, per-resource caching — all rejected."
       date: "2026-05-20 (W11-A scoping, post-v1 cumulative merge to main)"
 
@@ -297,6 +297,10 @@ technical_decisions:
       rationale: "No PyPI publish (private project), so the repo is a uv workspace and `uv sync --all-packages` builds ONE env holding server + engine (editable). Skills invoke `\"$PY\" -m hallucinote.cli <cmd>` where $PY is the running server's interpreter (ableton://server/info) — same env as the bridge, no default-venv divergence (Critic-W2 fix). Server stays stdlib-only at startup, lazy-imports the engine on analysis calls. Full narrative in this file's git history (pre-2026-07-04) and docs/dev-vs-use-coexistence.md."
       alternatives_considered: "PyPI publish (nothing to publish to); `uv run --project` (different env, fails on read-only plugin root); separate engine clone (defeats one-command install)."
       date: "2026-06-16 (PLUGIN-SELF-CONTAINED; supersedes INS-7V2D's PyPI-out assumption)"
+    - decision: "Go public WITHOUT rewriting git history; the privacy scrub is tip-only and that is accepted (PRC-6N2X)"
+      rationale: "The PUB-READY scrub cleaned the tracked tree, not the commits behind it: as of daa9ba6 (develop @ v1.7.1, the last commit before this branch), 17 commits carry absolute home-directory paths and 4 name a private sibling project, one of them holding that project's local source path plus a file inventory. Publishing the repo publishes those commits. Owner accepted the exposure on 2026-08-06: no credentials are involved, the private project's repo URL was already redacted before any of it was written, and stable SHAs are worth more than the residue is worth removing. Recorded here so `we scrubbed it` is never later misread as `it is not in the repo` — the distinction is tree vs history, and only the tree was cleaned. NOTE the count is anchored to a SHA on purpose: `git log <rev> -S'/Users/' --oneline | wc -l` SELF-COUNTS, because the scrub commits and this record are themselves commits containing the string. It reads 17 at daa9ba6, 19 after the scrub, 21 after this entry — re-running it today and comparing against a bare number would look like a regression that never happened. Do not `fix` this by adding a `':!.prawduct/'` pathspec; that returns a different, smaller number and silently measures something else."
+      alternatives_considered: "git-filter-repo over all refs before publishing — rejected: it invalidates every open branch and PR, and the residue does not justify that. The window was genuinely cheap only until the first external clone or fork, so this decision is effectively one-way once the repo is public."
+      date: "2026-08-06 (PRC-6N2X; from the independent PR review of chore/public-readiness)"
 
 # =============================================================================
 # DESIGN DECISIONS
@@ -358,7 +362,7 @@ user_expertise:
       inferred_from: "Wave M-3 quantize/swing/groove pivot"
     - dimension: product_thinking
       signal: "Framed the 50-tool problem empirically before the 10-tool consolidation; refused PyPI publish for a private project"
-      inferred_from: "docs/mcp-tool-design.md §1.2; Wave M scaffolding decisions"
+      inferred_from: "docs/archive/mcp-tool-design.md §1.2; Wave M scaffolding decisions"
     - dimension: operational_awareness
       signal: "Expects significant codebase growth and prefers structural fixes over patches"
       inferred_from: "User memory (feedback_engineering_rigor) + repeated 'don't paper over' framing"
@@ -437,7 +441,7 @@ artifact_manifest:
       version: 1
       depends_on: []
     - name: mcp-tool-design
-      file_path: docs/mcp-tool-design.md
+      file_path: docs/archive/mcp-tool-design.md
       version: 1
       depends_on: [vision]
     - name: mcp-requirements
@@ -482,7 +486,7 @@ build_state:
 # `artifacts/plans/<id>/` is invisible to it and regen-views then refuses to write
 # ANY view), and on gitflow a plan must survive until the develop->main release —
 # so the generic name would be contended by the next plan authored in that window.
-active_build_plan: .prawduct/artifacts/plans/AUD-2D6T/build-plan.md
+active_build_plan: .prawduct/artifacts/plans/PUB-READY/build-plan.md
 
 # =============================================================================
 # CHANGE LOG

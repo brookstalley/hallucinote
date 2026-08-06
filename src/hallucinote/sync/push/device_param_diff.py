@@ -4,8 +4,9 @@ The devices phase plans one ``set_parameter`` per stored param row,
 unconditionally (``push/devices.py`` ``_emit_param_writes``). On the canonical
 ``/song-pick-instruments`` -> capture -> push flow every param already equals
 Live, so the reconcile is ~1200 redundant TCP round-trips that stall for minutes
-and read as a hang (``incoming-bugs/2026-06-19-push-devices-phase-reapplies-all-
-params-on-just-captured-set.md``).
+and read as a hang. Reported as: ``push execute`` stalls for minutes at the
+``devices`` phase, re-applying ALL device params (1243 calls) on a set whose
+params were just captured.
 
 This module makes the devices phase a true diff-reconcile: the executor reads
 each device's CURRENT Live parameter values once (batched

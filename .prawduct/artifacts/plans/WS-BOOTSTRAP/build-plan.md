@@ -39,7 +39,7 @@ dry-run for skill detection; no-marker detection wired into `/getting-started` a
 project-root-contract "Still deferred" note updated.
 
 **Also closes (fresh-workspace half):** the filed bug
-`incoming-bugs/…song-workspace-gitignore-misses-tool-generated-artifacts.md`
+bug report "song workspace gitignore misses tool-generated artifacts"
 suggested-fix #1 — ship/author a `.gitignore` stanza covering `*.db*`,
 `**/captures/`, `**/analysis/`, `**/.last-*-push.json`, `**/captured_session.json.bak`,
 `*.als*`, pyc. `init-workspace` now authors it at workspace-creation time (the

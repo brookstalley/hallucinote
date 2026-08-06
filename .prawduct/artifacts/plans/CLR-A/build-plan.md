@@ -1,6 +1,6 @@
 # CLR-A — Build Plan (compose-loop reliability, wave A: swell friction fixes)
 
-The 2026-06-10 swell first-compose friction log (`incoming-bugs/archives/2026-06-10-swell-first-compose-friction.md`),
+The 2026-06-10 swell first-compose friction log (`backlog DEV-2M9K/DEV-5R8Q/INS-2Q7F/INV-3K8W/MCP-4T6Y/SKL-8N3V/SYN-5C3J/SYN-6B4Q/SYN-9F2L/TPL-2D8K`),
 triaged 2026-06-11 into backlog items SYN-9F2L, SYN-6B4Q, INV-3K8W, SYN-5C3J,
 MCP-4T6Y, DEV-5R8Q, INS-2Q7F, SKL-8N3V. One branch
 (`feature/clr-a-swell-friction`), one chunk per item-cluster, one PR into

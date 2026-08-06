@@ -39,7 +39,7 @@ def apply_feel(within_bar_position: float, feel: Feel) -> float:
     shifting bar-1's downbeat by -0.02 returns -0.02. The function is a
     pure within-bar math primitive that doesn't know about absolute
     timeline starts. The mutator boundary (`_normalize_note` in
-    `db/mutations.py`) refuses notes whose ABSOLUTE `start_beats` ends
+    `db/mutations/`) refuses notes whose ABSOLUTE `start_beats` ends
     up negative — that's the layer where reality (Live's MIDI clip has
     no negative-beat region) intrudes. Authors who want to shift bar-1's
     downbeat earlier need to either drop that shift on bar 1 or author

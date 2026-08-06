@@ -8,7 +8,7 @@
 
 You describe a song in plain language. Claude writes it — the composition, the sound design, the mix — as a Python `build.py` plus a captured-session snapshot, builds that into a SQLite working state, and pushes the whole thing into a running Ableton Live set. Tweak a fader in Live and pull the change back through the same path. The song is a directory you commit to git — reproducible and forkable, not a binary `.als` you hope to find again.
 
-It's early (see [Status](#status)), it runs today on Ableton Live 12, and the rest of this page gets you from zero to a playing song.
+It runs today on Ableton Live 12 (see [Status](#status) for what's in and what isn't), and the rest of this page gets you from zero to a playing song.
 
 ---
 
@@ -63,7 +63,7 @@ When it finishes you have a finished session — named tracks, clips, device cha
 
 ## Status
 
-Early — approaching 1.0, and honest about the rough edges:
+Actively developed, shipping releases, and honest about the rough edges:
 
 - Works today on **Ableton Live 12**, **macOS and Windows**.
 - **Live edition:** the authoring loop — compose, push, pull, play, and the symbolic `compose-review` — runs on **any Live 12 edition, Standard included**. The audio-analysis features (render → `mix-review` by measurement) need **Max for Live**, so they're **Suite-only**; `/hallucinote:ableton-mcp-install` asks whether you have Suite and lets Standard users skip the analyzer.
@@ -78,7 +78,7 @@ Limitations we know about and have consciously accepted for now — each with it
 - **Measured mix review needs Max for Live (Suite).** The authoring loop — compose, push, pull, play, and the *symbolic* `/compose-review` — runs on any Live 12 edition. Only the render → analysis → `/mix-review` path needs Max for Live, so on Standard you review by ear with `/compose-review`. This split is by design (see [`docs/capability-truth.md`](docs/capability-truth.md)).
 - **Mid-song tempo / time-signature changes aren't supported.** Changes before bar 1 round-trip cleanly; a mid-song change surfaces a refuse-and-teach at the call site (a real MCP gap, never silent data loss).
 - **A few device-parameter enums can't round-trip.** Some Live enum parameters have no normalized form on the MCP wire; they're skipped with a warning rather than set to the wrong value. Continuous parameters round-trip cleanly.
-- **Nested rack chains are modeled one level deep.** Capture and the structural/analysis read-back descend a single chain level; devices nested deeper inside racks aren't modeled yet.
+- **A few nested-rack corners are still one level deep.** Racks nested inside racks are captured, replayed and pushed to any depth. Three narrower things aren't there yet: pulling a *sidechain* setting back from a nested device, pulling a rack that sits on another rack's chain, and the snapshot-refresh *preview*, which itemizes one level and summarizes deeper subtrees rather than listing them (a display simplification — the underlying data round-trips in full).
 - **Linux is unsupported.** Ableton Live ships no Linux build; Wine/CrossOver gets a best-effort install candidate with warn-and-confirm. macOS and Windows are the supported platforms.
 
 ## Install

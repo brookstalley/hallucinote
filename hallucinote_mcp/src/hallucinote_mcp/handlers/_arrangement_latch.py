@@ -13,7 +13,7 @@ transport button reliably re-engages the Arrangement.
 These constants and the :func:`is_overridden` probe let the transport / clip /
 info surfaces *teach* that state in-band (inside the tool result) instead of
 returning a misleadingly-successful or silent result. See
-``incoming-bugs/2026-06-18-no-mcp-path-from-session-override-back-to-arrangement.md``
+``backlog MCP-2K9F/MCP-3D6Q/MCP-7P3R``
 (MCP-7P3R): an agent mid-recovery is reading tool results, so the teaching has
 to come back there, the way ``device set_sidechain`` / ``gain_db`` already do.
 """

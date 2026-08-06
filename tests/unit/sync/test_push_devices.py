@@ -775,7 +775,7 @@ def test_apply_push_results_accepts_device_param_override_as_ack(
     `ValueError: unknown push result key kind 'device_param_override'`, which
     HALTED the devices phase mid-run — a full from-scratch push of any song with
     such an override never finished (no routing/envelopes/automation/arrangement).
-    See incoming-bugs/2026-06-18-push-apply-unknown-device_param_override-result-kind-halts-devices-phase.md
+    See backlog PSH-8K3D
     """
     cid = M.create_device_chain(conn, parent_track_id=linked_track)
     did = M.create_device(
@@ -822,7 +822,7 @@ def test_apply_push_results_accepts_device_chain_props_as_ack(
     routing/envelopes/automation/arrangement/cues). Stayed latent until the
     rack-preset load fix made the rack load populated, so the set_chain_property
     calls finally SUCCEEDED and their results reached this apply step.
-    See incoming-bugs/2026-06-20-push-apply-unknown-device_chain_props-result-kind-crashes-devices-phase.md
+    See bug report "Push apply crashes on unknown result kind `device_chain_props` → full push of a rack-preset song never completes"
     """
     cid = M.create_device_chain(conn, parent_track_id=linked_track)
     did = M.create_device(

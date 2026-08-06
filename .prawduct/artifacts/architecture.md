@@ -126,11 +126,15 @@ graph, not a preference: routing needs tracks to exist, envelopes need devices.
 Push is **idempotent and diff-reconciling** — it skips already-current state, so a
 re-push changes what you asked for and leaves the rest alone.
 
+Arrangement is the exception to incremental push. On the **push** side it is a
+**projection** — clear, then create-and-fill from the DB, then assert integrity
+(`sync/push/arrangement.py`) — because incremental reconciliation against Live's
+positional, renumbering clip model produced years of whack-a-mole bugs.
+
 **Pull** ingests Live → DB by diffing against the DB and folding manual edits back
-through the same mutators that authored the state originally. Arrangement is the
-exception to naive diffing: it is a **projection** (clear + create-and-fill from the
-DB + integrity assert), because incremental reconciliation against Live's positional,
-renumbering clip model produced years of whack-a-mole bugs.
+through the same mutators that authored the state originally. Note that pull has *not*
+adopted the projection model: `sync/pull/clips.py::plan_pull_arrangement_clips` still
+diffs arrangement placements positionally against `arrangement_clips` rows.
 
 The invariant that makes both safe: **every write goes through a mutator and emits an
 event in the same transaction.** No raw SQL in callers, ever. That discipline is what
@@ -150,8 +154,12 @@ two worktrees and drop the marketplace install — the rationale is in
 
 ## What is deliberately not modeled
 
-- **Nested rack chains deeper than one level.** Capture and read-back descend a single
-  chain level.
+- **Three nested-rack corners** — *not* nesting in general, which capture, replay and
+  push handle to arbitrary depth (`_replay_rack_chains` recurses; `get_device_chains`
+  returns the whole tree in one call). What remains: sidechain **pull** is not extended
+  depth-N, a rack sitting on another rack's chain is outside the pull planner's scope,
+  and `diff_snapshots`/`merge_snapshots` itemize one level and summarize deeper subtrees
+  — a preview simplification, not a data limit.
 - **Human audio.** A recorded vocal take or a hand-ridden automation lane lives only in
   the `.als`; the bridge cannot pull it into a song's source. This is a boundary, not a
   bug — see the README's Known Issues.

@@ -2,7 +2,7 @@
 
 Branch: `fix/deep-rack-addressing` (same branch — small Medium fix riding the
 DEEP-RACK-ADDR PR to develop). Critic: covered by the branch's final cumulative.
-Source: `incoming-bugs/2026-06-14-pull-device-parameters-dry-run-too-noisy-for-drift-detection.md` (Severity M).
+Source: `incoming-bugs/archives/2026-06-14-pull-device-parameters-dry-run-too-noisy-for-drift-detection.md` (Severity M).
 
 ## Problem (three confirmed root causes)
 `pull_cli execute device-parameters [--dry-run]` (the `/snapshot-bake-recent-changes`

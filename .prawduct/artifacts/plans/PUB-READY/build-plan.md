@@ -7,7 +7,6 @@ last_validated: 2026-08-06
 
 # Build Plan — Public-Repo Readiness (PUB-READY)
 
-**Critic mode:** cumulative-final
 
 ## Confidence check
 
@@ -34,7 +33,8 @@ deliberately public — the README links `authorship-model.md`), while the raw
 ## Baseline
 
 Branch `chore/public-readiness` off `develop` @ v1.7.1 (develop == main, clean tree).
-Pre-work suite: 4614 passed, 2 skipped; ruff, mypy, `uv lock --check` all clean.
+Pre-work gates all green (suite, ruff, mypy, `uv lock --check`); counts live in
+the evidence store.
 
 ### Chunk C1: README version coherence  [status: done]
 
@@ -118,12 +118,12 @@ orthogonal to public readiness; doing them properly is its own work cycle.
 
 ## Status
 
-- [x] C1 — README version coherence
-- [x] C2 — privacy scrub
-- [x] C3 — untrack the incoming-bugs drop-zone
-- [x] C4 — community health files
-- [x] C5 — strategy artifacts
-- [~] C6 — housekeeping (size compaction deferred with reasoning)
+- [x] Chunk C1: README version coherence
+- [x] Chunk C2: privacy scrub
+- [x] Chunk C3: untrack the incoming-bugs drop-zone
+- [x] Chunk C4: community health files
+- [x] Chunk C5: strategy artifacts
+- [ ] Chunk C6: housekeeping (size compaction deferred with reasoning)
 
 ## Done when
 
@@ -131,5 +131,5 @@ All chunks resolved, full no-path `python -m pytest` green, ruff + mypy + `uv lo
 --check` clean, `/prawduct:critic cumulative` run with zero unresolved blocking
 findings.
 
-**Verification at commit 7b14fa8:** 4614 passed, 2 skipped; ruff, mypy and
-`uv lock --check` all clean.
+Verification is recorded in the evidence store (`prawduct-hook test-status`), not
+copied into this prose, where it would drift.

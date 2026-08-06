@@ -94,7 +94,7 @@ classification:
       relevance: "Action-dispatch + discovery-layered tool design; docs/archive/mcp-tool-design.md §2"
       relationship: reference
     - name: "MCP tool-count research (Anthropic, Speakeasy, Copilot)"
-      relevance: "Effectiveness degrades past ~25 tools; drove the 52→10 consolidation (docs/mcp-tool-design.md §1.2)"
+      relevance: "Effectiveness degrades past ~25 tools; drove the 52→10 consolidation (docs/archive/mcp-tool-design.md §1.2)"
       relationship: reference
 
 # =============================================================================
@@ -238,7 +238,7 @@ technical_decisions:
       alternatives_considered: "DB-authoritative (rejected — punishes manual edits in Ableton); three-way merge (deferred — premature without multi-collaborator workflows)."
       date: "2026-05-16 (Wave 3 pull-side sync)"
     - decision: "W11-A `hallucinote://` resources: shared `hallucinote-core` package, slug-in-URI addressing, LOM-mirrored hierarchy, always-requery (no caching)"
-      rationale: "Four interlocking choices: (a) shared core read-API package both `hallucinote` and `hallucinote-mcp` depend on (deliberate public-contract boundary); (b) song slug explicit in every URI (cwd-based resolution unreliable across multi-song sessions); (c) URI shape mirrors the `ableton://` hierarchy (one mental model); (d) handlers re-read SQLite per request (caching invalidated by concurrent mutation). Full rationale in this file's git history (pre-2026-07-04) and docs/mcp-tool-design.md."
+      rationale: "Four interlocking choices: (a) shared core read-API package both `hallucinote` and `hallucinote-mcp` depend on (deliberate public-contract boundary); (b) song slug explicit in every URI (cwd-based resolution unreliable across multi-song sessions); (c) URI shape mirrors the `ableton://` hierarchy (one mental model); (d) handlers re-read SQLite per request (caching invalidated by concurrent mutation). Full rationale in this file's git history (pre-2026-07-04) and docs/archive/mcp-tool-design.md."
       alternatives_considered: "Direct import of hallucinote (tight coupling), parallel reader (drift), cwd-based song resolution, per-resource caching — all rejected."
       date: "2026-05-20 (W11-A scoping, post-v1 cumulative merge to main)"
 
@@ -358,7 +358,7 @@ user_expertise:
       inferred_from: "Wave M-3 quantize/swing/groove pivot"
     - dimension: product_thinking
       signal: "Framed the 50-tool problem empirically before the 10-tool consolidation; refused PyPI publish for a private project"
-      inferred_from: "docs/mcp-tool-design.md §1.2; Wave M scaffolding decisions"
+      inferred_from: "docs/archive/mcp-tool-design.md §1.2; Wave M scaffolding decisions"
     - dimension: operational_awareness
       signal: "Expects significant codebase growth and prefers structural fixes over patches"
       inferred_from: "User memory (feedback_engineering_rigor) + repeated 'don't paper over' framing"
@@ -437,7 +437,7 @@ artifact_manifest:
       version: 1
       depends_on: []
     - name: mcp-tool-design
-      file_path: docs/mcp-tool-design.md
+      file_path: docs/archive/mcp-tool-design.md
       version: 1
       depends_on: [vision]
     - name: mcp-requirements
@@ -644,8 +644,8 @@ scope_rollups:
     chunks: ["B2", "B3-resid", "B4", "B5", "Q1"]
     releases: ["v1.4.0"]
   pub-ready:
-    chunks: ["C1", "C2", "C3", "C4", "C5", "C6"]
-    releases: []
+    chunks: ["C1", "C2", "C3", "C4", "C5"]
+    releases: ["unreleased"]
   push-reliability+compose-time-validation:
     chunks: ["R-1", "R-2"]
     releases: ["v1.0.1"]

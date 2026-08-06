@@ -1,7 +1,7 @@
 # Build plan — ARR-CMPHALT: comparator stops false-halting a faithful arrangement
 
 **Backlog:** ARR-CMPHALT (`.prawduct/backlog.md`). Branch: `fix/arr-cmphalt-comparator` (worktree off develop).
-**Refs:** `incoming-bugs/2026-06-22-arrangement-integrity-comparator-false-halts-samepitch-overlap-and-halfeps-bucketing.md`.
+**Refs:** `incoming-bugs/archives/2026-06-22-arrangement-integrity-comparator-false-halts-samepitch-overlap-and-halfeps-bucketing.md`.
 **Related:** ARR-PROJ (the safety net this regresses — PR #201), ARR-ORPHAN, ARR-FROMBUILD.
 
 ## Requirements Confidence

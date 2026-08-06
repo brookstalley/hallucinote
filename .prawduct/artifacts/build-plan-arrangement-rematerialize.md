@@ -11,7 +11,7 @@ phase to re-materialize them. The documented "notes → arrangement" recovery
 (delete the stale arrangement clips, re-run the arrangement phase — see archived
 report `incoming-bugs/archives/2026-06-15-note-changes-never-reach-arrangement-clips.md`)
 therefore fails. Reported in
-`incoming-bugs/2026-06-19-only-arrangement-is-refresh-only-not-create-from-session.md`.
+`incoming-bugs/archives/2026-06-19-only-arrangement-is-refresh-only-not-create-from-session.md`.
 
 ## Root cause
 

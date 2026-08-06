@@ -97,7 +97,7 @@ appends ` | HallucinoteAnalyzer` to the return name. `push probe-and-link` then
 can't match (`unmatched_db_returns: [Reverb]` vs
 `unmatched_live_returns: [A-Reverb | HallucinoteAnalyzer]`), silently breaking
 every return-targeting push phase after any render. (New report
-`incoming-bugs/2026-06-20-render-analyzer-autoload-renames-return-tracks-breaks-relink.md`.)
+`incoming-bugs/archives/2026-06-20-render-analyzer-autoload-renames-return-tracks-breaks-relink.md`.)
 
 **Fix (engine-side defensive — report's option 2).** The return-name match in
 `src/hallucinote/sync/push/probe.py:483-489` normalizes via

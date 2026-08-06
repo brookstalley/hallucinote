@@ -22,7 +22,7 @@
 
 ## 2026-08-06 — The repo gets ready to be public
 
-<!-- prawduct: type=chore | chunks=C1,C2,C3,C4,C5,C6 | scope=pub-ready | status=shipped -->
+<!-- prawduct: type=chore | chunks=C1,C2,C3,C4,C5 | scope=pub-ready | status=shipped | release=unreleased -->
 
 An audit ahead of making the repo public found the engineering substrate sound — 4614
 tests green, ruff/mypy/uv-lock clean, CI real and gating four things, no secrets, MIT
@@ -701,7 +701,7 @@ silent-degrade failure mode).
 - **`/getting-started` + `/song-new`** now `--check` for a workspace and offer to
   create one instead of silently scattering a song into `./songs/<slug>`.
 - Closes the **fresh-workspace half** of the filed gitignore bug
-  (`incoming-bugs/2026-06-14-song-workspace-gitignore-misses-tool-generated-artifacts.md`)
+  (`incoming-bugs/archives/2026-06-14-song-workspace-gitignore-misses-tool-generated-artifacts.md`)
   at the natural moment (workspace creation): the managed block covers the
   regenerable-artifact set.
 

@@ -78,7 +78,7 @@ Limitations we know about and have consciously accepted for now — each with it
 - **Measured mix review needs Max for Live (Suite).** The authoring loop — compose, push, pull, play, and the *symbolic* `/compose-review` — runs on any Live 12 edition. Only the render → analysis → `/mix-review` path needs Max for Live, so on Standard you review by ear with `/compose-review`. This split is by design (see [`docs/capability-truth.md`](docs/capability-truth.md)).
 - **Mid-song tempo / time-signature changes aren't supported.** Changes before bar 1 round-trip cleanly; a mid-song change surfaces a refuse-and-teach at the call site (a real MCP gap, never silent data loss).
 - **A few device-parameter enums can't round-trip.** Some Live enum parameters have no normalized form on the MCP wire; they're skipped with a warning rather than set to the wrong value. Continuous parameters round-trip cleanly.
-- **Nested rack chains are modeled one level deep.** Capture and the structural/analysis read-back descend a single chain level; devices nested deeper inside racks aren't modeled yet.
+- **A few nested-rack corners are still one level deep.** Racks nested inside racks are captured, replayed and pushed to any depth. Three narrower things aren't there yet: pulling a *sidechain* setting back from a nested device, pulling a rack that sits on another rack's chain, and the snapshot-refresh *preview*, which itemizes one level and summarizes deeper subtrees rather than listing them (a display simplification — the underlying data round-trips in full).
 - **Linux is unsupported.** Ableton Live ships no Linux build; Wine/CrossOver gets a best-effort install candidate with warn-and-confirm. macOS and Windows are the supported platforms.
 
 ## Install

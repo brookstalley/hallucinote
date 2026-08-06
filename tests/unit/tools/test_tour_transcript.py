@@ -19,6 +19,10 @@ from pathlib import Path
 import pytest
 
 from tools.tour_transcript import (
+    IGNORED_BLOCKS,
+    IGNORED_TYPES,
+    RENDERED_BLOCKS,
+    RENDERED_TYPES,
     RedactionFailure,
     TranscriptError,
     UnknownBlockType,
@@ -27,6 +31,7 @@ from tools.tour_transcript import (
     build_excerpt,
     latest_session,
     load,
+    main,
     redact,
     repo_root_of,
     render,
@@ -165,6 +170,38 @@ def test_bare_users_token_is_left_alone() -> None:
     assert_publishable(probe)  # does not raise
 
 
+def test_dash_encoded_home_paths_are_redacted() -> None:
+    """Claude Code flattens the cwd into its own directory names.
+
+    ``~/.claude/projects/-Users-alice-source-repo/`` and the matching task
+    scratchpad carry the account name in a form no slash-based pattern sees. The
+    first version of this tool passed its own ``grep -c '/Users/'`` acceptance
+    check while this form would have shipped straight into published output.
+    """
+    out = redact("~/.claude/projects/-Users-alice-source-repo/s.jsonl", FIXTURE_ROOT)
+    assert "alice" not in out
+    assert redact("/private/tmp/claude-501/-Users-alice-source-repo/t", FIXTURE_ROOT).count(
+        "alice"
+    ) == 0
+
+
+def test_gate_catches_a_dash_encoded_account_name() -> None:
+    with pytest.raises(RedactionFailure, match="dash-encoded"):
+        assert_publishable("path -Users-alice-source-repo/x")
+
+
+def test_repo_root_rewrite_is_anchored_at_a_path_boundary() -> None:
+    """A sibling repo sharing the root's prefix must not be mangled into it.
+
+    Unanchored, a root of ``…/source/demo-repo`` also matches inside
+    ``…/source/demo-repo-songs/x``, yielding ``.-songs/x`` — garbled output that
+    still discloses the shape of a private sibling workspace.
+    """
+    out = redact(f"{FIXTURE_ROOT}-songs/x/build.py", FIXTURE_ROOT)
+    assert ".-songs" not in out
+    assert "testuser" not in out, "the sibling path must still be redacted, just not mangled"
+
+
 def test_gate_catches_an_account_name_without_a_trailing_slash() -> None:
     with pytest.raises(RedactionFailure, match="account name"):
         assert_publishable("leaked /Users/alice")
@@ -249,6 +286,78 @@ def test_home_paths_are_fixed_by_redaction_not_left_to_the_gate(tmp_path: Path) 
     path = tmp_path / "t.jsonl"
     path.write_text(json.dumps(record) + "\n")
     assert "~/y" in build_excerpt(path, Path("/nowhere"))
+
+
+# --- the CLI -----------------------------------------------------------------
+
+
+def test_main_writes_the_excerpt_and_exits_zero(tmp_path: Path) -> None:
+    out = tmp_path / "excerpt.md"
+    code = main(["--session", str(FIXTURE), "--repo-root", str(FIXTURE_ROOT), "--out", str(out)])
+    assert code == 0
+    assert "chorus lift" in out.read_text()
+
+
+def test_main_writes_nothing_when_the_gate_trips(tmp_path: Path) -> None:
+    """The no-write-on-refusal contract: a refusal must leave no partial file."""
+    record = {
+        "type": "assistant",
+        "message": {"content": [{"type": "text", "text": "truncated <system-reminder>x"}]},
+    }
+    session = tmp_path / "t.jsonl"
+    session.write_text(json.dumps(record) + "\n")
+    out = tmp_path / "excerpt.md"
+    assert main(["--session", str(session), "--repo-root", str(tmp_path), "--out", str(out)]) == 1
+    assert not out.exists(), "a refused run left a file behind"
+
+
+def test_main_removes_a_stale_out_file_on_refusal(tmp_path: Path) -> None:
+    """A refusal must not leave last run's output looking like this run's.
+
+    Worse than writing nothing is leaving a plausible file behind: the command
+    failed, but a later step reads the path and publishes stale content.
+    """
+    record = {
+        "type": "assistant",
+        "message": {"content": [{"type": "text", "text": "truncated <system-reminder>x"}]},
+    }
+    session = tmp_path / "t.jsonl"
+    session.write_text(json.dumps(record) + "\n")
+    out = tmp_path / "excerpt.md"
+    out.write_text("stale content from a previous successful run\n")
+    assert main(["--session", str(session), "--repo-root", str(tmp_path), "--out", str(out)]) == 1
+    assert not out.exists(), "a refused run left the previous run's output in place"
+
+
+def test_rendered_and_ignored_type_sets_are_disjoint() -> None:
+    """A type in both sets would be silently ignored, since ignore is checked first."""
+    assert not (RENDERED_TYPES & IGNORED_TYPES.keys())
+    assert not (RENDERED_BLOCKS & IGNORED_BLOCKS.keys())
+
+
+def test_every_ignored_record_type_actually_produces_no_output(tmp_path: Path) -> None:
+    """Each classified ignored type is exercised, not just the ones the fixture happens to carry.
+
+    The fixture cannot practically hold a realistic instance of all thirteen, so
+    this drives them synthetically: a classification that stops working shows up
+    here rather than the next time that type appears in a real session.
+    """
+    for rtype in IGNORED_TYPES:
+        path = tmp_path / f"{rtype}.jsonl"
+        path.write_text(json.dumps({"type": rtype, "content": "/Users/alice/secret"}) + "\n")
+        assert to_turns(load(path), tmp_path) == [], f"{rtype} produced output"
+
+
+def test_main_reports_a_resolution_failure_without_a_traceback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An empty project dir must be a clean message, not a stack trace.
+
+    A traceback quotes the absolute project path in its frames — precisely what
+    this tool exists to keep out of the open.
+    """
+    assert main(["--project-dir", str(tmp_path)]) == 1
+    assert "tour_transcript:" in capsys.readouterr().err
 
 
 # --- source resolution -------------------------------------------------------

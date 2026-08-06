@@ -25,9 +25,17 @@ end users `uvx hallucinote-mcp` + install the plugin.
 
 One workspace lives **inside** the framework repo: `examples/`, carrying its own
 `hallucinote.toml` (`layout = "monorepo"`, `songs_root = "."`) and the demo song the
-end-to-end tour is built from. It resolves through the normal precedence below —
-marker discovery walks up from the song directory and finds it — so this costs no
+end-to-end tour is built from. It resolves through the normal precedence below with no
 special-casing in the resolution code.
+
+**But note the starting point, because it is not the song directory.** `find_workspace()`
+(`src/hallucinote/workspace.py`) walks **up** from `CLAUDE_PROJECT_DIR`, the cwd, or an
+explicit `start=` — never from the slug being resolved. `examples/hallucinote.toml` is a
+*descendant* of the repo root, so a session rooted at the repo root walks up past it and
+never sees it, falling through to the legacy `songs/<slug>` (precedence step 4) which no
+longer exists here. The marker is found when the cwd is inside `examples/`, or when
+`start=`/`root=` names it explicitly — which is how a CI build of the example must
+invoke it. Getting this wrong is silent: the fallback returns a path rather than raising.
 
 It is an exception to the split above, granted for two things a separate demo repo
 cannot give:

@@ -6,8 +6,9 @@ the JSONL Claude Code already writes to ``~/.claude/projects/<slug>/*.jsonl`` �
 and can be regenerated when behavior changes, instead of rotting.
 
 Publishing that JSONL naively would be a disclosure bug. A session transcript
-carries absolute ``/Users/<name>/…`` paths, hook output, MCP server names, and
-the contents of memory files injected as ``<system-reminder>`` blocks. So this
+carries absolute ``/Users/<name>/…`` paths (including *dash-encoded* ones in
+Claude Code's own project and task directory names), hook output, and the
+contents of memory files injected as ``<system-reminder>`` blocks. So this
 renderer **fails closed**:
 
 * Record types are an explicit allowlist. An unrecognized ``type`` raises rather
@@ -21,9 +22,18 @@ renderer **fails closed**:
 * Every surviving string is redacted, and then the whole document is re-scanned
   for the forbidden patterns. If redaction missed one, nothing is written.
 
-macOS/Linux paths are rewritten two ways: anything under the repo root becomes
-repo-relative, and any other home path collapses to ``~/`` so the account name
-does not ship.
+macOS/Linux paths are rewritten three ways: anything under the repo root becomes
+repo-relative, any other home path collapses to ``~/``, and a dash-encoded home
+path has its account segment replaced — so the account name does not ship in any
+of the three forms it appears in.
+
+**Tool names, including MCP tool names, DO ship** (``mcp__<server>__<tool>``
+renders verbatim). That is deliberate, not an oversight: the tour's whole point
+is showing which tools the agent actually called, and blanket-redacting server
+names would gut the beat that demonstrates the Ableton bridge. The consequence is
+that a rendered excerpt discloses which MCP servers the session had connected, so
+**choosing which session to render is an editorial act** — render one whose tool
+use you are willing to publish, rather than expecting this tool to launder it.
 
 Usage::
 
@@ -90,12 +100,22 @@ IGNORED_BLOCKS: dict[str, str] = {
 # command.
 _ACCOUNT_SEGMENT = r"/(?:Users|home)/[^/\s'\"`]+"
 
+# The same home path, dash-encoded. Claude Code names its own project and task
+# directories by flattening the cwd — ``~/.claude/projects/-Users-alice-source-
+# repo/`` and ``/private/tmp/claude-…/-Users-alice-source-repo/…`` — so the
+# account name ships in a form no slash-based pattern matches. This is not
+# hypothetical: the first version of this tool passed its own
+# ``grep -c '/Users/'`` acceptance check while a dash-encoded name would have
+# gone straight into published output. Both the redactor and the gate key on it.
+_DASH_ACCOUNT_SEGMENT = r"-(?:Users|home)-[A-Za-z0-9_.]+"
+
 # Same principle for reminders: what must not ship is an injected block's
 # *contents*, which a surviving ``<system-reminder>`` tag announces. The bare
 # word in authored prose — an agent explaining the mechanism — is not a leak,
 # and gating on it would refuse any session that discussed its own harness.
 FORBIDDEN = (
     (re.compile(_ACCOUNT_SEGMENT), "an absolute home path including an account name"),
+    (re.compile(_DASH_ACCOUNT_SEGMENT), "a dash-encoded home path including an account name"),
     (re.compile(r"</?system-reminder>"), "an unpaired harness system-reminder tag"),
 )
 
@@ -116,6 +136,7 @@ _HARNESS_MARKUP = re.compile(
 # of a sentence) is caught too rather than sailing past the gate.
 _HOME_PATH_DIR = re.compile(_ACCOUNT_SEGMENT + "/")
 _HOME_PATH_BARE = re.compile(_ACCOUNT_SEGMENT)
+_DASH_HOME_PATH = re.compile(_DASH_ACCOUNT_SEGMENT)
 
 # Per-tool field carrying the most useful one-line identifier. Values are
 # redacted like any other string; anything not listed renders as a bare name.
@@ -185,11 +206,19 @@ def redact(text: str, repo_root: Path) -> str:
     """
     text = _SYSTEM_REMINDER.sub("", text)
     text = _HARNESS_MARKUP.sub("", text)
-    root = str(repo_root).rstrip("/")
-    text = text.replace(root + "/", "")
-    text = text.replace(root, ".")
+
+    # The bare-root rewrite must be ANCHORED at a path boundary. Unanchored, a
+    # root of ``…/source/demo`` also matches inside ``…/source/demo-songs/x``,
+    # producing ``.-songs/x`` — output that is both garbled and still discloses
+    # the shape of a sibling repo. Only a root followed by ``/`` or ending the
+    # token is this repo.
+    root = re.escape(str(repo_root).rstrip("/"))
+    text = re.sub(root + "/", "", text)
+    text = re.sub(root + r"(?![^\s'\"`])", ".", text)
+
     text = _HOME_PATH_DIR.sub("~/", text)
-    return _HOME_PATH_BARE.sub("~", text)
+    text = _HOME_PATH_BARE.sub("~", text)
+    return _DASH_HOME_PATH.sub("-REDACTED", text)
 
 
 def assert_publishable(document: str) -> None:
@@ -368,14 +397,22 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    session = args.session if args.session else latest_session(args.project_dir.expanduser())
-    repo_root = args.repo_root or repo_root_of(Path.cwd())
-
+    # Source resolution is inside the try for a disclosure reason, not a tidiness
+    # one: an unhandled TranscriptError here prints a traceback whose frames
+    # quote the absolute project path this tool exists to keep out of the open.
     try:
+        session = args.session if args.session else latest_session(args.project_dir.expanduser())
+        repo_root = args.repo_root or repo_root_of(Path.cwd())
         document = build_excerpt(
             session.expanduser(), repo_root, args.start_at, args.exchanges
         )
     except TranscriptError as exc:
+        # Remove a stale --out from an earlier run. Leaving it is the worst
+        # outcome of a refusal: the command failed, but the path still holds
+        # plausible-looking content that a later step would publish as fresh.
+        if args.out and args.out.exists():
+            args.out.unlink()
+            print(f"tour_transcript: removed stale {args.out}", file=sys.stderr)
         print(f"tour_transcript: {exc}", file=sys.stderr)
         return 1
 

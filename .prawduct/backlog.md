@@ -926,17 +926,28 @@ sections only via explicit `/backlog update` calls.
   **Verifiable signal:** either `grep -rn "restamp" src/ docs/` returns nothing, or `docs/snapshot-schema.md` lists `restamp` among the `StaleSnapshotError` exits with its safety fence — and in the keep case, `capture --help` names it (DOC-6K1V). (PR #213 Critic review, 2026-07-20)
 
 - **[DOC-8V3Q]** README ships a placeholder hero; the deferral has no durable home
-  `effort: S · impact: M · area: docs · source: review · added: 2026-08-06 · status: open · stage: requirements · refs: README.md, docs/assets/hero.svg, .prawduct/artifacts/tour-walkthrough-design.md (forward ref — on branch docs/tour-walkthrough, unmerged; resolves on merge)`
+  `effort: S · impact: M · area: docs · source: review · added: 2026-08-06 · status: open · stage: ready · refs: README.md, docs/assets/hero.svg, .prawduct/artifacts/tour-walkthrough-design.md, .prawduct/artifacts/plans/TOUR/build-plan.md · reviewed: 2026-08-06`
 
   **From the independent PR review of `chore/public-readiness` (PUB-READY) — deferred, not blocking.** `README.md`:5 carries a placeholder SVG plus the HTML comment `<!-- HERO: replace docs/assets/hero.svg with a real screen capture before release — a prompt typed into Claude Code on the left, an Ableton Live set filling in on the right. -->`, rendered two lines later as `![A prompt, and the Ableton Live set it built](docs/assets/hero.svg)`.
 
   **Why this needs a backlog item and not just the comment.** The deferral is recorded only in **PUB-READY build-plan prose** and a change-log entry — and **build plans are deleted once they ship**: chunk C6 of this very branch deleted the AUD-2D6T plan for exactly that reason. So the reminder evaporates with the plan, leaving behind only an HTML comment that no gate reads and no view surfaces. This item is the durable home the deferral currently lacks.
 
-  **The design already exists (but is unmerged).** `.prawduct/artifacts/tour-walkthrough-design.md` lives on branch `docs/tour-walkthrough`, not yet merged — read it with `git show docs/tour-walkthrough:.prawduct/artifacts/tour-walkthrough-design.md`. It specifies the replacement: a **real hero video + poster image**, under a hard evidence budget.
+  **The design already exists (but is unmerged).** `.prawduct/artifacts/tour-walkthrough-design.md` specifies the replacement — real captured evidence under a hard budget. **Location corrected 2026-08-06:** it lives on branch **`feat/tour-walkthrough`**, alongside its chunked build plan at `.prawduct/artifacts/plans/TOUR/build-plan.md`; the earlier `docs/tour-walkthrough` branch is **superseded** (read either artifact with `git show feat/tour-walkthrough:<path>`).
 
-  **Stage: requirements** — the design exists but sits on an unmerged branch and its hero half has not been reconciled against the shipped README. Scope which asset the README actually adopts (video + poster, or a single still), and the capture budget, before producing anything; route to `/prawduct:methodology discovery`.
+  **Stage: ready (was `requirements`, advanced 2026-08-06).** The open question that held it at `requirements` — *which asset form the README actually adopts* — is now **resolved inside the plan rather than ahead of it**: chunk **A3** runs a GitHub inline-`<video>` probe first and records the verdict + chosen hero form in the design artifact (the known-safe fallback being a poster image linking out), and chunk **C1** spends the evidence budget once against the finished set, producing the hero in whichever form A3 determined and replacing `docs/assets/hero.svg`. The budget itself is fixed by the design's concision rule (4 screenshots · 1 hero · 3 audio clips, ≤ 12 MB committed). So the discovery work this item was routed to is done — a design plus a chunked build plan both exist; follow the normal build cycle against `plans/TOUR/`.
+
+  **Closed by chunk D1** (`docs/tour.md` + the README graft + the freshness tests) — that chunk is the one that removes the `<!-- HERO: … -->` comment and points the README at the captured asset. Record `closed-by: D1` when it archives.
 
   **Verifiable signal:** `grep -n 'HERO:' README.md` returns nothing, and the README's hero points at a real captured asset rather than the placeholder `docs/assets/hero.svg`. (PUB-READY PR review, 2026-08-06)
+
+- **[DOC-4Q2X]** `project-preferences.md` still describes the pre-split `songs/` layout
+  `effort: S · impact: M · area: docs · source: review · added: 2026-08-06 · status: open · stage: ready · refs: .prawduct/artifacts/project-preferences.md, .prawduct/artifacts/project-root-contract.md, .prawduct/artifacts/plans/TOUR/build-plan.md · related: DOC-3P7K · reviewed: 2026-08-06`
+
+  The framework⇄songs split moved authored songs into their own workspace repo, but `.prawduct/artifacts/project-preferences.md` still describes the monorepo layout in several places — song-specific tests at `songs/<slug>/tests/` (:31), "song-specific builders live under `songs/<name>/build.py`" (:40), the `python songs/falling-walking/build.py` example command (:53), and the one-DB-per-song rule stated as `songs/<slug>/<slug>.db` (:54, restated in the enforcement table at :94). A reader treating that file as governing authority (build plans cite it in `governed_by:`) gets a layout that no longer exists here — and `falling-walking` in particular now lives in the private **hallucinote-songs** repo.
+
+  **Why deferred rather than fixed inline.** Deliberately deferred from the TOUR A1 Critic review (`rev-20260806T230604Z-964240e7`, finding R-10): TOUR chunk **B1** adds an `examples/` workspace INSIDE the framework repo under a bounded exception (`examples/hallucinote.toml` with `layout="monorepo"`, `songs_root="."`, plus the demo song), which changes this same description again. Rewriting it before B1 lands means rewriting it twice. Do it once, after B1.
+
+  **Verifiable signal:** every `songs/` path in `project-preferences.md` either describes a workspace-relative location or is explicitly scoped to the `examples/` bounded exception; no example command references a song that is not in this repo. (TOUR A1 Critic review R-10, 2026-08-06)
 
 ## Promoted
 

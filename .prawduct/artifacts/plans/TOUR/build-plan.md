@@ -75,9 +75,10 @@ are each well under a day. Closes DOC-8V3Q (the placeholder hero) at D1.
 ### Project Initialization
 
 None — this work lands inside the existing repo and adds no runtime dependency. The
-capture tools are stdlib-only Python driving two external binaries already present on
-the authoring machine (`ffmpeg` 8.0.1 at `/opt/homebrew/bin/ffmpeg`, `screencapture` at
-`/usr/sbin/screencapture`, both verified 2026-08-06).
+capture tools are stdlib-only Python driving external binaries already present on the
+authoring machine: `ffmpeg` 8.0.1 at `/opt/homebrew/bin/ffmpeg` and `screencapture` at
+`/usr/sbin/screencapture` (both verified 2026-08-06), plus `git`, which A1 shells out to
+for `rev-parse --show-toplevel` and which degrades to a no-op fallback when absent.
 
 ### Dependencies
 
@@ -93,8 +94,8 @@ not in `src/hallucinote/`.
 Unchanged. New tests go under `tests/unit/tools/` (the existing home for
 `tools/`-adjacent tests) except the structural doc tests, which go under
 `tests/preferences/` per `project-preferences.md`. Finish every chunk with a **no-path**
-`python -m pytest` — `testpaths` covers `tests/`, `hallucinote_mcp/tests/` and `songs/`,
-and a path-scoped run silently skips the others.
+`python -m pytest` — `testpaths` is `["tests", "hallucinote_mcp/tests"]`
+(`pyproject.toml`), and a path-scoped run silently skips the half you did not name.
 
 ### Scaffold Verification
 
@@ -156,6 +157,13 @@ reading a render's capture directory layout, which it locates by path convention
   out of the tracked tree; a renderer that pipes it back into `docs/` reopens it. So the
   renderer **fails closed**: it emits nothing until every block has passed the filter,
   and an unrecognized record `type` is a refusal, not a silent skip.
+
+  *(As shipped, the gate keys on what actually leaks rather than on the marker: an
+  account segment — including its dash-encoded form in Claude Code's own directory
+  names — and an unpaired reminder tag. A bare `/Users/` token and the bare word
+  "system-reminder" in authored prose are deliberately allowed, since gating on those
+  refuses any session that discusses its own harness. Tool names, MCP ones included,
+  ship on purpose; choosing which session to render is therefore an editorial act.)*
 
   Concretely the filter drops `isSidechain` records (subagent chatter), `isMeta` records,
   every `thinking` block, all `system`/`attachment`/`file-history-snapshot` record types,

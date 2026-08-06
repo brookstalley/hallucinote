@@ -78,13 +78,13 @@ Each preference above should be enforced by one of three mechanisms — assign t
 
 | Mechanism | Where it lives | What it catches | Trade-off |
 |---|---|---|---|
-| **Linter** | Project's configured linter (ruff, eslint, swiftlint, etc.) | Mechanical style/naming rules | Best tool when configured. If no linter, preferences in this category fall through to Critic. |
+| **Linter** | `ruff check .` + `mypy`, both gating CI (INF-2C4X) | Mechanical style/naming rules | Preferred where a rule exists. A preference with no corresponding enabled rule still falls through to Critic — "a linter is configured" is not the same as "this rule is enforced". |
 | **Test** | `tests/preferences/test_*.py` (or equivalent) | Structural rules with named exceptions (AST checks, config-presence checks) | Bakes the rule into CI; refuses to be silent. Cost: re-validate when the rule's shape changes. |
 | **Critic** | `/critic` review (Goal 4: Project Preferences) | Judgment-required rules (semantic naming, "appropriate" anything, what counts as a "boundary") | No false-confidence test. Cost: requires reviewer per chunk; misses violations between reviews. |
 
 | Preference | Mechanism | Enforcement artifact |
 |---|---|---|
-| `from __future__ import annotations` on every module | Critic | (no linter configured; promote to a `ruff` rule if/when ruff is added) |
+| `from __future__ import annotations` on every module | Critic | ruff is configured and gates CI (INF-2C4X), but no enabled rule covers this — Critic still owns it; promote to a `ruff` rule to mechanize |
 | All writes go through `db.mutations` (no raw SQL in callers outside `db/`) | Critic | Goal 4 (project preferences) — high-priority rule; consider an AST-based `tests/preferences/test_no_raw_sql_outside_db.py` if violations recur |
 | Every mutator emits a paired `events` row in the same transaction | Critic | Goal 4 — paired-write discipline; covered behaviorally by `test_mutations.py` event assertions |
 | Generators stay pure (no DB / MCP imports under `generators/`) | Critic | Goal 4 — easy candidate for an import-graph test if drift starts |

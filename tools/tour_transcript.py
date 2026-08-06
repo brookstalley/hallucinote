@@ -109,6 +109,37 @@ _ACCOUNT_SEGMENT = r"/(?:Users|home)/[^/\s'\"`]+"
 # gone straight into published output. Both the redactor and the gate key on it.
 _DASH_ACCOUNT_SEGMENT = r"-(?:Users|home)-[A-Za-z0-9_.]+"
 
+
+def _account_rules(account: str) -> tuple[tuple[re.Pattern[str], str], ...]:
+    """Literal patterns for *this* machine's account name, in both encodings.
+
+    The generic patterns above cannot express a **hyphenated** username. In the
+    dash encoding, ``-`` is the delimiter, so for an account like ``mary-jane``
+    the slug ``-Users-mary-jane-source-repo`` matches only as far as
+    ``-Users-mary`` — half the name ships, and because the gate re-scans with the
+    same generic pattern it finds no ``-Users-`` remaining and passes. A shared
+    pattern cannot catch its own blind spot.
+
+    Knowing the actual name removes the ambiguity entirely: these run *before*
+    the generic patterns, and the generic ones remain as a second layer for
+    paths belonging to some other account (a transcript copied from elsewhere).
+    """
+    if not account:
+        return ()
+    name = re.escape(account)
+    return (
+        (re.compile(rf"/(?:Users|home)/{name}"), "~"),
+        (re.compile(rf"-(?:Users|home)-{name}"), "-REDACTED"),
+    )
+
+
+def default_account() -> str:
+    """This machine's account name, or ``""`` if it cannot be determined."""
+    try:
+        return Path.home().name
+    except (OSError, RuntimeError):
+        return ""
+
 # Same principle for reminders: what must not ship is an injected block's
 # *contents*, which a surviving ``<system-reminder>`` tag announces. The bare
 # word in authored prose — an agent explaining the mechanism — is not a leak,
@@ -198,7 +229,7 @@ def repo_root_of(start: Path) -> Path:
     return Path(out.stdout.strip() or start)
 
 
-def redact(text: str, repo_root: Path) -> str:
+def redact(text: str, repo_root: Path, account: str | None = None) -> str:
     """Strip injected reminders and rewrite absolute paths.
 
     Repo-relative rewriting runs first: without it a repo path would collapse to
@@ -216,14 +247,37 @@ def redact(text: str, repo_root: Path) -> str:
     text = re.sub(root + "/", "", text)
     text = re.sub(root + r"(?![^\s'\"`])", ".", text)
 
+    # This machine's literal account name first — it is the only layer that can
+    # resolve a hyphenated name in the dash encoding (see _account_rules).
+    for pattern, replacement in _account_rules(
+        default_account() if account is None else account
+    ):
+        text = pattern.sub(replacement, text)
+
     text = _HOME_PATH_DIR.sub("~/", text)
     text = _HOME_PATH_BARE.sub("~", text)
     return _DASH_HOME_PATH.sub("-REDACTED", text)
 
 
-def assert_publishable(document: str) -> None:
-    """Raise unless the rendered document is free of every forbidden pattern."""
-    for pattern, description in FORBIDDEN:
+def assert_publishable(document: str, account: str | None = None) -> None:
+    """Raise unless the rendered document is free of every forbidden pattern.
+
+    The gate checks this machine's literal account name in addition to the
+    generic patterns. Sharing only the generic ones with the redactor is what let
+    a hyphenated name pass: the redactor mangled it into a form its own pattern
+    no longer matched, and the gate agreed.
+    """
+    name = default_account() if account is None else account
+    checks = [*FORBIDDEN]
+    if name:
+        escaped = re.escape(name)
+        checks.append(
+            (
+                re.compile(rf"[/-](?:Users|home)[/-]{escaped}"),
+                "this machine's account name",
+            )
+        )
+    for pattern, description in checks:
         match = pattern.search(document)
         if match:
             line = document.count("\n", 0, match.start()) + 1
@@ -234,7 +288,7 @@ def assert_publishable(document: str) -> None:
             )
 
 
-def tool_line(block: dict, repo_root: Path) -> str:
+def tool_line(block: dict, repo_root: Path, account: str | None = None) -> str:
     """Render one tool call as a single line: never the full input."""
     name = str(block.get("name", "?"))
     field = _TOOL_SUMMARY_FIELD.get(name)
@@ -242,7 +296,7 @@ def tool_line(block: dict, repo_root: Path) -> str:
     value = raw.get(field) if field and isinstance(raw, dict) else None
     if not isinstance(value, str) or not value.strip():
         return f"`{name}`"
-    summary = redact(value.strip(), repo_root).splitlines()[0]
+    summary = redact(value.strip(), repo_root, account).splitlines()[0]
     return f"`{name}` — {summary}"
 
 
@@ -274,7 +328,7 @@ def _blocks_of(record: dict) -> list[dict]:
     return []
 
 
-def to_turns(records: list[dict], repo_root: Path) -> list[Turn]:
+def to_turns(records: list[dict], repo_root: Path, account: str | None = None) -> list[Turn]:
     """Filter records to publishable turns, raising on anything unclassified."""
     turns: list[Turn] = []
     for record in records:
@@ -304,11 +358,11 @@ def to_turns(records: list[dict], repo_root: Path) -> list[Turn]:
                     f"classify it before publishing."
                 )
             if btype == "text":
-                cleaned = redact(str(block.get("text", "")), repo_root).strip()
+                cleaned = redact(str(block.get("text", "")), repo_root, account).strip()
                 if cleaned:
                     texts.append(cleaned)
             else:
-                tools.append(tool_line(block, repo_root))
+                tools.append(tool_line(block, repo_root, account))
 
         if not texts and not tools:
             continue
@@ -372,11 +426,12 @@ def build_excerpt(
     repo_root: Path,
     start_at: str | None = None,
     exchanges: int | None = None,
+    account: str | None = None,
 ) -> str:
     """Full pipeline: load → filter → redact → render → gate."""
-    turns = select(to_turns(load(session), repo_root), start_at, exchanges)
+    turns = select(to_turns(load(session), repo_root, account), start_at, exchanges)
     document = render(turns)
-    assert_publishable(document)
+    assert_publishable(document, account)
     return document
 
 
@@ -411,8 +466,18 @@ def main(argv: list[str] | None = None) -> int:
         # outcome of a refusal: the command failed, but the path still holds
         # plausible-looking content that a later step would publish as fresh.
         if args.out and args.out.exists():
-            args.out.unlink()
-            print(f"tour_transcript: removed stale {args.out}", file=sys.stderr)
+            try:
+                args.out.unlink()
+                print(f"tour_transcript: removed stale {args.out}", file=sys.stderr)
+            except OSError as unlink_exc:
+                # Must not escape: an unhandled OSError here prints a traceback
+                # quoting the absolute path, which is the disclosure this error
+                # path exists to avoid.
+                print(
+                    f"tour_transcript: could not remove stale output ({unlink_exc.strerror}) "
+                    f"— treat that file as STALE, not as this run's result",
+                    file=sys.stderr,
+                )
         print(f"tour_transcript: {exc}", file=sys.stderr)
         return 1
 

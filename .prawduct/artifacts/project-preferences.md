@@ -89,7 +89,7 @@ Each preference above should be enforced by one of three mechanisms — assign t
 | Every mutator emits a paired `events` row in the same transaction | Critic | Goal 4 — paired-write discipline; covered behaviorally by `test_mutations.py` event assertions |
 | Generators stay pure (no DB / MCP imports under `generators/`) | Critic | Goal 4 — easy candidate for an import-graph test if drift starts |
 | `sync.*` produces plans, never invokes MCP tools directly | Critic | Goal 4 |
-| Snake/Pascal/UPPER naming, PEP 604 unions, grouped imports | Critic | Promote to `ruff` (E, I, UP rules) when a linter is added |
+| Snake/Pascal/UPPER naming, PEP 604 unions, grouped imports | Critic | ruff is configured and gates CI (INF-2C4X); enable the `E`, `I` and `UP` rule sets in `[tool.ruff]` to mechanize this row |
 | Test file lives next to the module it tests (mirror layout) | Critic | Goal 4 |
 | One DB per song at `songs/<slug>/<slug>.db`; slug = `[a-z0-9_-]+`; display name in `songs.title` | Test + Critic | Schema `CHECK` on `songs.name` + Python regex in `create_song` enforce the slug; Critic Goal 4 catches setup violations (rogue paths, sidecar config files) |
 

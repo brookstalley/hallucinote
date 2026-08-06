@@ -185,6 +185,37 @@ def test_dash_encoded_home_paths_are_redacted() -> None:
     ) == 0
 
 
+def test_hyphenated_account_name_is_fully_redacted() -> None:
+    """A hyphenated username breaks the generic dash pattern, so a literal layer runs first.
+
+    ``-`` is the delimiter of the slug encoding, so for ``mary-jane`` the generic
+    pattern matches only ``-Users-mary`` and emits ``-REDACTED-jane-source-repo``
+    — half the name shipping, undetectably, because the gate re-scans with that
+    same pattern and finds no ``-Users-`` left. A shared pattern cannot catch its
+    own blind spot; knowing the real name removes the ambiguity.
+    """
+    slug = "-Users-mary-jane-source-repo"
+    out = redact(f"~/.claude/projects/{slug}/s.jsonl", FIXTURE_ROOT, account="mary-jane")
+    assert "jane" not in out, "the second half of the account name survived"
+    assert "mary" not in out
+    assert redact("/Users/mary-jane/x", FIXTURE_ROOT, account="mary-jane") == "~/x"
+
+
+def test_gate_refuses_an_unredacted_hyphenated_account_name() -> None:
+    """The gate must know the literal name too, or it inherits the same blind spot."""
+    with pytest.raises(RedactionFailure, match="account name"):
+        assert_publishable("-Users-mary-jane-source-repo/x", account="mary-jane")
+    with pytest.raises(RedactionFailure, match="account name"):
+        assert_publishable("/Users/mary-jane/x", account="mary-jane")
+
+
+def test_no_account_name_available_degrades_to_the_generic_patterns() -> None:
+    """An empty account must not crash or match everything — the generic layer still applies."""
+    assert redact("/Users/alice/x", FIXTURE_ROOT, account="") == "~/x"
+    with pytest.raises(RedactionFailure):
+        assert_publishable("/Users/alice/x", account="")
+
+
 def test_gate_catches_a_dash_encoded_account_name() -> None:
     with pytest.raises(RedactionFailure, match="dash-encoded"):
         assert_publishable("path -Users-alice-source-repo/x")

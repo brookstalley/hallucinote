@@ -58,7 +58,7 @@ decision before A1 starts — Phase A is fully specified.
 
 ## Status
 
-- [ ] Chunk A1: Transcript renderer with a redaction gate
+- [x] Chunk A1: Transcript renderer with a redaction gate
 - [ ] Chunk A2: Deterministic Ableton screenshot capture
 - [ ] Chunk A3: Media encode — audio clips, waveform video, and the GitHub-video probe
 - [ ] Chunk A4: One lifecycle diagram, light/dark aware
@@ -66,9 +66,17 @@ decision before A1 starts — Phase A is fully specified.
 - [ ] Chunk C1: Capture the evidence from the finished set
 - [ ] Chunk D1: `docs/tour.md`, the README graft, and the freshness tests
 Context: Plan authored 2026-08-06 against `tour-walkthrough-design.md`, on
-`feat/tour-walkthrough` off v1.7.2. Nothing built yet. Next: Chunk A1. Phase B is
-owner-gated (needs Live and real creative work) and dominates the schedule; A, C and D
-are each well under a day. Closes DOC-8V3Q (the placeholder hero) at D1.
+`feat/tour-walkthrough` off v1.7.2. **A1 shipped** — `tools/tour_transcript.py`, verified
+end to end against a real session, Critic-reviewed (0 blocking; three real redaction
+leaks found and fixed). Next: **A2, A3 or A4 — all three need no Live and no decisions,
+and are independent of each other.** A3 carries the probe that gates C1's hero form, so
+it is the highest-value of the three to do first.
+
+Phase B is owner-gated (needs Live and real creative work), dominates the schedule, and
+opens with a musical proposal rather than a decision; A, C and D are each well under a
+day. Closes DOC-8V3Q (the placeholder hero) at D1. The pre-split `songs/` layout rot in
+`project-preferences.md` is deferred to DOC-4Q2X, to be fixed once after B1 creates
+`examples/` rather than twice.
 
 ## Scaffolding
 

@@ -23,6 +23,7 @@ from tools.tour_transcript import (
     IGNORED_TYPES,
     RENDERED_BLOCKS,
     RENDERED_TYPES,
+    FORBIDDEN,
     RedactionFailure,
     TranscriptError,
     UnknownBlockType,
@@ -128,13 +129,16 @@ def test_tool_calls_render_as_one_liners_not_full_input(document: str) -> None:
 
 
 def test_repo_paths_become_relative() -> None:
-    out = redact(f"see {FIXTURE_ROOT}/songs/demo/build.py", FIXTURE_ROOT)
+    out = redact(f"see {FIXTURE_ROOT}/songs/demo/build.py", FIXTURE_ROOT, account="")
     assert out == "see songs/demo/build.py"
 
 
 def test_non_repo_home_paths_collapse_to_tilde() -> None:
-    assert redact("/Users/testuser/.cache/x", FIXTURE_ROOT) == "~/.cache/x"
-    assert redact("/home/someone/.cache/x", FIXTURE_ROOT) == "~/.cache/x"
+    # account="" pins the local machine out of it: these are exact-equality
+    # assertions, and a maintainer whose home dir name is a prefix of a value
+    # here would otherwise see them go red for no real reason.
+    assert redact("/Users/testuser/.cache/x", FIXTURE_ROOT, account="") == "~/.cache/x"
+    assert redact("/home/someone/.cache/x", FIXTURE_ROOT, account="") == "~/.cache/x"
 
 
 def test_repo_rewrite_precedes_home_collapse() -> None:
@@ -154,8 +158,8 @@ def test_home_path_without_a_trailing_slash_is_redacted() -> None:
     is a legal account directory, so a regex that stopped at the first dot would
     leave half a real name behind.
     """
-    assert redact("owned by /Users/alice.", FIXTURE_ROOT) == "owned by ~"
-    assert redact("see /home/bob", FIXTURE_ROOT) == "see ~"
+    assert redact("owned by /Users/alice.", FIXTURE_ROOT, account="") == "owned by ~"
+    assert redact("see /home/bob", FIXTURE_ROOT, account="") == "see ~"
 
 
 def test_bare_users_token_is_left_alone() -> None:
@@ -166,7 +170,7 @@ def test_bare_users_token_is_left_alone() -> None:
     gating on it would refuse real sessions over a non-leak.
     """
     probe = "git log -S'/Users/' --oneline"
-    assert redact(probe, FIXTURE_ROOT) == probe
+    assert redact(probe, FIXTURE_ROOT, account="") == probe
     assert_publishable(probe)  # does not raise
 
 
@@ -202,11 +206,33 @@ def test_hyphenated_account_name_is_fully_redacted() -> None:
 
 
 def test_gate_refuses_an_unredacted_hyphenated_account_name() -> None:
-    """The gate must know the literal name too, or it inherits the same blind spot."""
+    """The un-redacted forms are refused (by the generic patterns, which run first)."""
     with pytest.raises(RedactionFailure, match="account name"):
         assert_publishable("-Users-mary-jane-source-repo/x", account="mary-jane")
     with pytest.raises(RedactionFailure, match="account name"):
         assert_publishable("/Users/mary-jane/x", account="mary-jane")
+
+
+def test_gate_independently_catches_a_BISECTED_account_name() -> None:
+    """The one gate rule the redactor does not share.
+
+    ``-REDACTED-jane-source-repo`` is what a bisecting redactor emits for
+    ``mary-jane``. No input-shaped pattern can see it — the ``-Users-`` that
+    would have announced it is already consumed — so re-running the redactor's
+    own patterns finds nothing, which is precisely how the original defect passed
+    its own gate. This rule inspects the redactor's OUTPUT shape instead, which is
+    what makes the gate a real backstop rather than a second opinion from the same
+    source.
+    """
+    with pytest.raises(RedactionFailure, match="bisected account name"):
+        assert_publishable("-REDACTED-jane-source-repo/x", account="mary-jane")
+
+    # The property that makes it independent: the generic patterns pass this.
+    for pattern, _ in FORBIDDEN:
+        assert not pattern.search("-REDACTED-jane-source-repo/x")
+
+    # A non-hyphenated account has no components to bisect, so no false refusal.
+    assert_publishable("-REDACTED-jane-source-repo/x", account="alice")
 
 
 def test_no_account_name_available_degrades_to_the_generic_patterns() -> None:
@@ -240,11 +266,11 @@ def test_gate_catches_an_account_name_without_a_trailing_slash() -> None:
 
 def test_tool_line_redacts_and_takes_first_line_only() -> None:
     block = {"name": "Read", "input": {"file_path": f"{FIXTURE_ROOT}/a.py\nsecond line"}}
-    assert tool_line(block, FIXTURE_ROOT) == "`Read` — a.py"
+    assert tool_line(block, FIXTURE_ROOT, account="") == "`Read` — a.py"
 
 
 def test_tool_line_falls_back_to_bare_name_for_unlisted_tools() -> None:
-    assert tool_line({"name": "Mystery", "input": {"x": 1}}, FIXTURE_ROOT) == "`Mystery`"
+    assert tool_line({"name": "Mystery", "input": {"x": 1}}, FIXTURE_ROOT, account="") == "`Mystery`"
 
 
 # --- fail-closed behavior ----------------------------------------------------

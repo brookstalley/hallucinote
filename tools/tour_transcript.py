@@ -24,8 +24,15 @@ renderer **fails closed**:
 
 macOS/Linux paths are rewritten three ways: anything under the repo root becomes
 repo-relative, any other home path collapses to ``~/``, and a dash-encoded home
-path has its account segment replaced — so the account name does not ship in any
-of the three forms it appears in.
+path has its account segment replaced — so **this machine's** account name does
+not ship in any of the three forms it appears in.
+
+One qualification, because the guarantee is not uniform: a path belonging to a
+*different* account (a transcript copied from another machine) is covered only by
+the generic patterns, and those cannot express a hyphenated username in the dash
+encoding — ``-Users-mary-jane-…`` would be bisected, shipping half the name. The
+gate's bisection check catches that residue for the local account; for a foreign
+one, pass ``--account`` or treat the excerpt as unreviewed.
 
 **Tool names, including MCP tool names, DO ship** (``mcp__<server>__<tool>``
 renders verbatim). That is deliberate, not an oversight: the tour's whole point
@@ -139,6 +146,7 @@ def default_account() -> str:
         return Path.home().name
     except (OSError, RuntimeError):
         return ""
+
 
 # Same principle for reminders: what must not ship is an injected block's
 # *contents*, which a surviving ``<system-reminder>`` tag announces. The bare
@@ -270,13 +278,30 @@ def assert_publishable(document: str, account: str | None = None) -> None:
     name = default_account() if account is None else account
     checks = [*FORBIDDEN]
     if name:
-        escaped = re.escape(name)
+        # A literal check for the un-redacted name. Note this is *subsumed* by
+        # the generic patterns above, which are checked first — it is
+        # belt-and-braces, not an independent signal.
         checks.append(
             (
-                re.compile(rf"[/-](?:Users|home)[/-]{escaped}"),
+                re.compile(rf"[/-](?:Users|home)[/-]{re.escape(name)}"),
                 "this machine's account name",
             )
         )
+        # This one IS independent: it inspects the redactor's *output shape*
+        # rather than re-running the redactor's own input patterns. A
+        # ``-REDACTED`` marker immediately followed by a component of the account
+        # name means redaction bisected the name instead of consuming it — the
+        # exact residue a hyphenated username produced before the literal rules
+        # existed, and the form no input-shaped pattern can see, because the
+        # ``-Users-`` that would have announced it is already gone.
+        for part in name.split("-")[1:]:
+            if part:
+                checks.append(
+                    (
+                        re.compile(rf"-REDACTED-{re.escape(part)}\b"),
+                        "a bisected account name left behind by redaction",
+                    )
+                )
     for pattern, description in checks:
         match = pattern.search(document)
         if match:
@@ -443,6 +468,11 @@ def main(argv: list[str] | None = None) -> int:
         "--project-dir", type=Path, help="a ~/.claude/projects/<slug> dir; uses its newest session"
     )
     parser.add_argument("--out", type=Path, help="write here instead of stdout")
+    parser.add_argument(
+        "--account",
+        help="account name to redact literally (default: this machine's). Set this when "
+        "rendering a transcript recorded under a different account.",
+    )
     parser.add_argument("--start-at", help="begin at the first prompt containing this substring")
     parser.add_argument("--exchanges", type=int, help="how many prompts to keep from the start")
     parser.add_argument(
@@ -459,7 +489,7 @@ def main(argv: list[str] | None = None) -> int:
         session = args.session if args.session else latest_session(args.project_dir.expanduser())
         repo_root = args.repo_root or repo_root_of(Path.cwd())
         document = build_excerpt(
-            session.expanduser(), repo_root, args.start_at, args.exchanges
+            session.expanduser(), repo_root, args.start_at, args.exchanges, args.account
         )
     except TranscriptError as exc:
         # Remove a stale --out from an earlier run. Leaving it is the worst

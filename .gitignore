@@ -104,3 +104,13 @@ tests/scenarios/results/*
 .prawduct/.critic-active
 .prawduct/.critic-partials/
 .prawduct/.session-base-tree
+
+# Incoming bug-report drop-zone. Raw, untriaged reports are local working notes;
+# they enter the public record as backlog items (via /prawduct:backlog) and their
+# text is preserved under incoming-bugs/archives/, which IS tracked because ~130
+# refs across source comments, tests and plans cite it as provenance.
+incoming-bugs/*.md
+
+# Prawduct session files
+.prawduct/.critic-partials-archive/
+.prawduct/.handoff-notes.md

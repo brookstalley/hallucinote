@@ -620,7 +620,7 @@ def _replay_devices(
         # key is genuinely "unspoken"; clobbering it to null re-cleared every
         # build.py-authored sidechain on every build, breaking converger
         # idempotency for any song with a mix-pass sidechain.
-        # See incoming-bugs/2026-06-17-replay-capture-nulls-sidechain-source-breaking-converger-idempotency.md
+        # See incoming-bugs/archives/2026-06-17-replay-capture-nulls-sidechain-source-breaking-converger-idempotency.md
         # An explicit null value (a future capture that records "no source here")
         # still clears on the post-pass — this is forward-compatible.
         if "sidechain_source" in d:

@@ -33,15 +33,15 @@ reinvention (decisions/08, dated 2026-06-01) and is committed clean.
 
 Three trees exist on disk; only two matter and they are NOT interchangeable:
 
-- **`/Users/brookstalley/source/hallucinote`** (cwd) — the **framework + plugin**
+- **`<repo-root>`** (cwd) — the **framework + plugin**
   repo, branch `develop`. Owns `src/hallucinote/sync/...`, the DB mutators, the audio
   analyzers. This is where the engine lives. It has an **empty `songs/`** (the split,
   PR #133, moved songs out — confirmed in MEMORY `project_root_contract_shipped.md`).
-- **`/Users/brookstalley/source/hallucinote-songs`** — the **private songs repo**,
+- **`<songs-workspace>`** — the **private songs repo**,
   branch `main`, working tree clean (2 commits: `682cd87` initial, `48b3ad8` gitignore
   caches). This is where `songs/sun-zone-done/build.py` actually lives and builds
   *against the installed engine*. **This is the only canonical home of the song.**
-- **`/Users/brookstalley/source/hallucinote-2`** — a **stale pre-split clone of the
+- **`<stale-clone>`** — a **stale pre-split clone of the
   framework**, branch `develop`, last commit `c471b38` (PR #125). It still carries an
   old `songs/sun-zone-done/` that **predates** the MIX-3S7P work (its `build.py` has no
   `_author_atmosphere_envelopes`, no `_ATMOSPHERE`, no MIX-3S7P references). **Ignore

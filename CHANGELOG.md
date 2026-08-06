@@ -23,20 +23,20 @@ catch-up window; v1.6.0 contained substantially more (see release notes).
   automation / arrangement / cues followed). It is now ack-only, like
   `device_parameter` — the value originates in the snapshot/DB, with no Live-side
   index to record back.
-  (`incoming-bugs/2026-06-18-push-apply-unknown-device_param_override-result-kind-halts-devices-phase.md`)
+  (`incoming-bugs/archives/2026-06-18-push-apply-unknown-device_param_override-result-kind-halts-devices-phase.md`)
 - **Converger idempotency restored for any song with sidechains.**
   `replay_capture` enqueued every device's `sidechain_source` and cleared it when
   the snapshot was silent, clobbering a `build.py`-authored source on every build
   (real → null → real = 2 spurious events per sidechain, forever). Replay now
   treats snapshot *silence* as "no opinion" and acts only when the snapshot
   declares the key; an explicit null still clears.
-  (`incoming-bugs/2026-06-17-replay-capture-nulls-sidechain-source-breaking-converger-idempotency.md`)
+  (`incoming-bugs/archives/2026-06-17-replay-capture-nulls-sidechain-source-breaking-converger-idempotency.md`)
 - **`reindex_markdown` no longer dies on a frontmatter-less decision.** A decision
   authored as a bare `# Title` body is now indexed (kind inferred from the corpus
   dir, full text searchable) instead of aborting the corpus; a genuinely
   unparseable file is skipped with a warning so one bad doc can't blind
   `/song-context` search to all the good ones.
-  (`incoming-bugs/2026-06-17-reindex-markdown-hard-fails-corpus-on-frontmatterless-decisions.md`)
+  (`incoming-bugs/archives/2026-06-17-reindex-markdown-hard-fails-corpus-on-frontmatterless-decisions.md`)
 
 ### Changed
 

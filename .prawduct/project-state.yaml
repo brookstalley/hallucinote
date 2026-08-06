@@ -482,7 +482,7 @@ build_state:
 # `artifacts/plans/<id>/` is invisible to it and regen-views then refuses to write
 # ANY view), and on gitflow a plan must survive until the develop->main release —
 # so the generic name would be contended by the next plan authored in that window.
-active_build_plan: .prawduct/artifacts/plans/AUD-2D6T/build-plan.md
+active_build_plan: .prawduct/artifacts/plans/PUB-READY/build-plan.md
 
 # =============================================================================
 # CHANGE LOG

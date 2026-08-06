@@ -165,7 +165,7 @@ def test_absence_is_no_opinion_not_clear_on_rebuild(conn):
     The accepted cost: snapshot-silence no longer clears a removed sidechain on
     an INCREMENTAL rebuild — clear via an explicit null (next test), a fresh-DB
     rebuild, or set_device_sidechain(None) in build.py.
-    See incoming-bugs/2026-06-17-replay-capture-nulls-sidechain-source-breaking-converger-idempotency.md
+    See incoming-bugs/archives/2026-06-17-replay-capture-nulls-sidechain-source-breaking-converger-idempotency.md
     """
     replay_capture(conn, _snapshot_with_sidechain(), song_name="s")
     snap_silent = _snapshot_with_sidechain()
@@ -224,7 +224,7 @@ def test_build_authored_sidechain_survives_silent_snapshot_rebuild(conn):
     (author) per sidechain = 2 spurious state-change events per build, forever.
     The idempotency guard test was therefore un-satisfiable for every song that
     authors a mix-pass sidechain.
-    See incoming-bugs/2026-06-17-replay-capture-nulls-sidechain-source-breaking-converger-idempotency.md
+    See incoming-bugs/archives/2026-06-17-replay-capture-nulls-sidechain-source-breaking-converger-idempotency.md
     """
     snap = {
         "song": {"master": {"volume": 0.85, "panning": 0.0}},

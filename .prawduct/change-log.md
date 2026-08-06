@@ -1934,7 +1934,7 @@ Full suite: 2159 passed in 16.6 s parallel (`-n auto --dist loadgroup`).
   dry impulse + known-IR convolution
 
 **Real-data sanity check** (informational; not gated on user verification):
-`analyze_mix('/Users/brookstalley/source/hallucinote/songs/reggae-metal/captures/20260527T200614Z')`
+`analyze_mix('songs/reggae-metal/captures/20260527T200614Z')`
 produced a structurally-correct report: master at -16.48 LUFS-I,
 -2.03 dBTP (no overshoots — render not hot enough to overshoot);
 5 stems all in plausible mix-bus territory (-16 to -22 LUFS-I, drums

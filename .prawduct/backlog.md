@@ -42,6 +42,72 @@ sections only via explicit `/backlog update` calls.
 
 ## Open
 
+- **[SYN-6R2D]** Fold a Live clip hand-edit back INTO `build.py` — reconcile, not just detect (the learn-back half of the drift loop)
+  `effort: L · impact: M · area: sync · source: user · added: 2026-08-06 · status: open · stage: requirements · related: ARR-FROMBUILD, ENV-1T9M, NOT-9H3K · refs: incoming-bugs/archives/2026-07-11-fold-live-clip-handedit-back-into-buildpy.md, src/hallucinote/sync/verify_arrangement_cli.py`
+
+  Capability request (not a bug), severity M–H. The **inverse of the drift detector** (shipped in ARR-PROJ; `--from-build` remainder is ARR-FROMBUILD). Detection answers *"is Live faithful to `build.py`?"*; this answers the workflow that actually happens when the answer is *"no, and **Live is the version we want**"* — getting the composer's by-ear Live edit back into the source of truth without hand-transcribing notes.
+
+  **The gap.** `build.py` is the source of truth and parts are authored as **generator code** (`add_wildness(...)`, degree loops, seeds). There is no primitive that reconciles a Live clip's notes INTO that code. `/ableton-pull` stages Live→DB, but the DB is a **regenerable artifact** — the next `build.py --reset` overwrites it. So the operation is a fully manual ritual, performed at least twice (2026-06-22 "the live set won", whole-song; 2026-07-11 single-clip Human Riff bridge tail on song `alien`): (1) read the Live clip's notes via `ableton_note action='list'`; (2) dump the DB clip's notes and diff to isolate the change; (3) reverse-map MIDI ints → the song's authoring idiom (here `d(deg, oct)` in 22-EDO); (4) hand-write literals into `build.py`, **deciding where they belong relative to the generator + seeded transforms**; (5) rebuild and hand-diff DB-vs-Live to confirm exact reproduction. Steps 1–2 and 5 are mechanizable today; **3–4 carry the real friction and the risk of silently mis-transcribing the art.**
+
+  **The crux (step 4).** An edit that lands *after* `add_wildness` must be appended **POST-wildness**, or the rebuild re-fragments exactly what the composer just cleaned up. Placement is an authorial call the tool cannot make.
+
+  **Two sub-gaps worth fixing independently.** (1) **A note-MATCHING clip diff** (shared with the detector): the naive distinct-`(pitch, start)` diff reports a *moved* note as one `missing` + one `extra`. On the bridge tail this turned a ~3-note delete plus a re-timed figure into a false **"17 removed / 12 added"**, which the user correctly pushed back on ("nowhere near 17 removed, maybe 3, and durations/start times changed"). A nearest-note pairing (match same-pitch by nearest start, then classify start/dur/vel deltas) reports it honestly as "3 removed, N moved/retimed" — the comparator's `extra`/`missing`/`mismatch` model should gain a **`moved` class** so it stops crying wolf on hand-nudged material. (2) **A round-trip helper for the reconcile itself** — even a low-tech `hallucinote reconcile-clip --song <slug> --track "Human Riff" --section bridge` emitting the Live clip as ready-to-paste authoring literals (in the song's `d(deg, oct)` idiom where a mapping exists; raw MIDI + a comment where it doesn't, e.g. non-scale `add_wildness` flourish pitches) removes the transcription-error surface. It can't decide *where* the literals belong, but it can hand the author an exact, idiom-correct block to place.
+
+  **Why it matters.** The *great art, not software* norm means the Live set is where a composer edits by ear, and `build.py` must be able to **learn** those edits, not just police them. Today the learn-back path is entirely manual and transcription-error-prone — the one place a silent wrong note can enter the source of truth. Detection (shipped) + reconcile (this) close the loop in both directions.
+
+  **Stage: requirements** — the sub-gap (1) comparator change is well-specified, but the reconcile helper's idiom-emission contract (which mappings are reversible, what to do when no mapping exists) and its relationship to the generator/seed pipeline need scoping before code; route to `/prawduct:methodology discovery`. Sub-gap (1) may be separable as a `ready` chunk against `verify_arrangement_cli.py`.
+
+  **Verifiable signal:** `grep -rn "reconcile_clip\|reconcile-clip" src/` returns nothing (no reconcile primitive exists), and `src/hallucinote/sync/verify_arrangement_cli.py:5` still documents the comparator as reporting `extra/missing/mismatch` with no `moved` class. (alien hand-edit learn-back, user, 2026-07-11)
+
+- **[PSH-7T4C]** Push halts on a disabled chain-mixer param that capture itself wrote — a sticky capture→replay asymmetry
+  `effort: S · impact: M · area: push · source: user · added: 2026-08-06 · status: open · stage: ready · related: PSH-8K3D, DEV-3W9R, SYN-2D9K · refs: incoming-bugs/archives/2026-07-11-push-halts-on-disabled-chain-mixer-param-capture-replay-asymmetry.md, src/hallucinote/capture.py, src/hallucinote/sync/push/devices.py, src/hallucinote/sync/push/plan.py`
+
+  Bug (push planner / capture fidelity), severity M. Surfaced on song `missing` (branch `compose/missing`), re-push of the long form 2026-07-11, current main-era engine.
+
+  **The asymmetry.** `capture execute` (`assemble_snapshot_via_probes`, deep-rack walk) happily **READS** a nested chain's mixer volume and bakes it into `captured_session.json`. On the next push, the `devices` phase dispatches `ableton_device(action='set_chain_property', volume=0.75)` for that same chain and Live refuses with `RuntimeError: Value cannot be set, the parameter is disabled` — halting the phase at **16/17 ok**.
+
+  **Concrete node** (from `.last-push-errors.json`): track 1 (Drums, 909 Core Kit rack), `device_index` 1, path `[{chain_index: 7, device_position: 1}]`, inner `chain_index` 1, `volume` 0.75. **The value was captured FROM this very Live set ~30 minutes earlier** — the write is a value-level no-op, but the parameter is disabled (macro-controlled or otherwise locked), so it halts anyway.
+
+  **Why it matters.** (a) The snapshot round-trip is supposed to be safe — capture → replay → push of an **UNCHANGED** set should be a clean no-op run; instead it manufactures a permanent halt. (b) **The halt is sticky:** the failing write can never apply, so idempotency never absorbs it ("already current" is unreachable) — every future full push of the song halts at `devices` and needs a manual `--start-at routing`. This is what separates it from an ordinary transient push failure.
+
+  **Possible fixes (any one suffices).** (1) **Capture-side** — mark disabled/locked chain-mixer params in the snapshot (`is_enabled: false`) and have the planner skip them. (2) **Planner-side** — pre-probe the param's enabled state and plan a skip-with-warning instead of a write. (3) **Executor-side** — treat `RuntimeError: … parameter is disabled` on `set_chain_property` as a **warning** (param unreachable; the value cannot diverge audibly) rather than a phase halt, in the same spirit as the unverified-perform policy. Note the macro-control angle overlaps DEV-3W9R (rack macros are unmodeled), which is why the capture-side option may be the one that generalizes.
+
+  **Repro.** On the `missing` set (909 Core Kit on track 1): `capture execute --song missing` → merge to canonical → rebuild → `push execute <session> --song missing --probe` → halts at `devices` on `set_chain_property` for the disabled chain volume. **Workaround:** `--start-at <next-phase>` (i.e. `routing`).
+
+  **Verifiable signal:** the repro above still halts; and neither `src/hallucinote/capture.py` nor `src/hallucinote/sync/push/{plan,devices}.py` consults a per-param enabled/disabled state before planning or dispatching `set_chain_property` — `grep -n "is_enabled" src/hallucinote/capture.py src/hallucinote/sync/push/*.py`. (missing re-push dogfood, user, 2026-07-11)
+
+- **[REC-3W8N]** Recurrence lens blind to a composed `transpose ∘ onset-diminish` recall with free durations — the payoff recall reads as no recall at all
+  `effort: M · impact: M · area: recurrence · source: user · added: 2026-08-06 · status: open · stage: requirements · related: REC-4Z8Q, ARR-9K4T, MEL-1A7K, DOC-7K3M · refs: incoming-bugs/archives/2026-07-11-recurrence-lens-misses-transpose-plus-rhythm-compressed-recall.md, src/hallucinote/recurrence/match.py, src/hallucinote/recurrence/lens.py`
+
+  Lens capability gap, severity M. Surfaced on song `missing` (branch `compose/missing`) during a `/compose-review` pass 2026-07-11, current main-era engine. **Distinct from REC-4Z8Q** (shipped — zero-interval/repeated-pitch motifs): this motif matches fine at home and elsewhere; it is the *composed transform* at the payoff that vanishes.
+
+  **The gap.** `missing`'s whole recurrence architecture converges on one moment: the coda restates the registered `reach` motif (B → D# → F#, home in verse1) and it finally **ends on E** — the question the song asks, answered. Authored form vs home form:
+
+  - home (verse1): pitches 59/63/66, onsets 0.0/4.0/8.0, durations 1.5/2.0/1.5
+  - coda recall: pitches 71/75/78 (**+12**), onsets 32.0/34.0/36.0 (spacing **exactly halved**), durations 1.5/1.5/1.0 (**NOT halved**), followed by an added landed E5
+
+  So the true variation is **`transpose(+12) ∘ onset-diminish(0.5)` with free durations**, plus a coda-only extension note. `hallucinote.cli recurrence missing` reports recalls in chorus1/verse2/chorus2/break/finalchorus but **nothing in the coda** — not even `derived`. By ear the recall is unmistakable (identical interval cell, same contour).
+
+  **Likely cause (two halves).** (a) Composed transforms beyond the bounded set aren't searched — `match.py` documents its vocabulary as `augment ×f` / `diminish ×f` / `invert` / `retrograde` / `fragment[a,b)` / `diminish∘fragment ×f` / `derived`, and `transpose ∘ onset-diminish` is outside it. (b) **The duration channel is part of match identity** — `match.py` states identity is `(relative-onset, pitch, duration)` — so an onset-only compression with sung/held durations fails the residual budget on the duration axis and falls through **entirely** rather than degrading to `derived`.
+
+  **Why it matters.** The skill doc positions `derived` as "a partial recall I can't fully name" — that grade's existence implies near-misses should **degrade gracefully, not vanish**. A recall that returns transposed *and* rhythmically tightened is one of the most common expressive recapitulation shapes (arrival statements compress). When the lens goes silent exactly there, `/compose-review` reads "no recall in the coda" as a **form fact** and may flag a recap that IS authored — and "does the outro recall land?" is the skill's own canonical example question. This is the same class of harm as REC-4Z8Q: a silent wrong answer is worse than an error, because the composer can't tell "my recall doesn't land" from "the lens can't see it."
+
+  **Secondary, same pass.** `verse3`'s two deliberately **abandoned** reach attempts (2–3 notes each — the abandonment is the point) are also invisible. Arguably correct (coverage below any fragment threshold), but a `fragment` reading with low coverage would have let the review say "the lens sees the attempts break off," which is the authored narrative. Worth considering a **floor-coverage `derived`/`fragment` tier**.
+
+  **Stage: requirements** — deciding the transform **search space** (which compositions to admit before combinatorics bite) and whether the duration channel becomes an independently-relaxable axis (with a graceful `derived` fallback) is a design question ahead of code; the calibrated residual budgets in `match.py` are load-bearing and must not be loosened blindly. Route to `/prawduct:methodology discovery`.
+
+  **Repro.**
+
+  ```
+  git worktree add /tmp/wt-missing compose/missing
+  cd /tmp/wt-missing
+  uv run --project ~/source/hallucinote python -m hallucinote.cli recurrence missing
+  # → 6 recalls, none in [coda]; _lead_coda() in songs/missing/build.py:956 plainly
+  #   restates the reach motif at beats 32–38 transposed +12 with halved onset spacing
+  ```
+
+  **Verifiable signal:** the command above still reports zero recalls in `[coda]`; and `src/hallucinote/recurrence/match.py` still declares identity as `(relative-onset, pitch, duration)` with no onset-only relaxation and no `transpose ∘ diminish` composition in its op vocabulary. (missing /compose-review, user, 2026-07-11)
+
 - **[AUD-TIMBRE-CALIB]** Calibrate timbre significance thresholds against re-capture jitter
   `effort: S · impact: S · area: audio · source: discovered-from-friction · added: 2026-06-24 · status: open · stage: requirements · related: AUD-8T3K, AUD-4W7K · refs: src/hallucinote/audio/compare.py`
 

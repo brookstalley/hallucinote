@@ -227,7 +227,7 @@ def test_reindex_skips_unparseable_file_and_indexes_the_rest(repo):
     one unparseable corpus file (here a disallowed `feeling` key) is SKIPPED with
     a warning, and every GOOD file still indexes — one bad doc must not blind
     `/song-context` search to all the good ones.
-    See incoming-bugs/2026-06-17-reindex-markdown-hard-fails-corpus-on-frontmatterless-decisions.md
+    See incoming-bugs/archives/2026-06-17-reindex-markdown-hard-fails-corpus-on-frontmatterless-decisions.md
     """
     conn, root = repo
     _seed_song(conn)
@@ -253,7 +253,7 @@ def test_reindex_indexes_frontmatterless_decision(repo):
     dir, full text searchable — rather than aborting the corpus. Before the fix,
     `/song-context` decisions search was silently dead for any song whose
     decisions (conventionally) carried no frontmatter.
-    See incoming-bugs/2026-06-17-reindex-markdown-hard-fails-corpus-on-frontmatterless-decisions.md
+    See incoming-bugs/archives/2026-06-17-reindex-markdown-hard-fails-corpus-on-frontmatterless-decisions.md
     """
     conn, root = repo
     _seed_song(conn)

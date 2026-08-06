@@ -8,7 +8,7 @@
 
 You describe a song in plain language. Claude writes it — the composition, the sound design, the mix — as a Python `build.py` plus a captured-session snapshot, builds that into a SQLite working state, and pushes the whole thing into a running Ableton Live set. Tweak a fader in Live and pull the change back through the same path. The song is a directory you commit to git — reproducible and forkable, not a binary `.als` you hope to find again.
 
-It's early (see [Status](#status)), it runs today on Ableton Live 12, and the rest of this page gets you from zero to a playing song.
+It runs today on Ableton Live 12 (see [Status](#status) for what's in and what isn't), and the rest of this page gets you from zero to a playing song.
 
 ---
 
@@ -63,7 +63,7 @@ When it finishes you have a finished session — named tracks, clips, device cha
 
 ## Status
 
-Early — approaching 1.0, and honest about the rough edges:
+Actively developed, shipping releases, and honest about the rough edges:
 
 - Works today on **Ableton Live 12**, **macOS and Windows**.
 - **Live edition:** the authoring loop — compose, push, pull, play, and the symbolic `compose-review` — runs on **any Live 12 edition, Standard included**. The audio-analysis features (render → `mix-review` by measurement) need **Max for Live**, so they're **Suite-only**; `/hallucinote:ableton-mcp-install` asks whether you have Suite and lets Standard users skip the analyzer.

@@ -2,7 +2,7 @@
 
 Branch: `feat/param-overrides-value-raw` (worktree `.claude/worktrees/value-raw`)
 Backlog: **DEV-4P7R** · residual facet of SNP-2H9F (PR #176) · related DPP-7H2K, DEV-9K7N
-Report: `incoming-bugs/archives/2026-06-17-param-overrides-cannot-carry-quantized-nonunit-range-param.md`
+Report: `backlog DEV-4P7R`
 Size: **Medium** · Type: **feature + bugfix** (new persisted channel closing a durability gap)
 Critic mode: **cumulative** at PR (single cohesive change; per-build-cycle = chunk then cumulative).
 

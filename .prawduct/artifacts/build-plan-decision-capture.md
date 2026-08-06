@@ -2,7 +2,7 @@
 
 **Scope tag:** DEC-CAP
 **Branch:** `feat/decision-capture` (worktree at `../hallucinote-decision-capture`)
-**Source:** `incoming-bugs/archives/2026-06-19-decision-capture-not-required-during-iterative-compose-loop.md` (severity H, methodology)
+**Source:** `backlog DOC-4F8M` (severity H, methodology)
 **Size/type:** Medium · methodology/docs+skills (no engine code in Chunks 1–4)
 **Critic:** worktree is gate-blind — review via independent Agent, PR/merge with `gh` (see memory `feedback_worktree_governance_gates_blind`).
 

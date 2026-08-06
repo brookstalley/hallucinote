@@ -7,7 +7,7 @@
 
 ## unreleased
 
-**Entry:** 2026-08-06 — The repo gets ready to be public
+**Entry:** 2026-08-06 — Internal bug reports leave the public record; the backlog id becomes their provenance
 
 **Chunks shipped:** C1, C2, C3, C4, C5
 

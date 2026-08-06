@@ -228,7 +228,7 @@ fresh `pytest` before any Chunk-A code review (current `prawduct-hook test-statu
     closed — addressing was the gate; Chunk A froze it). No wire change.
   - [x] **§4 corrections** — deleted the false "Python can't call MCP tools" claims (`capture.py` module +
     capture-plan section, `capture_cli.py` module); corrected the bug-record framing
-    (`incoming-bugs/archives/2026-06-14-nested-nested-rack-…md`: addressing shipped, acquisition was the gap)
+    (backlog NOD-1K7A/DEV-9K7N: addressing shipped, acquisition was the gap)
     + DEEP-RACK-ADDR build-plan Chunk-2 status ("capture" → "*replay* + push; acquisition deferred here").
   - [x] **Tombstone** — `device_parameter`/`device_parameter_set` already registered in `build.py`
     `_LATEST_ACTOR_EVENTS` (no new kind; capture replays as `actor='sync'`, pull as `actor='sync'` — both

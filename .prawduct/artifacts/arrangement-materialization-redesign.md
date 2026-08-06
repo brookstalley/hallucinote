@@ -231,7 +231,7 @@ chase a DB-tombstone cause for a Live-side materialization failure.
 Two reports landed mid-design; both are on-target and binding:
 
 **(A) `replace_notes` on an arrangement clip is non-atomic — leaves orphan notes**
-(`incoming-bugs/archives/2026-06-22-replace-notes-on-arrangement-clip-leaves-orphan-notes.md`, H).
+(`backlog ARR-ORPHAN`, H).
 The handler clears via a scoped `remove_notes_extended` derived from the *incoming* notes,
 not a full-extent clear / `Clip.set_notes()`, so notes from an older write generation
 survive (alien `Drums chorus2`: wrote 243, clip held 248 — 5 stale orphans with old
@@ -244,7 +244,7 @@ should also make `replace_notes` a true total-replace OR document it as
 not-for-materialization.)
 
 **(B) Systematic build↔Live arrangement verification capability**
-(`incoming-bugs/archives/2026-06-22-systematic-build-vs-live-arrangement-verification-capability.md`,
+(`backlog ARR-FROMBUILD/ARR-VERIFY`,
 H capability). This is the spec for the integrity assert (Chunk 3) AND a new audit command.
 It encodes **three mandatory normalizations** my first Chunk-3 framing got wrong — a raw
 note_count compare cries wolf:

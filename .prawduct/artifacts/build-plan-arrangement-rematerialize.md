@@ -9,9 +9,9 @@
 out of range` when the user has deleted arrangement clips in Live and re-runs the
 phase to re-materialize them. The documented "notes → arrangement" recovery
 (delete the stale arrangement clips, re-run the arrangement phase — see archived
-report `incoming-bugs/archives/2026-06-15-note-changes-never-reach-arrangement-clips.md`)
+report `backlog PSH-6W2J`)
 therefore fails. Reported in
-`incoming-bugs/archives/2026-06-19-only-arrangement-is-refresh-only-not-create-from-session.md`.
+`bug report "`push execute --only arrangement` is refresh-in-place, not create-from-session — the documented "notes→arrangement" recovery fails with IndexError"`.
 
 ## Root cause
 

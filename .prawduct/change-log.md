@@ -20,6 +20,32 @@
      pre-bumping a version (against `feedback_no_premature_version_bump`) or
      mislabeling in-flight work as an already-shipped version. -->
 
+## 2026-08-06 — Internal bug reports leave the public record; the backlog id becomes their provenance
+
+<!-- prawduct: type=chore | chunks=C3 | scope=pub-ready | status=shipped | release=unreleased -->
+
+The first pass at "get the internal bug inbox out of the public repo" ignored the raw
+drop-zone and kept `incoming-bugs/archives/` tracked, because ~130 references from
+shipped source comments, tests and plans cited those files as provenance. The Critic
+measured the result and found it untracked **zero** files — and that the three freshly
+triaged reports had gone from local-only to public. It also drew the right line: whether
+64 internal reports get published is the owner's decision, not a chunk's.
+
+The owner chose to untrack them, which meant paying the repointing cost. 108 references
+across 24 files now carry a non-file provenance form: the **backlog id** where one
+exists (50 of the 64 reports map to one), and the report's own title restated inline for
+the other 14. A restatement beats a link nobody can follow.
+
+That inverts this repo's usual link-don't-summarize rule for exactly one class of file,
+so `project-preferences.md`'s triage norm was rewritten rather than left to contradict
+the tree — the backlog item is now the citable evidence, and nothing tracked may cite a
+path into the dropbox.
+
+Four references used an elided (`…`) path form invisible to a whole-name match, and one
+in shipped source wraps its filename across two lines — the reason an earlier sweep
+reported itself complete while leaving dangling pointers behind. Sweeps here match on
+the prefix, not the full path.
+
 ## 2026-08-06 — The repo gets ready to be public
 
 <!-- prawduct: type=chore | chunks=C1,C2,C3,C4,C5 | scope=pub-ready | status=shipped | release=unreleased -->
@@ -677,7 +703,7 @@ arrangement refresh (no `duplicate_to_arrangement`). Not a weakened test: a cont
 found to be wrong, corrected to match the fixed behavior.
 
 Resolves the report archived under
-`incoming-bugs/archives/2026-06-15-note-changes-never-reach-arrangement-clips.md`.
+`backlog PSH-6W2J`.
 
 ## 2026-06-17 — Songs-workspace bootstrap (`hallucinote init-workspace`) + two doc-only decisions
 
@@ -701,7 +727,7 @@ silent-degrade failure mode).
 - **`/getting-started` + `/song-new`** now `--check` for a workspace and offer to
   create one instead of silently scattering a song into `./songs/<slug>`.
 - Closes the **fresh-workspace half** of the filed gitignore bug
-  (`incoming-bugs/archives/2026-06-14-song-workspace-gitignore-misses-tool-generated-artifacts.md`)
+  (`backlog WS-BOOTSTRAP/WSP-3R7K`)
   at the natural moment (workspace creation): the managed block covers the
   regenerable-artifact set.
 
@@ -756,7 +782,7 @@ Two framework bugs surfaced dogfooding the sun-zone-done mix pass:
 Full suite 3971 passed / 2 skipped @ HEAD. Cumulative Critic 0 blocking (base
 develop); 1 warning (master stale-set label `master #0` → `master:`) resolved via
 verify-resolutions chain. Resolved bug report archived under
-`incoming-bugs/archives/2026-06-16-master-device-param-repush-not-analyzer-aware-stale-link-halts-push.md`.
+`bug report "> **RESOLVED 2026-06-16** (branch `fix/analyzer-infra-robustness-sunzone`). Fix"`.
 Filed MCP-7F2K (fingerprint over-triggers re-vendor for server-internal changes).
 
 ## 2026-06-16 — Uniform node addressing (NODE-ADDR / DEV-9K7N) + release-prep: self-contained plugin, onboarding, M4L handling

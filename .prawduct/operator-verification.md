@@ -1254,7 +1254,7 @@ bug signatures: `chain_index N out of range [1, 0]` from empty-shell racks +
    Volume −9 dB). No regression.
 
 > ⚠️ **Full push completion blocked by a SEPARATE, newly-exposed bug** (filed
-> `incoming-bugs/archives/2026-06-20-push-apply-unknown-device_chain_props-result-kind-crashes-devices-phase.md`):
+> `bug report "Push apply crashes on unknown result kind `device_chain_props` → full push of a rack-preset song never completes"`):
 > the devices-phase result-apply raises `ValueError: unknown push result key kind
 > 'device_chain_props'` (`sync/push/plan.py`) once the rack chains actually load and
 > their `set_chain_property` calls succeed — the twin of the 2026-06-18

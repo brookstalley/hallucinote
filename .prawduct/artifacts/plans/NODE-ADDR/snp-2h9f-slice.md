@@ -1,7 +1,7 @@
 # SNP-2H9F — `param_overrides` on a `preset_query` device (NODE-ADDR Chunk B follow-on)
 
 Backlog: `SNP-2H9F` (`status: design`, related `DEV-9K7N`/`DEV-7K4H`/`SNP-4K7M`).
-Source report: `incoming-bugs/archives/2026-06-17-snapshot-cannot-carry-nested-param-override-on-preset-instrument.md`.
+Source report: `backlog SNP-2H9F`.
 Branch: `feat/snp-2h9f-param-overrides` (off develop, in worktree `.claude/worktrees/snp-2h9f`).
 Baseline at branch point: 4003 passed, 2 skipped.
 

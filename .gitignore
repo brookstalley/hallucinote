@@ -105,11 +105,13 @@ tests/scenarios/results/*
 .prawduct/.critic-partials/
 .prawduct/.session-base-tree
 
-# Incoming bug-report drop-zone. Raw, untriaged reports are local working notes;
-# they enter the public record as backlog items (via /prawduct:backlog) and their
-# text is preserved under incoming-bugs/archives/, which IS tracked because ~130
-# refs across source comments, tests and plans cite it as provenance.
-incoming-bugs/*.md
+# Incoming bug-report drop-zone, including archives/ — local working notes, never
+# published (owner decision 2026-08-06, at the point the repo went public). Raw
+# triage reports enter the public record as BACKLOG ITEMS via /prawduct:backlog,
+# and the backlog id is their citable provenance; see project-preferences.md
+# "Incoming-bugs triage". Nothing tracked may cite a path in here — it would
+# dangle for every reader without the local file.
+incoming-bugs/
 
 # Prawduct session files
 .prawduct/.critic-partials-archive/

@@ -1,8 +1,8 @@
 # Build plan — ARR-ORPHAN: `replace_notes` true total-replace
 
 **Backlog:** ARR-ORPHAN (`.prawduct/backlog.md`). Branch: `fix/arr-orphan` (worktree off develop).
-**Refs:** `incoming-bugs/archives/2026-06-22-replace-notes-on-arrangement-clip-leaves-orphan-notes.md`,
-`incoming-bugs/archives/2026-06-22-systematic-build-vs-live-arrangement-verification-capability.md`.
+**Refs:** `backlog ARR-ORPHAN`,
+`backlog ARR-FROMBUILD/ARR-VERIFY`.
 
 ## Confidence check
 

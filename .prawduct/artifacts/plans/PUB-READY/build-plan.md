@@ -57,15 +57,27 @@ org references and the author email in plugin manifests.
 Triage the 3 pending reports into the backlog FIRST — they were real unfiled
 requirements — then gitignore the inbox.
 
-**Scope correction made during the build.** The plan originally said untrack
-`incoming-bugs/` wholesale. Investigation found ~130 references across shipped source
-comments, tests and plans citing `incoming-bugs/archives/` as provenance, so untracking
-it would dangle every one. Only the raw drop-zone (`incoming-bugs/*.md`) is ignored;
-`archives/` stays tracked. This meets the owner's stated goal — no internal triage
-inbox in the public repo — at zero coherence cost.
+**Two passes, and an owner decision between them.** The chunk first narrowed to
+ignoring only the raw drop-zone, keeping `incoming-bugs/archives/` tracked because ~130
+references across shipped source comments, tests and plans cited it as provenance. The
+Critic (rev-20260806T200317Z, R-2) correctly held that this untracked *zero* files and
+that publishing 64 internal reports was the owner's call, not the chunk's.
 
-**Defect found and fixed en route:** 11 refs in shipped source and tests still named
-pre-archive paths and had silently gone stale when those files were archived.
+**Owner decision, 2026-08-06: untrack the whole tree and repoint the refs.** Executed:
+108 references across 24 files repointed to a non-file provenance form — the **backlog
+id** where one exists (50 of 64 reports map to one), and the report's own title restated
+inline for the remaining 14, so the record is self-contained rather than pointing at
+something no reader can open. Four more used an elided (`…`) path form that a
+whole-name match missed. `incoming-bugs/` is now fully gitignored; all 64 files remain
+on disk locally.
+
+`project-preferences.md`'s triage norm was rewritten to match: for these files
+specifically the backlog id is the citable provenance, inverting the usual
+link-don't-summarize rule — because a link nobody can follow is worse than a restatement.
+
+**Defect found and fixed en route:** refs in shipped source and tests had silently gone
+stale when reports were archived, including one whose filename wraps across two source
+lines and so was invisible to a whole-path grep.
 
 **Filed:** SYN-6R2D (fold a Live clip hand-edit back into `build.py`), PSH-7T4C (push
 halts on a disabled chain-mixer param capture itself wrote), REC-3W8N (recurrence lens

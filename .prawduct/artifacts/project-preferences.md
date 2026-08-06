@@ -12,7 +12,8 @@ Developer preferences for how code is written in this project. Captured during d
 
 - **Naming**: `snake_case` for functions/variables, `PascalCase` for classes, `UPPER_SNAKE` for module-level constants (see `generators/primitives.py`, `db/events.py`)
 - **Formatting**: No formatter configured. Project follows PEP 8 spacing and ~88-col lines by convention. (Critic-enforced.)
-- **Linting**: None configured. Add ruff if/when style drift starts to matter. (Critic-enforced for now.)
+- **Linting**: `ruff check .` and `mypy`, both configured in `pyproject.toml` and both
+  gating CI on every push/PR to `develop` and `main` (INF-2C4X, `.github/workflows/ci.yml`).
 - **Type annotations**: Required on public functions. PEP 604 unions (`int | None`), `Sequence`/`Iterable` from `typing` for inputs, concrete `list[...]` for outputs. `from __future__ import annotations` at the top of every module.
 - **Imports**: Absolute (`from hallucinote.db import mutations as M`). Grouped stdlib / third-party / local with blank lines between groups. Aliases used freely for cross-module clarity (`mutations as M`, `events as E`).
 - **Docstrings**: Module docstrings stating intent + discipline. Function docstrings explain *why* and any non-obvious convention, not signatures (types carry that). One-liners are fine for trivial helpers.

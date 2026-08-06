@@ -2,6 +2,11 @@
 artifact: build-plan
 version: 1
 plan_id: PUB-READY
+# Binds this plan to the `scope=pub-ready` change-log entries so the release
+# can regenerate the Status section below. Discovery is by this declaration,
+# not by filename or directory — without it the scope resolves to no plan and
+# regen-views withholds the view.
+scope: pub-ready
 last_validated: 2026-08-06
 ---
 
@@ -130,12 +135,12 @@ orthogonal to public readiness; doing them properly is its own work cycle.
 
 ## Status
 
-- [x] Chunk C1: README version coherence
-- [x] Chunk C2: privacy scrub
-- [x] Chunk C3: untrack the incoming-bugs drop-zone
-- [x] Chunk C4: community health files
-- [x] Chunk C5: strategy artifacts
-- [x] Chunk C6: housekeeping
+- [ ] Chunk C1: README version coherence
+- [ ] Chunk C2: privacy scrub
+- [ ] Chunk C3: untrack the incoming-bugs drop-zone
+- [ ] Chunk C4: community health files
+- [ ] Chunk C5: strategy artifacts
+- [ ] Chunk C6: housekeeping
 
 ## Done when
 

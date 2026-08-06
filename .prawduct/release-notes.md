@@ -5,16 +5,6 @@
      be overwritten on next regen. See change-log.md for full per-release
      bodies; this file is a digest. -->
 
-## unreleased
-
-**Entry:** 2026-08-06 — Internal bug reports leave the public record; the backlog id becomes their provenance
-
-**Chunks shipped:** C1, C2, C3, C4, C5, C6
-
-**Scope:** pub-ready
-
-See `.prawduct/change-log.md` for full details.
-
 ## v1.7.1
 
 ### aud-2d6t

@@ -1,7 +1,7 @@
 # Build plan — SYN-2D9K: prune orphaned `device_parameters` on replay
 
 **Backlog:** SYN-2D9K (`.prawduct/backlog.md`). Branch: `fix/syn-2d9k-param-orphans` (worktree off develop).
-**Refs:** `incoming-bugs/2026-06-23-device-param-orphans-from-class-change-survive-reset.md`.
+**Refs:** `backlog SYN-2D9K`.
 **Related:** BLD-RESET (sibling-in-`replay_capture`: the soft-reset preservation gap that lets these linger), SNP-2H9F.
 
 ## Requirements Confidence

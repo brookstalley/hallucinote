@@ -9,8 +9,8 @@ the *address grammar* is frozen (§3/§5). Findings: `.prawduct/.critic-findings
 **Supersedes:** the narrower `DEEP-RACK-READ` read-side-params framing (folded in as Slice 1 below).
 **Extends:** `DEEP-RACK-ADDR` (shipped 2026-06-14) — that unified addressing for the *device sub-tree*
 (`device_path`). This generalizes the same idea to *every node kind* and factors features off it.
-**Source:** recurring nested-rack durability gap (`incoming-bugs/archives/2026-06-14-nested-nested-rack-params-…md`,
-swell guitar + Voice-Lead LFO), backlog `DEV-7K4H` / "gap #17b", per-drum-routing gap.
+**Source:** recurring nested-rack durability gap (backlog `DEV-7K4H`/`DEV-9K7N`,
+swell guitar + Voice-Lead LFO), "gap #17b", per-drum-routing gap.
 **Decisions locked (user, 2026-06-15):** (a) it's an addressing × feature matrix — solve addressing
 *once*, layer features independently; (b) canonical address = **structured positional node-path**;
 a **named string rendering** is *generated* from it for humans, never parsed back.

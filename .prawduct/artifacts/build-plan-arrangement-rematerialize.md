@@ -9,9 +9,10 @@
 out of range` when the user has deleted arrangement clips in Live and re-runs the
 phase to re-materialize them. The documented "notes → arrangement" recovery
 (delete the stale arrangement clips, re-run the arrangement phase — see archived
-report `incoming-bugs/archives/2026-06-15-note-changes-never-reach-arrangement-clips.md`)
+report `backlog PSH-6W2J`)
 therefore fails. Reported in
-`incoming-bugs/2026-06-19-only-arrangement-is-refresh-only-not-create-from-session.md`.
+bug report "`push execute --only arrangement` is refresh-in-place, not
+create-from-session — the documented notes→arrangement recovery fails with IndexError".
 
 ## Root cause
 
@@ -42,8 +43,8 @@ never added to the same sweep.
   read already exists; no fingerprint flip / re-vendor).
 - The `--snapshot` (test/debug) path stays arrangement-blind (like it's
   device-blind) — reconcile only runs with a fresh `--probe`.
-- Session-override / "Back to Arrangement" recovery (separate report
-  `2026-06-18-no-mcp-path-from-session-override-back-to-arrangement.md`).
+- Session-override / "Back to Arrangement" recovery (separate report — backlog
+  `MCP-7P3R`).
 
 ## Design (one chunk)
 

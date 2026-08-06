@@ -9,7 +9,7 @@ chunk. The Critic verifies investigation occurred.
 ### Database Schema (`src/hallucinote/db/schema.sql`)
 
 - **Producer**: `db/connection.py` (init_db) materializes the schema.
-- **Consumers**: `db/mutations.py` (writes), `db/queries.py` (reads), test
+- **Consumers**: `db/mutations/` (writes), `db/queries.py` (reads), test
   fixtures, every `songs/*/build.py`, `sync/*`, future capture/replay tools.
 - **Contract**: Table names, column names + types, FK + cascade rules, and
   indexes. UUID identity (TEXT) is load-bearing — mutators generate ids in
@@ -20,7 +20,7 @@ When changing this surface:
 - Update every `songs/*/build.py` and any tool that opens the DB.
 - Re-run the full suite and rebuild falling-walking with `--reset` to verify.
 
-### Mutator API (`src/hallucinote/db/mutations.py`)
+### Mutator API (`src/hallucinote/db/mutations/`)
 
 - **Producer**: `mutations.py` — the only sanctioned writer.
 - **Consumers**: `songs/*/build.py`, `sync/push.py`, agent code, future

@@ -24,7 +24,7 @@ import os
 import sys
 import time
 
-ROOT = "/Users/brookstalley/source/hallucinote"
+ROOT = "<repo-root>"
 # Belt-and-suspenders against the worktree import gotcha (we are in primary, but
 # force this checkout's src dirs to the front regardless).
 sys.path.insert(0, os.path.join(ROOT, "src"))
@@ -37,7 +37,7 @@ from hallucinote.db import queries as Q                  # noqa: E402
 from hallucinote.sync.geometry import _position_bar_to_beats  # noqa: E402
 from hallucinote.sync.push._core import _notes_for_mcp   # noqa: E402
 
-DB = "/Users/brookstalley/source/hallucinote-songs/songs/alien/alien-compose--alien.db"
+DB = "<songs-workspace>/songs/alien/alien-compose--alien.db"
 TRACK_INDEX = 1          # Drums (1-based MCP index)
 TRACK_NAME = "Drums"
 EPS = 1e-6

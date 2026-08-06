@@ -1,7 +1,7 @@
 # SNP-8R4K — The analyzer is measurement infrastructure, not authored content
 
 `status: design` · `area: snapshot/sync` · driver:
-`incoming-bugs/archives/2026-06-13-snapshot-capture-includes-hallucinote-analyzer-devices.md`
+`backlog SNP-8R4K`
 · child of the bake-turnkey umbrella **BAK-3M9T** · perf-coupled to **MCP-4T6Y**
 (async renders)
 

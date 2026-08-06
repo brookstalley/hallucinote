@@ -20,6 +20,86 @@
      pre-bumping a version (against `feedback_no_premature_version_bump`) or
      mislabeling in-flight work as an already-shipped version. -->
 
+## 2026-08-06 — Internal bug reports leave the public record; the backlog id becomes their provenance
+
+<!-- prawduct: type=chore | chunks=C3 | scope=pub-ready | status=shipped | release=v1.7.2 -->
+
+The first pass at "get the internal bug inbox out of the public repo" ignored the raw
+drop-zone and kept `incoming-bugs/archives/` tracked, because ~130 references from
+shipped source comments, tests and plans cited those files as provenance. The Critic
+measured the result and found it untracked **zero** files — and that the three freshly
+triaged reports had gone from local-only to public. It also drew the right line: whether
+64 internal reports get published is the owner's decision, not a chunk's.
+
+The owner chose to untrack them, which meant paying the repointing cost. 108 references
+across 24 files now carry a non-file provenance form: the **backlog id** where one
+exists (50 of the 64 reports map to one), and the report's own title restated inline for
+the other 14. A restatement beats a link nobody can follow.
+
+That inverts this repo's usual link-don't-summarize rule for exactly one class of file,
+so `project-preferences.md`'s triage norm was rewritten rather than left to contradict
+the tree — the backlog item is now the citable evidence, and nothing tracked may cite a
+path into the dropbox.
+
+Four references used an elided (`…`) path form invisible to a whole-name match, and one
+in shipped source wraps its filename across two lines — the reason an earlier sweep
+reported itself complete while leaving dangling pointers behind. Sweeps here match on
+the prefix, not the full path.
+
+## 2026-08-06 — The repo gets ready to be public
+
+<!-- prawduct: type=chore | chunks=C1,C2,C3,C4,C5,C6 | scope=pub-ready | status=shipped | release=v1.7.2 -->
+
+An audit ahead of making the repo public found the engineering substrate sound — 4614
+tests green, ruff/mypy/uv-lock clean, CI real and gating four things, no secrets, MIT
+LICENSE and CONTRIBUTING present, every README link resolving, develop and main in sync
+at v1.7.1. What it also found was six classes of exposure that only matter once
+strangers can read the tree.
+
+The sharpest was a reference disclosing a *private* sibling project's local filesystem
+path and file inventory, inside an archived design doc that cites that project ~20 times
+as the precedent for the 13-tool surface. Deleting the discussion would have gutted the
+doc; the project's repo URL had already been deliberately redacted, so the name was
+anonymized and only the pointer removed. Fifteen hardcoded `/Users/<name>/...` paths
+across six files went the same way.
+
+`SECURITY.md` states the trust model rather than implying one, and its central claim is
+uncomfortable on purpose: a song's `build.py` is executable Python, so building someone
+else's song runs their code with your privileges. That is the feature — it is what makes
+a song forkable and reproducible — so reports of the form "build.py runs arbitrary code"
+are working-as-designed. The line that *is* defended: song **data** must never reach
+execution without someone running `build.py`.
+
+`architecture.md` and `api-contract.md` were both *required* by recorded structural
+characteristics and both absent. They now name the four-runtime topology, why the
+process boundary into Live is forced rather than chosen, and the three tracked API
+decisions — fingerprint-not-semver versioning, the errors-teach model (the consumer is
+an LLM, so an error is the next turn's input), and a deprecation policy that refuses to
+build compatibility shims for consumers that do not exist.
+
+The `incoming-bugs/` decision inverted under investigation. Untracking it wholesale
+would have dangled ~130 references from shipped source comments, tests and plans that
+cite `archives/` as provenance — so only the raw drop-zone is ignored. That dig also
+turned up 11 refs in shipped source and tests still naming pre-archive paths, silently
+stale since those files were archived. *(Superseded the same day — the owner chose to
+untrack the whole tree and pay the repointing cost; see the entry above.)*
+
+Deliberately not done: the hero image is still a placeholder, deferred to a dedicated
+pass with a new demo song showing the full create → push → arrange flow. And the
+`project-state.yaml` / `learnings.md` size-compaction advisories were declined with
+reasoning rather than half-executed — `learnings.md` is already 70 rules averaging 695
+bytes, and compacting further means deleting rules.
+
+**Re-vendor: required.** This release changes no behavior at all — the only edits under
+`src/` and `tests/` repoint doc comments from `incoming-bugs/` paths to backlog ids. But
+one of those repointed comments is a docstring in
+`hallucinote_mcp/.../handlers/_arrangement_latch.py`, and the handshake fingerprint
+hashes file *content* under `handlers/`, so it flipped anyway: `53201e72fa4d` →
+`aeb1af696f59`. Marketplace consumers must re-run `/ableton-mcp-install` and fully quit
++ reopen Live, or every bridge call fails the version handshake. A zero-behavior release
+forcing a re-vendor is the fingerprint design working as specified, not a defect — the
+cost is real, and worth knowing before editing prose inside a fingerprint path.
+
 ## 2026-08-03 — Capture takes get a rolling window (renders no longer grow without bound)
 
 <!-- prawduct: type=feature | chunks=1,2,3,4 | scope=aud-2d6t | status=shipped | release=v1.7.1 -->
@@ -634,7 +714,7 @@ arrangement refresh (no `duplicate_to_arrangement`). Not a weakened test: a cont
 found to be wrong, corrected to match the fixed behavior.
 
 Resolves the report archived under
-`incoming-bugs/archives/2026-06-15-note-changes-never-reach-arrangement-clips.md`.
+`backlog PSH-6W2J`.
 
 ## 2026-06-17 — Songs-workspace bootstrap (`hallucinote init-workspace`) + two doc-only decisions
 
@@ -658,7 +738,7 @@ silent-degrade failure mode).
 - **`/getting-started` + `/song-new`** now `--check` for a workspace and offer to
   create one instead of silently scattering a song into `./songs/<slug>`.
 - Closes the **fresh-workspace half** of the filed gitignore bug
-  (`incoming-bugs/2026-06-14-song-workspace-gitignore-misses-tool-generated-artifacts.md`)
+  (`backlog WS-BOOTSTRAP/WSP-3R7K`)
   at the natural moment (workspace creation): the managed block covers the
   regenerable-artifact set.
 
@@ -713,7 +793,9 @@ Two framework bugs surfaced dogfooding the sun-zone-done mix pass:
 Full suite 3971 passed / 2 skipped @ HEAD. Cumulative Critic 0 blocking (base
 develop); 1 warning (master stale-set label `master #0` → `master:`) resolved via
 verify-resolutions chain. Resolved bug report archived under
-`incoming-bugs/archives/2026-06-16-master-device-param-repush-not-analyzer-aware-stale-link-halts-push.md`.
+bug report "Master device-parameter re-push isn't analyzer-aware — the stale master
+device link targets the HallucinoteAnalyzer and hard-halts the push" (resolved
+2026-06-16 on branch `fix/analyzer-infra-robustness-sunzone`).
 Filed MCP-7F2K (fingerprint over-triggers re-vendor for server-internal changes).
 
 ## 2026-06-16 — Uniform node addressing (NODE-ADDR / DEV-9K7N) + release-prep: self-contained plugin, onboarding, M4L handling
@@ -1934,7 +2016,7 @@ Full suite: 2159 passed in 16.6 s parallel (`-n auto --dist loadgroup`).
   dry impulse + known-IR convolution
 
 **Real-data sanity check** (informational; not gated on user verification):
-`analyze_mix('/Users/brookstalley/source/hallucinote/songs/reggae-metal/captures/20260527T200614Z')`
+`analyze_mix('songs/reggae-metal/captures/20260527T200614Z')`
 produced a structurally-correct report: master at -16.48 LUFS-I,
 -2.03 dBTP (no overshoots — render not hot enough to overshoot);
 5 stems all in plausible mix-bus territory (-16 to -22 LUFS-I, drums

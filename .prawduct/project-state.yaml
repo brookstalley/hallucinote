@@ -647,6 +647,9 @@ scope_rollups:
   provenance+annotations-mcp+dev-ergonomics:
     chunks: ["B2", "B3-resid", "B4", "B5", "Q1"]
     releases: ["v1.4.0"]
+  pub-ready:
+    chunks: ["C1", "C2", "C3", "C4", "C5", "C6"]
+    releases: ["v1.7.2"]
   push-reliability+compose-time-validation:
     chunks: ["R-1", "R-2"]
     releases: ["v1.0.1"]

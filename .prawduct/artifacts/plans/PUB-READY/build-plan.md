@@ -135,12 +135,12 @@ orthogonal to public readiness; doing them properly is its own work cycle.
 
 ## Status
 
-- [ ] Chunk C1: README version coherence
-- [ ] Chunk C2: privacy scrub
-- [ ] Chunk C3: untrack the incoming-bugs drop-zone
-- [ ] Chunk C4: community health files
-- [ ] Chunk C5: strategy artifacts
-- [ ] Chunk C6: housekeeping
+- [x] Chunk C1: README version coherence
+- [x] Chunk C2: privacy scrub
+- [x] Chunk C3: untrack the incoming-bugs drop-zone
+- [x] Chunk C4: community health files
+- [x] Chunk C5: strategy artifacts
+- [x] Chunk C6: housekeeping
 
 ## Done when
 

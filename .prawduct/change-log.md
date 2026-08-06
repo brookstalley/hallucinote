@@ -22,7 +22,7 @@
 
 ## 2026-08-06 — Internal bug reports leave the public record; the backlog id becomes their provenance
 
-<!-- prawduct: type=chore | chunks=C3 | scope=pub-ready | release=unreleased -->
+<!-- prawduct: type=chore | chunks=C3 | scope=pub-ready | status=shipped | release=v1.7.2 -->
 
 The first pass at "get the internal bug inbox out of the public repo" ignored the raw
 drop-zone and kept `incoming-bugs/archives/` tracked, because ~130 references from
@@ -48,7 +48,7 @@ the prefix, not the full path.
 
 ## 2026-08-06 — The repo gets ready to be public
 
-<!-- prawduct: type=chore | chunks=C1,C2,C3,C4,C5,C6 | scope=pub-ready | release=unreleased -->
+<!-- prawduct: type=chore | chunks=C1,C2,C3,C4,C5,C6 | scope=pub-ready | status=shipped | release=v1.7.2 -->
 
 An audit ahead of making the repo public found the engineering substrate sound — 4614
 tests green, ruff/mypy/uv-lock clean, CI real and gating four things, no secrets, MIT
@@ -89,6 +89,16 @@ pass with a new demo song showing the full create → push → arrange flow. And
 `project-state.yaml` / `learnings.md` size-compaction advisories were declined with
 reasoning rather than half-executed — `learnings.md` is already 70 rules averaging 695
 bytes, and compacting further means deleting rules.
+
+**Re-vendor: required.** This release changes no behavior at all — the only edits under
+`src/` and `tests/` repoint doc comments from `incoming-bugs/` paths to backlog ids. But
+one of those repointed comments is a docstring in
+`hallucinote_mcp/.../handlers/_arrangement_latch.py`, and the handshake fingerprint
+hashes file *content* under `handlers/`, so it flipped anyway: `53201e72fa4d` →
+`aeb1af696f59`. Marketplace consumers must re-run `/ableton-mcp-install` and fully quit
++ reopen Live, or every bridge call fails the version handshake. A zero-behavior release
+forcing a re-vendor is the fingerprint design working as specified, not a defect — the
+cost is real, and worth knowing before editing prose inside a fingerprint path.
 
 ## 2026-08-03 — Capture takes get a rolling window (renders no longer grow without bound)
 

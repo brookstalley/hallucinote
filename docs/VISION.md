@@ -32,7 +32,7 @@ Two bets, both unproven, both load-bearing:
 
 ## What
 
-- **DB-backed materialized state.** Schema in `src/hallucinote/db/schema.sql`. Mutators in `db/mutations.py` paired with an append-only event log. Every write a row, every write an event.
+- **DB-backed materialized state.** Schema in `src/hallucinote/db/schema.sql`. Mutators in `db/mutations/` paired with an append-only event log. Every write a row, every write an event.
 
 - **Pure generators.** `generators/*` produce note arrays with semantic tags. No DB or MCP coupling. The library a human-or-LLM composes against.
 

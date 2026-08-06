@@ -33,7 +33,7 @@ the migration is a reinterpretation rather than a rewrite.
 
 Two invariants make that future affordable, and both are absolute:
 
-- **All writes go through mutators** (`db/mutations.py`). No raw SQL in callers, ever.
+- **All writes go through mutators** (`db/mutations/`). No raw SQL in callers, ever.
 - **Every mutator emits exactly one event.** `_emit` is the only path.
 
 A caller that reaches around the mutators doesn't just skip an audit row — it makes the

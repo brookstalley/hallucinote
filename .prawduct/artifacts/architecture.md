@@ -104,7 +104,7 @@ Two rules follow, and both are easy to violate:
 
 ## Concurrency and long operations
 
-**Sync tools must be `async`.** FastMCP (mcp 1.26.0) runs synchronous tool functions
+**Sync tools must be `async`.** FastMCP runs synchronous tool functions
 inline on the event loop, so one blocking sync tool freezes the entire server. The
 server wrapper is `async` and dispatches through `anyio.to_thread`. Reverting a handler
 to plain `def` is a whole-server availability bug, not a style preference.

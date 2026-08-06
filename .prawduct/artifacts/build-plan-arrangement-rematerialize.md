@@ -11,7 +11,8 @@ phase to re-materialize them. The documented "notes → arrangement" recovery
 (delete the stale arrangement clips, re-run the arrangement phase — see archived
 report `backlog PSH-6W2J`)
 therefore fails. Reported in
-`bug report "`push execute --only arrangement` is refresh-in-place, not create-from-session — the documented "notes→arrangement" recovery fails with IndexError"`.
+bug report "`push execute --only arrangement` is refresh-in-place, not
+create-from-session — the documented notes→arrangement recovery fails with IndexError".
 
 ## Root cause
 
@@ -42,8 +43,8 @@ never added to the same sweep.
   read already exists; no fingerprint flip / re-vendor).
 - The `--snapshot` (test/debug) path stays arrangement-blind (like it's
   device-blind) — reconcile only runs with a fresh `--probe`.
-- Session-override / "Back to Arrangement" recovery (separate report
-  `2026-06-18-no-mcp-path-from-session-override-back-to-arrangement.md`).
+- Session-override / "Back to Arrangement" recovery (separate report — backlog
+  `MCP-7P3R`).
 
 ## Design (one chunk)
 

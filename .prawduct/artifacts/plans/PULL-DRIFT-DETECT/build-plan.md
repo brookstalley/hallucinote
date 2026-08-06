@@ -2,7 +2,8 @@
 
 Branch: `fix/deep-rack-addressing` (same branch — small Medium fix riding the
 DEEP-RACK-ADDR PR to develop). Critic: covered by the branch's final cumulative.
-Source: `bug report "`pull device-parameters --dry-run` is unusable as a drift detector — reports every preset default as "added" + false "updated" on normalized params"` (Severity M).
+Source: bug report "`pull device-parameters --dry-run` is unusable as a drift detector —
+reports every preset default as *added* + false *updated* on normalized params" (Severity M).
 
 ## Problem (three confirmed root causes)
 `pull_cli execute device-parameters [--dry-run]` (the `/snapshot-bake-recent-changes`

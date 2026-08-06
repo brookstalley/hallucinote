@@ -112,7 +112,7 @@ is an LLM, so an error is the next turn's input), and deprecation (no shims to u
 consumers; aliases for one major version on the song-authoring API, with a dated
 revisit trigger).
 
-### Chunk C6: housekeeping  [status: partial — size compaction deferred]
+### Chunk C6: housekeeping  [status: done]
 
 Done: `prawduct-hook update-gitignore`; deleted the AUD-2D6T plan (all 4 chunks
 complete, shipped v1.7.1); repointed `active_build_plan`, which still named the deleted
@@ -135,7 +135,7 @@ orthogonal to public readiness; doing them properly is its own work cycle.
 - [x] Chunk C3: untrack the incoming-bugs drop-zone
 - [x] Chunk C4: community health files
 - [x] Chunk C5: strategy artifacts
-- [ ] Chunk C6: housekeeping (size compaction deferred with reasoning)
+- [x] Chunk C6: housekeeping
 
 ## Done when
 

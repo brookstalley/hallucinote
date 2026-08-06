@@ -48,7 +48,7 @@ the prefix, not the full path.
 
 ## 2026-08-06 — The repo gets ready to be public
 
-<!-- prawduct: type=chore | chunks=C1,C2,C3,C4,C5 | scope=pub-ready | status=shipped | release=unreleased -->
+<!-- prawduct: type=chore | chunks=C1,C2,C3,C4,C5,C6 | scope=pub-ready | status=shipped | release=unreleased -->
 
 An audit ahead of making the repo public found the engineering substrate sound — 4614
 tests green, ruff/mypy/uv-lock clean, CI real and gating four things, no secrets, MIT
@@ -81,7 +81,8 @@ The `incoming-bugs/` decision inverted under investigation. Untracking it wholes
 would have dangled ~130 references from shipped source comments, tests and plans that
 cite `archives/` as provenance — so only the raw drop-zone is ignored. That dig also
 turned up 11 refs in shipped source and tests still naming pre-archive paths, silently
-stale since those files were archived.
+stale since those files were archived. *(Superseded the same day — the owner chose to
+untrack the whole tree and pay the repointing cost; see the entry above.)*
 
 Deliberately not done: the hero image is still a placeholder, deferred to a dedicated
 pass with a new demo song showing the full create → push → arrange flow. And the
@@ -782,7 +783,9 @@ Two framework bugs surfaced dogfooding the sun-zone-done mix pass:
 Full suite 3971 passed / 2 skipped @ HEAD. Cumulative Critic 0 blocking (base
 develop); 1 warning (master stale-set label `master #0` → `master:`) resolved via
 verify-resolutions chain. Resolved bug report archived under
-`bug report "> **RESOLVED 2026-06-16** (branch `fix/analyzer-infra-robustness-sunzone`). Fix"`.
+bug report "Master device-parameter re-push isn't analyzer-aware — the stale master
+device link targets the HallucinoteAnalyzer and hard-halts the push" (resolved
+2026-06-16 on branch `fix/analyzer-infra-robustness-sunzone`).
 Filed MCP-7F2K (fingerprint over-triggers re-vendor for server-internal changes).
 
 ## 2026-06-16 — Uniform node addressing (NODE-ADDR / DEV-9K7N) + release-prep: self-contained plugin, onboarding, M4L handling

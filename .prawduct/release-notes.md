@@ -9,7 +9,7 @@
 
 **Entry:** 2026-08-06 — Internal bug reports leave the public record; the backlog id becomes their provenance
 
-**Chunks shipped:** C1, C2, C3, C4, C5
+**Chunks shipped:** C1, C2, C3, C4, C5, C6
 
 **Scope:** pub-ready
 

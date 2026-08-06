@@ -21,6 +21,31 @@ like `prawduct`), and *song* workspaces (one shared repo or one-per-collaborator
 depend on the installed engine. Contributors clone the framework and editable-install it;
 end users `uvx hallucinote-mcp` + install the plugin.
 
+### Bounded exception — the example workspace
+
+One workspace lives **inside** the framework repo: `examples/`, carrying its own
+`hallucinote.toml` (`layout = "monorepo"`, `songs_root = "."`) and the demo song the
+end-to-end tour is built from. It resolves through the normal precedence below —
+marker discovery walks up from the song directory and finds it — so this costs no
+special-casing in the resolution code.
+
+It is an exception to the split above, granted for two things a separate demo repo
+cannot give:
+
+- **No second destination.** The demo sits in the repo a visitor has already landed
+  on. The README, the tour, and the song they document are one clone, or none — a
+  reader following the walkthrough is never sent somewhere else to find the song it
+  describes.
+- **CI can build it**, making the documented example a real integration test rather
+  than a claim that rots.
+
+**The exception is bounded to that purpose.** `examples/` is documentation and test
+fixture; it is *not* the pattern users follow. The split still holds for authored
+work: a user's songs live in their own workspace repo, created by
+`hallucinote init-workspace`, depending on the installed plugin. Nothing here
+licenses adding further song directories to the framework repo, and the quickstart
+and getting-started paths continue to send users to a workspace of their own.
+
 ## The workspace marker
 
 A **workspace** is the directory tree a song (or many) lives in. It is identified by a

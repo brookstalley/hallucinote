@@ -10,6 +10,17 @@ mutator is wrapped in `_core._atomic`, which runs the whole body inside
 not at all; nested mutator calls join the outermost transaction via
 SAVEPOINTs.
 
+A second structural clause governs the build session: every mutator that
+writes a build-owned row (or a CASCADE child of one) must mark that row
+TOUCHED on EVERY return path — the idempotent "nothing changed" fast path
+included. `build_session` is mark-and-sweep, so an unmarked row is DELETED
+as orphaned build content on the next build; a fast path that returns
+before the touch destroys the very row it was converging, silently and one
+build later. `_core._touches(kind, id_kwarg)` is the guard — a decorator
+applied outside `_atomic`, so no return path can dodge it. Only mutators
+whose parent row is resolved inside the body (keyed by a child id) call
+`_record_touch_if_session` directly; DELETE mutators must not touch at all.
+
 Callers MUST use these instead of raw SQL. The discipline is the only thing
 that makes a future event-store flip cheap rather than a rewrite.
 

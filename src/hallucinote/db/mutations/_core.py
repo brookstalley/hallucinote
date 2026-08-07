@@ -139,6 +139,52 @@ def _record_touch_if_session(kind: str, id_: str) -> None:
         bs.record_touch(kind, id_)
 
 
+def _touches(kind: str, id_kwarg: str) -> Callable[[_F], _F]:
+    """Register the build-session touch for the row this mutator writes, on
+    EVERY return path — including an idempotent no-op fast path.
+
+    Why a decorator and not a call at each `return`: `build_session` is
+    mark-and-sweep, so a row the build never marks is DELETED as orphaned
+    build content. A mutator whose "nothing changed" fast path returns
+    before `_record_touch_if_session` therefore *destroys* the very row it
+    was converging — and the failure is silent, delayed by one build, and
+    only reachable through correct-looking caller code. That trap is a
+    property of the *return path*, so the guard belongs where no return
+    path can dodge it, not sprinkled at each one.
+
+    `kind` is the build-owned row-kind from `build._BUILD_OWNED_KINDS`,
+    `id_kwarg` the keyword argument naming that row. For a mutator that
+    writes CASCADE children (breakpoints, notes, drum-pad mappings,
+    param overrides) the touch goes on the PARENT — protecting the parent
+    is what keeps the children alive, since they have no row-kind of their
+    own in the sweep.
+
+    Applied OUTSIDE `_atomic` so the touch is recorded only after the
+    write commits; on an exception nothing is marked (and `build_session`
+    skips tombstoning entirely anyway). Recording an id for a row that
+    doesn't exist is harmless — the sweep intersects the touched-set with
+    the rows actually present.
+
+    Mutators whose parent id is resolved inside the body (keyed by a child
+    id — `remove_breakpoint`, `update_note`, `delete_notes`) can't use this
+    and call `_record_touch_if_session` directly; DELETE mutators must not
+    touch at all.
+    """
+
+    def decorate(fn: _F) -> _F:
+        @functools.wraps(fn)
+        def wrapper(conn: sqlite3.Connection, *args: Any, **kwargs: Any) -> Any:
+            result = fn(conn, *args, **kwargs)
+            row_id = kwargs.get(id_kwarg)
+            if isinstance(row_id, str):
+                _record_touch_if_session(kind, row_id)
+            return result
+
+        return wrapper  # type: ignore[return-value]
+
+    return decorate
+
+
 # Valid `requests.kind` values. Mirrors the wave-8 design: 'mutate' is the
 # back-compat default; 'compose', 'push', 'pull', 'capture', 'analyze' tag
 # higher-level cycles for cross-reference queries.
@@ -258,6 +304,7 @@ __all__ = [
     "_resolve_actor_and_request",
     "_touch_clip",
     "_touch_song",
+    "_touches",
     "_uuid",
     "json",
     "sqlite3",

@@ -14,6 +14,7 @@ from ._core import (
     _record_touch_if_session,
     _resolve_actor_and_request,
     _touch_song,
+    _touches,
     _uuid,
 )
 
@@ -99,6 +100,7 @@ def create_return(
 _RETURN_FIELDS = {"name", "position", "volume", "pan", "mute", "solo", "color"}
 
 
+@_touches("return", "return_id")
 @_atomic
 def update_return(
     conn: sqlite3.Connection,

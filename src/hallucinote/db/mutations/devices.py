@@ -24,6 +24,7 @@ from ._core import (
     _record_touch_if_session,
     _resolve_actor_and_request,
     _touch_song,
+    _touches,
     _uuid,
     json,
     transaction,
@@ -165,6 +166,7 @@ _CHAIN_PROP_FIELDS: tuple[str, ...] = (
 )
 
 
+@_touches("device_chain", "chain_id")
 @_atomic
 def set_chain_properties(
     conn: sqlite3.Connection,
@@ -263,7 +265,6 @@ def set_chain_properties(
         )
     actual = {k: v for k, v in changes.items() if row[k] != v}
     if not actual:
-        _record_touch_if_session("device_chain", chain_id)
         return MutatorResult(chain_id, "unchanged")
     sets = ", ".join(f"{k} = ?" for k in actual)
     conn.execute(
@@ -287,7 +288,6 @@ def set_chain_properties(
     )
     if song_id:
         _touch_song(conn, song_id)
-    _record_touch_if_session("device_chain", chain_id)
     return MutatorResult(chain_id, "updated")
 
 
@@ -494,6 +494,7 @@ def create_device(
     return MutatorResult(device_id, "created")
 
 
+@_touches("device", "device_id")
 @_atomic
 def set_device_sidechain(
     conn: sqlite3.Connection,
@@ -552,7 +553,6 @@ def set_device_sidechain(
     if (row["sidechain_source_track_id"], row["sidechain_source_channel"]) == (
         source_track_id, channel,
     ):
-        _record_touch_if_session("device", device_id)
         return
     conn.execute(
         """UPDATE devices SET sidechain_source_track_id = ?,
@@ -569,7 +569,6 @@ def set_device_sidechain(
     )
     if song_id:
         _touch_song(conn, song_id)
-    _record_touch_if_session("device", device_id)
 
 
 def _resolve_device_song(
@@ -796,6 +795,7 @@ def remove_device_parameter(
 # with a single event.
 
 
+@_touches("device", "device_id")
 @_atomic
 def replace_drum_pad_mappings(
     conn: sqlite3.Connection,
@@ -814,7 +814,10 @@ def replace_drum_pad_mappings(
     enforces too, but surfacing it here gives a better error).
 
     W12-A: idempotent — when the existing rows already match the incoming
-    set (by content), the function is a no-op and emits no event.
+    set (by content), the function is a no-op and emits no event. The parent
+    DEVICE is marked touched on every path (``@_touches``): pad mappings are
+    CASCADE children with no row-kind of their own in the build sweep, so
+    protecting the device is what keeps them alive.
     """
     actor, request_id = _resolve_actor_and_request(actor, request_id)
     incoming_sig: list[tuple[str, int]] = []
@@ -924,6 +927,7 @@ def _canonical_override_path(path: Any) -> list[dict[str, int]]:
     return out
 
 
+@_touches("device", "device_id")
 @_atomic
 def replace_device_param_overrides(
     conn: sqlite3.Connection,
@@ -1032,12 +1036,12 @@ def replace_device_param_overrides(
     }
     # Set equality (tuples carry None for normalized/items, so set membership —
     # not sorted-list comparison — sidesteps None-vs-value ordering).
-    # The touch is recorded against the parent DEVICE (not an override row-kind,
-    # which the build session doesn't track): touching the device is what
-    # protects it — and its CASCADE-child overrides — from the build sweep, the
-    # same reason DEVICE_PARAM_OVERRIDES_REPLACED registers under "device".
+    # The touch is recorded against the parent DEVICE by `@_touches` (not an
+    # override row-kind, which the build session doesn't track): touching the
+    # device is what protects it — and its CASCADE-child overrides — from the
+    # build sweep, the same reason DEVICE_PARAM_OVERRIDES_REPLACED registers
+    # under "device".
     if existing_sig == set(incoming):
-        _record_touch_if_session("device", device_id)
         return [r["id"] for r in existing_rows]
     with transaction(conn):
         prev_count = len(existing_rows)
@@ -1073,7 +1077,6 @@ def replace_device_param_overrides(
         )
         if song_id:
             _touch_song(conn, song_id)
-    _record_touch_if_session("device", device_id)
     return new_ids
 
 
@@ -1440,6 +1443,7 @@ def _resolve_envelope_song(
     return row["song_id"], row["target_clip_id"]
 
 
+@_touches("envelope", "envelope_id")
 @_atomic
 def add_breakpoint(
     conn: sqlite3.Connection,
@@ -1519,8 +1523,14 @@ def remove_breakpoint(
     )
     if song_id:
         _touch_song(conn, song_id)
+    # Removing a breakpoint leaves the ENVELOPE standing — mark it touched so
+    # the build sweep doesn't delete the arc we just edited. (Keyed by
+    # breakpoint_id, so `@_touches` can't express this; the envelope is
+    # resolved from the row above.)
+    _record_touch_if_session("envelope", envelope_id)
 
 
+@_touches("envelope", "envelope_id")
 @_atomic
 def replace_breakpoints(
     conn: sqlite3.Connection,
@@ -1540,6 +1550,12 @@ def replace_breakpoints(
     W12-A: idempotent — when the existing breakpoints already match the
     incoming set (by content, ignoring ids), the function is a no-op and
     emits no event. Returns the existing breakpoint ids in that case.
+
+    The parent envelope is marked TOUCHED on every path (``@_touches``) —
+    the no-op one included. Breakpoints have no row-kind of their own in
+    the build sweep; they survive because their envelope does, so the
+    "nothing changed" return must still mark it or the next build deletes
+    the arc it was converging.
     """
     actor, request_id = _resolve_actor_and_request(actor, request_id)
     # Idempotency check: compare incoming vs existing.

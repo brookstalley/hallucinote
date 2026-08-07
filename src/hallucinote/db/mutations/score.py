@@ -13,6 +13,7 @@ from ._core import (
     _require_bar_floor,
     _resolve_actor_and_request,
     _touch_song,
+    _touches,
     _uuid,
 )
 
@@ -110,6 +111,7 @@ def create_section(
 _SECTION_FIELDS = {"name", "start_bar", "end_bar", "color", "notes_md", "energy"}
 
 
+@_touches("section", "section_id")
 @_atomic
 def update_section(
     conn: sqlite3.Connection,
@@ -259,6 +261,7 @@ def add_tempo_point(
 _TEMPO_POINT_FIELDS = {"tempo_bpm", "ramp"}
 
 
+@_touches("tempo_point", "point_id")
 @_atomic
 def update_tempo_point(
     conn: sqlite3.Connection,
@@ -440,6 +443,7 @@ def add_time_signature_point(
 _TIME_SIGNATURE_POINT_FIELDS = {"numerator", "denominator"}
 
 
+@_touches("time_signature_point", "point_id")
 @_atomic
 def update_time_signature_point(
     conn: sqlite3.Connection,

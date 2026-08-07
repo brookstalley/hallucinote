@@ -1,0 +1,2 @@
+layout = "monorepo"
+songs_root = "."

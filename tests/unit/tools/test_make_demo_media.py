@@ -28,6 +28,7 @@ from tools.make_demo_media import (
     Output,
     _assert_encoded_duration,
     _emit,
+    _all_or_nothing,
     clip_bounds,
     hero_argv,
     main,
@@ -38,6 +39,8 @@ from tools.make_demo_media import (
     poster_argv,
     probe_duration,
     require_tools,
+    run_command,
+    untrustworthy,
     waveform_argv,
 )
 
@@ -63,11 +66,14 @@ def capture_dir(tmp_path: Path) -> Path:
                 "schema_version": "1",
                 "song_slug": "demo",
                 "tracks": [{"track_id": "track:1", "filename": "track-01-Drums.wav"}],
+                "status": "ok",
+                "analyzer_not_terminal": [],
                 "master": {
                     "track_id": "master",
                     "surface_name": "Main",
                     "filename": "master.wav",
                     "absolute_path": "/nonexistent/elsewhere/master.wav",
+                    "terminal": True,
                 },
             }
         ),
@@ -89,13 +95,24 @@ class FakeRunner:
         self.duration = duration
         self.write_bytes = write_bytes
         self.encoded: dict[str, float] = {}
+        self.encoded_width = 1280
 
     def __call__(self, argv: list[str]) -> str:
         self.calls.append(list(argv))
         if argv[0] == "ffprobe":
+            if "stream=width" in argv:
+                return f"{self.encoded_width}\n"
             return f"{self.encoded.get(argv[-1], self.duration)}\n"
         if "-t" in argv:
             self.encoded[argv[-1]] = float(argv[argv.index("-t") + 1])
+        elif "-filter_complex" in argv:
+            # Model the speed-up, so the hero's post-encode duration check is
+            # tested against a fake that actually re-times rather than one that
+            # returns the source length and would pass any implementation.
+            filters = argv[argv.index("-filter_complex") + 1]
+            for part in filters.split(","):
+                if part.startswith("setpts=PTS/"):
+                    self.encoded[argv[-1]] = self.duration / float(part.split("/")[1])
         Path(argv[-1]).write_bytes(self.write_bytes)
         return ""
 
@@ -480,3 +497,154 @@ def test_main_reports_a_missing_encoder_before_doing_any_work(
     )
     assert code == 1
     assert "not found on PATH" in capsys.readouterr().err
+
+
+# --- the manifest's own trust flags ------------------------------------------
+#
+# The render writes these so a reader "never trusts an under-measured stem as if
+# it were faithful". They matter more here than anywhere else in this module,
+# because no other guard can see this failure: an incomplete render produces a
+# short but valid master, open bounds are derived from that shortened length,
+# and the post-encode duration check compares against the same derived number.
+# Every check agrees and the tour ships a truncated take as its evidence.
+
+
+def test_untrustworthy_is_silent_on_a_healthy_manifest() -> None:
+    assert untrustworthy({"status": "ok", "analyzer_not_terminal": []}) == []
+
+
+def test_untrustworthy_tolerates_a_manifest_predating_the_flags() -> None:
+    """Older captures omit these fields; absence must not be read as failure."""
+    assert untrustworthy({"song_slug": "demo"}) == []
+
+
+@pytest.mark.parametrize(
+    ("manifest", "expected"),
+    [
+        ({"status": "incomplete"}, "not 'ok'"),
+        ({"analyzer_not_terminal": ["master"]}, "not last in the master chain"),
+        ({"master": {"terminal": False}}, "non-terminal"),
+    ],
+)
+def test_untrustworthy_reports_each_flag(manifest: dict, expected: str) -> None:
+    reasons = untrustworthy(manifest)
+    assert reasons and any(expected in reason for reason in reasons)
+
+
+def test_untrustworthy_ignores_other_surfaces_being_under_tapped() -> None:
+    """A non-terminal analyzer on a stem does not taint the master mix."""
+    assert untrustworthy({"analyzer_not_terminal": ["track:3"]}) == []
+
+
+def _flag(capture_dir: Path, **changes: object) -> None:
+    manifest = capture_dir / "manifest.json"
+    data = json.loads(manifest.read_text())
+    data.update(changes)
+    manifest.write_text(json.dumps(data), encoding="utf-8")
+
+
+def test_master_wav_refuses_an_incomplete_render(capture_dir: Path) -> None:
+    _flag(capture_dir, status="incomplete")
+    with pytest.raises(CaptureDirError, match="unfaithful"):
+        master_wav(capture_dir)
+
+
+def test_master_wav_allows_an_incomplete_render_when_told_to(capture_dir: Path) -> None:
+    _flag(capture_dir, status="incomplete")
+    assert master_wav(capture_dir, allow_incomplete=True) == capture_dir / "master.wav"
+
+
+def test_make_clip_refuses_an_incomplete_render_before_encoding_anything(
+    capture_dir: Path, tmp_path: Path, runner: FakeRunner
+) -> None:
+    _flag(capture_dir, status="incomplete")
+    with pytest.raises(CaptureDirError):
+        make_clip(capture_dir, tmp_path / "assets", "full-song")
+    assert not runner.calls, "an unfaithful capture must not reach ffmpeg at all"
+
+
+# --- outputs are all-or-nothing ----------------------------------------------
+
+
+def test_all_or_nothing_clears_stale_files_before_the_run(tmp_path: Path) -> None:
+    """A previous take left in place is what gets committed after a failed re-shoot."""
+    stale = tmp_path / "old.mp3"
+    stale.write_bytes(b"previous take")
+    with _all_or_nothing([stale]):
+        assert not stale.exists()
+
+
+def test_all_or_nothing_removes_a_partial_set_when_one_output_fails(tmp_path: Path) -> None:
+    good, bad = tmp_path / "a.mp3", tmp_path / "b.png"
+    with pytest.raises(EncodeError):
+        with _all_or_nothing([good, bad]):
+            good.write_bytes(b"encoded")
+            raise EncodeError("second output failed")
+    assert not good.exists(), "a sibling of a failed output is evidence for audio that is gone"
+
+
+def test_make_clip_leaves_no_stale_waveform_when_the_mp3_is_rejected(
+    capture_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The waveform must not survive to front audio that was deleted."""
+    out_dir = tmp_path / "assets"
+    out_dir.mkdir()
+    (out_dir / "clip.mp3").write_bytes(b"previous take")
+    (out_dir / "clip.png").write_bytes(b"previous waveform")
+
+    fake = FakeRunner()
+
+    def truncating(argv: list[str]) -> str:
+        if argv[0] == "ffprobe" and argv[-1].endswith(".mp3"):
+            return "0.05\n"
+        return fake(argv)
+
+    monkeypatch.setattr("tools.make_demo_media.run_command", truncating)
+    with pytest.raises(EncodeError):
+        make_clip(capture_dir, out_dir, "clip", start=24.0, end=32.0)
+    assert not (out_dir / "clip.mp3").exists()
+    assert not (out_dir / "clip.png").exists()
+
+
+def test_make_hero_refuses_an_mp4_that_encoded_to_the_wrong_width(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fixed width is a promise the exit code cannot keep."""
+    source = tmp_path / "take.mov"
+    source.write_bytes(b"\x00" * 16)
+    fake = FakeRunner()
+    fake.encoded_width = 640
+    monkeypatch.setattr("tools.make_demo_media.run_command", fake)
+    with pytest.raises(EncodeError, match="wide but 1280px was requested"):
+        make_hero(source, tmp_path / "assets", "hero")
+    assert not (tmp_path / "assets" / "hero.mp4").exists()
+
+
+def test_make_hero_accepts_a_frame_of_slack_on_the_speed_up(
+    tmp_path: Path, runner: FakeRunner
+) -> None:
+    """setpts re-times whole frames, so exact equality would be a false failure."""
+    source = tmp_path / "take.mov"
+    source.write_bytes(b"\x00" * 16)
+    runner.encoded[str(tmp_path / "assets" / "hero.mp4")] = SOURCE_DURATION / 4 + 0.03
+    assert make_hero(source, tmp_path / "assets", "hero")
+
+
+# --- the subprocess seam itself ----------------------------------------------
+#
+# Every other test in this file fakes `run_command`, so without these the one
+# function that actually shells out is never executed.
+
+
+def test_run_command_returns_stdout_from_a_real_process() -> None:
+    assert run_command(["echo", "hello"]).strip() == "hello"
+
+
+def test_run_command_raises_with_the_tool_name_on_a_real_failure() -> None:
+    with pytest.raises(EncodeError, match="false failed"):
+        run_command(["false"])
+
+
+def test_run_command_raises_when_the_binary_does_not_exist() -> None:
+    with pytest.raises(EncodeError, match="could not run"):
+        run_command(["definitely-not-a-real-binary-xyz"])

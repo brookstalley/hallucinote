@@ -105,7 +105,7 @@ IGNORED_BLOCKS: dict[str, str] = {
 # deliberately allowed through; gating on it instead would refuse real sessions
 # for a non-leak, and rewriting it would silently change the meaning of a quoted
 # command.
-_ACCOUNT_SEGMENT = r"/(?:Users|home)/[^/\s'\"`]+"
+_ACCOUNT_SEGMENT = r"/(?:Users|home)/+[^/\s'\"`]+"
 
 # The same home path, dash-encoded. Claude Code names its own project and task
 # directories by flattening the cwd — ``~/.claude/projects/-Users-alice-source-
@@ -114,7 +114,7 @@ _ACCOUNT_SEGMENT = r"/(?:Users|home)/[^/\s'\"`]+"
 # hypothetical: the first version of this tool passed its own
 # ``grep -c '/Users/'`` acceptance check while a dash-encoded name would have
 # gone straight into published output. Both the redactor and the gate key on it.
-_DASH_ACCOUNT_SEGMENT = r"-(?:Users|home)-[A-Za-z0-9_.]+"
+_DASH_ACCOUNT_SEGMENT = r"-(?:Users|home)-+[A-Za-z0-9_.]+"
 
 
 def _account_rules(account: str) -> tuple[tuple[re.Pattern[str], str], ...]:
@@ -135,8 +135,8 @@ def _account_rules(account: str) -> tuple[tuple[re.Pattern[str], str], ...]:
         return ()
     name = re.escape(account)
     return (
-        (re.compile(rf"/(?:Users|home)/{name}"), "~"),
-        (re.compile(rf"-(?:Users|home)-{name}"), "-REDACTED"),
+        (re.compile(rf"/(?:Users|home)/+{name}", re.IGNORECASE), "~"),
+        (re.compile(rf"-(?:Users|home)-+{name}", re.IGNORECASE), "-REDACTED"),
     )
 
 
@@ -152,11 +152,37 @@ def default_account() -> str:
 # *contents*, which a surviving ``<system-reminder>`` tag announces. The bare
 # word in authored prose — an agent explaining the mechanism — is not a leak,
 # and gating on it would refuse any session that discussed its own harness.
-FORBIDDEN = (
-    (re.compile(_ACCOUNT_SEGMENT), "an absolute home path including an account name"),
-    (re.compile(_DASH_ACCOUNT_SEGMENT), "a dash-encoded home path including an account name"),
-    (re.compile(r"</?system-reminder>"), "an unpaired harness system-reminder tag"),
+# Credential shapes. The path and reminder rules cover what the *harness*
+# injects; these cover what a human pastes. A key typed into a prompt, or echoed
+# back in assistant prose, arrives as an ordinary ``text`` block — it is not a
+# tool_result and not a path, so every other rule here passes it straight
+# through into a public repo whose history is permanent. The list is
+# deliberately literal and high-signal rather than an entropy heuristic: a
+# false refusal costs one `--account`-style investigation, while a false pass
+# costs a leaked credential, and "fails closed" has to mean this too.
+_CREDENTIAL_PATTERNS = (
+    (r"\bghp_[A-Za-z0-9]{16,}", "a GitHub personal access token"),
+    (r"\bgithub_pat_[A-Za-z0-9_]{20,}", "a fine-grained GitHub token"),
+    (r"\bgh[opsu]_[A-Za-z0-9]{16,}", "a GitHub OAuth/server token"),
+    (r"\bsk-[A-Za-z0-9_-]{20,}", "an OpenAI-style secret key"),
+    (r"\bsk-ant-[A-Za-z0-9_-]{20,}", "an Anthropic API key"),
+    (r"\bAKIA[0-9A-Z]{16}", "an AWS access key id"),
+    (r"\bxox[baprs]-[A-Za-z0-9-]{10,}", "a Slack token"),
+    (r"-----BEGIN [A-Z ]*PRIVATE KEY-----", "a private key block"),
+    (r"(?i)\bauthorization:\s*(bearer|basic)\s+\S+", "an Authorization header with a credential"),
 )
+
+# Case-insensitive throughout: macOS paths are case-preserving but
+# case-insensitive, so ``/users/alice`` addresses the same home directory and
+# leaks the same name, while a case-sensitive rule neither redacts nor gates it.
+FORBIDDEN = (
+    (re.compile(_ACCOUNT_SEGMENT, re.IGNORECASE), "an absolute home path including an account name"),
+    (
+        re.compile(_DASH_ACCOUNT_SEGMENT, re.IGNORECASE),
+        "a dash-encoded home path including an account name",
+    ),
+    (re.compile(r"</?system-reminder>", re.IGNORECASE), "an unpaired harness system-reminder tag"),
+) + tuple((re.compile(pattern), description) for pattern, description in _CREDENTIAL_PATTERNS)
 
 _SYSTEM_REMINDER = re.compile(r"<system-reminder>.*?</system-reminder>", re.DOTALL)
 
@@ -173,9 +199,9 @@ _HARNESS_MARKUP = re.compile(
 # Ordered: the trailing-slash form first so ``~/`` keeps its separator, then the
 # bare form so a path ending at the account segment (``/Users/alice``, at the end
 # of a sentence) is caught too rather than sailing past the gate.
-_HOME_PATH_DIR = re.compile(_ACCOUNT_SEGMENT + "/")
-_HOME_PATH_BARE = re.compile(_ACCOUNT_SEGMENT)
-_DASH_HOME_PATH = re.compile(_DASH_ACCOUNT_SEGMENT)
+_HOME_PATH_DIR = re.compile(_ACCOUNT_SEGMENT + "/", re.IGNORECASE)
+_HOME_PATH_BARE = re.compile(_ACCOUNT_SEGMENT, re.IGNORECASE)
+_DASH_HOME_PATH = re.compile(_DASH_ACCOUNT_SEGMENT, re.IGNORECASE)
 
 # Per-tool field carrying the most useful one-line identifier. Values are
 # redacted like any other string; anything not listed renders as a bare name.
@@ -491,7 +517,14 @@ def main(argv: list[str] | None = None) -> int:
         document = build_excerpt(
             session.expanduser(), repo_root, args.start_at, args.exchanges, args.account
         )
-    except TranscriptError as exc:
+    except (TranscriptError, OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        # OSError et al. are caught alongside the tool's own refusals for the
+        # same disclosure reason, and they are the *likelier* arrival: a typo'd
+        # --session raises FileNotFoundError, whose traceback prints the
+        # absolute `/Users/<name>/…` path this tool exists to keep out of the
+        # open — and, being unhandled, would also skip the stale-output removal
+        # below. Catching only TranscriptError guarded the rarer half.
+        #
         # Remove a stale --out from an earlier run. Leaving it is the worst
         # outcome of a refusal: the command failed, but the path still holds
         # plausible-looking content that a later step would publish as fresh.

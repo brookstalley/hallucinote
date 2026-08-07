@@ -43,10 +43,12 @@ mine to infer.
   user decides at B1]  The design shapes the song around what each beat must *demonstrate*;
   it does not choose the music. Per the propose-and-react discipline this is a creative
   lock-in, so B1 opens by proposing and reading the reaction rather than auto-deciding.
-- [ASSUMPTION: GitHub renders an inline `<video>` from a relative repo path | MED impact |
-  resolved by probe, not by me] The design flags this as unverified and names the
-  known-safe fallback (poster image linking out). A3 resolves it with a real probe before
-  any encode work depends on the answer.
+- ~~[ASSUMPTION: GitHub renders an inline `<video>` from a relative repo path | MED impact |
+  resolved by probe, not by me]~~ **RESOLVED at A3, 2026-08-06 — it does not, and the
+  reason is stronger than the assumption's framing:** GitHub's sanitizer removes the
+  `<video>` element itself, so an absolute CDN `src` does not rescue it either. The hero
+  is a poster still linking to the mp4. Evidence table in the design artifact; the same
+  verdict replaced this chunk's `showwaves` video with a `showwavespic` still.
 - [ASSUMPTION: total committed media ≤ 12 MB | MED impact | user can override] The design
   caps evidence by *count* (4 screenshots · 1 hero video · 3 audio clips) but not by
   *bytes*, and this is a public repo whose history is permanent — a decision to rewrite
@@ -59,18 +61,32 @@ decision before A1 starts — Phase A is fully specified.
 ## Status
 
 - [x] Chunk A1: Transcript renderer with a redaction gate
-- [ ] Chunk A2: Deterministic Ableton screenshot capture
-- [ ] Chunk A3: Media encode — audio clips, waveform video, and the GitHub-video probe
-- [ ] Chunk A4: One lifecycle diagram, light/dark aware
+- [x] Chunk A2: Deterministic Ableton screenshot capture
+- [x] Chunk A3: Media encode — audio clips, waveform stills, hero post, and the GitHub-video probe
+- [x] Chunk A4: One lifecycle diagram, light/dark aware
 - [ ] Chunk B1: The `examples/` workspace and the demo song
 - [ ] Chunk C1: Capture the evidence from the finished set
 - [ ] Chunk D1: `docs/tour.md`, the README graft, and the freshness tests
 Context: Plan authored 2026-08-06 against `tour-walkthrough-design.md`, on
-`feat/tour-walkthrough` off v1.7.2. **A1 shipped** — `tools/tour_transcript.py`, verified
-end to end against a real session, Critic-reviewed (0 blocking; three real redaction
-leaks found and fixed). Next: **A2, A3 or A4 — all three need no Live and no decisions,
-and are independent of each other.** A3 carries the probe that gates C1's hero form, so
-it is the highest-value of the three to do first.
+`feat/tour-walkthrough` off v1.7.2. **Phase A is complete** — all four tools built and
+verified against real input. Next is **B1, which is the owner's**: it needs Live, real
+creative work, and opens with a musical proposal rather than a decision.
+
+Every Phase-A chunk had its stated mechanism falsified by its own verify-api probe,
+which is worth knowing before trusting a later chunk's stated mechanism:
+
+- **A3's probe reshaped the design.** GitHub's sanitizer drops the `<video>` element
+  outright — absolute `src` included — so the hero is a poster still linking to the
+  mp4, and C1 captures accordingly. That verdict also killed this chunk's own
+  `showwaves` video (it existed to make audio skimmable *inline*; nothing is inline),
+  replaced by a `showwavespic` still. Evidence table in the design.
+- **A2's mechanism did not exist.** Live publishes zero accessibility windows, and its
+  own AppleScript dictionary blocks 120 s before failing, so no AppleScript path yields
+  a window id. `CGWindowListCopyWindowInfo` via `ctypes` does, with no new dependency.
+  **A2's live capture is blocked on Screen Recording permission**, which only the
+  operator can grant — the five checks are queued in `operator-verification.md`.
+- **A4** is verified in all four theme combinations, including both OS/GitHub theme
+  mismatches; its GitHub-page render is queued for the operator.
 
 Phase B is owner-gated (needs Live and real creative work), dominates the schedule, and
 opens with a musical proposal rather than a decision; A, C and D are each well under a
@@ -90,12 +106,21 @@ for `rev-parse --show-toplevel` and which degrades to a no-op fallback when abse
 
 ### Dependencies
 
-**No new packaged dependency.** ffmpeg and `screencapture` are invoked as subprocesses,
-not imported, and are needed only to *produce* the committed assets — never to consume
+**No new packaged dependency.** The external binaries are invoked as subprocesses, not
+imported, and are needed only to *produce* the committed assets — never to consume
 them. That asymmetry is deliberate: a reader cloning the repo gets the media as
 committed files and needs neither binary, and CI needs neither either. The tools
 therefore live in `tools/` (author-side, like the existing `tools/scenario_eval.py`),
 not in `src/hallucinote/`.
+
+As shipped, the full set is wider than "ffmpeg and screencapture": `ffmpeg` **and
+`ffprobe`** (A3 — every post-encode check re-measures the file it just wrote),
+`screencapture` **and `sips`** (A2 — `sips` does the downscale and reads the width
+back; being macOS-native it costs nothing a macOS-only tool was not already paying),
+plus `open` for raising Live and `ps` for naming the app that needs Screen Recording
+permission. A2 additionally calls **CoreGraphics through `ctypes`** — a system
+framework, not a package — because Live publishes no accessible window to ask.
+Each tool checks for its binaries up front and names the missing one.
 
 ### Build & Test Configuration
 
@@ -128,12 +153,13 @@ that does not actually check the rule is worse than no test.
 tools/
 ├── tour_transcript.py       # A1  session JSONL → redacted markdown excerpt
 ├── capture_live_shot.py     # A2  deterministic Ableton window screenshot
-└── make_demo_media.py       # A3  audio clips + waveform video from a capture dir
+└── make_demo_media.py       # A3  audio clips + waveform stills; hero mp4 + poster
 examples/
 ├── hallucinote.toml         # B1  layout="monorepo", songs_root="."
 └── <slug>/                  # B1  the demo song (build.py, snapshot, decisions/…)
 docs/
 ├── tour.md                  # D1  the worked example
+├── assets/lifecycle.svg     # A4  the one lifecycle diagram, theme-proof
 └── assets/                  # C1  the committed evidence (replaces hero.svg)
 tests/
 ├── unit/tools/              # A1-A3 tool tests
@@ -147,7 +173,29 @@ script with a `main()`. They do not import `hallucinote`: they operate on files
 (transcripts, WAVs, window ids), not on the engine's model, and coupling them to it
 would make the doc pipeline fail whenever the engine moves. The one exception is A3
 reading a render's capture directory layout, which it locates by path convention
-(`songs/<slug>/captures/<ts>/`) rather than by importing the capture module.
+(`songs/<slug>/captures/<ts>/`) rather than by importing the capture module — a
+consumer relationship registered in `boundary-patterns.md` → *Capture Manifest*.
+
+**Sibling duplication between the three is accepted, and this is the decision, not an
+oversight.** The paragraph above argues only against importing the *engine*; it never
+addressed the tools duplicating each other, and they do: a run-and-check subprocess
+wrapper, a binary-presence check, an exited-0-but-wrote-nothing guard, and the
+`argparse → try → print → return 1` skeleton each exist two or three times.
+
+The cost of extracting them is not the extraction — it is the invocation contract.
+Every tool is documented and used as `python tools/<tool>.py`, which puts `tools/` on
+`sys.path` rather than the repo root, so a shared `tools/_toolshed.py` import fails
+unless every call site becomes `python -m tools.<tool>` (or each tool grows a
+`sys.path` shim). That change would touch three tools' docstrings, this plan, the
+operator-verification entries, and the tour that quotes the commands — to deduplicate
+roughly forty lines.
+
+**What is not accepted is the copies silently diverging**, which already happened and
+produced a real defect: A1 removes a stale output on refusal and A2/A3 did not, so a
+failed re-shoot left the previous asset in place looking fresh. They are now aligned.
+The rule going forward: a change to any of these four shared behaviours is applied to
+every tool that has it in the same commit, or the duplication has stopped paying for
+itself and the invocation change becomes the cheaper option.
 
 ## Build Chunks
 
@@ -351,7 +399,10 @@ reading a render's capture directory layout, which it locates by path convention
 - **Artifacts consumed:** `tour-walkthrough-design.md` §The concision rule (the hard cap)
 - **Deliverables:** committed assets under `docs/assets/`, replacing the placeholder `docs/assets/hero.svg`
 - **Tests:** none directly — D1 asserts existence and the byte budget
-- **Acceptance criteria:** the cap is met exactly (4 · 1 · 3, no more); every asset is
+- **Acceptance criteria:** the cap is met exactly — 4 · 1 · 3 **items**, which is at most
+  **12 files**, because the hero and each audio clip ship as a pair (media + the still
+  that stands in for it, since nothing plays inline; see the design's *Evidence budget*).
+  No more; every asset is
   git-tracked (`git ls-files --error-unmatch` per asset — a broad ignore rule silently
   swallowing a media directory is a known trap); total committed media ≤ 12 MB
 - **Visual change:** yes
@@ -418,6 +469,16 @@ that the tour's agent output will be genuine rather than staged.
 
 **Note on the gate.** `active_build_plan` is repointed to this plan at A1 (PUB-READY
 shipped in v1.7.2), so the stop-hook Critic gate arms normally for this work.
+
+**Phase A's review cadence, as actually run.** A1 took three per-chunk rounds. A2, A3 and
+A4 were then built back to back and covered by **one `cumulative` review spanning all
+three**, rather than the per-chunk review each chunk's Done-when names. That is the
+repo's recorded cadence preference — skip per-chunk review for small chunks and roll up —
+and it is written here rather than left implicit, because an unticked Done-when step is
+otherwise indistinguishable from a skipped one. The substitution is sound in this
+direction only: `cumulative` covers all seven goals against `merge-base...HEAD`, a
+strict superset of what three `chunk` reviews (goals 1-3, each against its own diff)
+would have covered.
 
 - After A1: confirm the redaction gate actually holds against a real transcript before
   three more tools and a song are built on the assumption that it does.

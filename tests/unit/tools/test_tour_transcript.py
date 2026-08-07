@@ -472,3 +472,84 @@ def test_exchanges_keeps_the_assistant_turns_that_follow_a_kept_prompt() -> None
     """Trimming by prompt count must not orphan a prompt from its answer."""
     kept = select(to_turns(load(FIXTURE), FIXTURE_ROOT), None, 1)
     assert any(t.role == "assistant" for t in kept)
+
+
+# --- credentials -------------------------------------------------------------
+#
+# The path and reminder rules cover what the harness injects. A key pasted into
+# a prompt arrives as an ordinary `text` block: not a tool_result, not a path,
+# so every other rule passes it into a repo whose history is permanent.
+
+
+@pytest.mark.parametrize(
+    "secret",
+    [
+        "ghp_0123456789abcdefghijklmnopqrstuvwxyz",
+        "github_pat_11ABCDEFG0123456789_abcdefghijklmnop",
+        "sk-abcdefghijklmnopqrstuvwxyz0123456789",
+        "sk-ant-api03-abcdefghijklmnopqrstuvwxyz012345",
+        "AKIAIOSFODNN7EXAMPLE",
+        "xoxb-1234567890-abcdefghijklmnop",
+        "-----BEGIN OPENSSH PRIVATE KEY-----",
+        "Authorization: Bearer abcdefghijklmnop",
+    ],
+)
+def test_the_gate_refuses_a_document_carrying_a_credential(secret: str) -> None:
+    with pytest.raises(RedactionFailure):
+        assert_publishable(f"The user pasted {secret} into the prompt.", account="testuser")
+
+
+def test_the_gate_still_passes_prose_that_merely_discusses_keys() -> None:
+    """High-signal literals, not an entropy heuristic — talking about keys is fine."""
+    assert_publishable(
+        "Set ANTHROPIC_API_KEY in the environment; never paste a bearer token here.",
+        account="testuser",
+    )
+
+
+# --- case and separator residues ---------------------------------------------
+
+
+def test_a_lowercased_home_path_is_redacted_like_any_other(tmp_path: Path) -> None:
+    """macOS paths are case-insensitive, so /users/alice leaks the same name."""
+    assert "alice" not in redact("/users/alice/src/x.py", tmp_path, account="alice")
+
+
+def test_the_gate_refuses_a_lowercased_home_path() -> None:
+    with pytest.raises(RedactionFailure):
+        assert_publishable("see /users/someone/notes.md", account="testuser")
+
+
+def test_a_doubled_separator_does_not_slip_past_the_gate() -> None:
+    """String concatenation really does produce `/Users//name`."""
+    with pytest.raises(RedactionFailure):
+        assert_publishable("see /Users//someone/notes.md", account="testuser")
+
+
+def test_a_doubled_separator_is_redacted(tmp_path: Path) -> None:
+    assert "alice" not in redact("/Users//alice/src/x.py", tmp_path, account="alice")
+
+
+# --- refusals never print the path they exist to hide ------------------------
+
+
+def test_a_missing_session_file_is_reported_without_a_traceback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A typo'd --session is the likeliest failure, and it raises FileNotFoundError.
+
+    Left unhandled it prints a traceback quoting the absolute path this tool
+    exists to keep out of the open — and skips the stale-output removal below.
+    """
+    missing = tmp_path / "definitely-not-here.jsonl"
+    assert main(["--session", str(missing)]) == 1
+    assert "Traceback" not in capsys.readouterr().err
+
+
+def test_a_failed_run_removes_a_stale_output_even_when_the_error_is_an_oserror(
+    tmp_path: Path,
+) -> None:
+    stale = tmp_path / "excerpt.md"
+    stale.write_text("a previous, plausible-looking excerpt", encoding="utf-8")
+    assert main(["--session", str(tmp_path / "missing.jsonl"), "--out", str(stale)]) == 1
+    assert not stale.exists(), "a stale excerpt would be published as this run's result"

@@ -17,8 +17,13 @@
        below follows the *operating system*, while GitHub's light/dark setting is
        its own, so the two can disagree. When they do, the cards still supply
        their own background and the text keeps its contrast — only the gaps
-       between cards change colour. The connectors are a mid grey that clears 3:1
-       against both a white page and GitHub's #0d1117. */
+       between cards change colour.
+
+       Contrast was measured, not eyeballed: every text colour below clears WCAG
+       AA (4.5:1) against its own card in both palettes, the italic asides
+       included, and the connector grey clears 4:1 against a white page and
+       against GitHub's #0d1117 alike — which is why one connector colour serves
+       both themes and is not restated in the dark block. */
     .card      { fill: #eef2f7; stroke: #c7d3e1; stroke-width: 1.5; }
     .card-lead { fill: #0b3a75; }
     .stage     { fill: #12203a; font-weight: 600; }

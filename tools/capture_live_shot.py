@@ -15,8 +15,11 @@ Asking System Events for ``window 1 of process "Live"`` fails with *Invalid
 index* — ``count of windows`` is ``0`` and the ``AXWindows`` attribute is empty,
 because Live draws its interface on a custom surface rather than as standard
 AX windows. Live's *own* AppleScript dictionary is no better: ``id of window 1``
-does not return, it times out after 60 seconds with error ``-1712``. Both dead
-ends were probed against a real running Live, so neither is worth re-trying.
+never returns a value — it blocks for **120 seconds** and then fails with an
+AppleEvent timeout (error ``-1712``), measured twice against a running Live.
+Both dead ends were probed against real Live, so neither is worth re-trying, and
+an approach that stalls two minutes before failing belongs nowhere near a tool
+meant to make re-shooting cheap.
 
 What does work is the window server's own list. :func:`on_screen_windows` calls
 ``CGWindowListCopyWindowInfo`` through ``ctypes`` — no PyObjC, no compiled
@@ -301,7 +304,28 @@ def resample_argv(path: Path, width: int) -> list[str]:
     return ["sips", "--resampleWidth", str(width), str(path), "--out", str(path)]
 
 
-def _run(argv: list[str]) -> None:
+def _assert_width(path: Path, width: int) -> None:
+    """Read the width back off the finished PNG.
+
+    A fixed width is the entire determinism this tool promises, and ``sips``
+    exiting 0 does not establish it. Measuring is one call, and the alternative
+    is discovering at review time that four committed screenshots disagree.
+    """
+    reported = _run_capturing(["sips", "-g", "pixelWidth", str(path)])
+    actual = next(
+        (int(part) for line in reported.splitlines() if "pixelWidth" in line
+         for part in [line.rsplit(":", 1)[-1].strip()] if part.isdigit()),
+        None,
+    )
+    if actual != width:
+        raise CaptureFailed(
+            f"{path.name} is {actual}px wide but {width}px was requested — the fixed "
+            f"width is the determinism this tool exists to provide"
+        )
+
+
+def _run_capturing(argv: list[str]) -> str:
+    """Run a subprocess and return its stdout, raising on failure."""
     try:
         completed = subprocess.run(argv, capture_output=True, text=True, check=False)
     except OSError as exc:
@@ -309,6 +333,12 @@ def _run(argv: list[str]) -> None:
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout or "").strip().splitlines()
         raise CaptureFailed(f"{argv[0]} failed: {detail[-1] if detail else 'no output'}")
+    return completed.stdout
+
+
+def _run(argv: list[str]) -> None:
+    """Run a subprocess for its effect, discarding stdout."""
+    _run_capturing(argv)
 
 
 def capture(
@@ -337,14 +367,25 @@ def capture(
         window_id = window.window_id
 
     out.parent.mkdir(parents=True, exist_ok=True)
-    _run(screencapture_argv(window_id, out))
-    if not out.is_file() or out.stat().st_size == 0:
-        # screencapture can exit 0 having written nothing when the target window
-        # disappears mid-capture. An empty PNG left on disk is worse than none:
-        # it is a committable file that renders as a broken image.
+    # Clear any previous take first, and remove whatever this run produced if it
+    # fails. Otherwise a failed re-shoot leaves the *old* image sitting at the
+    # path looking fresh, and the next `git add docs/assets/` commits it — and a
+    # capture that succeeded but failed to downscale is the worse version of
+    # that, since it is a valid PNG silently violating the fixed width this tool
+    # exists to guarantee.
+    out.unlink(missing_ok=True)
+    try:
+        _run(screencapture_argv(window_id, out))
+        if not out.is_file() or out.stat().st_size == 0:
+            # screencapture can exit 0 having written nothing when the target
+            # window disappears mid-capture. An empty PNG is committable and
+            # renders as a broken image.
+            raise CaptureFailed(f"screencapture exited 0 but wrote no image to {out}")
+        _run(resample_argv(out, width))
+        _assert_width(out, width)
+    except CaptureError:
         out.unlink(missing_ok=True)
-        raise CaptureFailed(f"screencapture exited 0 but wrote no image to {out}")
-    _run(resample_argv(out, width))
+        raise
     return window
 
 

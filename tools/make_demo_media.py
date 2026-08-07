@@ -53,6 +53,8 @@ import json
 import shutil
 import subprocess
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -83,6 +85,10 @@ DURATION_SLACK_S = 0.05
 # two frames; observed error on real captures is under a millisecond.
 ENCODED_DURATION_SLACK_S = 0.05
 
+# Video is compared more loosely than audio: `setpts` re-times whole frames, so
+# a 4x speed-up of an 8s take lands a frame past 2s rather than exactly on it.
+VIDEO_DURATION_SLACK_S = 0.25
+
 
 class MediaError(Exception):
     """Base class for refusals — every one of these means nothing usable was written."""
@@ -97,7 +103,8 @@ class CaptureDirError(MediaError):
 
 
 class ClipBoundsError(MediaError):
-    """The requested clip range is not inside the source audio."""
+    """A requested time extent is unusable — a clip range outside the source, or a
+    speed factor that would not produce a playable duration."""
 
 
 class EncodeError(MediaError):
@@ -147,12 +154,49 @@ def run_command(argv: list[str]) -> str:
     return completed.stdout
 
 
-def master_wav(capture_dir: Path) -> Path:
+def untrustworthy(manifest: dict) -> list[str]:
+    """Reasons this capture must not become the tour's audio, in the producer's own terms.
+
+    The render writes three flags for exactly one purpose — so a reader "never
+    trusts an under-measured stem as if it were faithful", in its words. Honouring
+    them matters more here than anywhere, because **none of the other guards can
+    see this class of failure**: an incomplete render yields a *short but
+    perfectly valid* master, so open bounds are derived from the truncated
+    length, the post-encode duration check compares against that same derived
+    number, and the mp3 plays. Every check agrees, and the tour ships a truncated
+    take as its central evidence.
+
+    Absence is not failure. Captures predating these flags omit them, and one
+    such directory is what this tool was verified against — so only an explicit
+    bad value refuses.
+    """
+    reasons = []
+    status = manifest.get("status")
+    if status is not None and status != "ok":
+        reasons.append(f"the render reported status {status!r}, not 'ok'")
+
+    # Listed by track_id, and the master's is the string "master".
+    not_terminal = manifest.get("analyzer_not_terminal")
+    if isinstance(not_terminal, list) and "master" in not_terminal:
+        reasons.append(
+            "the analyzer was not last in the master chain, so the WAV misses whatever "
+            "sits past it — the mix would be missing its own master processing"
+        )
+    entry = manifest.get("master")
+    if isinstance(entry, dict) and entry.get("terminal") is False:
+        reasons.append("the master's analyzer tap is flagged non-terminal")
+    return reasons
+
+
+def master_wav(capture_dir: Path, allow_incomplete: bool = False) -> Path:
     """Locate the master WAV in a render's capture directory.
 
     Resolved through ``manifest.json``'s ``master.filename`` — **not** its
     ``absolute_path``, which records the authoring machine's path and is wrong
     the moment the directory is moved, copied, or read from a clone.
+
+    Refuses a capture the manifest itself flags as untrustworthy; pass
+    ``allow_incomplete`` to override deliberately (see :func:`untrustworthy`).
     """
     manifest_path = capture_dir / "manifest.json"
     if not manifest_path.is_file():
@@ -168,6 +212,14 @@ def master_wav(capture_dir: Path) -> Path:
             f"{manifest_path} has no master entry — a capture without a master mix "
             f"cannot produce the tour's audio"
         )
+    if not allow_incomplete:
+        reasons = untrustworthy(manifest)
+        if reasons:
+            raise CaptureDirError(
+                f"{manifest_path} flags this capture as unfaithful: "
+                + "; ".join(reasons)
+                + " — re-render, or pass --allow-incomplete to publish it anyway"
+            )
     wav = capture_dir / str(entry["filename"])
     if not wav.is_file():
         raise CaptureDirError(f"{wav} is listed in the manifest but does not exist")
@@ -373,6 +425,57 @@ def _assert_encoded_duration(dst: Path, expected: float) -> None:
         )
 
 
+@contextmanager
+def _all_or_nothing(targets: list[Path]) -> Iterator[None]:
+    """Make a set of outputs appear only if *every* one of them succeeded.
+
+    Both halves matter. Stale files are cleared **before** the run, because a
+    failure that leaves the previous take in place is the trap this tool feeds
+    directly: the operator reads the error, fixes it, and `git add docs/assets/`
+    picks up an asset that looks fresh and is not. And a partial set is cleared
+    **after** a failure, because the sibling outputs of a rejected file are just
+    as wrong — a waveform still fronting audio that was deleted for being the
+    wrong length is worse than no waveform, since it looks like evidence.
+    """
+    for target in targets:
+        target.unlink(missing_ok=True)
+    try:
+        yield
+    except MediaError:
+        for target in targets:
+            target.unlink(missing_ok=True)
+        raise
+
+
+def _assert_video_shape(path: Path, width: int, expected_duration: float | None) -> None:
+    """Re-measure an encoded video against what was asked for.
+
+    The visual outputs promise checkable post-conditions — a fixed width, a
+    duration implied by the speed-up — and ffmpeg's exit code proves neither.
+    Measuring them is the same discipline :func:`_assert_encoded_duration`
+    applies to audio, and the reason is identical: the file is committed to a
+    permanent history, so "it encoded" is not the same claim as "it is right".
+    """
+    actual_width = int(
+        run_command(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+             "stream=width", "-of", "default=nw=1:nk=1", str(path)]
+        ).strip()
+        or 0
+    )
+    if actual_width != width:
+        path.unlink(missing_ok=True)
+        raise EncodeError(f"{path.name} encoded {actual_width}px wide but {width}px was requested")
+    if expected_duration is not None:
+        actual = probe_duration(path)
+        if abs(actual - expected_duration) > VIDEO_DURATION_SLACK_S:
+            path.unlink(missing_ok=True)
+            raise EncodeError(
+                f"{path.name} encoded to {actual:.3f}s but the crop and {expected_duration:.3f}s "
+                f"speed-up implied a different length"
+            )
+
+
 def make_clip(
     capture_dir: Path,
     out_dir: Path,
@@ -380,17 +483,19 @@ def make_clip(
     start: float | None = None,
     end: float | None = None,
     bitrate: str = DEFAULT_BITRATE,
+    allow_incomplete: bool = False,
 ) -> list[Output]:
     """Master WAV → ``<name>.mp3`` plus ``<name>.png``, its inline waveform."""
-    src = master_wav(capture_dir)
+    src = master_wav(capture_dir, allow_incomplete)
     begin, duration = clip_bounds(start, end, probe_duration(src))
     out_dir.mkdir(parents=True, exist_ok=True)
 
     mp3 = out_dir / f"{name}.mp3"
-    outputs = [_emit(mp3, mp3_argv(src, mp3, begin, duration, bitrate))]
-    _assert_encoded_duration(mp3, duration)
     png = out_dir / f"{name}.png"
-    outputs.append(_emit(png, waveform_argv(mp3, png)))
+    with _all_or_nothing([mp3, png]):
+        outputs = [_emit(mp3, mp3_argv(src, mp3, begin, duration, bitrate))]
+        _assert_encoded_duration(mp3, duration)
+        outputs.append(_emit(png, waveform_argv(mp3, png)))
     return outputs
 
 
@@ -407,11 +512,14 @@ def make_hero(
     if not source.is_file():
         raise MediaError(f"{source} does not exist")
     out_dir.mkdir(parents=True, exist_ok=True)
+    expected = probe_duration(source) / speed if speed > 0 else None
 
     mp4 = out_dir / f"{name}.mp4"
-    outputs = [_emit(mp4, hero_argv(source, mp4, crop, speed, width))]
     png = out_dir / f"{name}.png"
-    outputs.append(_emit(png, poster_argv(mp4, png, poster_at)))
+    with _all_or_nothing([mp4, png]):
+        outputs = [_emit(mp4, hero_argv(source, mp4, crop, speed, width))]
+        _assert_video_shape(mp4, width, expected)
+        outputs.append(_emit(png, poster_argv(mp4, png, poster_at)))
     return outputs
 
 
@@ -426,6 +534,11 @@ def main(argv: list[str] | None = None) -> int:
     clip.add_argument("--start", type=float, help="clip start in seconds (default: 0)")
     clip.add_argument("--end", type=float, help="clip end in seconds (default: end of source)")
     clip.add_argument("--bitrate", default=DEFAULT_BITRATE)
+    clip.add_argument(
+        "--allow-incomplete",
+        action="store_true",
+        help="publish even if the manifest flags the render as incomplete or under-tapped",
+    )
 
     hero = sub.add_parser("hero", help="screen recording → mp4 + poster still")
     hero.add_argument("--source", type=Path, required=True, help="the raw screen-recording take")
@@ -441,7 +554,13 @@ def main(argv: list[str] | None = None) -> int:
         require_tools()
         if args.command == "clip":
             outputs = make_clip(
-                args.capture_dir, args.out_dir, args.name, args.start, args.end, args.bitrate
+                args.capture_dir,
+                args.out_dir,
+                args.name,
+                args.start,
+                args.end,
+                args.bitrate,
+                args.allow_incomplete,
             )
         else:
             outputs = make_hero(

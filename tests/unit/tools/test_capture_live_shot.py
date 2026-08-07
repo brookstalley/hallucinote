@@ -30,6 +30,7 @@ from tools.capture_live_shot import (
     ScreenRecordingDenied,
     UnsupportedPlatformError,
     Window,
+    _run_capturing,
     assert_capture_permission,
     capture,
     find_window,
@@ -194,12 +195,17 @@ def pipeline(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         "tools.capture_live_shot.on_screen_windows", lambda: [window_entry(56749)]
     )
 
-    def fake_run(argv: list[str]) -> None:
+    # `_run_capturing` is the single subprocess seam — `_run` delegates to it —
+    # so patching this one name routes every external call through the fake.
+    def fake_run(argv: list[str]) -> str:
         events.append(argv[0])
         if argv[0] == "screencapture":
             Path(argv[-1]).write_bytes(b"\x89PNG" + b"\x00" * 64)
+        if argv[0] == "sips" and "-g" in argv:
+            return f"{argv[-1]}\n  pixelWidth: {DEFAULT_WIDTH}\n"
+        return ""
 
-    monkeypatch.setattr("tools.capture_live_shot._run", fake_run)
+    monkeypatch.setattr("tools.capture_live_shot._run_capturing", fake_run)
     return events
 
 
@@ -261,11 +267,12 @@ def test_capture_removes_an_empty_png_rather_than_leaving_it_to_be_committed(
 ) -> None:
     out = tmp_path / "shot.png"
 
-    def writes_nothing(argv: list[str]) -> None:
+    def writes_nothing(argv: list[str]) -> str:
         if argv[0] == "screencapture":
             Path(argv[-1]).write_bytes(b"")
+        return ""
 
-    monkeypatch.setattr("tools.capture_live_shot._run", writes_nothing)
+    monkeypatch.setattr("tools.capture_live_shot._run_capturing", writes_nothing)
     with pytest.raises(CaptureFailed, match="wrote no image"):
         capture(out)
     assert not out.exists()
@@ -328,3 +335,78 @@ def test_main_reports_a_refusal_without_a_traceback(
     monkeypatch.setattr("tools.capture_live_shot.on_screen_windows", lambda: [])
     assert main(["--out", str(tmp_path / "shot.png")]) == 1
     assert "is Live running" in capsys.readouterr().err
+
+
+# --- outputs are all-or-nothing ----------------------------------------------
+
+
+def test_capture_removes_a_previous_take_when_the_capture_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pipeline: list[str]
+) -> None:
+    """A failed re-shoot must not leave the old image looking fresh for `git add`."""
+    out = tmp_path / "shot.png"
+    out.write_bytes(b"previous take")
+
+    def failing(argv: list[str]) -> str:
+        if argv[0] == "screencapture":
+            raise CaptureFailed("screencapture failed: could not create image from window")
+        return ""
+
+    monkeypatch.setattr("tools.capture_live_shot._run_capturing", failing)
+    with pytest.raises(CaptureFailed):
+        capture(out)
+    assert not out.exists()
+
+
+def test_capture_removes_the_full_size_image_when_the_downscale_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pipeline: list[str]
+) -> None:
+    """A captured-but-undownscaled PNG is valid and silently violates the fixed width."""
+    out = tmp_path / "shot.png"
+
+    def failing(argv: list[str]) -> str:
+        if argv[0] == "screencapture":
+            Path(argv[-1]).write_bytes(b"\x89PNG" + b"\x00" * 64)
+            return ""
+        raise CaptureFailed("sips failed")
+
+    monkeypatch.setattr("tools.capture_live_shot._run_capturing", failing)
+    with pytest.raises(CaptureFailed):
+        capture(out)
+    assert not out.exists()
+
+
+def test_capture_refuses_an_image_that_is_not_the_requested_width(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pipeline: list[str]
+) -> None:
+    """sips exiting 0 does not establish the width, which is the whole promise."""
+    out = tmp_path / "shot.png"
+
+    def wrong_width(argv: list[str]) -> str:
+        if argv[0] == "screencapture":
+            Path(argv[-1]).write_bytes(b"\x89PNG" + b"\x00" * 64)
+        if argv[0] == "sips" and "-g" in argv:
+            return f"{argv[-1]}\n  pixelWidth: 900\n"
+        return ""
+
+    monkeypatch.setattr("tools.capture_live_shot._run_capturing", wrong_width)
+    with pytest.raises(CaptureFailed, match="900px wide but 1600px was requested"):
+        capture(out)
+    assert not out.exists()
+
+
+# --- the subprocess seam itself ----------------------------------------------
+
+
+def test_run_capturing_returns_stdout_from_a_real_process() -> None:
+    assert _run_capturing(["echo", "hello"]).strip() == "hello"
+
+
+def test_run_capturing_raises_with_the_tool_name_on_a_real_failure() -> None:
+    with pytest.raises(CaptureFailed, match="false failed"):
+        _run_capturing(["false"])
+
+
+def test_run_capturing_raises_when_the_binary_does_not_exist() -> None:
+    with pytest.raises(CaptureFailed, match="could not run"):
+        _run_capturing(["definitely-not-a-real-binary-xyz"])

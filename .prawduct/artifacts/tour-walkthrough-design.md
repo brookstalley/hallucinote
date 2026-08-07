@@ -33,10 +33,21 @@ document** built from real artifacts captured while that song was authored.
 Each lifecycle stage earns exactly one piece of evidence, chosen for the thing only
 it can show, and **links** to the existing deep doc rather than restating it.
 
-**Evidence budget — hard cap:** 4 screenshots · 1 hero video · 3 audio clips. The
-hero counts as **one** item but ships as **two files** — the mp4 and the poster PNG
-that links to it — because GitHub will not render an inline player (see *Capture
-tooling* item 4). The poster is not one of the four screenshots.
+**Evidence budget — hard cap:** 4 screenshots · 1 hero video · 3 audio clips.
+
+**The cap counts *items*; two kinds of item ship as two files each**, both for the same
+reason — GitHub renders no inline player, so every piece of media needs a still to
+stand in for it (see *Capture tooling* item 4):
+
+- the **hero** is one item = `hero.mp4` + the poster PNG that links to it;
+- each **audio clip** is one item = `<name>.mp3` + its `showwavespic` waveform PNG.
+
+So the budget permits **at most 12 media files** — 4 screenshots + 2 + (3 × 2) — and
+neither the poster nor any waveform counts against the four screenshots. Everything
+else is text or code. C1's "the cap is met exactly" and D1's asset test are both
+written against those numbers; without this paragraph they have no unambiguous target,
+and the likely outcome is a test relaxed to permit arbitrary extras — exactly what the
+byte cap exists to prevent.
 Everything else is text or code. Every screenshot is a maintenance liability, so
 they are spent only where text cannot carry the point: off-grid MIDI, the full
 arrangement, the session filling in, meters during playback.
@@ -115,8 +126,9 @@ hand-staging exercise.
    get.** Probed against a real running Live on 2026-08-06: `count of windows` of
    process "Live" is **0** and its `AXWindows` attribute is empty — Live draws its
    interface on a custom surface, so it publishes no accessibility windows — and
-   Live's own dictionary does not answer `id of window 1` at all, timing out after
-   60 s with `-1712`. The id comes instead from the window server itself,
+   Live's own dictionary never answers `id of window 1`: it blocks for 120 seconds
+   and then fails with an AppleEvent timeout (`-1712`), measured twice. The id comes
+   instead from the window server itself,
    `CGWindowListCopyWindowInfo` reached through `ctypes` and serialised via
    `CFPropertyListCreateData` into something `plistlib` parses. That keeps the
    no-new-dependency rule intact: no PyObjC, no compiled helper. Live is raised with

@@ -373,6 +373,20 @@ itself and the invocation change becomes the cheaper option.
   change because marker discovery walks up from the song directory (root-contract
   precedence step 3). Confirm that against the resolver with a real DB-path resolution
   from inside `examples/<slug>/` before composing a note.
+- **Status note (2026-08-07): the first take shipped and was then RETIRED.**
+  `examples/angle-of-the-light` was built end to end, pushed, rendered and
+  measured — and its real output was the six framework defects it surfaced by
+  being rebuilt from scratch, not its audio. It is archived outside the repo; its
+  ADRs remain in this branch's history. **The Deliverables below therefore name
+  files that are not currently in the tree** — they describe what the NEXT take
+  re-creates, and only `examples/hallucinote.toml` survives today.
+
+  The next take is re-authored from a sparse prompt through discovery and
+  elicitation, so it will be a *different song* — that is intended, not a
+  regression. See `tour-walkthrough-design.md` → *A walkthrough, not a recipe*.
+  Do not paste the first take's brief back in: the brief is what the elicitation
+  pass must PRODUCE, and skipping it is the defect the next take exists to close.
+
 - **Depends on:** Chunk A1 (the transcript renderer must exist before the session that
   produces the transcript), A2, A3
 - **Artifacts consumed:** `tour-walkthrough-design.md` §Where the demo song lives + §Sequencing, `project-root-contract.md` §Bounded exception, `song-conventions.md`
@@ -393,6 +407,25 @@ itself and the invocation change becomes the cheaper option.
   5. Committed and chunk marked `[x]` in Status
 
 ### Chunk C1: Capture the evidence from the finished set
+
+- **Amendment — four artifacts CANNOT wait for this chunk.** Recovered here
+  because it was written into the retired song's capture log and would otherwise
+  have died with it. C1 keeps its role as the curation and budget-enforcement
+  pass, and still spends the cap exactly once — but some of its raw material has
+  to be acquired *during* composition, because these four stop being true the
+  moment the song is finished:
+
+  | Beat | Artifact | Why it cannot wait |
+  |---|---|---|
+  | 7 Materialize | the session view *filling in* | a finished set is full; "filling in" is a state, not a view |
+  | 6 Arrangement | the arrangement *growing* | the whole-form shot works at the end; the *becoming* does not |
+  | 8 Production & mix | the mix **before** the fix | once fixed, the evidence of the problem is gone |
+  | 9 Iterate | the A/B pair | the "before" is by definition a discarded state; render it while it exists |
+
+  Two standing rules follow, and they belong to B1 as much as to C1: **screenshot
+  before fixing anything interesting — the bug is the evidence**, and **never
+  stage a shot** — if an artifact would have to be manufactured to look right, it
+  does not go in the tour. The premise of the document is that all of it happened.
 
 - **Description:** Spend the evidence budget, exactly once, against the finished song:
   4 screenshots (off-grid MIDI in the clip editor, the arrangement, the session filling

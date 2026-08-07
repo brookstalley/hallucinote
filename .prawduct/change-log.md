@@ -72,12 +72,20 @@ uncancellable Live operations. The implicit 15/15 default was never checked at a
 because the test only iterated the explicit entries. Caller ceilings widened; the
 invariant is now asserted strictly.
 
+`examples/angle-of-the-light` was RETIRED from the tree in the same batch. It was
+a scouting run: its real output was the six defects above, found by rebuilding it
+from scratch, not its audio. It is archived outside the repo with both masters and
+its decision records, and its ADRs remain in this branch's history. The next take
+is re-authored from a sparse prompt through discovery and elicitation, so it will
+be a different song by design — see `tour-walkthrough-design.md`, *A walkthrough,
+not a recipe*.
+
 Two more were pinned rather than fixed and are filed: push appends behind a matched
 parent's foreign devices while promising to load over them (no reorder API in Live 12.4,
 so the honest fix is a chain-tail rebuild), and `run_on_main` releases the bout lock on
 the timeout path, so admission stops refusing while Live is still committed.
 
-Suite 4830 -> 4869 passing across the batch; ruff and mypy clean.
+Suite 4830 -> 4865 passing across the batch; ruff and mypy clean.
 
 ## 2026-08-06 — The tour's capture tooling, built against probes that kept saying no
 

@@ -318,25 +318,45 @@ design_decisions:
       rationale: "A song = build.py + captured_session.json + tests/ + per-song SQLite DB (gitignored). Tests live next to the song so the directory is forkable as a unit."
       date: "2026-05-17 (J-2b)"
   interaction_patterns:
-    - name: "Propose-and-react, never interrogate"
+    - name: "Identity is the composer's; craft is the agent's"
       summary: >-
-        Where a choice is the user's to own, the agent states an informed
-        proposal carrying its reasoning and a recommendation, inviting a
-        one-word reaction — never a blank question. A blank question is
-        auto-accompaniment wearing a politeness costume: it looks collaborative
-        and transfers zero expertise. Cheap-to-revise choices are made
-        tastefully and *shown* (the artifact becomes the next proposal); only
-        expensive-to-reverse forks earn a proposal.
+        Hallucinote is a tool for composing, not a music generator. Sort every
+        choice by WHO OWNS IT. Identity — what the song IS (what it should do to
+        someone, whether anyone is singing, the harmonic world, what it sounds
+        like, the shape) — is the composer's and is ASKED OPENLY, with no
+        recommendation attached, regardless of how cheap it would be to reverse.
+        Craft — BPM, meter arithmetic, voicings, generator choice, device
+        chains, mix moves — is the agent's: decided, built, stated in a clause,
+        never asked. The musical intent is identity; the number that realizes it
+        is craft. Supersedes the earlier reversal-cost sorting ("cheap choices
+        are shown, expensive forks are proposed"), which graded the wrong axis.
+        Two failure modes: gatekeeping (guarded everywhere) and SUBSTITUTING —
+        deciding, fluently, what the song is.
+      artifact: .prawduct/artifacts/elicitation-and-stage-exit-criteria.md
+    - name: "Ask openly; propose only once the choice is handed back"
+      summary: >-
+        A blank question about CRAFT is auto-accompaniment wearing a politeness
+        costume — it transfers zero expertise; decide it. But an informed
+        proposal about IDENTITY is the opposite failure: a recommendation plus
+        its justification CLOSES the fork, because disagreeing then costs the
+        composer an argument. Ask identity openly with two concretes and no
+        thumb on the scale. The rule inverts once they hand the choice back
+        ("you pick") or ask for something they can't yet specify ("make it feel
+        like Bach") — there, withholding an opinion is uselessness, so propose
+        with the why. Expertise is constant; the mode reads the REQUEST, not the
+        requester. They lead the creative project no matter what.
       artifact: .prawduct/artifacts/intent-collaboration-model.md
-    - name: "One consolidated turn, bounded"
+    - name: "Elicitation is bounded by shape, not by turn count"
       summary: >-
-        Elicitation gets exactly one turn, with every proposal, disclosure and
-        piece of arithmetic in a single message. Sequential Q&A burns patience
-        and violates the stop-less norm for real. An item the user leaves
-        unanswered does NOT earn a second round — it becomes an UNDECIDED row
-        with an owner and a closing stage, and work proceeds. Bounds two
-        failure modes that both look like diligence: the stage that never
-        converges, and the turn that fragments.
+        Every turn carries new work, not just questions; at most two questions
+        per turn; converge once only craft remains; "just go" ends the stage
+        immediately with the rest decided and marked `agent-handback` in the brief.
+        Replaces the earlier one-consolidated-turn bound, which caused the cram
+        it was meant to prevent. Sequential blank-question Q&A stays forbidden —
+        now because a question with no work attached fails the shape rule, not
+        because a counter was exceeded. Where identity outruns the two-question
+        budget it travels as a two-sentence read with an explicit exit, never a
+        silent decision and never a full argument.
       artifact: .prawduct/artifacts/elicitation-and-stage-exit-criteria.md
     - name: "Three states, and a forbidden fourth"
       summary: >-

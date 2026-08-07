@@ -36,11 +36,16 @@ not a required-fields list.
 **Sort by owner before you sort by importance.** Ask one question of every
 dimension: **whose choice is this?**
 
-- **Identity — the composer's.** What the song *is*. The five **must-haves**
-  below are the floor: purpose/feeling (1), genre + sonic world (2, with 5 and
-  9), form and energy shape (3, with 10), **vocals (4)**, and the harmonic world
-  (8). **Ask these openly, with no recommendation attached.** Theirs even when
-  you have a great answer, and regardless of how cheap they'd be to reverse.
+- **Identity — the composer's.** What the song *is*. **Every must-have below is
+  identity** — purpose/feeling (1), genre anchor (2), length + structure (3),
+  **vocals (4)**, instrumentation (5) — and three **should-haves are promoted**
+  to it: harmonic strategy (8), production style (9) and the energy arc (10),
+  because they describe what the song *is* rather than how it gets built.
+  Must/should grades how often a dimension is load-bearing; identity/craft grades
+  **who owns it** — a different axis, so they cross. **Ask these openly, with no
+  recommendation attached**, theirs regardless of how cheap they'd be to reverse.
+  `/song-brief` collapses them into five questions (2 and 5 travel together; 3
+  and 10 travel together).
 - **Craft — the agent's.** How to realize that intent: BPM (6), meter arithmetic
   (7), density (14), the mechanism behind a named gesture (16), the time-budget
   arithmetic (17). **Decide, build, state in a clause. Never ask.**

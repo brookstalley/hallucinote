@@ -167,3 +167,103 @@ def test_stage_criteria_table_has_exactly_one_home():
     assert "definitions-of-done" in artifact, (
         "the design artifact must link to the canonical criteria table"
     )
+
+
+# --- The identity/craft contract ------------------------------------------
+#
+# The elicitation stage was rebuilt around an owner test: identity (what the
+# song IS) belongs to the composer and is asked openly; craft (the numbers that
+# realize it) belongs to the agent and is never asked. That contract is now
+# restated across eight instruction surfaces, which is a deliberate trade for
+# LLM-read files — an agent that loads only CLAUDE.md still has to get it right.
+# The trade only holds if the restatements cannot drift apart, and the previous
+# landing of this same stage drifted three surfaces before anyone noticed.
+
+_OWNER_TEST_SURFACES = (
+    # CLAUDE.md auto-loads every session; the skills do not. A contract missing
+    # from here is a contract that does not bind, whatever the skills say.
+    _REPO / "CLAUDE.md",
+    _REPO / "docs" / "song-workflow.md",
+    _REPO / "docs" / "song-new-checklist.md",
+    _REPO / "docs" / "song-authoring-conventions.md",
+    _REPO / "skills" / "song-brief" / "SKILL.md",
+    _REPO / "skills" / "song-workflow" / "SKILL.md",
+)
+
+# The five dimensions the composer owns, each keyed by a phrase that must
+# survive rewording. Vocals is the one that matters most: the pre-amendment
+# sweep table omitted it entirely, a 45-second song with a verse and a chorus
+# got briefed with nobody asking about the voice, and that is the defect the
+# floor exists to make impossible.
+_IDENTITY_MARKERS = ("singing", "harmonic world", "sounds like", "shape")
+
+
+def test_owner_test_reaches_every_instruction_surface():
+    """Identity-vs-craft has to be findable from whichever surface an agent
+    happens to load, or it binds only the agents that read the right file."""
+    for surface in _OWNER_TEST_SURFACES:
+        text = surface.read_text("utf-8").lower()
+        assert "identity" in text and "craft" in text, (
+            f"{surface.relative_to(_REPO)} carries song-authoring instructions "
+            "but not the identity/craft owner test — an agent reading only this "
+            "surface can author the composer's choices and never know it"
+        )
+
+
+def test_identity_floor_names_vocals_and_the_rest():
+    """The floor is five dimensions; the skill is where they are enumerated."""
+    text = (_REPO / "skills" / "song-brief" / "SKILL.md").read_text("utf-8").lower()
+    for marker in _IDENTITY_MARKERS:
+        assert marker in text, (
+            f"skills/song-brief lost the identity dimension matching {marker!r} "
+            "— the floor is what stops a must-have falling out of the sweep"
+        )
+
+
+def test_vocals_is_on_the_identity_floor():
+    """Separate from the loop above so the failure names the actual defect.
+
+    The pre-amendment sweep table was derived from what had already gone wrong
+    once, so it held only should-haves and gap-closers. Questions that have
+    always been answered by accident never become defects, and therefore never
+    earn a row on a defect-derived agenda."""
+    text = (_REPO / "skills" / "song-brief" / "SKILL.md").read_text("utf-8").lower()
+    assert "is anyone singing" in text, (
+        "skills/song-brief no longer asks whether anyone is singing — this is "
+        "the exact omission the identity floor was built to prevent"
+    )
+
+
+def test_the_over_argued_proposal_is_still_named_as_a_failure():
+    """Warning only against the blank question is what produced the wall: an
+    agent avoiding 'what tempo?' lands on a recommendation plus its full
+    justification, which closes the fork instead of opening it. Both failures
+    have to be named or the skill teaches one by omitting the other."""
+    text = (_REPO / "skills" / "song-brief" / "SKILL.md").read_text("utf-8")
+    assert "over-argued proposal" in text, (
+        "skills/song-brief dropped the over-argued-proposal anti-pattern — "
+        "leaving only the blank-question warning steers straight into it"
+    )
+
+
+def test_no_surface_reinstates_the_one_turn_bound():
+    """Counting turns is what caused the cram it was meant to prevent; the
+    bound is now on shape (every turn carries new work, <=2 questions).
+
+    `.prawduct/change-log.md` is exempt: it is an append-only historical record
+    and its older entries legitimately describe the superseded rule. The design
+    artifact is exempt because it preserves the ratified text under explicit
+    `→ amended by Amendment 1` markers, which is how a norm amendment is
+    supposed to read."""
+    exempt = {"change-log.md", "elicitation-and-stage-exit-criteria.md"}
+    offenders = [
+        md.relative_to(_REPO)
+        for md in _markdown_files()
+        if md.name not in exempt
+        and "plans/" not in md.relative_to(_REPO).as_posix()
+        and "one consolidated turn" in md.read_text("utf-8").lower()
+    ]
+    assert not offenders, (
+        "the one-consolidated-turn bound was reinstated in: "
+        + "; ".join(str(o) for o in offenders)
+    )

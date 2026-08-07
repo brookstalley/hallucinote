@@ -111,9 +111,11 @@ first. Skipped silently when a directed prompt leaves nothing applicable open.
 `/song-new` scaffolds `songs/<slug>/` (build.py, captured_session.json, tests,
 decisions/, annotations/, attempts/, song.md). Before that, and throughout, the song's
 *intent* — key, the central tension, what the chorus does, the energy arc — is
-the thing everything else serves. Don't auto-decide it: at an elementary musical
-fork the user hasn't directed, **propose and read their reaction** (the third
-register). Three recall surfaces, one per question: prior *intent* → `/song-context`;
+the thing everything else serves. Those are **identity** dimensions, so don't
+auto-decide them and don't staple a recommendation to them either: at an
+elementary musical fork the user hasn't directed, **ask it openly** and read the
+reaction. Only once they hand the choice back ("you decide") do you propose, with
+the why. Three recall surfaces, one per question: prior *intent* → `/song-context`;
 the audit trail of compose-time decisions → `/decisions`; **what you already tried on a
 part and how it turned out** (incl. reverted dead ends) → `/song-attempts`, before you
 re-touch a part you've worked before.
@@ -301,7 +303,7 @@ depends on."*
 
 | Stage | Done when |
 |---|---|
-| **0 · `/song-brief`** | `annotations/01-the-brief.md` exists with the prompt verbatim and a resolution table in which every applicable dimension is DECIDED or UNDECIDED-with-an-owner. **Every identity dimension was answered by the composer or asked about openly** — or, on "just go", decided and marked `agent` so they can take it back; **no craft dimension was put to them as a question.** NOT-APPLICABLE rows are recorded, not asked about. The time budget is costed if a duration was stated. |
+| **0 · `/song-brief`** | `annotations/01-the-brief.md` exists with the prompt verbatim and a resolution table in which every applicable dimension is DECIDED or UNDECIDED-with-an-owner. **Every identity dimension was answered by the composer or asked about openly** — or, on "just go", decided and marked `agent-handback` so they can take it back (a bare `agent` on an identity row is the defect, and is greppable); **no craft dimension was put to them as a question.** NOT-APPLICABLE rows are recorded, not asked about. The time budget is costed if a duration was stated. |
 | **1 · `/song-new`** | Tempo, meter and the section/bar list are **values from the brief**, not invented at the command line. Scaffold builds; shape tests pass. Each brief decision is filed in `decisions/`. If the CLI needs a value the brief lacks, that is an UNDECIDED row — close it before scaffolding, never default it silently. |
 | **2 · `/song-pick-instruments`** | Every part the brief names has a resolved **chain** in the snapshot. Where the brief says the sonic worlds differ, that difference exists **as chain differences**. No chain is "TBD at mix time" — sound design is composition. |
 | **3 · `/compose-part`** | Every gesture the section needs **exists in `build.py`** — notes, envelope, or device. **The docstring test:** if prose in the song names a device, an envelope or a mechanism, grep the song for it; absent ⇒ the stage is not done. Per-part `feel` is set explicitly, not defaulted by omission. |

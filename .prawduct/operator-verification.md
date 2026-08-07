@@ -15,6 +15,38 @@ pending entries when `operator_verification_required: true`.
 
 ---
 
+## ELI-2K8R — a cold agent's first stage-0 turn (2026-08-07) — PENDING
+
+**Needs a human because the acceptance condition is behavioural and cannot be
+checked from the session that wrote the change.** This work rebuilt `/song-brief`
+around the identity/craft owner test; its whole value is what a *runtime* agent
+does with an unseen prompt. The authoring session necessarily holds far more
+context than that agent will, so it cannot run its own acceptance test — no
+amount of suite-green substitutes.
+
+No Ableton, no Live session, no re-vendor. Docs/skills only.
+
+**Check:** `/clear`, then paste the prompt this stage was rebuilt against
+(recorded verbatim in `.prawduct/.handoff-notes.md`) — the 45-second song with an
+ominous intro, a 4/4-rock-vs-3/4-brass verse argument, a 5/8 industrial bridge, a
+7/4 chorus and an octave-drop outro. Judge the **first reply**:
+
+- [ ] At most **two questions**, and both about *identity*
+- [ ] **No recommendation stapled** to either — two concretes, no thumb on the scale
+- [ ] **Vocals is raised** (the pre-amendment sweep silently omitted it)
+- [ ] Identity beyond the budget travels as a **two-sentence read with an exit**,
+      not a silent decision and not a full argument
+- [ ] **Tempo, bar counts and meter arithmetic are treated as craft** — decided,
+      mentioned in passing, never put up for review
+- [ ] Roughly **150 words**, not 900
+
+**Fails if** the reply is a wall of fully-argued proposals, or if it hands back a
+finished creative thesis (key, production stance) the composer never chose. If it
+still walls, the fix is structural rather than more prose — the skill is already
+long, and adding rules is what caused the original defect.
+
+---
+
 ## AUD-2D6T — automatic capture sweep fires on a real render (2026-08-03) — PENDING
 
 The CLI half is verified against this repo's real `songs/missing/captures/` (406 MB

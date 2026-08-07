@@ -172,6 +172,9 @@ values elicitation produces; and the tour needs a nameable beat.
 4. **Load-bearing AND unstated only.** Cheap-to-revise choices are made
    tastefully and *shown* (the artifact is the next proposal); expensive forks
    are proposed. Nothing already stated is re-asked.
+   → *its show-vs-ask sorting is amended by Amendment 1: reversal cost was the
+   wrong axis, and the owner test replaces it. "Load-bearing and unstated only"
+   and "nothing already stated is re-asked" stand.*
 
 **Silence is a valid pass.** A fully-directed prompt with no applicable
 undecided dimension produces a brief with a resolution table and **no
@@ -266,6 +269,14 @@ does not carry:
 
 ## Worked example — the v2 prompt
 
+> **Superseded by *Amendment 1* — kept as the record of what was ratified, NOT
+> as a model to copy.** The turn below is the exact wall Amendment 1 forbids:
+> seven fully-argued items at once, **tempo** (craft) put up as proposal #1 with
+> its arithmetic, **harmony** and **production stance** (identity) handed over as
+> finished theses with recommendations attached — and no question about
+> **vocals**. The current model is the Good/Bad pair in
+> [`skills/song-brief/SKILL.md`](../../skills/song-brief/SKILL.md).
+
 Run on `~/angle-of-light/v2-prompt.md`, the owner's real next starting prompt.
 That file also records the gaps the owner already knows are there, which makes
 it the acceptance test.
@@ -326,6 +337,10 @@ stated defect and not merely their stated gap list.
 Seven items, five of which take a one-word reaction and two of which take none.
 
 ## Worked example — the sparse case
+
+> **Read through *Amendment 1*.** The sparse-prompt shape still holds; the
+> register does not — identity is now asked openly rather than proposed with a
+> recommendation.
 
 Prompt: *"an ambient soundscape, something to work to."* No rhythm, no sections,
 no meter, no duration.

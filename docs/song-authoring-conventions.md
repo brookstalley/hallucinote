@@ -531,7 +531,7 @@ For non-4/4 sections:
 - Name `BEATS_PER_BAR_7_8 = 3.5` (etc.) as a constant in `build.py` and pass it through.
 - Use the time-signature map (`M.add_time_signature_point`) to record **the song's true meter**, including within-song changes: one row per meter change, at the bar it starts on. `start_bar` is a float and rows below 1.0 are refused (bars are 1-based), but there is no ceiling and no one-row limit.
 
-> **The DB records the meter; Live shows a flat ruler.** Live 12.4's MCP has no `song_signature` automation target, so only the bar-1 row reaches Live — `plan_push_time_signature_map` pushes it and warns loudly that the rest were skipped. That warn is the one place the limit is stated: the song's meter is a property of the authored work, Live's ability to render it is a materialization detail, and the projection is where a projection loss belongs. Author the true meter map regardless.
+> **The DB records the meter; Live shows a flat ruler.** Live 12.4's MCP has no `song_signature` automation target, so only the bar-1 row reaches Live — `plan_push_time_signature_map` pushes it and raises a push-report *alert* (not a diagnostic note) saying the rest were skipped. That warn is the one place the limit is stated: the song's meter is a property of the authored work, Live's ability to render it is a materialization detail, and the projection is where a projection loss belongs. Author the true meter map regardless.
 >
 > **Realize the meter as felt groove, because the ruler won't carry it.** Bar-scaled generators via `beats_per_bar`, plus hand-authored within-bar accent groupings. Never present that to the user as a creative option — it isn't one; it's what the renderer forces.
 >

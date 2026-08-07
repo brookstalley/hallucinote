@@ -70,17 +70,27 @@ planner tests had been reaching past the mutator with a raw INSERT to prove it;
 that helper is retired.
 
 **Where the limit is stated now.** `plan_push_time_signature_map` pushes the
-bar-1 row and warns about the rest — as before, but the warn now says what is
-lost and what is not: Live's ruler will read the bar-1 meter for the whole song,
-the DB still holds the true map, and the felt meter has to live in note placement
-and accent.
+bar-1 row and reports the rest — and reports it on the channel the operator
+actually reads. The first cut used `plan.warn`, which appends to
+`PushPlan.notes`, a field documented as diagnostic-only and never drained by the
+executor; a mutator exception the author could not miss had been replaced by a
+message nobody sees. It is a `plan.alert` now, landing in the push report, and
+says what is lost and what is not: Live's ruler will read the bar-1 meter for the
+whole song, the DB still holds the true map, and the felt meter has to live in
+note placement and accent. Tempo's identical non-bar-1 skip was promoted with it
+— the same silent drop, and asymmetry there would have been indefensible.
 
 **A hazard the guard had been masking, now surfaced rather than inherited.** Two
 bar rulers exist in this codebase: push translates bar positions through the
 meter map, while `hallucinote.arrangement` accumulates whole bars against one
 uniform `beats_per_bar` and never reads the map. They agree only while the map is
-bar-1-only — which the guard had guaranteed. Push now emits a second warn when a
-non-bar-1 row is present. Closing it is `ARR-4M3T`'s (a meter-aware
+bar-1-only — which the guard had guaranteed. Push now DETECTS it, in the two
+phases where a bar position actually becomes a Live beat: the arrangement and
+cue planners run `uniform_bar_math_divergences` and alert only on the placements
+whose two translations differ, naming the count and both beat positions. A
+detector that fired on the mere presence of a meter change would have been
+identical noise on every correct odd-meter song, so it discriminates rather than
+announcing. Closing the divergence itself is `ARR-4M3T`'s (a meter-aware
 `Arrangement.plan()` and meter-aware lenses); getting a declared map to actually
 materialize in Live is `TMP-4J6Q`'s. Neither closes the other, and this change
 closes neither — it stops the model lying about what the song is.

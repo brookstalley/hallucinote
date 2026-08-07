@@ -334,6 +334,25 @@ def test_plan_push_cue_points_emits_single_batched_call(conn, song):
     assert call.key == f"cue_batch:{song}"
 
 
+def test_plan_push_cue_points_alerts_on_cues_past_a_meter_change(conn, song):
+    """A cue's position resolves through the meter map exactly as an
+    arrangement placement's does, so it diverges from uniform bar math the same
+    way and needs the same alert. Cues before the change must stay quiet."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    _ts_point(conn, song, 9.0, 7, 4)
+    M.add_cue_point(conn, song_id=song, position_bar=5.0, name="early")
+    plan = push.plan_push_cue_points(conn, song_id=song)
+    assert not any("cue points sit after" in a for a in plan.alerts)
+
+    M.add_cue_point(conn, song_id=song, position_bar=13.0, name="late")
+    plan = push.plan_push_cue_points(conn, song_id=song)
+    hit = next(a for a in plan.alerts if "cue points sit after" in a)
+    assert "1 of 2 cue points" in hit
+    assert "beat 60" in hit and "48" in hit
+
+
 def test_plan_push_cue_points_sets_if_exists_skip(conn, song):
     """R-1.1: re-push idempotency. The planner explicitly sets
     ``if_exists='skip'`` so a second push of the same DB against a Live

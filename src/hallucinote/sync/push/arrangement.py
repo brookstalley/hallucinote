@@ -411,6 +411,23 @@ def plan_push_cue_points(
             "no time_signature_map; assuming 4/4 for cue-point beat conversion"
         )
 
+    # A cue's position resolves through the meter map below, so it diverges from
+    # uniform bar math for exactly the same reason an arrangement placement does
+    # (see plan_push_arrangement). Cues + placements are the whole surface:
+    # clip lengths come from length_beats, and plan_push_sections emits no calls.
+    diverging = uniform_bar_math_divergences(
+        [float(r["position_bar"]) for r in rows], ts_points,
+    )
+    if diverging:
+        first_bar, mapped, uniform = diverging[0]
+        plan.alert(
+            f"{len(diverging)} of {len(rows)} cue points sit after a meter "
+            f"change, where push's meter-map bar→beat translation and "
+            f"hallucinote.arrangement's uniform beats_per_bar disagree. Bar "
+            f"{first_bar:g} goes to beat {mapped:g} here; uniform math would "
+            f"put it at {uniform:g}."
+        )
+
     # SYN-6B4Q: partition cues against the DB's composed song length.
     #
     # The composed extent is max(arrangement_clips.end_bar) — the length the

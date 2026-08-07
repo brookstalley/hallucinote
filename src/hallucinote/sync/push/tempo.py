@@ -107,7 +107,10 @@ def plan_push_time_signature_map(
         # alert, not warn: this is the one place the meter reach limit is
         # stated, and `notes` is diagnostic-only — the executor drains
         # `alerts` and drops `notes`, so a skip reported as a note is the
-        # silent drop `alerts` exists to prevent.
+        # silent drop `alerts` exists to prevent. The "no row at start_bar=1.0"
+        # warn above stays a note deliberately: it reports an authoring gap
+        # rather than a skipped write, and a map that lacks a bar-1 row always
+        # has non-bar-1 rows, so this alert already fires alongside it.
         plan.alert(
             f"per-bar meter automation is an MCP gap on Live 12.4 — "
             f"ableton_automation has no 'song_signature' target_kind "

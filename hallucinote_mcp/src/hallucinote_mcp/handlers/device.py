@@ -1043,14 +1043,24 @@ def _browser_path_is_preset_file(browser_path: list[str]) -> bool:
 def _browser_path_to_query(browser_path: list[str]) -> dict[str, Any]:
     """Synthesize the ``preset_query`` that resolves a captured ``browser_path``:
     root = first segment, optional ``path_prefix`` = the middle segments,
-    ``pattern`` = the leaf (the loaded item's display name). Substring +
+    ``pattern`` = the leaf (the loaded item's display name). Exact +
     case-sensitive — identical to the W13-A E3 fallback so both call sites
     (standalone preset-file load, and preset_uri-miss fallback) resolve the
-    same way."""
+    same way.
+
+    The mode is ``exact`` because the leaf is not a user-typed search term: it
+    is the browser item's own display name, copied verbatim at capture time, so
+    whole-name equality holds by construction. Matching it as a substring
+    instead makes any preset whose name CONTAINS the captured one a rival hit —
+    ``"Kit-BritishVintage.adg"`` also matches ``"MPE Kit-BritishVintage.adg"``
+    — and the strict loader then refuses the pair as ambiguous rather than
+    loading the preset that was actually captured. Nothing at this call site
+    can disambiguate that: both siblings sit at the same path, so no
+    ``path_prefix`` separates them; only anchoring the name does."""
     query: dict[str, Any] = {
         "root": browser_path[0],
         "pattern": browser_path[-1],
-        "mode": "substring",
+        "mode": "exact",
         "case_sensitive": True,
     }
     if len(browser_path) > 2:

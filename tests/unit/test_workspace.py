@@ -302,6 +302,51 @@ def test_explain_does_advise_a_build_when_the_song_exists_nowhere(tmp_path):
     assert "--reset" in msg
 
 
+def test_explain_never_claims_a_resolvable_song_is_absent(tmp_path):
+    """Called on a song that DOES resolve, it must not run the absence wording.
+
+    The bug it forecloses: the "workspace has no song 'x'" branch listing 'x'
+    among the songs that workspace does have — a sentence that contradicts
+    itself inside one line. The function is documented for the failure path,
+    but a caller reaching it on a stale check or a race would print nonsense,
+    which is the very class of misleading error this module exists to kill.
+    """
+    ws = _write_marker(tmp_path / "ws", '[workspace]\nlayout = "monorepo"\nsongs_root = "."\n')
+    song = _build_song(ws / "demo")
+    (song / "demo-main.db").write_bytes(b"")
+
+    msg = W.explain_unresolved_song("demo", start=tmp_path)
+    assert "DOES resolve" in msg, msg
+    assert "has no song" not in msg, msg
+    assert "holds no song" not in msg
+    assert "doesn't exist yet" not in msg
+    assert str(song.resolve()) in msg
+    assert "demo-main.db" in msg
+
+
+def test_explain_calls_a_scaffolded_but_unbuilt_song_what_it_is(tmp_path):
+    """Song dir + build.py but no DB is neither "absent" nor "built" — it is
+    scaffolded, and `build.py --reset` is the right advice for exactly it."""
+    ws = _write_marker(tmp_path / "ws", '[workspace]\nlayout = "monorepo"\nsongs_root = "."\n')
+    song = _build_song(ws / "demo")  # build.py, no DB
+
+    msg = W.explain_unresolved_song("demo", start=tmp_path)
+    assert "scaffolded, not yet built" in msg, msg
+    assert "has no song" not in msg, msg
+    assert "--reset" in msg
+    assert str(song.resolve()) in msg
+
+
+def test_sibling_list_never_includes_the_slug_being_diagnosed(tmp_path):
+    """Second, structural guard: even if a future caller reached the absence
+    branch with a present slug, the "did you mean" list cannot echo it back."""
+    ws = _write_marker(tmp_path / "ws", '[workspace]\nlayout = "monorepo"\nsongs_root = "."\n')
+    _build_song(ws / "demo")
+    _build_song(ws / "other")
+    workspace = W.find_workspace(start=tmp_path, descend=True)
+    assert W._sibling_slugs(workspace, exclude="demo") == ["other"]
+
+
 def test_a_bare_captures_dir_is_not_a_built_song(tmp_path):
     """`songs/<slug>/captures/` is the residue a misresolved render leaves. It
     must not be reported as the song, or the wreckage of the bug impersonates

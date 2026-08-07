@@ -392,14 +392,45 @@ def explain_unresolved_song(
 ) -> str:
     """A teaching sentence for "this slug didn't resolve to a built song".
 
-    Distinguishes the three failures a bare "doesn't name a built song" runs
-    together — resolved into a workspace that doesn't hold it / resolved by the
-    legacy fallback because no marker was found / the song genuinely does not
-    exist — and, when the song IS built somewhere else, says so and where
-    instead of recommending a rebuild.
+    Distinguishes the failures a bare "doesn't name a built song" runs together
+    — the song dir resolves but was never built / resolved into a workspace
+    that doesn't hold it / resolved by the legacy fallback because no marker was
+    found / the song genuinely does not exist — and, when the song IS built
+    somewhere else, says so and where instead of recommending a rebuild.
+
+    **It also re-checks the caller's premise.** Callers reach this after their
+    own "is it there?" test failed, and that test can be wrong (a stale path, a
+    per-branch DB name, a race with a build). Without the re-check the absence
+    branches would run on a song that is plainly present and emit a sentence
+    that contradicts itself — *"has no song 'x' — songs it does have: x"* — the
+    same misleading-error failure this whole module exists to eliminate. So the
+    resolvable cases are answered FIRST and the absence wording is unreachable
+    unless the song dir really is absent. ``_sibling_slugs`` drops ``slug`` too:
+    one guard is a branch that can drift, two make the contradiction structural.
     """
     res = resolve_song_dir_explained(slug, start=start)
     where = _candidate_start(start).resolve()
+
+    # Premise re-check, before any wording that asserts absence.
+    if res.song_dir.is_dir():
+        dbs = sorted(p.name for p in res.song_dir.glob("*.db"))
+        if dbs:
+            return (
+                f"{slug!r} DOES resolve, to a built song at {res.song_dir} "
+                f"(DB: {', '.join(dbs)}) — nothing is missing at the resolution "
+                f"layer, so a caller reporting it absent checked a different "
+                f"path than the one that exists. The usual cause is the "
+                f"per-branch DB filename (`<slug>-<branch>.db`, `/`→`--`): a "
+                f"check for a bare `{slug}.db`, or for another branch's, misses "
+                f"the file sitting right there. Compare against {res.song_dir}."
+            )
+        if (res.song_dir / "build.py").is_file():
+            return (
+                f"the song dir for {slug!r} exists at {res.song_dir} and holds "
+                f"its build.py, but no DB — it is scaffolded, not yet built. "
+                f"`python3 {res.song_dir / 'build.py'} --reset` builds it."
+            )
+
     elsewhere = find_song_elsewhere(slug, start=start)
 
     if res.source == SOURCE_ENV:
@@ -410,7 +441,7 @@ def explain_unresolved_song(
     elif res.source in (SOURCE_MARKER_ABOVE, SOURCE_MARKER_BELOW):
         assert res.workspace is not None
         root = res.workspace.root
-        known = _sibling_slugs(res.workspace)
+        known = _sibling_slugs(res.workspace, exclude=slug)
         lead = (
             f"the workspace at {root} (marker {root / MARKER_FILENAME}) has no "
             f"song {slug!r}"
@@ -447,15 +478,24 @@ def explain_unresolved_song(
     )
 
 
-def _sibling_slugs(ws: Workspace, *, limit: int = 12) -> list[str]:
-    """Song slugs already present in ``ws`` — the "did you mean" list."""
+def _sibling_slugs(
+    ws: Workspace, *, exclude: str | None = None, limit: int = 12,
+) -> list[str]:
+    """Song slugs already present in ``ws`` — the "did you mean" list.
+
+    ``exclude`` drops the slug being diagnosed. The caller's branch logic should
+    already make that impossible (a present slug never reaches an absence
+    sentence), but "should" is what produced *"has no song 'x' — songs it does
+    have: x"*. Enforcing it here means no future caller can reintroduce it.
+    """
     if ws.layout == LAYOUT_SONG:
-        return [ws.slug] if ws.slug else []
+        return [ws.slug] if ws.slug and ws.slug != exclude else []
     root = ws.root / ws.songs_root
     try:
         names = sorted(
             p.name for p in root.iterdir()
-            if p.is_dir() and not p.name.startswith(".") and _looks_built(p)
+            if p.is_dir() and not p.name.startswith(".") and p.name != exclude
+            and _looks_built(p)
         )
     except OSError:
         return []

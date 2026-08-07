@@ -318,6 +318,18 @@ def _refuse_render_into_phantom_song_dir(request: Request) -> "Response | None":
             resolve_song_dir,
         )
     except ImportError:
+        # An MCP-only install (uvx, no engine) has no resolver to check, so the
+        # legacy cwd-relative fallback stands and this render is unguarded. Say
+        # so rather than fail silently: the condition is PERMANENT, and an
+        # operator who later finds captures in an unexpected `songs/<slug>/`
+        # needs this line to explain it. Mirrors the retention sweep's
+        # engine-absent notice for the same reason.
+        logger.info(
+            "render: destination check unavailable — the hallucinote engine "
+            "isn't importable in this server, so %r falls back to a "
+            "cwd-relative songs/<slug> without workspace resolution.",
+            song_slug,
+        )
         return None
     song_dir = pathlib.Path(resolve_song_dir(song_slug))
     if not song_dir.is_absolute():

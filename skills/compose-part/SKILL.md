@@ -75,6 +75,29 @@ Full signatures live in the source (`src/hallucinote/generators/`); the index in
 - **Velocity-only humanize** — that's `/clip-humanize` (a different axis: jitter on already-feel-correct parts). Don't use it to inject groove.
 - **Structure** (creating tracks, instruments, clips for the first time) — that's `/ableton-push` / `/track-new-with-instrument`. This skill composes *notes* into structure that already exists in the DB.
 
+## Exit criteria — this stage is done when
+
+- Every gesture the section needs **exists in `build.py`** — as notes, an
+  envelope, or a device. Not as a plan, and not as a docstring.
+- Per-part `feel` is set **explicitly**. Feel defaulted by omission is a
+  decision nobody made.
+- **The docstring test.** Before you call the part done, grep the song for every
+  device, envelope or mechanism your own prose names:
+
+  ```
+  grep -rin "shifter\|envelope\|automation\|<device name>" songs/<slug>/
+  ```
+
+  If a docstring says the outro "rides a Shifter device-parameter envelope" and
+  there is no Shifter in `captured_session.json` and no envelope in the DB, **the
+  stage is not done** — build it, or rewrite the prose as an open row in the
+  brief. This is not hypothetical: it is exactly how the demo song shipped an
+  octave drop that did not exist, with a clean build and an OK push.
+
+A documented mechanism with no implementation is **worse** than an admitted gap,
+because every later reader takes it as done. Full model:
+[docs/song-workflow.md](../../docs/song-workflow.md#stage-exit-criteria).
+
 ## Next: read what you composed
 
 When the part — or a section's first compositional pass — is finished, run

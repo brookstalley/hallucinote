@@ -10,7 +10,7 @@ argument-hint: >-
 
 # /song-new
 
-You scaffold a new Hallucinote song from templates AND run the pre-composition elicitation pass so the first composition decisions are defensible, not guessed.
+You scaffold a new Hallucinote song from templates, **on the values `/song-brief` resolved** — so the first composition decisions are defensible, not guessed to satisfy a command line.
 
 $ARGUMENTS
 
@@ -54,9 +54,25 @@ When ambiguous, state your inference ("Reading this as a finished song — I'll 
 
 Two phases, in order:
 
-**Phase 1 — Pre-composition elicitation** (`docs/song-new-checklist.md`):
+**Phase 1 — Pre-composition elicitation → `/song-brief`**:
 
-Read what the user said. Infer everything you can. **State your inferences explicitly** — "you said 'disco prog-metal', so I'm assuming 120 BPM, 4/4, electric bass + acoustic drums, modal interchange in the bridge — say if you want different." Ask 2-3 targeted questions for the **must-haves** you genuinely can't infer (intent/purpose, genre, length/structure, vocals?, instrumentation). Default the **should-haves** (tempo/feel, time sig, harmonic strategy, production, arrangement arc) with "I'll go with N — say if you want different." Let **nice-to-haves** (references, hard constraints, hooks, density) emerge — only ask if the user volunteers something or the must-haves leave a gap.
+**The elicitation pass is its own stage and it runs first.** Invoke
+**`/song-brief`** with the user's starting prompt. It sweeps the load-bearing
+dimensions (marking each DECIDED / UNDECIDED / NOT-APPLICABLE), closes the
+undecided ones in **one consolidated turn of informed proposals**, and writes
+`annotations/01-the-brief.md`. `docs/song-new-checklist.md` is the dimension
+reference it draws on.
+
+**This matters structurally, not just procedurally.** The scaffold command below
+takes tempo, meter and the section list as **required arguments** — exactly the
+values elicitation exists to resolve. Run this skill without a brief and you
+will invent those three values to make the command run, and the invented values
+become the song. **Take them from the brief.**
+
+Skip straight to Phase 2 only when the request is *directed* — a structured
+`/song-new <slug> "<title>" 120 4/4 intro,verse,chorus` call, or a prompt that
+already pins every applicable dimension. `/song-brief` is also silent in that
+case, so invoking it costs nothing when there is nothing to ask.
 
 This is **guidance, not a script.** Freeform exploration is allowed. The point is to surface what the user would want to fix later if you guessed wrong, before you write code.
 
@@ -91,7 +107,20 @@ The user usually invokes this conversationally ("let's start a new song called '
 - **key** (optional) — musical key (e.g., `Dm`, `Bb`). Surface to the user that this is informational metadata, not a constraint enforced anywhere.
 - **intent** (optional) — one-paragraph composer intent that goes into `songs/<slug>/<slug>.md`. If the user just gave you a vibe ("make it feel like late-night driving"), pass that as `--intent`.
 
-If anything's missing or ambiguous, ask **once**. Don't interrogate.
+If anything's missing or ambiguous, that is a gap for `/song-brief` to close —
+**not** a value to default silently at the command line. Don't interrogate; one
+consolidated turn of proposals settles it.
+
+## Exit criteria — this stage is done when
+
+- Tempo, meter and the section/bar list are **values from the brief**, not
+  invented to satisfy the CLI.
+- The scaffold builds (`build.py --reset`) and its shape tests pass.
+- Each of the brief's substantive resolutions is filed in `decisions/`.
+- Nothing this stage wrote is DESCRIBED-BUT-UNBUILT — no `<slug>.md` or decision
+  record names a mechanism that doesn't exist.
+
+Full model: [docs/song-workflow.md](../../docs/song-workflow.md#stage-exit-criteria).
 
 ## Refusal cases
 
@@ -159,4 +188,4 @@ Stop after the scaffold + decisions + picks land, so the user can review and dri
 - Sections default to 8 bars each. The scaffold uses this for cue-point placement; the user can adjust constants in `build.py` afterwards.
 - Generators today assume 4/4. For non-4/4 songs, hand-author until meter-parametrized generators ship.
 - Master/group/return automation IS supported — author the envelope in `build.py`; push performs it into arrangement automation (transport plays in real time, fingerprint-gated). Plain MIDI/audio-track envelopes are also supported (ENV-9P4T): a song-spanning / clip-independent ride performs as a continuous arrangement lane; a within-one-clip ride routes through that session clip.
-- Within-section meter changes aren't supported. The meter map can only change between sections.
+- **No within-song meter change can be recorded today** — `M.add_time_signature_point` raises for any `start_bar > 1.0`, per-section changes included (Live 12.4's MCP has no `song_signature` automation target). Scaffold with the song's *primary* meter as the global one. This is a **projection** limitation, not a modelling one: the song is in 7/4 if it's in 7/4. Record the true meter in the brief, mark the row open with the engine as its owner, and realize the rest as felt groove over the single ruler — never ask the user to accommodate it. See `docs/song-authoring-conventions.md` → *Meter*.

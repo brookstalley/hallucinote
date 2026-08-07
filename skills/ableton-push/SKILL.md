@@ -192,6 +192,17 @@ Do not retry inside the loop — re-running `execute` is the retry.
 
 For single-element edits (tweak one clip's notes, nudge one parameter), drive the relevant MCP namespace directly. `push_cli` also exposes `phases`, `plan`, `apply` subcommands for debugging.
 
+## Exit criteria — this stage is done when
+
+Push reports OK **and every phase the brief depends on actually moved
+something.** A clean run is not evidence of a complete one: the phases that can
+silently no-op are `envelopes`, `performed automation`, `arrangement` and
+`devices`, and each of them reports success on zero work. If the brief calls for
+a pitch bend, a filter sweep or a rise and the envelopes phase pushed nothing,
+that is a **gap, not a clean run** — go back to `/compose-part`.
+
+Full model: [docs/song-workflow.md](../../docs/song-workflow.md#stage-exit-criteria).
+
 ## Next: read the mix
 
 After a full-song push, capture + analyze (`ableton_render` → `ableton_analysis`

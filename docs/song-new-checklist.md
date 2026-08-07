@@ -1,16 +1,60 @@
 # Song-new checklist
 
-**Authoritative pre-composition checklist.** Use this when starting a new song. The `/hallucinote:song-new` skill cross-links here — one source of truth.
+**The dimension reference for the elicitation stage.** The skill that *runs* the
+pass is [`/hallucinote:song-brief`](../skills/song-brief/SKILL.md); this page is
+the catalogue it draws on. `/hallucinote:song-new` consumes what the pass
+resolves.
 
 ## How to use this
 
-This is **guidance, not a script.** The agent reads the user's prompt, infers everything it can, and **states inferences explicitly** ("you said disco prog-metal so I'm assuming 120 BPM, 4/4, electric bass + acoustic drums, modal interchange in the bridge — say if you want different"). Then it asks 2-3 targeted questions for the must-haves it genuinely can't infer. Should-haves get defaults with a "I'll go with N — say if you want different." Nice-to-haves are emergent unless the user volunteers them. **Freeform exploration is allowed** — this is the list of things the user would want to fix later if the model guessed wrong, so the agent surfaces its guesses early.
+**This is a prompt for thinking, not a form to fill in.** Nothing here is
+mandatory. Run each item through the **relevance test** first:
 
-Apply with judgment, scaled to the work. A quick sketch song deserves 2-3 questions; a serious centerpiece deserves the full pass.
+> *Does the song, as described so far, depend on this?*
 
-**This is collaborate-by-default, with precedence** (see `/hallucinote:song-new`'s "Read the request, not the requester"): elicit only the *load-bearing* unknowns, and when open questions stop yielding direction ("you decide," repeated vagueness), switch from asking to **proposing** a concrete, redirectable option — never assume-and-go. Clear direction always wins; questions are for genuine gaps, not choices the user already made.
+and assign one of **three states** — never two:
 
-**Persist the answers.** Each non-trivial decision (especially must-haves) lands as a markdown file under `songs/<slug>/decisions/`, recording the question, the answer, who decided (user / inferred / agreed-after-confirm), and the rationale. Future sessions read these via `/hallucinote:song-context` so the song's intent survives `/clear`.
+- **DECIDED** — the user pinned it, or it follows unambiguously from what they
+  pinned. Restate it so it's correctable; don't re-ask it.
+- **UNDECIDED** — the song depends on it and nobody has chosen. **Only this is a
+  gap**, and only gaps go into the turn.
+- **NOT-APPLICABLE** — the material doesn't imply it. Record it in the brief and
+  **say nothing.** This is a real answer you reach by your own judgement; it never
+  requires asking the user.
+
+**Silence about a non-applicable dimension is correct. Silence about an
+undecided one is the defect.** An ambient soundscape has no drum style to
+specify, no meter argument, and possibly no tempo worth pinning — asking anyway
+is not thoroughness, it reads as incompetence. Most songs will mark several rows
+below NOT-APPLICABLE, and a directed prompt may leave nothing open at all, in
+which case the pass is **silent** and the work proceeds.
+
+The must-have / should-have / nice-to-have grouping below is a **rough prior on
+how often a dimension turns out to be load-bearing**, not a priority order and
+not a required-fields list.
+
+**One consolidated turn, proposals not questions.** Everything undecided goes
+into a single message, each item carrying its reasoning and a recommendation so a
+one-word reaction settles it — *"I'd propose 132 BPM, here's the arithmetic"*,
+never *"what tempo?"*. A blank question is auto-accompaniment wearing a
+politeness costume: it looks collaborative and transfers zero expertise. Cheap,
+easy-to-revise choices are **shown** rather than asked; the artifact becomes the
+next proposal. Sequential Q&A is the anti-pattern.
+
+**Clear direction always wins.** Questions are for genuine gaps, never for
+choices the user already made. When open questions stop yielding direction ("you
+decide," repeated vagueness), switch from asking to **proposing** a concrete,
+redirectable option — never assume-and-go.
+
+**Persist the answers.** The states land in `songs/<slug>/annotations/01-the-brief.md`
+(the resolution table); each substantive *why* lands as a markdown file under
+`songs/<slug>/decisions/`, recording the question, the answer, who decided (user
+/ inferred / agreed-after-confirm), and the rationale. Future sessions read these
+via `/hallucinote:song-context` so the song's intent survives `/clear`.
+
+**No dimension may be left DESCRIBED-BUT-UNBUILT** — written as settled prose
+with nothing behind it. If you can't decide it, mark it open. See
+[`docs/song-workflow.md`](song-workflow.md#stage-exit-criteria).
 
 ---
 
@@ -100,9 +144,53 @@ Sparse vs busy. Layer count at each moment. Affects how the agent picks generato
 
 ---
 
+---
+
+## Gap-closers — applicable exactly when the prompt names one
+
+These three aren't preferences to elicit; they're **holes to close**. Each is
+NOT-APPLICABLE unless the prompt itself creates it, and each caused a real defect
+in the first demo song. They are the reason this page exists as more than a
+questionnaire.
+
+### 15. Named narrative turns
+
+A turn the prompt names but doesn't give a musical mechanism for: *"the ominous
+notes are suddenly major **somehow**"*, *"the two are finally **integrated**"*.
+A destination with no route.
+
+*Applicable when:* the prompt names a turn. *Closing it* means proposing what the
+turn **is** musically — same five pitches with only the bass moving; the same
+melody at two rates. Both examples above came from one brief; one got answered
+in-stage and became the best thing in the song, and one didn't.
+
+### 16. Mechanism for every named gesture
+
+The prompt names an audible event — a pitch bend, a riser, a drop, a crash, a
+fade. **A gesture is not decided until the thing that produces it is named**: a
+generator call, an envelope, a device, or hand-authored notes.
+
+*Applicable when:* the prompt names an audible event. This is the row that
+catches the failure with no symptoms — the demo song's `_outro` docstring said
+the closing octave drop "rides a Shifter device-parameter envelope"; no Shifter
+and no envelope existed anywhere; the build ran clean, the push reported OK, and
+the song ended flat while every document about it said otherwise.
+
+### 17. Section time budget
+
+*Applicable when:* the prompt states a duration **and** names sections. Cost the
+structure at the chosen tempo and compare it to the stated length. Under-budget
+and a hinge reads as an edit; over-budget and something has to give. The first
+demo song under-budgeted three of its own best moments against its own stated
+45–60 s floor — caught late, by arithmetic someone happened to run, not by a
+gate. This is a **statement to the user, not a question**: show the numbers and
+the proposed adjustment, ending with "say if you want the shape different".
+
+---
+
 ## What this becomes
 
-Once the must-haves are settled (or confidently inferred + confirmed):
+Once the applicable dimensions are settled (or confidently inferred + confirmed):
 
 1. **Scaffold** with `/hallucinote:song-new <slug> ...` — gets you `songs/<slug>/build.py` + synthetic snapshot.
 2. **Pick instruments** via `/hallucinote:song-pick-instruments` — translates "vintage analog poly + acoustic drums" into device picks. Use `portability=strict` for cross-machine portability (stock Live content); switch to `relaxed` or `unrestricted` if the style demands third-party plugins. Picks land in the snapshot via `preset_query` (composer-time, portable) or via load-then-recapture.
@@ -116,6 +204,7 @@ The decisions you recorded here are durable — re-opening this song in a future
 
 ## Reference
 
-- Implementation: `skills/hallucinote:song-new/SKILL.md`. Sibling workflow skills under `skills/` include `song-pick-instruments`, `track-new-with-instrument`, `return-new`, `mix-sidechain`, `clip-humanize`, `compose-part`.
+- Implementation: `skills/song-brief/SKILL.md` runs the pass; `skills/song-new/SKILL.md` consumes it. Sibling workflow skills under `skills/` include `song-pick-instruments`, `track-new-with-instrument`, `return-new`, `mix-sidechain`, `clip-humanize`, `compose-part`.
+- The model behind the three states, the relevance test, and each stage's definition of done: [`docs/song-workflow.md`](song-workflow.md#stage-exit-criteria) and [`.prawduct/artifacts/elicitation-and-stage-exit-criteria.md`](../.prawduct/artifacts/elicitation-and-stage-exit-criteria.md).
 - Adjacent docs: `docs/snapshot-schema.md` for the snapshot shape; `docs/song-authoring-conventions.md` for compose-half conventions; `skills/hallucinote:ableton-push/SKILL.md` for the push flow.
 - Decision retrieval: `/hallucinote:song-context` skill (queries `decisions/` + `annotations/`).

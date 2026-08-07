@@ -308,3 +308,48 @@ generous `MCP_TIMEOUT`; a pre-warm hook is best-effort, not the mitigation.**
 ## A comment asserting how an external tool fails is a test, not a comment
 
 **When you write down how a subprocess behaves on a failure path AND build a guard on it, verify the claim — the guard is only as good as an assumption nobody checked. "ffmpeg writes a zero-length file on an out-of-range seek" was wrong: it exits 0, with EMPTY stderr, writing ~428 bytes of valid mp3 header, which sails straight through the file-is-non-empty check written to catch it. The fix was not a better threshold but a different KIND of check (re-measure the encoded duration), and the same shape recurs — a gate sharing its patterns with the mechanism it guards cannot catch that mechanism's blind spot (TOUR A1), and a traceback guard catching only the tool's own exception class misses FileNotFoundError, the likeliest failure at that step (A1, R-14). Pin the external behaviour in a test so a version bump that changes it goes red. (TOUR A3, 2026-08-06)**
+
+## Verify a from-scratch reproduction, not a re-push onto matching state
+
+When testing that something can be rebuilt, push into an EMPTY target, because a
+push into state that already matches skips the work and reports OK. Hallucinote's
+devices phase diff-reconciles, so every push onto an already-correct Live set had
+been skipping the loads entirely; the first push into a fresh set exposed a
+preset-shadowing bug and a stale-link permanent halt within minutes. Reading the
+code finds neither — the code is correct in the state it usually runs in.
+(2026-08-07, TOUR B1)
+
+## A test you have not seen fail is not evidence — plant the failure
+
+For any guard or scanner, verify RED by planting the thing it should catch, not
+just GREEN on a clean tree. A repo-wide secret/path scan passed vacuously because
+the constant it iterated was `(regex, description)` pairs and the loop called
+`.search` on the tuple — it matched nothing, forever, while looking thorough. Also
+verify the OVER-drop direction: a scan that flags legitimate fixtures gets deleted
+rather than fixed. (2026-08-07, TOUR B1)
+
+## Prose naming a mechanism reads as a decision — DESCRIBED-BUT-UNBUILT
+
+A docstring or design note that says how something works is indistinguishable from
+a record that it was built. `build.py` documented an outro pitch-drop as riding a
+Shifter envelope; no Shifter and no envelope ever existed, the build ran clean and
+the push reported OK. This is the only defect class with no symptoms. When a stage
+cannot decide something, mark it explicitly OPEN — never hand it downstream in the
+clothes of a decision. (2026-08-07, TOUR B1)
+
+## A required CLI argument can forbid the stage that should supply it
+
+Before concluding a missing step is a discipline problem, check whether the
+tooling makes it impossible. Hallucinote never elicited musical requirements
+partly because `/song-new`'s scaffold CLI takes tempo, meter and the section list
+as REQUIRED arguments — the agent must invent them to run the command, and the
+invented values become the song. Ordering forbade the stage; no amount of norm
+would have fixed it. (2026-08-07, TOUR B1)
+
+## Check whether a rule describes the tooling before obeying it
+
+The PR skill says a develop-bound change-log entry stays statusless. Following it
+made a chunk invisible to this repo's derived views, because only `status=shipped`
+feeds them. When a written rule and the implementation disagree, the rule may be
+describing a different repo's tooling — verify which, and record the departure
+rather than silently matching either. (2026-08-07, TOUR B1)

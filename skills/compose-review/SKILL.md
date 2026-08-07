@@ -271,6 +271,23 @@ read you have.
   recall I can't fully name," not "wrong." Grade each recall against the song's
   declared recurrence intent and learn the answer back.
 
+## Exit criteria — this stage is done when
+
+- The composition is read against intent **per section**.
+- The **section time budget is re-costed against actual bar counts** and
+  reconciled with any duration the brief stated. Arithmetic catches
+  under-budgeted sections; taste doesn't. The demo song starved three of its own
+  best moments against its own stated floor, and it was caught late, by someone
+  happening to run the numbers.
+- Every row in `annotations/01-the-brief.md` that composition was meant to close
+  is now **DECIDED**, or re-stated **UNDECIDED with a new owner and closing
+  stage**. Silently inheriting an open row is how it becomes invisible.
+- Nothing in the song is DESCRIBED-BUT-UNBUILT — apply the docstring test from
+  `/compose-part` across the whole song, not just the part you last touched.
+- Kept bright-line moves are filed in `decisions/`; reverted ones in `attempts/`.
+
+Full model: [docs/song-workflow.md](../../docs/song-workflow.md#stage-exit-criteria).
+
 ## One-line thesis
 
 `/mix-review` asks "which collision hurts the part that's supposed to win?"

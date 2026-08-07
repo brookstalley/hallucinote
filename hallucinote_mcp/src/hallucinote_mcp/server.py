@@ -110,14 +110,17 @@ Resources (read via resources/read, no turn cost):
 Multi-step workflows live as Claude Code skills (skills/) — not
 MCP prompts — so the agent can invoke them directly. For ANY song
 work, read /song-workflow first — it is the lifecycle map. The arc:
-  /song-new -> /song-pick-instruments -> /compose-part ->
-  /compose-review (READ the composition) -> /ableton-push ->
+  /song-brief (ELICIT the brief) -> /song-new -> /song-pick-instruments ->
+  /compose-part -> /compose-review (READ the composition) -> /ableton-push ->
   /render-analyze (render+analyze in one step, poll loops kept out of context) ->
   /mix-review (READ the mix; needs Max for Live) ->
   /song-snapshot, then loop. Building blocks: /track-new-with-instrument,
   /return-new, /mix-sidechain, /clip-humanize, /ableton-pull, /song-context.
-  The two review checkpoints (/compose-review, /mix-review) are easy to
-  skip and shouldn't be — they apply the framework's ear to your work.
+  The three checkpoints (/song-brief, /compose-review, /mix-review) are easy
+  to skip and shouldn't be — /song-brief specifies the work, the other two
+  apply the framework's ear to it. Each stage has a definition of done
+  (docs/song-workflow.md): a stage may not hand a load-bearing question
+  downstream dressed as a decision.
 
 Hard constraints:
   - 1-based indexing throughout (track_index >= 1).

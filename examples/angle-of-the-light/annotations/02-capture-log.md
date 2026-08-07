@@ -32,26 +32,34 @@ Session started from a `/clear` on `feat/tour-walkthrough`; the brief arrives a
 few turns in, preserved verbatim in
 [`01-the-brief.md`](01-the-brief.md).
 
-**The transcript spans more than one session file, by necessity.** Live's MCP
-server was not attached to the session above — the `hallucinote` plugin was
-neither installed as a marketplace plugin nor dev-loaded, so nothing declared the
-`hallucinote-mcp` server (`known_marketplaces.json` held only
-`claude-plugins-official` and `prawduct`). Fixing it means relaunching with
-`--plugin-dir`, which necessarily starts a new session and a new JSONL.
+**The transcript spans more than one session file** — but not for the reason
+first written here, and the correction is worth keeping. The original note
+predicted that fixing the MCP attachment (the `hallucinote` plugin was neither a
+marketplace plugin nor dev-loaded, so nothing declared the `hallucinote-mcp`
+server) would fork the transcript, because relaunching with `--plugin-dir`
+starts a new process. **It did not.** The relaunch resumed into the same JSONL,
+so `9bb2fc6d` holds the brief *and* the entire composition, Live calls included
+— verifiable by counting `hallucinote-mcp__ableton` occurrences in it.
 
-So the tour's transcript excerpts come from two files: **this one holds beat 1**
-(the brief, and the agent proposing key/tension back rather than auto-deciding),
-and the composition session holds **beats 8-9** (the mix conversation and the
-iterate A/B). `tour_transcript.py` takes `--session`, so this is two invocations
-rather than a problem — but it is confusing met cold at D1, which is why it is
-written here.
+The splits that actually happen are ordinary ones: a `/clear`, or quitting the
+host application. Which means the rule for D1 is simpler than the original note
+implied — **do not reason about where a beat lives, grep for it.** Each row below
+is recorded from the file's observed content, never from a prediction about
+where the work was going to land.
 
 Record each new session's path in this list as it starts:
 
 | Session JSONL | Holds |
 |---|---|
-| `9bb2fc6d-5f46-4207-8ff5-20d37682b874` | Beat 1 — the brief, the proposal, the meter decision |
-| _(next: composition)_ | Beats 8-9 — mix conversation, the iterate A/B |
+| `9bb2fc6d-5f46-4207-8ff5-20d37682b874` | Beat 1 — the brief, the proposal, the meter decision. **Also all of beats 2–7**: the composition, and the push to Live (115 Ableton calls). |
+| `d29313eb-6e93-44a2-8bb5-3da229b4602d` | No beat. Orientation after a `/clear`; discovered Screen Recording was never granted to the host app, which is why capture had produced nothing. Ends at the restart that grants it. |
+| `5b429604-02ba-493e-9794-fb0db07011fd` | No beat. The restart worked — capture produced its first real PNG. But the same restart dropped `--plugin-dir`, so no `hallucinote-mcp` server was attached and the push could not run. Ends at a second relaunch. |
+| _(next)_ | Beats 8–9 — the mix conversation and the iterate A/B, neither of which has happened yet |
+
+Two consecutive no-beat sessions is itself worth a line in the walkthrough, if D1
+wants it: the environment cost two restarts before a single note could be heard,
+and neither restart was the composition's fault. That is the ordinary texture of
+this work, and the tour's premise is that it does not get sanded off.
 
 ## Capture liberally, commit selectively
 

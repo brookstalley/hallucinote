@@ -204,11 +204,18 @@ reading a render's capture directory layout, which it locates by path convention
 
 ### Chunk A2: Deterministic Ableton screenshot capture
 
-- **Description:** AppleScript raises Live, `screencapture -o -l <windowID>` grabs the
-  front window only, then downscale to a fixed width. Determinism is the whole value: a
+- **Description:** Raise Live, `screencapture -o -l <windowID>` grabs that window only,
+  then downscale to a fixed width. Determinism is the whole value: a
   re-shoot after a Live UI change must be a one-liner, not a manual re-composition, or
   the four screenshots the design budgets become four permanent maintenance liabilities.
   macOS-only, which is sufficient and stated in the tool's docstring.
+
+  *(The verify-api probe falsified the stated mechanism. Live publishes **no**
+  accessibility windows — `count of windows` is 0 — and its own AppleScript dictionary
+  times out rather than answering `id of window 1`, so no AppleScript path yields a
+  window id. The window server's `CGWindowListCopyWindowInfo`, reached through `ctypes`
+  and parsed via `plistlib`, does — with no new dependency. The design records both dead
+  ends so neither is re-tried.)*
 - **Depends on:** none (independent of A1)
 - **Foreign API:** macos-screencapture-applescript
 - **Artifacts consumed:** `tour-walkthrough-design.md` §Capture tooling item 2

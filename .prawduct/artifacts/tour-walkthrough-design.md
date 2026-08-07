@@ -106,10 +106,29 @@ hand-staging exercise.
    This gives **real, un-fabricated agent output with zero hand-typing**, and lets the
    doc be regenerated after a behavior change. Hand-written fake transcripts are the
    first thing a skeptical reader catches; this removes the temptation.
-2. **`tools/capture_live_shot.py` — deterministic Ableton screenshots.** AppleScript
-   raises Live → `screencapture -o -l <windowID>` (front window only) → downscale to a
-   fixed width. Deterministic framing makes a re-shoot after a UI change a one-liner
-   rather than a manual re-composition. macOS-only, which is sufficient.
+2. **`tools/capture_live_shot.py` — deterministic Ableton screenshots.** Raise Live →
+   `screencapture -o -l <windowID>` (that window only) → downscale to a fixed width.
+   Deterministic framing makes a re-shoot after a UI change a one-liner rather than a
+   manual re-composition. macOS-only, which is sufficient.
+
+   **The window id does not come from AppleScript, because for Live there is none to
+   get.** Probed against a real running Live on 2026-08-06: `count of windows` of
+   process "Live" is **0** and its `AXWindows` attribute is empty — Live draws its
+   interface on a custom surface, so it publishes no accessibility windows — and
+   Live's own dictionary does not answer `id of window 1` at all, timing out after
+   60 s with `-1712`. The id comes instead from the window server itself,
+   `CGWindowListCopyWindowInfo` reached through `ctypes` and serialised via
+   `CFPropertyListCreateData` into something `plistlib` parses. That keeps the
+   no-new-dependency rule intact: no PyObjC, no compiled helper. Live is raised with
+   `open -a` (~0.1 s) rather than `osascript … activate` (~2 s on the same AppleEvent
+   channel that hangs elsewhere).
+
+   **It needs Screen Recording permission, granted to the terminal's host
+   application** — and its absence does not announce itself: `screencapture` reports
+   *"could not create image from window"*, which reads like a bad window id, and
+   window names silently come back empty. The tool therefore preflights
+   `CGPreflightScreenCaptureAccess` and names both the host app and the settings pane
+   before it raises anything.
 3. **`tools/make_demo_media.py` — audio and image encode.** From a render's capture
    directory (per-track + master WAVs already exist): master → mp3 (~1 MB/min), the
    A/B pair → two clips, and a waveform **still** per clip via ffmpeg `showwavespic`,

@@ -1425,3 +1425,77 @@ Checks (a pushed song with an arrangement clip carrying known stale notes — e.
    warning (collapse is faithful, not a leak).
 4. **Session view unaffected.** A `replace_notes` on a session clip still
    total-replaces correctly (the defensive clear is harmless there).
+
+---
+
+## 2026-08-06 — TOUR A2: deterministic Ableton screenshot capture (feat/tour-walkthrough)
+
+Visual change: **yes**. Fingerprint flip: no — `tools/` is outside the MCP
+wire-shape paths, so no re-vendor and no Live restart is needed for this.
+
+Why it can't be auto-verified: framing and legibility of a screenshot are exactly
+what a test cannot speak to, and the capture itself is blocked on a permission
+only the operator can grant.
+
+**Blocked, and the block is the first check.** `CGPreflightScreenCaptureAccess()`
+returns `False` on this machine, so `screencapture` cannot photograph another
+application's window at all — it exits 1 with *"could not create image from
+window"*. Everything up to that point is verified: the tool resolves the real
+Live window through the window server (`--list` prints `id 56749 layer 0
+1576x949` against a running Live) and refuses with a precise, actionable error
+naming `Visual Studio Code.app`, writing no file and without stealing focus.
+
+Checks (Live running with the demo set open):
+
+1. **Grant the permission.** System Settings → Privacy & Security → Screen
+   Recording → enable the application hosting the terminal (the tool names it;
+   here `Visual Studio Code.app`). **Restart that application** — the grant is
+   read at launch, so a running process keeps its old answer.
+2. **It captures the window, not the screen.** `python
+   tools/capture_live_shot.py --out /tmp/shot.png` writes a PNG showing the Live
+   window alone — no desktop, no other application, and no soft grey drop-shadow
+   halo around the edges (that is what `-o` removes).
+3. **Fixed width, which is the determinism being promised.** The image is
+   exactly 1600 px wide. Run it twice without touching the Live window: both
+   images have identical dimensions.
+4. **It refuses rather than photographing the wrong window.** Open a plug-in
+   editor or Preferences so Live owns two normal windows, then run it again: it
+   must error listing both ids and sizes and capture nothing. `--window-id
+   <id>` from that listing then captures the one you chose.
+5. **Legibility at the committed width.** Open the result and confirm clip
+   names, device names and the transport are readable at 1600 px — this is the
+   width the tour ships, and text that is unreadable there makes the screenshot
+   worthless regardless of framing.
+
+---
+
+## 2026-08-06 — TOUR A4: lifecycle diagram, light/dark aware (feat/tour-walkthrough)
+
+Visual change: **yes**. Fingerprint flip: no — `docs/` is outside the MCP
+wire-shape paths.
+
+Why it can't be auto-verified: an SVG's correctness is whether it *reads*, and
+on the surface that matters — a GitHub page, in the reader's theme.
+
+Already verified locally, so these checks are about GitHub specifically: the file
+is well-formed XML with zero external references (no font, no image, no
+`@import`), and all four theme combinations were rendered in headless Chrome and
+inspected — light palette on white, dark on `#0d1117`, and **both mismatched
+pairings**. The mismatch cases are the point: the `prefers-color-scheme` query
+follows the operating system while GitHub's light/dark toggle is its own setting,
+so the two can disagree. Every piece of text sits inside an opaque card
+specifically so that a disagreement changes only the colour of the gaps.
+
+Checks (on the pushed branch's rendered page, not a local preview):
+
+1. **It renders at all.** `docs/assets/lifecycle.svg` displays on the GitHub page
+   rather than showing a broken-image icon — the failure mode when a sanitizer
+   strips something the file depends on.
+2. **Light theme.** With GitHub set to light, the cards read as light panels with
+   dark text; connectors and arrowheads are visible against the page.
+3. **Dark theme.** Switch GitHub to dark and reload. The cards must not stay
+   light-on-light or go dark-on-dark; text stays legible and the return arrow is
+   still visible.
+4. **Theme mismatch.** Set the OS to one scheme and GitHub to the other. The
+   diagram may look inverted relative to the page — that is expected and
+   accepted — but every label must remain readable.

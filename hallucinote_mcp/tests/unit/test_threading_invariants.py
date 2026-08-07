@@ -198,7 +198,7 @@ class _SimulatedLiveCtx:
     def live_state_lock(self) -> threading.RLock:
         return self._lock
 
-    def run_on_main(self, fn):  # type: ignore[no-untyped-def]
+    def run_on_main(self, fn, **_kwargs):  # type: ignore[no-untyped-def]
         done = threading.Event()
         box: dict[str, Any] = {}
         self._main_q.put((fn, done, box))

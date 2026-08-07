@@ -257,6 +257,37 @@ _PRESET_URI_MISS_HINTS = (
 # value-range refusal.
 _PARAM_NOT_FOUND_HINTS = ("not found",)
 
+# Live's refusal when a parameter exists and reads fine but cannot be written —
+# macro-mapped, or otherwise locked. Matched on the message because the wire
+# carries a RuntimeError string, not a typed code. Kept narrow on purpose: this
+# tolerates ONLY the disabled case, never a value-range or missing-param
+# refusal, both of which are real defects a push should still halt on.
+_PARAM_DISABLED_HINT = "parameter is disabled"
+
+
+def _is_tolerated_failure(
+    *, tool: str, action: str | None, err_msg: str | None,
+) -> bool:
+    """Is this failure a no-op Live refused, rather than a real defect?
+
+    Exactly one case qualifies: a chain-mixer write refused because the
+    parameter is DISABLED (macro-mapped or otherwise locked). Such a parameter
+    cannot be changed by us, by the user in Live's UI, or by anything else — so
+    the DB's value can never audibly diverge, there is nothing a retry or a
+    human could fix, and halting a fourteen-phase push over it is wrong.
+
+    Everything else stays fatal. In particular a value-RANGE refusal and a
+    missing-parameter refusal are real defects that must still halt: they mean
+    the song is asking for something the device cannot do, which is exactly
+    what a push is supposed to catch.
+    """
+    return (
+        tool == "ableton_device"
+        and action == "set_chain_property"
+        and bool(err_msg)
+        and _PARAM_DISABLED_HINT in (err_msg or "")
+    )
+
 
 def _orphan_param_hint(
     *, tool: str, action: str | None, err_msg: str | None,
@@ -1079,7 +1110,32 @@ def execute_push(
                 result_entry["set_parameter_fallback"] = set_param_fallback
             results.append(result_entry)
 
-            if not ok:
+            # A chain-mixer write Live refuses BECAUSE THE PARAMETER IS DISABLED
+            # is a no-op, and halting fourteen phases over it is wrong. A
+            # macro-mapped or locked chain mixer cannot be changed by us, by the
+            # user in the UI, or by anything else — so the DB's value can never
+            # audibly diverge from Live, and there is nothing for a retry or a
+            # human to fix. (Live's own 606 Core Kit hi-hat pads do this.) The
+            # capture side now declines to record such params at all
+            # (`_chain_mixer_nondefault`), so this is the belt to that braces:
+            # snapshots authored before the capture fix, or a param that becomes
+            # macro-mapped after capture, still must not take down a push.
+            #
+            # Deliberately NOT converted to ok=True: nothing succeeded, so the
+            # result must not be applied as though the value had been written.
+            # It is recorded as a warning and skipped.
+            tolerated = not ok and _is_tolerated_failure(
+                tool=call.tool, action=action, err_msg=err_msg,
+            )
+            if tolerated:
+                result_entry["skipped_param_disabled"] = True
+                warning_messages.append(
+                    f"devices: chain property skipped — Live reports the "
+                    f"parameter is disabled (macro-mapped or locked), so the "
+                    f"write is a no-op ({call.key})"
+                )
+
+            if not ok and not tolerated:
                 error_records.append({
                     "key": call.key,
                     "tool": call.tool,

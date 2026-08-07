@@ -32,7 +32,7 @@ class FakeCtx:
     def song(self) -> Any:
         return self._song
 
-    def run_on_main(self, fn):
+    def run_on_main(self, fn, **_kwargs):
         return fn()
 
 
@@ -91,7 +91,7 @@ class _FakeCtxWithSong:
     def song(self):
         return self._song
 
-    def run_on_main(self, fn):
+    def run_on_main(self, fn, **_kwargs):
         return fn()
 
 

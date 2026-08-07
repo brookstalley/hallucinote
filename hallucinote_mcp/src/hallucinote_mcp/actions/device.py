@@ -163,6 +163,10 @@ register(
     Action(
         tool="ableton_device",
         name="get_parameters",
+        # A large sampled rack (a Brass Ensemble, a 16-pad Drum Rack) walks far
+        # past the 15s default with detail='full'; that is what aborted a whole
+        # `capture execute` mid-walk. Mirrors client._READ_TIMEOUTS.
+        main_thread_timeout=90.0,
         description=(
             "Read a device's parameters with current values. detail='summary' "
             "returns name + value + value_display + default_value (cheap). "
@@ -204,6 +208,12 @@ register(
     Action(
         tool="ableton_device",
         name="load",
+        # A browser load costs whatever the ITEM costs, not what our call costs.
+        # Instantiating a Max for Live device is the worst case — the ~490 KB
+        # HallucinoteAnalyzer blocks Live's main thread for tens of seconds, and
+        # the 15s default turned that into a false failure whose retry queued
+        # more work behind the still-running load. Mirrors client._READ_TIMEOUTS.
+        main_thread_timeout=120.0,
         description=(
             "Load a device onto a track or return chain via Live's browser. "
             "'kind' is the device's BROWSER DISPLAY NAME (e.g. 'Compressor', "

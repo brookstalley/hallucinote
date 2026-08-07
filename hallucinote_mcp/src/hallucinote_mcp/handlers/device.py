@@ -662,6 +662,10 @@ _BROWSER_URI_ROOTS: tuple[str, ...] = _BROWSER_LOAD_ROOTS + (
     "samples",
     "user_library",
     "packs",
+    # Live serves a User-Library .amxd from the M4L root (``query:M4L#…``) while
+    # ``browser.user_library`` can be empty, so a URI that resolves nowhere else
+    # resolves here. Last in the tuple: built-in roots keep priority on a tie.
+    "max_for_live",
 )
 
 _BROWSER_WALK_DEPTH = 8
@@ -2355,6 +2359,22 @@ def _describe_chain(
                     # same guard tuple as the get_parameters default_value read.
                     # Without a default the filter treats it as default (no
                     # capture) — mixer state must not over-capture every chain.
+                    pass
+                # Whether this parameter can be WRITTEN. A macro-mapped or
+                # otherwise locked chain mixer reads fine and refuses every set
+                # with "Value cannot be set, the parameter is disabled" — so a
+                # capture that records it produces a snapshot the very next push
+                # cannot replay, and the push halts on a write that would have
+                # changed nothing. Reading value without reading writability is
+                # what made that failure possible; surfacing it lets the capture
+                # filter decline to record what it cannot restore.
+                try:
+                    chain_entry[key + "_is_enabled"] = bool(param.is_enabled)
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    # Absent on older Live / odd params. Unknown must not mean
+                    # "skip" — that would silently drop real authored state, so
+                    # the filter treats a missing flag as writable (capture it)
+                    # and we fall back to the pre-existing behaviour.
                     pass
     if detail == "full":
         mixer = _mixer_state(chain)

@@ -85,12 +85,31 @@ class LiveContext(Protocol):
     @property
     def live_state_lock(self) -> Any: ...  # pragma: no cover - structural only
 
-    def run_on_main(self, fn: Callable[[], Any]) -> Any: ...  # pragma: no cover
+    def run_on_main(
+        self,
+        fn: Callable[[], Any],
+        *,
+        timeout: float | None = None,
+        label: str | None = None,
+    ) -> Any: ...  # pragma: no cover
 
 
 # ---------------------------------------------------------------------------
 # Param validation
 # ---------------------------------------------------------------------------
+
+
+class LiveBusyError(RuntimeError):
+    """Live's main thread is occupied and this request was REFUSED, not queued.
+
+    Defined here, beside the ``LiveContext`` Protocol that raises it, so the
+    dispatcher can translate it into a structured response without importing
+    the Live-only module.
+
+    A distinct type because the correct response differs from every other
+    failure: nothing is broken, the work was never attempted, and retrying
+    immediately makes things worse — it deepens the queue behind an operation
+    that cannot be cancelled."""
 
 
 class ParamValidationError(Exception):
@@ -485,7 +504,11 @@ def dispatch(request: Request, context: LiveContext | None = None) -> Response:
             assert action.handler is not None  # guaranteed by Action.__post_init__
             result = action.handler(context, **validated)
         else:
-            result = context.run_on_main(run_executor)
+            result = context.run_on_main(
+                run_executor,
+                timeout=action.main_thread_timeout,
+                label=f"{action.tool}({action.name!r})",
+            )
     except KeyError as exc:
         logger.warning(
             "schema bug: %s(%r) executor referenced unknown param %r",
@@ -495,6 +518,20 @@ def dispatch(request: Request, context: LiveContext | None = None) -> Response:
             f"{action.tool}({action.name!r}) executor referenced "
             f"unknown param {exc.args[0]!r}; this is a schema bug",
             hint="Report this — the action schema and executor are out of sync.",
+        )
+    except LiveBusyError as exc:
+        # Not a failure of THIS request — it was never attempted. Kept ahead of
+        # the broad catch so it never reads as "the action is broken", and
+        # deliberately not logged at exception level: a busy main thread is an
+        # expected condition under concurrent callers, not a defect.
+        return error(
+            str(exc),
+            hint=(
+                "Wait for the in-flight operation to finish before calling "
+                "again. Retrying now queues more work behind an operation Live "
+                "cannot cancel, which is how a slow call becomes an "
+                "unresponsive Live."
+            ),
         )
     except Exception as exc:  # prawduct:ok-broad-except — dispatcher is a system boundary; we MUST translate any executor exception into a structured wire response or the agent gets a raw traceback
         logger.exception(

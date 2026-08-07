@@ -238,7 +238,7 @@ class _FakeCtx:
     def live_state_lock(self) -> Any:
         return self._live_state_lock
 
-    def run_on_main(self, fn):
+    def run_on_main(self, fn, **_kwargs):
         self.run_on_main_calls += 1
         return fn()
 
@@ -941,3 +941,88 @@ def test_return_name_restoration_matches_engine_normalizer():
         assert _return_name_restoration(dirty) == normalize_live_return_name(
             dirty
         ), dirty
+
+
+# ---------------------------------------------------------------------------
+# Where the analyzer is looked up
+# ---------------------------------------------------------------------------
+
+
+def test_analyzer_browser_candidates_include_the_m4l_root_first():
+    """Live serves a User-Library .amxd from the M4L root.
+
+    On Live 12.4.2 `browser.user_library.children` comes back EMPTY while the
+    installed analyzer resolves as `query:M4L#Max Audio Effect:FileId_…` with
+    `source == "User Library"`. Querying only `user_library` therefore failed on
+    a CORRECT install — with a misleading "path_prefix segment 'Presets' not
+    found under <root>; available: []" — and took every render and every
+    analysis down with it.
+    """
+    from hallucinote_mcp.analyzer.setup import (
+        ANALYZER_BROWSER_CANDIDATES,
+        ANALYZER_BROWSER_PATH_PREFIX,
+    )
+
+    roots = [root for root, _ in ANALYZER_BROWSER_CANDIDATES]
+    assert roots[0] == "max_for_live", (
+        "M4L must be tried first — it is where Live actually serves Max devices"
+    )
+    assert "user_library" in roots, (
+        "the historical location must remain a candidate; an install that "
+        "worked yesterday has to keep working"
+    )
+    # The legacy candidate keeps its exact pinned prefix (anti-shadowing).
+    assert dict(ANALYZER_BROWSER_CANDIDATES)["user_library"] == (
+        ANALYZER_BROWSER_PATH_PREFIX
+    )
+    # Every candidate pins a path prefix — an unpinned root would let a
+    # user-saved preset named "HallucinoteAnalyzer" shadow the real device.
+    assert all(prefix for _, prefix in ANALYZER_BROWSER_CANDIDATES)
+
+
+def test_max_for_live_is_a_reachable_browser_root():
+    """A root the agent cannot enumerate is a failure it cannot diagnose.
+
+    `max_for_live` was absent from both the browser tool's root list and the
+    device-load URI roots, so the analyzer was invisible to every normal query
+    path and the only way to find it was to drop to `ableton_probe`.
+    """
+    from hallucinote_mcp.handlers.browser import _ROOTS
+    from hallucinote_mcp.handlers.device import _BROWSER_URI_ROOTS
+
+    assert "max_for_live" in _ROOTS
+    assert "max_for_live" in _BROWSER_URI_ROOTS
+
+
+# ---------------------------------------------------------------------------
+# The two timeout tables bound the same operations from opposite ends
+# ---------------------------------------------------------------------------
+
+
+def test_main_thread_and_read_timeouts_agree():
+    """Live-side and client-side ceilings must not disagree.
+
+    `client._READ_TIMEOUTS` bounds how long the CALLER waits on the socket;
+    `Action.main_thread_timeout` bounds how long LIVE waits for its own main
+    thread. They bound the same operation from opposite ends, so if they
+    disagree the tighter one reports a failure that has not happened — and
+    because a Live API call cannot be cancelled, that false report invites a
+    retry which queues more work behind the operation still running. That is
+    exactly how a slow device load became an unresponsive Live.
+    """
+    import hallucinote_mcp.actions  # noqa: F401 — import registers the actions
+    from hallucinote_mcp import client, schema
+
+    by_key = {(a.tool, a.name): a for a in schema.all_actions()}
+    for (tool, action_name), read_timeout in client._READ_TIMEOUTS.items():
+        if read_timeout is None:
+            continue  # unbounded by design (perform_batch owns its own deadline)
+        action = by_key.get((tool, action_name))
+        if action is None or action.main_thread_timeout is None:
+            continue  # not a main-thread-bounded action (jobs, server-side)
+        assert action.main_thread_timeout <= read_timeout, (
+            f"{tool}({action_name!r}): Live gives up after "
+            f"{action.main_thread_timeout}s but the caller waits "
+            f"{read_timeout}s — Live must not abandon work the caller is "
+            f"still waiting for"
+        )

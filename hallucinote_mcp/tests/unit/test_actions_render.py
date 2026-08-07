@@ -265,7 +265,7 @@ class _FakeCtx:
     def live_state_lock(self):
         return self._live_state_lock
 
-    def run_on_main(self, fn):
+    def run_on_main(self, fn, **_kwargs):
         self.run_on_main_calls += 1
         bout_id = self.run_on_main_calls
         time_before = self._song.current_song_time
@@ -966,7 +966,7 @@ def test_default_engine_preflight_passes_when_transport_advances():
         def song(self):
             return self._song
 
-        def run_on_main(self, fn):
+        def run_on_main(self, fn, **_kwargs):
             return fn()
 
     assert render_handlers._default_engine_preflight(

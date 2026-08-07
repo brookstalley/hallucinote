@@ -49,13 +49,29 @@ class LiveConnectionError(Exception):
 #     long-poll itself must stay under the Claude Code tool-call timeout (raise
 #     .mcp.json `timeout` if you widen it). NOTE: start (not listed) returns
 #     immediately, so the default suits it. (MCP-9R3T async render.)
+#   - ableton_device(load): a browser load runs on Live's main thread and its
+#     cost scales with the ITEM, not with our call. A Max for Live patch is the
+#     worst case — HallucinoteAnalyzer.amxd is ~490 KB and Live blocks for tens
+#     of seconds instantiating it, during which NO other request is answered
+#     (measured: a single master-track analyzer load severed the socket twice at
+#     the 15s default). Large sampled instrument racks behave the same way.
+#     Bounded, not unbounded: a load that never returns is a real failure and
+#     must still surface as a timeout rather than hanging the caller forever.
+#   - ableton_device(get_parameters): `detail='full'` enumerates every parameter
+#     on the addressed node. On a big sampled rack (a Brass Ensemble, a 16-pad
+#     Drum Rack) that walk exceeds the default and aborts a whole capture —
+#     which is how `capture execute` died mid-walk with a bare FrameError.
 _DEFAULT_READ_TIMEOUT: float = 15.0
 _ENSURE_LOADED_READ_TIMEOUT: float = 180.0
 _STATUS_READ_TIMEOUT: float = 60.0
+_DEVICE_LOAD_READ_TIMEOUT: float = 120.0
+_GET_PARAMETERS_READ_TIMEOUT: float = 90.0
 _READ_TIMEOUTS: dict[tuple[str, str], float | None] = {
     ("ableton_automation", "perform_batch"): None,
     ("ableton_render", "ensure_loaded"): _ENSURE_LOADED_READ_TIMEOUT,
     ("ableton_render", "status"): _STATUS_READ_TIMEOUT,
+    ("ableton_device", "load"): _DEVICE_LOAD_READ_TIMEOUT,
+    ("ableton_device", "get_parameters"): _GET_PARAMETERS_READ_TIMEOUT,
 }
 
 

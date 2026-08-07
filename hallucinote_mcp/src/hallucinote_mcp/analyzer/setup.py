@@ -130,13 +130,35 @@ def _return_name_restoration(current_name: str) -> str | None:
 
 ANALYZER_BROWSER_PATH_PREFIX = ("Presets", "Audio Effects", "Max Audio Effect")
 """Browser path under the ``user_library`` root where the install
-skill places the .amxd. Used by the analyzer-load ``preset_query`` —
-narrowing to this exact location prevents a user-saved preset named
-``HallucinoteAnalyzer`` elsewhere in their library from shadowing the
-canonical device. Match: ``user_library/Presets/Audio Effects/Max Audio Effect/HallucinoteAnalyzer``.
+skill places the .amxd. Match:
+``user_library/Presets/Audio Effects/Max Audio Effect/HallucinoteAnalyzer``.
 
 This MUST stay in sync with ``install_paths.analyzer_install_target`` —
 that's where the install skill writes the file."""
+
+ANALYZER_BROWSER_CANDIDATES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("max_for_live", ("Max Audio Effect",)),
+    ("user_library", ANALYZER_BROWSER_PATH_PREFIX),
+)
+"""Where to look for the analyzer, in order, as ``(root, path_prefix)``.
+
+**Why this is a list and not one location.** Where a file sits on DISK and which
+browser root Live SERVES it from are different questions, and Live answers the
+second one for itself. On Live 12.4.2 the .amxd the install writes into
+``~/Music/Ableton/User Library/Presets/Audio Effects/Max Audio Effect/`` is
+served from the **M4L** root — ``query:M4L#Max%20Audio%20Effect:FileId_…``, with
+``source == "User Library"`` — while ``browser.user_library.children`` is
+**empty**. Querying only ``user_library`` therefore failed on a correct install,
+with a confusing "path_prefix segment 'Presets' not found under <root>;
+available: []", and took down every render and every analysis with it.
+
+Each entry still pins an exact location, so the original anti-shadowing property
+holds: a user-saved preset named ``HallucinoteAnalyzer`` elsewhere in the library
+cannot win. Order matters only when both resolve, and M4L is first because it is
+where Live actually serves Max devices from.
+
+Add a candidate rather than replacing one when a future Live reorganises the
+browser again — an install that worked yesterday must keep working."""
 
 ANALYZER_SIGNATURE = "hallucinote-analyzer-v1"
 """Version-tagged identity reported by the patch in reply to OSC
@@ -662,24 +684,43 @@ def _load_analyzer(
     # Top-level load onto the surface's main chain → a node-itself terminal
     # (surface_kind is track/return/master).
     load_node = device_handlers.build_node_addr(track_address, terminal=surface_kind)
-    try:
-        result = context.run_on_main(lambda: device_handlers.load_handler(
-            context,
-            node=load_node,
-            kind=ANALYZER_DEVICE_NAME,  # required by signature; preset_query takes precedence
-            preset_query={
-                "root": "user_library",
-                "pattern": ANALYZER_DEVICE_NAME,
-                "path_prefix": list(ANALYZER_BROWSER_PATH_PREFIX),
-                "mode": "substring",
-            },
-        ))
-    except device_handlers.PresetQueryNoMatchError as exc:
-        # The .amxd isn't in the User Library — either no Max for Live, or a
-        # Suite user who skipped /ableton-mcp-install. Either way the generic
-        # preset error is unhelpful; teach instead (ONBOARD-M4L B1). Keyed on
-        # the missing device, not on edition inference (D1).
-        raise AnalyzerNotInstalledError(ANALYZER_MISSING_MESSAGE) from exc
+    # Try each known browser location in turn. A miss raises one of two things
+    # and BOTH mean "not here, try the next": PresetQueryNoMatchError when the
+    # root resolves but nothing matches, and a bare ValueError from
+    # `_navigate_path_prefix` when a prefix segment is absent (the empty-
+    # user_library case). Only when every candidate misses is the analyzer
+    # genuinely absent.
+    result: Any = None
+    last_exc: Exception | None = None
+    for root, prefix in ANALYZER_BROWSER_CANDIDATES:
+        query: dict[str, Any] = {
+            "root": root,
+            "pattern": ANALYZER_DEVICE_NAME,
+            "path_prefix": list(prefix),
+            "mode": "substring",
+        }
+
+        def _load(q: dict[str, Any] = query) -> Any:
+            return device_handlers.load_handler(
+                context,
+                node=load_node,
+                # required by signature; preset_query takes precedence
+                kind=ANALYZER_DEVICE_NAME,
+                preset_query=q,
+            )
+
+        try:
+            result = context.run_on_main(_load)
+            break
+        except (device_handlers.PresetQueryNoMatchError, ValueError) as exc:
+            last_exc = exc
+            continue
+    if result is None:
+        # Every candidate missed — either no Max for Live, or a Suite user who
+        # skipped /ableton-mcp-install. Either way the generic preset error is
+        # unhelpful; teach instead (ONBOARD-M4L B1). Keyed on the missing
+        # device, not on edition inference (D1).
+        raise AnalyzerNotInstalledError(ANALYZER_MISSING_MESSAGE) from last_exc
     device_index = int(result.get("device_index", 0))
     if device_index < 1:
         raise RuntimeError(

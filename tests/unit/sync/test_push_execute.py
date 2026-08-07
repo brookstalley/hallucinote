@@ -2664,3 +2664,51 @@ def test_errors_file_write_failure_still_closes_request(
     state = json.loads((state_dir / ".last-push-state.json").read_text())
     assert state["outcome"] == "partial"
     assert state["current_phase"] is None  # terminal flush, not a mid-run one
+
+
+# ---------------------------------------------------------------------------
+# Tolerated failures — a refused no-op must not halt a fourteen-phase push
+# ---------------------------------------------------------------------------
+
+
+_DISABLED_ERR = (
+    "ableton_device('set_chain_property') failed: RuntimeError: "
+    "Value cannot be set, the parameter is disabled"
+)
+
+
+def test_disabled_chain_property_is_tolerated():
+    """Live's own 606 Core Kit hi-hat pads carry macro-locked chain mixers.
+
+    Capture read the value, push wrote the identical value back, Live refused,
+    and the whole push halted at the devices phase over a change that would
+    have changed nothing.
+    """
+    assert push_execute._is_tolerated_failure(
+        tool="ableton_device", action="set_chain_property",
+        err_msg=_DISABLED_ERR,
+    )
+
+
+@pytest.mark.parametrize("tool, action, err_msg, why", [
+    ("ableton_device", "set_chain_property",
+     "value 2.5 out of range [0.0, 1.0]",
+     "a value-range refusal is a real defect — the song asks for the impossible"),
+    ("ableton_device", "set_chain_property",
+     "parameter 'Volume' not found on device",
+     "a missing parameter means the device changed under the song"),
+    ("ableton_device", "set_parameter",
+     _DISABLED_ERR,
+     "only the CHAIN-MIXER write is a guaranteed no-op; a disabled device "
+     "parameter is not in scope for this tolerance"),
+    ("ableton_clip", "create", _DISABLED_ERR,
+     "tolerance must be keyed on the tool as well as the message"),
+    ("ableton_device", "set_chain_property", None,
+     "no error message means no evidence it was the disabled case"),
+])
+def test_other_failures_are_not_tolerated(tool, action, err_msg, why):
+    """The tolerance must stay narrow. A guard that swallows more than the one
+    provably-harmless case turns a push from a verifier into a rubber stamp."""
+    assert not push_execute._is_tolerated_failure(
+        tool=tool, action=action, err_msg=err_msg,
+    ), why

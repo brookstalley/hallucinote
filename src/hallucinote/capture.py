@@ -1452,6 +1452,15 @@ def _chain_mixer_nondefault(
     val = chain_entry.get(key)
     if not isinstance(val, (int, float)) or isinstance(val, bool):
         return None
+    # Never record state we cannot replay. A macro-mapped / locked chain mixer
+    # reads back a perfectly good value and then refuses every write with
+    # "Value cannot be set, the parameter is disabled" — so capturing it writes
+    # a snapshot whose next push HALTS on a value-level no-op. (Witnessed on
+    # Live's own 606 Core Kit: the closed/open hi-hat pads.) An absent flag means
+    # "unknown", not "disabled" — older Live and odd params don't report it, and
+    # treating unknown as disabled would silently drop real authored mix state.
+    if chain_entry.get(f"{key}_is_enabled") is False:
+        return None
     default = chain_entry.get(f"{key}_default")
     if not isinstance(default, (int, float)) or isinstance(default, bool):
         return None

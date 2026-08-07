@@ -205,7 +205,7 @@ rendering detail the user should not have to hold.
 below was lifted by TMP-7B3X: `add_time_signature_point` /
 `update_time_signature_point` accept any `start_bar >= 1.0`, and the "cannot reach
 Live" statement moved to `plan_push_time_signature_map`, which pushes the bar-1
-row and warns about the rest. The `/song-new` exit criterion is satisfiable for a
+row and raises a push-report alert about the rest. The `/song-new` exit criterion is satisfiable for a
 song with a within-song meter change, and the meter row resolves DECIDED rather
 than UNDECIDED-owned-by-the-engine. What remains open is the projection half
 (TMP-4J6Q — how a declared map materializes in Live) and the authoring half

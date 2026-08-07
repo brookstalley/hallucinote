@@ -1,11 +1,14 @@
 # Elicitation & stage exit criteria — a stage may not emit an unresolved gap
 
-**Status:** adopted (2026-08-07) — the stage, the three-state model and the
-per-stage criteria ship as norms in `docs/song-workflow.md`,
-`docs/song-authoring-conventions.md` and the nine song skills. Two parts are
-**not** adopted and are tracked in the backlog, not here: the CLAUDE.md amendment
-(owner ratification pending) and the docstring-test lint (deferred, needs its own
-build cycle). **Related:** `onboarding-and-teaching-model.md`
+**Status:** adopted (2026-08-07), **amended the same day — read
+[*Amendment 1*](#amendment-1--identity-vs-craft-and-conversation-over-one-turn-2026-08-07)
+(at the end) alongside anything above it.** It replaces the one-turn bound with a
+shape invariant and adds the identity/craft owner test; the stage, the
+three-state model and every per-stage criterion are unchanged and ship as norms
+in `docs/song-workflow.md`, `docs/song-authoring-conventions.md` and the nine
+song skills. The docstring-test lint remains **not** adopted and is tracked in
+the backlog (deferred, needs its own build cycle).
+**Related:** `onboarding-and-teaching-model.md`
 (the elicitation registers this operationalizes), `intent-collaboration-model.md`
 (propose-and-react), `song-conventions.md` (`decisions/` + `attempts/` schema),
 `tour-walkthrough-design.md` (which names this work as a prerequisite for the
@@ -149,16 +152,20 @@ for three reasons: the norms drive the agent straight through anything embedded
 inside a scaffolding skill; `/song-new`'s CLI requires as arguments the very
 values elicitation produces; and the tour needs a nameable beat.
 
-**Four constraints, load-bearing:**
+**Four constraints, load-bearing** — constraints 1 and 2 are **amended by
+*Amendment 1* below; read them together.** Preserved here as ratified:
 
 1. **Propose, don't interrogate.** Informed proposals carrying reasoning and a
    recommendation, inviting a one-word reaction — not blank questions that hand
    the work back. *"I'd propose 132 BPM, here's the arithmetic"*, never *"what
    tempo?"*. A blank question is the auto-accompaniment failure wearing a
    politeness costume: it looks collaborative and transfers zero expertise.
+   → *narrowed to craft by Amendment 1; for identity a recommendation is now a
+   defect.*
 2. **One consolidated turn.** Every proposal, disclosure and piece of arithmetic
    arrives in a single message. Sequential Q&A would violate the stop-less norm
    for real, and is unwatchable on camera.
+   → *replaced by a shape invariant in Amendment 1.*
 3. **Its output is the brief.** The turn is not conversation that evaporates;
    it is drafted into `annotations/01-the-brief.md`, and the user's reaction
    edits that file.
@@ -378,6 +385,10 @@ third bullet in the stop list:
 >   Where a directed prompt leaves no applicable open dimension, the turn is
 >   skipped silently; this is never an excuse for a second turn.
 
+> **Superseded — see *Amendment 1* below.** The bullet above is preserved as the
+> text that was ratified; the wording now in CLAUDE.md replaces the one-turn
+> bound with a shape invariant and adds the identity/craft split.
+
 And amend **"Creative product prompts vs planning prompts"**, replacing the
 sentence *"Drive the workflow end-to-end (scaffold → compose → sound design →
 mix → verify) before declaring done"* with:
@@ -422,3 +433,107 @@ exit-criteria table against multi-site drift (every surface names stage 0; every
 deep-link resolves; the table has exactly one home). That guards *this design's
 own documentation*, not a song's prose — the two together are the reason the
 "Deliberately not built" list above is shorter than it looks.
+
+---
+
+## Amendment 1 — identity vs craft, and conversation over one turn (2026-08-07)
+
+**Status:** adopted. Amends constraints **1** and **2** of *The elicitation pass*
+and the CLAUDE.md text ratified earlier the same day. Constraints 3 and 4, the
+three-state ledger, DESCRIBED-BUT-UNBUILT and every per-stage exit criterion are
+**unchanged**.
+
+### What forced it
+
+Owner ruling, verbatim: *"hallucinote is a tool to help music composition,
+performance, production, arrangement. It is NOT an AI music generator"*, and
+*"the last thing a creative person wants is to have all the choices taken away —
+I would be very disappointed if I shared that initial prompt and you just ran off
+and built the whole thing."*
+
+The v1 design optimized for a defect that had already happened (a gap passed
+downstream in the clothes of a decision). It did not model **who owns a choice**,
+so an agent could satisfy every constraint while quietly authoring the song.
+
+**Reproduced, not hypothesised.** A live stage-0 run produced a ~900-word single
+turn carrying eight fully-argued proposals — and never mentioned **vocals**.
+
+Two root causes, both structural:
+
+1. **The dimension table was a regression list.** *The dimension prompts* above
+   says so plainly — *"Drawn from what actually bit v1."* Cross-checked against
+   `docs/song-new-checklist.md`, its seven rows contain **none of the five
+   must-haves**; they are should-haves (#6 tempo, #7 meter, #8 harmony, #9
+   production) and gap-closers (#15, #16, #17). Questions that have always been
+   answered by accident never became defects, so they never earned a row — and
+   the checklist that *does* carry them sat behind a link. A defect-derived
+   agenda cannot catch *"is anyone singing?"*.
+2. **The constraints composed into a wall.** *Sweep every dimension* + *one
+   consolidated turn* + *propose with reasoning and a recommendation* has exactly
+   one output: enumerate everything, fully argued, at once. The wall was not a
+   failure to follow this design — it is what following it produces.
+
+### What changes
+
+**The owner test replaces the relevance test as the primary sort.** *Whose choice
+is this?*
+
+- **Identity — the composer's.** What the song *is*: the feeling and what it's
+  for; **whether anyone is singing**; the harmonic world; what it sounds like
+  (one sonic world or several, and whether they argue in the production too);
+  the shape. Seeded from the checklist's five must-haves so they cannot fall out
+  again. Theirs *regardless of reversal cost* — the v1 "cheap choices are shown"
+  heuristic sorted on the wrong axis.
+- **Craft — the agent's.** BPM, meter arithmetic, voicings, generator choice,
+  feel offsets, device chains, mix moves, the budget arithmetic. Never asked.
+
+> *The musical intent is identity; the number that realizes it is craft.*
+
+The relevance test still runs — it decides applicability (DECIDED / UNDECIDED /
+NOT-APPLICABLE) for the ledger. The owner test decides **who is asked**.
+
+**Constraint 1 is narrowed to craft.** For an identity dimension the composer has
+not spoken to, a recommendation is now a **defect**, not the requirement. Naming
+the second failure is the substance of this amendment:
+
+> **The over-argued proposal** — a recommendation plus its full justification.
+> It *closes* the fork: disagreeing costs the composer an argument against a
+> paragraph of the agent's reasoning. An answer wearing a question's clothes.
+> It is the *more likely* failure, because every other rule pushes toward it.
+
+The rule **inverts** the moment the composer hands a choice back (*"you pick"*,
+*"I don't know keys"*) — that is the third register, and there withholding an
+opinion is uselessness, not humility. Propose properly, with the why.
+
+**Constraint 2 becomes a shape invariant.** *Every turn carries new work, not
+just questions*; at most two questions per turn; converge once only craft
+remains; *"just go"* ends the stage immediately with the rest decided and marked
+`agent` in the brief. The failure constraint 2 bounded — sequential blank-question
+Q&A — is still forbidden, now because a question with no work attached fails the
+shape rule rather than because a counter was exceeded. Counting turns is what
+*caused* the cram.
+
+**The camera rationale is explicitly overruled** by the owner: *"we need to
+optimize for product experience, not the demo. Ok if we have to cut scenes."*
+`tour-walkthrough-design.md` beat 1 shows a conversation, not one turn.
+
+**Expertise is constant; the mode reads the request.** The composer may be a rank
+novice or better than the agent, and the agent does not get to find out — read the
+*request*, not the requester. Directed → implement. Unspoken → ask openly.
+Handed back → propose. **They lead the creative project no matter what.**
+
+**Ruler-vs-stamp is extended from the library to the agent** (`docs/song-authoring-conventions.md`
+§ *Generator altitude*). Gatekeeping and **substituting** are two ways the song
+stops being the composer's; the corpus guarded only the first.
+
+**The ledger's *reason* is re-centred, its content untouched.**
+DESCRIBED-BUT-UNBUILT matters because it tells the composer their song has
+something it doesn't — lying to an author about their own work — not because the
+machine passed a gap downstream. The conversation is *selective*; the file stays
+**complete**. Conflating those two jobs is the root cause underneath both
+failures above.
+
+### Deliberately not in scope
+
+`/compose-review` and `/mix-review` surface "a producer's question, never a
+verdict" and carry the same wall risk. Filed, not silently dropped.

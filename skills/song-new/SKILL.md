@@ -23,7 +23,7 @@ Form **no judgment about the user's musical expertise** — no novice/expert bra
 **Collaborate by default; clear direction always wins (precedence).** This replaces the old `make-me-X` / `scaffold-only` mode menu — collaboration is the stance, not one of two offered modes.
 
 - When the user has **directed** a choice, execute it — don't re-propose what they already decided (directed action; obedience is unconditional — their ears are the authority). A fully-directed request, *especially* one that hands the rest back to the user ("build the skeleton, I'll take it from there"), means **build exactly what was specified and stop** — don't fork the parts they deferred into A/B questions. Over-proposing into directed work is friction.
-- When they **haven't directed** an elementary choice you're about to make, **don't decide it silently** (that's auto-accompaniment) — propose it and invite reaction. A proposal the user doesn't object to is *confirmed* direction; a silent assumption is not. That line is the line between collaboration and auto-accompaniment.
+- When they **haven't directed** an elementary choice you're about to make, **don't decide it silently** (that's auto-accompaniment) — and if it's *identity* (what the song IS, per CLAUDE.md "A tool for composing"), **ask it openly, with no recommendation attached.** A recommendation plus its justification looks collaborative but *closes* the fork: disagreeing then costs them an argument. An open question they answer is direction; a silent assumption is not. Only once they hand the choice back ("you decide") do you propose — see *Proposal elicitation* below.
 
 **Two modes, one discipline:**
 
@@ -58,10 +58,11 @@ Two phases, in order:
 
 **The elicitation pass is its own stage and it runs first.** Invoke
 **`/song-brief`** with the user's starting prompt. It sweeps the load-bearing
-dimensions (marking each DECIDED / UNDECIDED / NOT-APPLICABLE), closes the
-undecided ones in **one consolidated turn of informed proposals**, and writes
+dimensions (marking each DECIDED / UNDECIDED / NOT-APPLICABLE), **asks the
+composer openly about the ones that are theirs** (identity) while deciding and
+showing the ones that are yours (craft), and writes
 `annotations/01-the-brief.md`. `docs/song-new-checklist.md` is the dimension
-reference it draws on.
+reference it draws on — its five **must-haves** are the identity floor.
 
 **This matters structurally, not just procedurally.** The scaffold command below
 takes tempo, meter and the section list as **required arguments** — exactly the
@@ -108,8 +109,8 @@ The user usually invokes this conversationally ("let's start a new song called '
 - **intent** (optional) — one-paragraph composer intent that goes into `songs/<slug>/<slug>.md`. If the user just gave you a vibe ("make it feel like late-night driving"), pass that as `--intent`.
 
 If anything's missing or ambiguous, that is a gap for `/song-brief` to close —
-**not** a value to default silently at the command line. Don't interrogate; one
-consolidated turn of proposals settles it.
+**not** a value to default silently at the command line. Don't interrogate:
+identity gets asked openly, craft you decide and show.
 
 ## Exit criteria — this stage is done when
 

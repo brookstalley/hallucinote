@@ -33,13 +33,31 @@ The must-have / should-have / nice-to-have grouping below is a **rough prior on
 how often a dimension turns out to be load-bearing**, not a priority order and
 not a required-fields list.
 
-**One consolidated turn, proposals not questions.** Everything undecided goes
-into a single message, each item carrying its reasoning and a recommendation so a
-one-word reaction settles it — *"I'd propose 132 BPM, here's the arithmetic"*,
-never *"what tempo?"*. A blank question is auto-accompaniment wearing a
-politeness costume: it looks collaborative and transfers zero expertise. Cheap,
-easy-to-revise choices are **shown** rather than asked; the artifact becomes the
-next proposal. Sequential Q&A is the anti-pattern.
+**Sort by owner before you sort by importance.** Ask one question of every
+dimension: **whose choice is this?**
+
+- **Identity — the composer's.** What the song *is*. The five **must-haves**
+  below are the floor: purpose/feeling (1), genre + sonic world (2, with 5 and
+  9), form and energy shape (3, with 10), **vocals (4)**, and the harmonic world
+  (8). **Ask these openly, with no recommendation attached.** Theirs even when
+  you have a great answer, and regardless of how cheap they'd be to reverse.
+- **Craft — the agent's.** How to realize that intent: BPM (6), meter arithmetic
+  (7), density (14), the mechanism behind a named gesture (16), the time-budget
+  arithmetic (17). **Decide, build, state in a clause. Never ask.**
+
+> **The musical intent is identity; the number that realizes it is craft.**
+> *"Driving, urgent"* is theirs — `132 BPM` is yours. *"Full 7-rhythm, not
+> 4-then-3"* is theirs — `beats_per_bar=3.5` is yours. Several items split along
+> that seam rather than landing wholly on one side.
+
+**Two opposite failures.** A **blank question** (*"what tempo?"*) transfers zero
+expertise and hands the work back — that's craft, you decide it. An
+**over-argued proposal** (a recommendation plus its full justification) is the
+subtler and more likely one: it *closes* the fork, because disagreeing then costs
+the composer an argument against your paragraph. It is an answer wearing a
+question's clothes. Sequential blank-question Q&A remains the anti-pattern — not
+because of a turn count, but because a question with no work attached fails the
+shape rule in [`/song-brief`](../skills/song-brief/SKILL.md).
 
 **Clear direction always wins.** Questions are for genuine gaps, never for
 choices the user already made. When open questions stop yielding direction ("you

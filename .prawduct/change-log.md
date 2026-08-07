@@ -20,6 +20,65 @@
      pre-bumping a version (against `feedback_no_premature_version_bump`) or
      mislabeling in-flight work as an already-shipped version. -->
 
+## 2026-08-07 — a tool for composing, not a music generator
+
+<!-- prawduct: type=feature | chunks=1,2,3 | scope=song-lifecycle | status=shipped | release=unreleased -->
+
+`/song-brief` rebuilt around **whose choice is it**, and the one-turn bound
+replaced by a shape invariant. Amends the same-day elicitation design
+(`.prawduct/artifacts/elicitation-and-stage-exit-criteria.md` → *Amendment 1*);
+the stage, the three-state ledger, DESCRIBED-BUT-UNBUILT and every per-stage exit
+criterion are unchanged.
+
+**The defect, reproduced not hypothesised.** A live stage-0 run produced a
+~900-word single turn carrying eight fully-argued proposals — and never mentioned
+**vocals**. Two structural causes:
+
+1. **The sweep table was a regression list.** Its own design says *"drawn from
+   what actually bit v1"*. Cross-checked against `docs/song-new-checklist.md`, its
+   seven rows contained **none of the five must-haves** — only should-haves and
+   gap-closers. Questions that have always been answered by accident never became
+   defects, so they never earned a row.
+2. **The constraints composed into a wall.** *Sweep every dimension* + *one
+   consolidated turn* + *propose with reasoning and a recommendation* has exactly
+   one output. The wall was not a failure to follow the skill; it is what
+   following it produced.
+
+**The owner test.** **Identity** — what the song *is* (the feeling, whether
+anyone is singing, the harmonic world, what it sounds like, the shape) — is the
+composer's, asked **openly, with no recommendation**, regardless of reversal cost.
+**Craft** — BPM, meter arithmetic, voicings, generators, mix moves — is the
+agent's: decided, built, stated in a clause, never asked. *The musical intent is
+identity; the number that realizes it is craft.* Asking about craft reads as
+incompetence; deciding identity takes the song away, and getting it backwards is
+the characteristic failure.
+
+**The second anti-pattern, now named.** The corpus warned only about the blank
+question (*"what tempo?"*). The **over-argued proposal** — a recommendation plus
+its full justification — is the likelier failure and *closes* the fork:
+disagreeing costs the composer an argument against a paragraph of reasoning. It
+inverts the moment they hand a choice back (*"you pick"*), where withholding an
+opinion is uselessness, not humility.
+
+**Turn count → turn shape.** Every turn carries new work, not just questions; ≤2
+questions per turn; converge once only craft remains; *"just go"* ends the stage
+with the rest decided and marked `agent` in the brief. Counting turns is what
+caused the cram. Sequential blank-question Q&A stays forbidden — now because a
+question with no work attached fails the shape rule.
+
+**Ruler-vs-stamp extended from the library to the agent.** Gatekeeping (guarded
+everywhere) and **substituting** — deciding, fluently, what the song *is* — are
+two ways the song stops being the composer's; only the first had a rule.
+Expertise is constant and the mode reads the *request*, not the requester:
+directed → implement, unspoken → ask openly, handed back → propose. **They lead
+the creative project no matter what.**
+
+Also: a worked good-vs-bad stage-0 turn ships in the skill (a cold agent
+pattern-matches examples more reliably than it follows rules), and the brief's
+resolution table gains a `Decided by` distinction between `user` and `agent` so a
+composer can find what was chosen for them. `/compose-review` and `/mix-review`
+carry the same risk and are deliberately out of scope — filed, not dropped.
+
 ## 2026-08-07 — `/song-brief`: a stage may not emit an unresolved gap
 
 <!-- prawduct: type=feature | scope=song-lifecycle | status=shipped | release=unreleased -->

@@ -80,7 +80,18 @@ The helper surface below is a **convenience index, not the menu of the possible.
 ## Generator altitude — ruler vs stamp
 
 A generator is a **ruler, not a stamp**: it removes bookkeeping; it never makes the
-musical decision. Concretely (`.prawduct/artifacts/generator-altitude-policy.md`):
+musical decision.
+
+> **The rule binds the agent, not only the library.** Hallucinote is a tool for
+> composing, not a music generator — so an agent that decides *what the song is*
+> is a stamp, however fluently it does it. The split is **identity** (what the
+> song is: the feeling, whether anyone is singing, the harmonic world, what it
+> sounds like, the shape — the composer's, asked openly) versus **craft** (BPM,
+> voicings, generator choice, mix moves — yours, decided and shown). *The musical
+> intent is identity; the number that realizes it is craft.* → CLAUDE.md
+> § *A tool for composing, not a music generator*, and `/song-brief`.
+
+Concretely (`.prawduct/artifacts/generator-altitude-policy.md`):
 
 - A package generator realizes **ONE part's pattern** from composer-supplied
   parameters (a `Progression`, register, `feel`). It must **never** decide *which*

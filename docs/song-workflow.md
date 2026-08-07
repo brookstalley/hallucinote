@@ -24,6 +24,18 @@ as a *producer's question* ("is the chorus landing?"), never a verdict. A
 near-silent part, a drone, a dissonance, a 3/4 bar in a 4/4 song — these are
 valid art, and nothing in the build blocks them.
 
+**And a tool for composing, not a music generator.** Gatekeeping is one way the
+song stops being the composer's; **substituting** — deciding, fluently and
+helpfully, what the song *is* — is the other, and it is the less-guarded one.
+**Identity** (what it should do to someone, whether anyone is singing, the
+harmonic world, what it sounds like, the shape) is theirs; **craft** (BPM, meter
+arithmetic, voicings, generators, mix moves) is yours. You are an expert
+regardless of whether they are a beginner or better than you — read the
+*request*, not the requester: implement what they've directed, ask openly what
+they haven't spoken to, and propose properly once they hand a choice back.
+**They lead the creative project no matter what.**
+→ CLAUDE.md § *A tool for composing, not a music generator*.
+
 - The producer stance, the propose-and-react discipline, and the three intent
   registers (directed / volunteered / directed-but-underarticulated):
   [intent-collaboration-model.md](../.prawduct/artifacts/intent-collaboration-model.md).
@@ -65,12 +77,28 @@ polish** — stage 0 is where the work gets specified, and stages 4 and 7 are ho
 the framework's ear gets applied to it.
 
 ### 0 — Elicit the brief ⭐ `/song-brief`
-A starting prompt is not a brief. `/song-brief` sweeps the load-bearing
-dimensions the prompt left open — harmony, tempo, production stance, what a
-named narrative turn means musically, meter, the section time budget, and the
-**mechanism behind every named gesture** — and closes them in **one consolidated
-turn of informed proposals**, each carrying its reasoning and a recommendation
-so a one-word reaction settles it. Never a questionnaire, never sequential Q&A.
+A starting prompt is not a brief. This is the conversation where the song becomes
+the **composer's** rather than yours — the part a real collaborator has before
+playing a note. Hallucinote is a tool for composing, not a music generator, and
+handing back a finished song from a rough prompt is not efficiency; it takes the
+song away from the person who came to write one.
+
+Form a musical read *silently* first — get as far as an opinion. Then split what
+the song depends on by **whose choice it is**:
+
+- **Identity — the composer's.** What it should do to someone; whether anyone is
+  singing; the harmonic world; what it sounds like (one world or several, and
+  whether they argue in the production too); the shape. **Ask these openly, with
+  no recommendation attached.**
+- **Craft — yours.** Tempo in BPM, meter arithmetic, voicings, generator choice,
+  how a riser is built, the time-budget arithmetic. **Decide and show; never
+  ask.**
+
+*The musical intent is identity; the number that realizes it is craft.* Bounded
+by shape rather than a turn count: every turn carries new work, at most two
+questions per turn, converge once only craft is left. Never a questionnaire,
+never sequential blank questions — and never a recommendation stapled to an
+identity question, which looks collaborative but closes the fork.
 
 Its output is `annotations/01-the-brief.md`: the prompt verbatim, plus the
 resolution table every later stage reads. It also produces the tempo, meter and
@@ -235,9 +263,9 @@ and `decisions/` (what you kept and why). Schema + worked example:
 
 **A stage may not emit an unresolved gap.** Under-specifying is the user's
 prerogative; *closing* the gap is the stage's job — by deciding it in-stage
-(propose, and read the reaction) or by marking it explicitly open. What is
-forbidden is passing an unresolved gap downstream **in the clothes of a
-decision**.
+(craft: decide and show; identity: ask openly and read the reaction) or by
+marking it explicitly open. What is forbidden is passing an unresolved gap
+downstream **in the clothes of a decision**.
 
 The failure this exists to stop leaves no trace: the demo song's `_outro`
 docstring said the closing octave drop "rides a Shifter device-parameter
@@ -273,7 +301,7 @@ depends on."*
 
 | Stage | Done when |
 |---|---|
-| **0 · `/song-brief`** | `annotations/01-the-brief.md` exists with the prompt verbatim and a resolution table in which every applicable dimension is DECIDED or UNDECIDED-with-an-owner. NOT-APPLICABLE rows are recorded, not asked about. The time budget is costed if a duration was stated. |
+| **0 · `/song-brief`** | `annotations/01-the-brief.md` exists with the prompt verbatim and a resolution table in which every applicable dimension is DECIDED or UNDECIDED-with-an-owner. **Every identity dimension was answered by the composer or asked about openly** — or, on "just go", decided and marked `agent` so they can take it back; **no craft dimension was put to them as a question.** NOT-APPLICABLE rows are recorded, not asked about. The time budget is costed if a duration was stated. |
 | **1 · `/song-new`** | Tempo, meter and the section/bar list are **values from the brief**, not invented at the command line. Scaffold builds; shape tests pass. Each brief decision is filed in `decisions/`. If the CLI needs a value the brief lacks, that is an UNDECIDED row — close it before scaffolding, never default it silently. |
 | **2 · `/song-pick-instruments`** | Every part the brief names has a resolved **chain** in the snapshot. Where the brief says the sonic worlds differ, that difference exists **as chain differences**. No chain is "TBD at mix time" — sound design is composition. |
 | **3 · `/compose-part`** | Every gesture the section needs **exists in `build.py`** — notes, envelope, or device. **The docstring test:** if prose in the song names a device, an envelope or a mechanism, grep the song for it; absent ⇒ the stage is not done. Per-part `feel` is set explicitly, not defaulted by omission. |

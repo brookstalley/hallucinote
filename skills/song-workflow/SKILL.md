@@ -29,18 +29,23 @@ hand-authored notes if that's what the art needs.
 
 ## The arc
 
-0. ⭐ **Elicit the brief** — **`/song-brief`**. Before scaffolding, sweep the
-   load-bearing dimensions the prompt left open and close them in **one
-   consolidated turn of informed proposals** (never a questionnaire). Output is
+0. ⭐ **Elicit the brief** — **`/song-brief`**. Before scaffolding: form a musical
+   read *silently*, then split what the song depends on by **whose choice it is**.
+   **Identity** (what it should do to someone, whether anyone is singing, the
+   harmonic world, what it sounds like, the shape) is the composer's — ask openly,
+   no recommendation. **Craft** (BPM, meter arithmetic, voicings, generators, mix
+   moves) is yours — decide and show, never ask. Bounded by shape, not a turn
+   count: every turn carries new work, ≤2 questions. Output is
    `annotations/01-the-brief.md` — the origin record, and the source of the
-   tempo / meter / section values `/song-new` needs as arguments. Skipped
-   silently when a directed prompt leaves nothing applicable open.
+   tempo / meter / section values `/song-new` needs as arguments. Silent when a
+   directed prompt leaves nothing open.
 1. **Frame the intent** — `/song-new` scaffolds the song *from the brief's
    values*; `/song-context` recalls prior intent. At an elementary fork the user
-   hasn't directed (key, the central tension, what the chorus does), *propose and
-   read their reaction* — don't auto-decide. Before re-touching a part you've
-   worked before, `/song-attempts` recalls what was already tried (and reverted)
-   so you don't re-propose a dead end.
+   hasn't directed (key, the central tension, what the chorus does), *ask it
+   openly* — don't auto-decide, and don't staple a recommendation to it (that
+   closes the fork). Before re-touching a part you've worked before,
+   `/song-attempts` recalls what was already tried (and reverted) so you don't
+   re-propose a dead end.
 2. **Pick instrument chains** — `/song-pick-instruments`. The chain (instrument +
    FX + sends) is authorship that ships in the snapshot — sound design *is*
    composition, not a mix-time todo.

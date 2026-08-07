@@ -89,6 +89,12 @@ ENCODED_DURATION_SLACK_S = 0.05
 # a 4x speed-up of an 8s take lands a frame past 2s rather than exactly on it.
 VIDEO_DURATION_SLACK_S = 0.25
 
+# Kept in step with `audio/io.py`'s `_SUPPORTED_MANIFEST_SCHEMA_VERSIONS`, the
+# in-`src` consumer of the same contract surface. Deliberately duplicated rather
+# than imported: these tools do not import the engine, so that the doc pipeline
+# does not break whenever the engine moves (see the plan's Module Boundaries).
+SUPPORTED_MANIFEST_SCHEMA_VERSIONS = frozenset({"1"})
+
 
 class MediaError(Exception):
     """Base class for refusals — every one of these means nothing usable was written."""
@@ -205,6 +211,19 @@ def master_wav(capture_dir: Path, allow_incomplete: bool = False) -> Path:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise CaptureDirError(f"could not read {manifest_path}: {exc}") from exc
+
+    # Gate the schema the same way the in-`src` consumer does
+    # (`audio/io.py` `load_capture`). A manifest this tool cannot read correctly
+    # must not be read *approximately*: the fields below are exactly the ones a
+    # future version could re-shape, and reading a v2 manifest with v1
+    # assumptions is how a wrong file quietly becomes the tour's audio.
+    schema_version = manifest.get("schema_version")
+    if schema_version not in SUPPORTED_MANIFEST_SCHEMA_VERSIONS:
+        raise CaptureDirError(
+            f"{manifest_path} has schema_version={schema_version!r}; this tool understands "
+            f"{sorted(SUPPORTED_MANIFEST_SCHEMA_VERSIONS)} (writer: "
+            f"hallucinote_mcp/.../handlers/render.py)"
+        )
 
     entry = manifest.get("master")
     if not isinstance(entry, dict) or not entry.get("filename"):
@@ -441,7 +460,11 @@ def _all_or_nothing(targets: list[Path]) -> Iterator[None]:
         target.unlink(missing_ok=True)
     try:
         yield
-    except MediaError:
+    except BaseException:
+        # Every failure, not only MediaError. An unexpected exception is exactly
+        # when a half-written asset is most likely to be left behind, and the
+        # cost of the broad clause is nil because it re-raises rather than
+        # swallowing — the caller still sees the original error.
         for target in targets:
             target.unlink(missing_ok=True)
         raise
@@ -456,13 +479,15 @@ def _assert_video_shape(path: Path, width: int, expected_duration: float | None)
     applies to audio, and the reason is identical: the file is committed to a
     permanent history, so "it encoded" is not the same claim as "it is right".
     """
-    actual_width = int(
-        run_command(
-            ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
-             "stream=width", "-of", "default=nw=1:nk=1", str(path)]
-        ).strip()
-        or 0
-    )
+    reported = run_command(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+         "stream=width", "-of", "default=nw=1:nk=1", str(path)]
+    ).strip()
+    try:
+        actual_width = int(reported or 0)
+    except ValueError as exc:
+        path.unlink(missing_ok=True)
+        raise EncodeError(f"ffprobe reported no usable width for {path.name}") from exc
     if actual_width != width:
         path.unlink(missing_ok=True)
         raise EncodeError(f"{path.name} encoded {actual_width}px wide but {width}px was requested")
@@ -486,13 +511,15 @@ def make_clip(
     allow_incomplete: bool = False,
 ) -> list[Output]:
     """Master WAV → ``<name>.mp3`` plus ``<name>.png``, its inline waveform."""
-    src = master_wav(capture_dir, allow_incomplete)
-    begin, duration = clip_bounds(start, end, probe_duration(src))
     out_dir.mkdir(parents=True, exist_ok=True)
-
     mp3 = out_dir / f"{name}.mp3"
     png = out_dir / f"{name}.png"
+    # Opened BEFORE the manifest and bounds are resolved, not after: a refusal
+    # there is still a failed run, and leaving the previous take at these paths
+    # is the same `git add docs/assets/` trap as leaving a partial one.
     with _all_or_nothing([mp3, png]):
+        src = master_wav(capture_dir, allow_incomplete)
+        begin, duration = clip_bounds(start, end, probe_duration(src))
         outputs = [_emit(mp3, mp3_argv(src, mp3, begin, duration, bitrate))]
         _assert_encoded_duration(mp3, duration)
         outputs.append(_emit(png, waveform_argv(mp3, png)))
@@ -509,14 +536,13 @@ def make_hero(
     poster_at: float = 0.0,
 ) -> list[Output]:
     """Screen recording → ``<name>.mp4`` plus ``<name>.png``, the poster that links to it."""
-    if not source.is_file():
-        raise MediaError(f"{source} does not exist")
     out_dir.mkdir(parents=True, exist_ok=True)
-    expected = probe_duration(source) / speed if speed > 0 else None
-
     mp4 = out_dir / f"{name}.mp4"
     png = out_dir / f"{name}.png"
     with _all_or_nothing([mp4, png]):
+        if not source.is_file():
+            raise MediaError(f"{source} does not exist")
+        expected = probe_duration(source) / speed if speed > 0 else None
         outputs = [_emit(mp4, hero_argv(source, mp4, crop, speed, width))]
         _assert_video_shape(mp4, width, expected)
         outputs.append(_emit(png, poster_argv(mp4, png, poster_at)))

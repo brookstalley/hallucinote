@@ -352,20 +352,6 @@ def capture(
 ) -> Window | None:
     """Raise Live, capture its window, downscale. Returns the window captured."""
     require_macos()
-    for tool in ("screencapture", "sips"):
-        if shutil.which(tool) is None:
-            raise CaptureError(f"{tool} not found on PATH")
-    assert_capture_permission()
-
-    if raise_first:
-        raise_app(app)
-        time.sleep(settle)
-
-    window = None
-    if window_id is None:
-        window = find_window(on_screen_windows(), owner)
-        window_id = window.window_id
-
     out.parent.mkdir(parents=True, exist_ok=True)
     # Clear any previous take first, and remove whatever this run produced if it
     # fails. Otherwise a failed re-shoot leaves the *old* image sitting at the
@@ -373,8 +359,26 @@ def capture(
     # capture that succeeded but failed to downscale is the worse version of
     # that, since it is a valid PNG silently violating the fixed width this tool
     # exists to guarantee.
+    #
+    # The clear happens before the *pre-flight* checks too, not just the capture:
+    # a denied permission or an ambiguous window is equally a failed run, and
+    # leaving the old image behind for those is the same trap.
     out.unlink(missing_ok=True)
     try:
+        for tool in ("screencapture", "sips"):
+            if shutil.which(tool) is None:
+                raise CaptureError(f"{tool} not found on PATH")
+        assert_capture_permission()
+
+        if raise_first:
+            raise_app(app)
+            time.sleep(settle)
+
+        window = None
+        if window_id is None:
+            window = find_window(on_screen_windows(), owner)
+            window_id = window.window_id
+
         _run(screencapture_argv(window_id, out))
         if not out.is_file() or out.stat().st_size == 0:
             # screencapture can exit 0 having written nothing when the target
@@ -383,7 +387,10 @@ def capture(
             raise CaptureFailed(f"screencapture exited 0 but wrote no image to {out}")
         _run(resample_argv(out, width))
         _assert_width(out, width)
-    except CaptureError:
+    except BaseException:
+        # Broad on purpose, and it re-raises rather than swallowing: an
+        # unexpected failure is exactly when a half-written PNG is most likely
+        # to survive at a path something is about to commit.
         out.unlink(missing_ok=True)
         raise
     return window

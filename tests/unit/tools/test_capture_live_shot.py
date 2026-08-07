@@ -410,3 +410,31 @@ def test_run_capturing_raises_with_the_tool_name_on_a_real_failure() -> None:
 def test_run_capturing_raises_when_the_binary_does_not_exist() -> None:
     with pytest.raises(CaptureFailed, match="could not run"):
         _run_capturing(["definitely-not-a-real-binary-xyz"])
+
+
+def test_a_preflight_refusal_also_clears_a_stale_shot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pipeline: list[str]
+) -> None:
+    """A denied permission or ambiguous window is a failed run too, and the old
+    image at that path is what `git add docs/assets/` would pick up."""
+    out = tmp_path / "shot.png"
+    out.write_bytes(b"previous take")
+    monkeypatch.setattr("tools.capture_live_shot.on_screen_windows", lambda: [])
+    with pytest.raises(NoWindowError):
+        capture(out)
+    assert not out.exists()
+
+
+def test_an_unexpected_exception_still_clears_the_shot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pipeline: list[str]
+) -> None:
+    out = tmp_path / "shot.png"
+
+    def explodes(argv: list[str]) -> str:
+        Path(argv[-1]).write_bytes(b"partial")
+        raise ZeroDivisionError("something unforeseen")
+
+    monkeypatch.setattr("tools.capture_live_shot._run_capturing", explodes)
+    with pytest.raises(ZeroDivisionError):
+        capture(out)
+    assert not out.exists()

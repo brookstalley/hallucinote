@@ -172,9 +172,13 @@ The three tools share nothing and import nothing from each other — each is a s
 script with a `main()`. They do not import `hallucinote`: they operate on files
 (transcripts, WAVs, window ids), not on the engine's model, and coupling them to it
 would make the doc pipeline fail whenever the engine moves. The one exception is A3
-reading a render's capture directory layout, which it locates by path convention
-(`songs/<slug>/captures/<ts>/`) rather than by importing the capture module — a
-consumer relationship registered in `boundary-patterns.md` → *Capture Manifest*.
+reading a render's capture directory, which it *locates* by path convention
+(`songs/<slug>/captures/<ts>/`) but which couples it to the manifest's **schema**, not
+merely its layout: it reads `master.filename` and the three trust flags. That is a real
+consumer relationship, registered in `boundary-patterns.md` → *Capture Manifest*, and it
+is why A3 gates `schema_version` the way the in-`src` loader does. The supported-version
+set is duplicated rather than imported (the no-engine-import rule above), so a test
+asserts the duplicate equals the engine's — otherwise it drifts silently.
 
 **Sibling duplication between the three is accepted, and this is the decision, not an
 oversight.** The paragraph above argues only against importing the *engine*; it never

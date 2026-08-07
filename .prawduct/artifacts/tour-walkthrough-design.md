@@ -188,6 +188,32 @@ hand-staging exercise.
 6. **One SVG lifecycle diagram** — prompt → artifacts → Live → analysis → back.
    Light/dark aware. One diagram, not five.
 
+## What the capture tooling depends on
+
+Recorded here rather than only in the build plan, because plans are deleted when
+they ship and this outlives them. **Nothing below is a packaged dependency** — every
+one is a subprocess or a system framework, and none is needed to *consume* the
+results: a reader cloning the repo gets the media as committed files, and CI needs
+none of it.
+
+| Tool | Needs | For |
+|---|---|---|
+| `tour_transcript.py` | `git` | repo-root resolution; degrades to a no-op fallback when absent |
+| `capture_live_shot.py` | `screencapture`, `sips` | the window capture, and the fixed-width downscale plus its read-back |
+| | `open`, `ps` | raising Live; naming the app that needs Screen Recording permission |
+| | CoreGraphics via `ctypes` | the window id — a **system framework**, not a package, and the only way to get one (see item 2) |
+| `make_demo_media.py` | `ffmpeg`, `ffprobe` | encoding, and re-measuring every file it just wrote |
+
+Each tool checks for its binaries up front and names the missing one. `capture_live_shot`
+additionally needs **Screen Recording permission granted to the terminal's host
+application**, which is a per-machine grant rather than a dependency — it preflights it
+and names both the app and the settings pane.
+
+`make_demo_media` is also a **consumer of the Capture Manifest contract surface**
+(registered in [`boundary-patterns.md`](boundary-patterns.md)), and the only consumer
+outside `src/` — so it gates `schema_version` exactly as the in-`src` loader does, and
+honours the manifest's trust flags rather than only its filenames.
+
 ## Sequencing, and the ordering constraint that matters
 
 **The tooling must exist before the demo song is authored.** The genuine session

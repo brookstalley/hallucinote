@@ -20,6 +20,7 @@ import pytest
 
 from tools.make_demo_media import (
     DEFAULT_BITRATE,
+    SUPPORTED_MANIFEST_SCHEMA_VERSIONS,
     CaptureDirError,
     ClipBoundsError,
     EncodeError,
@@ -648,3 +649,65 @@ def test_run_command_raises_with_the_tool_name_on_a_real_failure() -> None:
 def test_run_command_raises_when_the_binary_does_not_exist() -> None:
     with pytest.raises(EncodeError, match="could not run"):
         run_command(["definitely-not-a-real-binary-xyz"])
+
+
+def test_master_wav_refuses_an_unsupported_manifest_schema(capture_dir: Path) -> None:
+    """Reading a future manifest with today's field assumptions is how a wrong
+    file quietly becomes the tour's audio; the in-src consumer gates this too."""
+    _flag(capture_dir, schema_version="2")
+    with pytest.raises(CaptureDirError, match="schema_version"):
+        master_wav(capture_dir)
+
+
+def test_the_supported_schema_set_matches_the_engines(capture_dir: Path) -> None:
+    """Duplicated rather than imported (tools do not import the engine), so the
+    duplicate is asserted here — otherwise it drifts silently."""
+    from hallucinote.audio.io import _SUPPORTED_MANIFEST_SCHEMA_VERSIONS
+
+    assert SUPPORTED_MANIFEST_SCHEMA_VERSIONS == _SUPPORTED_MANIFEST_SCHEMA_VERSIONS
+
+
+def test_a_preflight_refusal_also_clears_a_stale_asset(
+    capture_dir: Path, tmp_path: Path, runner: FakeRunner
+) -> None:
+    """A refusal before any encode is still a failed run, and the old take at
+    that path is exactly what `git add docs/assets/` would pick up."""
+    out_dir = tmp_path / "assets"
+    out_dir.mkdir()
+    (out_dir / "full-song.mp3").write_bytes(b"previous take")
+    (out_dir / "full-song.png").write_bytes(b"previous waveform")
+    _flag(capture_dir, status="incomplete")
+    with pytest.raises(CaptureDirError):
+        make_clip(capture_dir, out_dir, "full-song")
+    assert not (out_dir / "full-song.mp3").exists()
+    assert not (out_dir / "full-song.png").exists()
+
+
+def test_a_non_media_error_still_clears_the_partial_set(tmp_path: Path) -> None:
+    """The cleanup must not be keyed on MediaError alone — an unexpected
+    exception is when a half-written asset is most likely to survive."""
+    target = tmp_path / "a.mp4"
+    with pytest.raises(ZeroDivisionError):
+        with _all_or_nothing([target]):
+            target.write_bytes(b"partial")
+            raise ZeroDivisionError("something unforeseen")
+    assert not target.exists()
+
+
+def test_an_unparseable_width_is_an_encode_error_not_a_valueerror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ValueError would escape the all-or-nothing guarantee entirely."""
+    source = tmp_path / "take.mov"
+    source.write_bytes(b"\x00" * 16)
+    fake = FakeRunner()
+
+    def garbled(argv: list[str]) -> str:
+        if argv[0] == "ffprobe" and "stream=width" in argv:
+            return "N/A\n"
+        return fake(argv)
+
+    monkeypatch.setattr("tools.make_demo_media.run_command", garbled)
+    with pytest.raises(EncodeError, match="no usable width"):
+        make_hero(source, tmp_path / "assets", "hero")
+    assert not (tmp_path / "assets" / "hero.mp4").exists()

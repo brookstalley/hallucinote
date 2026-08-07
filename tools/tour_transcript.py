@@ -148,10 +148,6 @@ def default_account() -> str:
         return ""
 
 
-# Same principle for reminders: what must not ship is an injected block's
-# *contents*, which a surviving ``<system-reminder>`` tag announces. The bare
-# word in authored prose — an agent explaining the mechanism — is not a leak,
-# and gating on it would refuse any session that discussed its own harness.
 # Credential shapes. The path and reminder rules cover what the *harness*
 # injects; these cover what a human pastes. A key typed into a prompt, or echoed
 # back in assistant prose, arrives as an ordinary ``text`` block — it is not a
@@ -172,6 +168,11 @@ _CREDENTIAL_PATTERNS = (
     (r"(?i)\bauthorization:\s*(bearer|basic)\s+\S+", "an Authorization header with a credential"),
 )
 
+# Same principle for reminders: what must not ship is an injected block's
+# *contents*, which a surviving ``<system-reminder>`` tag announces. The bare
+# word in authored prose — an agent explaining the mechanism — is not a leak,
+# and gating on it would refuse any session that discussed its own harness.
+#
 # Case-insensitive throughout: macOS paths are case-preserving but
 # case-insensitive, so ``/users/alice`` addresses the same home directory and
 # leaks the same name, while a case-sensitive rule neither redacts nor gates it.
@@ -545,7 +546,16 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if args.out:
-        args.out.write_text(document, encoding="utf-8")
+        # Same traceback-disclosure reason as the block above: an unwritable
+        # --out raises OSError, whose traceback quotes the absolute path.
+        # Console-only rather than a publication leak, but it is the same class
+        # and the same one-line guard.
+        try:
+            args.out.write_text(document, encoding="utf-8")
+        except OSError as exc:
+            print(f"tour_transcript: could not write {args.out.name}: {exc.strerror}",
+                  file=sys.stderr)
+            return 1
         print(f"wrote {args.out} ({len(document.splitlines())} lines)", file=sys.stderr)
     else:
         sys.stdout.write(document)

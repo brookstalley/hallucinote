@@ -2,7 +2,10 @@
 
 ## First moves
 - For a quick exploration: `ableton_session(action='info')` reads tempo / track-count / master in one shot.
-- For new song scaffolding: `/song-new <prompt>` (see also `/song-pick-instruments`).
+- For a new song from a prompt: `/song-brief "<prompt>"` **first** — it resolves the
+  tempo / meter / section values `/song-new` requires as arguments, so they aren't
+  invented at a command line. Then `/song-new` (see also `/song-pick-instruments`).
+  `/song-workflow` is the whole lifecycle map.
 - For pushing an existing song into Live: `/ableton-push <slug>` from its directory.
 
 ## Per-song composer intent

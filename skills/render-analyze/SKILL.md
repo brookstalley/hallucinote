@@ -112,6 +112,17 @@ so they must be set in the `env` block of this server's entry in the user's
 Claude settings, not exported in a terminal. The server logs
 `retention sweep disabled` at INFO when the opt-out actually reached it.
 
+## Exit criteria — this stage is done when
+
+A MixReport exists **for the current build** — not a stale take from before the
+last `/ableton-push` — and the render covered the **full arrangement length**. A
+report over a truncated capture will read as a finished song that simply lacks
+its ending, which is indistinguishable from a song whose ending was never built.
+Check the report's span against the arrangement before handing it to
+`/mix-review`.
+
+Full model: [docs/song-workflow.md](../../docs/song-workflow.md#stage-exit-criteria).
+
 ## Why a subagent (not inline, not a CLI)
 
 The render/analyze poll loops are pure plumbing — dozens of `running` statuses

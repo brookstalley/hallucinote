@@ -20,7 +20,7 @@ are the same.)
 | Skill | What it does |
 |---|---|
 | `/hallucinote:getting-started` | Orientation for a new user — checks your install (uv, the MCP bridge, the Remote Script, the Max for Live analyzer), says plainly what works with and without Max for Live, and **proposes** the next step (install if needed, then a new or existing song). Run it first, or whenever you're unsure "what now?". |
-| `/hallucinote:song-workflow` | The song-creation **lifecycle map** — the phases, the skill that runs each, and the two review checkpoints (`/compose-review`, `/mix-review`) that are easy to skip. Read first for any song work; links to [`docs/song-workflow.md`](song-workflow.md) for the full depth and the research behind each tool. |
+| `/hallucinote:song-workflow` | The song-creation **lifecycle map** — the phases, the skill that runs each, each stage's [definition of done](song-workflow.md#stage-exit-criteria), and the three checkpoints (`/song-brief`, `/compose-review`, `/mix-review`) that are easy to skip. Read first for any song work; links to [`docs/song-workflow.md`](song-workflow.md) for the full depth and the research behind each tool. |
 
 ## Setup
 
@@ -33,7 +33,8 @@ are the same.)
 
 | Skill | What it does |
 |---|---|
-| `/hallucinote:song-new` | Scaffold a new song: `songs/<slug>/` with `build.py`, snapshot, tests, and intent/decision folders. The start of every song. |
+| `/hallucinote:song-brief` | **The elicitation stage — runs before `/song-new`.** Sweeps the load-bearing dimensions a starting prompt left open (harmony, tempo, production stance, named narrative turns, meter, the section time budget, and the mechanism behind every named gesture), marking each **DECIDED / UNDECIDED / NOT-APPLICABLE**, and closes the undecided ones in **one consolidated turn of informed proposals** — never a questionnaire, and silent when nothing applicable is open. Writes `annotations/01-the-brief.md`, which supplies the tempo/meter/section values `/song-new` needs as arguments. |
+| `/hallucinote:song-new` | Scaffold a new song: `songs/<slug>/` with `build.py`, snapshot, tests, and intent/decision folders — on the brief's values, not values invented to satisfy the command line. |
 | `/hallucinote:song-pick-instruments` | Pick instrument **chains** per track (instrument + post-FX + send levels) from Live's browser, respecting a portability mode. The chain is authorship, not a mix-time to-do. |
 | `/hallucinote:compose-part` | Compose a part to a finished, audible state via the author-as-code loop: write/extend note-generating code in `build.py`, build, and scoped-push the changed clips. Use to write or rewrite drums, bass, a lead line, or a section's comp. |
 | `/hallucinote:track-new-with-instrument` | Create a MIDI track and load an instrument on it in one step. |

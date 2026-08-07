@@ -9,6 +9,7 @@ Conventions for authoring `build.py` against the Hallucinote library. Companion 
 - [The toolkit reduces work — it never limits what you can author](#the-toolkit-reduces-work--it-never-limits-what-you-can-author)
 - [Authoring API — the helper surface](#authoring-api--the-helper-surface)
 - [Sound design is authorship](#sound-design-is-authorship)
+- [A stage may not emit an unresolved gap](#a-stage-may-not-emit-an-unresolved-gap)
 - [Rationale is authorship — the WHY ships in `decisions/`](#rationale-is-authorship--the-why-ships-in-decisions)
 - [Per-part feel (microtiming is authorship)](#per-part-feel-microtiming-is-authorship)
 - [Drum kits: probe, don't assume](#drum-kits-probe-dont-assume)
@@ -210,6 +211,36 @@ A finished song has the sound it's supposed to have *as part of being finished*,
 The "default volumes / sends / chain-state" the song needs to *sound right* live in this file. The composer's job is to put them there as part of authoring, not to defer them to a later mix session. See `docs/snapshot-schema.md` for the schema; see `/hallucinote:song-pick-instruments` for the picker that writes chains.
 
 This applies most strongly to a **creative product prompt** (see `/hallucinote:song-new`, "Read the request"): the deliverable is the playable song, and the song's sound is part of being playable.
+
+---
+
+## A stage may not emit an unresolved gap
+
+Sibling rule to *Rationale is authorship* below, and the one that governs the
+prose either of them produces. Under-specifying is the user's prerogative;
+**closing the gap is the stage's job** — by deciding it in-stage (propose, and
+read the reaction) or by marking it explicitly open. What is forbidden is passing
+an unresolved gap downstream *in the clothes of a decision*.
+
+**Never write a mechanism as settled prose unless it exists.** A docstring that
+says the outro "rides a Shifter device-parameter envelope", with no Shifter in
+`captured_session.json` and no envelope in the DB, is not documentation — it is
+the defect, and it is invisible: the build runs clean, the push reports OK, and
+every later reader takes it as done. **A documented mechanism with no
+implementation is worse than an admitted gap.**
+
+Three legal states per dimension — **DECIDED** (value *and* mechanism named),
+**UNDECIDED** (named, with an owner and a closing stage), **NOT-APPLICABLE**
+(recorded, never asked about, reached by your own judgement from the material).
+Only UNDECIDED blocks a stage; not-applicable is a real answer, and asking a
+user about a dimension their song doesn't have reads as incompetence. The
+forbidden fourth is DESCRIBED-BUT-UNBUILT.
+
+Before calling a part done, grep the song for every device, envelope or mechanism
+your own prose names. Per-stage definitions of done live in
+[`song-workflow.md`](song-workflow.md#stage-exit-criteria); the design and the
+worked examples are in
+[`../.prawduct/artifacts/elicitation-and-stage-exit-criteria.md`](../.prawduct/artifacts/elicitation-and-stage-exit-criteria.md).
 
 ---
 
@@ -498,7 +529,13 @@ For non-4/4 sections:
 - Use the library generators with `beats_per_bar=N` if the within-bar 4/4 shape is musically acceptable for the section (e.g. 6/4 — a longer bar with the same downbeat-snare-snare frame).
 - Hand-author or compose a meter-specific primitive when the within-bar shape matters (e.g. 7/8 with grouping 2+2+3). The `odd-meter-experimental/build.py` example is a worked example for 7/8 + polyrhythm authoring.
 - Name `BEATS_PER_BAR_7_8 = 3.5` (etc.) as a constant in `build.py` and pass it through.
-- Use the time-signature map (`M.add_time_signature_point`) for both the global meter AND any future per-section meter changes (between sections only — within-section meter changes are not supported).
+- Use the time-signature map (`M.add_time_signature_point`) for **the global meter** — one row at `start_bar=1.0`.
+
+> **A within-song meter change cannot be recorded today.** `add_time_signature_point` raises for *any* `start_bar > 1.0`, per-section changes included: Live 12.4's MCP has no `song_signature` automation target, so the ratchet can't reach Live, and the refusal is dual-layered at the mutator and the planner. (Earlier revisions of this page said per-section changes were supported. They are not — the code refuses them.)
+>
+> **This is a projection limitation, not a modelling one.** The song's meter is a property of the authored work; Live's ability to represent it is a materialization detail. Author the true meter into the brief regardless, mark the row open with **the engine** as its owner (see [*A stage may not emit an unresolved gap*](#a-stage-may-not-emit-an-unresolved-gap)), and realize the meter *as felt groove* — bar-scaled generators via `beats_per_bar`, plus hand-authored within-bar accent groupings — over the single global ruler. Never present that workaround to the user as a creative option; it isn't one.
+>
+> **Who owns moving this.** `TMP-7B3X` is the source-of-truth half — lift the policy refusal out of the mutator so the DB can record what the song *is*. `TMP-4J6Q` is the projection half — how a declared meter map actually materializes in Live. Neither closes the other.
 
 ---
 

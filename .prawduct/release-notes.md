@@ -7,11 +7,21 @@
 
 ## unreleased
 
+### song-lifecycle
+
+**Entry:** 2026-08-07 — `/song-brief`: a stage may not emit an unresolved gap
+
+### tour+push+workspace+db-converger
+
+**Entry:** 2026-08-07 — Six defects the demo song found by actually being rebuilt
+
+**Chunks shipped:** B1
+
+### tour
+
 **Entry:** 2026-08-06 — The tour's capture tooling, built against probes that kept saying no
 
 **Chunks shipped:** A1, A2, A3, A4
-
-**Scope:** tour
 
 See `.prawduct/change-log.md` for full details.
 

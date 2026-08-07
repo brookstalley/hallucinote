@@ -42,6 +42,23 @@ sections only via explicit `/backlog update` calls.
 
 ## Open
 
+- **[SYN-3P8M]** `compat check` is blind to Pack-provided content — a song built from installed Packs reports "no additional installs needed"
+  `effort: M · impact: M · area: sync · source: user · added: 2026-08-07 · status: open · stage: design · related: DEV-1F9X, DEV-3K7H, SMP-7K2D · refs: src/hallucinote/sync/compat.py, skills/ableton-push/SKILL.md, skills/song-pick-instruments/SKILL.md`
+
+  **The gap.** `classify_device` (`src/hallucinote/sync/compat.py:331`) classifies purely on Live's `class_name`: anything that isn't a plugin wrapper falls through `if not _is_plugin_class(device_kind): return "native", None` (`:353–354`) — "Live built-in — no install needed." But a Drum Rack, Simpler, or instrument-rack preset **sourced from an Ableton Pack** is exactly that: a native class wrapping content that lives in the Pack, not in Live. On a machine without the Pack the class exists and the content doesn't. Compat reports it clean.
+
+  **The false-clean claim is the sharp end.** `format_requirements_md` (`:594`) builds the shopping list from `third_party_ok + missing + unverified` only, so such a song's REQUIREMENTS.md prints *"None. This song uses only Live's built-in devices — no additional installs needed."* (`:652`) — an affirmative wrong answer to the one question the file exists to answer, and the push preflight gate (`skills/ableton-push/SKILL.md:52`, step 0b) exits 0. Silence would be safer than this.
+
+  **The signal exists and is unread.** Pack identity is already in the DB: `devices.preset_query` accepts root `"packs"` (and `"samples"` / `"user_library"` — `hallucinote/preset_query.py:29–32`), and `devices.browser_path_json` (`db/schema.sql:403`) stores the resolved browser path from the root down, captured *precisely so* "vendor / pack identity discriminates cross-machine loads." Compat reads neither — it never looks past `class_name`. Same for sample references: `devices.audio_file` (`schema.sql:413`, SMP-7K2D) and `clips.audio_file` (`:123`) are never existence-checked by the walk (weaker sub-case — song-relative `assets/` paths travel with the song repo, but an absolute path outside it does not).
+
+  **`--probe` is not the answer already shipped.** The dry-run (`_probe_browser_dry_runs`) only covers devices carrying a structurally-valid `preset_query`, only when Live is running, and yields `kind_unresolvable` framed as an *authoring* error rather than "you are missing Pack X." A device carrying only `preset_uri` + `browser_path_json` gets no dry run at all, and the offline/author-side path (`regen_requirements`, which is how REQUIREMENTS.md is generated) never probes.
+
+  **Also undermines strict mode's promise.** `song-pick-instruments` strict mode explicitly admits Pack content ("their edition and installed Packs included") and points at `compat check` to catch the portability gap (`skills/song-pick-instruments/SKILL.md:23`) — a promise compat doesn't currently keep.
+
+  **Why `stage: design`, not `ready`.** Two things to settle first. (1) `DeviceStatus` (`compat.py:105`) is governed by the "detection that replaces a user question must enumerate every state" learning, so adding Pack/sample awareness means new *enumerated* statuses (`pack_content_unverified` / `pack_content_missing` / `sample_missing`?) that every caller must handle — not a boolean bolt-on. (2) Detecting *which* Pack is needed offline is the open question: `browser_path_json[1]` is a plausible Pack name but is a per-machine browser label, not a stable Pack identifier, and there is no installed-Packs equivalent to `ableton_browser(action='plugins_list')` to match against — probe the API before designing.
+
+  **Verifiable signal:** author a song whose instrument is a Pack-provided Drum Rack (`preset_query` root `packs`, or `browser_path_json[0] == "packs"`), run `python -m hallucinote.cli compat check <slug>` → today exits 0 with the device listed `native`, and `compat write-requirements <slug>` writes "None. This song uses only Live's built-in devices." Fixed: the device is enumerated as Pack-dependent and REQUIREMENTS.md names the Pack. (user report 2026-08-07, verified against code)
+
 - **[DOC-2W9F]** `capture_live_shot.py` refuses on a missing Screen Recording grant instead of *requesting* it — add `CGRequestScreenCaptureAccess`
   `effort: S · impact: M · area: docs · source: user · added: 2026-08-07 · status: open · stage: ready · related: DOC-8V3Q · refs: tools/capture_live_shot.py, .prawduct/.session-handoff.md, .prawduct/operator-verification.md`
 

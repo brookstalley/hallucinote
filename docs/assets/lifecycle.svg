@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 970 300" width="970" height="300"
+     role="img" aria-labelledby="lifecycleTitle lifecycleDesc">
+  <title id="lifecycleTitle">How a Hallucinote song gets made</title>
+  <desc id="lifecycleDesc">A loop of four stages. A prompt states intent in words. That
+    becomes authored artifacts — build.py for what, decisions for why. Those are pushed to
+    Ableton Live, played, and captured. The capture is analysed by the mix, melody and
+    arrangement lenses, which return a producer's question rather than a verdict, starting
+    the loop again.</desc>
+
+  <style>
+    /* No external font or asset reference anywhere in this file: GitHub's
+       sanitizer strips them, and a diagram that renders locally but not on the
+       repo page is worse than no diagram.
+
+       Every piece of text sits inside an opaque card. That is deliberate and is
+       what makes the file theme-proof rather than theme-lucky: the media query
+       below follows the *operating system*, while GitHub's light/dark setting is
+       its own, so the two can disagree. When they do, the cards still supply
+       their own background and the text keeps its contrast — only the gaps
+       between cards change colour. The connectors are a mid grey that clears 3:1
+       against both a white page and GitHub's #0d1117. */
+    .card      { fill: #eef2f7; stroke: #c7d3e1; stroke-width: 1.5; }
+    .card-lead { fill: #0b3a75; }
+    .stage     { fill: #12203a; font-weight: 600; }
+    .detail    { fill: #33465f; }
+    .aside     { fill: #5a6b80; font-style: italic; }
+    .pill      { fill: #eef2f7; stroke: #c7d3e1; stroke-width: 1.5; }
+    .flow      { stroke: #6e7781; stroke-width: 2; fill: none; }
+    .head      { fill: #6e7781; }
+    text       { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+
+    @media (prefers-color-scheme: dark) {
+      .card      { fill: #161b22; stroke: #30363d; }
+      .card-lead { fill: #58a6ff; }
+      .stage     { fill: #e6edf3; }
+      .detail    { fill: #b6c2cf; }
+      .aside     { fill: #8b949e; }
+      .pill      { fill: #161b22; stroke: #30363d; }
+    }
+  </style>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path class="head" d="M 0 0 L 10 5 L 0 10 z"/>
+    </marker>
+  </defs>
+
+  <!-- 1. Prompt -->
+  <rect class="card" x="16" y="40" width="200" height="100" rx="10"/>
+  <rect class="card-lead" x="28" y="40" width="176" height="4" rx="2"/>
+  <text class="stage" x="116" y="76" font-size="16" text-anchor="middle">Prompt</text>
+  <text class="detail" x="116" y="100" font-size="12.5" text-anchor="middle">“make the drums drag”</text>
+  <text class="aside" x="116" y="122" font-size="11.5" text-anchor="middle">intent, in words</text>
+
+  <!-- 2. Authored artifacts -->
+  <rect class="card" x="262" y="40" width="200" height="100" rx="10"/>
+  <rect class="card-lead" x="274" y="40" width="176" height="4" rx="2"/>
+  <text class="stage" x="362" y="76" font-size="16" text-anchor="middle">Authored</text>
+  <text class="detail" x="362" y="100" font-size="12.5" text-anchor="middle">build.py · decisions/</text>
+  <text class="aside" x="362" y="122" font-size="11.5" text-anchor="middle">the what, and the why</text>
+
+  <!-- 3. Live -->
+  <rect class="card" x="508" y="40" width="200" height="100" rx="10"/>
+  <rect class="card-lead" x="520" y="40" width="176" height="4" rx="2"/>
+  <text class="stage" x="608" y="76" font-size="16" text-anchor="middle">Live</text>
+  <text class="detail" x="608" y="100" font-size="12.5" text-anchor="middle">pushed · played · captured</text>
+  <text class="aside" x="608" y="122" font-size="11.5" text-anchor="middle">it actually lands</text>
+
+  <!-- 4. Analysis -->
+  <rect class="card" x="754" y="40" width="200" height="100" rx="10"/>
+  <rect class="card-lead" x="766" y="40" width="176" height="4" rx="2"/>
+  <text class="stage" x="854" y="76" font-size="16" text-anchor="middle">Analysis</text>
+  <text class="detail" x="854" y="100" font-size="12.5" text-anchor="middle">mix · melody · arrangement</text>
+  <text class="aside" x="854" y="122" font-size="11.5" text-anchor="middle">the agent listens back</text>
+
+  <!-- forward flow -->
+  <path class="flow" marker-end="url(#arrow)" d="M 222 90 H 254"/>
+  <path class="flow" marker-end="url(#arrow)" d="M 468 90 H 500"/>
+  <path class="flow" marker-end="url(#arrow)" d="M 714 90 H 746"/>
+
+  <!-- the return: analysis feeds the next prompt -->
+  <path class="flow" marker-end="url(#arrow)"
+        d="M 854 146 V 214 Q 854 232 836 232 H 134 Q 116 232 116 214 V 150"/>
+  <rect class="pill" x="345" y="217" width="280" height="30" rx="15"/>
+  <text class="detail" x="485" y="237" font-size="12.5" text-anchor="middle">a question, not a verdict</text>
+</svg>

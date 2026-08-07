@@ -648,6 +648,27 @@ def probe_and_link(
     # pass — so a missing track link there is normal, not orphaned. Runs after
     # the track sweep so parent-link lookups reflect the drops; fresh snapshot
     # because the unlink mutator mutates the same table.
+    # A SURVIVING parent is not enough on its own: the link also has to still
+    # point at a device that EXISTS. Live's own default returns are why this
+    # bites in practice. Every fresh Live set ships `A-Reverb` and `B-Delay`,
+    # and DB return names are stored slot-prefix-stripped (see return_naming),
+    # so a song with a return called `Delay` legitimately matches Live's stock
+    # one — a return that already holds a factory device at index 1. The
+    # authored device therefore loads at index 2, and the link records 2. Open a
+    # FRESH set and that return is factory-fresh again: the parent still matches
+    # by name, so the sweep above keeps the link, but index 2 no longer exists.
+    # `_emit_device_calls` then reads the link as present, SKIPS the load, and
+    # every parameter write addresses the missing index — the devices phase
+    # halts on IndexError and re-running never converges, because nothing in the
+    # loop ever emits the load that would create index 2.
+    #
+    # Only the link's own index can catch that, so check it against the probe.
+    # Deliberately conservative: drop ONLY when this parent WAS probed and the
+    # index is absent from it outright. An unprobed parent (no device data in
+    # this run) teaches nothing, and dropping on absence-of-evidence would
+    # discard good links on the snapshot fallback path. An index that exists but
+    # holds the wrong device is a different failure with its own handling in
+    # _match_devices_for_linked_parents — not this sweep's business.
     for link in [
         ln for ln in Q.get_ableton_links_for_session(conn, session_id)
         if ln["db_kind"] == "device"
@@ -655,33 +676,58 @@ def probe_and_link(
         device_row = Q.get_device(conn, link["db_id"])
         parent_linked = False
         is_master_device = False
+        parent_key: tuple[str, int] | None = None
         if device_row is not None:
             chain_row = Q.get_device_chain(conn, device_row["chain_id"])
             if chain_row is not None and chain_row["parent_track_id"] is not None:
                 parent_track = Q.get_track(conn, chain_row["parent_track_id"])
                 if parent_track is not None and parent_track["kind"] == "master":
                     is_master_device = True
+                    parent_key = ("master", 0)
                 else:
-                    parent_linked = Q.get_ableton_link(
+                    parent_link = Q.get_ableton_link(
                         conn, session_id=session_id, db_kind="track",
                         db_id=chain_row["parent_track_id"],
-                    ) is not None
+                    )
+                    parent_linked = parent_link is not None
+                    if parent_link is not None:
+                        parent_key = ("track", parent_link)
             elif chain_row is not None and chain_row["parent_return_id"] is not None:
-                parent_linked = Q.get_ableton_link(
+                parent_link = Q.get_ableton_link(
                     conn, session_id=session_id, db_kind="return",
                     db_id=chain_row["parent_return_id"],
-                ) is not None
+                )
+                parent_linked = parent_link is not None
+                if parent_link is not None:
+                    parent_key = ("return", parent_link)
             # parent_rack_device_id (a nested device) never carries a top-level
             # ableton_link, so it won't appear in this device-link loop.
         if is_master_device or parent_linked:
-            continue
+            probed_siblings = (
+                live_devices_by_parent.get(parent_key)
+                if live_devices_by_parent and parent_key is not None
+                else None
+            )
+            if probed_siblings is None:
+                continue
+            if any(
+                d.get("device_index") == link["ableton_index"]
+                for d in probed_siblings
+            ):
+                continue
+            drop_reason = (
+                "probe-and-link: stale device link (device_index no longer "
+                "present in Live)"
+            )
+        else:
+            drop_reason = "probe-and-link: stale device link (parent unlinked)"
         M.unlink_db_from_ableton(
             conn,
             session_id=session_id,
             db_kind="device",
             db_id=link["db_id"],
             actor=actor,
-            reason=reason or "probe-and-link: stale device link (parent unlinked)",
+            reason=reason or drop_reason,
         )
         result.unlinked_stale_devices.append({
             "db_id": link["db_id"],

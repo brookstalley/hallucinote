@@ -368,6 +368,11 @@ State these when they bear on a finding; never present masking as ground truth:
 - Revealed intent is written back as an annotation, so nothing here re-flags
   next run.
 
+**How to run the gesture check:** `/song-brief <slug>` sweeps an *existing* song
+and reports which dimensions are still UNDECIDED or DESCRIBED-BUT-UNBUILT — the
+retrospective mode is built for this checkpoint. Run it, then confirm each
+surviving gesture against the render rather than against the prose.
+
 This criterion is deliberately redundant with `/compose-part`'s and
 `/ableton-push`'s. The gap that matters is the one that survives every stage.
 Full model: [docs/song-workflow.md](../../docs/song-workflow.md#stage-exit-criteria).

@@ -107,8 +107,10 @@ Only expensive-to-reverse forks earn a proposal.
 
 **Silence is a valid pass.** A fully-directed prompt with no applicable
 undecided dimension produces a brief with a resolution table and **no questions**
-— hand back the brief and continue to `/song-new` without stopping. This stage is
-not obliged to find something.
+— hand back the brief and let the lifecycle advance to `/song-new` without
+stopping. ("Advance to" is not "invoke": see Step 3 — this stage hands back
+resolved values, it never runs the scaffold itself.) This stage is not obliged
+to find something.
 
 ### The bound: one turn, and it is not renegotiable
 

@@ -1002,7 +1002,7 @@ sections only via explicit `/backlog update` calls.
   **Verifiable signal:** every `songs/` path in `project-preferences.md` either describes a workspace-relative location or is explicitly scoped to the `examples/` bounded exception; no example command references a song that is not in this repo. (TOUR A1 Critic review R-10, 2026-08-06)
 
 - **[TMP-4J6Q]** Within-song meter changes (W10-H) — the per-bar-arrangement-clip workaround, currently a code comment with no backlog entry
-  `effort: L · impact: M · area: tempo · source: user · added: 2026-08-06 · reviewed: 2026-08-07 · status: open · stage: requirements · related: ARR-4M3T, TMP-9X2D, TMP-5K1R, TMP-7B3X`
+  `effort: L · impact: M · area: tempo · source: user · added: 2026-08-06 · reviewed: 2026-08-07 · status: open · stage: requirements · related: ARR-4M3T, TMP-9X2D, TMP-5K1R, TMP-7B3X · refs: .prawduct/artifacts/elicitation-and-stage-exit-criteria.md#meter-is-a-projection-concern-not-a-modelling-one, docs/song-authoring-conventions.md#meter-44-vs-other, src/hallucinote/db/mutations/score.py`
 
   `add_time_signature_point` (`src/hallucinote/db/mutations/score.py`) hard-refuses any `start_bar > 1.0` with a teaching error: Live 12.4's MCP has no `song_signature` automation `target_kind`, so a within-song meter ratchet cannot reach Live at all. The W10-H decision (per user, 2026-05-19) was a **loud dual-layer refusal** at both the DB-mutator and planner layers, with the working implementation punted to "v1.1 scope (per-bar-arrangement-clip workaround)". That punt has lived **only as a code comment** ever since (`score.py:358-372`, `:388`) — no backlog item, so the deferred scope was invisible to triage and to `pick`.
 

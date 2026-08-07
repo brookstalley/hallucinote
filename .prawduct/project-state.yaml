@@ -317,7 +317,45 @@ design_decisions:
     - decision: "Songs as self-contained units under songs/<slug>/"
       rationale: "A song = build.py + captured_session.json + tests/ + per-song SQLite DB (gitignored). Tests live next to the song so the directory is forkable as a unit."
       date: "2026-05-17 (J-2b)"
-  interaction_patterns: []
+  interaction_patterns:
+    - name: "Propose-and-react, never interrogate"
+      summary: >-
+        Where a choice is the user's to own, the agent states an informed
+        proposal carrying its reasoning and a recommendation, inviting a
+        one-word reaction — never a blank question. A blank question is
+        auto-accompaniment wearing a politeness costume: it looks collaborative
+        and transfers zero expertise. Cheap-to-revise choices are made
+        tastefully and *shown* (the artifact becomes the next proposal); only
+        expensive-to-reverse forks earn a proposal.
+      artifact: .prawduct/artifacts/intent-collaboration-model.md
+    - name: "One consolidated turn, bounded"
+      summary: >-
+        Elicitation gets exactly one turn, with every proposal, disclosure and
+        piece of arithmetic in a single message. Sequential Q&A burns patience
+        and violates the stop-less norm for real. An item the user leaves
+        unanswered does NOT earn a second round — it becomes an UNDECIDED row
+        with an owner and a closing stage, and work proceeds. Bounds two
+        failure modes that both look like diligence: the stage that never
+        converges, and the turn that fragments.
+      artifact: .prawduct/artifacts/elicitation-and-stage-exit-criteria.md
+    - name: "Three states, and a forbidden fourth"
+      summary: >-
+        Every dimension a stage touches ends DECIDED (value AND mechanism
+        named), UNDECIDED (named, with an owner), or NOT-APPLICABLE (recorded
+        by the agent's own judgement, never asked about). Only UNDECIDED blocks
+        a stage. DESCRIBED-BUT-UNBUILT — prose naming a mechanism that does not
+        exist — is not a legal state; it is the defect, and the only one with
+        no symptoms. Silence about a non-applicable dimension is correct;
+        silence about an undecided one is the defect.
+      artifact: .prawduct/artifacts/elicitation-and-stage-exit-criteria.md
+    - name: "Measurements are questions, never verdicts"
+      summary: >-
+        Every read-side lens (mix, melody, recurrence, masking) surfaces a
+        producer's question graded against DECLARED intent — "you wanted the
+        chorus to lift; does it?" — never a universal score. Revealed intent is
+        learned back per-song so a confirmed choice never re-flags. Aesthetic
+        judgements never fail a build.
+      artifact: .prawduct/artifacts/gate-verdict-policy.md
   accessibility_approach: null
   error_handling_approach: "Plain exceptions (ValueError, KeyError); no custom hierarchy. Broad catches require `# prawduct:ok-broad-except` annotation with rationale; every catch logs context. Narrow carve-out (ONBOARD-M4L): two leaf classes callers catch by identity — `PresetQueryNoMatchError` (device.py) and `AnalyzerNotInstalledError` (analyzer/setup.py); new code still defaults to plain exceptions."
   observability_approach: "The event log IS the audit trail. Every mutator emits an event with actor (in events.ACTORS), reason, request_id, and monotonic seq. No logging frameworks beyond stdlib `logging`. The `requests` table groups events under higher-level intent for cross-mutator correlation."

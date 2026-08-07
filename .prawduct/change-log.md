@@ -22,7 +22,7 @@
 
 ## 2026-08-07 — Six defects the demo song found by actually being rebuilt
 
-<!-- prawduct: type=bugfix | chunks=B1 | scope=tour+push+workspace+db-converger | status=shipped | release=unreleased -->
+<!-- prawduct: type=bugfix | chunks=B1 | scope=tour+push+workspace+db-converger | release=unreleased -->
 
 Building `examples/angle-of-the-light` end to end surfaced six framework defects.
 Every one was found by *reproducing from scratch* — pushing into an empty Live set,

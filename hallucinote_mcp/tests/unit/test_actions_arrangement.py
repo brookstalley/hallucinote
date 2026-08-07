@@ -134,7 +134,7 @@ class FakeCtx:
     def live_state_lock(self):
         return self._live_state_lock
 
-    def run_on_main(self, fn):
+    def run_on_main(self, fn, **_kwargs):
         self.run_on_main_calls += 1
         return fn()
 

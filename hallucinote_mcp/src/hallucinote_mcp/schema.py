@@ -132,6 +132,21 @@ class Action:
     # owned on the worker thread, and main-thread bouts inside
     # ``run_on_main`` don't try to re-acquire it.
     runs_on_worker: bool = False
+    # Per-action ceiling for ONE main-thread bout, overriding the context-wide
+    # default (15s). ``None`` keeps the default.
+    #
+    # Some Live operations legitimately run long: instantiating a Max for Live
+    # device (a ~490 KB .amxd can take a minute), enumerating every parameter of
+    # a large sampled rack. A timeout shorter than the real operation is not a
+    # safety net — the work is NOT cancellable, so the timeout only stops us
+    # waiting, and the caller then queues more work behind an operation still
+    # running. Set this wherever the honest upper bound exceeds the default.
+    #
+    # MUST stay in step with the client-side read-timeout table
+    # (``hallucinote_mcp.client._READ_TIMEOUTS``). The two ends bound the same
+    # operation from opposite sides; if they disagree, whichever gives up first
+    # reports a failure that has not happened. A test asserts they agree.
+    main_thread_timeout: float | None = None
     # Arc 2 / B2: server-side-only execution opt-in.
     #
     # Most actions require a Live context to execute, so the server-side

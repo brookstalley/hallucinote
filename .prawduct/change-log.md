@@ -20,6 +20,167 @@
      pre-bumping a version (against `feedback_no_premature_version_bump`) or
      mislabeling in-flight work as an already-shipped version. -->
 
+## 2026-08-07 — Six defects the demo song found by actually being rebuilt
+
+<!-- prawduct: type=bugfix | chunks=B1 | scope=tour+push+workspace+db-converger | status=shipped | release=unreleased -->
+
+Building `examples/angle-of-the-light` end to end surfaced six framework defects.
+Every one was found by *reproducing from scratch* — pushing into an empty Live set,
+rendering, rebuilding — and not one by reading code. That is the finding worth
+keeping: a push into a set that already matches reports OK and proves nothing,
+which is exactly the claim the tour makes to its readers.
+
+**Preset names matched as substrings.** A captured `browser_path` leaf was resolved
+with `mode="substring"` although the leaf IS the browser item's own display name.
+`Kit-BritishVintage.adg` therefore also matched `MPE Kit-BritishVintage.adg`, and the
+strict loader refused the ambiguous pair. `exact` existed for precisely this shape and
+the sibling test already described the contract in prose; the code was contradicting
+its own documentation.
+
+**A stale device link survived a Live set swap.** Reconciliation asked only whether the
+link's PARENT still existed, never whether the device's own index did. Live's factory
+`B-Delay` makes this routine: an authored device loads at index 2 behind the stock one,
+and a fresh set puts index 2 out of range while the parent still matches by name. The
+planner then read the link as present, skipped the load, and every parameter write
+addressed an index nothing would ever create — a permanent halt, not a race.
+
+**`testpaths` excluded `examples/`.** The demo song's own tests never ran in CI, so its
+"builds headless with no Live" claim was asserted rather than checked.
+
+**The workspace marker was unreachable below the session root.** `find_workspace()`
+walked upward only, so `resolve_song_dir` fell through to a *silently successful*
+relative `songs/<slug>`. Renders wrote ~290 MB into a phantom directory and analysis
+then reported "the song isn't built" and advised a rebuild — for a song that was built,
+elsewhere. Fixed with bounded downward discovery that declines on ambiguity, plus error
+text that distinguishes the three failures. Deliberately NOT fixed by adding a root
+marker: that fixes one repo rather than the class, and converts "the framework repo
+contains a bounded workspace" into "the framework repo IS a workspace".
+
+**Mark-and-sweep deleted rows the build had just converged.** `build_session` tombstones
+any build-owned row the build did not touch, and sixteen mutators returned without
+registering their touch. `replace_breakpoints` registered none on ANY path, so a build
+that CHANGED an arc lost it too — producing an infinite create/delete/create loop that
+never converges. Fixed structurally with a `_touches` decorator applied outside
+`_atomic`, because the trap is a property of the return path and patching today's
+returns leaves the next one to re-open it.
+
+**Live's "do not retry" guidance was unreachable.** Every `read_timeout` equalled its
+`main_thread_timeout`, while `run_on_main` spends up to 2.0 s on admission before its
+bout timer starts — so the client always gave up first and the agent got a bare socket
+timeout instead of the one instruction that stops it queueing more work behind
+uncancellable Live operations. The implicit 15/15 default was never checked at all,
+because the test only iterated the explicit entries. Caller ceilings widened; the
+invariant is now asserted strictly.
+
+**The analyzer stopped writing the author's home directory into tracked files.**
+MixReport's `captures_dir` and `compare_to.baseline.ref` were machine-absolute,
+and `.gitignore` policy deliberately TRACKS those reports — so every analysis run
+committed an account name, while `tools/tour_transcript.py` was failing closed
+rather than publish the same strings. One part of the codebase was committing
+what another refused to emit. Both fields now persist as song-relative refs (the
+anchor a reader can rediscover from the artifact alone, and the one that survives
+a song living in a workspace outside the repo); returned values stay absolute,
+because a returned path is one the caller opens. No `schema_version` bump — the
+field name and type are unchanged, and `ensure_comparable` refuses across
+versions, so bumping would make every existing report un-diffable for nothing. An
+already-written absolute report still loads and still works as a `--compare`
+baseline. A repo-wide scan now asserts no tracked file matches the publish gate's
+FORBIDDEN set, importing that set rather than restating it — the drift between
+write side and publish side WAS the defect.
+
+`examples/angle-of-the-light` was RETIRED from the tree in the same batch. It was
+a scouting run: its real output was the six defects above, found by rebuilding it
+from scratch, not its audio. It is archived outside the repo with both masters and
+its decision records, and its ADRs remain in this branch's history. The next take
+is re-authored from a sparse prompt through discovery and elicitation, so it will
+be a different song by design — see `tour-walkthrough-design.md`, *A walkthrough,
+not a recipe*.
+
+Two more were pinned rather than fixed and are filed: push appends behind a matched
+parent's foreign devices while promising to load over them (no reorder API in Live 12.4,
+so the honest fix is a chain-tail rebuild), and `run_on_main` releases the bout lock on
+the timeout path, so admission stops refusing while Live is still committed.
+
+Suite 4830 -> 4865 passing across the batch; ruff and mypy clean.
+
+## 2026-08-06 — The tour's capture tooling, built against probes that kept saying no
+
+<!-- prawduct: type=feature | chunks=A2,A3,A4 | scope=tour | status=shipped | release=unreleased -->
+
+Three chunks of Phase A tooling, and all three had the mechanism their plan specified
+falsified by the verify-api probe that plan required first. That is the whole story of
+this batch, and the reason the step is not ceremony.
+
+**A3 asked GitHub whether it renders an inline `<video>` from a repo path.** It does
+not, and the reason is stronger than "the relative src won't resolve": the sanitizer
+removes the **element**, absolute `raw.githubusercontent` src included, and
+`![clip](x.mp4)` degrades to a broken `<img>`. Only a poster still linking to the mp4
+survives. So the hero is a poster — which is what C1 now knows to capture, before
+spending the shoot rather than after.
+
+That verdict then propagated backwards into A3's own other deliverable. The `showwaves`
+video existed to make audio "skimmable inline rather than a download link"; once nothing
+renders inline, a waveform video is a megabytes-large download link showing a moving
+line. An 8 KB `showwavespic` still renders inline and shows the whole arrangement's
+dynamics, so it replaced the video. Killing a specified deliverable was only visible by
+re-reading *why* it was specified.
+
+**A2's mechanism did not exist at all.** Ableton Live publishes zero accessibility
+windows — `count of windows` is 0, `AXWindows` empty — and its own AppleScript
+dictionary blocks 120 seconds before failing with -1712. No AppleScript path yields a
+window id. `CGWindowListCopyWindowInfo` through `ctypes`, serialised via
+`CFPropertyListCreateData` for `plistlib`, does, and adds no dependency. A2's capture
+remains blocked on Screen Recording permission, which only the operator can grant; the
+tool now preflights it and names the host app, because the native failure reads as a bad
+window id.
+
+**A4** is theme-*proof* rather than theme-lucky: `prefers-color-scheme` follows the OS
+while GitHub's toggle is its own, so every label sits on an opaque card and a
+disagreement changes only the gaps. Verified by rendering all four combinations.
+
+The cumulative Critic returned 0 blocking, 9 warning, 9 note; fifteen were fixed in one
+commit. The most valuable found a failure no other guard could see: the capture
+manifest's `status`/`analyzer_not_terminal`/`terminal` flags were ignored, and an
+incomplete render yields a *short but valid* master, so bounds, duration and size checks
+all agree with each other and are wrong together. It also found the publication gate had
+no credential rule, and that A2/A3 left stale output in place on failure — the exact
+trap A1 closes.
+
+One mistake is worth recording because it generalises. A comment here claimed an
+out-of-range ffmpeg seek writes a zero-length file, and a guard was built on it. ffmpeg
+exits 0, with empty stderr, writing 428 bytes of valid mp3 header — sailing through that
+exact check. When a guard's premise is a claim about a tool's behaviour, the claim is a
+test, not a comment.
+
+## 2026-08-06 — Session transcripts become publishable, behind a gate that fails closed
+
+<!-- prawduct: type=feature | chunks=A1 | scope=tour | status=shipped | release=unreleased -->
+
+`tools/tour_transcript.py` renders a real Claude Code session JSONL into a markdown
+excerpt fit to publish, so the tour quotes genuine agent output instead of a hand-written
+reconstruction — which is the first thing a skeptical reader catches — and can be
+regenerated after a behaviour change instead of rotting.
+
+The renderer is mostly a disclosure gate. A transcript carries absolute `/Users/<name>/…`
+paths in three encodings, hook output, and whole memory files injected as
+`<system-reminder>` blocks. So record types are an allowlist where an unknown type
+*raises* rather than being skipped, only `text` blocks survive, tool calls render as
+one-liners rather than full inputs, and the finished document is re-scanned for every
+forbidden pattern before a byte is written.
+
+Reality validated the fail-closed stance three separate times, each on a real session and
+none on the fixture: an unseen `queue-operation` record type, and two gates keyed on the
+*marker* rather than on the thing that leaks. Re-keying them onto the account segment
+closed a real hole in the other direction — `/Users/alice` with no trailing slash had
+been escaping redaction entirely.
+
+Three independent Critic rounds then found three leak paths in a module whose entire
+purpose is not leaking, including dash-encoded home paths, which the chunk's own
+`grep -c '/Users/'` acceptance check had certified clean. The generalisable rule, now a
+comment in the code because it outlives this work: **a gate that shares its patterns with
+the mechanism it guards cannot catch that mechanism's blind spot.** The fix was not a
+better pattern but a rule keyed on the redactor's *output shape*.
+
 ## 2026-08-06 — Internal bug reports leave the public record; the backlog id becomes their provenance
 
 <!-- prawduct: type=chore | chunks=C3 | scope=pub-ready | status=shipped | release=v1.7.2 -->

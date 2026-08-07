@@ -343,6 +343,21 @@ def test_handle_tool_call_translates_connection_error(isolated_registry):
 # ---------------------------------------------------------------------------
 
 
+def _existing_song_dir(tmp_path, slug: str = "demo"):
+    """Make ``<tmp>/songs/<slug>/`` real before a default-destination render.
+
+    ``_refuse_render_into_phantom_song_dir`` refuses to fill a slug-derived
+    default that resolves to a directory that doesn't exist — the seatbelt that
+    stopped a misresolved render from parking gigabytes of WAVs in an invented
+    ``songs/<slug>/``. Tests about absolutization, timeouts or the retention
+    sweep aren't about that guard, so they state the precondition every real
+    render has: the song they're rendering exists.
+    """
+    song_dir = tmp_path / "songs" / slug
+    song_dir.mkdir(parents=True, exist_ok=True)
+    return song_dir
+
+
 def test_start_call_absolutizes_relative_output_dir_before_forward(
     tmp_path, monkeypatch,
 ):
@@ -385,6 +400,7 @@ def test_start_call_computes_default_output_dir_when_missing(
     from hallucinote_mcp.wire import Response
 
     monkeypatch.chdir(tmp_path)
+    _existing_song_dir(tmp_path)
 
     forwarded = Response(ok=True, result={"status": "ok"})
     with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
@@ -484,6 +500,7 @@ def test_handle_tool_call_forwards_policy_read_timeout(
     from hallucinote_mcp.wire import Response
 
     monkeypatch.chdir(tmp_path)
+    _existing_song_dir(tmp_path)
     forwarded = Response(ok=True, result={})
     with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
         handle_tool_call(tool, action, params)
@@ -1020,6 +1037,7 @@ def test_render_proceeds_when_the_sweep_raises(tmp_path, monkeypatch, caplog):
     """Disk hygiene must never cost a capture."""
     import logging
     monkeypatch.chdir(tmp_path)
+    _existing_song_dir(tmp_path)
     monkeypatch.delenv("HALLUCINOTE_CAPTURE_SWEEP", raising=False)
 
     def _boom(*a, **kw):
@@ -1097,6 +1115,7 @@ def test_render_start_logs_when_the_sweep_is_disabled(tmp_path, monkeypatch, cap
     process, so the opt-out confirms itself in the log."""
     import logging
     monkeypatch.chdir(tmp_path)
+    _existing_song_dir(tmp_path)
     monkeypatch.setenv("HALLUCINOTE_CAPTURE_SWEEP", "0")
 
     with caplog.at_level(logging.INFO, logger="hallucinote_mcp"):
@@ -1138,6 +1157,7 @@ def test_render_start_logs_when_the_engine_is_unavailable(
     import builtins
     import logging
     monkeypatch.chdir(tmp_path)
+    _existing_song_dir(tmp_path)
     monkeypatch.delenv("HALLUCINOTE_CAPTURE_SWEEP", raising=False)
 
     real_import = builtins.__import__
@@ -1153,3 +1173,119 @@ def test_render_start_logs_when_the_engine_is_unavailable(
 
     assert "capture retention unavailable" in caplog.text
     assert send.called
+
+
+# ---------------------------------------------------------------------------
+# Render destination safety — the phantom song dir.
+#
+# `ableton_render(action='start')` with no output_dir builds its destination
+# from the slug. When that resolved to a directory that didn't exist, nothing
+# refused: the Live-side handler's mkdir(parents=True) invented the whole tree
+# and the capture pass filled it with ~290 MB of WAVs. Because the render
+# SUCCEEDED, the misfile stayed invisible until analysis reported the song
+# unbuilt. These pin both halves — resolve it right, and refuse rather than
+# invent when it can't be resolved.
+# ---------------------------------------------------------------------------
+
+
+def test_render_default_finds_a_workspace_below_the_project_dir(
+    tmp_path, monkeypatch,
+):
+    """The defect: project dir above, `hallucinote.toml` below. Captures must
+    land in the song's own workspace, not a fabricated `songs/<slug>/`."""
+    import pathlib
+    from hallucinote_mcp.wire import Response
+
+    monkeypatch.delenv("HALLUCINOTE_SONGS_ROOT", raising=False)
+    ws = tmp_path / "examples"
+    (ws / "demo").mkdir(parents=True)
+    (ws / "hallucinote.toml").write_text(
+        '[workspace]\nlayout = "monorepo"\nsongs_root = "."\n'
+    )
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+
+    forwarded = Response(ok=True, result={"status": "ok"})
+    with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
+        handle_tool_call("ableton_render", "start", {"song_slug": "demo"})
+
+    output_dir = pathlib.Path(send.call_args.args[0].params["output_dir"])
+    assert output_dir.is_relative_to((ws / "demo").resolve()), (
+        f"captures must land in the resolved workspace, got {output_dir}"
+    )
+    assert not (tmp_path / "songs").exists(), (
+        "the legacy path must not even be named once the workspace resolves"
+    )
+
+
+def test_render_refuses_to_write_into_a_song_dir_that_does_not_exist(
+    tmp_path, monkeypatch,
+):
+    """No resolution is perfect — a typo'd slug, an ambiguous descent. The
+    render must refuse rather than invent a tree and fill it with gigabytes."""
+    monkeypatch.delenv("HALLUCINOTE_SONGS_ROOT", raising=False)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+
+    with patch("hallucinote_mcp.server.client.send") as send:
+        response = handle_tool_call("ableton_render", "start", {"song_slug": "demo"})
+
+    assert response["ok"] is False
+    assert not send.called, "a refused render must never reach Live"
+    assert "does not exist" in response["error"]
+    # Diagnoses rather than blames the slug.
+    assert "no hallucinote.toml workspace marker" in response["error"]
+
+
+def test_render_refusal_does_not_apply_to_an_explicit_output_dir(
+    tmp_path, monkeypatch,
+):
+    """A caller naming a destination is saying "put it here" — the guard is
+    only ever about the DERIVED default."""
+    from hallucinote_mcp.wire import Response
+
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    target = str(tmp_path / "anywhere" / "captures")
+
+    forwarded = Response(ok=True, result={"status": "ok"})
+    with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
+        response = handle_tool_call(
+            "ableton_render", "start",
+            {"song_slug": "demo", "output_dir": target},
+        )
+    assert response["ok"] is True
+    assert send.call_args.args[0].params["output_dir"] == target
+
+
+def test_render_db_seq_is_tagged_for_a_workspace_below_the_project_dir(
+    tmp_path, monkeypatch,
+):
+    """Downstream symptom of the same misresolution: `manifest.db_seq` came
+    back null (the DB "didn't exist"), so the capture could never serve as a
+    `--compare` baseline."""
+    from hallucinote.db import mutations as M
+    from hallucinote.db.connection import init_db
+    from hallucinote_mcp.wire import Response
+
+    monkeypatch.delenv("HALLUCINOTE_SONGS_ROOT", raising=False)
+    ws = tmp_path / "examples"
+    song_dir = ws / "demo"
+    song_dir.mkdir(parents=True)
+    (ws / "hallucinote.toml").write_text(
+        '[workspace]\nlayout = "monorepo"\nsongs_root = "."\n'
+    )
+    conn = init_db(song_dir / "demo.db")
+    M.create_song(conn, name="demo")
+    conn.commit()
+    conn.close()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+
+    forwarded = Response(ok=True, result={"status": "ok"})
+    with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
+        handle_tool_call("ableton_render", "start", {"song_slug": "demo"})
+
+    assert send.call_args.args[0].params.get("db_seq") is not None, (
+        "a resolvable song DB must tag the render with its audit-log seq"
+    )

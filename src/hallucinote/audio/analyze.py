@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     # pre-loaded from .io), but its "np.ndarray" annotations need the name.
     import numpy as np
 
+from ..paths import portable_path
 from .alignment import trim_to_common_length
 from .compare import diff_reports, ensure_comparable, resolve_baseline
 from .attribution import (
@@ -185,6 +186,12 @@ def analyze_mix(
     populated lists. This function stays DB-agnostic so synthetic-fixture
     tests can drive it without a song DB.
 
+    ``analysis_dir`` does double duty: it is the pool a ``compare_to`` seq
+    resolves against, and its parent is the **song directory** every path the
+    report records is written relative to (``captures_dir``,
+    ``compare_to.baseline.ref``) — see ``hallucinote.paths.portable_path`` and
+    the ``MixReport`` docstring for why a persisted absolute path is a defect.
+
     ``compare_to`` selects a baseline for a before/after diff: an ``int`` is
     a song audit-log seq, resolved against ``analysis_dir`` (the directory
     of previously-written analysis JSONs — required for the seq form) via
@@ -197,6 +204,19 @@ def analyze_mix(
     captures_dir = Path(captures_dir)
     manifest_path = captures_dir / "manifest.json"
     capture = load_capture(manifest_path)
+
+    # Anchor for every path this report WRITES DOWN. The report JSON is
+    # git-tracked (see .gitignore: the heavy captures/ WAVs are ignored, the
+    # small analysis/ reports are kept), so an absolute path in it commits the
+    # authoring machine's home directory — non-portable, undiffable across
+    # machines, and refused outright by tools/tour_transcript.py's publish gate.
+    # The song dir is the anchor because it is the one the reader can rediscover
+    # from the artifact alone: the report lives at <song_dir>/analysis/<ts>.json,
+    # so song_dir == report_path.parent.parent. None when the caller passed no
+    # analysis_dir (a direct/synthetic-fixture call, which writes nothing);
+    # portable_path then falls back to ~-collapsed or absolute — never an
+    # account-bearing path. See hallucinote.paths.portable_path.
+    song_dir = Path(analysis_dir).parent if analysis_dir is not None else None
 
     # Resolve + load + validate the baseline up front so a bad seq / path /
     # song fails fast, before the expensive DSP passes — the diff itself
@@ -217,7 +237,10 @@ def analyze_mix(
             baseline_path = resolve_baseline(analysis_dir, compare_to)
         else:
             baseline_path = Path(compare_to)
-        baseline_ref = str(baseline_path)
+        # Portable for the same reason captures_dir is: baseline_ref is recorded
+        # in the report's compare_to.baseline block (and quoted in the
+        # comparability refusals below).
+        baseline_ref = portable_path(baseline_path, base=song_dir)
         baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
         ensure_comparable(
             SCHEMA_VERSION, capture.song_slug, baseline, baseline_ref=baseline_ref
@@ -317,7 +340,7 @@ def analyze_mix(
 
     report = MixReport(
         song_slug=capture.song_slug,
-        captures_dir=str(capture.captures_dir),
+        captures_dir=portable_path(capture.captures_dir, base=song_dir),
         captured_at=capture.captured_at,
         analyzer_signature=capture.analyzer_signature,
         master=master_metrics,

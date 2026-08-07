@@ -12,7 +12,8 @@ Developer preferences for how code is written in this project. Captured during d
 
 - **Naming**: `snake_case` for functions/variables, `PascalCase` for classes, `UPPER_SNAKE` for module-level constants (see `generators/primitives.py`, `db/events.py`)
 - **Formatting**: No formatter configured. Project follows PEP 8 spacing and ~88-col lines by convention. (Critic-enforced.)
-- **Linting**: None configured. Add ruff if/when style drift starts to matter. (Critic-enforced for now.)
+- **Linting**: `ruff check .` and `mypy`, both configured in `pyproject.toml` and both
+  gating CI on every push/PR to `develop` and `main` (INF-2C4X, `.github/workflows/ci.yml`).
 - **Type annotations**: Required on public functions. PEP 604 unions (`int | None`), `Sequence`/`Iterable` from `typing` for inputs, concrete `list[...]` for outputs. `from __future__ import annotations` at the top of every module.
 - **Imports**: Absolute (`from hallucinote.db import mutations as M`). Grouped stdlib / third-party / local with blank lines between groups. Aliases used freely for cross-module clarity (`mutations as M`, `events as E`).
 - **Docstrings**: Module docstrings stating intent + discipline. Function docstrings explain *why* and any non-obvious convention, not signatures (types carry that). One-liners are fine for trivial helpers.
@@ -77,18 +78,18 @@ Each preference above should be enforced by one of three mechanisms — assign t
 
 | Mechanism | Where it lives | What it catches | Trade-off |
 |---|---|---|---|
-| **Linter** | Project's configured linter (ruff, eslint, swiftlint, etc.) | Mechanical style/naming rules | Best tool when configured. If no linter, preferences in this category fall through to Critic. |
+| **Linter** | `ruff check .` + `mypy`, both gating CI (INF-2C4X) | Mechanical style/naming rules | Preferred where a rule exists. A preference with no corresponding enabled rule still falls through to Critic — "a linter is configured" is not the same as "this rule is enforced". |
 | **Test** | `tests/preferences/test_*.py` (or equivalent) | Structural rules with named exceptions (AST checks, config-presence checks) | Bakes the rule into CI; refuses to be silent. Cost: re-validate when the rule's shape changes. |
 | **Critic** | `/critic` review (Goal 4: Project Preferences) | Judgment-required rules (semantic naming, "appropriate" anything, what counts as a "boundary") | No false-confidence test. Cost: requires reviewer per chunk; misses violations between reviews. |
 
 | Preference | Mechanism | Enforcement artifact |
 |---|---|---|
-| `from __future__ import annotations` on every module | Critic | (no linter configured; promote to a `ruff` rule if/when ruff is added) |
+| `from __future__ import annotations` on every module | Critic | ruff is configured and gates CI (INF-2C4X), but no enabled rule covers this — Critic still owns it; promote to a `ruff` rule to mechanize |
 | All writes go through `db.mutations` (no raw SQL in callers outside `db/`) | Critic | Goal 4 (project preferences) — high-priority rule; consider an AST-based `tests/preferences/test_no_raw_sql_outside_db.py` if violations recur |
 | Every mutator emits a paired `events` row in the same transaction | Critic | Goal 4 — paired-write discipline; covered behaviorally by `test_mutations.py` event assertions |
 | Generators stay pure (no DB / MCP imports under `generators/`) | Critic | Goal 4 — easy candidate for an import-graph test if drift starts |
 | `sync.*` produces plans, never invokes MCP tools directly | Critic | Goal 4 |
-| Snake/Pascal/UPPER naming, PEP 604 unions, grouped imports | Critic | Promote to `ruff` (E, I, UP rules) when a linter is added |
+| Snake/Pascal/UPPER naming, PEP 604 unions, grouped imports | Critic | ruff is configured and gates CI (INF-2C4X); enable the `E`, `I` and `UP` rule sets in `[tool.ruff]` to mechanize this row |
 | Test file lives next to the module it tests (mirror layout) | Critic | Goal 4 |
 | One DB per song at `songs/<slug>/<slug>.db`; slug = `[a-z0-9_-]+`; display name in `songs.title` | Test + Critic | Schema `CHECK` on `songs.name` + Python regex in `create_song` enforce the slug; Critic Goal 4 catches setup violations (rogue paths, sidecar config files) |
 

@@ -753,3 +753,264 @@ def test_audio_clip_survives_identical_rebuild_reconcile(conn):
         (sid,),
     ).fetchall()
     assert rows == []
+
+
+# ---------------------------------------------------------------------------
+# The no-op-fast-path data-loss class
+#
+# A mutator whose "nothing changed" fast path returns BEFORE registering its
+# touch destroys the row it was converging: the build never marks it, so the
+# mark-and-sweep tombstones it on the very next run. Two properties must hold
+# together on that path, and fixing one by breaking the other is not a fix:
+#   1. the row (and its CASCADE children) survives the sweep, AND
+#   2. no event is emitted — converger discipline ("re-running produces zero
+#      net state-change events") is the whole point of the fast path.
+# ---------------------------------------------------------------------------
+
+
+def _state_events(conn):
+    return [
+        r["kind"] for r in conn.execute(
+            "SELECT kind FROM events "
+            "WHERE kind NOT IN ('request_created', 'request_closed') "
+            "ORDER BY seq"
+        ).fetchall()
+    ]
+
+
+def _shifter_envelope_build(conn, *, breakpoints):
+    """A build.py-shaped converger that reuses an EXISTING envelope by query
+    rather than re-calling `create_envelope` — the correct-looking caller
+    shape that made the loss reachable (`create_envelope`'s own touch is what
+    masked it). Returns (song_id, envelope_id)."""
+    with M.build_session(conn, song_name="s"):
+        sid = M.create_song(conn, name="s")
+        tid = M.create_track(conn, song_id=sid, track_index=1, name="T")
+        chain_id = M.create_device_chain(conn, parent_track_id=tid)
+        dev_id = M.create_device(
+            conn, chain_id=chain_id, position=1, kind="Shifter",
+            display_name="Shifter",
+        )
+        existing = [
+            e for e in Q.get_envelopes_for_device(conn, dev_id)
+            if e["parameter_path"] == "Pitch Coarse"
+        ]
+        if existing:
+            env_id = existing[0]["id"]
+        else:
+            env_id = M.create_envelope(
+                conn, song_id=sid, target_kind="device_parameter",
+                target_device_id=dev_id, parameter_path="Pitch Coarse",
+            )
+        M.replace_breakpoints(conn, envelope_id=env_id, breakpoints=breakpoints)
+    return sid, env_id
+
+
+_ARC = [
+    {"time_beats": 0.0, "value": 0.0, "curve_kind": "linear"},
+    {"time_beats": 4.0, "value": -12.0, "curve_kind": "linear"},
+]
+
+
+def test_identical_replace_breakpoints_keeps_envelope_alive_through_sweep(conn):
+    """`replace_breakpoints`'s no-op fast path must still mark the parent
+    envelope touched, or the sweep deletes the automation it just converged.
+
+    Pre-fix this failed on run 2: the second session emitted exactly
+    `request_created`, `envelope_deleted`, `request_closed` and left zero
+    envelopes (and run 3 recreated it — an eternally oscillating build).
+    """
+    sid, env_id = _shifter_envelope_build(conn, breakpoints=_ARC)
+    assert len(Q.get_envelopes_for_song(conn, sid)) == 1
+
+    # Run 2: byte-identical source ⇒ identical breakpoints ⇒ the fast path.
+    sid2, env_id2 = _shifter_envelope_build(conn, breakpoints=_ARC)
+    assert sid2 == sid
+    assert env_id2 == env_id, "the envelope should be REUSED, not recreated"
+
+    envs = Q.get_envelopes_for_song(conn, sid)
+    assert [e["id"] for e in envs] == [env_id], (
+        "the sweep deleted the envelope the build was converging"
+    )
+    bps = conn.execute(
+        "SELECT id FROM automation_breakpoints WHERE envelope_id = ?", (env_id,),
+    ).fetchall()
+    assert len(bps) == len(_ARC), "breakpoints went with the envelope"
+
+
+def test_identical_replace_breakpoints_emits_no_event(conn):
+    """The other half of the contract: keeping the row alive must NOT be paid
+    for with an event. Marking touched is bookkeeping, not a state change."""
+    _shifter_envelope_build(conn, breakpoints=_ARC)
+    before = _state_events(conn)
+    _shifter_envelope_build(conn, breakpoints=_ARC)
+    assert _state_events(conn) == before, (
+        "an identical rebuild must produce zero net state-change events"
+    )
+
+
+def test_changed_replace_breakpoints_keeps_envelope_alive_through_sweep(conn):
+    """The fast path is only half the bug: pre-fix `replace_breakpoints`
+    registered no touch on ANY path, so even a build that CHANGED the arc lost
+    the envelope (run 2 emitted `breakpoints_replaced` then `envelope_deleted`).
+    """
+    sid, env_id = _shifter_envelope_build(conn, breakpoints=_ARC)
+    moved = [
+        {"time_beats": 0.0, "value": 0.0, "curve_kind": "linear"},
+        {"time_beats": 8.0, "value": -12.0, "curve_kind": "linear"},
+    ]
+    sid2, env_id2 = _shifter_envelope_build(conn, breakpoints=moved)
+    assert env_id2 == env_id
+    assert [e["id"] for e in Q.get_envelopes_for_song(conn, sid)] == [env_id]
+    times = [
+        r["time_beats"] for r in conn.execute(
+            "SELECT time_beats FROM automation_breakpoints "
+            "WHERE envelope_id = ? ORDER BY time_beats", (env_id,),
+        ).fetchall()
+    ]
+    assert times == [0.0, 8.0]
+
+
+def test_replace_breakpoints_touch_does_not_resurrect_a_dropped_envelope(conn):
+    """The sweep must still own the row. An envelope the build stops writing
+    is still tombstoned — the fix marks what the build TOUCHED, it does not
+    make envelopes immortal."""
+    sid, env_id = _shifter_envelope_build(conn, breakpoints=_ARC)
+    with M.build_session(conn, song_name="s"):
+        sid = M.create_song(conn, name="s")
+        tid = M.create_track(conn, song_id=sid, track_index=1, name="T")
+        chain_id = M.create_device_chain(conn, parent_track_id=tid)
+        M.create_device(
+            conn, chain_id=chain_id, position=1, kind="Shifter",
+            display_name="Shifter",
+        )
+        # No envelope authored this run.
+    assert Q.get_envelopes_for_song(conn, sid) == []
+
+
+def test_identical_replace_clip_notes_keeps_clip_alive_through_sweep(conn):
+    """Sibling of the envelope case: `replace_clip_notes`'s no-op fast path
+    must mark the parent CLIP (notes are CASCADE children with no row-kind of
+    their own), and must still emit nothing."""
+    notes = [
+        {"pitch": 60, "start_beats": 0.0, "duration_beats": 1.0, "velocity": 100},
+        {"pitch": 64, "start_beats": 1.0, "duration_beats": 1.0, "velocity": 90},
+    ]
+
+    def build():
+        with M.build_session(conn, song_name="s"):
+            sid = M.create_song(conn, name="s")
+            tid = M.create_track(conn, song_id=sid, track_index=1, name="T")
+            # Reuse the existing clip by query — never re-call create_clip, so
+            # its touch can't mask the one replace_clip_notes owes.
+            existing = Q.get_clips_for_track(conn, tid)
+            cid = existing[0]["id"] if existing else M.create_clip(
+                conn, track_id=tid, slot=1, length_beats=4.0, name="A",
+            )
+            M.replace_clip_notes(conn, clip_id=cid, notes=notes)
+        return sid, cid
+
+    sid, cid = build()
+    before = _state_events(conn)
+    sid2, cid2 = build()
+    assert cid2 == cid
+    rows = conn.execute(
+        """SELECT c.id FROM clips c JOIN tracks t ON t.id = c.track_id
+           WHERE t.song_id = ?""", (sid,),
+    ).fetchall()
+    assert [r["id"] for r in rows] == [cid], "the sweep deleted the clip"
+    assert conn.execute(
+        "SELECT COUNT(*) AS n FROM notes WHERE clip_id = ?", (cid,),
+    ).fetchone()["n"] == 2
+    assert _state_events(conn) == before, "the no-op path emitted an event"
+
+
+def test_identical_replace_drum_pad_mappings_keeps_device_alive_through_sweep(conn):
+    """Sibling of the envelope case on the device side: pad mappings are
+    CASCADE children of the device, so the no-op path must mark the DEVICE."""
+    mappings = [
+        {"chain_name": "Kick", "midi_note": 36},
+        {"chain_name": "Snare", "midi_note": 38},
+    ]
+
+    def build():
+        with M.build_session(conn, song_name="s"):
+            sid = M.create_song(conn, name="s")
+            tid = M.create_track(conn, song_id=sid, track_index=1, name="T")
+            chain_id = M.create_device_chain(conn, parent_track_id=tid)
+            # Reuse the existing device by query — no create_device touch to
+            # mask the one replace_drum_pad_mappings owes.
+            existing = conn.execute(
+                "SELECT id FROM devices WHERE chain_id = ?", (chain_id,),
+            ).fetchall()
+            did = existing[0]["id"] if existing else M.create_device(
+                conn, chain_id=chain_id, position=1, kind="Drum Rack",
+                display_name="Drum Rack",
+            )
+            M.replace_drum_pad_mappings(conn, device_id=did, mappings=mappings)
+        return sid, did
+
+    sid, did = build()
+    before = _state_events(conn)
+    sid2, did2 = build()
+    assert did2 == did
+    assert conn.execute(
+        "SELECT COUNT(*) AS n FROM devices WHERE id = ?", (did,),
+    ).fetchone()["n"] == 1, "the sweep deleted the device"
+    assert conn.execute(
+        "SELECT COUNT(*) AS n FROM drum_pad_mappings WHERE device_id = ?", (did,),
+    ).fetchone()["n"] == 2
+    assert _state_events(conn) == before, "the no-op path emitted an event"
+
+
+def test_set_chain_properties_no_fields_still_marks_the_chain(conn):
+    """`set_chain_properties` returns before ANY work when the caller passes no
+    fields (the `if not changes` guard sits above the per-field diff that did
+    record the touch). Same class: the chain is then swept."""
+    def build(*, with_props: bool):
+        with M.build_session(conn, song_name="s"):
+            sid = M.create_song(conn, name="s")
+            tid = M.create_track(conn, song_id=sid, track_index=1, name="T")
+            existing = conn.execute(
+                "SELECT id FROM device_chains WHERE parent_track_id = ?", (tid,),
+            ).fetchall()
+            chain_id = existing[0]["id"] if existing else M.create_device_chain(
+                conn, parent_track_id=tid,
+            )
+            if with_props:
+                M.set_chain_properties(conn, chain_id=chain_id, mute=0)
+            else:
+                M.set_chain_properties(conn, chain_id=chain_id)
+        return chain_id
+
+    chain_id = build(with_props=True)
+    before = _state_events(conn)
+    assert build(with_props=False) == chain_id
+    assert conn.execute(
+        "SELECT COUNT(*) AS n FROM device_chains WHERE id = ?", (chain_id,),
+    ).fetchone()["n"] == 1, "the sweep deleted the chain"
+    assert _state_events(conn) == before
+
+
+def test_set_track_mixer_no_op_still_marks_the_track(conn):
+    """`set_track_mixer`'s three early returns (no fields / missing row /
+    nothing changed) all skipped the touch. A build that only rides the mixer
+    on a track it looks up would lose the track."""
+    def build():
+        with M.build_session(conn, song_name="s"):
+            sid = M.create_song(conn, name="s")
+            existing = Q.get_tracks_for_song(conn, sid)
+            tid = existing[0]["id"] if existing else M.create_track(
+                conn, song_id=sid, track_index=1, name="T",
+            )
+            M.set_track_mixer(conn, track_id=tid, volume=0.7)
+        return sid, tid
+
+    sid, tid = build()
+    before = _state_events(conn)
+    sid2, tid2 = build()
+    assert tid2 == tid
+    assert [t["id"] for t in Q.get_tracks_for_song(conn, sid)] == [tid], (
+        "the sweep deleted the track"
+    )
+    assert _state_events(conn) == before

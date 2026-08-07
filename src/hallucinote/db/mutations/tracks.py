@@ -12,6 +12,7 @@ from ._core import (
     _record_touch_if_session,
     _resolve_actor_and_request,
     _touch_song,
+    _touches,
     _uuid,
 )
 
@@ -100,6 +101,7 @@ def create_track(
 _MIXER_FIELDS = {"volume", "pan", "mute", "solo", "arm", "color"}
 
 
+@_touches("track", "track_id")
 @_atomic
 def set_track_mixer(
     conn: sqlite3.Connection,
@@ -235,6 +237,7 @@ def _validate_track_routing(
                 )
 
 
+@_touches("track", "track_id")
 @_atomic
 def set_track_routing(
     conn: sqlite3.Connection,

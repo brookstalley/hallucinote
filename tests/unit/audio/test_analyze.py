@@ -25,6 +25,12 @@ from hallucinote.audio import (
 )
 from hallucinote.audio.report import SCHEMA_VERSION
 from hallucinote.audio.reverb import REVERB_TOLERANCE_FLOOR_S
+from hallucinote.paths import resolve_portable_path
+
+# The repo's own publish gate. Imported rather than restated so the analyzer's
+# write side and the transcript renderer's publish side can't drift — see
+# test_analyze_mix_report_carries_no_publishable_leak.
+from tools.tour_transcript import FORBIDDEN
 
 from .fixtures import (
     SAMPLE_RATE,
@@ -1312,3 +1318,109 @@ def test_analyze_mix_bool_compare_to_refuses(tmp_path: Path):
     )
     with pytest.raises(TypeError, match="bool"):
         analyze_mix(captures_dir, compare_to=True, analysis_dir=tmp_path)
+
+
+# --- persisted-path portability (AUD-PORTPATH) ------------------------
+#
+# The MixReport JSONs under songs/<slug>/analysis/ are git-tracked by policy
+# (.gitignore ignores the heavy captures/ WAVs and explicitly keeps the small
+# reports). A machine-absolute path inside one therefore commits the author's
+# home directory into the repo — the exact class of disclosure
+# tools/tour_transcript.py refuses to publish — and makes the report
+# non-portable and undiffable across machines. These pin the emitted form.
+
+
+def test_analyze_mix_records_captures_dir_relative_to_the_song(tmp_path: Path):
+    """``captures_dir`` is recorded relative to the SONG dir, not absolutely.
+
+    The song dir is the anchor a reader can rediscover from the artifact
+    alone (the report lives at ``<song_dir>/analysis/<ts>.json``), and it is
+    the same anchor ``clips.audio_file`` already uses."""
+    song_dir = tmp_path / "songs" / "test-song"
+    captures_dir = _write_synthetic_capture(
+        song_dir,
+        stems=[("track:1", "01 Drums", calibrated_pink_noise(-26.0, 4.0))],
+        master_audio=calibrated_pink_noise(-22.0, 4.0),
+    )
+    analysis_dir = song_dir / "analysis"
+    analysis_dir.mkdir(parents=True)
+
+    report = analyze_mix(captures_dir, analysis_dir=analysis_dir)
+
+    assert report.captures_dir == "captures/20260528T130000Z"
+    # Still locatable: the read half round-trips it back to the real dir.
+    assert resolve_portable_path(song_dir, report.captures_dir) == captures_dir
+
+
+def test_analyze_mix_records_baseline_ref_relative_to_the_song(tmp_path: Path):
+    """``compare_to.baseline.ref`` is a persisted path too — same rule."""
+    song_dir = tmp_path / "songs" / "test-song"
+    captures_dir = _write_synthetic_capture(
+        song_dir,
+        stems=[("track:1", "01 Drums", calibrated_pink_noise(-26.0, 4.0))],
+        master_audio=calibrated_pink_noise(-22.0, 4.0),
+    )
+    analysis_dir = song_dir / "analysis"
+    analysis_dir.mkdir(parents=True)
+    baseline_path = analysis_dir / "20260610T010000Z.json"
+    baseline_path.write_text(
+        json.dumps(
+            analyze_mix(captures_dir, analysis_dir=analysis_dir).to_json_dict(),
+            allow_nan=False,
+        ),
+        encoding="utf-8",
+    )
+
+    report = analyze_mix(
+        captures_dir, compare_to=baseline_path, analysis_dir=analysis_dir,
+    )
+
+    assert report.compare_to is not None
+    assert report.compare_to["baseline"]["ref"] == "analysis/20260610T010000Z.json"
+
+
+def test_analyze_mix_report_carries_no_publishable_leak(tmp_path: Path):
+    """No field ANYWHERE in the serialized report may carry a home path.
+
+    The rule is not re-stated here: it is imported from the repo's own
+    publish gate (``tools.tour_transcript.FORBIDDEN``), so the analyzer's
+    write side and the transcript renderer's publish side can never drift
+    into disagreeing about what a leak is — one part of the codebase
+    refusing to publish what another part commits was the original defect.
+    (A test importing ``tools`` is fine; the ENGINE must not, which is why
+    the shared helper lives in ``hallucinote.paths``, not in ``tools/``.)
+
+    The song is planted under a home-SHAPED tree (``…/Users/test-account/…``)
+    so the assertion has something to bite on: with the paths recorded
+    absolutely, the serialized report matches the account-segment pattern.
+    A real ``/Users/<you>`` never appears in this test.
+    """
+    song_dir = tmp_path / "Users" / "test-account" / "songs" / "test-song"
+    captures_dir = _write_synthetic_capture(
+        song_dir,
+        stems=[("track:1", "01 Drums", calibrated_pink_noise(-26.0, 4.0))],
+        master_audio=calibrated_pink_noise(-22.0, 4.0),
+    )
+    analysis_dir = song_dir / "analysis"
+    analysis_dir.mkdir(parents=True)
+    baseline_path = analysis_dir / "20260610T010000Z.json"
+    baseline_path.write_text(
+        json.dumps(
+            analyze_mix(captures_dir, analysis_dir=analysis_dir).to_json_dict(),
+            allow_nan=False,
+        ),
+        encoding="utf-8",
+    )
+
+    report = analyze_mix(
+        captures_dir, compare_to=baseline_path, analysis_dir=analysis_dir,
+    )
+    payload = json.dumps(report.to_json_dict(), indent=2, allow_nan=False)
+
+    for pattern, description in FORBIDDEN:
+        match = pattern.search(payload)
+        assert match is None, (
+            f"the MixReport JSON carries {description}: {match.group(0)!r} — "
+            "analysis/ reports are git-tracked, so this ships to whoever "
+            "clones the repo"
+        )

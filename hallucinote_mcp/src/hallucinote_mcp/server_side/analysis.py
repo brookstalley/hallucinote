@@ -69,6 +69,15 @@ try:
     from hallucinote.audio.levels import live_fader_gain
     from hallucinote.db import queries as Q
     from hallucinote.db.connection import init_db, resolve_db_path
+    # The write half of the persisted-path contract — status.json is written
+    # into the git-tracked analysis/ dir alongside the reports, so the path it
+    # carries is anchored to the song dir, not to this machine.
+    from hallucinote.paths import (
+        portable_path,
+        portable_text,
+        resolve_portable_path,
+    )
+    from hallucinote.workspace import explain_unresolved_song
     # Reuse the canonical bar→beat converter the push planner uses — it walks
     # the song's time_signature_map so meter changes accumulate exactly. Both
     # section windows and tempo-map segments are positioned through it.
@@ -93,6 +102,10 @@ except ImportError:  # pragma: no cover - exercised in Live's vendored env
     Q = None  # type: ignore[assignment]
     init_db = None  # type: ignore[assignment]
     resolve_db_path = None  # type: ignore[assignment]
+    explain_unresolved_song = None  # type: ignore[assignment]
+    portable_path = None  # type: ignore[assignment]
+    portable_text = None  # type: ignore[assignment]
+    resolve_portable_path = None  # type: ignore[assignment]
     _position_bar_to_beats = None  # type: ignore[assignment]
     recency_key = None  # type: ignore[assignment]
     _HAS_HALLUCINOTE = False
@@ -157,8 +170,7 @@ def _latest_captures_dir(song_slug: str) -> Path:
             f"no captures directory at {captures_root} — has "
             f"ableton_render(action='start', song_slug={song_slug!r}) "
             f"been called yet? (Then poll action='status' to completion.) "
-            f"Captures are written to "
-            f"songs/{song_slug}/captures/<iso-ts>/."
+            f"Captures are written to {captures_root}/<iso-ts>/."
         )
     candidates = [
         p for p in captures_root.iterdir()
@@ -243,13 +255,19 @@ def _existing_db_path(song_slug: str) -> Path:
     Existence check only (no open) — the handler opens the DB exactly once for
     well-formedness validation + both collectors. Catches a typo'd slug before
     a MixReport gets written against random captures.
+
+    The failure message defers to ``workspace.explain_unresolved_song``, which
+    distinguishes the three things a missing DB can mean — the workspace this
+    process resolved doesn't hold the song / no marker was found at all so the
+    legacy path was used / the song genuinely doesn't exist. The flat "doesn't
+    name a built song. run build.py --reset" this replaced ran all three
+    together, and told an operator to scaffold a duplicate over a song that was
+    built and findable a directory away.
     """
     db_path = resolve_db_path(song_slug)
     if not db_path.exists():
         raise _AnalysisError(
-            f"no song DB at {db_path} — slug {song_slug!r} doesn't name "
-            f"a built song. `python3 songs/{song_slug}/build.py --reset` "
-            f"creates it."
+            f"no song DB at {db_path} — {explain_unresolved_song(song_slug)}"
         )
     return db_path
 
@@ -652,15 +670,32 @@ def analyze_handler(
             "analyze: failed for song_slug=%s (analysis_dir=%s) — wrote "
             "status.json=error and re-raising", song_slug, analysis_dir,
         )
-        _write_analysis_status(analysis_dir, {"state": "error", "error": str(e)})
+        # The message is quoted verbatim into the git-tracked analysis/ dir, and
+        # the teaching errors here name the paths they're teaching about ("no
+        # manifest.json at <captures_path>"). Collapse this machine's home so a
+        # failed run doesn't commit it; the message otherwise stays intact —
+        # the diagnosis is the point. The exception re-raised below is the
+        # UNCOLLAPSED one, so the caller still gets the full path on the wire.
+        _write_analysis_status(
+            analysis_dir, {"state": "error", "error": portable_text(str(e))},
+        )
         raise
 
     # Heartbeat=done — the report JSON is on disk. The robust completion signal
     # an agent polls for; carries the report path so the poller can read it
     # directly without re-globbing the analysis dir.
+    #
+    # status.json lives in the git-tracked analysis/ dir (only captures/ is
+    # ignored), so the path it records is written the same portable way the
+    # MixReport's own paths are: relative to the SONG dir (analysis_dir.parent),
+    # i.e. `analysis/<ts>.json`. A poller reading status.json already knows the
+    # analysis dir it read it from, so it joins from there — while an absolute
+    # path would commit this machine's home directory on every analysis run.
+    # The tool RETURN value below stays absolute on purpose: it is an in-flight
+    # API response the agent uses to open the file, never persisted.
     _write_analysis_status(analysis_dir, {
         "state": "done",
-        "report_path": str(report_path),
+        "report_path": portable_path(report_path, base=analysis_dir.parent),
     })
 
     out_of_tolerance = [
@@ -683,7 +718,14 @@ def analyze_handler(
     if report_dict["compare_to"] is not None:
         diff = report_dict["compare_to"]
         summary["compare_to"] = {
-            "baseline_ref": diff["baseline"]["ref"],
+            # The REPORT records this song-relative (it's a checked-in file);
+            # the response re-absolutizes it, because a caller reads a returned
+            # path to open the file and has no reason to know the anchor.
+            # Same split as `report_path` below: portable on disk, resolved on
+            # the wire.
+            "baseline_ref": str(
+                resolve_portable_path(analysis_dir.parent, diff["baseline"]["ref"])
+            ),
             # Loudness rows + the overshoot-count change (always significant
             # when nonzero — an overshoot appearing/disappearing is the
             # headline a summary reader must not miss).
@@ -880,7 +922,7 @@ def get_latest_report_handler(
     if report_path is None:
         raise _AnalysisError(
             f"no MixReport JSON found under "
-            f"songs/{song_slug}/analysis/ — has "
+            f"{_resolve_song_dir(song_slug) / 'analysis'} — has "
             f"ableton_analysis(action='analyze') been called yet for "
             f"this song?"
         )
@@ -999,7 +1041,7 @@ def extract_structure_handler(
             raise _AnalysisError(
                 f"no song row named {song_slug!r} in {db_path} — the DB "
                 f"exists but has no matching song. `python3 "
-                f"songs/{song_slug}/build.py --reset` populates it."
+                f"{db_path.parent / 'build.py'} --reset` populates it."
             )
         extract = _extract_song_structure(conn, song["id"])
     finally:

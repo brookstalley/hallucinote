@@ -50,7 +50,7 @@ class _FakeContext:
     def live_state_lock(self):
         return self._live_state_lock
 
-    def run_on_main(self, fn):
+    def run_on_main(self, fn, **_kwargs):
         return fn()
 
 

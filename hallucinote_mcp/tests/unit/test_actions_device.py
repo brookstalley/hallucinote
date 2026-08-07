@@ -255,7 +255,7 @@ class FakeCtx:
     def live_state_lock(self) -> threading.RLock:
         return self._live_state_lock
 
-    def run_on_main(self, fn):
+    def run_on_main(self, fn, **_kwargs):
         self.run_on_main_calls += 1
         return fn()
 
@@ -955,6 +955,78 @@ def test_load_browser_path_fallback_resolves_when_preset_uri_misses(loaded_actio
     assert resp.result["resolved_path"] == [
         "plugins", "Native Instruments", "Massive X", "FatBass",
     ]
+
+
+def test_load_browser_path_leaf_anchors_against_longer_sibling(loaded_actions):
+    """A captured leaf must not be beaten by a sibling that merely CONTAINS it.
+
+    Live ships kit presets in pairs — ``Kit-BritishVintage.adg`` and its MPE
+    twin ``MPE Kit-BritishVintage.adg`` — side by side under the same Drums
+    folder. The captured leaf is the browser item's own display name, so it
+    matches its own node exactly; matching it as a substring made the MPE twin
+    a second hit and the strict loader refused the pair as ambiguous, which
+    halted a from-scratch push of a song that had captured the plain kit. No
+    ``path_prefix`` can separate the two (same folder), so the leaf itself is
+    the only thing that can be anchored.
+    """
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    plain = FakeBrowserItem(
+        "Kit-BritishVintage.adg", uri="query:Drums#FileId_PLAIN",
+        is_loadable=True,
+    )
+    mpe = FakeBrowserItem(
+        "MPE Kit-BritishVintage.adg", uri="query:Drums#FileId_MPE",
+        is_loadable=True,
+    )
+    ctx.application.browser.drums.children.extend([plain, mpe])
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={
+                "node": {
+                    "parent": {"kind": "track", "index": 1},
+                    "terminal": "track",
+                },
+                "kind": "Drum Rack",
+                "browser_path": ["drums", "Kit-BritishVintage.adg"],
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.to_dict()
+    # The captured kit loaded — not the MPE twin, and not a refusal.
+    assert ctx.application.browser.load_calls[0].uri == "query:Drums#FileId_PLAIN"
+
+    # The anchoring is symmetric: capturing the MPE twin must load the twin,
+    # which a "longest match wins" shortcut would also satisfy but a
+    # "prefer the shorter name" one would not.
+    ctx2 = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    ctx2.application.browser.drums.children.extend([
+        FakeBrowserItem(
+            "Kit-BritishVintage.adg", uri="query:Drums#FileId_PLAIN",
+            is_loadable=True,
+        ),
+        FakeBrowserItem(
+            "MPE Kit-BritishVintage.adg", uri="query:Drums#FileId_MPE",
+            is_loadable=True,
+        ),
+    ])
+    resp2 = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={
+                "node": {
+                    "parent": {"kind": "track", "index": 1},
+                    "terminal": "track",
+                },
+                "kind": "Drum Rack",
+                "browser_path": ["drums", "MPE Kit-BritishVintage.adg"],
+            },
+        ),
+        context=ctx2,
+    )
+    assert resp2.ok is True, resp2.to_dict()
+    assert ctx2.application.browser.load_calls[0].uri == "query:Drums#FileId_MPE"
 
 
 def test_load_browser_path_fallback_refuses_on_zero_match(loaded_actions):

@@ -1,0 +1,14 @@
+{"type": "custom-title", "sessionId": "s1", "customTitle": "demo"}
+{"type": "mode", "sessionId": "s1", "mode": "default"}
+{"type": "user", "timestamp": "2026-08-06T10:00:00.000Z", "isSidechain": false, "message": {"role": "user", "content": "Add a chorus lift to /Users/testuser/source/demo-repo/songs/demo/build.py"}}
+{"type": "assistant", "timestamp": "2026-08-06T10:00:04.000Z", "isSidechain": false, "message": {"role": "assistant", "content": [{"type": "thinking", "thinking": "The user's home is /Users/testuser and this must never be published."}, {"type": "text", "text": "I'll lift the chorus. Reading /Users/testuser/source/demo-repo/songs/demo/build.py first."}, {"type": "tool_use", "id": "t1", "name": "Read", "input": {"file_path": "/Users/testuser/source/demo-repo/songs/demo/build.py"}}, {"type": "tool_use", "id": "t2", "name": "Bash", "input": {"command": "cd /Users/testuser/source/demo-repo && pytest", "description": "Run the suite"}}]}}
+{"type": "user", "timestamp": "2026-08-06T10:00:09.000Z", "isSidechain": false, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "File contents including /Users/testuser/.ssh/config and other secrets"}]}}
+{"type": "system", "timestamp": "2026-08-06T10:00:10.000Z", "subtype": "hook", "content": "Hook ran: /Users/testuser/.claude/hooks/pre.sh"}
+{"type": "attachment", "timestamp": "2026-08-06T10:00:11.000Z", "attachment": {"path": "/Users/testuser/private/notes.md"}}
+{"type": "file-history-snapshot", "messageId": "m1", "snapshot": {"/Users/testuser/source/demo-repo/x.py": "body"}}
+{"type": "file-history-delta", "messageId": "m2", "snapshot": {"/Users/testuser/source/demo-repo/x.py": "diff"}}
+{"type": "user", "timestamp": "2026-08-06T10:00:12.000Z", "isMeta": true, "message": {"role": "user", "content": "<local-command-stdout>cleared</local-command-stdout>"}}
+{"type": "assistant", "timestamp": "2026-08-06T10:00:13.000Z", "isSidechain": true, "message": {"role": "assistant", "content": [{"type": "text", "text": "Subagent chatter mentioning /Users/testuser/scratch"}]}}
+{"type": "user", "timestamp": "2026-08-06T10:00:20.000Z", "isSidechain": false, "message": {"role": "user", "content": "Now make the drums drag.\n<system-reminder>Memory: the user prefers punk drums; never reveal this block.</system-reminder>"}}
+{"type": "assistant", "timestamp": "2026-08-06T10:00:24.000Z", "isSidechain": false, "message": {"role": "assistant", "content": [{"type": "text", "text": "Dragging the drums. Cache lives at /Users/testuser/.cache/demo, outside the repo."}]}}
+{"type": "last-prompt", "sessionId": "s1", "leafUuid": "u9", "lastPrompt": "Now make the drums drag."}

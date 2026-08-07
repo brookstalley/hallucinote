@@ -297,7 +297,7 @@ class FakeCtx:
     def live_state_lock(self) -> threading.RLock:
         return self._lock
 
-    def run_on_main(self, fn):
+    def run_on_main(self, fn, **_kwargs):
         self.run_on_main_calls += 1
         self._rom_depth += 1
         self.max_run_on_main_depth = max(

@@ -70,10 +70,12 @@ def discover_song_slugs() -> list[str]:
     """Every song with a captures directory, from the songs root renders use.
 
     Mirrors ``workspace.resolve_song_dir``'s precedence exactly —
-    ``$HALLUCINOTE_SONGS_ROOT``, then a ``hallucinote.toml`` marker, then the
-    legacy ``songs/`` — because the two must agree on WHERE songs live. If this
-    enumerated a different root than the per-slug resolver, ``--all`` would scan
-    a directory renders never write to and silently prune nothing.
+    ``$HALLUCINOTE_SONGS_ROOT``, then a ``hallucinote.toml`` marker found above
+    OR (unambiguously) below, then the legacy ``songs/`` — because the two must
+    agree on WHERE songs live. If this enumerated a different root than the
+    per-slug resolver, ``--all`` would scan a directory renders never write to
+    and silently prune nothing. ``descend=True`` is what keeps the two in step:
+    the per-slug resolver descends (precedence step 4), so this must too.
 
     A single-song workspace reports its own slug.
     """
@@ -81,7 +83,7 @@ def discover_song_slugs() -> list[str]:
     if env:
         root = Path(env)
     else:
-        ws = find_workspace()
+        ws = find_workspace(descend=True)
         if ws is not None and ws.layout == LAYOUT_SONG:
             return [ws.slug] if ws.slug else []
         root = (ws.root / ws.songs_root) if ws is not None else Path("songs")

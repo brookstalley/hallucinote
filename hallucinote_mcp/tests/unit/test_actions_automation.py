@@ -198,7 +198,7 @@ class FakeCtx:
     def song(self) -> FakeSong:
         return self._song
 
-    def run_on_main(self, fn):
+    def run_on_main(self, fn, **_kwargs):
         self.run_on_main_calls += 1
         return fn()
 

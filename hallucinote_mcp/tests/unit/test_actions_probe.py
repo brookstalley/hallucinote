@@ -119,7 +119,7 @@ class FakeCtx:
     def application(self) -> FakeApplication:
         return self._app
 
-    def run_on_main(self, fn):
+    def run_on_main(self, fn, **_kwargs):
         return fn()
 
 

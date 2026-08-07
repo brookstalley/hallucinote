@@ -270,3 +270,51 @@ def test_re_replay_clears_dropped_mixer_state(conn):
                    song_name="mx")
     row = _drum_rack_chains(conn, song_id)[1]
     assert row["mute"] is None and row["volume"] is None
+
+
+# ---------------------------------------------------------------------------
+# Writability filter — capture must not record what push cannot replay
+# ---------------------------------------------------------------------------
+
+
+def test_chain_mixer_volume_not_captured_when_parameter_is_disabled():
+    """A macro-mapped / locked chain mixer reads a good value and refuses every
+    write ("Value cannot be set, the parameter is disabled").
+
+    Capturing it produces a snapshot whose next push HALTS on a value-level
+    no-op — witnessed on Live's own 606 Core Kit hi-hat pads, which took down a
+    fourteen-phase push at the devices phase. The value being non-default is
+    exactly why the old filter kept it, so nothing else would catch this.
+    """
+    entry = {
+        "chain_index": 1,
+        "volume": 0.7749,
+        "volume_default": 0.85,
+        "volume_is_enabled": False,
+    }
+    assert chain_authored_props(entry)["volume"] is None
+
+
+def test_chain_mixer_volume_captured_when_writability_is_unknown():
+    """An ABSENT flag means "unknown", not "disabled".
+
+    Older Live versions and odd params don't report `is_enabled`. Treating a
+    missing flag as disabled would silently drop real authored mix state, which
+    is a far worse failure than the halt this guard prevents — so unknown must
+    fall back to the historical always-capture behaviour.
+    """
+    entry = {"chain_index": 1, "volume": 0.7749, "volume_default": 0.85}
+    assert chain_authored_props(entry)["volume"] == pytest.approx(0.7749)
+
+
+def test_chain_mixer_pan_honours_its_own_enabled_flag():
+    """The flag is per-parameter: a locked volume must not suppress a writable
+    pan on the same chain."""
+    entry = {
+        "chain_index": 1,
+        "volume": 0.7749, "volume_default": 0.85, "volume_is_enabled": False,
+        "pan": -0.5, "pan_default": 0.0, "pan_is_enabled": True,
+    }
+    props = chain_authored_props(entry)
+    assert props["volume"] is None
+    assert props["pan"] == pytest.approx(-0.5)

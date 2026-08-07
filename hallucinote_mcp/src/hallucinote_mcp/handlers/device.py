@@ -662,6 +662,10 @@ _BROWSER_URI_ROOTS: tuple[str, ...] = _BROWSER_LOAD_ROOTS + (
     "samples",
     "user_library",
     "packs",
+    # Live serves a User-Library .amxd from the M4L root (``query:M4L#…``) while
+    # ``browser.user_library`` can be empty, so a URI that resolves nowhere else
+    # resolves here. Last in the tuple: built-in roots keep priority on a tie.
+    "max_for_live",
 )
 
 _BROWSER_WALK_DEPTH = 8
@@ -1039,14 +1043,24 @@ def _browser_path_is_preset_file(browser_path: list[str]) -> bool:
 def _browser_path_to_query(browser_path: list[str]) -> dict[str, Any]:
     """Synthesize the ``preset_query`` that resolves a captured ``browser_path``:
     root = first segment, optional ``path_prefix`` = the middle segments,
-    ``pattern`` = the leaf (the loaded item's display name). Substring +
+    ``pattern`` = the leaf (the loaded item's display name). Exact +
     case-sensitive — identical to the W13-A E3 fallback so both call sites
     (standalone preset-file load, and preset_uri-miss fallback) resolve the
-    same way."""
+    same way.
+
+    The mode is ``exact`` because the leaf is not a user-typed search term: it
+    is the browser item's own display name, copied verbatim at capture time, so
+    whole-name equality holds by construction. Matching it as a substring
+    instead makes any preset whose name CONTAINS the captured one a rival hit —
+    ``"Kit-BritishVintage.adg"`` also matches ``"MPE Kit-BritishVintage.adg"``
+    — and the strict loader then refuses the pair as ambiguous rather than
+    loading the preset that was actually captured. Nothing at this call site
+    can disambiguate that: both siblings sit at the same path, so no
+    ``path_prefix`` separates them; only anchoring the name does."""
     query: dict[str, Any] = {
         "root": browser_path[0],
         "pattern": browser_path[-1],
-        "mode": "substring",
+        "mode": "exact",
         "case_sensitive": True,
     }
     if len(browser_path) > 2:
@@ -2355,6 +2369,22 @@ def _describe_chain(
                     # same guard tuple as the get_parameters default_value read.
                     # Without a default the filter treats it as default (no
                     # capture) — mixer state must not over-capture every chain.
+                    pass
+                # Whether this parameter can be WRITTEN. A macro-mapped or
+                # otherwise locked chain mixer reads fine and refuses every set
+                # with "Value cannot be set, the parameter is disabled" — so a
+                # capture that records it produces a snapshot the very next push
+                # cannot replay, and the push halts on a write that would have
+                # changed nothing. Reading value without reading writability is
+                # what made that failure possible; surfacing it lets the capture
+                # filter decline to record what it cannot restore.
+                try:
+                    chain_entry[key + "_is_enabled"] = bool(param.is_enabled)
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    # Absent on older Live / odd params. Unknown must not mean
+                    # "skip" — that would silently drop real authored state, so
+                    # the filter treats a missing flag as writable (capture it)
+                    # and we fall back to the pre-existing behaviour.
                     pass
     if detail == "full":
         mixer = _mixer_state(chain)

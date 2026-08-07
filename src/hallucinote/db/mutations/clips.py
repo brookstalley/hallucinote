@@ -12,6 +12,7 @@ from ._core import (
     _record_touch_if_session,
     _resolve_actor_and_request,
     _touch_song,
+    _touches,
     _uuid,
     json,
 )
@@ -316,6 +317,7 @@ _AUDIO_CLIP_UPDATE_FIELDS = frozenset({
 })
 
 
+@_touches("clip", "clip_id")
 @_atomic
 def update_clip(
     conn: sqlite3.Connection,

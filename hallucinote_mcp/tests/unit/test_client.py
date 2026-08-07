@@ -58,7 +58,10 @@ def test_read_timeout_for_ensure_loaded_is_generous_but_bounded():
 
 
 def test_read_timeout_for_default_action():
-    assert client.read_timeout_for("ableton_track", "create") == 15.0
+    # 20s = Live's 15s main-thread ceiling + the 5s reply margin. The caller
+    # must outlast Live, or Live's "still running, do not retry" timeout
+    # report is cut off by the socket and the agent sees a bare FrameError.
+    assert client.read_timeout_for("ableton_track", "create") == 20.0
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +83,7 @@ def test_send_auto_resolves_normal_action_to_default():
     rt = _recv_timeout_for(
         Request(tool="ableton_track", action="create", params={})
     )
-    assert rt == 15.0
+    assert rt == 20.0
 
 
 def test_send_honors_explicit_read_timeout_over_policy():
@@ -93,7 +96,7 @@ def test_send_honors_explicit_read_timeout_over_policy():
 
 def test_send_honors_explicit_none_as_block_forever():
     """Explicit None is 'block forever', NOT 'unset' — it must be honored, not
-    re-resolved to the policy (which would coincidentally also be 15s here)."""
+    re-resolved to the policy (which would give the 20s default here)."""
     rt = _recv_timeout_for(
         Request(tool="ableton_track", action="create", params={}),
         read_timeout=None,

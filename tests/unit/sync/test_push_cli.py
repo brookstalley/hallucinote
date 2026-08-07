@@ -534,6 +534,132 @@ def test_probe_and_link_cascades_device_link_when_parent_track_mislinked(
     ) is None
 
 
+def test_probe_and_link_unlinks_device_when_its_index_vanished_from_live(
+    conn, song, session,
+):
+    """A surviving PARENT does not make a device link valid — the index has to
+    still exist.
+
+    This is the fresh-set path, and Live's own defaults are what make it
+    routine. Every new Live set ships `A-Reverb` / `B-Delay`, and DB return
+    names are stored slot-prefix-stripped, so a song return called `Delay`
+    matches Live's stock `B-Delay` — a return that already holds a factory
+    device at index 1. The authored device loads at index 2 and the link
+    records 2. Reopen a FRESH set and that return is factory-fresh again: the
+    parent still matches by name, so the parent-scoped sweep keeps the link,
+    but index 2 is gone. `_emit_device_calls` then reads the link as present,
+    SKIPS the load, and every parameter write addresses the missing index —
+    the devices phase halts on IndexError and never converges, because nothing
+    emits the load that would create index 2.
+    """
+    rid = M.create_return(conn, song_id=song, name="Delay", position=1)
+    device_id = _make_chain_with_device(
+        conn, parent_return_id=rid, position=1, kind="Echo",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="return", db_id=rid, ableton_index=2,
+    )
+    # Recorded when the authored Echo loaded behind Live's factory Delay.
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=device_id,
+        ableton_index=2,
+    )
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[],
+        # The parent still matches by name, so it is NOT dropped...
+        live_returns=[{"return_index": 2, "name": "B-Delay"}],
+        # ...but the fresh set carries only the factory device at index 1.
+        live_devices_by_parent={
+            ("return", 2): [
+                {"device_index": 1, "name": "Delay", "class_name": "Delay"},
+            ],
+        },
+    )
+    assert result.unlinked_stale_devices == [
+        {"db_id": device_id, "ableton_index": 2}
+    ]
+    # Unlinked is the whole point: it is what makes the devices planner emit the
+    # load instead of writing parameters into a hole.
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="device", db_id=device_id,
+    ) is None
+    # The parent itself must survive — dropping it would re-create a duplicate
+    # return rather than reusing Live's.
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="return", db_id=rid,
+    ) == 2
+
+
+def test_probe_and_link_keeps_device_link_when_index_still_present(
+    conn, song, session,
+):
+    """The mirror of the vanished-index case: do not over-drop.
+
+    A device still sitting at its recorded index is the ordinary re-push, and
+    dropping its link would make the planner load a SECOND copy of the device.
+    Guards the fix above from being written as an unconditional drop.
+    """
+    rid = M.create_return(conn, song_id=song, name="Delay", position=1)
+    device_id = _make_chain_with_device(
+        conn, parent_return_id=rid, position=1, kind="Echo",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="return", db_id=rid, ableton_index=2,
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=device_id,
+        ableton_index=2,
+    )
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[],
+        live_returns=[{"return_index": 2, "name": "B-Delay"}],
+        live_devices_by_parent={
+            ("return", 2): [
+                {"device_index": 1, "name": "Delay", "class_name": "Delay"},
+                {"device_index": 2, "name": "Echo", "class_name": "Echo"},
+            ],
+        },
+    )
+    assert result.unlinked_stale_devices == []
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="device", db_id=device_id,
+    ) == 2
+
+
+def test_probe_and_link_keeps_device_link_when_parent_not_probed(
+    conn, song, session,
+):
+    """Absence of evidence is not evidence of absence.
+
+    On the snapshot-fallback path no device data is probed at all. Treating an
+    unprobed parent as "index missing" would drop every good device link and
+    force a full reload on a push that merely skipped the device probe.
+    """
+    rid = M.create_return(conn, song_id=song, name="Delay", position=1)
+    device_id = _make_chain_with_device(
+        conn, parent_return_id=rid, position=1, kind="Echo",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="return", db_id=rid, ableton_index=2,
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=device_id,
+        ableton_index=2,
+    )
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[],
+        live_returns=[{"return_index": 2, "name": "B-Delay"}],
+        # No live_devices_by_parent at all — the device probe did not run.
+    )
+    assert result.unlinked_stale_devices == []
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="device", db_id=device_id,
+    ) == 2
+
+
 def test_probe_and_link_keeps_track_link_when_renamed_not_scaffold(
     conn, song, session,
 ):

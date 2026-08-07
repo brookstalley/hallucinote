@@ -9,8 +9,10 @@ from ._core import (
     NoteDict,
     _atomic,
     _emit,
+    _record_touch_if_session,
     _resolve_actor_and_request,
     _touch_clip,
+    _touches,
     _uuid,
     json,
     transaction,
@@ -69,6 +71,7 @@ def _require_midi_clip(conn: sqlite3.Connection, clip_id: str, op: str) -> None:
         )
 
 
+@_touches("clip", "clip_id")
 @_atomic
 def insert_notes(
     conn: sqlite3.Connection,
@@ -109,6 +112,7 @@ def insert_notes(
     return new_ids
 
 
+@_touches("clip", "clip_id")
 @_atomic
 def replace_clip_notes(
     conn: sqlite3.Connection,
@@ -125,6 +129,10 @@ def replace_clip_notes(
     already match the incoming set, the function is a no-op and emits no
     event. Returns the existing note ids in that case (preserves the
     list[str] return contract — same length, same ordering by start_beats).
+
+    The parent CLIP is marked touched on every path (``@_touches``), the
+    no-op one included: notes are CASCADE children with no row-kind of their
+    own in the build sweep, so protecting the clip is what keeps them alive.
 
     Refuses kind='audio' targets (notes live on MIDI clips only).
     """
@@ -224,6 +232,9 @@ def update_note(
         return
     conn.execute(f"UPDATE notes SET {', '.join(sets)} WHERE id = ?", vals)
     _touch_clip(conn, clip_row["clip_id"])
+    # Keyed by note_id, so `@_touches` can't express it — mark the parent clip
+    # so the build sweep doesn't delete the clip whose note we just edited.
+    _record_touch_if_session("clip", clip_row["clip_id"])
     _emit(
         conn,
         E.NOTE_UPDATED,
@@ -258,6 +269,10 @@ def delete_notes(
     conn.execute(f"DELETE FROM notes WHERE id IN ({placeholders})", tuple(note_ids))
     for cid in affected_clips:
         _touch_clip(conn, cid)
+        # Deleting notes leaves the CLIP standing — mark it so the build sweep
+        # doesn't delete the clip we just edited. (Keyed by note ids, so
+        # `@_touches` can't express it.)
+        _record_touch_if_session("clip", cid)
     # Emit one NOTES_DELETED event per affected clip so events.clip_id is set
     # — symmetric with NOTE_UPDATED + insert_notes, and the events.clip_id
     # column drives `_latest_actor_for(row_kind='clip')`'s tombstone-actor
@@ -276,6 +291,7 @@ def delete_notes(
         )
 
 
+@_touches("clip", "clip_id")
 @_atomic
 def update_notes_by_tag(
     conn: sqlite3.Connection,

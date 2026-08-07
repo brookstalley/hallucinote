@@ -199,7 +199,20 @@ something.** A clean run is not evidence of a complete one: the phases that can
 silently no-op are `envelopes`, `performed automation`, `arrangement` and
 `devices`, and each of them reports success on zero work. If the brief calls for
 a pitch bend, a filter sweep or a rise and the envelopes phase pushed nothing,
-that is a **gap, not a clean run** — go back to `/compose-part`.
+that is a **gap, not a clean run**.
+
+**Route the gap to the stage that owns it**, not reflexively back one step:
+
+- `envelopes` · `performed automation` · `arrangement` moved nothing the brief
+  requires → **`/compose-part`** (stage 3). These are authored in `build.py`.
+- `devices` moved nothing the brief requires → **`/song-pick-instruments`**
+  (stage 2). The chain is authorship that ships in the snapshot, so a missing
+  device is a sound-design gap, not a composition one.
+
+One caveat specific to `devices`: it **diff-reconciles**, so zero work legitimately
+means "already current". Distinguish the two by checking whether the thing the
+brief names is actually present in the set — not by the phase count alone. A push
+into a set that already matches proves nothing.
 
 Full model: [docs/song-workflow.md](../../docs/song-workflow.md#stage-exit-criteria).
 

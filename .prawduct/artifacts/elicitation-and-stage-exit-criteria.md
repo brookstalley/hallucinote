@@ -1,6 +1,11 @@
 # Elicitation & stage exit criteria — a stage may not emit an unresolved gap
 
-**Status:** design (2026-08-07). **Related:** `onboarding-and-teaching-model.md`
+**Status:** adopted (2026-08-07) — the stage, the three-state model and the
+per-stage criteria ship as norms in `docs/song-workflow.md`,
+`docs/song-authoring-conventions.md` and the nine song skills. Two parts are
+**not** adopted and are tracked in the backlog, not here: the CLAUDE.md amendment
+(owner ratification pending) and the docstring-test lint (deferred, needs its own
+build cycle). **Related:** `onboarding-and-teaching-model.md`
 (the elicitation registers this operationalizes), `intent-collaboration-model.md`
 (propose-and-react), `song-conventions.md` (`decisions/` + `attempts/` schema),
 `tour-walkthrough-design.md` (which names this work as a prerequisite for the
@@ -211,9 +216,12 @@ carry the true meter map and the DB will refuse to hold it, so the row stays
 UNDECIDED with the *engine*, not the user, named as its owner. The criterion is
 the requirement; the code is what has to move.
 
-(Note also that `docs/song-authoring-conventions.md` currently claims the
-time-signature map supports "per-section meter changes (between sections only)".
-The code refuses all of them. Flagged, not fixed here.)
+(`docs/song-authoring-conventions.md` used to claim the time-signature map
+supported "per-section meter changes (between sections only)". The code refuses
+all of them, so that page was **corrected in this same change** — it now records
+the refusal and the projection framing. The stale claim is a small worked example
+of the defect this design is about: prose that named a capability nobody built,
+which every later reader took as done.)
 
 ---
 
@@ -222,20 +230,30 @@ The code refuses all of them. Flagged, not fixed here.)
 Short by design; a checklist nobody reads is worse than none. Every one is
 applicability-gated — read each as *"…for the dimensions this song depends on."*
 
-| Stage | Done when |
-|---|---|
-| **0 · `/song-brief`** | `annotations/01-the-brief.md` exists with the prompt verbatim and a resolution table in which every applicable dimension is DECIDED or UNDECIDED-with-an-owner. NOT-APPLICABLE rows are recorded, not asked about. The time budget is costed if a duration was stated. |
-| **1 · `/song-new`** | Tempo, meter and the section/bar list are **values from the brief**, not invented at the command line. Scaffold builds; shape tests pass. Each brief decision is filed in `decisions/`. If the CLI needed a value the brief lacks, that is an UNDECIDED row — close it before scaffolding, never default it silently. |
-| **2 · `/song-pick-instruments`** | Every part the brief names has a resolved **chain** in the snapshot. Where the brief says the sonic worlds differ, that difference exists **as chain differences**. No chain is "TBD at mix time" — sound design is composition. |
-| **3 · `/compose-part`** | Every gesture the section needs **exists in `build.py`** — notes, envelope, or device. **The docstring test:** if prose in the song names a device, an envelope or a mechanism, grep the song for it; absent ⇒ the stage is not done. Per-part `feel` is set explicitly, not defaulted by omission. |
-| **4 · `/compose-review`** | The composition is read against intent per section. The time budget is **re-costed against actual bar counts** and reconciled with any stated duration. Every brief row this stage owned is now DECIDED or re-stated UNDECIDED with a new owner. ADRs filed for kept bright-line moves; `attempts/` for reverted ones. |
-| **5 · `/ableton-push`** | Push reports OK **and** every phase the brief depends on moved something. A phase that pushed zero of a thing the brief requires is a gap, not a clean run — v1's push reported OK with zero envelopes. |
-| **6 · `/render-analyze`** | A MixReport exists **for the current build** (not a stale take) and the render covered the full arrangement length. |
-| **7 · `/mix-review`** | The measurements are read against intent per section, and **every audible gesture the brief names is either confirmed in the measurement or logged as not-yet-landed.** Verified on the render, never asserted. |
+**The criteria themselves live in
+[`docs/song-workflow.md` → *Definitions of done*](../../docs/song-workflow.md#definitions-of-done)**,
+which is the canonical copy. They are not restated here: this artifact and that
+doc carried the table twice for one commit and the two had **already diverged**
+on arrival — which is the same failure as the per-section-meter claim this work
+had to go back and fix, and exactly what the repo's *link, don't summarize*
+learning exists to stop.
 
-Stage 5's and stage 7's criteria are the two that would have caught v1 late if
-stage 3's had not caught it early. They are deliberately redundant: the gap that
-matters is the one that survives every stage.
+What belongs here is the *design* reasoning behind the table, which the doc
+does not carry:
+
+- **Each stage's criterion reduces to one sentence** — *this stage owns no
+  UNDECIDED row, and no row is DESCRIBED-BUT-UNBUILT.* The per-stage wording is
+  that sentence specialized to what the stage can actually see.
+- **Stages 5 and 7 are deliberately redundant with stage 3.** Stage 3 should
+  catch a missing mechanism at authoring time; 5 catches it as a phase that
+  pushed zero of something the brief requires (v1's push reported OK with zero
+  envelopes), and 7 catches it as a gesture absent from the measurement. The gap
+  that matters is the one that survives every stage, so the late nets are worth
+  their cost.
+- **Stage 8 (`/song-snapshot` + iterate) has no exit criterion by design** — it
+  is the loop-back, not a stage with a downstream consumer to protect. It cannot
+  emit a gap because it emits nothing; the next pass through stages 3–7
+  re-applies their criteria.
 
 ---
 
@@ -331,10 +349,19 @@ appear in the turn**. The design stays quiet.
 ## RECOMMENDATION — the CLAUDE.md amendment (not applied)
 
 `CLAUDE.md`'s behavioural norms are owner-ratified, so this is proposed text
-only. It is required for the design to function: an agent following the current
-norms correctly barrels from prompt to composition, because the pedagogical
-carve-out is scoped to *mid-composition* creative forks, not to the opening of
-the work.
+only — **and until it is ratified the design is inert for any agent that does
+not open `/song-workflow`**, because CLAUDE.md is auto-loaded every session and
+the skills are not. Tracked as **DOC-5H2T** so the request has a durable home
+rather than living only in this artifact's prose (the repo has twice paid for a
+deferral that lived in prose alone).
+
+Why the current text doesn't already carry it: CLAUDE.md line 43 enumerates the
+lifecycle as `/song-new → … → /mix-review` with "the two review checkpoints", so
+an agent following it *correctly* starts at the scaffold. The pedagogical
+carve-out does gesture at proposing rather than auto-deciding, but it is written
+around *"an elementary musical choice"* mid-composition and names no stage,
+artifact or bound — so it neither authorizes the opening turn nor limits it to
+one. Ratifying the text below is what makes stage 0 reachable.
 
 Add to **"Stop only on high-stakes decisions or must-answer questions"**, as a
 third bullet in the stop list:
@@ -369,9 +396,12 @@ mix → verify) before declaring done"* with:
 - **No schema for the ledger.** Prose in the brief, per the standing preference
   for LLM intelligence over deterministic structure. Promote to a typed field
   only if prose proves ambiguous in practice.
-- **No fix to the meter refusal.** Owner-sequenced, above.
+- **No fix to the meter refusal.** Owner-sequenced, above. Filed as **TMP-7B3X**
+  (lift the policy refusal out of the mutator so the model can record what the
+  song *is*); the projection half — how a declared meter map materializes in
+  Live — stays with **TMP-4J6Q**.
 
-### Split — Chunk B, not built here
+### Split — the docstring test, not built here (TST-4M9P)
 
 The **docstring test** is the one mechanically-checkable rule in this design,
 and it is the one that would have caught v1 automatically. A narrow, honest
@@ -380,5 +410,13 @@ present in `ableton://browser/*`, and assert each appears in
 `captured_session.json` or the DB; likewise for the words *envelope* and
 *automation* against the envelope tables. It is code plus tests plus a
 false-positive budget, it needs its own build cycle, and shipping it half-done
-would produce exactly the noisy gate this design argues against. Specified here;
-deliberately deferred.
+would produce exactly the noisy gate this design argues against. Specified here,
+deliberately deferred, and **filed as TST-4M9P** — its acceptance test is that,
+run against the v1 song at `97816e1`, it flags the phantom Shifter.
+
+What *did* ship as a mechanical check is narrower and different in kind:
+`tests/unit/test_song_lifecycle_doc_parity.py` locks the lifecycle map and the
+exit-criteria table against multi-site drift (every surface names stage 0; every
+deep-link resolves; the table has exactly one home). That guards *this design's
+own documentation*, not a song's prose — the two together are the reason the
+"Deliberately not built" list above is shorter than it looks.

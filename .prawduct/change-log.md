@@ -20,6 +20,62 @@
      pre-bumping a version (against `feedback_no_premature_version_bump`) or
      mislabeling in-flight work as an already-shipped version. -->
 
+## 2026-08-07 — `/song-brief`: a stage may not emit an unresolved gap
+
+<!-- prawduct: type=feature | scope=song-lifecycle | status=shipped | release=unreleased -->
+
+A new lifecycle **stage 0**, `/song-brief`, in front of `/song-new`, plus a
+**definition of done for every authoring stage**. The rule both serve: *a stage
+may not emit an unresolved gap.*
+
+**The defect.** The lifecycle had well-named stages and no exit criterion for any
+of them, so a stage could end with a load-bearing question still open — and,
+worse, written down as though it were answered. The demo song's `_outro`
+docstring said the closing octave drop "rides a Shifter device-parameter
+envelope". There was no Shifter and no envelope. The build ran clean, the push
+reported OK, `decisions/01` cited the drop as load-bearing, and the song ended
+flat while every document about it said otherwise. **A documented mechanism with
+no implementation is worse than an admitted gap, because every later reader takes
+it as done.**
+
+**Three states, and a forbidden fourth.** Every dimension a stage touches ends
+DECIDED (value *and* mechanism named), UNDECIDED (named, with an owner and a
+closing stage), or NOT-APPLICABLE (recorded by the agent's own judgement, never
+asked about). Only UNDECIDED blocks. **DESCRIBED-BUT-UNBUILT** is not a legal
+state — it is the defect above.
+
+**Why elicitation needed its own stage rather than a norm.** The cause was
+mechanical, not attitudinal: `/song-new`'s scaffold CLI takes tempo, meter and
+the section list as **required arguments** — exactly the values elicitation
+resolves. The agent could not run the stage without having already decided them,
+so it invented them, and the invented values became the song. Tool ordering
+forbade elicitation; laziness didn't.
+
+**The stage is bounded.** One consolidated turn of informed proposals carrying
+reasoning and a recommendation ("I'd propose 132 BPM, here's the arithmetic"),
+never a questionnaire, and never a second round — an unanswered item becomes an
+UNDECIDED row with an owner, not a follow-up question. Silence is a valid pass: a
+fully-directed prompt produces a brief with a resolution table and no questions.
+NOT-APPLICABLE is a first-class answer, so an ambient piece is never asked about
+drum style.
+
+Wired into seven lifecycle surfaces + nine skills, all deep-linking one canonical
+criteria table at `docs/song-workflow.md#definitions-of-done`.
+`tests/unit/test_song_lifecycle_doc_parity.py` (6 tests) locks that against the
+multi-site drift this bundle itself introduced — every surface names stage 0,
+every deep-link resolves, the table has exactly one home. Each assertion was
+verified red by planting its failure before shipping.
+
+Deferred with durable homes, not prose: **DOC-5H2T** (the CLAUDE.md amendment —
+owner ratification pending; until it lands the stage is inert for any agent that
+never opens `/song-workflow`), **TST-4M9P** (the docstring test as code — the one
+mechanically-checkable rule, needs its own build cycle), **TMP-7B3X** (the meter
+refusal belongs in the push layer, not the source of truth).
+
+Suite: 4871 passed / 2 skipped (+6). No fingerprint flip — `server.py`'s
+instructions string and `resources/` are both outside `_FINGERPRINT_PATHS`, so
+**no re-vendor**.
+
 ## 2026-08-07 — Six defects the demo song found by actually being rebuilt
 
 <!-- prawduct: type=bugfix | chunks=B1 | scope=tour+push+workspace+db-converger | status=shipped | release=unreleased -->

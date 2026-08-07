@@ -1,9 +1,9 @@
 ---
 name: song-new
-description: Scaffold a new Hallucinote song from templates. Creates songs/<slug>/ with build.py, captured_session.json, tests/, decisions/, annotations/, attempts/ (the try→outcome ledger), and a song.md overview. Use when starting a new song from a prompt — replaces the "copy from falling-walking" pattern that Wave 0 surfaced as a major onboarding friction.
+description: Scaffold a new Hallucinote song from templates, on values that are already resolved. Creates songs/<slug>/ with build.py, captured_session.json, tests/, decisions/, annotations/, attempts/ (the try→outcome ledger), and a song.md overview. Use when tempo, meter and the section list are ALREADY settled — given explicitly, or resolved by `/song-brief`. Starting from an open-ended prompt instead? Run `/song-brief` first: the scaffold takes those three values as required arguments, so invoking this against an unresolved prompt means inventing them, and the invented values become the song. Replaces the "copy from falling-walking" pattern that Wave 0 surfaced as a major onboarding friction.
 user-invocable: true
 disable-model-invocation: false
-allowed-tools: Read, Write, Bash, Bash(pytest songs/*)
+allowed-tools: Read, Write, Bash, Bash(pytest songs/*), Skill(song-brief)
 argument-hint: >-
   <slug> "<title>" <tempo> <signature> <sections-csv> [optional: <key>] [optional: <intent>]
 ---

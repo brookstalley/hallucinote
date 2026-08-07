@@ -460,6 +460,14 @@ artifact_manifest:
       file_path: .prawduct/backlog.md
       version: 2
       depends_on: []
+    - name: elicitation-and-stage-exit-criteria
+      file_path: .prawduct/artifacts/elicitation-and-stage-exit-criteria.md
+      version: 1
+      # Conceptually builds on onboarding-and-teaching-model and
+      # intent-collaboration-model; neither is registered here yet (most of this
+      # repo's artifacts aren't), and a dangling name is worse than an honest
+      # gap — add the edges when those get registered.
+      depends_on: [gate-verdict-policy]
 
 # =============================================================================
 # BUILD STATE

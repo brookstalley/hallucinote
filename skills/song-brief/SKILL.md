@@ -5,7 +5,7 @@ description: >-
 argument-hint: "<the user's starting prompt, or a slug for an existing song>"
 user-invocable: true
 disable-model-invocation: false
-allowed-tools: Read, Write, Glob, Grep
+allowed-tools: Read, Write, Glob, Grep, Bash, Skill(song-context), Skill(song-attempts)
 ---
 
 # /song-brief — the elicitation stage
@@ -110,11 +110,49 @@ undecided dimension produces a brief with a resolution table and **no questions*
 — hand back the brief and continue to `/song-new` without stopping. This stage is
 not obliged to find something.
 
+### The bound: one turn, and it is not renegotiable
+
+**This stage gets exactly one consolidated turn.** Whatever the user's reaction
+to it is — answers, partial answers, "just go", or silence on some items — the
+stage then *closes*. It does not open a second round to chase the rows they
+didn't address.
+
+An item the user left unanswered is **not** a reason to ask again. It becomes an
+UNDECIDED row in the brief, with an owner and the stage that will close it, and
+the work proceeds. That is the whole point of having three states: the gap
+travels forward *visibly* instead of being either hidden or re-litigated.
+
+Two failure modes this bounds, both of which look like diligence:
+
+- **The stage that never converges** — each answer surfacing a follow-up, so
+  elicitation becomes the work instead of preceding it.
+- **The turn that fragments** — one proposal per message. Same total questions,
+  worse experience, and it violates the stop-less norm for real.
+
+If you find yourself composing a second turn, the correct move is to write the
+open rows into the brief and start scaffolding.
+
 ## Step 3 — write the brief
 
-Write `songs/<slug>/annotations/01-the-brief.md` (create the song dir via
-`/song-new` first if it doesn't exist yet, or write the brief into the scaffold
-immediately after — either order is fine, but the *values* must come from here).
+**What must come first is the deciding, not the file.** Steps 1 and 2 touch no
+files: you sweep, you propose, and you read the reaction. Only then does anything
+get scaffolded, and the tempo / meter / section values that go to `/song-new`
+are the ones this stage resolved.
+
+**Order, and why it is this way round.** `scaffold_song` **refuses** to write
+into an existing `songs/<slug>/`
+([`src/hallucinote/tools/scaffold_song.py`](../../src/hallucinote/tools/scaffold_song.py)),
+so the brief cannot be filed before the scaffold exists — it would block the
+scaffold it is meant to feed. Draft the brief **in the turn**, hand its values to
+`/song-new`, then write the drafted text to
+`songs/<slug>/annotations/01-the-brief.md` as the closing act of this stage.
+
+**Do not invoke `/song-new` from inside this stage.** Hand back the resolved
+values and let the lifecycle advance. Running the scaffold here is how the
+required-CLI-argument trap this stage exists to remove creeps back in — and at
+Step 2 the slug may not even be settled yet (propose it with everything else).
+
+For an **existing** song the dir is already there, so write the file directly.
 
 ```markdown
 ---

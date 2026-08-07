@@ -10,9 +10,9 @@ allowed-tools: Read
 
 # /song-workflow — the map for making a song here
 
-Making a song is a **loop, not a line**: you scaffold, compose, push to Live,
-mix, and circle back. This skill is the map of that arc — which skill runs each
-phase, and the two review checkpoints that are easy to skip and shouldn't be.
+Making a song is a **loop, not a line**: you elicit, scaffold, compose, push to
+Live, mix, and circle back. This skill is the map of that arc — which skill runs
+each phase, and the three checkpoints that are easy to skip and shouldn't be.
 The depth (the *why*, grounded in the research) is
 [docs/song-workflow.md](../../docs/song-workflow.md); this is the at-a-glance
 version.
@@ -85,15 +85,22 @@ Each stage's **definition of done** is in
 design is
 [elicitation-and-stage-exit-criteria.md](../../.prawduct/artifacts/elicitation-and-stage-exit-criteria.md).
 
-## The two checkpoints agents miss
+## The three checkpoints agents miss
 
-`/compose-review` (step 4) and `/mix-review` (step 7) are **not optional
-polish** — they are how the framework's *ear* gets applied to your work. Reach
-for them after a compositional pass and after an analysis pass respectively, or
-whenever the user asks "does this work?", "is the hook landing?", "how's the
-mix?", "is anything masking the vocal?", "what's missing?". Both surface a
-producer's question (never a score) and learn revealed intent back so they never
-re-flag a choice you've confirmed.
+`/song-brief` (step 0) **specifies** the work; `/compose-review` (step 4) and
+`/mix-review` (step 7) apply the framework's *ear* to it. None is optional
+polish.
+
+`/song-brief` runs before you scaffold, because `/song-new` takes tempo, meter
+and the section list as **required arguments** — skip the brief and you invent
+those three values to make a command run, and the invented values become the
+song.
+
+Reach for the other two after a compositional pass and after an analysis pass
+respectively, or whenever the user asks "does this work?", "is the hook
+landing?", "how's the mix?", "is anything masking the vocal?", "what's
+missing?". Both surface a producer's question (never a score) and learn revealed
+intent back so they never re-flag a choice you've confirmed.
 
 If you only remember one thing: **before you scaffold, run `/song-brief`; after
 you compose, run `/compose-review`; after you analyze, run `/mix-review`.**

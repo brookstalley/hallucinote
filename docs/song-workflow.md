@@ -285,6 +285,11 @@ depends on."*
 Stages 5 and 7 are deliberately redundant with stage 3: the gap that matters is
 the one that survives every stage.
 
+**Stage 8 (snapshot + iterate) has no criterion, and that is deliberate** — it is
+the loop-back, not a stage handing work downstream. It cannot emit a gap dressed
+as a decision because it emits no decisions; the next pass through stages 3–7
+re-applies theirs.
+
 ### Meter is a projection concern
 
 The song's meter is a property of the authored work; Live's ability to represent

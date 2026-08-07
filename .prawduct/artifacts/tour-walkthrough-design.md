@@ -17,8 +17,10 @@ document** built from real artifacts captured while that song was authored.
 
 ## What we are building
 
-1. **`examples/<slug>/`** — a demo song, in this repo, that a reader can clone and
-   rebuild. Stock Live devices only. 60–90 seconds.
+1. **`examples/<slug>/`** — a demo song, in this repo, whose committed `build.py`
+   a reader can clone and replay deterministically. Stock Live devices only.
+   60–90 seconds. **Not** a recipe that reproduces the song from the prompt — see
+   *A walkthrough, not a recipe* below.
 2. **`docs/tour.md`** — "Making a song, start to finish." Ten beats, one artifact
    per beat, ~300 lines, a ten-minute read.
 3. **Capture tooling** — so the artifacts are *generated from real sessions*, not
@@ -26,6 +28,74 @@ document** built from real artifacts captured while that song was authored.
 4. **README evidence graft** — real hero, audio near the top, a link to the tour.
    The README gets *shorter* in prose, richer in artifacts. It does not restate the
    tour.
+
+## The owner's framing, recovered verbatim
+
+From the origin session (2026-08-07), alongside the brief. Recovered from the
+`/clear` continuation transcript; it had never been written into an artifact,
+which is why it is recorded here now:
+
+> "keep that brief as the example of the prompt that generated the song"
+
+> "we're writing a song but also capturing a demo… record my prompts, and your
+> responses, and full mixes and important screenshots along the way. **This is
+> storytelling!**"
+
+That last line is the governing constraint on the whole tour, and it outranks
+feature coverage. A beat that demonstrates a capability but does not advance the
+story does not earn its place — which is the same rule the concision cap below
+enforces from the other direction.
+
+## A walkthrough, not a recipe
+
+Owner requirement, 2026-08-07, recorded because the design previously implied the
+opposite and D1 would have overclaimed by default:
+
+> "This is a walkthrough/demo, not a recipe for the exact audio. Once we have the
+> video, we'll post it and link the exact audio it produced, but it will not be
+> reproducible exactly by users. Totally fine."
+
+**Two senses of "rebuild" must never be conflated:**
+
+| | What it means | True? |
+|---|---|---|
+| **Deterministic replay** | `python build.py` re-materializes THIS take's song | **Yes**, always — the CI-buildable claim and D1's freshness tests rest on it |
+| **Re-authoring from the prompt** | an agent reads the brief and composes | **No** — it produces a *different* piece, and that is accepted |
+
+The second is inherent to LLM authorship, not a defect to engineer away.
+
+**What this permits the tour to claim.** Only: *here is the process, here is the
+audio this run produced, and the committed `build.py` reproduces that take
+exactly.* Never "run this prompt and get this song," and never "follow along and
+you'll get…". `docs/tour.md` must not treat "the demo song" as a fixed artifact
+that exists independently of the take that made it.
+
+**Consequences that reach other chunks:**
+
+- **C1's committed audio is a specimen, not a target** — evidence that the
+  process works, not a reference render anyone is expected to match.
+- **D1's freshness tests get narrower, not wider.** They defend only that the
+  committed `build.py` still contains the snippets `tour.md` quotes. They never
+  need to defend anything about re-authoring.
+- Everything take-specific — `decisions/`, the ADRs, the committed assets —
+  documents THAT take's reasoning. A later run need not arrive at any of it.
+
+**The demo video comes after**, and only once the walkthrough is "seamless and
+easy". That is a stricter bar than "it completes": a video cannot quietly edit
+out a halted push, a render landing in the wrong directory, or a mid-flight
+hand-correction. Any friction visible on camera is a defect to fix, not to
+narrate.
+
+**A gap this exposes, for the next round.** The tour is meant to show song
+creation end to end, but the first take's session opened with a fully-formed
+15-bullet brief — a spec, not a starting prompt. Checked against the origin
+transcript: the first user message was `"let's keep going"` and the brief arrived
+next, authored directly. So there is no *initial use prompt* to preserve and no
+elicitation step to show, because none was ever run. A genuine end-to-end
+walkthrough starts from something closer to "make me something for a game
+trailer" and reaches the brief through **discovery and elicitation** — work that
+does not exist yet and is a prerequisite for the next take, not a documentation
+task.
 
 ## The concision rule (this is the whole design)
 

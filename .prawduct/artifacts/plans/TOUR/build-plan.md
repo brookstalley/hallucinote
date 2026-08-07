@@ -376,7 +376,7 @@ itself and the invocation change becomes the cheaper option.
 - **Depends on:** Chunk A1 (the transcript renderer must exist before the session that
   produces the transcript), A2, A3
 - **Artifacts consumed:** `tour-walkthrough-design.md` §Where the demo song lives + §Sequencing, `project-root-contract.md` §Bounded exception, `song-conventions.md`
-- **Deliverables:** new `examples/hallucinote.toml`, new `examples/<slug>/` (build.py, captured session snapshot, `decisions/`, `annotations/`), a rendered session transcript retained for D1
+- **Deliverables:** new `examples/hallucinote.toml`, new `examples/angle-of-the-light/build.py`, new `examples/angle-of-the-light/captured_session.json`, new `examples/angle-of-the-light/tests/test_angle_of_the_light_build.py`, new `examples/angle-of-the-light/annotations/01-the-brief.md`, new `examples/angle-of-the-light/annotations/02-capture-log.md`, new `examples/angle-of-the-light/decisions/01-the-tritone-transfiguration.md`, new `examples/angle-of-the-light/decisions/02-the-time-budget.md`, new `examples/angle-of-the-light/decisions/03-the-microtiming-arc.md`, new `examples/angle-of-the-light/decisions/04-signal-chains.md`, new `examples/angle-of-the-light/decisions/05-the-master-ceiling.md`, new `examples/angle-of-the-light/decisions/06-the-octave-drop.md`, a rendered session transcript retained for D1
 - **Tests:** the song's own build is the test — `build.py` runs headless to a DB with no
   Live present, which is what makes the CI-buildable claim real rather than asserted
 - **Acceptance criteria:** the song builds from a clean checkout with no Live running;

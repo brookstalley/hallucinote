@@ -29,8 +29,9 @@ class LiveConnectionError(Exception):
 # so a long-running handler can't outrun the socket on one route while being
 # safe on the other (the ENV-9P4T blocker: perform_batch was safe on the
 # server route but the push route hit the 15s default and severed verification).
-# The default suits actions that return within Live's main-thread budget; a few
-# break it by design and need a wider (or no) window:
+# The default suits actions that return within Live's main-thread budget (plus
+# the reply margin below); a few break it by design and need a wider (or no)
+# window:
 #   - ableton_render(start): mints a job handle + spawns the detached render
 #     worker, then returns immediately (< ~3s) → the default suits it; the
 #     realtime full-arrangement playback runs on the worker, NOT on this
@@ -61,11 +62,39 @@ class LiveConnectionError(Exception):
 #     on the addressed node. On a big sampled rack (a Brass Ensemble, a 16-pad
 #     Drum Rack) that walk exceeds the default and aborts a whole capture —
 #     which is how `capture execute` died mid-walk with a bare FrameError.
-_DEFAULT_READ_TIMEOUT: float = 15.0
+#
+# Every bounded value below is a LIVE-SIDE CEILING PLUS A MARGIN, never a bare
+# match — see ``_LIVE_REPLY_MARGIN_S``.
+_LIVE_MAIN_THREAD_DEFAULT_S: float = 15.0
+"""Mirror of ``remote_script.dispatch.LiveLiveContext``'s default
+``main_thread_timeout`` — the ceiling every action that doesn't override
+``Action.main_thread_timeout`` runs under. Mirrored rather than imported so the
+server side never depends on the Live-only module; a test pins the two equal."""
+
+_LIVE_REPLY_MARGIN_S: float = 5.0
+"""How much longer the CALLER waits than the Live-side ceiling it is bounding.
+
+The Live end's time-to-reply is not just the action's main-thread ceiling.
+``run_on_main`` first spends up to ``remote_script.dispatch._BUSY_ADMIT_WAIT_S``
+(2.0 s) waiting for admission to the main-thread bout, and only THEN starts the
+bout timer; the reply then has to be serialized and written back. And the
+caller's clock starts BEFORE Live's — the request still has to travel and be
+dispatched.
+
+So a read timeout that merely MATCHES the Live ceiling always expires first.
+That is not a rounding concern, it is a guarantee: the pairing this table used
+to carry (120/120, 90/90, and the implicit 15/15 default) made Live's timeout
+message — "IT IS STILL RUNNING on Live's main thread ... Do not retry
+immediately" — provably unreachable. The agent got a bare ``FrameError``
+("socket read timed out") instead, losing the one instruction that stops it
+deepening the queue behind an operation Live cannot cancel. The margin has to
+exceed the admission wait, with headroom for the reply; a test pins that."""
+
+_DEFAULT_READ_TIMEOUT: float = _LIVE_MAIN_THREAD_DEFAULT_S + _LIVE_REPLY_MARGIN_S
 _ENSURE_LOADED_READ_TIMEOUT: float = 180.0
 _STATUS_READ_TIMEOUT: float = 60.0
-_DEVICE_LOAD_READ_TIMEOUT: float = 120.0
-_GET_PARAMETERS_READ_TIMEOUT: float = 90.0
+_DEVICE_LOAD_READ_TIMEOUT: float = 120.0 + _LIVE_REPLY_MARGIN_S
+_GET_PARAMETERS_READ_TIMEOUT: float = 90.0 + _LIVE_REPLY_MARGIN_S
 _READ_TIMEOUTS: dict[tuple[str, str], float | None] = {
     ("ableton_automation", "perform_batch"): None,
     ("ableton_render", "ensure_loaded"): _ENSURE_LOADED_READ_TIMEOUT,
@@ -124,7 +153,9 @@ def send(
         BOTH wire-recv routes — the server's agent-forward and push_cli's
         direct dispatch — get the same window without each caller re-deriving
         it. An explicit value (incl. ``None`` = block forever) is honored as
-        passed; default for most actions is 15s (Live's main-thread budget).
+        passed; default for most actions is 20s — Live's 15s main-thread
+        budget plus ``_LIVE_REPLY_MARGIN_S``, so Live's own timeout report
+        arrives instead of the socket cutting it off.
     """
     if read_timeout is _UNSET_READ_TIMEOUT:
         read_timeout = read_timeout_for(request.tool, request.action)

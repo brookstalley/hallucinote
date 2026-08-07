@@ -999,6 +999,34 @@ def test_max_for_live_is_a_reachable_browser_root():
 # ---------------------------------------------------------------------------
 
 
+def _live_side_ceiling(main_thread_timeout: float) -> float:
+    """The worst-case wall clock the LIVE side needs before it can reply.
+
+    Not just the bout ceiling: ``run_on_main`` burns up to
+    ``_BUSY_ADMIT_WAIT_S`` waiting for admission to the main-thread bout
+    BEFORE the bout timer starts.
+    """
+    from hallucinote_mcp.remote_script.dispatch import _BUSY_ADMIT_WAIT_S
+
+    return main_thread_timeout + _BUSY_ADMIT_WAIT_S
+
+
+def _assert_caller_outlasts_live(tool: str, action_name: str,
+                                 main_thread_timeout: float,
+                                 read_timeout: float) -> None:
+    live_side = _live_side_ceiling(main_thread_timeout)
+    assert read_timeout > live_side, (
+        f"{tool}({action_name!r}): the caller's socket window is "
+        f"{read_timeout}s but Live can take up to {live_side}s to reply "
+        f"({main_thread_timeout}s bout ceiling + the admission wait). The "
+        f"caller therefore gives up FIRST and Live's 'IT IS STILL RUNNING — "
+        f"do not retry' message never reaches the agent; it sees a bare "
+        f"socket-read FrameError instead. Widen the read timeout (see "
+        f"client._LIVE_REPLY_MARGIN_S) rather than shrinking Live's ceiling — "
+        f"a short ceiling false-reports work that is genuinely still running."
+    )
+
+
 def test_main_thread_and_read_timeouts_agree():
     """Live-side and client-side ceilings must not disagree.
 
@@ -1009,6 +1037,12 @@ def test_main_thread_and_read_timeouts_agree():
     because a Live API call cannot be cancelled, that false report invites a
     retry which queues more work behind the operation still running. That is
     exactly how a slow device load became an unresponsive Live.
+
+    The relation is STRICT and margined, not ``<=``. A caller window that
+    merely equals Live's ceiling always expires first (Live's clock starts
+    later, and the admission wait is spent before the bout timer even
+    starts), which makes Live's timeout message unreachable — the one
+    message that tells the agent not to retry.
     """
     import hallucinote_mcp.actions  # noqa: F401 — import registers the actions
     from hallucinote_mcp import client, schema
@@ -1020,9 +1054,70 @@ def test_main_thread_and_read_timeouts_agree():
         action = by_key.get((tool, action_name))
         if action is None or action.main_thread_timeout is None:
             continue  # not a main-thread-bounded action (jobs, server-side)
-        assert action.main_thread_timeout <= read_timeout, (
-            f"{tool}({action_name!r}): Live gives up after "
-            f"{action.main_thread_timeout}s but the caller waits "
-            f"{read_timeout}s — Live must not abandon work the caller is "
-            f"still waiting for"
+        _assert_caller_outlasts_live(
+            tool, action_name, action.main_thread_timeout, read_timeout,
         )
+
+
+def test_default_read_timeout_outlasts_the_default_main_thread_ceiling():
+    """The pair the table above never covers — and the one that applies to
+    nearly every action.
+
+    An action with ``main_thread_timeout=None`` runs under
+    ``LiveLiveContext``'s context-wide default, and its caller gets
+    ``_DEFAULT_READ_TIMEOUT``. Because neither appears in ``_READ_TIMEOUTS``,
+    the explicit-entry loop above never checked them — and they were paired
+    15/15, so the timeout message was unreachable for the entire default
+    surface.
+    """
+    import inspect
+
+    from hallucinote_mcp import client
+    from hallucinote_mcp.remote_script.dispatch import LiveLiveContext
+
+    live_default = inspect.signature(
+        LiveLiveContext.__init__
+    ).parameters["main_thread_timeout"].default
+    assert live_default == client._LIVE_MAIN_THREAD_DEFAULT_S, (
+        "client._LIVE_MAIN_THREAD_DEFAULT_S mirrors LiveLiveContext's default "
+        "main_thread_timeout so the server side needn't import the Live-only "
+        "module — the mirror has drifted"
+    )
+    _assert_caller_outlasts_live(
+        "*", "<default>", live_default, client._DEFAULT_READ_TIMEOUT,
+    )
+
+
+def test_every_widened_main_thread_ceiling_has_a_matching_read_timeout():
+    """The reverse direction the table-driven loop cannot see.
+
+    An action that declares a wide ``main_thread_timeout`` but is absent
+    from ``_READ_TIMEOUTS`` silently gets the DEFAULT socket window — so the
+    caller abandons at 20s an operation Live is happily giving 120s. The
+    widened ceiling then does nothing except make Live keep working on
+    something nobody is listening for. ``schema.Action.main_thread_timeout``
+    says the two tables "MUST stay in step"; this is that check.
+    """
+    import hallucinote_mcp.actions  # noqa: F401 — import registers the actions
+    from hallucinote_mcp import client, schema
+
+    for action in schema.all_actions():
+        if action.main_thread_timeout is None:
+            continue
+        read_timeout = client.read_timeout_for(action.tool, action.name)
+        if read_timeout is None:
+            continue  # unbounded caller outlasts any Live ceiling
+        _assert_caller_outlasts_live(
+            action.tool, action.name, action.main_thread_timeout, read_timeout,
+        )
+
+
+def test_reply_margin_exceeds_the_admission_wait():
+    """The margin's job is to cover the Live side's pre-bout admission wait
+    plus the reply write. If it ever shrinks to at or below the admission
+    wait, every bounded pairing in the table silently goes back to being
+    unreachable."""
+    from hallucinote_mcp import client
+    from hallucinote_mcp.remote_script.dispatch import _BUSY_ADMIT_WAIT_S
+
+    assert client._LIVE_REPLY_MARGIN_S > _BUSY_ADMIT_WAIT_S

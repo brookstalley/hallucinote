@@ -69,6 +69,14 @@ try:
     from hallucinote.audio.levels import live_fader_gain
     from hallucinote.db import queries as Q
     from hallucinote.db.connection import init_db, resolve_db_path
+    # The write half of the persisted-path contract — status.json is written
+    # into the git-tracked analysis/ dir alongside the reports, so the path it
+    # carries is anchored to the song dir, not to this machine.
+    from hallucinote.paths import (
+        portable_path,
+        portable_text,
+        resolve_portable_path,
+    )
     from hallucinote.workspace import explain_unresolved_song
     # Reuse the canonical bar→beat converter the push planner uses — it walks
     # the song's time_signature_map so meter changes accumulate exactly. Both
@@ -95,6 +103,9 @@ except ImportError:  # pragma: no cover - exercised in Live's vendored env
     init_db = None  # type: ignore[assignment]
     resolve_db_path = None  # type: ignore[assignment]
     explain_unresolved_song = None  # type: ignore[assignment]
+    portable_path = None  # type: ignore[assignment]
+    portable_text = None  # type: ignore[assignment]
+    resolve_portable_path = None  # type: ignore[assignment]
     _position_bar_to_beats = None  # type: ignore[assignment]
     recency_key = None  # type: ignore[assignment]
     _HAS_HALLUCINOTE = False
@@ -659,15 +670,32 @@ def analyze_handler(
             "analyze: failed for song_slug=%s (analysis_dir=%s) — wrote "
             "status.json=error and re-raising", song_slug, analysis_dir,
         )
-        _write_analysis_status(analysis_dir, {"state": "error", "error": str(e)})
+        # The message is quoted verbatim into the git-tracked analysis/ dir, and
+        # the teaching errors here name the paths they're teaching about ("no
+        # manifest.json at <captures_path>"). Collapse this machine's home so a
+        # failed run doesn't commit it; the message otherwise stays intact —
+        # the diagnosis is the point. The exception re-raised below is the
+        # UNCOLLAPSED one, so the caller still gets the full path on the wire.
+        _write_analysis_status(
+            analysis_dir, {"state": "error", "error": portable_text(str(e))},
+        )
         raise
 
     # Heartbeat=done — the report JSON is on disk. The robust completion signal
     # an agent polls for; carries the report path so the poller can read it
     # directly without re-globbing the analysis dir.
+    #
+    # status.json lives in the git-tracked analysis/ dir (only captures/ is
+    # ignored), so the path it records is written the same portable way the
+    # MixReport's own paths are: relative to the SONG dir (analysis_dir.parent),
+    # i.e. `analysis/<ts>.json`. A poller reading status.json already knows the
+    # analysis dir it read it from, so it joins from there — while an absolute
+    # path would commit this machine's home directory on every analysis run.
+    # The tool RETURN value below stays absolute on purpose: it is an in-flight
+    # API response the agent uses to open the file, never persisted.
     _write_analysis_status(analysis_dir, {
         "state": "done",
-        "report_path": str(report_path),
+        "report_path": portable_path(report_path, base=analysis_dir.parent),
     })
 
     out_of_tolerance = [
@@ -690,7 +718,14 @@ def analyze_handler(
     if report_dict["compare_to"] is not None:
         diff = report_dict["compare_to"]
         summary["compare_to"] = {
-            "baseline_ref": diff["baseline"]["ref"],
+            # The REPORT records this song-relative (it's a checked-in file);
+            # the response re-absolutizes it, because a caller reads a returned
+            # path to open the file and has no reason to know the anchor.
+            # Same split as `report_path` below: portable on disk, resolved on
+            # the wire.
+            "baseline_ref": str(
+                resolve_portable_path(analysis_dir.parent, diff["baseline"]["ref"])
+            ),
             # Loudness rows + the overshoot-count change (always significant
             # when nonzero — an overshoot appearing/disappearing is the
             # headline a summary reader must not miss).

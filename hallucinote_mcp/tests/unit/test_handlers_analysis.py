@@ -17,8 +17,13 @@ import soundfile as sf
 
 from hallucinote.db import mutations as M
 from hallucinote.db.connection import init_db
+from hallucinote.paths import resolve_portable_path
 from hallucinote_mcp.server_side import analysis as analysis_handlers
 from hallucinote_mcp.server_side.analysis import ANALYSIS_STATUS_FILENAME
+
+# The repo's own publish gate, imported rather than restated — see
+# test_analyze_handler_writes_nothing_publishable_into_the_tracked_tree.
+from tools.tour_transcript import FORBIDDEN
 
 
 SAMPLE_RATE = 48_000
@@ -200,7 +205,58 @@ def test_analyze_handler_writes_status_json_done(synthetic_song: Path):
     assert status_path.exists()
     status = json.loads(status_path.read_text(encoding="utf-8"))
     assert status["state"] == "done"
-    assert status["report_path"] == result["report_path"]
+    # status.json is written into the git-tracked analysis/ dir, so the path it
+    # records is portable (song-relative), not this machine's absolute one
+    # (AUD-PORTPATH). The poller's contract is unchanged — it still points AT
+    # the report the call returned, which is what the second assertion pins.
+    assert status["report_path"] == f"analysis/{Path(result['report_path']).name}"
+    assert (
+        resolve_portable_path(synthetic_song, status["report_path"])
+        == Path(result["report_path"])
+    )
+
+
+def test_analyze_handler_writes_nothing_publishable_into_the_tracked_tree(
+    tmp_path: Path, monkeypatch,
+):
+    """Every file a run leaves in ``analysis/`` is publishable as-is.
+
+    ``analysis/`` is git-tracked (``.gitignore`` ignores the heavy
+    ``captures/`` WAVs and explicitly keeps the small MixReport JSONs), so
+    both the report AND the ``status.json`` heartbeat ship to whoever clones
+    the repo. The rule is imported from the repo's own publish gate
+    (``tools.tour_transcript.FORBIDDEN``) instead of restated, so the write
+    side and the publish side cannot drift apart — one part of the codebase
+    refusing to publish what another part commits was the defect.
+
+    The song is planted under a home-SHAPED tree (``…/Users/test-account/…``)
+    so the assertion has something to bite on: written absolutely, both files
+    match the account-segment pattern. No real account name appears here.
+    """
+    slug = "test-song"
+    song_dir = _make_song_dir(tmp_path / "Users" / "test-account", slug)
+    db_path = song_dir / f"{slug}.db"
+    monkeypatch.setattr(
+        analysis_handlers, "resolve_db_path", lambda s, **_: db_path,
+    )
+    captures_dir = _write_captures(
+        song_dir / "captures" / "20260528T140000Z", song_slug=slug,
+    )
+
+    analysis_handlers.analyze_handler(
+        None, song_slug=slug, captures_dir=str(captures_dir),
+    )
+
+    written = sorted((song_dir / "analysis").glob("*.json"))
+    assert len(written) == 2, "expected the report JSON + the status heartbeat"
+    for path in written:
+        text = path.read_text(encoding="utf-8")
+        for pattern, description in FORBIDDEN:
+            match = pattern.search(text)
+            assert match is None, (
+                f"{path.name} carries {description}: {match.group(0)!r} — "
+                "analysis/ is checked in, so this ships with the repo"
+            )
 
 
 def test_analyze_handler_writes_status_json_error_on_failure(
@@ -229,6 +285,45 @@ def test_analyze_handler_writes_status_json_error_on_failure(
     status = json.loads(status_path.read_text(encoding="utf-8"))
     assert status["state"] == "error"
     assert "analyze blew up" in status["error"]
+
+
+def test_analyze_handler_error_status_does_not_commit_the_home_dir(
+    synthetic_song: Path, monkeypatch,
+):
+    """The failure heartbeat quotes the exception message verbatim, and the
+    messages that reach it name absolute files — a soundfile IO error is
+    ``Error opening <abs path>``. status.json is checked in, so a failed run
+    must not commit the author's home directory with it (AUD-PORTPATH).
+
+    ``Path.home()`` is redirected at the tmp tree — the same definition of home
+    ``portable_text`` collapses against — so the assertion bites without any
+    real account name appearing in this test.
+    """
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: synthetic_song))
+    captures_dir = _write_captures(
+        synthetic_song / "captures" / "20260528T140000Z",
+        song_slug="test-song",
+    )
+    wav = captures_dir / "master.wav"
+
+    def _boom(*_a, **_k):
+        raise RuntimeError(f"Error opening {wav}: System error.")
+
+    monkeypatch.setattr(analysis_handlers, "analyze_mix", _boom)
+    with pytest.raises(RuntimeError, match="Error opening"):
+        analysis_handlers.analyze_handler(
+            None, song_slug="test-song", captures_dir=str(captures_dir),
+        )
+
+    status = json.loads(
+        (synthetic_song / "analysis" / "status.json").read_text(encoding="utf-8")
+    )
+    assert status["state"] == "error"
+    # The diagnosis survives — only the home prefix is collapsed.
+    assert status["error"] == (
+        "Error opening ~/captures/20260528T140000Z/master.wav: System error."
+    )
+    assert str(synthetic_song) not in status["error"]
 
 
 def test_analyze_handler_surfaces_analysis_code_version(synthetic_song: Path):
@@ -1289,9 +1384,19 @@ def test_analyze_handler_compare_to_seq_end_to_end(synthetic_song: Path):
     )
     report = json.loads(Path(result["report_path"]).read_text(encoding="utf-8"))
     assert report["db_seq"] == 2
-    assert report["compare_to"]["baseline"]["ref"] == baseline_result["report_path"]
+    # In the FILE the ref is portable (song-relative) — analysis/ is checked in
+    # (AUD-PORTPATH) — and it still names the baseline the call returned.
+    assert report["compare_to"]["baseline"]["ref"] == (
+        f"analysis/{Path(baseline_result['report_path']).name}"
+    )
+    assert (
+        resolve_portable_path(synthetic_song, report["compare_to"]["baseline"]["ref"])
+        == Path(baseline_result["report_path"])
+    )
     # Identical synthetic captures → nothing significant; the overshoot
     # delta rides the summary so a count change can't hide in the report.
+    # On the WIRE the ref stays absolute: a returned path is one the caller
+    # opens, and it has no reason to know the anchor.
     assert result["summary"]["compare_to"] == {
         "baseline_ref": baseline_result["report_path"],
         "significant_delta_count": 0,

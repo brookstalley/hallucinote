@@ -509,7 +509,9 @@ def _outro(conn, tracks, length):
 
     The octave drop that follows is NOT authored here as notes — clip_pitch_bend
     cannot be pushed to Live (no auto-encode path; see the mix pass), so it rides
-    a Shifter device-parameter envelope instead.
+    a Shifter device-parameter envelope instead. That envelope is authored in
+    :func:`_author_octave_drop`, which runs after the sections are laid out
+    because it has to look the Shifter up by class on the master strip.
     """
     slot = 7
     return {
@@ -530,6 +532,96 @@ def _outro(conn, tracks, length):
             note(CRASH, 0, 3.0, 120), note(TOM_LO, 0, 1.5, 116),
             note(CRASH, 4, 4.0, 104)]),
     }
+
+
+#: The outro's octave drop — the brief's closing gesture, and the only moment in
+#: the piece that cannot be written as notes.
+#:
+#: The brief asks that "everything pitch bends down a whole octave while it fades
+#: out over one 4/4 measure". *Everything* is the operative word: this is not a
+#: part bending, it is the whole record being dragged under, so it belongs on the
+#: master strip rather than on any instrument. A Shifter in Pitch mode sits ahead
+#: of the master Limiter (chain order matters — pitching down AFTER limiting
+#: would re-introduce the peaks the ceiling just removed), and its `Pitch Coarse`
+#: parameter is automated in raw semitones from 0 to -12.
+#:
+#: The meter here is a global 1/4 ruler that counts rather than claims (see the
+#: time-signature note above), so one bar is one beat and the outro's two
+#: notional 4/4 measures are beats 102-106 and 106-110. The drop rides the
+#: SECOND measure only: bar 1 is the reveal (the bass slides Ab -> D under an
+#: unchanged voicing) and it has to be heard at pitch to land, because the whole
+#: argument is that the triumph was the doubt chord all along. Only once that is
+#: audible does the floor go.
+OCTAVE_DROP_HOLD_BEAT = float(OUTRO_BAR - 1)          # outro starts, still at pitch
+OCTAVE_DROP_START_BEAT = float(OUTRO_BAR - 1) + 4.0   # the reveal has landed
+OCTAVE_DROP_END_BEAT = float(END_BAR - 1)             # an octave down
+OCTAVE_DROP_SEMITONES = -12.0
+
+
+def _author_octave_drop(conn, song_id, tracks):
+    """Automate the master Shifter down an octave across the outro's last bar.
+
+    Looked up by CLASS on the master strip rather than by a hard-coded index:
+    the device chain is materialized from `captured_session.json`, so its
+    position is snapshot state this file does not own. Raising when it is absent
+    is deliberate — a silently-missing Shifter is exactly how this gesture went
+    unbuilt once already, documented in prose while no envelope existed.
+    """
+    master_id = tracks["Master"]
+    shifter = next(
+        (d for d in Q.get_devices_for_track(conn, master_id)
+         if d["class_name"] == "Shifter"),
+        None,
+    )
+    if shifter is None:
+        raise RuntimeError(
+            "no Shifter on the master strip — the outro's octave drop has "
+            "nothing to ride. It lives in captured_session.json under "
+            "song.master.devices, ahead of the Limiter; re-capture the set "
+            "with `hallucinote capture execute` if it has been lost."
+        )
+    # build.py is a state CONVERGER: re-running it with no source change must
+    # produce no net state change. `create_envelope` inserts unconditionally, so
+    # reuse an existing arc when there is one and rewrite its points — otherwise
+    # every rebuild stacks another envelope on the same parameter.
+    existing = [
+        e for e in Q.get_envelopes_for_device(conn, shifter["id"])
+        if e["parameter_path"] == "Pitch Coarse"
+    ]
+    want = [
+        {"time_beats": OCTAVE_DROP_HOLD_BEAT, "value": 0.0,
+         "curve_kind": "linear"},
+        {"time_beats": OCTAVE_DROP_START_BEAT, "value": 0.0,
+         "curve_kind": "linear"},
+        {"time_beats": OCTAVE_DROP_END_BEAT, "value": OCTAVE_DROP_SEMITONES,
+         "curve_kind": "linear"},
+    ]
+    # Reuse an existing arc rather than stacking a second one: `create_envelope`
+    # inserts unconditionally. `replace_breakpoints` is a true converger — it
+    # emits nothing when the points are already identical — so it is safe to
+    # call every build, and calling it is also what marks the envelope as
+    # TOUCHED. That matters: `build_session` is mark-and-sweep, and a row the
+    # build never touches is deleted as orphaned build content. Returning early
+    # on "nothing changed" therefore deletes the very envelope it was trying to
+    # preserve.
+    if existing:
+        envelope_id = existing[0]["id"]
+    else:
+        envelope_id = M.create_envelope(
+            conn, song_id=song_id,
+            target_kind="device_parameter",
+            target_device_id=shifter["id"],
+            parameter_path="Pitch Coarse",
+            actor="build",
+            reason="outro octave drop — the brief's closing gesture",
+        )
+    M.replace_breakpoints(
+        conn, envelope_id=envelope_id,
+        breakpoints=want,
+        actor="build",
+        reason="outro octave drop — the brief's closing gesture",
+    )
+    return envelope_id
 
 
 SECTION_SPANS = (
@@ -653,6 +745,10 @@ def build(reset: bool = False, force_replay: bool = False) -> str:
             clips = SECTION_COMPOSERS[section_name](conn, tracks, end - start)
             arrange_section(conn, song_id, tracks, clips,
                             start_bar=float(start), end_bar=float(end))
+
+        # The one gesture that isn't notes. Runs last because it resolves the
+        # Shifter off the master chain the snapshot replayed above.
+        _author_octave_drop(conn, song_id, tracks)
 
         return song_id
 

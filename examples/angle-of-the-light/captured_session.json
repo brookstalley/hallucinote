@@ -10,6 +10,93 @@
       "devices": [
         {
           "index": 1,
+          "class": "Shifter",
+          "class_name": "Shifter",
+          "name": "Shifter",
+          "params_dialed": {
+            "Device On": {
+              "value": "On",
+              "value_items": [
+                "Off",
+                "On"
+              ]
+            },
+            "Lfo Waveform": {
+              "value": "Triangle",
+              "value_items": [
+                "Sine",
+                "Triangle",
+                "Triangle Analog",
+                "Triangle 8",
+                "Triangle 16",
+                "Saw Up",
+                "Saw Down",
+                "Rectangle",
+                "Random",
+                "Random S&H"
+              ]
+            },
+            "Lfo Sync": {
+              "value": "Off",
+              "value_items": [
+                "Off",
+                "On"
+              ]
+            },
+            "Lfo Spin": {
+              "value": "On",
+              "value_items": [
+                "Off",
+                "On"
+              ]
+            },
+            "RM Drive": {
+              "value": "Off",
+              "value_items": [
+                "Off",
+                "On"
+              ]
+            },
+            "Env On": {
+              "value": "Off",
+              "value_items": [
+                "Off",
+                "On"
+              ]
+            },
+            "Delay On": {
+              "value": "Off",
+              "value_items": [
+                "Off",
+                "On"
+              ]
+            },
+            "Delay Sync": {
+              "value": "On",
+              "value_items": [
+                "Off",
+                "On"
+              ]
+            },
+            "Mode": {
+              "value": "Pitch",
+              "value_items": [
+                "Pitch",
+                "Freq",
+                "Ring"
+              ]
+            },
+            "Wide": {
+              "value": "Off",
+              "value_items": [
+                "Off",
+                "On"
+              ]
+            }
+          }
+        },
+        {
+          "index": 2,
           "class": "Limiter",
           "class_name": "Limiter",
           "name": "Limiter",

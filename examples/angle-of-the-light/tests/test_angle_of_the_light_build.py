@@ -189,3 +189,65 @@ def test_bridge_is_exactly_quantized(build_module):
         "the bridge must contain no push() calls — the absence of a human "
         "hand is what makes it grim"
     )
+
+
+def test_outro_octave_drop_is_actually_authored(build_module):
+    """The brief's closing gesture must EXIST, not merely be described.
+
+    This assertion is here because the gesture went missing exactly once, and
+    silently: `_outro`'s docstring said the octave drop "rides a Shifter
+    device-parameter envelope instead" of being written as notes, and no such
+    envelope — and no Shifter — was ever built. Prose in a docstring reads as
+    done. Nothing failed, nothing warned, and the song simply ended flat while
+    every document about it said otherwise.
+
+    So the test asserts the whole chain the gesture depends on: a Shifter on the
+    master strip, an envelope pointed at its pitch parameter, and breakpoints
+    that actually travel a full octave downward inside the outro.
+    """
+    from hallucinote.db import init_db, queries as Q
+
+    song_id = build_module.build(reset=True)
+    conn = init_db(build_module.DB_PATH)
+    try:
+        tracks = Q.tracks_by_name(conn, song_id)
+        master_devices = Q.get_devices_for_track(conn, tracks["Master"])
+        shifter = next(
+            (d for d in master_devices if d["class_name"] == "Shifter"), None,
+        )
+        assert shifter is not None, (
+            "no Shifter on the master strip — the octave drop has nothing to "
+            "ride (it lives in captured_session.json under song.master.devices)"
+        )
+
+        envelopes = Q.get_envelopes_for_device(conn, shifter["id"])
+        assert len(envelopes) == 1, (
+            f"expected exactly one envelope on the master Shifter, got "
+            f"{len(envelopes)}"
+        )
+        envelope = envelopes[0]
+        assert envelope["target_kind"] == "device_parameter"
+        assert envelope["parameter_path"] == "Pitch Coarse"
+
+        points = Q.get_breakpoints(conn, envelope["id"])
+        values = [p["value"] for p in points]
+        times = [p["time_beats"] for p in points]
+
+        # A full octave down, in raw semitones — not a token bend.
+        assert min(values) == -12.0, f"expected -12 st, got {min(values)}"
+        assert max(values) == 0.0, "the drop must start at unshifted pitch"
+
+        # ...and it has to happen inside the outro, after the reveal has landed.
+        # Bar 1 of the outro is the bass sliding Ab -> D under an unchanged
+        # voicing; dropping during it would bury the very moment it exists for.
+        outro_start = float(build_module.OUTRO_BAR - 1)
+        song_end = float(build_module.END_BAR - 1)
+        assert min(times) >= outro_start, "the drop must not begin before the outro"
+        assert max(times) == song_end, "the drop must land exactly at the end"
+        drop_start = max(t for t, v in zip(times, values) if v == 0.0)
+        assert drop_start >= outro_start + 4.0, (
+            "the drop must wait for the reveal — bar 1 of the outro has to be "
+            "heard at pitch for the tritone identity to register"
+        )
+    finally:
+        conn.close()

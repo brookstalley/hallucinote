@@ -708,6 +708,9 @@ scope_rollups:
   song-author-hygiene+kit-strict+negative-beats-refusal:
     chunks: ["H1", "H2", "H3", "H4", "H5", "backlog-scrub"]
     releases: ["v1.4.0"]
+  song-lifecycle:
+    chunks: []
+    releases: ["unreleased"]
   sync,artifacts,tests:
     chunks: ["SYN-8Q3F"]
     releases: ["v1.7.0"]
@@ -740,6 +743,9 @@ scope_rollups:
     releases: ["v0.9.2"]
   tour:
     chunks: ["A1", "A2", "A3", "A4"]
+    releases: ["unreleased"]
+  tour+push+workspace+db-converger:
+    chunks: ["B1"]
     releases: ["unreleased"]
   tuning,mcp-bridge,mcp-render,sync-push,sync-pull,db,analysis,methodology,docs,tests:
     chunks: ["ARR-ORPHAN", "DEC-CAP", "DOC-7K3M", "FK-clip-guard", "IDX-5W2P", "MCP-2K9F", "MCP-5N8K", "MCP-7F2K", "MCP-7P3R", "MCP-8H4N", "MCP-9R3T", "MICROTUNE", "PSH-3K9D", "PSH-8K3D", "REC-4Z8Q", "SYN-4R7P", "SYN-7N4K", "SYN-9F4K", "SYN-RACK-PRESET-RELINK", "SYN-RENDER-RELINK", "SYN-SCAFFOLD-MISLINK", "master-true-peak"]

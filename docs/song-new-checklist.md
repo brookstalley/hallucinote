@@ -144,8 +144,6 @@ Sparse vs busy. Layer count at each moment. Affects how the agent picks generato
 
 ---
 
----
-
 ## Gap-closers — applicable exactly when the prompt names one
 
 These three aren't preferences to elicit; they're **holes to close**. Each is

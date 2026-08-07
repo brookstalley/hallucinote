@@ -67,7 +67,10 @@ in**; most songs will mark several rows NOT-APPLICABLE.
 | **Mechanism per named gesture** | the prompt names an audible event — a bend, a riser, a drop, a crash | **the most important row.** A gesture is not DECIDED until the thing that produces it is named |
 
 Anything not in this table that the prompt clearly leans on is also fair game —
-this is guidance, not a schema.
+this is guidance, not a schema. The fuller catalogue this table condenses —
+must-haves, should-haves and nice-to-haves, with the gap-closers called out — is
+[`docs/song-new-checklist.md`](../../docs/song-new-checklist.md); reach for it
+when a prompt leans on something the seven rows above don't cover.
 
 ## Step 2 — one consolidated turn
 

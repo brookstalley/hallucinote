@@ -242,6 +242,8 @@ your own prose names. Per-stage definitions of done live in
 worked examples are in
 [`../.prawduct/artifacts/elicitation-and-stage-exit-criteria.md`](../.prawduct/artifacts/elicitation-and-stage-exit-criteria.md).
 
+---
+
 ## Rationale is authorship — the WHY ships in `decisions/`
 
 `build.py` and the snapshot carry the **WHAT** — `feel_shift(verse, RUN_PUSH)`, a chaos-burst subsystem, `params_dialed` mix levels. They do **not** carry the **WHY**, or the cross-cutting narrative→sound mapping that has no home in code: a reader sees `RUN_PUSH`, not *"the human rushes ahead of the machine = fear."* That rationale is the song's most valuable, least-recoverable artifact — it's what survives `/clear` and what `/song-context` serves — so it ships in `songs/<slug>/decisions/NN-*.md` as a first-class part of authoring, exactly the way the device chain ships in the snapshot (see *Sound design is authorship*).

@@ -66,11 +66,19 @@ multi-site drift this bundle itself introduced — every surface names stage 0,
 every deep-link resolves, the table has exactly one home. Each assertion was
 verified red by planting its failure before shipping.
 
-Deferred with durable homes, not prose: **DOC-5H2T** (the CLAUDE.md amendment —
-owner ratification pending; until it lands the stage is inert for any agent that
-never opens `/song-workflow`), **TST-4M9P** (the docstring test as code — the one
-mechanically-checkable rule, needs its own build cycle), **TMP-7B3X** (the meter
-refusal belongs in the push layer, not the source of truth).
+**The CLAUDE.md amendment shipped in this bundle** (DOC-5H2T, closed). CLAUDE.md
+auto-loads every session and the skills do not, so while it still enumerated the
+pre-brief arc the stage was inert for any agent that never opened
+`/song-workflow`. The owner ratified both edits on 2026-08-07: the
+opening-elicitation bullet in the stop list, and the lifecycle sentence now
+leading with **elicit**, naming `/song-brief` first in the full map, and counting
+three checkpoints. CLAUDE.md is the first entry in the parity test's surface
+list, so it cannot fall behind again.
+
+Deferred with durable homes, not prose: **TST-4M9P** (the docstring test as code
+— the one mechanically-checkable rule, needs its own build cycle) and
+**TMP-7B3X** (the meter refusal belongs in the push layer, not the source of
+truth; **TMP-4J6Q** keeps the projection half).
 
 Suite: 4871 passed / 2 skipped (+6). No fingerprint flip — `server.py`'s
 instructions string and `resources/` are both outside `_FINGERPRINT_PATHS`, so

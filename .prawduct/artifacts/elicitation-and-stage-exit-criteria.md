@@ -346,14 +346,16 @@ appear in the turn**. The design stays quiet.
 
 ---
 
-## RECOMMENDATION — the CLAUDE.md amendment (not applied)
+## The CLAUDE.md amendment — RATIFIED AND APPLIED (2026-08-07)
 
-`CLAUDE.md`'s behavioural norms are owner-ratified, so this is proposed text
-only — **and until it is ratified the design is inert for any agent that does
-not open `/song-workflow`**, because CLAUDE.md is auto-loaded every session and
-the skills are not. Tracked as **DOC-5H2T** so the request has a durable home
-rather than living only in this artifact's prose (the repo has twice paid for a
-deferral that lived in prose alone).
+`CLAUDE.md`'s behavioural norms are owner-ratified, so this began as proposed
+text only. **The owner ratified it on 2026-08-07 and both edits are applied** —
+DOC-5H2T is closed. Until they landed, the design was inert for any agent that
+did not open `/song-workflow`, because CLAUDE.md is auto-loaded every session and
+the skills are not. The text below is kept verbatim as the record of what was
+proposed and accepted; `CLAUDE.md` itself is now authoritative, and
+`tests/unit/test_song_lifecycle_doc_parity.py` lists it first among the surfaces
+that must name stage 0.
 
 Why the current text doesn't already carry it: CLAUDE.md line 43 enumerates the
 lifecycle as `/song-new → … → /mix-review` with "the two review checkpoints", so

@@ -430,12 +430,12 @@ choice or re-propose a dead end.
 ## Exit criteria — this stage is done when
 
 - `annotations/01-the-brief.md` exists, carrying the prompt verbatim.
-- **Every identity dimension took one of four honest routes**, and the brief
-  says which: answered by the composer (`user`) · follows unambiguously from what
-  they said (`inferred`) · asked openly · offered as a two-sentence read with an
-  exit because the two-question budget overflowed (`agent-read`) · decided after
-  they said "just go" (`agent-handback`). **A bare `agent` on an identity row
-  fails this criterion** — that is the substitution, and it is greppable.
+- **Every identity dimension carries one of four honest `Decided by` values**:
+  `user` (they chose it — this is what asking openly earns) · `inferred` (follows
+  unambiguously from what they said) · `agent-read` (a two-sentence read with an
+  exit, where the two-question budget overflowed) · `agent-handback` (they said
+  "just go"). **A bare `agent` on an identity row fails this criterion** — that
+  is the substitution, and it is greppable.
 - No craft dimension was put to the composer as a question.
 - Every applicable dimension is DECIDED, or UNDECIDED with a named owner and a
   closing stage. NOT-APPLICABLE rows are recorded and were never asked about.

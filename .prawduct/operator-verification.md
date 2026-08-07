@@ -26,13 +26,39 @@ amount of suite-green substitutes.
 
 No Ableton, no Live session, no re-vendor. Docs/skills only.
 
-**Check:** `/clear`, then give a fresh agent an open-ended song prompt that
-leaves vocals and the harmonic world unstated while specifying structure in
-detail. The prompt this stage was rebuilt against — a 45-second song with an
-ominous intro, a verse alternating 4/4 rock against 3/4 brass, a 5/8 industrial
-bridge, a 7/4 chorus that resolves, and an outro that pitch-bends down an octave
-— is reproduced in full in the `feat/elicitation-conversational` branch's commit
-message history and in `.prawduct/change-log.md`. Judge the **first reply**:
+**Check:** `/clear`, then paste the prompt below to a fresh agent — verbatim,
+typos included. It is the one this stage was rebuilt against, and it is carried
+here in full rather than pointed at, because a pointer is what fails first.
+
+```text
+Let's write a short song that illustrates how to use Hallucinote, while also
+being a legit interesting song with narrative structure and musical depth. I'm
+thinking:
+
+- About 45 seconds long
+- Short ominous intro that builds tension for 5-8 seconds, suspensful and growing
+- Crash into verse disolves the tension
+- Verse is call-and-response, even argument between rock and roll and brass
+  orchestral. Verse builds tension back up
+- Rock and roll is pushing, 4/4, insistent, rock instrumentation and flourishes
+- Brass is 3/4, and equally insistent, even angrier maybe
+- Drums in rock and roll measures are typical but expressive rock drums
+- Switch to timpany and other orchestral percussion to keep rhythm coherent and
+  steady across brass sections
+- Bridge is industrial instrumentation, a few 5/8 measures, quantized and
+  mechanical, bringing back the ominosity of intro and high tension
+- Chorus resolves tension, is moves to 7/4 (not just 4-then-3, full 7-rhythm)
+  with rock and roll and brass finally integrated and playing together
+- Chorus feels relaxed, plays with differnt rhythms, hinting at samba and rumba
+  and calypso, even in 7/4
+- Chrous concludes with crescendo, outro rapidly tears everything down and pitch
+  bends everything down an octave over just a few seconds
+```
+
+It is deliberately dense on structure and silent on **vocals** and the
+**harmonic world** — the two identity dimensions the reply must not invent.
+
+Judge the **first reply**:
 
 - [ ] At most **two questions**, and both about *identity*
 - [ ] **No recommendation stapled** to either — two concretes, no thumb on the scale

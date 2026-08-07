@@ -286,9 +286,14 @@ def test_decider_vocabulary_is_consistent_in_the_worked_example():
     exactly how this drifted once: the vocabulary was split into three values
     and the worked example kept the old one."""
     text = (_REPO / "skills" / "song-brief" / "SKILL.md").read_text("utf-8")
-    good, _, rest = text.partition("### Bad — and why")
-    _, _, good_example = good.partition("### Good")
-    assert good_example, "skills/song-brief lost its Good worked example"
+    good, bad_sep, _ = text.partition("### Bad — and why")
+    # Assert the separator was FOUND. Without this, renaming the Bad heading
+    # makes partition return the whole file, silently widening the slice to
+    # include the Decided-by rules table — which contains `agent-read`, so the
+    # assertion below would pass while guarding nothing.
+    assert bad_sep, "skills/song-brief lost its Bad worked example heading"
+    _, good_sep, good_example = good.partition("### Good")
+    assert good_sep and good_example, "skills/song-brief lost its Good worked example"
     assert "`agent-read`" in good_example, (
         "the Good example's overflowed-identity row must be recorded as "
         "`agent-read` — a bare `agent` is the defect the column exists to expose"
@@ -298,4 +303,29 @@ def test_decider_vocabulary_is_consistent_in_the_worked_example():
             f"skills/song-brief no longer defines `{value}` in the Decided-by "
             "table, so the audit trail cannot distinguish the legitimate path "
             "from the substitution defect"
+        )
+
+
+def test_operator_check_carries_its_own_prompt():
+    """The behavioural acceptance check is the only thing that can verify this
+    stage, and it is useless without the exact prompt it was written against.
+
+    Two successive drafts pointed elsewhere for it — first at
+    `.prawduct/.handoff-notes.md` (gitignored, consumed by `/clear`), then at
+    "the commit history and the change log", neither of which carries it
+    verbatim. That is the DESCRIBED-BUT-UNBUILT shape the elicitation work
+    exists to stop, reproduced inside its own paperwork. The entry now carries
+    the prompt inline, and this asserts it stays that way."""
+    entry = (_REPO / ".prawduct" / "operator-verification.md").read_text("utf-8")
+    _, _, eli = entry.partition("## ELI-2K8R")
+    eli, _, _ = eli.partition("\n## ")
+    assert eli, "operator-verification.md lost the ELI-2K8R entry"
+    for phrase in (
+        "About 45 seconds long",
+        "full 7-rhythm",
+        "bends everything down an octave",
+    ):
+        assert phrase in eli, (
+            "the ELI-2K8R operator check no longer carries the prompt verbatim "
+            f"(missing {phrase!r}) — a pointer is what failed twice here"
         )

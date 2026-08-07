@@ -69,6 +69,7 @@ try:
     from hallucinote.audio.levels import live_fader_gain
     from hallucinote.db import queries as Q
     from hallucinote.db.connection import init_db, resolve_db_path
+    from hallucinote.workspace import explain_unresolved_song
     # Reuse the canonical bar→beat converter the push planner uses — it walks
     # the song's time_signature_map so meter changes accumulate exactly. Both
     # section windows and tempo-map segments are positioned through it.
@@ -93,6 +94,7 @@ except ImportError:  # pragma: no cover - exercised in Live's vendored env
     Q = None  # type: ignore[assignment]
     init_db = None  # type: ignore[assignment]
     resolve_db_path = None  # type: ignore[assignment]
+    explain_unresolved_song = None  # type: ignore[assignment]
     _position_bar_to_beats = None  # type: ignore[assignment]
     recency_key = None  # type: ignore[assignment]
     _HAS_HALLUCINOTE = False
@@ -157,8 +159,7 @@ def _latest_captures_dir(song_slug: str) -> Path:
             f"no captures directory at {captures_root} — has "
             f"ableton_render(action='start', song_slug={song_slug!r}) "
             f"been called yet? (Then poll action='status' to completion.) "
-            f"Captures are written to "
-            f"songs/{song_slug}/captures/<iso-ts>/."
+            f"Captures are written to {captures_root}/<iso-ts>/."
         )
     candidates = [
         p for p in captures_root.iterdir()
@@ -243,13 +244,19 @@ def _existing_db_path(song_slug: str) -> Path:
     Existence check only (no open) — the handler opens the DB exactly once for
     well-formedness validation + both collectors. Catches a typo'd slug before
     a MixReport gets written against random captures.
+
+    The failure message defers to ``workspace.explain_unresolved_song``, which
+    distinguishes the three things a missing DB can mean — the workspace this
+    process resolved doesn't hold the song / no marker was found at all so the
+    legacy path was used / the song genuinely doesn't exist. The flat "doesn't
+    name a built song. run build.py --reset" this replaced ran all three
+    together, and told an operator to scaffold a duplicate over a song that was
+    built and findable a directory away.
     """
     db_path = resolve_db_path(song_slug)
     if not db_path.exists():
         raise _AnalysisError(
-            f"no song DB at {db_path} — slug {song_slug!r} doesn't name "
-            f"a built song. `python3 songs/{song_slug}/build.py --reset` "
-            f"creates it."
+            f"no song DB at {db_path} — {explain_unresolved_song(song_slug)}"
         )
     return db_path
 
@@ -880,7 +887,7 @@ def get_latest_report_handler(
     if report_path is None:
         raise _AnalysisError(
             f"no MixReport JSON found under "
-            f"songs/{song_slug}/analysis/ — has "
+            f"{_resolve_song_dir(song_slug) / 'analysis'} — has "
             f"ableton_analysis(action='analyze') been called yet for "
             f"this song?"
         )
@@ -999,7 +1006,7 @@ def extract_structure_handler(
             raise _AnalysisError(
                 f"no song row named {song_slug!r} in {db_path} — the DB "
                 f"exists but has no matching song. `python3 "
-                f"songs/{song_slug}/build.py --reset` populates it."
+                f"{db_path.parent / 'build.py'} --reset` populates it."
             )
         extract = _extract_song_structure(conn, song["id"])
     finally:

@@ -1361,3 +1361,103 @@ def test_latest_captures_dir_agrees_with_the_retention_sweeps_ordering(
     # And the survivor of a keep=1 sweep is exactly what the selector picks.
     plan = T.plan_sweep(captures, keep=1)
     assert [t.path for t in plan.kept] == [selector_pick]
+
+
+# ---------------------------------------------------------------------------
+# `_existing_db_path` — the missing-DB message must diagnose, not misdirect.
+#
+# The failure that motivated this: `ableton_analysis` on a song that WAS built
+# reported "slug 'angle-of-the-light' doesn't name a built song. `python3
+# songs/angle-of-the-light/build.py --reset` creates it." The song was built —
+# in a workspace the server hadn't resolved. Following the advice would have
+# scaffolded a duplicate over real work.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def _clean_workspace_env(monkeypatch):
+    monkeypatch.delenv("HALLUCINOTE_SONGS_ROOT", raising=False)
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+
+
+def test_missing_db_message_names_the_workspace_it_searched(
+    tmp_path, monkeypatch, _clean_workspace_env,
+):
+    """"Found a workspace; the song isn't in it" — name the workspace and the
+    songs it does have, instead of a bare "doesn't name a built song"."""
+    ws = tmp_path / "examples"
+    ws.mkdir()
+    (ws / "hallucinote.toml").write_text(
+        '[workspace]\nlayout = "monorepo"\nsongs_root = "."\n'
+    )
+    _make_song_dir(ws.parent, "unused")  # keeps tmp_path/songs/ realistic
+    built = ws / "real-song"
+    built.mkdir()
+    (built / "build.py").write_text("# built\n")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+
+    with pytest.raises(analysis_handlers._AnalysisError) as exc:
+        analysis_handlers._existing_db_path("typo-song")
+    msg = str(exc.value)
+    assert str(ws.resolve()) in msg, msg
+    assert "real-song" in msg, msg
+    assert "doesn't name a built song" not in msg
+
+
+def test_missing_db_message_does_not_advise_rebuilding_a_song_built_elsewhere(
+    tmp_path, monkeypatch, _clean_workspace_env,
+):
+    """The exact misdirection: never send an operator to `build.py --reset` for
+    a song that exists somewhere the resolver simply didn't look."""
+    for name in ("one", "two"):
+        d = tmp_path / name
+        d.mkdir()
+        (d / "hallucinote.toml").write_text(
+            '[workspace]\nlayout = "monorepo"\nsongs_root = "."\n'
+        )
+    built = tmp_path / "two" / "demo"          # two workspaces below ⇒ ambiguous
+    built.mkdir()                              # ⇒ resolution falls back to legacy
+    (built / "build.py").write_text("# built\n")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(analysis_handlers._AnalysisError) as exc:
+        analysis_handlers._existing_db_path("demo")
+    msg = str(exc.value)
+    assert "--reset" not in msg, msg
+    assert str(built.resolve()) in msg, msg
+
+
+def test_missing_db_message_distinguishes_no_marker_from_wrong_workspace(
+    tmp_path, monkeypatch, _clean_workspace_env,
+):
+    """No marker anywhere is a third, differently-remediated diagnosis."""
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+
+    with pytest.raises(analysis_handlers._AnalysisError) as exc:
+        analysis_handlers._existing_db_path("nowhere")
+    msg = str(exc.value)
+    assert "no hallucinote.toml workspace marker was found at or above" in msg
+    assert "HALLUCINOTE_SONGS_ROOT" in msg
+
+
+def test_analysis_resolves_a_song_in_a_workspace_below_the_project_dir(
+    tmp_path, monkeypatch, _clean_workspace_env,
+):
+    """The defect end-to-end at the analysis boundary: project dir above,
+    workspace below, song built. It must resolve — not report it unbuilt."""
+    ws = tmp_path / "examples"
+    ws.mkdir()
+    (ws / "hallucinote.toml").write_text(
+        '[workspace]\nlayout = "monorepo"\nsongs_root = "."\n'
+    )
+    song_dir = ws / "demo"
+    song_dir.mkdir()
+    conn = init_db(song_dir / "demo.db")
+    conn.execute("INSERT INTO songs (id, name) VALUES (?, ?)", ("song-demo", "demo"))
+    conn.commit()
+    conn.close()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+
+    resolved = analysis_handlers._existing_db_path("demo")
+    assert resolved.parent == song_dir.resolve()

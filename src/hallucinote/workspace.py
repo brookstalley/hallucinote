@@ -15,12 +15,27 @@ Resolution precedence for a song's directory (first hit wins):
 1. an explicit ``root=`` at the callsite (handled by ``resolve_db_path``;
    e.g. ``build.py`` passes ``root=Path(__file__).parent.parent``)
 2. env var ``HALLUCINOTE_SONGS_ROOT`` → ``<env>/<slug>`` (monorepo-style override)
-3. a ``hallucinote.toml`` marker (layout-aware: ``monorepo`` nests
-   ``songs_root/<slug>``; ``song`` means the marker's dir *is* the song)
-4. legacy default ``songs/<slug>`` relative to cwd
+3. a ``hallucinote.toml`` marker found by walking **up** (layout-aware:
+   ``monorepo`` nests ``songs_root/<slug>``; ``song`` means the marker's dir
+   *is* the song)
+4. a ``hallucinote.toml`` marker found by a **bounded descent** below the start
+   directory, when the upward walk found none and the descent is unambiguous
+   (see :func:`find_workspaces_below`)
+5. legacy default ``songs/<slug>`` relative to cwd
 
-Steps 2–4 are purely additive: with no env and no marker (the engine monorepo
-today) the legacy default reproduces the historical relative path exactly.
+Steps 2–5 are purely additive: with no env and no marker anywhere the legacy
+default reproduces the historical relative path exactly.
+
+**Why step 4 exists.** The start directory is ``CLAUDE_PROJECT_DIR`` / cwd —
+never the song being resolved — so a workspace that lives *below* the project
+directory (the in-repo ``examples/`` demo workspace; a user whose editor is
+rooted one level above their songs repo) is invisible to the upward walk. The
+old behavior was to fall through to step 5 and hand back
+``songs/<slug>`` — a path that names nothing. That was silent, and callers
+treat the answer as authoritative: a render created the phantom tree and wrote
+gigabytes of WAVs into it, and analysis then reported "slug doesn't name a
+built song" for a song that was built all along. Step 4 finds the workspace;
+:func:`explain_unresolved_song` makes the residual failure loud and specific.
 """
 from __future__ import annotations
 
@@ -50,6 +65,23 @@ LAYOUT_SONG = "song"  # the marker's directory IS one song
 _VALID_LAYOUTS = (LAYOUT_MONOREPO, LAYOUT_SONG)
 
 _LEGACY_SONGS_ROOT = "songs"
+
+# --- bounded descent (precedence step 4) ----------------------------------
+# How far BELOW the start directory to look for a marker. 2 covers the shapes
+# that actually occur — ``<repo>/examples/`` (depth 1) and an editor rooted a
+# level or two above a songs repo (``~/src/music/my-songs/``) — while keeping
+# the scan to a handful of ``scandir`` calls. Deeper nesting is not guessed at:
+# it fails loud through ``explain_unresolved_song`` instead.
+MAX_DESCEND_DEPTH = 2
+# Hard ceiling on directories visited, so the descent can never turn a resolve
+# into a filesystem crawl if someone points a session at a huge tree.
+_DESCEND_DIR_BUDGET = 500
+# Directory names never worth descending into: VCS, caches, build output, and
+# dependency trees. Any name starting with "." is skipped too (see below).
+_DESCEND_SKIP_NAMES = frozenset({
+    "node_modules", "__pycache__", "venv", "site-packages",
+    "build", "dist", "target", "vendor",
+})
 
 
 def validate_slug(slug: str) -> None:
@@ -145,11 +177,12 @@ def _workspace_from_marker(root: Path, marker: Path) -> Workspace | None:
     return Workspace(root=root, layout=layout, songs_root=songs_root, slug=slug)
 
 
-def find_workspace(start: Path | str | None = None) -> Workspace | None:
-    """Walk up from ``start`` (or ``CLAUDE_PROJECT_DIR`` / cwd) for a marker.
+def find_workspace_above(start: Path | str | None = None) -> Workspace | None:
+    """Walk **up** from ``start`` (or ``CLAUDE_PROJECT_DIR`` / cwd) for a marker.
 
     Returns the first ``hallucinote.toml`` workspace found, or ``None`` if the
-    search reaches the filesystem root without one.
+    search reaches the filesystem root without one. This is precedence step 3
+    on its own — no descent, no fallbacks.
     """
     here = _candidate_start(start).resolve()
     for d in (here, *here.parents):
@@ -161,17 +194,269 @@ def find_workspace(start: Path | str | None = None) -> Workspace | None:
     return None
 
 
+def find_workspaces_below(
+    start: Path | str | None = None, *, max_depth: int = MAX_DESCEND_DEPTH,
+) -> list[Workspace]:
+    """Every workspace whose marker sits at most ``max_depth`` levels BELOW
+    ``start`` — the descent half of discovery (precedence step 4).
+
+    Breadth-first, so shallower workspaces come first, and a directory that is
+    itself a workspace is never descended into (its subtree belongs to it — a
+    nested marker would be that workspace's own business, not a sibling
+    candidate). Hidden dirs, VCS/cache/build/dependency dirs and anything past
+    :data:`_DESCEND_DIR_BUDGET` are skipped: discovery must stay cheap enough
+    to sit on the resolve path.
+
+    Returns a *list* rather than a single answer on purpose. Descent can be
+    genuinely ambiguous (a parent directory holding three song repos), and
+    guessing there would recreate the silent-wrong-answer bug in a new place;
+    callers decide, and :func:`explain_unresolved_song` names the candidates
+    when nobody can.
+    """
+    root = _candidate_start(start).resolve()
+    if not root.is_dir():
+        return []
+    found: list[Workspace] = []
+    frontier = [root]
+    budget = _DESCEND_DIR_BUDGET
+    for _depth in range(max_depth):
+        if not frontier or budget <= 0:
+            break
+        nxt: list[Path] = []
+        for parent in frontier:
+            try:
+                children = sorted(p for p in parent.iterdir() if p.is_dir())
+            except OSError:  # unreadable dir — not fatal to discovery
+                continue
+            for child in children:
+                if budget <= 0:
+                    break
+                budget -= 1
+                name = child.name
+                if name.startswith(".") or name in _DESCEND_SKIP_NAMES:
+                    continue
+                marker = child / MARKER_FILENAME
+                if marker.is_file():
+                    ws = _workspace_from_marker(child, marker)
+                    if ws is not None:
+                        found.append(ws)
+                        continue  # a workspace owns its subtree; don't descend
+                nxt.append(child)
+        frontier = nxt
+    return found
+
+
+def find_workspace(
+    start: Path | str | None = None, *, descend: bool = False,
+) -> Workspace | None:
+    """The workspace governing ``start`` — up first, then optionally down.
+
+    ``descend=False`` (the default) is the historical containment question
+    *"which workspace am I inside?"*, and it is the right question for
+    ``hallucinote init-workspace``'s refuse-inside-an-existing-workspace guard:
+    a directory that merely *contains* a workspace is not itself one.
+
+    ``descend=True`` asks the resolution question — *"which workspace do the
+    songs of this session live in?"* — and falls back to a bounded descent
+    (:func:`find_workspaces_below`) when the upward walk finds nothing. An
+    ambiguous descent (more than one workspace below) returns ``None`` rather
+    than picking: the caller falls through to the legacy default and the
+    failure surfaces with the candidates named.
+    """
+    ws = find_workspace_above(start)
+    if ws is not None or not descend:
+        return ws
+    below = find_workspaces_below(start)
+    if len(below) == 1:
+        return below[0]
+    if below:
+        logger.warning(
+            "%d workspaces found below %s (%s); none chosen — name one with "
+            "$%s, or run from inside the one you mean",
+            len(below), _candidate_start(start),
+            ", ".join(str(w.root) for w in below), ENV_SONGS_ROOT,
+        )
+    return None
+
+
+# Where a resolved song dir came from, for diagnostics. Values are stable
+# enough to assert on in tests and to branch remediation advice on.
+SOURCE_ENV = "env"
+SOURCE_MARKER_ABOVE = "marker-above"
+SOURCE_MARKER_BELOW = "marker-below"
+SOURCE_LEGACY = "legacy"
+
+
+@dataclass(frozen=True)
+class SongDirResolution:
+    """A resolved song dir plus *how* it was resolved.
+
+    ``resolve_song_dir`` returns only the path, which is all a caller needs
+    when the answer is right. When it is wrong the path alone is unreadable —
+    "songs/foo" says nothing about whether a marker was found and rejected or
+    never looked for. This carries the provenance so an error message can say
+    which.
+    """
+
+    song_dir: Path
+    source: str
+    workspace: Workspace | None = None
+    #: Workspaces found below the start dir — populated only when the descent
+    #: was ambiguous (and therefore declined).
+    ambiguous_below: tuple[Workspace, ...] = ()
+
+
+def resolve_song_dir_explained(
+    slug: str, *, start: Path | str | None = None,
+) -> SongDirResolution:
+    """:func:`resolve_song_dir` plus the provenance of its answer."""
+    env = os.environ.get(ENV_SONGS_ROOT)
+    if env:
+        return SongDirResolution(Path(env) / slug, SOURCE_ENV)
+    above = find_workspace_above(start)
+    if above is not None:
+        return SongDirResolution(above.song_dir(slug), SOURCE_MARKER_ABOVE, above)
+    below = find_workspaces_below(start)
+    if len(below) == 1:
+        return SongDirResolution(
+            below[0].song_dir(slug), SOURCE_MARKER_BELOW, below[0]
+        )
+    if below:
+        logger.warning(
+            "%d workspaces found below %s (%s); falling back to the legacy "
+            "%s/%s — name one with $%s, or run from inside the one you mean",
+            len(below), _candidate_start(start),
+            ", ".join(str(w.root) for w in below),
+            _LEGACY_SONGS_ROOT, slug, ENV_SONGS_ROOT,
+        )
+    return SongDirResolution(
+        Path(_LEGACY_SONGS_ROOT) / slug, SOURCE_LEGACY,
+        ambiguous_below=tuple(below),
+    )
+
+
 def resolve_song_dir(slug: str, *, start: Path | str | None = None) -> Path:
     """Resolve the directory holding a song's ``build.py`` + DB.
 
-    Applies precedence steps 2–4 (the explicit-``root`` step belongs to the
-    caller). With no env var and no marker this returns the legacy
+    Applies precedence steps 2–5 (the explicit-``root`` step belongs to the
+    caller). With no env var and no marker anywhere this returns the legacy
     ``songs/<slug>`` relative path, preserving historical behavior.
     """
-    env = os.environ.get(ENV_SONGS_ROOT)
-    if env:
-        return Path(env) / slug
-    ws = find_workspace(start)
-    if ws is not None:
-        return ws.song_dir(slug)
-    return Path(_LEGACY_SONGS_ROOT) / slug
+    return resolve_song_dir_explained(slug, start=start).song_dir
+
+
+def _looks_built(song_dir: Path) -> bool:
+    """Whether ``song_dir`` holds an actual song rather than just a name.
+
+    A song dir earns the description by carrying its authorship (``build.py``)
+    or its DB. Deliberately NOT satisfied by a bare ``captures/`` — that is
+    exactly the residue a misresolved render leaves behind, and treating it as
+    a song would let the wreckage of the bug masquerade as the song it
+    displaced.
+    """
+    if not song_dir.is_dir():
+        return False
+    return (song_dir / "build.py").is_file() or any(song_dir.glob("*.db"))
+
+
+def find_song_elsewhere(
+    slug: str, *, start: Path | str | None = None,
+) -> list[Path]:
+    """Directories where ``slug`` IS built, other than the resolved one.
+
+    Consulted before telling an operator to build a song: advising
+    ``build.py --reset`` for a song that already exists somewhere else invites
+    them to scaffold a duplicate over work that was never missing.
+    """
+    resolved = resolve_song_dir_explained(slug, start=start).song_dir
+    resolved_abs = (_candidate_start(start).resolve() / resolved).resolve()
+    seen: list[Path] = []
+    candidates: list[Path] = [
+        _candidate_start(start).resolve() / _LEGACY_SONGS_ROOT / slug
+    ]
+    candidates += [ws.song_dir(slug) for ws in find_workspaces_below(start)]
+    above = find_workspace_above(start)
+    if above is not None:
+        candidates.append(above.song_dir(slug))
+    for cand in candidates:
+        cand = cand.resolve()
+        if cand == resolved_abs or cand in seen:
+            continue
+        if _looks_built(cand):
+            seen.append(cand)
+    return seen
+
+
+def explain_unresolved_song(
+    slug: str, *, start: Path | str | None = None,
+) -> str:
+    """A teaching sentence for "this slug didn't resolve to a built song".
+
+    Distinguishes the three failures a bare "doesn't name a built song" runs
+    together — resolved into a workspace that doesn't hold it / resolved by the
+    legacy fallback because no marker was found / the song genuinely does not
+    exist — and, when the song IS built somewhere else, says so and where
+    instead of recommending a rebuild.
+    """
+    res = resolve_song_dir_explained(slug, start=start)
+    where = _candidate_start(start).resolve()
+    elsewhere = find_song_elsewhere(slug, start=start)
+
+    if res.source == SOURCE_ENV:
+        lead = (
+            f"${ENV_SONGS_ROOT}={os.environ.get(ENV_SONGS_ROOT)!r} resolves "
+            f"{slug!r} to {res.song_dir}, which holds no song"
+        )
+    elif res.source in (SOURCE_MARKER_ABOVE, SOURCE_MARKER_BELOW):
+        assert res.workspace is not None
+        root = res.workspace.root
+        known = _sibling_slugs(res.workspace)
+        lead = (
+            f"the workspace at {root} (marker {root / MARKER_FILENAME}) has no "
+            f"song {slug!r}"
+        )
+        if known:
+            lead += f" — songs it does have: {', '.join(known)}"
+    else:
+        lead = (
+            f"no {MARKER_FILENAME} workspace marker was found at or above "
+            f"{where}, so {slug!r} fell back to the legacy "
+            f"{_LEGACY_SONGS_ROOT}/{slug} path (which holds no song)"
+        )
+        if res.ambiguous_below:
+            roots = ", ".join(str(w.root) for w in res.ambiguous_below)
+            lead += (
+                f"; {len(res.ambiguous_below)} workspaces were found below "
+                f"{where} ({roots}) and none was chosen because the choice is "
+                f"ambiguous"
+            )
+
+    if elsewhere:
+        found = ", ".join(str(p) for p in elsewhere)
+        return (
+            f"{lead}. {slug!r} IS built at {found} — that workspace is not the "
+            f"one this process resolves. Do NOT rebuild it: run from inside "
+            f"that workspace, or set ${ENV_SONGS_ROOT} to the directory holding "
+            f"the song dirs. (See .prawduct/artifacts/project-root-contract.md.)"
+        )
+    return (
+        f"{lead}. If {slug!r} exists in a workspace elsewhere, run from inside "
+        f"it or set ${ENV_SONGS_ROOT} to the directory holding the song dirs; "
+        f"if it genuinely doesn't exist yet, `python3 {res.song_dir}/build.py "
+        f"--reset` creates it."
+    )
+
+
+def _sibling_slugs(ws: Workspace, *, limit: int = 12) -> list[str]:
+    """Song slugs already present in ``ws`` — the "did you mean" list."""
+    if ws.layout == LAYOUT_SONG:
+        return [ws.slug] if ws.slug else []
+    root = ws.root / ws.songs_root
+    try:
+        names = sorted(
+            p.name for p in root.iterdir()
+            if p.is_dir() and not p.name.startswith(".") and _looks_built(p)
+        )
+    except OSError:
+        return []
+    return names[:limit]

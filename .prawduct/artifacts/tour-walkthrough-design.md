@@ -84,13 +84,15 @@ between the three is the standing risk, and link-don't-summarize is the control.
 discovery (precedence step 3 of the root contract's resolution rules) finds it, and
 per-branch DB naming probes the containing repo's branch as usual.
 
-**With one caveat verified against the resolver, not assumed:** `find_workspace()` walks
-up from `CLAUDE_PROJECT_DIR` / cwd / an explicit `start=` — *not* from the song
-directory. Since `examples/hallucinote.toml` is a descendant of the repo root, a session
-rooted at the repo root never sees it and silently falls back to the legacy
-`songs/<slug>`. The marker resolves when the cwd is inside `examples/` or when the start
-directory is named explicitly, which is what a CI build must do. See
-[`project-root-contract.md`](project-root-contract.md) → *Bounded exception*.
+**The caveat this once carried has been fixed, not worked around.** `find_workspace()`
+walks up from `CLAUDE_PROJECT_DIR` / cwd / an explicit `start=` — *not* from the song
+directory — so a session rooted at the repo root used to walk straight past
+`examples/hallucinote.toml` and fall silently back to the legacy `songs/<slug>`. That
+was not a caveat to live with: on 2026-08-07 it sent a render's ~290 MB of WAVs into a
+phantom `songs/angle-of-the-light/` and made analysis report a built song unbuilt.
+Resolution now descends (precedence step 4) and the residual failure is loud. See
+[`project-root-contract.md`](project-root-contract.md) → *Bounded exception* and
+*Resolution contract*.
 
 **This departs from the framework⇄songs split** the root contract established, where
 songs live in a separate workspace repo. The departure is deliberate and owner-chosen,

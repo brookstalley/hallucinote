@@ -54,7 +54,28 @@ Record each new session's path in this list as it starts:
 | `9bb2fc6d-5f46-4207-8ff5-20d37682b874` | Beat 1 — the brief, the proposal, the meter decision. **Also all of beats 2–7**: the composition, and the push to Live (115 Ableton calls). |
 | `d29313eb-6e93-44a2-8bb5-3da229b4602d` | No beat. Orientation after a `/clear`; discovered Screen Recording was never granted to the host app, which is why capture had produced nothing. Ends at the restart that grants it. |
 | `5b429604-02ba-493e-9794-fb0db07011fd` | No beat. The restart worked — capture produced its first real PNG. But the same restart dropped `--plugin-dir`, so no `hallucinote-mcp` server was attached and the push could not run. Ends at a second relaunch. |
+| `2b5ecf5f-48ff-4320-89ca-e6f2ace62c56` | No beat, but the first **reproduction**: pushed the song into an empty Live set from scratch, which halted at the devices phase and exposed a real loader defect (see below). Also settled the Pack-content question with filesystem evidence. Ends waiting on a Live relaunch. |
 | _(next)_ | Beats 8–9 — the mix conversation and the iterate A/B, neither of which has happened yet |
+
+### What the from-scratch push found
+
+Worth keeping because it is the strongest evidence so far that the
+reproducibility claim is being *tested* rather than asserted.
+
+Every prior push went into a set that already held the song's devices, and the
+devices phase diff-reconciles — so it skipped the loads instead of performing
+them. The first push into an **empty** set had to resolve each captured
+`browser_path` for real, and one did not resolve: `Kit-BritishVintage.adg` was
+refused as ambiguous because Live ships the kit beside `MPE
+Kit-BritishVintage.adg`, whose name contains it. Fixed at the root in
+`_browser_path_to_query` (substring → exact); the loader had been contradicting
+the contract its own tests described in prose.
+
+The lesson generalizes past this one preset: **a push into a set that already
+matches proves nothing about reproduction.** If the tour claims a reader can
+rebuild the song, the only check that backs the claim is a push into an empty
+set — which is now also the check that produces the beat-7 "session filling in"
+screenshot, so the two obligations happen to want the same run.
 
 Two consecutive no-beat sessions is itself worth a line in the walkthrough, if D1
 wants it: the environment cost two restarts before a single note could be heard,

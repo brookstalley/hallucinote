@@ -63,6 +63,12 @@ def plan_push_time_signature_map(
     `ableton_session(action='set_signature')`). Per-bar meter automation
     is a real MCP gap — `ableton_automation` has no `song_signature`
     target_kind (see hallucinote_mcp/.../guides/gaps.md).
+
+    This is the ONE place that limit is enforced. The DB records the song's
+    true meter map — a within-song meter change is a property of the authored
+    work, and refusing to store it would make the model lie about what the
+    song is. Live is a lossy projection of that model, so the loss is reported
+    here, where the projection happens, rather than pre-empted at the mutator.
     """
     plan = PushPlan()
     rows = Q.get_time_signature_map(conn, song_id)
@@ -91,10 +97,26 @@ def plan_push_time_signature_map(
         )
     non_bar_1 = [r for r in rows if float(r["start_bar"]) != 1.0]
     if non_bar_1:
+        meter_1 = (
+            f"{bar_1['numerator']}/{bar_1['denominator']}"
+            if bar_1 is not None else "whatever it already shows"
+        )
         plan.warn(
             f"per-bar meter automation is an MCP gap on Live 12.4 — "
             f"ableton_automation has no 'song_signature' target_kind "
             f"(see hallucinote_mcp/.../guides/gaps.md); "
-            f"{len(non_bar_1)} non-bar-1 time_signature_map rows skipped"
+            f"{len(non_bar_1)} non-bar-1 time_signature_map rows skipped. "
+            f"The DB still holds the song's true meter — this is a "
+            f"projection loss, not a lost decision. Live's ruler will read "
+            f"{meter_1} for the whole song, so the felt meter has to live in "
+            f"note placement and accent."
+        )
+        plan.warn(
+            "a non-bar-1 meter map is authored, and the two bar->beat "
+            "translations in this codebase now disagree: push resolves bar "
+            "positions through the meter map, while hallucinote.arrangement "
+            "accumulates whole bars against one uniform beats_per_bar. Check "
+            "that clip and section positions written by build.py were "
+            "computed the same way push reads them."
         )
     return plan

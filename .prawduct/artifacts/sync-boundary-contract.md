@@ -163,8 +163,14 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
   non-bar-1 rows skipped with warn (LOM gap — no per-bar tempo automation).
   Per-call failure → boundary halt. Ack-only key `tempo_point:`.
 
-### 2. `time_signature_map` (`push/tempo.py:54-100`)
+### 2. `time_signature_map` (`push/tempo.py:54-122`)
 - Symmetric with tempo_map (`time_signature_point:` ack-only; same LOM gap warn).
+- **This phase is where the meter reach limit is enforced, and nowhere else.**
+  The DB records the song's true meter map (within-song changes included); this
+  planner pushes the bar-1 row, skips the rest, and warns both that Live's ruler
+  will show the bar-1 meter for the whole song and that a non-bar-1 map makes the
+  arrangement layer's uniform `beats_per_bar` bar math disagree with push's
+  meter-aware translation.
 
 ### 3. `tracks` (`push/tracks.py:12-73`)
 - **Assumes:** link rows are truthful (gate-validated) — emits `create` only for

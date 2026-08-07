@@ -404,7 +404,7 @@ Anti-pattern: a `/hallucinote:clip-humanize` pass run after composition to "add 
 
 ### Human breathing: the performance profile (phase 2b)
 
-The `feel` dict above is a **deterministic** offset — a constant shift per within-bar position. That is the *generative* half of feel, and on its own it reads **mechanical** to the performance lens: a precisely-shifted grid is still a machine (tightness, not lateness, is the mechanical signal). The missing half — the one the research names as decisive ([Hennig 2011](../.prawduct/artifacts/performance-model.md#references)) — is a small, additive, **1/f-correlated** breathing layer: structured deviation, *never* white-noise jitter. That is what separates *human* from both *mechanical* and *sloppy*, and it's a **measurable property of structure, not magnitude**.
+The `feel` dict above is a **deterministic** offset — a constant shift per within-bar position. That is the *generative* half of feel, and on its own it reads **mechanical** to the performance lens: a precisely-shifted grid is still a machine (tightness, not lateness, is the mechanical signal). The missing half — the one the research names as decisive ([Hennig 2011](../.prawduct/artifacts/performance-model.md#9-references)) — is a small, additive, **1/f-correlated** breathing layer: structured deviation, *never* white-noise jitter. That is what separates *human* from both *mechanical* and *sloppy*, and it's a **measurable property of structure, not magnitude**.
 
 Author it by declaring a `PerformanceProfile` and realizing a finished part through it (ruler-not-stamp: you declare the *what*, the layer computes the per-note *how*):
 
@@ -529,13 +529,15 @@ For non-4/4 sections:
 - Use the library generators with `beats_per_bar=N` if the within-bar 4/4 shape is musically acceptable for the section (e.g. 6/4 — a longer bar with the same downbeat-snare-snare frame).
 - Hand-author or compose a meter-specific primitive when the within-bar shape matters (e.g. 7/8 with grouping 2+2+3). The `odd-meter-experimental/build.py` example is a worked example for 7/8 + polyrhythm authoring.
 - Name `BEATS_PER_BAR_7_8 = 3.5` (etc.) as a constant in `build.py` and pass it through.
-- Use the time-signature map (`M.add_time_signature_point`) for **the global meter** — one row at `start_bar=1.0`.
+- Use the time-signature map (`M.add_time_signature_point`) to record **the song's true meter**, including within-song changes: one row per meter change, at the bar it starts on. `start_bar` is a float and rows below 1.0 are refused (bars are 1-based), but there is no ceiling and no one-row limit.
 
-> **A within-song meter change cannot be recorded today.** `add_time_signature_point` raises for *any* `start_bar > 1.0`, per-section changes included: Live 12.4's MCP has no `song_signature` automation target, so the ratchet can't reach Live, and the refusal is dual-layered at the mutator and the planner. (Earlier revisions of this page said per-section changes were supported. They are not — the code refuses them.)
+> **The DB records the meter; Live shows a flat ruler.** Live 12.4's MCP has no `song_signature` automation target, so only the bar-1 row reaches Live — `plan_push_time_signature_map` pushes it and warns loudly that the rest were skipped. That warn is the one place the limit is stated: the song's meter is a property of the authored work, Live's ability to render it is a materialization detail, and the projection is where a projection loss belongs. Author the true meter map regardless.
 >
-> **This is a projection limitation, not a modelling one.** The song's meter is a property of the authored work; Live's ability to represent it is a materialization detail. Author the true meter into the brief regardless, mark the row open with **the engine** as its owner (see [*A stage may not emit an unresolved gap*](#a-stage-may-not-emit-an-unresolved-gap)), and realize the meter *as felt groove* — bar-scaled generators via `beats_per_bar`, plus hand-authored within-bar accent groupings — over the single global ruler. Never present that workaround to the user as a creative option; it isn't one.
+> **Realize the meter as felt groove, because the ruler won't carry it.** Bar-scaled generators via `beats_per_bar`, plus hand-authored within-bar accent groupings. Never present that to the user as a creative option — it isn't one; it's what the renderer forces.
 >
-> **Who owns moving this.** `TMP-7B3X` is the source-of-truth half — lift the policy refusal out of the mutator so the DB can record what the song *is*. `TMP-4J6Q` is the projection half — how a declared meter map actually materializes in Live. Neither closes the other.
+> **Two bar rulers, and they diverge once you author a change.** Push translates bar positions through the meter map (`_split_bar` / `_position_bar_to_beats`), while `hallucinote.arrangement` accumulates whole bars against one uniform `beats_per_bar` and never reads the map. With a non-bar-1 row present the two disagree, and push emits a second warn saying so. Until that is closed, compute `build.py`'s clip and section positions the same way push reads them — or keep the declared map and the arrangement's `beats_per_bar` consistent with each other.
+>
+> **What is still open.** `TMP-4J6Q` is the projection half — how a declared meter map actually materializes in Live (per-bar arrangement clips, or the per-scene mechanism `TMP-5K1R` proposes). `ARR-4M3T` is the authoring half — a meter-aware `Arrangement.plan()` and meter-aware read-side lenses. Neither closes the other.
 
 ---
 
@@ -550,6 +552,8 @@ What that means when you author one:
 - **Fingerprint-gated.** Unchanged arcs are skipped (and listed as skipped) — a data-safety feature, not just a speed one: an arc you didn't change is never re-recorded, so a hand edit to that lane survives. An edited arc re-performs (in the next pass, alongside any other changed arcs), replacing its prior recording over the same span.
 - **Write-only.** Recorded arrangement automation has no LOM read surface. Push verifies `automation_state == 1` per arc; shape verification is your ears/eyes (or a `.als` dump).
 - **Nested-rack device parameters are unreachable** on this route (as on session clips) — the planner warns and skips.
+
+---
 
 ## Audio-track + song-spanning envelopes (ENV-9P4T: now performed)
 

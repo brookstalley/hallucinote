@@ -20,6 +20,77 @@
      pre-bumping a version (against `feedback_no_premature_version_bump`) or
      mislabeling in-flight work as an already-shipped version. -->
 
+## 2026-08-07 — Doc deep-links: the parity check now covers every link, not one file
+
+<!-- prawduct: type=bugfix | scope=docs-hygiene | status=shipped | release=unreleased -->
+
+`test_every_song_workflow_deeplink_resolves` only validated links whose target
+was `song-workflow.md`, so a heading renamed in a design artifact left two
+backlog `refs:` pointing at nothing and the suite stayed green. It is now
+`test_every_markdown_deeplink_resolves` over every relative `*.md#anchor` link in
+the repo, plus a sibling for the bare `path/to/doc.md#anchor` form the backlog's
+`refs:` field uses (no link syntax, so the first check cannot see it).
+
+The slugger was also wrong in a way that would have hidden a real break: it
+collapsed whitespace runs, but GitHub emits one hyphen per space. Dropping an
+em-dash from `Foo — bar` leaves two spaces and GitHub's anchor is `foo--bar`, so
+the old helper both rejected correct links and would have accepted links GitHub
+resolves to nothing.
+
+Four dangling references fixed: two backlog `refs:` anchors, `docs/faq.md` →
+`README.md#requirements` (no such heading), and
+`docs/song-authoring-conventions.md` → `performance-model.md#references` (the
+heading is numbered). Also corrected the README's claim that a mid-song
+tempo/meter change is refused at the call site — it is authored fine and warned
+about at push — and restored a missing `---` rule in the conventions page.
+
+## 2026-08-07 — Meter is a projection concern: the DB records what the song IS
+
+<!-- prawduct: type=bugfix | chunks=01 | scope=tmp-7b3x | status=shipped | release=unreleased -->
+
+`add_time_signature_point` and `update_time_signature_point` refused any
+`start_bar > 1.0`. The stated reason was a Live limitation — Live 12.4's MCP has
+no `song_signature` automation target_kind, so a within-song meter change cannot
+reach Live. The consequence was that **the DB could not record that a song is in
+7/4**, because of what the renderer cannot draw.
+
+**The ruling, from the owner:** *the song itself is 7/4 or whatever; if we have
+to represent it as 1/4 or 1/8 in Live, fine.* A song's meter is a property of the
+authored work; Live's ability to render it is a materialization detail. So the
+guard was in the wrong layer — the same lesson the arrangement redesign already
+applied: the DB holds the authored truth, Live is a projection of it, and
+projection limits are enforced where the projection happens.
+
+**What changed.** Both refusals are deleted; `_require_bar_floor` (bars are
+1-based) stays, and so does the schema `CHECK (start_bar >= 1.0)`. Nothing else
+had to move: `start_bar` was already a float, and every consumer of the map —
+`_split_bar`, `_position_bar_to_beats`, arrangement verify, the analysis
+handlers — already reads multi-point maps through meter-aware geometry. The
+planner tests had been reaching past the mutator with a raw INSERT to prove it;
+that helper is retired.
+
+**Where the limit is stated now.** `plan_push_time_signature_map` pushes the
+bar-1 row and warns about the rest — as before, but the warn now says what is
+lost and what is not: Live's ruler will read the bar-1 meter for the whole song,
+the DB still holds the true map, and the felt meter has to live in note placement
+and accent.
+
+**A hazard the guard had been masking, now surfaced rather than inherited.** Two
+bar rulers exist in this codebase: push translates bar positions through the
+meter map, while `hallucinote.arrangement` accumulates whole bars against one
+uniform `beats_per_bar` and never reads the map. They agree only while the map is
+bar-1-only — which the guard had guaranteed. Push now emits a second warn when a
+non-bar-1 row is present. Closing it is `ARR-4M3T`'s (a meter-aware
+`Arrangement.plan()` and meter-aware lenses); getting a declared map to actually
+materialize in Live is `TMP-4J6Q`'s. Neither closes the other, and this change
+closes neither — it stops the model lying about what the song is.
+
+Unblocks the tour demo song's v2 take, whose chorus is in true 7/4, and makes
+`/song-new`'s meter exit criterion satisfiable: the meter row now resolves
+DECIDED instead of UNDECIDED-owned-by-the-engine.
+
+(`backlog TMP-7B3X`)
+
 ## 2026-08-07 — `/song-brief`: a stage may not emit an unresolved gap
 
 <!-- prawduct: type=feature | scope=song-lifecycle | status=shipped | release=unreleased -->

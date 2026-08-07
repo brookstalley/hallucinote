@@ -1,12 +1,12 @@
 """Doc-drift lock for the song lifecycle map and its stage exit criteria.
 
-The lifecycle is enumerated across seven surfaces (README, two docs pages, the
-`/song-workflow` skill, the MCP primer string, the MCP getting-started resource,
-and `docs/skills.md`), and nine skills deep-link into one anchor for the
-per-stage definitions of done. When stage 0 (`/song-brief`) was added, three of
-those surfaces kept the pre-brief arc and one skill contradicted itself inside a
-single file — the same multi-site drift `test_docs_pipeline_parity.py` exists to
-catch for the push pipeline.
+The lifecycle is enumerated across every surface in `_LIFECYCLE_SURFACES` below
+— CLAUDE.md, the README, three docs pages, the `/song-workflow` skill, the MCP
+primer string and the MCP getting-started resource — and skills across the repo
+deep-link into one anchor for the per-stage definitions of done. When stage 0
+(`/song-brief`) was added, three of those surfaces kept the pre-brief arc and one
+skill contradicted itself inside a single file — the same multi-site drift
+`test_docs_pipeline_parity.py` exists to catch for the push pipeline.
 
 The exit-criteria table also shipped in TWO places at once and had already
 diverged on arrival, which is what the repo's "link, don't summarize" learning
@@ -61,11 +61,18 @@ _STAGES = (
 
 
 def _github_anchor(heading_text: str) -> str:
-    """GitHub's heading->anchor slug: lowercase, drop punctuation, spaces to
-    hyphens. Good enough for the plain ASCII headings this repo uses."""
+    """GitHub's heading->anchor slug: lowercase, drop punctuation, then one
+    hyphen per remaining space.
+
+    Each space maps to its own hyphen — runs are NOT collapsed. That matters
+    here because dropping an em-dash from `Foo — bar` leaves two spaces, and
+    GitHub's real slug is `foo--bar`. Collapsing them produced `foo-bar`, which
+    marked a correct link as dangling and, worse, would have accepted a link
+    that GitHub resolves to nothing.
+    """
     slug = heading_text.strip().lower()
     slug = re.sub(r"[^\w\s-]", "", slug)
-    return re.sub(r"\s+", "-", slug)
+    return re.sub(r"\s", "-", slug)
 
 
 def _anchors_in(doc: Path) -> set[str]:
@@ -95,16 +102,62 @@ def test_song_workflow_doc_carries_both_linked_anchors():
         )
 
 
-def test_every_song_workflow_deeplink_resolves():
-    """Any `song-workflow.md#some-anchor` link anywhere in the repo must hit a
-    real heading."""
-    anchors = _anchors_in(_WORKFLOW_DOC)
+def test_every_markdown_deeplink_resolves():
+    """Every relative `some-doc.md#anchor` link in the repo must hit a real
+    heading in a real file.
+
+    Scoped to `song-workflow.md` originally, which is why a renamed heading in
+    a design artifact sat dangling: the link that pointed at it lived in the
+    backlog and named a different file. A cross-file rename breaks links
+    wherever they happen to live, so the check has to be repo-wide.
+    """
+    cache: dict[Path, set[str]] = {}
     broken: list[str] = []
     for md in _markdown_files():
-        for m in re.finditer(r"song-workflow\.md#([\w-]+)", md.read_text("utf-8")):
-            if m.group(1) not in anchors:
-                broken.append(f"{md.relative_to(_REPO)} -> #{m.group(1)}")
-    assert not broken, "dangling song-workflow.md anchors: " + "; ".join(broken)
+        for m in re.finditer(
+            r"\]\((?!https?:)([^)\s]+\.md)#([\w-]+)\)", md.read_text("utf-8")
+        ):
+            rel, anchor = m.group(1), m.group(2)
+            target = (md.parent / rel).resolve()
+            here = md.relative_to(_REPO)
+            if not target.exists():
+                broken.append(f"{here} -> {rel} (no such file)")
+                continue
+            if target not in cache:
+                cache[target] = _anchors_in(target)
+            if anchor not in cache[target]:
+                broken.append(f"{here} -> {rel}#{anchor}")
+    assert not broken, "dangling markdown anchors: " + "; ".join(broken)
+
+
+# Bare repo-root-relative doc references — the shape the backlog's `refs:` field
+# uses. They carry no link syntax, so the check above cannot see them, and both
+# of the dangling anchors this test was widened for lived in exactly this form.
+_BARE_DOC_REF = re.compile(
+    r"(?<![(\w/])"
+    r"((?:\.prawduct|docs|skills|examples)/[\w./-]+\.md)"
+    r"#([\w-]+)"
+)
+
+
+def test_every_bare_doc_reference_resolves():
+    """A `path/to/doc.md#anchor` written as bare text — the backlog's `refs:`
+    idiom — must resolve too."""
+    cache: dict[Path, set[str]] = {}
+    broken: list[str] = []
+    for md in _markdown_files():
+        for m in _BARE_DOC_REF.finditer(md.read_text("utf-8")):
+            rel, anchor = m.group(1), m.group(2)
+            target = _REPO / rel
+            here = md.relative_to(_REPO)
+            if not target.exists():
+                broken.append(f"{here} -> {rel} (no such file)")
+                continue
+            if target not in cache:
+                cache[target] = _anchors_in(target)
+            if anchor not in cache[target]:
+                broken.append(f"{here} -> {rel}#{anchor}")
+    assert not broken, "dangling bare doc references: " + "; ".join(broken)
 
 
 def test_every_lifecycle_surface_names_the_brief_stage():

@@ -22,8 +22,8 @@ Hallucinote itself, yes — see [`CONTRIBUTING.md`](../CONTRIBUTING.md).
 ## Does it work on Windows?
 
 Yes — macOS and Windows, with **Ableton Live 12**. On Windows, if `python` opens
-the Microsoft Store, use `py -3` everywhere. See [README → Requirements and
-Install](../README.md#requirements).
+the Microsoft Store, use `py -3` everywhere. See [README →
+Install](../README.md#install).
 
 ## Can I mix the song inside Hallucinote?
 

@@ -298,13 +298,14 @@ the meter genuinely **is** (*"full 7-rhythm, or 4-then-3?"* is a real musical
 question) and never offer "we'll represent it as a global 1/4" as a creative
 option.
 
-**Known limitation:** `M.add_time_signature_point` currently refuses any
-`start_bar > 1.0` (Live 12.4's MCP has no `song_signature` automation target), so
-a within-song meter change cannot yet be recorded in the DB. Author the true
-meter into the brief regardless and mark the row open with **the engine** as its
-owner. The criterion is the requirement; the code is what has to move — tracked
-as **TMP-7B3X** (lift the refusal out of the source of truth) and **TMP-4J6Q**
-(how a declared meter map materializes in Live).
+The DB records that meter, within-song changes included — one
+`M.add_time_signature_point` row per change. **What is still open** is the
+projection: only the bar-1 row reaches Live (Live 12.4's MCP has no
+`song_signature` automation target), so Live's ruler shows one meter for the
+whole song and push warns about the rest. The meter has to be *felt* — bar-scaled
+generators, within-bar accent groupings — not read off the grid. Tracked as
+**TMP-4J6Q** (how a declared meter map materializes in Live) and **ARR-4M3T** (a
+meter-aware `Arrangement.plan()` and lenses).
 
 → Full design, including the worked examples and what is deliberately not built:
 [elicitation-and-stage-exit-criteria.md](../.prawduct/artifacts/elicitation-and-stage-exit-criteria.md)

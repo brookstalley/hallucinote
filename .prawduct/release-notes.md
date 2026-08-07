@@ -5,6 +5,16 @@
      be overwritten on next regen. See change-log.md for full per-release
      bodies; this file is a digest. -->
 
+## unreleased
+
+**Entry:** 2026-08-06 — The tour's capture tooling, built against probes that kept saying no
+
+**Chunks shipped:** A1, A2, A3, A4
+
+**Scope:** tour
+
+See `.prawduct/change-log.md` for full details.
+
 ## v1.7.2
 
 **Entry:** 2026-08-06 — Internal bug reports leave the public record; the backlog id becomes their provenance

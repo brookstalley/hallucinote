@@ -20,6 +20,84 @@
      pre-bumping a version (against `feedback_no_premature_version_bump`) or
      mislabeling in-flight work as an already-shipped version. -->
 
+## 2026-08-06 — The tour's capture tooling, built against probes that kept saying no
+
+<!-- prawduct: type=feature | chunks=A2,A3,A4 | scope=tour | status=shipped | release=unreleased -->
+
+Three chunks of Phase A tooling, and all three had the mechanism their plan specified
+falsified by the verify-api probe that plan required first. That is the whole story of
+this batch, and the reason the step is not ceremony.
+
+**A3 asked GitHub whether it renders an inline `<video>` from a repo path.** It does
+not, and the reason is stronger than "the relative src won't resolve": the sanitizer
+removes the **element**, absolute `raw.githubusercontent` src included, and
+`![clip](x.mp4)` degrades to a broken `<img>`. Only a poster still linking to the mp4
+survives. So the hero is a poster — which is what C1 now knows to capture, before
+spending the shoot rather than after.
+
+That verdict then propagated backwards into A3's own other deliverable. The `showwaves`
+video existed to make audio "skimmable inline rather than a download link"; once nothing
+renders inline, a waveform video is a megabytes-large download link showing a moving
+line. An 8 KB `showwavespic` still renders inline and shows the whole arrangement's
+dynamics, so it replaced the video. Killing a specified deliverable was only visible by
+re-reading *why* it was specified.
+
+**A2's mechanism did not exist at all.** Ableton Live publishes zero accessibility
+windows — `count of windows` is 0, `AXWindows` empty — and its own AppleScript
+dictionary blocks 120 seconds before failing with -1712. No AppleScript path yields a
+window id. `CGWindowListCopyWindowInfo` through `ctypes`, serialised via
+`CFPropertyListCreateData` for `plistlib`, does, and adds no dependency. A2's capture
+remains blocked on Screen Recording permission, which only the operator can grant; the
+tool now preflights it and names the host app, because the native failure reads as a bad
+window id.
+
+**A4** is theme-*proof* rather than theme-lucky: `prefers-color-scheme` follows the OS
+while GitHub's toggle is its own, so every label sits on an opaque card and a
+disagreement changes only the gaps. Verified by rendering all four combinations.
+
+The cumulative Critic returned 0 blocking, 9 warning, 9 note; fifteen were fixed in one
+commit. The most valuable found a failure no other guard could see: the capture
+manifest's `status`/`analyzer_not_terminal`/`terminal` flags were ignored, and an
+incomplete render yields a *short but valid* master, so bounds, duration and size checks
+all agree with each other and are wrong together. It also found the publication gate had
+no credential rule, and that A2/A3 left stale output in place on failure — the exact
+trap A1 closes.
+
+One mistake is worth recording because it generalises. A comment here claimed an
+out-of-range ffmpeg seek writes a zero-length file, and a guard was built on it. ffmpeg
+exits 0, with empty stderr, writing 428 bytes of valid mp3 header — sailing through that
+exact check. When a guard's premise is a claim about a tool's behaviour, the claim is a
+test, not a comment.
+
+## 2026-08-06 — Session transcripts become publishable, behind a gate that fails closed
+
+<!-- prawduct: type=feature | chunks=A1 | scope=tour | status=shipped | release=unreleased -->
+
+`tools/tour_transcript.py` renders a real Claude Code session JSONL into a markdown
+excerpt fit to publish, so the tour quotes genuine agent output instead of a hand-written
+reconstruction — which is the first thing a skeptical reader catches — and can be
+regenerated after a behaviour change instead of rotting.
+
+The renderer is mostly a disclosure gate. A transcript carries absolute `/Users/<name>/…`
+paths in three encodings, hook output, and whole memory files injected as
+`<system-reminder>` blocks. So record types are an allowlist where an unknown type
+*raises* rather than being skipped, only `text` blocks survive, tool calls render as
+one-liners rather than full inputs, and the finished document is re-scanned for every
+forbidden pattern before a byte is written.
+
+Reality validated the fail-closed stance three separate times, each on a real session and
+none on the fixture: an unseen `queue-operation` record type, and two gates keyed on the
+*marker* rather than on the thing that leaks. Re-keying them onto the account segment
+closed a real hole in the other direction — `/Users/alice` with no trailing slash had
+been escaping redaction entirely.
+
+Three independent Critic rounds then found three leak paths in a module whose entire
+purpose is not leaking, including dash-encoded home paths, which the chunk's own
+`grep -c '/Users/'` acceptance check had certified clean. The generalisable rule, now a
+comment in the code because it outlives this work: **a gate that shares its patterns with
+the mechanism it guards cannot catch that mechanism's blind spot.** The fix was not a
+better pattern but a rule keyed on the redactor's *output shape*.
+
 ## 2026-08-06 — Internal bug reports leave the public record; the backlog id becomes their provenance
 
 <!-- prawduct: type=chore | chunks=C3 | scope=pub-ready | status=shipped | release=v1.7.2 -->

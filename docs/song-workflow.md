@@ -302,7 +302,9 @@ option.
 `start_bar > 1.0` (Live 12.4's MCP has no `song_signature` automation target), so
 a within-song meter change cannot yet be recorded in the DB. Author the true
 meter into the brief regardless and mark the row open with **the engine** as its
-owner. The criterion is the requirement; the code is what has to move.
+owner. The criterion is the requirement; the code is what has to move — tracked
+as **TMP-7B3X** (lift the refusal out of the source of truth) and **TMP-4J6Q**
+(how a declared meter map materializes in Live).
 
 → Full design, including the worked examples and what is deliberately not built:
 [elicitation-and-stage-exit-criteria.md](../.prawduct/artifacts/elicitation-and-stage-exit-criteria.md)

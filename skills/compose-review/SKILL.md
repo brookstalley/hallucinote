@@ -284,13 +284,14 @@ read you have.
   stage**. Silently inheriting an open row is how it becomes invisible.
 - Nothing in the song is DESCRIBED-BUT-UNBUILT — apply the docstring test from
   `/compose-part` across the whole song, not just the part you last touched.
-
-**How to run those last two checks:** `/song-brief <slug>` sweeps an *existing*
-song rather than a prompt — it reads `annotations/`, `decisions/` and `build.py`
-and reports which dimensions are still UNDECIDED or DESCRIBED-BUT-UNBUILT. That
-retrospective mode exists for exactly this checkpoint; reaching for it here is
-what keeps the brief a live document instead of an origin story nobody revisits.
 - Kept bright-line moves are filed in `decisions/`; reverted ones in `attempts/`.
+
+**How to run the brief-row and DESCRIBED-BUT-UNBUILT checks:** `/song-brief
+<slug>` sweeps an *existing* song rather than a prompt — it reads `annotations/`,
+`decisions/` and `build.py` and reports which dimensions are still UNDECIDED or
+DESCRIBED-BUT-UNBUILT. That retrospective mode exists for exactly this
+checkpoint; reaching for it here is what keeps the brief a live document instead
+of an origin story nobody revisits.
 
 Full model: [docs/song-workflow.md](../../docs/song-workflow.md#stage-exit-criteria).
 

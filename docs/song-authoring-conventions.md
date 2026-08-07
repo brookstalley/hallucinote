@@ -532,6 +532,8 @@ For non-4/4 sections:
 > **A within-song meter change cannot be recorded today.** `add_time_signature_point` raises for *any* `start_bar > 1.0`, per-section changes included: Live 12.4's MCP has no `song_signature` automation target, so the ratchet can't reach Live, and the refusal is dual-layered at the mutator and the planner. (Earlier revisions of this page said per-section changes were supported. They are not — the code refuses them.)
 >
 > **This is a projection limitation, not a modelling one.** The song's meter is a property of the authored work; Live's ability to represent it is a materialization detail. Author the true meter into the brief regardless, mark the row open with **the engine** as its owner (see [*A stage may not emit an unresolved gap*](#a-stage-may-not-emit-an-unresolved-gap)), and realize the meter *as felt groove* — bar-scaled generators via `beats_per_bar`, plus hand-authored within-bar accent groupings — over the single global ruler. Never present that workaround to the user as a creative option; it isn't one.
+>
+> **Who owns moving this.** `TMP-7B3X` is the source-of-truth half — lift the policy refusal out of the mutator so the DB can record what the song *is*. `TMP-4J6Q` is the projection half — how a declared meter map actually materializes in Live. Neither closes the other.
 
 ---
 

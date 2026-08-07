@@ -387,6 +387,14 @@ itself and the invocation change becomes the cheaper option.
   Do not paste the first take's brief back in: the brief is what the elicitation
   pass must PRODUCE, and skipping it is the defect the next take exists to close.
 
+  **Three places still describe the retired song in the present tense, and the
+  next take must fix them — recorded here so a deferral does not become a drop:**
+  `pyproject.toml`'s `testpaths` comment (it explains the song's tests, which no
+  longer exist; `examples/` currently collects nothing, which is correct but
+  undescribed), `project-root-contract.md`'s bounded-exception paragraph, and
+  backlog item `TMP-4J6Q`, which quotes `examples/angle-of-the-light/build.py`
+  by line number. None is wrong about intent; all three are stale about fact.
+
 - **Depends on:** Chunk A1 (the transcript renderer must exist before the session that
   produces the transcript), A2, A3
 - **Artifacts consumed:** `tour-walkthrough-design.md` §Where the demo song lives + §Sequencing, `project-root-contract.md` §Bounded exception, `song-conventions.md`

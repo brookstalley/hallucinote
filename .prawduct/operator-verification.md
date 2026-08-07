@@ -1499,3 +1499,47 @@ Checks (on the pushed branch's rendered page, not a local preview):
 4. **Theme mismatch.** Set the OS to one scheme and GitHub to the other. The
    diagram may look inverted relative to the page — that is expected and
    accepted — but every label must remain readable.
+
+---
+
+## 2026-08-07 — TOUR B1: the engine/MCP fix batch (feat/tour-walkthrough)
+
+Visual change: no. **Fingerprint flip: YES.**
+
+This is the ship instruction for the bundle. Six files inside
+`_FINGERPRINT_PATHS` changed (`schema.py`, `dispatcher.py`, `actions/device.py`,
+`handlers/browser.py`, `handlers/device.py`, `remote_script/dispatch.py`), so the
+Remote Script vendored into Live's User Library is **stale until re-vendored**.
+Until the handshake below, Live keeps running the old code and none of the
+Live-side fixes take effect — silently, because a stale script still answers.
+
+The `run_on_main` concurrency rewrite is the load-bearing one: its admission
+control and per-bout timeouts are Live-side, and its thresholds can only be
+confirmed against a real Live. It now has 26 unit tests against an injected
+scheduler, but those prove the state machine, not the deployment.
+
+Checks:
+
+1. **Re-vendor and restart.** Run `/ableton-mcp-install`, then **quit Ableton
+   Live completely and reopen it** — Live caches Control Surface modules at
+   launch, so a running instance keeps the old script. Then `/mcp` to respawn the
+   server. Confirm `ableton://server/info`'s `fingerprint` matches the vendored
+   copy (`preflight` reports `matches_mcp_server: true`).
+2. **The browser-path fix takes effect.** Push a song whose snapshot names a
+   preset that is a strict prefix of a sibling — Live's `Kit-BritishVintage.adg`
+   beside `MPE Kit-BritishVintage.adg` is the case that broke. The devices phase
+   must load the captured kit rather than refusing the pair as ambiguous.
+3. **A slow Live call no longer hangs the DAW.** Start a long operation (a large
+   `devices` push), and while it runs issue a second call from another surface.
+   The second must come back as a REFUSAL naming the incumbent operation and its
+   elapsed time — not block, and not stack behind it.
+4. **The do-not-retry message is now reachable.** This is the one that was
+   provably unreachable before: every client read timeout equalled its Live-side
+   ceiling while admission burned up to 2 s first, so the client always gave up
+   first and the agent saw a bare socket timeout. Force a bounded operation past
+   its `main_thread_timeout` and confirm the reply is Live's "IT IS STILL RUNNING
+   — Do not retry immediately", not `FrameError: socket read timed out`.
+5. **Captures land in the right workspace.** With a song in a workspace nested
+   below the session root, `ableton_render` must write into that workspace's
+   `captures/`, NOT into a `songs/<slug>/` tree at the repo root. The old
+   behaviour created that tree silently and stranded ~290 MB in it.

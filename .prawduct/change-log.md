@@ -22,7 +22,7 @@
 
 ## 2026-08-07 — Six defects the demo song found by actually being rebuilt
 
-<!-- prawduct: type=bugfix | chunks=B1 | scope=tour+push+workspace+db-converger | release=unreleased -->
+<!-- prawduct: type=bugfix | chunks=B1 | scope=tour+push+workspace+db-converger | status=shipped | release=unreleased -->
 
 Building `examples/angle-of-the-light` end to end surfaced six framework defects.
 Every one was found by *reproducing from scratch* — pushing into an empty Live set,
@@ -71,6 +71,22 @@ timeout instead of the one instruction that stops it queueing more work behind
 uncancellable Live operations. The implicit 15/15 default was never checked at all,
 because the test only iterated the explicit entries. Caller ceilings widened; the
 invariant is now asserted strictly.
+
+**The analyzer stopped writing the author's home directory into tracked files.**
+MixReport's `captures_dir` and `compare_to.baseline.ref` were machine-absolute,
+and `.gitignore` policy deliberately TRACKS those reports — so every analysis run
+committed an account name, while `tools/tour_transcript.py` was failing closed
+rather than publish the same strings. One part of the codebase was committing
+what another refused to emit. Both fields now persist as song-relative refs (the
+anchor a reader can rediscover from the artifact alone, and the one that survives
+a song living in a workspace outside the repo); returned values stay absolute,
+because a returned path is one the caller opens. No `schema_version` bump — the
+field name and type are unchanged, and `ensure_comparable` refuses across
+versions, so bumping would make every existing report un-diffable for nothing. An
+already-written absolute report still loads and still works as a `--compare`
+baseline. A repo-wide scan now asserts no tracked file matches the publish gate's
+FORBIDDEN set, importing that set rather than restating it — the drift between
+write side and publish side WAS the defect.
 
 `examples/angle-of-the-light` was RETIRED from the tree in the same batch. It was
 a scouting run: its real output was the six defects above, found by rebuilding it

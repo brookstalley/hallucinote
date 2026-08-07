@@ -33,7 +33,10 @@ document** built from real artifacts captured while that song was authored.
 Each lifecycle stage earns exactly one piece of evidence, chosen for the thing only
 it can show, and **links** to the existing deep doc rather than restating it.
 
-**Evidence budget — hard cap:** 4 screenshots · 1 hero video · 3 audio clips.
+**Evidence budget — hard cap:** 4 screenshots · 1 hero video · 3 audio clips. The
+hero counts as **one** item but ships as **two files** — the mp4 and the poster PNG
+that links to it — because GitHub will not render an inline player (see *Capture
+tooling* item 4). The poster is not one of the four screenshots.
 Everything else is text or code. Every screenshot is a maintenance liability, so
 they are spent only where text cannot carry the point: off-grid MIDI, the full
 arrangement, the session filling in, meters during playback.
@@ -42,7 +45,7 @@ arrangement, the session filling in, meters during playback.
 
 | # | Beat | The one artifact | What only this can show |
 |---|---|---|---|
-| 0 | The result, first | 60–90 s audio + hero video | Lead with the song; everything after is "how" |
+| 0 | The result, first | 60–90 s audio + hero poster → video | Lead with the song; everything after is "how" |
 | 1 | Ideation → intent | Transcript excerpt: the brief, and Claude *proposing* key / central tension back | It does not auto-decide — propose-and-react |
 | 2 | Scaffold + chains | Song directory tree + one instrument-chain listing | A song is a directory; sound design ships as authorship |
 | 3 | Harmony & form | `build.py` excerpt — progression + section list | Harmony is a modeled substrate parts compose *against* |
@@ -107,14 +110,46 @@ hand-staging exercise.
    raises Live → `screencapture -o -l <windowID>` (front window only) → downscale to a
    fixed width. Deterministic framing makes a re-shoot after a UI change a one-liner
    rather than a manual re-composition. macOS-only, which is sufficient.
-3. **`tools/make_demo_media.py` — audio and video encode.** From a render's capture
+3. **`tools/make_demo_media.py` — audio and image encode.** From a render's capture
    directory (per-track + master WAVs already exist): master → mp3 (~1 MB/min), the
-   A/B pair → two clips, and a waveform/spectrum video via ffmpeg `showwaves` so the
-   audio is embeddable and skimmable rather than a download link.
+   A/B pair → two clips, and a waveform **still** per clip via ffmpeg `showwavespic`,
+   so the audio is skimmable rather than an unlabelled download link.
+
+   **A waveform *still*, not the `showwaves` video originally specified.** That was
+   written to make audio "embeddable and skimmable rather than a download link", and
+   item 4's probe removed the premise: GitHub renders no inline player, so a waveform
+   video is a download link too — one that costs megabytes and a click to show a
+   scrolling line. A `showwavespic` PNG *does* render inline, shows the whole
+   arrangement's dynamics at a glance, and is ~8 KB. Each clip therefore ships as an
+   inline waveform image linking to its mp3.
 4. **Hero capture + post.** A two-window take (Claude Code left, Live filling in
-   right) → ffmpeg crop → 4× speed → mp4 + poster PNG. **Verify before building:**
-   GitHub renders `<video>` only for assets served from its own CDN; a relative repo
-   path will not play inline. Known-safe fallback is a poster image linking out.
+   right) → ffmpeg crop → 4× speed → mp4 + poster PNG.
+
+   **Probed 2026-08-06; the hero is a poster still linking out, not an inline
+   player.** GitHub's markdown sanitizer **drops the `<video>` element entirely** —
+   not merely its relative `src`. Rendering the four candidate forms through both
+   `POST /markdown` (`mode=gfm`, repo context) and
+   `GET /repos/{owner}/{repo}/contents/{path}` with `Accept: application/vnd.github.html`
+   gave the same result on both:
+
+   | Form | Rendered as |
+   |---|---|
+   | `<video src="relative.mp4">` | *nothing* — an empty `<p>` |
+   | `<video><source src="…"></video>` with `poster` | *nothing* — element removed |
+   | `<video src="https://raw.githubusercontent.com/…">` | *nothing* — absolute src does not help |
+   | `![clip](clip.mp4)` | `<img src="clip.mp4">` — a **broken image**, worse than no hero |
+   | `[![poster](poster.png)](clip.mp4)` | `<a href="clip.mp4"><img src="poster.png">` ✅ |
+
+   So the fallback is the only form, and it is what C1 captures: a poster PNG
+   wrapped in a link to the committed mp4. The mp4 still ships and still counts
+   against the media budget — a reader gets one click, not zero.
+
+   **The rejected alternative, so it is not re-litigated:** GitHub *does* play video
+   uploaded through its web UI to `github.com/user-attachments/assets/…`. That route
+   is rejected on design grounds rather than rendering grounds — such an asset lives
+   outside the repo, so it cannot be produced by a tool, cannot be re-shot by a
+   re-run, is invisible to the committed-media budget test, and vanishes from a
+   clone. Every one of those is a property this design is buying deliberately.
 5. **Docs-freshness test.** Extend the `markdown_refs` idea: assert every code snippet
    quoted in `tour.md` still appears verbatim in the demo song's `build.py`, and that
    quoted MixReport numbers match the committed report JSON. A worked example that

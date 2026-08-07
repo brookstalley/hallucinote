@@ -229,11 +229,12 @@ reading a render's capture directory layout, which it locates by path convention
   3. `/prawduct:critic` run and blocking findings resolved
   4. Committed and chunk marked `[x]` in Status
 
-### Chunk A3: Media encode — audio clips, waveform video, and the GitHub-video probe
+### Chunk A3: Media encode — audio clips, waveform stills, hero post, and the GitHub-video probe
 
 - **Description:** From a render's capture directory (per-track and master WAVs already
-  exist there): master → mp3, the A/B pair → two clips, and a waveform/spectrum video via
-  ffmpeg `showwaves` so the audio is skimmable inline rather than a download link.
+  exist there): master → mp3, the A/B pair → two time-bounded clips, and a waveform
+  still per clip so the audio is skimmable rather than an unlabelled download link. Plus
+  hero post-production: crop, speed up, and emit an mp4 with its poster PNG.
 
   **The probe gates the design, so it runs first.** The design flags as unverified
   whether GitHub renders `<video>` from a relative repo path; the known-safe fallback is
@@ -241,6 +242,14 @@ reading a render's capture directory layout, which it locates by path convention
   looking at the rendered page — not by recalling how GitHub behaved. The answer decides
   whether the hero is a video or a still, which decides what C1 captures, so guessing
   here costs a re-shoot.
+
+  *(Probe result, 2026-08-06: `<video>` is stripped by GitHub's sanitizer outright —
+  relative and absolute `src` alike — so the hero is a poster PNG linking to the mp4.
+  The verdict and its evidence table are in the design artifact. It also removed the
+  rationale for the `showwaves` **video** originally specified here: that existed to
+  make audio skimmable *inline*, and nothing plays inline, so a `showwavespic` **still**
+  replaces it — it renders inline, shows the whole arrangement's dynamics, and costs
+  ~8 KB against a video's megabytes. The design records the substitution.)*
 - **Depends on:** none (independent of A1, A2)
 - **Foreign API:** ffmpeg
 - **Artifacts consumed:** `tour-walkthrough-design.md` §Capture tooling items 3-4
@@ -249,9 +258,11 @@ reading a render's capture directory layout, which it locates by path convention
   subprocess faked; a capture directory missing its master WAV errors clearly rather than
   emitting a zero-length file
 - **Acceptance criteria:** run against a real capture directory and produce a playable
-  mp3, two A/B clips, and a video whose duration matches its source audio within 0.1 s
+  mp3 plus an inline waveform PNG for the full master and for two A/B clips, each clip's
+  measured duration matching its requested bounds within 0.05 s; and a hero mp4 + poster
+  PNG whose dimensions and duration match the requested crop and speed-up
 - **Done when:**
-  0. verify-api — confirm the `showwaves` filter chain against the installed ffmpeg 8.0.1;
+  0. verify-api — confirm the waveform filter chain against the installed ffmpeg 8.0.1;
      **and** probe GitHub's inline-`<video>` rendering from a relative repo path, recording
      the verdict and the chosen hero form in the design artifact
   1. Acceptance criteria met and tests pass

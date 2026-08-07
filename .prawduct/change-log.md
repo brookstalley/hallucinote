@@ -59,8 +59,9 @@ fully-directed prompt produces a brief with a resolution table and no questions.
 NOT-APPLICABLE is a first-class answer, so an ambient piece is never asked about
 drum style.
 
-Wired into seven lifecycle surfaces + nine skills, all deep-linking one canonical
-criteria table at `docs/song-workflow.md#definitions-of-done`.
+Wired into eight lifecycle surfaces + eight skills, all deep-linking one
+canonical criteria table via `docs/song-workflow.md#stage-exit-criteria` (the
+`#definitions-of-done` subsection under it holds the per-stage rows).
 `tests/unit/test_song_lifecycle_doc_parity.py` (6 tests) locks that against the
 multi-site drift this bundle itself introduced — every surface names stage 0,
 every deep-link resolves, the table has exactly one home. Each assertion was

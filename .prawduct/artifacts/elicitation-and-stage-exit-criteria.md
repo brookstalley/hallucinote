@@ -414,6 +414,11 @@ mix → verify) before declaring done"* with:
 > definition of done (`docs/song-workflow.md` → *Stage exit criteria*): a stage
 > may not hand a load-bearing question downstream dressed as a decision.
 
+> **Superseded — see *Amendment 1*.** The shipped wording differs materially:
+> the norm now reads **"Finish the craft; never author the identity"**, and names
+> *incompleteness* as its target so it cannot be read as licence to decide what
+> the song is. The pause is a conversation, not one turn.
+
 ---
 
 ## Deliberately not built
@@ -523,7 +528,7 @@ opinion is uselessness, not humility. Propose properly, with the why.
 **Constraint 2 becomes a shape invariant.** *Every turn carries new work, not
 just questions*; at most two questions per turn; converge once only craft
 remains; *"just go"* ends the stage immediately with the rest decided and marked
-`agent` in the brief. The failure constraint 2 bounded — sequential blank-question
+`agent-handback` in the brief. The failure constraint 2 bounded — sequential blank-question
 Q&A — is still forbidden, now because a question with no work attached fails the
 shape rule rather than because a counter was exceeded. Counting turns is what
 *caused* the cram.

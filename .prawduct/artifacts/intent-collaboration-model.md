@@ -20,6 +20,29 @@ wrong."
 
 ## Three registers (the key distinction)
 
+> **Amended for stage 0 by `elicitation-and-stage-exit-criteria.md` →
+> *Amendment 1* (2026-08-07).** The three registers below are unchanged and
+> still classify *where a request came from*. Two things now qualify how the
+> middle column plays at elicitation time, and they are recorded here because
+> this artifact is linked as canonical producer stance:
+>
+> 1. **Propose-and-react is narrowed for identity.** Where a choice is *what the
+>    song IS* — the feeling, whether anyone is singing, the harmonic world, what
+>    it sounds like, the shape — an informed proposal carrying a recommendation
+>    **closes** the fork the composer should own: disagreeing then costs them an
+>    argument against a paragraph of reasoning. Identity is **asked openly**, two
+>    concretes, no thumb on the scale. Propose-and-react still governs craft and
+>    every choice the composer hands back.
+> 2. **The third register's trigger is unchanged and its reach is wider than it
+>    reads.** It fires on an ask the composer *cannot yet specify* ("make it feel
+>    like Bach"). Explicit delegation ("you pick", "I don't know keys") earns the
+>    same move for the same reason — there, withholding an opinion is uselessness,
+>    not humility.
+>
+> `/song-brief`'s Ask / Show / Note is a **different** trichotomy from the one
+> below: that table classifies what the *stage does*, this one where the request
+> came from. They compose; they are not the same three.
+
 | | **Directed action** | **Volunteered observation** | **Directed-but-under-articulated** *(new)* |
 |---|---|---|---|
 | Trigger | User asks ("fix X", "make Y cut") | Tool noticed something | User asked for something they can't yet specify — *"make it feel like Bach"*, *"a pop song like Madonna"* |

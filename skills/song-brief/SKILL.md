@@ -253,7 +253,7 @@ Two open identity questions — vocals (2) and the sonic world (4), the two whos
 answers would invalidate the most work. Harmony (3) is identity too and they
 hadn't spoken to it, but the budget was spent, so it travels as **a two-sentence
 read with an exit in the same breath** — weaker than a question on purpose, and
-recorded `agent` in the brief. One **note**. Shape (5) they already gave; purpose
+recorded `agent-read` in the brief. One **note**. Shape (5) they already gave; purpose
 (1) is legible from the prompt — both *decided*, restated rather than re-asked.
 Tempo, bar counts and meter arithmetic are craft: decided, mentioned in passing,
 never put up for review.
@@ -323,8 +323,9 @@ the same situation and is always available.
 
 The dimension catalogue behind this sweep — must-haves, should-haves,
 nice-to-haves — is [`docs/song-new-checklist.md`](../../docs/song-new-checklist.md).
-Its five **must-haves** are the identity floor in Step 2; **read it rather than
-working from the table above**, which is a summary and will not stay complete.
+Every must-have is identity, and three should-haves are promoted to it — the
+mapping is in Step 2. **Read the catalogue rather than working from that table**,
+which is a summary and will not stay complete.
 
 ```markdown
 ---
@@ -429,9 +430,12 @@ choice or re-propose a dead end.
 ## Exit criteria — this stage is done when
 
 - `annotations/01-the-brief.md` exists, carrying the prompt verbatim.
-- **Every identity dimension was either answered by the composer or asked about**
-  — or, where they said "just go", decided and marked `agent-handback` so they can take it
-  back.
+- **Every identity dimension took one of four honest routes**, and the brief
+  says which: answered by the composer (`user`) · follows unambiguously from what
+  they said (`inferred`) · asked openly · offered as a two-sentence read with an
+  exit because the two-question budget overflowed (`agent-read`) · decided after
+  they said "just go" (`agent-handback`). **A bare `agent` on an identity row
+  fails this criterion** — that is the substitution, and it is greppable.
 - No craft dimension was put to the composer as a question.
 - Every applicable dimension is DECIDED, or UNDECIDED with a named owner and a
   closing stage. NOT-APPLICABLE rows are recorded and were never asked about.

@@ -52,17 +52,17 @@ was serving as an elicitation agenda.
 
 - [ASSUMPTION: the runtime agent has only the skill, not this design conversation
   | HIGH impact | stated by the owner] Every change is therefore judged on
-  whether it changes what a *cold* agent finds easy. Exhortation ("be concise")
-  is assumed to fail; the table it walks, and a worked example it can
-  pattern-match, are assumed to work. This is why Chunk 2 exists as its own
-  deliverable rather than as prose inside Chunk 1.
+whether it changes what a *cold* agent finds easy. Exhortation ("be concise")
+is assumed to fail; the table it walks, and a worked example it can
+pattern-match, are assumed to work. This is why Chunk 2 exists as its own
+deliverable rather than as prose inside Chunk 1.
 - [ASSUMPTION: identity dimensions number ~5 and are stable across genres |
-  MEDIUM impact | inferred] Derived from the checklist's five must-haves plus
-  what the owner's own sample questions reached for. If a later song finds a
-  sixth, it is added — the list is a floor, not a schema.
+MEDIUM impact | inferred] Derived from the checklist's five must-haves plus
+what the owner's own sample questions reached for. If a later song finds a
+sixth, it is added — the list is a floor, not a schema.
 - The review checkpoints (`/compose-review`, `/mix-review`) surface "a producer's
-  question, never a verdict" and carry the same wall risk. **Deliberately out of
-  scope** — filed, not silently dropped.
+question, never a verdict" and carry the same wall risk. **Deliberately out of
+scope** — filed, not silently dropped.
 
 ## Problem
 
@@ -80,22 +80,29 @@ was serving as an elicitation agenda.
 
 ### Chunk 01: The owner test replaces the defect list
 
- Rebuild
-  `skills/song-brief/SKILL.md`'s sweep around *whose choice is it* (identity =
-  composer, craft = agent), seeded from the checklist's must-haves so vocals
-  cannot fall out again. Add the third register (`note`) and the missing
-  anti-pattern (the over-argued proposal). Replace "one consolidated turn" with
-  the shape invariant.
-  *Done when:* the skill's table contains all five must-haves; craft dimensions
-  are named as never-asked; both anti-patterns are stated with examples.
+Rebuild
+`skills/song-brief/SKILL.md`'s sweep around *whose choice is it* (identity =
+composer, craft = agent), seeded from the checklist's must-haves so vocals
+cannot fall out again. Add the third register (`note`) and the missing
+anti-pattern (the over-argued proposal). Replace "one consolidated turn" with
+the shape invariant.
+
+*Done when:* every checklist must-have is reachable from the identity floor —
+**via an explicit mapping, since the relation is many-to-one** (genre anchor and
+instrumentation share one row) and three should-haves are promoted; craft
+dimensions are named as never-asked; both anti-patterns are stated with
+examples. An earlier draft said "the table contains all five must-haves", which
+was simply false of the shipped table and is the same claiming-what-isn't-so
+this work exists to stop.
 
 ### Chunk 02: The worked example
 
- A good stage-0 turn and the bad one, side by
-  side, in the skill. This is the anti-wall mechanism for a cold agent, which
-  pattern-matches examples more reliably than it follows rules.
-  *Done when:* both turns are in the skill, the bad one is labelled with which
-  rule each part violates.
+A good stage-0 turn and the bad one, side by
+side, in the skill. This is the anti-wall mechanism for a cold agent, which
+pattern-matches examples more reliably than it follows rules.
+
+*Done when:* both turns are in the skill, the bad one is labelled with which
+rule each part violates.
 
 ### Chunk 03: Propagate the norm
 

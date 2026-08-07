@@ -26,10 +26,13 @@ amount of suite-green substitutes.
 
 No Ableton, no Live session, no re-vendor. Docs/skills only.
 
-**Check:** `/clear`, then paste the prompt this stage was rebuilt against
-(recorded verbatim in `.prawduct/.handoff-notes.md`) — the 45-second song with an
-ominous intro, a 4/4-rock-vs-3/4-brass verse argument, a 5/8 industrial bridge, a
-7/4 chorus and an octave-drop outro. Judge the **first reply**:
+**Check:** `/clear`, then give a fresh agent an open-ended song prompt that
+leaves vocals and the harmonic world unstated while specifying structure in
+detail. The prompt this stage was rebuilt against — a 45-second song with an
+ominous intro, a verse alternating 4/4 rock against 3/4 brass, a 5/8 industrial
+bridge, a 7/4 chorus that resolves, and an outro that pitch-bends down an octave
+— is reproduced in full in the `feat/elicitation-conversational` branch's commit
+message history and in `.prawduct/change-log.md`. Judge the **first reply**:
 
 - [ ] At most **two questions**, and both about *identity*
 - [ ] **No recommendation stapled** to either — two concretes, no thumb on the scale

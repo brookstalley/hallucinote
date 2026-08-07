@@ -32,7 +32,7 @@ Form **no judgment about the user's musical expertise** — no novice/expert bra
 
 **The one discipline across both: never assume-and-go.** Every gap is either elicited or proposed-and-reacted-to.
 
-**Load-bearing only; just-do-and-show the cheap choices.** Elicit at the expensive forks; make cheap-to-revise choices tastefully and *show* them — the artifact becomes the next proposal, instantly redirectable. Don't fork every elementary choice into an A/B.
+**Sort by owner, not by reversal cost.** Ask about **identity** (what the song IS — the feeling, whether anyone is singing, the harmonic world, what it sounds like, the shape), which is the composer's *however cheap it would be to change*. Decide and *show* **craft** (BPM, voicings, generators, mix moves) — the artifact becomes the next proposal, instantly redirectable. Reversal cost is the wrong axis and was the earlier rule; don't fork every elementary choice into an A/B.
 
 **Name the why.** When you propose, carry the reasoning in *one plain collaborator's sentence* — "I held the verse back so the chorus opens up," never "this is a deceptive cadence, which in theory…". The expert skims it; the novice learns from it; you never decided which is which. The theory vocabulary only surfaces if the user reaches for it. **Never a classroom; never homework.**
 
@@ -44,7 +44,7 @@ Form **no judgment about the user's musical expertise** — no novice/expert bra
 
 Do **not** ask the user to pick "build it all for me" vs "just scaffold it" — offering the do-it-for-you path surfaces the dependence framing. **Read** the deliverable shape from what they asked, state your read in one sentence so they can correct it, and proceed:
 
-- **Creative product prompt** ("make / build / write me a song like X" — a thing to press play on): drive end-to-end to a playable result, *collaborating on the elementary choices you'd otherwise guess at*. Skill boundaries (`/song-new` → `/song-pick-instruments` → `/ableton-push` → compose → re-push → mix) are NOT user-facing checkpoints — chain through them, stopping only for high-stakes decisions, must-answer questions, or a collaborative proposal at a creative lock-in (see CLAUDE.md "Hallucinote Behavioral Norms"). "Drive end-to-end" never means "decide the elementary musical choices silently" — propose them.
+- **Creative product prompt** ("make / build / write me a song like X" — a thing to press play on): drive end-to-end to a playable result, *collaborating on the elementary choices you'd otherwise guess at*. Skill boundaries (`/song-new` → `/song-pick-instruments` → `/ableton-push` → compose → re-push → mix) are NOT user-facing checkpoints — chain through them, stopping only for high-stakes decisions, must-answer questions, or a collaborative proposal at a creative lock-in (see CLAUDE.md "Hallucinote Behavioral Norms"). "Drive end-to-end" never means "decide the elementary musical choices silently" — those are identity, so **ask them openly**, without a recommendation attached.
 - **Scaffold request** (structured slash-command call with explicit args like `/song-new my-song "Title" 120 4/4 intro,verse,chorus`, or "set up / scaffold a song"): this *is* directed action — produce the scaffold + instrument picks + the "Next steps" report, and don't over-collaborate on choices the user deferred to a later sitting.
 - **The build-it-all-for-me path exists but is never *offered*.** A user can ask for it outright ("just make me something, I trust you") and you oblige — but never put it on the table as a menu choice.
 
@@ -62,7 +62,9 @@ dimensions (marking each DECIDED / UNDECIDED / NOT-APPLICABLE), **asks the
 composer openly about the ones that are theirs** (identity) while deciding and
 showing the ones that are yours (craft), and writes
 `annotations/01-the-brief.md`. `docs/song-new-checklist.md` is the dimension
-reference it draws on — its five **must-haves** are the identity floor.
+reference it draws on. **Every must-have is identity**, and three should-haves
+(harmony, production style, the energy arc) are promoted to it — `/song-brief`
+carries the many-to-one mapping.
 
 **This matters structurally, not just procedurally.** The scaffold command below
 takes tempo, meter and the section list as **required arguments** — exactly the

@@ -203,10 +203,14 @@ def test_owner_test_reaches_every_instruction_surface():
     happens to load, or it binds only the agents that read the right file."""
     for surface in _OWNER_TEST_SURFACES:
         text = surface.read_text("utf-8").lower()
-        assert "identity" in text and "craft" in text, (
+        # Both nouns AND the instruction that makes them actionable. "identity"
+        # and "craft" are common enough words that presence alone would pass on
+        # a surface that merely mentions them; "openly" is the behaviour.
+        missing = [w for w in ("identity", "craft", "openly") if w not in text]
+        assert not missing, (
             f"{surface.relative_to(_REPO)} carries song-authoring instructions "
-            "but not the identity/craft owner test — an agent reading only this "
-            "surface can author the composer's choices and never know it"
+            f"but is missing {missing} — an agent reading only this surface can "
+            "author the composer's choices and never know it"
         )
 
 
@@ -267,3 +271,31 @@ def test_no_surface_reinstates_the_one_turn_bound():
         "the one-consolidated-turn bound was reinstated in: "
         + "; ".join(str(o) for o in offenders)
     )
+
+
+def test_decider_vocabulary_is_consistent_in_the_worked_example():
+    """The brief's `Decided by` column is the only audit trail this stage
+    ships, and it only works if the legitimate paths and the defect write
+    DIFFERENT values: `agent-read` (a read with an exit, offered because the
+    two-question budget overflowed), `agent-handback` (they said "just go"),
+    and a bare `agent`, which on an identity row IS the substitution the stage
+    exists to prevent — deliberately greppable.
+
+    The canonical Good example is where an agent will copy from, so a bare
+    `agent` there teaches the defect regardless of what the rule says. That is
+    exactly how this drifted once: the vocabulary was split into three values
+    and the worked example kept the old one."""
+    text = (_REPO / "skills" / "song-brief" / "SKILL.md").read_text("utf-8")
+    good, _, rest = text.partition("### Bad — and why")
+    _, _, good_example = good.partition("### Good")
+    assert good_example, "skills/song-brief lost its Good worked example"
+    assert "`agent-read`" in good_example, (
+        "the Good example's overflowed-identity row must be recorded as "
+        "`agent-read` — a bare `agent` is the defect the column exists to expose"
+    )
+    for value in ("agent-read", "agent-handback"):
+        assert f"| `{value}` |" in text, (
+            f"skills/song-brief no longer defines `{value}` in the Decided-by "
+            "table, so the audit trail cannot distinguish the legitimate path "
+            "from the substitution defect"
+        )

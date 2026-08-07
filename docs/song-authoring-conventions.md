@@ -535,7 +535,9 @@ For non-4/4 sections:
 >
 > **Realize the meter as felt groove, because the ruler won't carry it.** Bar-scaled generators via `beats_per_bar`, plus hand-authored within-bar accent groupings. Never present that to the user as a creative option — it isn't one; it's what the renderer forces.
 >
-> **Two bar rulers, and they diverge once you author a change.** Push translates bar positions through the meter map (`_split_bar` / `_position_bar_to_beats`), while `hallucinote.arrangement` accumulates whole bars against one uniform `beats_per_bar` and never reads the map. With a non-bar-1 row present the two disagree, and push emits a second warn saying so. Until that is closed, compute `build.py`'s clip and section positions the same way push reads them — or keep the declared map and the arrangement's `beats_per_bar` consistent with each other.
+> **Two bar rulers, and they diverge after the first meter change.** Push translates bar positions through the meter map (`_split_bar` / `_position_bar_to_beats`), while `hallucinote.arrangement` accumulates whole bars against one uniform `beats_per_bar` and never reads the map. `Arrangement(beats_per_bar=...)` is a single value, so there is no setting that makes them agree for a multi-meter song — bar 13 of a 4/4→7/4 song is beat 48 to the arrangement layer and beat 60 to push. The arrangement push phase detects this and alerts, naming the placements affected; it cannot repair them.
+>
+> Two ways through, both real: **author the placements after the change directly** — `M.add_arrangement_clip` / `M.create_section` take float bars and push resolves them through the map, so `Arrangement` is simply not the tool past that point — or **keep the song single-meter in the DB** and carry the odd groupings as accent alone. Making `Arrangement.plan()` meter-aware is `ARR-4M3T`.
 >
 > **What is still open.** `TMP-4J6Q` is the projection half — how a declared meter map actually materializes in Live (per-bar arrangement clips, or the per-scene mechanism `TMP-5K1R` proposes). `ARR-4M3T` is the authoring half — a meter-aware `Arrangement.plan()` and meter-aware read-side lenses. Neither closes the other.
 

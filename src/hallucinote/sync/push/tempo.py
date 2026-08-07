@@ -42,7 +42,10 @@ def plan_push_tempo_map(
         )
     non_bar_1 = [r for r in rows if float(r["start_bar"]) != 1.0]
     if non_bar_1:
-        plan.warn(
+        # alert, not warn: the operator authored these rows and they are not
+        # being pushed. `notes` is diagnostic-only and the executor drops it —
+        # reporting a skip there is the silent drop `alerts` exists to prevent.
+        plan.alert(
             f"per-bar tempo automation is an MCP gap on Live 12.4 — "
             f"ableton_automation has no 'song_tempo' target_kind "
             f"(see hallucinote_mcp/.../guides/gaps.md); "
@@ -101,7 +104,11 @@ def plan_push_time_signature_map(
             f"{bar_1['numerator']}/{bar_1['denominator']}"
             if bar_1 is not None else "whatever it already shows"
         )
-        plan.warn(
+        # alert, not warn: this is the one place the meter reach limit is
+        # stated, and `notes` is diagnostic-only — the executor drains
+        # `alerts` and drops `notes`, so a skip reported as a note is the
+        # silent drop `alerts` exists to prevent.
+        plan.alert(
             f"per-bar meter automation is an MCP gap on Live 12.4 — "
             f"ableton_automation has no 'song_signature' target_kind "
             f"(see hallucinote_mcp/.../guides/gaps.md); "
@@ -110,13 +117,5 @@ def plan_push_time_signature_map(
             f"projection loss, not a lost decision. Live's ruler will read "
             f"{meter_1} for the whole song, so the felt meter has to live in "
             f"note placement and accent."
-        )
-        plan.warn(
-            "a non-bar-1 meter map is authored, and the two bar->beat "
-            "translations in this codebase now disagree: push resolves bar "
-            "positions through the meter map, while hallucinote.arrangement "
-            "accumulates whole bars against one uniform beats_per_bar. Check "
-            "that clip and section positions written by build.py were "
-            "computed the same way push reads them."
         )
     return plan

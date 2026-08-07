@@ -15,6 +15,7 @@ is about. `test_stage_criteria_table_has_exactly_one_home` is the lock on that.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parents[2]
@@ -82,13 +83,58 @@ def _anchors_in(doc: Path) -> set[str]:
     }
 
 
+# Append-only records: a change-log entry, a shipped release note or an archived
+# doc states what was true when it was written and is never edited afterwards, so
+# a heading renamed later would strand a link there permanently and the only way
+# to green the suite would be to rewrite history. Living docs are policed; the
+# record of the past is not.
+_APPEND_ONLY = (
+    "CHANGELOG.md",
+    ".prawduct/change-log.md",
+    ".prawduct/release-notes.md",
+    ".prawduct/reflections.md",
+)
+_APPEND_ONLY_DIRS = ("archive", "reflections-archive")
+
+
 def _markdown_files() -> list[Path]:
     skip = {".git", "node_modules", "__pycache__", ".venv", "venv", "songs"}
-    return [
-        p
-        for p in _REPO.rglob("*.md")
-        if not any(part in skip for part in p.relative_to(_REPO).parts)
-    ]
+    out = []
+    for p in _REPO.rglob("*.md"):
+        rel = p.relative_to(_REPO)
+        if any(part in skip for part in rel.parts):
+            continue
+        if rel.as_posix() in _APPEND_ONLY:
+            continue
+        if any(d in part for part in rel.parts for d in _APPEND_ONLY_DIRS):
+            continue
+        out.append(p)
+    return out
+
+
+def _resolve_refs(
+    pattern: re.Pattern[str],
+    resolve: "Callable[[Path, str], Path]",
+) -> list[str]:
+    """Report every `<doc>.md#<anchor>` reference `pattern` finds that does not
+    land on a real heading in a real file. `resolve` turns a reference's path
+    text into an absolute path — the two callers differ only there (one link
+    form is relative to the citing file, the other to the repo root)."""
+    cache: dict[Path, set[str]] = {}
+    broken: list[str] = []
+    for md in _markdown_files():
+        for m in pattern.finditer(md.read_text("utf-8")):
+            rel, anchor = m.group(1), m.group(2)
+            here = md.relative_to(_REPO)
+            target = resolve(md, rel)
+            if not target.exists():
+                broken.append(f"{here} -> {rel} (no such file)")
+                continue
+            if target not in cache:
+                cache[target] = _anchors_in(target)
+            if anchor not in cache[target]:
+                broken.append(f"{here} -> {rel}#{anchor}")
+    return broken
 
 
 def test_song_workflow_doc_carries_both_linked_anchors():
@@ -102,6 +148,9 @@ def test_song_workflow_doc_carries_both_linked_anchors():
         )
 
 
+_MARKDOWN_LINK = re.compile(r"\]\((?!https?:)([^)\s]+\.md)#([\w-]+)\)")
+
+
 def test_every_markdown_deeplink_resolves():
     """Every relative `some-doc.md#anchor` link in the repo must hit a real
     heading in a real file.
@@ -111,22 +160,7 @@ def test_every_markdown_deeplink_resolves():
     backlog and named a different file. A cross-file rename breaks links
     wherever they happen to live, so the check has to be repo-wide.
     """
-    cache: dict[Path, set[str]] = {}
-    broken: list[str] = []
-    for md in _markdown_files():
-        for m in re.finditer(
-            r"\]\((?!https?:)([^)\s]+\.md)#([\w-]+)\)", md.read_text("utf-8")
-        ):
-            rel, anchor = m.group(1), m.group(2)
-            target = (md.parent / rel).resolve()
-            here = md.relative_to(_REPO)
-            if not target.exists():
-                broken.append(f"{here} -> {rel} (no such file)")
-                continue
-            if target not in cache:
-                cache[target] = _anchors_in(target)
-            if anchor not in cache[target]:
-                broken.append(f"{here} -> {rel}#{anchor}")
+    broken = _resolve_refs(_MARKDOWN_LINK, lambda md, rel: (md.parent / rel).resolve())
     assert not broken, "dangling markdown anchors: " + "; ".join(broken)
 
 
@@ -143,20 +177,7 @@ _BARE_DOC_REF = re.compile(
 def test_every_bare_doc_reference_resolves():
     """A `path/to/doc.md#anchor` written as bare text — the backlog's `refs:`
     idiom — must resolve too."""
-    cache: dict[Path, set[str]] = {}
-    broken: list[str] = []
-    for md in _markdown_files():
-        for m in _BARE_DOC_REF.finditer(md.read_text("utf-8")):
-            rel, anchor = m.group(1), m.group(2)
-            target = _REPO / rel
-            here = md.relative_to(_REPO)
-            if not target.exists():
-                broken.append(f"{here} -> {rel} (no such file)")
-                continue
-            if target not in cache:
-                cache[target] = _anchors_in(target)
-            if anchor not in cache[target]:
-                broken.append(f"{here} -> {rel}#{anchor}")
+    broken = _resolve_refs(_BARE_DOC_REF, lambda md, rel: _REPO / rel)
     assert not broken, "dangling bare doc references: " + "; ".join(broken)
 
 

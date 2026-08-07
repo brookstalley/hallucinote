@@ -6,7 +6,13 @@ from typing import Any
 
 from hallucinote.db import queries as Q
 
-from ._core import PushPlan, ToolCall, _notes_for_mcp, _position_bar_to_beats
+from ._core import (
+    PushPlan,
+    ToolCall,
+    _notes_for_mcp,
+    _position_bar_to_beats,
+    uniform_bar_math_divergences,
+)
 from .envelopes import envelope_hosting_clip_ids
 
 
@@ -150,6 +156,28 @@ def plan_push_arrangement(
     if not ts_points:
         plan.warn(
             "no time_signature_map; assuming 4/4 for arrangement bar→beats conversion"
+        )
+
+    # The two-ruler check belongs HERE, not in the meter phase: this is where
+    # authored bar positions actually become Live beats, and it is the phase
+    # `push execute --only arrangement` runs. It reports placements, not the
+    # mere presence of a meter change — a song whose every clip sits before
+    # the first change diverges nowhere and gets no alert.
+    diverging = uniform_bar_math_divergences(
+        [float(r["start_bar"]) for r in arr_rows], ts_points,
+    )
+    if diverging:
+        first_bar, mapped, uniform = diverging[0]
+        plan.alert(
+            f"{len(diverging)} of {len(arr_rows)} arrangement placements sit "
+            f"after a meter change, where this codebase's two bar rulers "
+            f"disagree: push resolves bar positions through the "
+            f"time_signature_map, while hallucinote.arrangement accumulates "
+            f"whole bars against one uniform beats_per_bar and never reads "
+            f"the map. Bar {first_bar:g} goes to beat {mapped:g} here; "
+            f"uniform math would put it at {uniform:g}. If build.py computed "
+            f"these positions with a single beats_per_bar, they will land "
+            f"somewhere other than where it intended."
         )
 
     if live_arrangement_clips_by_track is None:

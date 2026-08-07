@@ -228,10 +228,10 @@ UNDECIDED with the *engine*, not the user, named as its owner. Holding the
 criterion as the requirement, and naming the code as what had to move, is what
 produced the fix.
 
-(`docs/song-authoring-conventions.md` used to claim the time-signature map
-supported "per-section meter changes (between sections only)". The code refuses
-all of them, so that page was **corrected in this same change** — it now records
-the refusal and the projection framing. The stale claim is a small worked example
+(`docs/song-authoring-conventions.md` claimed the time-signature map supported
+"per-section meter changes (between sections only)" while the code refused all of
+them, so that page was corrected alongside this design — and corrected again when
+TMP-7B3X made the claim true. The original stale claim is a small worked example
 of the defect this design is about: prose that named a capability nobody built,
 which every later reader took as done.)
 

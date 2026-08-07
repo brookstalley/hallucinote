@@ -227,10 +227,15 @@ state, so the meter row in the brief resolves DECIDED like any other.
 **What is still open, and is yours to know rather than the user's to weigh:**
 only the bar-1 row reaches Live (Live 12.4's MCP has no `song_signature`
 automation target), so Live's ruler reads one meter for the whole song and push
-warns about the rest. The meter therefore has to be *felt* — bar-scaled
-generators and within-bar accent groupings — not read off the grid. Push warns a
-second time that `hallucinote.arrangement`'s bar math is not meter-aware, so keep
-`build.py`'s beat arithmetic and the declared map consistent. Details:
+alerts about the rest. The meter therefore has to be *felt* — bar-scaled
+generators and within-bar accent groupings — not read off the grid.
+
+Second, `hallucinote.arrangement` multiplies by ONE `beats_per_bar` and never
+reads the meter map, so for a multi-meter song its bar accumulation and push's
+disagree after the first change, and no `beats_per_bar` value reconciles them.
+Author the placements past that change directly through
+`M.add_arrangement_clip` / `M.create_section` (float bars, resolved through the
+map), or keep the DB single-meter. Details:
 `docs/song-authoring-conventions.md` → *Meter (4/4 vs. other)*.
 
 ## Existing songs

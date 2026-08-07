@@ -440,6 +440,50 @@ def test_plan_push_arrangement_converts_bar_to_beats_per_meter(
     assert plan.calls[0].args["start_beats"] == 64.0
 
 
+def test_plan_push_arrangement_alerts_only_on_placements_past_a_meter_change(
+    conn, song, session, track, clip
+):
+    """The two-ruler alert has to discriminate, or it is noise on every
+    odd-meter song. A placement BEFORE the first meter change translates
+    identically under both rulers, so it must not raise the alert; one AFTER
+    it does, and the alert names the two beat positions."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=9.0, numerator=7, denominator=4
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=2
+    )
+    # Bar 5 is before the change: map and uniform math both say beat 16.
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip,
+        start_bar=5.0, end_bar=9.0,
+    )
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track={2: []},
+    )
+    assert not any("bar rulers" in a for a in plan.alerts), (
+        "a placement before the meter change diverges nowhere — alerting on "
+        "it makes the signal unreadable on every legitimate odd-meter song"
+    )
+
+    # Bar 13 is four 7/4 bars past the change: 32 + 28 = 60, not 48.
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip,
+        start_bar=13.0, end_bar=17.0,
+    )
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track={2: []},
+    )
+    hit = next(a for a in plan.alerts if "bar rulers" in a)
+    assert "1 of 2 arrangement placements" in hit
+    assert "beat 60" in hit and "48" in hit
+
+
 def test_plan_push_arrangement_multiple_placements_create_separate_calls(
     conn, song, session, track, clip
 ):

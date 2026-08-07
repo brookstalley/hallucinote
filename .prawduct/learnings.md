@@ -328,6 +328,15 @@ the constant it iterated was `(regex, description)` pairs and the loop called
 verify the OVER-drop direction: a scan that flags legitimate fixtures gets deleted
 rather than fixed. (2026-08-07, TOUR B1)
 
+**When you plant it by text substitution, assert it landed in the intended
+function — "the file changed" is not enough.** A falsification run that inserted a
+refusal after `_require_bar_floor("start_bar", start_bar)` hit the first of three
+identical call sites in the same file, mutated an unrelated mutator, and reported
+the meter test as NOT CAUGHT. Anchor on something unique to the target (the
+function's docstring, or a located line index whose enclosing `def` you assert),
+and treat an unexpected survivor as a suspect harness before a suspect test.
+(2026-08-07, TMP-7B3X)
+
 ## Prose naming a mechanism reads as a decision — DESCRIBED-BUT-UNBUILT
 
 A docstring or design note that says how something works is indistinguishable from

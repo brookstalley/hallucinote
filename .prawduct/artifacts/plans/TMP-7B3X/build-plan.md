@@ -90,8 +90,19 @@ mechanism). Making `Arrangement.plan()` or the read-side lenses meter-aware
 4. Docs — the "Meter (4/4 vs. other)" block in
    `docs/song-authoring-conventions.md` is rewritten to say the DB records the
    true meter and Live is the lossy projection, and to carry the arrangement-layer
-   caveat. `CHANGELOG.md` gets an Unreleased entry that supersedes the shipped
-   "Meter-ratchet refusal (H1)" note.
+   caveat. Every other page asserting the refusal (`docs/song-workflow.md`, the
+   `/song-brief` and `/song-new` skills, the README, `api-contract.md`,
+   `nonfunctional-requirements.md`, `docs/song-new-checklist.md`) is corrected
+   with it. The release record is a `.prawduct/change-log.md` entry —
+   `CHANGELOG.md` is frozen at v1.5.0 and its "Meter-ratchet refusal (H1)" line
+   correctly records what shipped then.
+5. Ride-along, outside the meter work and recorded rather than silent: the
+   lifecycle doc-link parity test only validated links whose target was
+   `song-workflow.md`, which is why a renamed heading left two backlog `refs:`
+   dangling with the suite green. It now covers every relative `*.md#anchor` in
+   the repo plus the bare `path/doc.md#anchor` form, its GitHub slugger no longer
+   collapses whitespace runs, and append-only records are excluded (their links
+   describe the tree as it was). Four dangling references fixed.
 
 **Acceptance criteria:**
 
@@ -114,7 +125,9 @@ dispositioned, TMP-7B3X closed and TMP-4J6Q's scope note updated via
 
 - [x] Chunk 01: Lift the meter refusal into the projection layer
 
-Context: The TOUR plan is parked, not finished — `active_build_plan` pointed at
-it before this cycle and should point back at it afterwards, with Chunk B1 as
-the next TOUR work. This plan exists because B1 is blocked on it: the demo song's
-brief carries a meter the DB currently refuses to hold.
+Context: Chunk 01 shipped on `fix/tmp-7b3x-meter-source-of-truth` (2026-08-07);
+suite green at 4877 passed / 2 skipped, ruff + mypy clean, TMP-7B3X archived.
+The blocker it existed to clear is cleared: the demo song's brief can now carry
+a true meter map. The TOUR plan is parked, not finished — `active_build_plan`
+pointed at it before this cycle and should point back at it once this branch
+merges, with Chunk B1 as the next TOUR work.

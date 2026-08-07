@@ -78,8 +78,9 @@ layer the dispatcher validates against — one source of truth, so help can't dr
 behavior.
 
 **Refuse-and-teach over silent wrong behavior** is the governing rule at every
-boundary. Concretely: a mid-song tempo change surfaces a refusal at the call site
-rather than corrupting timing; a device enum with no normalized wire form is **skipped
+boundary. Concretely: a mid-song tempo or meter change is recorded faithfully in the DB and
+reported as skipped where it cannot reach Live, rather than corrupting timing or
+being quietly dropped; a device enum with no normalized wire form is **skipped
 with a warning** rather than set to the wrong value. Silent data loss is never the
 fallback.
 

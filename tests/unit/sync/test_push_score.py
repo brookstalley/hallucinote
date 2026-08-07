@@ -138,8 +138,8 @@ def test_plan_push_tempo_map_multi_point_emits_bar1_call_and_gap_warn(conn, song
     assert call.args == {"action": "set_tempo", "bpm": 132.0}
     assert call.key == f"tempo_point:{pid_1}"
     assert any(
-        "song_tempo" in n and "1 non-bar-1" in n for n in plan.notes
-    )
+        "song_tempo" in n and "1 non-bar-1" in n for n in plan.alerts
+    ), "the skipped rows must reach the operator channel, not diagnostic notes"
 
 
 def test_plan_push_tempo_map_no_bar1_row_warns_and_emits_no_calls(conn, song):
@@ -155,7 +155,7 @@ def test_plan_push_tempo_map_no_bar1_row_warns_and_emits_no_calls(conn, song):
     assert any(
         "no row at start_bar=1.0" in n for n in plan.notes
     )
-    assert any("song_tempo" in n for n in plan.notes)
+    assert any("song_tempo" in n for n in plan.alerts)
 
 
 # ---------- plan_push_time_signature_map ----------
@@ -202,36 +202,27 @@ def test_plan_push_time_signature_map_multi_point_emits_bar1_and_gap_warn(
     }
     assert call.key == f"time_signature_point:{pid_1}"
     assert any(
-        "song_signature" in n and "1 non-bar-1" in n for n in plan.notes
-    )
+        "song_signature" in n and "1 non-bar-1" in n for n in plan.alerts
+    ), "the skipped rows must reach the operator channel, not diagnostic notes"
 
 
-def test_plan_push_time_signature_map_warn_names_the_projection(conn, song):
-    """The planner is the ONE place the Live reach limit is stated, so its
-    warn has to say what is lost and what is not: Live shows the bar-1 meter
-    for the whole song, and the DB still holds the authored map.
+def test_plan_push_time_signature_map_alert_names_the_projection(conn, song):
+    """The planner is the ONE place the Live reach limit is stated, so it has
+    to say what is lost and what is not: Live shows the bar-1 meter for the
+    whole song, and the DB still holds the authored map.
+
+    On `alerts`, not `notes` — the executor drains alerts into the push
+    report and discards notes as diagnostic noise, so a statement the operator
+    must read cannot live in `notes`.
     """
     M.add_time_signature_point(
         conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
     )
     _ts_point(conn, song, 9.0, 7, 4)
     plan = push.plan_push_time_signature_map(conn, song_id=song)
-    gap = next(n for n in plan.notes if "song_signature" in n)
+    gap = next(n for n in plan.alerts if "song_signature" in n)
     assert "true meter" in gap
     assert "4/4 for the whole song" in gap
-
-
-def test_plan_push_time_signature_map_warns_on_bar_math_divergence(conn, song):
-    """A non-bar-1 map makes push's meter-aware bar->beat translation
-    disagree with the arrangement layer's uniform beats_per_bar. Push cannot
-    fix that, so it must at least say it out loud.
-    """
-    M.add_time_signature_point(
-        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
-    )
-    _ts_point(conn, song, 9.0, 7, 4)
-    plan = push.plan_push_time_signature_map(conn, song_id=song)
-    assert any("beats_per_bar" in n for n in plan.notes)
 
 
 def test_plan_push_time_signature_map_no_bar1_row_warns_no_calls(conn, song):
@@ -243,7 +234,7 @@ def test_plan_push_time_signature_map_no_bar1_row_warns_no_calls(conn, song):
     plan = push.plan_push_time_signature_map(conn, song_id=song)
     assert plan.calls == []
     assert any("no row at start_bar=1.0" in n for n in plan.notes)
-    assert any("song_signature" in n for n in plan.notes)
+    assert any("song_signature" in n for n in plan.alerts)
 
 
 # ---------- _position_bar_to_beats (W3-B inverse of _split_bar) ----------

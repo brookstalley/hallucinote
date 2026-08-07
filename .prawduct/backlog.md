@@ -42,6 +42,17 @@ sections only via explicit `/backlog update` calls.
 
 ## Open
 
+- **[DOC-2W9F]** `capture_live_shot.py` refuses on a missing Screen Recording grant instead of *requesting* it — add `CGRequestScreenCaptureAccess`
+  `effort: S · impact: M · area: docs · source: user · added: 2026-08-07 · status: open · stage: ready · related: DOC-8V3Q · refs: tools/capture_live_shot.py, .prawduct/.session-handoff.md, .prawduct/operator-verification.md`
+
+  **Filed premise partly falsified — read this before building.** The item was reported as *"infers Screen Recording permission instead of requesting it — should use `CGPreflightScreenCaptureAccess`/`CGRequestScreenCaptureAccess` via ctypes."* Verified against the code: **the preflight half already ships.** `tools/capture_live_shot.py:250` `assert_capture_permission()` loads CoreGraphics via `ctypes.util.find_library` and calls `CGPreflightScreenCaptureAccess` (`:262–263`) — it does *not* infer from window-title visibility or from a failed capture. That half landed in `e35947b` (TOUR R-9/R-16 defect pass), after the handoff note that reported it. **The genuine remaining gap is narrower: `CGRequestScreenCaptureAccess` appears nowhere in the repo** (only in `.prawduct/.session-handoff.md` and `.handoff-notes.md` prose). So on a denied grant the tool raises `ScreenRecordingDenied` with prose telling the operator to go find System Settings, and **no TCC dialog is ever raised** — neither `CGWindowListCopyWindowInfo` nor the `screencapture` CLI triggers one.
+
+  **Why it's worth the S.** This cost a real session: the operator had to hunt System Settings and fully quit VS Code mid-tour-capture, and the shots that were queued ("session view filling in", "the arrangement growing") stop being true once the push finishes. One extra `ctypes` call — no new dependency — turns a dead-end error into the OS prompt that grants the thing.
+
+  **The diagnostic subtlety that must survive the fix (do not delete the current error path).** Preflight returned **`True` while capture was still failing**, because the grant already existed in TCC but *this process had launched before it applied* — the permission is read at launch. So `CGPreflightScreenCaptureAccess` answers *"is it granted"*, not *"can this process use it"*. The request call has the same limitation: granting via the prompt does **not** retroactively enable a running process. The fix is therefore *preflight → if denied, request (raising the prompt) → if still denied or newly granted, keep the existing actionable error including the `_host_app_hint()` app name and the **restart-the-host-app** instruction* — the restart line at `:269–270` is load-bearing and must not be dropped as "now redundant."
+
+  **Verifiable signal:** `grep -n CGRequestScreenCaptureAccess tools/capture_live_shot.py` returns a hit inside `assert_capture_permission()`, and `tests/unit/tools/test_capture_live_shot.py`'s fake CoreGraphics (`:138`) covers the denied→request→still-denied path, asserting the raised message still names the host app and the relaunch requirement. (user report 2026-08-07, verified against code; origin: `feat/tour-walkthrough` capture session handoff)
+
 - **[SYN-6R2D]** Fold a Live clip hand-edit back INTO `build.py` — reconcile, not just detect (the learn-back half of the drift loop)
   `effort: L · impact: M · area: sync · source: user · added: 2026-08-06 · status: open · stage: requirements · related: ARR-FROMBUILD, ENV-1T9M, NOT-9H3K · refs: src/hallucinote/sync/verify_arrangement_cli.py`
 

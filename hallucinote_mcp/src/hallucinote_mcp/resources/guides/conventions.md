@@ -137,7 +137,7 @@ There is a window between step 1 and step 2 where the chain is empty — issue
 all the delete + reload calls back-to-back (don't pause for unrelated work
 while the chain is gutted). Afterward, re-run the push probe-and-link step so
 the DB↔Live device bindings re-attach to the rebuilt chain; the next
-`push_cli execute` then reports `devices: skipped (idempotent)`.
+`push_cli execute` then reports `devices: skipped (nothing to push)`.
 
 > No `rebuild_chain` convenience ships for this (DEV-5R8Q). It isn't a
 > pure-planner emission: the push planner binds devices idempotently by

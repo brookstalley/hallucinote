@@ -22,6 +22,35 @@ from .tempo import plan_push_tempo_map, plan_push_time_signature_map
 from .tracks import plan_push_song_returns, plan_push_song_tracks
 
 
+# PSH-ARRPROBE: the arrangement probe map is either an already-materialized
+# ``{track_index: [clip, ...]}`` dict (tests / non-execute callers) or a
+# ZERO-ARG THUNK the arrangement phase calls at PLAN time. The thunk form is the
+# one the execute path uses, and it is load-bearing: the probe must run AFTER
+# the `tracks` phase, because a first push CREATES the song's Live tracks and a
+# map probed before that names entirely different track indices (see
+# :func:`plan_push_song`). ``None`` (either directly, or returned by the thunk)
+# keeps the pre-existing "no probe → no clear, loud alert" contract.
+LiveArrangementProbe = (
+    dict[int, list[dict[str, Any]]]
+    | Callable[[], dict[int, list[dict[str, Any]]] | None]
+    | None
+)
+
+
+def resolve_live_arrangement_probe(
+    probe: LiveArrangementProbe,
+) -> dict[int, list[dict[str, Any]]] | None:
+    """Materialize an arrangement probe map, calling it if it's a thunk.
+
+    Called from inside the arrangement phase's ``plan_fn``, i.e. once the
+    `tracks` phase has created + linked every track, so the probe map is keyed
+    by the SAME Live indices the planner resolves from ``ableton_links``.
+    """
+    if probe is None or isinstance(probe, dict):
+        return probe
+    return probe()
+
+
 @dataclass(frozen=True)
 class PushPhase:
     """One phase of the song-level master push.
@@ -195,7 +224,7 @@ def plan_push_song(
     song_id: str,
     session_id: str,
     perform_slowdown_factor: float = 1.0,
-    live_arrangement_clips_by_track: dict[int, list[dict]] | None = None,
+    live_arrangement_clips_by_track: LiveArrangementProbe = None,
 ) -> list[PushPhase]:
     """Master orchestration: return the fourteen phases of a full song push, in order.
 
@@ -213,6 +242,20 @@ def plan_push_song(
     phase's full boundary contract -- what it ASSUMES from prior phases vs
     what it RE-PROBES from Live, and its failure/halt policy -- lives in
     ``.prawduct/artifacts/sync-boundary-contract.md``.
+
+    ``live_arrangement_clips_by_track`` (PSH-ARRPROBE) may be a dict OR a
+    zero-arg thunk (:data:`LiveArrangementProbe`). The execute path passes a
+    THUNK, and that laziness is a correctness requirement, not an optimization:
+    the arrangement projection matches probe keys against the Live track indices
+    recorded in ``ableton_links``, and on a FIRST push those indices don't exist
+    until the `tracks` phase has run. A map probed before the phase loop
+    (the pre-fix behavior) described a different set — a fresh song pushed into
+    a Live set holding the 4 default scaffold tracks probed lanes 1-4 while the
+    song's tracks landed at 5-13, so EVERY track read as "probe failed" and the
+    whole arrangement silently no-op'd. Resolving the thunk inside the
+    arrangement ``plan_fn`` probes after tracks exist. (It also stops non-
+    arrangement scoped runs, e.g. ``--only devices``, from paying for the probe
+    at all.)
 
     Sections (``plan_push_sections``) is NOT a phase: it emits no
     canonical calls (Live has no section-marker concept distinct from
@@ -314,7 +357,11 @@ def plan_push_song(
             name="arrangement",
             plan_fn=lambda: plan_push_arrangement(
                 conn, song_id=song_id, session_id=session_id,
-                live_arrangement_clips_by_track=live_arrangement_clips_by_track,
+                # Resolved HERE (inside the thunk), not at plan_push_song time —
+                # the probe must see the tracks the `tracks` phase created.
+                live_arrangement_clips_by_track=resolve_live_arrangement_probe(
+                    live_arrangement_clips_by_track,
+                ),
             ),
             description="Project the DB onto the arrangement: clear each track then create+fill (envelope-bearing clips duplicate onto the cleared region) — ARR-PROJ.",
         ),

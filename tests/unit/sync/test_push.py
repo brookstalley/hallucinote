@@ -535,6 +535,146 @@ def test_plan_push_arrangement_skips_track_absent_from_probe(
     assert any("the per-track probe failed" in a for a in plan.alerts)
 
 
+# --- PSH-ARRPROBE: severity of a skip — "nothing to do" vs "couldn't tell" ---
+
+
+def test_failed_probe_skip_is_blocked_not_a_benign_alert(
+    conn, song, session, track, clip
+):
+    """A lane absent from the probe means the probe FAILED for that track. The
+    planner is right to skip it, but the skip is un-determined work, not a
+    no-op: it must land in ``blocked_reasons`` so the executor can report the
+    push INCOMPLETE instead of "skipped (idempotent)" over an empty timeline.
+    (It stays an alert too — blocked is the stronger subset.)"""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=2
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip, start_bar=1.0, end_bar=16.0
+    )
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track={9: []},
+    )
+    assert plan.calls == []
+    assert any("the per-track probe failed" in b for b in plan.blocked_reasons)
+    assert set(plan.blocked_reasons) <= set(plan.alerts)
+
+
+def test_unlinked_track_skip_is_blocked(conn, song, session, track, clip):
+    """Same severity for a track with no session link: the song asked for a
+    timeline this push could not address."""
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip, start_bar=1.0, end_bar=16.0
+    )
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track={},
+    )
+    assert any("not linked" in b for b in plan.blocked_reasons)
+
+
+def test_audio_track_skip_is_not_blocked(conn, song, session):
+    """The counterweight: an audio track is a DELIBERATE, known-scope no-op
+    (CLP-AUD2). Nothing is owed, so it must NOT make the push read incomplete —
+    otherwise every song with a vocal stem exits non-zero forever."""
+    atrack = M.create_track(
+        conn, song_id=song, track_index=3, name="Vox", kind="audio",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=atrack, ableton_index=3,
+    )
+    aclip = M.create_audio_clip(
+        conn, track_id=atrack, slot=1, length_beats=16.0,
+        audio_file="assets/vox.wav", name="vox",
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=atrack, clip_id=aclip,
+        start_bar=1.0, end_bar=16.0,
+    )
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track={3: []},
+    )
+    assert plan.blocked_reasons == []
+
+
+def test_no_probe_at_all_is_an_alert_not_blocked(conn, song, session, track, clip):
+    """``None`` means "no probe was taken" (a non-execute caller). The planner
+    still materializes everything — it just can't clear — so it warns loudly
+    without claiming work went undone."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=2
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip, start_bar=1.0, end_bar=16.0
+    )
+    plan = push.plan_push_arrangement(conn, song_id=song, session_id=session)
+    assert plan.calls, "everything is still planned; only the clear is missing"
+    assert plan.blocked_reasons == []
+    assert any("WITHOUT a Live arrangement probe" in a for a in plan.alerts)
+
+
+# --- PSH-ARRPROBE: the probe map may be a thunk, resolved at phase time ---
+
+
+def test_resolve_live_arrangement_probe_passes_through_dict_and_none():
+    assert push.resolve_live_arrangement_probe(None) is None
+    assert push.resolve_live_arrangement_probe({2: []}) == {2: []}
+
+
+def test_resolve_live_arrangement_probe_calls_a_thunk():
+    calls = []
+
+    def thunk():
+        calls.append(1)
+        return {5: []}
+
+    assert push.resolve_live_arrangement_probe(thunk) == {5: []}
+    assert calls == [1]
+
+
+def test_plan_push_song_does_not_resolve_the_probe_thunk_eagerly(
+    conn, song, session, track, clip
+):
+    """The load-bearing bit: building the phase list must NOT probe. The
+    arrangement lane map is only valid once the `tracks` phase has created the
+    song's Live tracks — probing at plan_push_song time is what produced a map
+    keyed by the PRE-push track indices and a silently empty arrangement."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=5
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip, start_bar=1.0, end_bar=16.0
+    )
+    calls = []
+
+    def thunk():
+        calls.append(1)
+        return {5: []}
+
+    phases = push.plan_push_song(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track=thunk,
+    )
+    assert calls == [], "plan_push_song must not touch Live"
+
+    arrangement = next(p for p in phases if p.name == "arrangement")
+    plan = arrangement.plan_fn()
+    assert calls == [1], "the arrangement phase resolves it, once"
+    assert plan.blocked_reasons == []
+    assert [c.args["track_index"] for c in plan.calls] == [5]
+
+
 # --- arrangement projection: routing + §6a all-or-nothing ---
 
 

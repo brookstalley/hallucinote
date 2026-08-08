@@ -128,6 +128,8 @@ from .probe import (
 from .plan import (
     PushPhase,
     PhaseOrderError,
+    LiveArrangementProbe,
+    resolve_live_arrangement_probe,
     _PHASE_NAMES,
     _PHASE_DEPS,
     validate_phase_order,
@@ -220,6 +222,8 @@ __all__ = [
     # Orchestrator + apply
     "PushPhase",
     "PhaseOrderError",
+    "LiveArrangementProbe",
+    "resolve_live_arrangement_probe",
     "_PHASE_NAMES",
     "_PHASE_DEPS",
     "validate_phase_order",

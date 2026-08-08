@@ -201,6 +201,16 @@ silently no-op are `envelopes`, `performed automation`, `arrangement` and
 a pitch bend, a filter sweep or a rise and the envelopes phase pushed nothing,
 that is a **gap, not a clean run**.
 
+One class of that gap now reports itself. A phase that pushed nothing because it
+could not **determine** what to do — a failed per-track probe, a link that isn't
+there — is marked `[GAP] … NOT PUSHED — could not determine state`, the run's
+outcome is `INCOMPLETE`, the exit code is non-zero, and the summary lists the
+reason verbatim under `INCOMPLETE —`. Do not read that as a halt (nothing
+failed) and do not read it as clean. Fix the named precondition and re-run
+`execute --probe`; it re-probes and is idempotent. `skipped (nothing to push)`
+still means exactly that — there was no work — and remains the case you have to
+judge yourself against the brief.
+
 **Route the gap to the stage that owns it**, not reflexively back one step:
 
 - `envelopes` · `performed automation` · `arrangement` moved nothing the brief

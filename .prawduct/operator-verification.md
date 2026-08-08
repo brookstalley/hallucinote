@@ -15,6 +15,48 @@ pending entries when `operator_verification_required: true`.
 
 ---
 
+## MST-LEAK — a master device load no longer leaks into the focused track (2026-08-07) — PENDING
+
+Field report (Live 12.4 Suite, 2026-08-07): with the view on `Detail/Clip` and
+track 3 selected, two `ableton_device(action='load')` calls addressing the MASTER
+put `Shifter` + `Limiter` on the master (correct, `ok`, `parent_kind: "master"`)
+AND appended both to track 3, which nobody addressed. `browser.load_item` takes
+no destination argument — Live aims it from view state, and the loader was moving
+only one half of that state (`song.view.selected_track`), leaving the Detail
+pane's device-chain binding on track 3.
+
+Fix (`handlers/device.py`): retarget the Detail pane at the destination's device
+chain as well, restore the caller's selection + Detail pane afterwards, and
+bracket the load with a FULL-SESSION device census so a device landing in an
+unaddressed chain is removed + reported (or raises) instead of returning `ok`.
+
+**Fingerprint flips** (`handlers/` is in `_FINGERPRINT_PATHS`) → **re-vendor the
+Remote Script + full Live quit/reopen required** before this check can run.
+
+**Check (Ableton open, a set with 3+ tracks and an empty master):**
+1. `ableton_session(action='set_view', view='detail')`, then select track 3 in
+   Live by hand and leave the Detail pane showing the CLIP.
+2. `ableton_device(action='load', node={'parent': {'kind': 'master'}, 'terminal': 'master'}, kind='Shifter')`
+   → expect `ok`, `parent_kind: "master"`, `device_index: 1`, and NO
+   `collateral_removed` key in the response.
+3. `ableton_device(action='list', track_index=3)` → expect track 3's chain
+   byte-for-byte what it was in step 1. Repeat 2-3 with `kind='Limiter'`.
+4. Confirm Live's selection is back on **track 3** and the Detail pane is back on
+   **Clip** (not the device chain) — the load must not move the composer's view.
+5. Collapse the Detail pane entirely, repeat step 2 with a third device →
+   expect the pane still collapsed afterwards.
+6. Repeat 2-4 with a RETURN destination (`{'kind': 'return', 'index': 1}`) — the
+   same aiming defect is latent there (a return is likewise not a member of
+   `song.tracks`), and the fix is destination-kind agnostic.
+
+**Why it can't be headless-verified:** the leak is Live's own load-aiming
+behaviour. The unit tests model the two-halves mechanism in a fake browser
+(`_LeakyBrowser` in `hallucinote_mcp/tests/unit/test_actions_device.py`) — per
+the NODE-ADDR learning, a fake that encodes how an EXTERNAL system responds
+proves nothing until an operator confirms it. The full-session census backstop
+(`_AlwaysLeakyBrowser`) is what protects the composer if the prevention half
+turns out not to be the whole mechanism.
+
 ## AUD-2D6T — automatic capture sweep fires on a real render (2026-08-03) — PENDING
 
 The CLI half is verified against this repo's real `songs/missing/captures/` (406 MB

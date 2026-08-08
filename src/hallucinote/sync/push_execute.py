@@ -728,10 +728,49 @@ def execute_push(
     # bad --only/--start-at/--stop-after fails fast (PhaseTargetError) without
     # leaving a dangling open audit row. plan_push_song is pure-data (no side
     # effects), so the reorder is safe.
+    # PSH-DEVDUP: the devices phase needs Live's CURRENT device chains to tell
+    # "this device is missing" from "this device is present but unlinked" —
+    # answering `load` to both is what doubled every FX chain on `the-argument`
+    # (2026-08-08). The probe is a THUNK resolved inside the devices plan_fn, so
+    # it runs AFTER `tracks`/`returns` have created + linked the parents it keys
+    # by (an eagerly-probed map on a first push describes different indices).
+    # Resolving it also RECONCILES the device links, which is the actual repair:
+    # a chain loaded into Live by /song-pick-instruments reaches the DB only via
+    # the capture snapshot, so it never had an `ableton_links` row, and
+    # `push_cli execute` — unlike `push_cli probe-and-link` — never bound one.
+    device_probe_state: dict[str, Any] = {"done": False, "map": None}
+
+    def _device_chain_probe() -> dict[tuple[str, int], list[dict]] | None:
+        if device_probe_state["done"]:
+            return device_probe_state["map"]
+        device_probe_state["done"] = True
+        probed, parent_count = _probe_live_device_chains()
+        if probed:
+            push.reconcile_device_links(
+                conn,
+                song_id=song_id,
+                session_id=session_id,
+                live_devices_by_parent=probed,
+                actor=actor,
+                reason=(
+                    reason
+                    or f"push_cli execute device reconcile (session={session_id})"
+                ),
+            )
+        # No PARENTS to probe (a song with no linked tracks/returns yet, or a
+        # scoped run before `tracks`) yields an empty map that says nothing —
+        # hand the planner ``None`` so it keeps its pure-planner contract. But
+        # an empty map when there WERE parents means every read failed, and
+        # that is real ignorance: keep the empty map so the planner refuses
+        # per-parent rather than appending on faith.
+        device_probe_state["map"] = probed if parent_count else None
+        return device_probe_state["map"]
+
     phases = push.plan_push_song(
         conn, song_id=song_id, session_id=session_id,
         perform_slowdown_factor=perform_slowdown_factor,
         live_arrangement_clips_by_track=live_arrangement_clips_by_track,
+        live_device_chains=_device_chain_probe,
     )
     phases, scope = _filter_phases(
         phases, only=only, start_at=start_at, stop_after=stop_after,
@@ -855,6 +894,70 @@ def execute_push(
             request_id=request_id,
             reason=reason or f"push_cli execute pad-probe (session={session_id})",
         )
+
+    def _probe_one_device_chain(
+        parent_kind: str, parent_index: int,
+    ) -> list[dict[str, Any]] | None:
+        """PSH-DEVDUP: read one parent's top-level Live device chain.
+
+        Returns the ``ableton_device(action='list')`` device list, or ``None``
+        on ANY failure. ``None`` is load-bearing and must never be softened to
+        ``[]``: the devices planner reads "no data for this parent" as REFUSE,
+        while ``[]`` means "Live's chain is genuinely empty, appending is safe".
+        Collapsing the two is precisely the guess that doubles a chain."""
+        if parent_kind == "master":
+            params: dict[str, Any] = {"master": True}
+        elif parent_kind == "track":
+            params = {"track_index": parent_index}
+        elif parent_kind == "return":
+            params = {"return_index": parent_index}
+        else:
+            return None
+        try:
+            resp = send_fn(Request(
+                tool="ableton_device", action="list", params=params,
+            ))
+        except Exception:  # prawduct:allow prawduct/broad-except -- a probe hiccup must surface as "unknown" (which REFUSES the load), never as a traceback or a false "chain is empty"
+            logger.debug(
+                "device-chain probe failed for %s#%s", parent_kind, parent_index,
+                exc_info=True,
+            )
+            return None
+        if not bool(getattr(resp, "ok", False)):
+            return None
+        payload = getattr(resp, "result", None) or {}
+        # An OK response with no `devices` key is read as an EMPTY chain, not as
+        # a failure — same convention as `push_cli._probe_live_devices_via_mcp`
+        # (the handler omits the key for an empty chain). Only a refused call or
+        # a raised transport error is "unknown"; that is the distinction the
+        # planner's refuse-vs-load fork rests on.
+        return list(payload.get("devices") or [])
+
+    def _probe_live_device_chains() -> tuple[dict[tuple[str, int], list[dict]], int]:
+        """PSH-DEVDUP: probe every addressable parent's device chain, keyed
+        ``(parent_kind, parent_index)`` — the same shape ``probe_and_link``
+        consumes. Parents come from ``ableton_links`` (plus the master
+        singleton), so this issues exactly as many reads as the devices phase
+        has parents to address, and a per-parent failure simply leaves that key
+        ABSENT (which the planner reads as "unknown → refuse").
+
+        Returns ``(map, parent_count)``; the count lets the caller tell "there
+        was nothing to probe" from "nothing answered"."""
+        tracks, returns, master = push.linked_device_parents(
+            conn, song_id=song_id, session_id=session_id,
+        )
+        by_parent: dict[tuple[str, int], list[dict]] = {}
+        parent_count = 0
+        for parents, parent_kind in (
+            (tracks, "track"), (returns, "return"), (master, "master"),
+        ):
+            for parent in parents:
+                parent_count += 1
+                idx = parent["ableton_index"]
+                probed = _probe_one_device_chain(parent_kind, idx)
+                if probed is not None:
+                    by_parent[(parent_kind, idx)] = probed
+        return by_parent, parent_count
 
     def _read_device_params(node: dict[str, Any]) -> dict[str, Any] | None:
         """PSH-3K9D: read one device's current Live parameters for the
@@ -1260,6 +1363,93 @@ def execute_push(
             ))
         _emit_progress(f"[{phase_name}] HALTED — {outcome_label}")
 
+    def _device_chains_verified(phase_name: str, idx: int, calls_ok: int) -> bool:
+        """PSH-DEVDUP PREVENTION assert — the devices-phase sibling of the
+        arrangement integrity check, and the same contract: a materialize step
+        that can corrupt state silently proves it didn't, or the push HALTs.
+
+        Re-probes every addressable parent's chain in a FRESH read (never the
+        pre-phase map — that one predates the loads) and compares Live's
+        authored device classes against the DB's. Live carrying MORE of a class
+        the DB authors on that parent than the DB authors is the duplication
+        signature; anything else (a factory device, a hand-dropped utility, a
+        short chain, an unreadable parent) is surfaced as a warning and does not
+        halt. Returns True when the phase may be recorded OK."""
+        if phase_name != "devices":
+            return True
+        from hallucinote.sync.device_chain_verify import (
+            DeviceChainIntegrityError,
+            assert_device_chains_materialized,
+            CHAIN_PROBE_FAILED,
+        )
+        try:
+            report = assert_device_chains_materialized(
+                conn, song_id=song_id, session_id=session_id,
+                probe_fn=_probe_one_device_chain,
+            )
+        except DeviceChainIntegrityError as exc:
+            error_records.append({
+                "key": None,
+                "tool": phase_name,
+                "action": "integrity_assert",
+                "args_summary": {"phase": phase_name},
+                "error": str(exc),
+                "hint": (
+                    "Live's device chain carries a duplicate of a device the DB "
+                    "already authors there. Live has no reorder API, so a "
+                    "re-push cannot undo it: delete the duplicates in Live (or "
+                    "push into a fresh set), then re-run `push_cli "
+                    "probe-and-link <session> --song <slug> --probe`."
+                ),
+            })
+            _halt(
+                phase_name, idx, outcome_label="partial",
+                exit_code_val=EXIT_PARTIAL, calls_ok=calls_ok,
+                calls_failed=1,
+            )
+            return False
+        except _CONNECTION_EXCS as exc:
+            error_records.append({
+                "key": None,
+                "tool": phase_name,
+                "action": "integrity_assert",
+                "args_summary": {"phase": phase_name},
+                "error": (
+                    "connection lost during the device-chain integrity "
+                    f"re-probe: {exc}"
+                ),
+                "hint": "see ableton://guides/error-recovery; re-execute (idempotent).",
+            })
+            _halt(
+                phase_name, idx, outcome_label="connection_lost",
+                exit_code_val=EXIT_CONNECTION_LOST, calls_ok=calls_ok,
+                calls_failed=1,
+            )
+            return False
+        # Non-fatal disagreements: say them, don't swallow them. "Couldn't
+        # verify" must read differently from "verified clean" — that gap is the
+        # whole reason the assert exists.
+        for anomaly in report.anomalies():
+            msg = f"devices integrity: {anomaly.describe()}"
+            if msg not in warning_messages:
+                warning_messages.append(msg)
+        unverified = [
+            r for r in report.results if r.status == CHAIN_PROBE_FAILED
+        ]
+        if unverified:
+            msg = (
+                f"devices integrity: {len(unverified)} device chain(s) could "
+                f"NOT be verified (Live re-probe failed) — a duplicated chain "
+                f"on those would NOT have been caught: "
+                + ", ".join(
+                    f"{r.parent_kind} {r.parent_name!r}" for r in unverified[:5]
+                )
+                + (" ..." if len(unverified) > 5 else "")
+            )
+            if msg not in warning_messages:
+                warning_messages.append(msg)
+        return True
+
     # MICROTUNE Chunk 3: before the phase loop, emit the gated tuning notices —
     # the re-load instruction + a non-blocking drift warning — for an alt-tuned
     # song. Inert (returns []) for the 99.99% with tuning_ref NULL, with NO extra
@@ -1312,6 +1502,12 @@ def execute_push(
             break
 
         if not plan.calls:
+            # PSH-DEVDUP: an empty devices plan is the fully-idempotent
+            # re-push — every device already linked. That is exactly the state
+            # a doubled chain hides in (the second copy IS linked), so verify
+            # here too rather than trusting "nothing to do".
+            if not _device_chains_verified(phase.name, idx, 0):
+                break
             pad_ok, pad_failed = _maybe_pad_probe(phase.name)
             phase_outcomes.append(PhaseOutcome(
                 name=phase.name, status=_STATUS_SKIPPED,
@@ -1560,6 +1756,12 @@ def execute_push(
                     calls_failed=calls_failed + 1,
                 )
                 break
+
+        # PSH-DEVDUP: the devices phase just dispatched loads/params. Prove Live
+        # doesn't now carry a doubled chain before recording OK — the exact
+        # claim the 2026-08-08 `23/23 ok` made falsely.
+        if not _device_chains_verified(phase.name, idx, calls_ok):
+            break
 
         pad_ok, pad_failed = _maybe_pad_probe(phase.name)
         phase_outcomes.append(PhaseOutcome(

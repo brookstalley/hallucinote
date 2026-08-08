@@ -77,6 +77,18 @@ probe, and every prior phase that creates X halted the push if it failed.
     suppress-on-confident-empty, keep-on-any-doubt).
   - *devices*: convergence re-plan — after an all-ok pass, re-run the planner once
     so params of devices loaded THIS pass land same-push (:1335-1392, SYN-9F2L).
+  - *devices*: **pre-phase chain probe + link reconcile** (PSH-DEVDUP) — a
+    lazily-resolved, once-per-push `ableton_device(list)` per linked parent
+    (`_probe_live_device_chains`), fed to `reconcile_device_links` and then to
+    the planner. Resolved INSIDE the devices `plan_fn`, so it sees the parents
+    `tracks`/`returns` created. Without it "unlinked" was read as "absent" and
+    push appended a SECOND copy of an FX chain Live already had.
+  - *devices*: **post-phase integrity assert** (PSH-DEVDUP) — FRESH re-probe of
+    every parent's chain vs the DB's authored device classes; HALT when Live
+    carries MORE of a class the DB authors there (the duplication signature).
+    Extra/short/drift and unreadable parents degrade to warnings. Runs on the
+    dispatched path AND the "skipped, nothing to push" path — a doubled chain
+    hides in the fully-linked state (`device_chain_verify.py`).
   - *devices*: post-phase pad probe — best-effort `pad_info` per linked Drum Rack,
     persisted via `M.replace_drum_pad_mappings`; never affects the outcome
     (:491-583, :804-826; runs on ok AND skipped, not on halt).
@@ -212,12 +224,19 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
 - **Assumes:** tracks/returns linked (warn + skip whole parent otherwise,
   :96-103/:119-126); device links truthful — a linked device's load is skipped
   entirely, trusting W20-A probe matching + SYN-SCAFFOLD-MISLINK cascades;
+  **an UNLINKED device is no longer assumed absent** (PSH-DEVDUP): with a
+  `live_devices_by_parent` probe map the planner emits a load ONLY for a
+  position Live's authored chain does not reach, and REFUSES (hard `plan.error`,
+  halt before dispatch) when the slot is occupied or the parent was unreadable.
+  Without a map (pure-planner callers) the pre-PSH-DEVDUP "load on faith"
+  behavior is preserved;
   nested devices arrive WITH the rack preset (never loaded, only param-addressed
   by `device_path`, :513-573); master devices load without a parent link
   (`master=True`, :77-92, DEV-6M2K).
-- **Re-probes (executor-side, §Executor):** per-device `get_parameters`
-  (diff-reconcile), per-rack `get_device_chains` (empty-rack guard), post-phase
-  `pad_info`.
+- **Re-probes (executor-side, §Executor):** per-parent `ableton_device(list)`
+  (PSH-DEVDUP pre-phase chain probe + link reconcile, and again post-phase for
+  the integrity assert), per-device `get_parameters` (diff-reconcile), per-rack
+  `get_device_chains` (empty-rack guard), post-phase `pad_info`.
 - **Failure/halt:** placeholder + analyzer rows skip-with-warn (:164-185).
   Param with no writable form → operator **alert**, never a silent drop
   (:499-510, SYN-9F2L). Corrupt stored JSON (browser_path/preset_query/override

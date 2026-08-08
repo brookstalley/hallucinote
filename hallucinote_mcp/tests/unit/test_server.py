@@ -1188,8 +1188,23 @@ def test_render_start_logs_when_the_engine_is_unavailable(
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture
+def proj(tmp_path):
+    """An isolated project dir, one level inside `tmp_path`.
+
+    Slug resolution consults the project dir's SIBLINGS (the two-repo topology
+    rung), and pytest's `tmp_path` siblings are other tests' `tmp_path`s — some
+    of which plant workspace markers and build songs. Nesting one level gives
+    each test its own neighbourhood so no test can be steered by another's
+    fixtures.
+    """
+    d = tmp_path / "proj"
+    d.mkdir()
+    return d
+
+
 def test_render_default_finds_a_workspace_below_the_project_dir(
-    tmp_path, monkeypatch,
+    proj, monkeypatch,
 ):
     """The defect: project dir above, `hallucinote.toml` below. Captures must
     land in the song's own workspace, not a fabricated `songs/<slug>/`."""
@@ -1197,13 +1212,13 @@ def test_render_default_finds_a_workspace_below_the_project_dir(
     from hallucinote_mcp.wire import Response
 
     monkeypatch.delenv("HALLUCINOTE_SONGS_ROOT", raising=False)
-    ws = tmp_path / "examples"
+    ws = proj / "examples"
     (ws / "demo").mkdir(parents=True)
     (ws / "hallucinote.toml").write_text(
         '[workspace]\nlayout = "monorepo"\nsongs_root = "."\n'
     )
-    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj))
+    monkeypatch.chdir(proj)
 
     forwarded = Response(ok=True, result={"status": "ok"})
     with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
@@ -1213,19 +1228,19 @@ def test_render_default_finds_a_workspace_below_the_project_dir(
     assert output_dir.is_relative_to((ws / "demo").resolve()), (
         f"captures must land in the resolved workspace, got {output_dir}"
     )
-    assert not (tmp_path / "songs").exists(), (
+    assert not (proj / "songs").exists(), (
         "the legacy path must not even be named once the workspace resolves"
     )
 
 
 def test_render_refuses_to_write_into_a_song_dir_that_does_not_exist(
-    tmp_path, monkeypatch,
+    proj, monkeypatch,
 ):
     """No resolution is perfect — a typo'd slug, an ambiguous descent. The
     render must refuse rather than invent a tree and fill it with gigabytes."""
     monkeypatch.delenv("HALLUCINOTE_SONGS_ROOT", raising=False)
-    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj))
+    monkeypatch.chdir(proj)
 
     with patch("hallucinote_mcp.server.client.send") as send:
         response = handle_tool_call("ableton_render", "start", {"song_slug": "demo"})
@@ -1238,15 +1253,15 @@ def test_render_refuses_to_write_into_a_song_dir_that_does_not_exist(
 
 
 def test_render_refusal_does_not_apply_to_an_explicit_output_dir(
-    tmp_path, monkeypatch,
+    proj, monkeypatch,
 ):
     """A caller naming a destination is saying "put it here" — the guard is
     only ever about the DERIVED default."""
     from hallucinote_mcp.wire import Response
 
-    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
-    monkeypatch.chdir(tmp_path)
-    target = str(tmp_path / "anywhere" / "captures")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj))
+    monkeypatch.chdir(proj)
+    target = str(proj / "anywhere" / "captures")
 
     forwarded = Response(ok=True, result={"status": "ok"})
     with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
@@ -1259,7 +1274,7 @@ def test_render_refusal_does_not_apply_to_an_explicit_output_dir(
 
 
 def test_render_db_seq_is_tagged_for_a_workspace_below_the_project_dir(
-    tmp_path, monkeypatch,
+    proj, monkeypatch,
 ):
     """Downstream symptom of the same misresolution: `manifest.db_seq` came
     back null (the DB "didn't exist"), so the capture could never serve as a
@@ -1269,7 +1284,7 @@ def test_render_db_seq_is_tagged_for_a_workspace_below_the_project_dir(
     from hallucinote_mcp.wire import Response
 
     monkeypatch.delenv("HALLUCINOTE_SONGS_ROOT", raising=False)
-    ws = tmp_path / "examples"
+    ws = proj / "examples"
     song_dir = ws / "demo"
     song_dir.mkdir(parents=True)
     (ws / "hallucinote.toml").write_text(
@@ -1279,8 +1294,8 @@ def test_render_db_seq_is_tagged_for_a_workspace_below_the_project_dir(
     M.create_song(conn, name="demo")
     conn.commit()
     conn.close()
-    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj))
+    monkeypatch.chdir(proj)
 
     forwarded = Response(ok=True, result={"status": "ok"})
     with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
@@ -1289,3 +1304,74 @@ def test_render_db_seq_is_tagged_for_a_workspace_below_the_project_dir(
     assert send.call_args.args[0].params.get("db_seq") is not None, (
         "a resolvable song DB must tag the render with its audit-log seq"
     )
+
+
+def test_render_default_finds_the_sibling_songs_repo(proj, monkeypatch):
+    """The reported failure on the render side. A session rooted at the
+    framework repo — which ships a demo workspace at `examples/` — used to send
+    every slug into that demo workspace, so captures for a song in the sibling
+    songs repo landed in the wrong tree (workable around only by passing an
+    explicit `output_dir`; `ableton_analysis` had no such escape hatch).
+    """
+    import pathlib
+    from hallucinote_mcp.wire import Response
+
+    monkeypatch.delenv("HALLUCINOTE_SONGS_ROOT", raising=False)
+    demo_ws = proj / "examples"
+    (demo_ws / "b-natural").mkdir(parents=True)
+    (demo_ws / "b-natural" / "build.py").write_text("# built\n")
+    (demo_ws / "hallucinote.toml").write_text(
+        '[workspace]\nlayout = "monorepo"\nsongs_root = "."\n'
+    )
+    song_dir = proj.parent / "songs-repo" / "songs" / "the-argument"
+    song_dir.mkdir(parents=True)
+    (song_dir / "build.py").write_text("# built\n")
+    (proj.parent / "songs-repo" / "hallucinote.toml").write_text(
+        '[workspace]\nlayout = "monorepo"\nsongs_root = "songs"\n'
+    )
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj))
+    monkeypatch.chdir(proj)
+
+    forwarded = Response(ok=True, result={"status": "ok"})
+    with patch("hallucinote_mcp.server.client.send", return_value=forwarded) as send:
+        response = handle_tool_call(
+            "ableton_render", "start", {"song_slug": "the-argument"},
+        )
+
+    assert response["ok"] is True
+    output_dir = pathlib.Path(send.call_args.args[0].params["output_dir"])
+    assert output_dir.is_relative_to(song_dir.resolve()), (
+        f"captures must land in the sibling songs repo, got {output_dir}"
+    )
+    assert not (demo_ws / "the-argument").exists(), (
+        "the demo workspace must not be named for a song it does not hold"
+    )
+
+
+def test_render_refuses_and_names_both_workspaces_when_two_hold_the_song(
+    proj, monkeypatch,
+):
+    """Ambiguity stays honest at the render boundary too: refuse, name the
+    candidates, and never invent a tree to fill with gigabytes."""
+    monkeypatch.delenv("HALLUCINOTE_SONGS_ROOT", raising=False)
+    roots = []
+    for name in ("repo-a", "repo-b"):
+        root = proj.parent / name
+        (root / "songs" / "demo").mkdir(parents=True)
+        (root / "songs" / "demo" / "build.py").write_text("# built\n")
+        (root / "hallucinote.toml").write_text(
+            '[workspace]\nlayout = "monorepo"\nsongs_root = "songs"\n'
+        )
+        roots.append(root)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj))
+    monkeypatch.chdir(proj)
+
+    with patch("hallucinote_mcp.server.client.send") as send:
+        response = handle_tool_call("ableton_render", "start", {"song_slug": "demo"})
+
+    assert response["ok"] is False
+    assert not send.called, "a refused render must never reach Live"
+    assert "ambiguous" in response["error"], response["error"]
+    for root in roots:
+        assert str(root.resolve()) in response["error"], response["error"]
+    assert not (proj / "songs").exists()

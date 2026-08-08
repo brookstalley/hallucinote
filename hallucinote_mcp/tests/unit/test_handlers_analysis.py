@@ -1485,21 +1485,35 @@ def _clean_workspace_env(monkeypatch):
     monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
 
 
+@pytest.fixture
+def proj(tmp_path):
+    """An isolated project dir, one level inside `tmp_path`.
+
+    Resolution consults the project dir's SIBLINGS (the two-repo topology rung),
+    and pytest's `tmp_path` siblings are other tests' `tmp_path`s — several of
+    which plant workspace markers and build songs. Nesting one level gives each
+    test its own neighbourhood so no test can be steered by another's fixtures.
+    """
+    d = tmp_path / "proj"
+    d.mkdir()
+    return d
+
+
 def test_missing_db_message_names_the_workspace_it_searched(
-    tmp_path, monkeypatch, _clean_workspace_env,
+    proj, monkeypatch, _clean_workspace_env,
 ):
     """"Found a workspace; the song isn't in it" — name the workspace and the
     songs it does have, instead of a bare "doesn't name a built song"."""
-    ws = tmp_path / "examples"
+    ws = proj / "examples"
     ws.mkdir()
     (ws / "hallucinote.toml").write_text(
         '[workspace]\nlayout = "monorepo"\nsongs_root = "."\n'
     )
-    _make_song_dir(ws.parent, "unused")  # keeps tmp_path/songs/ realistic
+    _make_song_dir(ws.parent, "unused")  # keeps proj/songs/ realistic
     built = ws / "real-song"
     built.mkdir()
     (built / "build.py").write_text("# built\n")
-    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj))
 
     with pytest.raises(analysis_handlers._AnalysisError) as exc:
         analysis_handlers._existing_db_path("typo-song")
@@ -1510,21 +1524,28 @@ def test_missing_db_message_names_the_workspace_it_searched(
 
 
 def test_missing_db_message_does_not_advise_rebuilding_a_song_built_elsewhere(
-    tmp_path, monkeypatch, _clean_workspace_env,
+    proj, monkeypatch, _clean_workspace_env,
 ):
     """The exact misdirection: never send an operator to `build.py --reset` for
-    a song that exists somewhere the resolver simply didn't look."""
+    a song that exists somewhere the resolver simply didn't look.
+
+    Staged as two workspaces that BOTH hold `demo`, which is what "the resolver
+    didn't look there" now means: a single holder is resolved outright (that is
+    the slug-aware rung), so only a genuine ambiguity still declines — and the
+    advice must name where the song is rather than offer to make another one.
+    """
     for name in ("one", "two"):
-        d = tmp_path / name
+        d = proj / name
         d.mkdir()
         (d / "hallucinote.toml").write_text(
             '[workspace]\nlayout = "monorepo"\nsongs_root = "."\n'
         )
-    built = tmp_path / "two" / "demo"          # two workspaces below ⇒ ambiguous
-    built.mkdir()                              # ⇒ resolution falls back to legacy
-    (built / "build.py").write_text("# built\n")
-    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
-    monkeypatch.chdir(tmp_path)
+        song = d / "demo"                  # both hold `demo` ⇒ ambiguous
+        song.mkdir()                       # ⇒ resolution falls back to legacy
+        (song / "build.py").write_text("# built\n")
+    built = proj / "two" / "demo"
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj))
+    monkeypatch.chdir(proj)
 
     with pytest.raises(analysis_handlers._AnalysisError) as exc:
         analysis_handlers._existing_db_path("demo")
@@ -1534,10 +1555,10 @@ def test_missing_db_message_does_not_advise_rebuilding_a_song_built_elsewhere(
 
 
 def test_missing_db_message_distinguishes_no_marker_from_wrong_workspace(
-    tmp_path, monkeypatch, _clean_workspace_env,
+    proj, monkeypatch, _clean_workspace_env,
 ):
     """No marker anywhere is a third, differently-remediated diagnosis."""
-    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj))
 
     with pytest.raises(analysis_handlers._AnalysisError) as exc:
         analysis_handlers._existing_db_path("nowhere")
@@ -1547,11 +1568,11 @@ def test_missing_db_message_distinguishes_no_marker_from_wrong_workspace(
 
 
 def test_analysis_resolves_a_song_in_a_workspace_below_the_project_dir(
-    tmp_path, monkeypatch, _clean_workspace_env,
+    proj, monkeypatch, _clean_workspace_env,
 ):
     """The defect end-to-end at the analysis boundary: project dir above,
     workspace below, song built. It must resolve — not report it unbuilt."""
-    ws = tmp_path / "examples"
+    ws = proj / "examples"
     ws.mkdir()
     (ws / "hallucinote.toml").write_text(
         '[workspace]\nlayout = "monorepo"\nsongs_root = "."\n'
@@ -1562,7 +1583,77 @@ def test_analysis_resolves_a_song_in_a_workspace_below_the_project_dir(
     conn.execute("INSERT INTO songs (id, name) VALUES (?, ?)", ("song-demo", "demo"))
     conn.commit()
     conn.close()
-    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj))
 
     resolved = analysis_handlers._existing_db_path("demo")
     assert resolved.parent == song_dir.resolve()
+
+
+def _built_song_db(song_dir: Path, slug: str) -> None:
+    song_dir.mkdir(parents=True, exist_ok=True)
+    (song_dir / "build.py").write_text("# built\n")
+    conn = init_db(song_dir / f"{slug}.db")
+    conn.execute("INSERT INTO songs (id, name) VALUES (?, ?)", (f"song-{slug}", slug))
+    conn.commit()
+    conn.close()
+
+
+def test_analysis_resolves_a_song_in_the_sibling_songs_repo(
+    proj, monkeypatch, _clean_workspace_env,
+):
+    """THE REPORTED FAILURE, at the boundary where it had no workaround.
+
+    Session rooted at the framework repo (which ships a demo workspace at
+    `examples/`), song living in the sibling songs repo — the supported two-repo
+    topology. The nested demo workspace used to capture the slug, and
+    `ableton_analysis` — unlike `ableton_render`, which can be steered with an
+    explicit `output_dir` — hard-failed with "no song DB at .../examples/<slug>".
+    """
+    demo_ws = proj / "examples"
+    demo_ws.mkdir()
+    (demo_ws / "hallucinote.toml").write_text(
+        '[workspace]\nlayout = "monorepo"\nsongs_root = "."\n'
+    )
+    _built_song_db(demo_ws / "b-natural", "b-natural")
+
+    songs_repo = proj.parent / "songs-repo"
+    songs_repo.mkdir()
+    (songs_repo / "hallucinote.toml").write_text(
+        '[workspace]\nlayout = "monorepo"\nsongs_root = "songs"\n'
+    )
+    _built_song_db(songs_repo / "songs" / "the-argument", "the-argument")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj))
+
+    resolved = analysis_handlers._existing_db_path("the-argument")
+    assert resolved.parent == (songs_repo / "songs" / "the-argument").resolve()
+    # …and the demo workspace still answers for the song it does hold.
+    assert analysis_handlers._existing_db_path("b-natural").parent == (
+        (demo_ws / "b-natural").resolve()
+    )
+
+
+def test_analysis_names_both_workspaces_when_two_hold_the_song(
+    proj, monkeypatch, _clean_workspace_env,
+):
+    """Genuinely ambiguous ⇒ a teaching error naming the candidates, never a
+    silent pick of one of two real songs."""
+    roots = []
+    for name in ("repo-a", "repo-b"):
+        root = proj.parent / name
+        root.mkdir()
+        (root / "hallucinote.toml").write_text(
+            '[workspace]\nlayout = "monorepo"\nsongs_root = "songs"\n'
+        )
+        _built_song_db(root / "songs" / "demo", "demo")
+        roots.append(root)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj))
+    monkeypatch.chdir(proj)
+
+    with pytest.raises(analysis_handlers._AnalysisError) as exc:
+        analysis_handlers._existing_db_path("demo")
+    msg = str(exc.value)
+    assert "ambiguous" in msg, msg
+    for root in roots:
+        assert str(root.resolve()) in msg, msg
+    assert "HALLUCINOTE_SONGS_ROOT" in msg, msg
+    assert "--reset" not in msg, msg

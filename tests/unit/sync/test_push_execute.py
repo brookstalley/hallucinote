@@ -2036,6 +2036,105 @@ def test_execute_arrangement_probe_failure_warns_not_silent_ok(
     assert any("could NOT be verified" in w for w in state.get("warnings", []))
 
 
+def _arrangement_witness(conn, song, tiny_song):
+    """One MIDI placement with notes — the minimum a materialize can drop."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4,
+    )
+    M.insert_notes(conn, clip_id=tiny_song["clip_id"], notes=[
+        {"pitch": 60, "start_beats": 0.0, "duration_beats": 1.0, "velocity": 100},
+    ])
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=tiny_song["track_id"],
+        clip_id=tiny_song["clip_id"], start_bar=1.0, end_bar=2.0,
+    )
+
+
+def test_execute_arrangement_lane_probe_failure_halts_not_ok(
+    conn, song, session, tiny_song, state_dir,
+):
+    """ARR-ORPHAN2 regression — the witness bug, end to end.
+
+    The push planner reads each track's arrangement lane from
+    ``ableton_clip(list, location='arrangement')``; when that listing FAILS the
+    lane is skipped — no clear, no rebuild — and any orphan already in it
+    survives. The post-phase assert used to file the same failure under the
+    benign ``probe_failed`` bucket, so the phase reported ok and the push exited
+    0 over a track that had lost every placement (observed: Lead Gtr silent at
+    -180 dBFS while push printed "97/97 ok"). An unreadable lane must HALT."""
+    _arrangement_witness(conn, song, tiny_song)
+    base = _make_send_fn()
+
+    def lane_list_fails(req, *, read_timeout=None):
+        if (req.tool == "ableton_clip" and req.action == "list"
+                and req.params.get("location") == "arrangement"):
+            return FakeResponse(ok=False, error="simulated lane-probe failure")
+        return base(req, read_timeout=read_timeout)
+
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=lane_list_fails,
+    )
+    assert result.outcome == "partial"
+    assert result.exit_code == push_execute.EXIT_PARTIAL
+    assert result.phase_halted == "arrangement"
+    blob = json.dumps(json.loads((state_dir / ".last-push-errors.json").read_text()))
+    assert "integrity" in blob.lower()
+    assert "lane_unreadable" in blob
+
+
+def test_execute_arrangement_dropped_placement_with_orphan_halts(
+    conn, song, session, tiny_song, state_dir,
+):
+    """ARR-ORPHAN2 regression: a track whose placements were DROPPED and which
+    kept an orphan clip must fail the phase, not report ok. Both halves of the
+    observed divergence (`missing_clip` + `extra_clip`) are already what
+    ``verify-arrangement`` prints — the defect was that the pusher's own assert
+    reached a different conclusion from its verifier on the same facts."""
+    _arrangement_witness(conn, song, tiny_song)
+    base = _make_send_fn()
+
+    def lane_lies(req, *, read_timeout=None):
+        resp = base(req, read_timeout=read_timeout)
+        if (req.tool == "ableton_clip" and req.action == "list"
+                and req.params.get("location") == "arrangement"):
+            # Materialization "succeeded", but the lane actually holds only a
+            # stale orphan far from any DB placement.
+            resp.result = {"clips": [{
+                "arrangement_clip_index": 1, "start_beats": 500.0,
+                "name": "Lead Gtr 2", "length": 400.0,
+            }]}
+        return resp
+
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=lane_lies,
+    )
+    assert result.outcome == "partial"
+    assert result.phase_halted == "arrangement"
+    blob = json.dumps(json.loads((state_dir / ".last-push-errors.json").read_text()))
+    assert "missing_clip" in blob
+    assert "extra_clip" in blob
+
+
+def test_execute_arrangement_faithful_materialize_still_reports_ok(
+    conn, song, session, tiny_song, state_dir,
+):
+    """ARR-ORPHAN2 happy path: with the assert tightened, a faithful projection
+    must still complete clean — no false halt, no spurious warning."""
+    _arrangement_witness(conn, song, tiny_song)
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=_make_send_fn(),
+    )
+    assert result.outcome == "ok"
+    assert result.phase_halted is None
+    arrangement = next(p for p in result.phases if p.name == "arrangement")
+    assert arrangement.status == "ok"
+    assert arrangement.calls_failed == 0
+    assert not any("integrity" in w.lower() for w in result.warnings), result.warnings
+
+
 # ---------------------------------------------------------------------------
 # PSH-2R7K — phase-targeting (--only / --start-at / --stop-after)
 # ---------------------------------------------------------------------------
@@ -2664,3 +2763,339 @@ def test_errors_file_write_failure_still_closes_request(
     state = json.loads((state_dir / ".last-push-state.json").read_text())
     assert state["outcome"] == "partial"
     assert state["current_phase"] is None  # terminal flush, not a mid-run one
+
+
+# ---------------------------------------------------------------------------
+# Tolerated failures — a refused no-op must not halt a fourteen-phase push
+# ---------------------------------------------------------------------------
+
+
+_DISABLED_ERR = (
+    "ableton_device('set_chain_property') failed: RuntimeError: "
+    "Value cannot be set, the parameter is disabled"
+)
+
+
+def test_disabled_chain_property_is_tolerated():
+    """Live's own 606 Core Kit hi-hat pads carry macro-locked chain mixers.
+
+    Capture read the value, push wrote the identical value back, Live refused,
+    and the whole push halted at the devices phase over a change that would
+    have changed nothing.
+    """
+    assert push_execute._is_tolerated_failure(
+        tool="ableton_device", action="set_chain_property",
+        err_msg=_DISABLED_ERR,
+    )
+
+
+@pytest.mark.parametrize("tool, action, err_msg, why", [
+    ("ableton_device", "set_chain_property",
+     "value 2.5 out of range [0.0, 1.0]",
+     "a value-range refusal is a real defect — the song asks for the impossible"),
+    ("ableton_device", "set_chain_property",
+     "parameter 'Volume' not found on device",
+     "a missing parameter means the device changed under the song"),
+    ("ableton_device", "set_parameter",
+     _DISABLED_ERR,
+     "only the CHAIN-MIXER write is a guaranteed no-op; a disabled device "
+     "parameter is not in scope for this tolerance"),
+    ("ableton_clip", "create", _DISABLED_ERR,
+     "tolerance must be keyed on the tool as well as the message"),
+    ("ableton_device", "set_chain_property", None,
+     "no error message means no evidence it was the disabled case"),
+])
+def test_other_failures_are_not_tolerated(tool, action, err_msg, why):
+    """The tolerance must stay narrow. A guard that swallows more than the one
+    provably-harmless case turns a push from a verifier into a rubber stamp."""
+    assert not push_execute._is_tolerated_failure(
+        tool=tool, action=action, err_msg=err_msg,
+    ), why
+
+
+# ---------------------------------------------------------------------------
+# PSH-ARRPROBE — the first-push silent arrangement no-op
+#
+# Observed 2026-08-07 against Live 12.4: a brand-new 9-track song pushed into a
+# Live set that still held its 4 default scaffold tracks reported
+# "OK — all 14 phases completed" with `arrangement: skipped (idempotent)` and an
+# EMPTY timeline. Root cause: the arrangement lane probe ran BEFORE the phase
+# loop, so it described Live indices 1-4 while the `tracks` phase then created
+# the song's tracks at 5-13; every track read as "probe failed" and the planner
+# (correctly) refused to clear+fill an unknown lane. Two independent defects:
+# the probe ran too early, and the resulting do-nothing reported as clean.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _Req:
+    """Minimal stand-in for hallucinote_mcp.wire.Request — the fakes here read
+    only .tool / .action / .params."""
+    tool: str
+    action: str
+    params: dict
+
+
+def _make_offset_live_send_fn(*, preexisting_tracks: int = 4):
+    """A fake Live set that ALREADY holds ``preexisting_tracks`` tracks (the
+    default 1-MIDI/2-MIDI/3-Audio/4-Audio scaffold), so tracks this push creates
+    land at indices ``preexisting_tracks + 1 …`` — the geometry of the bug.
+
+    Wraps :func:`_make_send_fn` so arrangement projection / link counters /
+    perform batching all behave as in the other execute tests; only
+    ``ableton_track`` create+list and ``ableton_return`` list are re-modeled so
+    the Live-side track numbering is real rather than a monotonic counter.
+    """
+    inner = _make_send_fn()
+    tracks = [
+        {"track_index": i, "name": f"{i}-MIDI", "kind": "midi"}
+        for i in range(1, preexisting_tracks + 1)
+    ]
+
+    def send(req, *, read_timeout=None):
+        if req.tool == "ableton_track" and req.action == "create":
+            idx = len(tracks) + 1
+            tracks.append({
+                "track_index": idx,
+                "name": req.params.get("name") or "",
+                "kind": req.params.get("kind") or "midi",
+            })
+            return FakeResponse(ok=True, result={"track_index": idx})
+        if req.tool == "ableton_track" and req.action == "list":
+            return FakeResponse(
+                ok=True, result={"tracks": [dict(t) for t in tracks]},
+            )
+        if req.tool == "ableton_return" and req.action == "list":
+            return FakeResponse(ok=True, result={"returns": []})
+        return inner(req, read_timeout=read_timeout)
+
+    send.call_log = inner.call_log  # type: ignore[attr-defined]
+    send.live_tracks = tracks  # type: ignore[attr-defined]
+    return send
+
+
+def _probe_arrangement_lanes(send_fn):
+    """The engine-side twin of ``push_cli._probe_arrangement_lanes``: re-probe
+    the track list, THEN each track's arrangement lane. Returns the thunk, plus
+    a list recording each invocation's observed track indices so a test can
+    assert WHEN the probe ran."""
+    invocations: list[list[int]] = []
+
+    def probe() -> dict[int, list[dict]]:
+        resp = send_fn(_Req("ableton_track", "list", {}))
+        live_tracks = list((resp.result or {}).get("tracks") or [])
+        invocations.append([t["track_index"] for t in live_tracks])
+        by_track: dict[int, list[dict]] = {}
+        for t in live_tracks:
+            r = send_fn(_Req("ableton_clip", "list", {
+                "track_index": t["track_index"], "location": "arrangement",
+            }))
+            if getattr(r, "ok", False):
+                by_track[t["track_index"]] = list((r.result or {}).get("clips") or [])
+        return by_track
+
+    probe.invocations = invocations  # type: ignore[attr-defined]
+    return probe
+
+
+@pytest.fixture
+def offset_song(conn, song, tiny_song):
+    """tiny_song + a time signature + one arrangement placement, so the
+    arrangement phase has real work."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4,
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=tiny_song["track_id"],
+        clip_id=tiny_song["clip_id"], start_bar=1.0, end_bar=2.0,
+    )
+    return tiny_song
+
+
+def test_arrangement_materializes_when_tracks_land_at_a_live_offset(
+    conn, song, session, offset_song, state_dir,
+):
+    """The bug, end to end: Live already holds 4 tracks, so this push's track
+    lands at index 5. With the probe deferred to the arrangement phase, the
+    placement materializes — on track 5, not on the pre-push numbering."""
+    send = _make_offset_live_send_fn(preexisting_tracks=4)
+    probe = _probe_arrangement_lanes(send)
+
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send,
+        live_arrangement_clips_by_track=probe,
+    )
+
+    assert result.outcome == "ok", result.warnings
+    arrangement = next(p for p in result.phases if p.name == "arrangement")
+    assert arrangement.status == "ok"
+    assert arrangement.calls_ok == 1
+    assert arrangement.blocked_reasons == []
+
+    # The DB track is linked at the OFFSET Live index, and that is where the
+    # arrangement clip was created.
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="track",
+        db_id=offset_song["track_id"],
+    ) == 5
+    creates = [
+        c for c in send.call_log
+        if c["tool"] == "ableton_clip" and c["action"] == "create"
+        and c["params"].get("location") == "arrangement"
+    ]
+    assert [c["params"]["track_index"] for c in creates] == [5]
+
+
+def test_arrangement_probe_runs_after_the_tracks_phase(
+    conn, song, session, offset_song, state_dir,
+):
+    """The structural half: the probe is a THUNK resolved inside the arrangement
+    phase, so it sees the tracks the `tracks` phase created. A probe taken any
+    earlier describes a different set of Live indices — which is precisely how
+    the phase came to skip every track."""
+    from hallucinote.sync import push
+
+    send = _make_offset_live_send_fn(preexisting_tracks=4)
+    probe = _probe_arrangement_lanes(send)
+
+    # Not called merely by handing it to execute_push / plan_push_song.
+    push.plan_push_song(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track=probe,
+    )
+    assert probe.invocations == []
+
+    push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send,
+        live_arrangement_clips_by_track=probe,
+    )
+    # Probed exactly once, and by then the song's track (index 5) existed.
+    assert len(probe.invocations) == 1
+    assert 5 in probe.invocations[0]
+
+
+def test_stale_pre_tracks_probe_reports_incomplete_not_ok(
+    conn, song, session, offset_song, state_dir,
+):
+    """The reporting half, driven by the exact stale map the bug produced: a
+    dict covering only Live's pre-push tracks (1-4). The planner still refuses
+    to clear+fill an unknown lane — that part was always right — but the run
+    must now say so: INCOMPLETE, non-zero exit, and never
+    'skipped (idempotent)'."""
+    send = _make_offset_live_send_fn(preexisting_tracks=4)
+    stale = {i: [] for i in range(1, 5)}  # probed before the tracks phase
+
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send,
+        live_arrangement_clips_by_track=stale,
+    )
+
+    assert result.outcome == "incomplete"
+    assert result.exit_code == push_execute.EXIT_PARTIAL
+    assert result.phase_halted is None  # a gap, not a halt
+    arrangement = next(p for p in result.phases if p.name == "arrangement")
+    assert arrangement.status == "incomplete"
+    assert any(
+        "the per-track probe failed" in r for r in arrangement.blocked_reasons
+    ), arrangement.blocked_reasons
+    # Later phases still ran — an undeterminable phase does not stop the push.
+    assert all(p.status != "pending" for p in result.phases)
+
+    text = push_execute.format_summary(result)
+    assert "skipped (idempotent)" not in text
+    assert "INCOMPLETE" in text
+    assert "the per-track probe failed" in text
+    # And it must not be filed under the benign channel.
+    assert not any("per-track probe failed" in w for w in result.warnings)
+
+
+def test_incomplete_phase_state_file_carries_status_and_reasons(
+    conn, song, session, offset_song, state_dir,
+):
+    """`.last-push-state.json` is the machine-readable half of the same
+    contract: a reader must be able to tell a failed-probe skip from an
+    idempotent one without parsing prose."""
+    send = _make_offset_live_send_fn(preexisting_tracks=4)
+    push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send,
+        live_arrangement_clips_by_track={i: [] for i in range(1, 5)},
+    )
+    state = json.loads((state_dir / ".last-push-state.json").read_text())
+    assert state["outcome"] == "incomplete"
+    by_name = {p["name"]: p for p in state["phases"]}
+    assert by_name["arrangement"]["status"] == "incomplete"
+    assert by_name["arrangement"]["blocked_reasons"]
+    # A genuinely empty phase stays a clean skip and carries no reasons.
+    assert by_name["tempo_map"]["status"] == "skipped"
+    assert "blocked_reasons" not in by_name["tempo_map"]
+
+
+def test_genuine_empty_arrangement_still_reports_a_clean_skip(
+    conn, song, session, tiny_song, state_dir,
+):
+    """The other side of the split: a song with no arrangement rows has nothing
+    to do, and that is still a clean, zero-exit skip. The new status must not
+    turn every quiet phase into a scary one."""
+    send = _make_offset_live_send_fn(preexisting_tracks=4)
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send,
+        live_arrangement_clips_by_track=_probe_arrangement_lanes(send),
+    )
+    assert result.outcome == "ok"
+    assert result.exit_code == push_execute.EXIT_OK
+    arrangement = next(p for p in result.phases if p.name == "arrangement")
+    assert arrangement.status == "skipped"
+    assert "skipped (nothing to push)" in push_execute.format_summary(result)
+
+
+def test_partially_blocked_arrangement_never_reports_clean(
+    conn, song, session, offset_song, state_dir,
+):
+    """A second track whose lane IS probed materializes; the unprobed one does
+    not. Pre-fix this reported `[ok] arrangement 1/1 ok`, hiding a track that
+    never got built. Here the post-phase integrity assert catches the
+    un-materialized placement and halts — the halt is honest, and it must NOT
+    swallow the planner's reason for skipping (the state file and the summary
+    both still name the unprobed lane)."""
+    tid2 = M.create_track(
+        conn, song_id=song, track_index=2, name="Bass", kind="midi",
+    )
+    cid2 = M.create_clip(
+        conn, track_id=tid2, slot=1, length_beats=4.0, name="bass-loop",
+    )
+    M.insert_notes(conn, clip_id=cid2, notes=[
+        {"pitch": 36, "velocity": 100, "start_beats": 0.0, "duration_beats": 1.0},
+    ])
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=tid2, clip_id=cid2,
+        start_bar=1.0, end_bar=2.0,
+    )
+    send = _make_offset_live_send_fn(preexisting_tracks=4)
+
+    # Probe only the FIRST song track (index 5); track 6's lane stays unknown.
+    def half_probe() -> dict[int, list[dict]]:
+        return {5: []}
+
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send,
+        live_arrangement_clips_by_track=half_probe,
+    )
+    arrangement = next(p for p in result.phases if p.name == "arrangement")
+    assert arrangement.calls_ok == 1  # the probed track DID materialize
+    assert result.exit_code != push_execute.EXIT_OK
+    assert result.outcome == "partial"
+    assert result.phase_halted == "arrangement"
+    assert any(
+        "Live index 6" in r for r in arrangement.blocked_reasons
+    ), arrangement.blocked_reasons
+    text = push_execute.format_summary(result)
+    assert "Live index 6" in text
+    state = json.loads((state_dir / ".last-push-state.json").read_text())
+    by_name = {p["name"]: p for p in state["phases"]}
+    assert by_name["arrangement"]["blocked_reasons"]

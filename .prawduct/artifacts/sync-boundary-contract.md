@@ -38,7 +38,7 @@ probe, and every prior phase that creates X halted the push if it failed.
 |---|---|---|
 | Phase-target validation (`push_execute.validate_phase_targets`, push_execute.py:91-131; called pre-probe at push_cli.py:763-774 per PSH-PHASEORDER) | `--only/--start-at/--stop-after` name real phases, coherent window | `PhaseTargetError` → stderr teaching message, exit 2, no Live traffic |
 | Coherence check (`push/probe.py:976-1134 check_coherence`; wired push_cli.py:776-796) | session row exists; every `track`/`return` link points at a live index; no link points at a canonical default-scaffold track (set-swap signature) | refuse execute, exit 1, per-error `recovery` hints. **Opt-out:** `--no-coherence-check`. Nested links (clip/device) are NOT validated — a stale parent cascade-invalidates them (probe.py:1003-1007); residual risk note R1 below |
-| Arrangement probe (`_probe_live_arrangement_clips_via_mcp`, push_cli.py:798-808) | per-track Live arrangement clip inventory, feeding the projection's clear | a per-track probe failure leaves the lane out of the map; the arrangement planner then skips that track with an alert (arrangement.py:191-202) rather than guess |
+| Arrangement probe (`_probe_live_arrangement_clips_via_mcp`, wrapped by `_cmd_execute._probe_arrangement_lanes`) | per-track Live arrangement clip inventory, feeding the projection's clear | **NOT a pre-phase gate** (PSH-ARRPROBE): it is passed as a THUNK and resolved inside the arrangement phase's planner, because the map is keyed by Live track index and a first push CREATES those tracks in the `tracks` phase — a pre-phase map described the pre-push numbering and made every track read as unprobed. The thunk re-probes `ableton_track(list)` itself; it does NOT reuse the coherence probe's track list. A per-track probe failure still leaves the lane out of the map, and the arrangement planner still skips that track rather than guess — but now via `PushPlan.blocked`, so the phase reports `incomplete` (non-zero exit), not `skipped` |
 | `probe_and_link` (separate subcommand, NOT run by execute; push/probe.py:360-748) | name-matched track/return links; W20-A device links by (parent, position, class); W18-B/SYN-3C8K/SYN-SCAFFOLD-MISLINK stale-link reconciliation | additive only (never deletes Live entities); duplicate names link-first + note; case near-matches noted, not linked |
 
 ## Executor cross-phase contract (`push_execute.execute_push`, push_execute.py:640-1576)
@@ -77,6 +77,18 @@ probe, and every prior phase that creates X halted the push if it failed.
     suppress-on-confident-empty, keep-on-any-doubt).
   - *devices*: convergence re-plan — after an all-ok pass, re-run the planner once
     so params of devices loaded THIS pass land same-push (:1335-1392, SYN-9F2L).
+  - *devices*: **pre-phase chain probe + link reconcile** (PSH-DEVDUP) — a
+    lazily-resolved, once-per-push `ableton_device(list)` per linked parent
+    (`_probe_live_device_chains`), fed to `reconcile_device_links` and then to
+    the planner. Resolved INSIDE the devices `plan_fn`, so it sees the parents
+    `tracks`/`returns` created. Without it "unlinked" was read as "absent" and
+    push appended a SECOND copy of an FX chain Live already had.
+  - *devices*: **post-phase integrity assert** (PSH-DEVDUP) — FRESH re-probe of
+    every parent's chain vs the DB's authored device classes; HALT when Live
+    carries MORE of a class the DB authors there (the duplication signature).
+    Extra/short/drift and unreadable parents degrade to warnings. Runs on the
+    dispatched path AND the "skipped, nothing to push" path — a doubled chain
+    hides in the fully-linked state (`device_chain_verify.py`).
   - *devices*: post-phase pad probe — best-effort `pad_info` per linked Drum Rack,
     persisted via `M.replace_drum_pad_mappings`; never affects the outcome
     (:491-583, :804-826; runs on ok AND skipped, not on halt).
@@ -85,8 +97,12 @@ probe, and every prior phase that creates X halted the push if it failed.
     (:415-488 SYN-9F2L); orphan-param hint rewrite (:261-281 SYN-2D9K).
   - *arrangement*: post-phase integrity assert — FRESH re-probe of every clip's
     audible note set vs the DB collapsed set; HALT on silent corruption; per-clip
-    probe failures degrade to a benign "N unverified" warning (:1423-1507,
-    ARR-PROJ Chunk 3).
+    NOTE probe failures degrade to a benign "N unverified" warning (:1423-1507,
+    ARR-PROJ Chunk 3). ARR-ORPHAN2: a per-track LANE probe failure
+    (`ableton_clip(list, location='arrangement')`) does NOT degrade — it is
+    `lane_probe_failed`, counted as corruption, and HALTs. The planner reads the
+    clear inventory from that same probe, so an unreadable lane was never cleared
+    and never rebuilt, and orphan detection could not run on it.
   - *cues*: handler-deferred cues (`skipped_out_of_range`) surface as benign
     warnings, never failures (:1039-1064, SYN-6B4Q).
   - *pre-loop*: alt-tuning notices (gated, inert for tuning_ref NULL;
@@ -212,12 +228,19 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
 - **Assumes:** tracks/returns linked (warn + skip whole parent otherwise,
   :96-103/:119-126); device links truthful — a linked device's load is skipped
   entirely, trusting W20-A probe matching + SYN-SCAFFOLD-MISLINK cascades;
+  **an UNLINKED device is no longer assumed absent** (PSH-DEVDUP): with a
+  `live_devices_by_parent` probe map the planner emits a load ONLY for a
+  position Live's authored chain does not reach, and REFUSES (hard `plan.error`,
+  halt before dispatch) when the slot is occupied or the parent was unreadable.
+  Without a map (pure-planner callers) the pre-PSH-DEVDUP "load on faith"
+  behavior is preserved;
   nested devices arrive WITH the rack preset (never loaded, only param-addressed
   by `device_path`, :513-573); master devices load without a parent link
   (`master=True`, :77-92, DEV-6M2K).
-- **Re-probes (executor-side, §Executor):** per-device `get_parameters`
-  (diff-reconcile), per-rack `get_device_chains` (empty-rack guard), post-phase
-  `pad_info`.
+- **Re-probes (executor-side, §Executor):** per-parent `ableton_device(list)`
+  (PSH-DEVDUP pre-phase chain probe + link reconcile, and again post-phase for
+  the integrity assert), per-device `get_parameters` (diff-reconcile), per-rack
+  `get_device_chains` (empty-rack guard), post-phase `pad_info`.
 - **Failure/halt:** placeholder + analyzer rows skip-with-warn (:164-185).
   Param with no writable form → operator **alert**, never a silent drop
   (:499-510, SYN-9F2L). Corrupt stored JSON (browser_path/preset_query/override
@@ -284,14 +307,21 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
 - **Assumes:** tracks linked (alert + skip whole track otherwise); envelope-bearing
   placements' source clips linked (duplicate route); the DB is the ONLY author of
   the timeline (projection: clear then rebuild, ARR-PROJ).
-- **Re-probes:** the pre-phase arrangement probe supplies each track's current
-  Live clips for the clear (§Gates); a lane ABSENT from the probe map → alert +
-  skip that track (:191-202 — unknown state must not be cleared into). Probe map
-  `None` (non-execute callers) → loud alert, no clear emitted (:155-161).
-  Post-phase: the executor's integrity assert re-probes every placement FRESH.
+- **Re-probes:** the arrangement probe (resolved at THIS phase, not before the
+  loop — §Gates) supplies each track's current Live clips for the clear; a lane
+  ABSENT from the probe map → `blocked` + skip that track (unknown state must
+  not be cleared into). Probe map `None` (non-execute callers) → loud alert, no
+  clear emitted (:155-161) — an alert, not `blocked`: everything is still
+  planned.
+  Post-phase: the executor's integrity assert re-probes every placement FRESH —
+  and (ARR-ORPHAN2) HALTs when that re-probe cannot list a lane, which is what
+  makes the alert+skip above loud instead of an exit-0 "phase ok" over a track
+  that kept its stale clips and got none of its placements.
 - **Failure/halt:** §6a all-or-nothing per track — every link validated BEFORE
   any of that track's calls (clear included) join the plan; an unmaterializable
-  track emits nothing + alert (audio/CLP-AUD2 → warn) (:204-291). Clears emitted
+  track emits nothing + `blocked` (audio/CLP-AUD2 → warn, a deliberate no-op)
+  (:204-291). A phase carrying blocked reasons is reported `incomplete` with a
+  non-zero exit and its reasons verbatim — never `skipped (idempotent)`. Clears emitted
   descending-index (:298-320). Per-call failure → boundary halt;
   `ArrangementIntegrityError` → halt (silent corruption must not report OK).
   Keys: `arrangement_clip:` (link), `arrangement_clip_clear:` /

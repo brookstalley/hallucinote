@@ -65,6 +65,14 @@ _STATUS_OK = "ok"
 _STATUS_SKIPPED = "skipped"
 _STATUS_HALTED = "halted"
 _STATUS_PENDING = "pending"
+# PSH-ARRPROBE: the phase ran but could NOT determine part (or all) of what it
+# was asked to do, so it deliberately did nothing there — distinct from
+# _STATUS_SKIPPED ("nothing to do"), which is a clean, idempotent no-op. The
+# reasons come from ``PushPlan.blocked_reasons``. An incomplete phase does NOT
+# halt the run (the work that COULD be determined still lands, and later phases
+# still run) but it DOES flip the terminal outcome off "ok" and the exit code
+# off zero — a push that left the song un-materialized must never read clean.
+_STATUS_INCOMPLETE = "incomplete"
 
 
 # args_summary redaction: keys whose values are list-shaped and potentially
@@ -185,13 +193,23 @@ class PhaseOutcome:
     # devices phase, or a devices phase with no linked Drum Rack devices).
     pad_probes_ok: int = 0
     pad_probes_failed: int = 0
+    # PSH-ARRPROBE: why this phase could not do (part of) its job — verbatim
+    # from ``PushPlan.blocked_reasons``. Drives ``_STATUS_INCOMPLETE``, and is
+    # carried on a HALTED phase too so a halt can't swallow the planner's
+    # reason. Rides the state file + the summary so the operator reads WHY, not
+    # just that something is missing.
+    blocked_reasons: list[str] = field(default_factory=list)
 
 
 @dataclass
 class ExecuteResult:
     """Returned to the CLI for stdout summarization. Mirrors the on-disk state
     file contents minus the per-error detail (those go in errors_file)."""
-    outcome: str  # "ok" | "partial" | "connection_lost"
+    # "ok" | "incomplete" | "partial" | "connection_lost". "incomplete"
+    # (PSH-ARRPROBE) means every phase RAN without failing a call, but at least
+    # one could not determine part of its work and honestly skipped it — the
+    # push did not halt, yet the song is not fully materialized.
+    outcome: str
     exit_code: int
     phase_halted: str | None
     phases: list[PhaseOutcome] = field(default_factory=list)
@@ -256,6 +274,37 @@ _PRESET_URI_MISS_HINTS = (
 # not on the device" (the orphan-from-class-change shape), distinct from a
 # value-range refusal.
 _PARAM_NOT_FOUND_HINTS = ("not found",)
+
+# Live's refusal when a parameter exists and reads fine but cannot be written —
+# macro-mapped, or otherwise locked. Matched on the message because the wire
+# carries a RuntimeError string, not a typed code. Kept narrow on purpose: this
+# tolerates ONLY the disabled case, never a value-range or missing-param
+# refusal, both of which are real defects a push should still halt on.
+_PARAM_DISABLED_HINT = "parameter is disabled"
+
+
+def _is_tolerated_failure(
+    *, tool: str, action: str | None, err_msg: str | None,
+) -> bool:
+    """Is this failure a no-op Live refused, rather than a real defect?
+
+    Exactly one case qualifies: a chain-mixer write refused because the
+    parameter is DISABLED (macro-mapped or otherwise locked). Such a parameter
+    cannot be changed by us, by the user in Live's UI, or by anything else — so
+    the DB's value can never audibly diverge, there is nothing a retry or a
+    human could fix, and halting a fourteen-phase push over it is wrong.
+
+    Everything else stays fatal. In particular a value-RANGE refusal and a
+    missing-parameter refusal are real defects that must still halt: they mean
+    the song is asking for something the device cannot do, which is exactly
+    what a push is supposed to catch.
+    """
+    return (
+        tool == "ableton_device"
+        and action == "set_chain_property"
+        and bool(err_msg)
+        and _PARAM_DISABLED_HINT in (err_msg or "")
+    )
 
 
 def _orphan_param_hint(
@@ -651,7 +700,7 @@ def execute_push(
     start_at: str | None = None,
     stop_after: str | None = None,
     progress_fn: Callable[[str], None] | None = None,
-    live_arrangement_clips_by_track: dict[int, list[dict]] | None = None,
+    live_arrangement_clips_by_track: push.LiveArrangementProbe = None,
 ) -> ExecuteResult:
     """Run the full fourteen-phase push, dispatching each call via ``send_fn``.
 
@@ -670,6 +719,20 @@ def execute_push(
     * Writes ``<state_dir>/.last-push-state.json`` always.
     * Writes ``<state_dir>/.last-push-errors.json`` only when there's at
       least one per-call error or a connection drop.
+
+    ``live_arrangement_clips_by_track`` accepts a dict OR a zero-arg thunk
+    (:data:`push.LiveArrangementProbe`). Callers that probe Live should pass the
+    THUNK: it is resolved inside the arrangement phase's planner, i.e. AFTER the
+    `tracks` phase has created the song's Live tracks. See
+    :func:`push.plan_push_song` for why an eagerly-probed map is wrong on a
+    first push.
+
+    Outcome (PSH-ARRPROBE): "ok" only when every phase either did its work or
+    had none to do. A phase that could not DETERMINE its work (a failed probe,
+    a missing link — ``PushPlan.blocked_reasons``) is recorded ``incomplete``,
+    which flips the run's outcome to ``"incomplete"`` and its exit to
+    ``EXIT_PARTIAL`` WITHOUT halting. A silent no-op that leaves the song
+    un-materialized must never exit 0.
     """
     if send_fn is None:
         from hallucinote_mcp import client as _client  # type: ignore[import-not-found]
@@ -697,10 +760,49 @@ def execute_push(
     # bad --only/--start-at/--stop-after fails fast (PhaseTargetError) without
     # leaving a dangling open audit row. plan_push_song is pure-data (no side
     # effects), so the reorder is safe.
+    # PSH-DEVDUP: the devices phase needs Live's CURRENT device chains to tell
+    # "this device is missing" from "this device is present but unlinked" —
+    # answering `load` to both is what doubled every FX chain on `the-argument`
+    # (2026-08-08). The probe is a THUNK resolved inside the devices plan_fn, so
+    # it runs AFTER `tracks`/`returns` have created + linked the parents it keys
+    # by (an eagerly-probed map on a first push describes different indices).
+    # Resolving it also RECONCILES the device links, which is the actual repair:
+    # a chain loaded into Live by /song-pick-instruments reaches the DB only via
+    # the capture snapshot, so it never had an `ableton_links` row, and
+    # `push_cli execute` — unlike `push_cli probe-and-link` — never bound one.
+    device_probe_state: dict[str, Any] = {"done": False, "map": None}
+
+    def _device_chain_probe() -> dict[tuple[str, int], list[dict]] | None:
+        if device_probe_state["done"]:
+            return device_probe_state["map"]
+        device_probe_state["done"] = True
+        probed, parent_count = _probe_live_device_chains()
+        if probed:
+            push.reconcile_device_links(
+                conn,
+                song_id=song_id,
+                session_id=session_id,
+                live_devices_by_parent=probed,
+                actor=actor,
+                reason=(
+                    reason
+                    or f"push_cli execute device reconcile (session={session_id})"
+                ),
+            )
+        # No PARENTS to probe (a song with no linked tracks/returns yet, or a
+        # scoped run before `tracks`) yields an empty map that says nothing —
+        # hand the planner ``None`` so it keeps its pure-planner contract. But
+        # an empty map when there WERE parents means every read failed, and
+        # that is real ignorance: keep the empty map so the planner refuses
+        # per-parent rather than appending on faith.
+        device_probe_state["map"] = probed if parent_count else None
+        return device_probe_state["map"]
+
     phases = push.plan_push_song(
         conn, song_id=song_id, session_id=session_id,
         perform_slowdown_factor=perform_slowdown_factor,
         live_arrangement_clips_by_track=live_arrangement_clips_by_track,
+        live_device_chains=_device_chain_probe,
     )
     phases, scope = _filter_phases(
         phases, only=only, start_at=start_at, stop_after=stop_after,
@@ -769,8 +871,14 @@ def execute_push(
                     "name": p.name,
                     "status": p.status,
                     **({"calls_ok": p.calls_ok, "calls_failed": p.calls_failed}
-                       if p.status in {_STATUS_OK, _STATUS_HALTED}
+                       if p.status in {_STATUS_OK, _STATUS_HALTED,
+                                       _STATUS_INCOMPLETE}
                        else {}),
+                    # PSH-ARRPROBE: WHY the phase couldn't finish. Emitted
+                    # only when there IS a reason, so a reader can branch on
+                    # the key's presence alone.
+                    **({"blocked_reasons": p.blocked_reasons}
+                       if p.blocked_reasons else {}),
                     **({"calls_planned": p.calls_planned}
                        if p.status == _STATUS_PENDING
                        else {}),
@@ -824,6 +932,70 @@ def execute_push(
             request_id=request_id,
             reason=reason or f"push_cli execute pad-probe (session={session_id})",
         )
+
+    def _probe_one_device_chain(
+        parent_kind: str, parent_index: int,
+    ) -> list[dict[str, Any]] | None:
+        """PSH-DEVDUP: read one parent's top-level Live device chain.
+
+        Returns the ``ableton_device(action='list')`` device list, or ``None``
+        on ANY failure. ``None`` is load-bearing and must never be softened to
+        ``[]``: the devices planner reads "no data for this parent" as REFUSE,
+        while ``[]`` means "Live's chain is genuinely empty, appending is safe".
+        Collapsing the two is precisely the guess that doubles a chain."""
+        if parent_kind == "master":
+            params: dict[str, Any] = {"master": True}
+        elif parent_kind == "track":
+            params = {"track_index": parent_index}
+        elif parent_kind == "return":
+            params = {"return_index": parent_index}
+        else:
+            return None
+        try:
+            resp = send_fn(Request(
+                tool="ableton_device", action="list", params=params,
+            ))
+        except Exception:  # prawduct:allow prawduct/broad-except -- a probe hiccup must surface as "unknown" (which REFUSES the load), never as a traceback or a false "chain is empty"
+            logger.debug(
+                "device-chain probe failed for %s#%s", parent_kind, parent_index,
+                exc_info=True,
+            )
+            return None
+        if not bool(getattr(resp, "ok", False)):
+            return None
+        payload = getattr(resp, "result", None) or {}
+        # An OK response with no `devices` key is read as an EMPTY chain, not as
+        # a failure — same convention as `push_cli._probe_live_devices_via_mcp`
+        # (the handler omits the key for an empty chain). Only a refused call or
+        # a raised transport error is "unknown"; that is the distinction the
+        # planner's refuse-vs-load fork rests on.
+        return list(payload.get("devices") or [])
+
+    def _probe_live_device_chains() -> tuple[dict[tuple[str, int], list[dict]], int]:
+        """PSH-DEVDUP: probe every addressable parent's device chain, keyed
+        ``(parent_kind, parent_index)`` — the same shape ``probe_and_link``
+        consumes. Parents come from ``ableton_links`` (plus the master
+        singleton), so this issues exactly as many reads as the devices phase
+        has parents to address, and a per-parent failure simply leaves that key
+        ABSENT (which the planner reads as "unknown → refuse").
+
+        Returns ``(map, parent_count)``; the count lets the caller tell "there
+        was nothing to probe" from "nothing answered"."""
+        tracks, returns, master = push.linked_device_parents(
+            conn, song_id=song_id, session_id=session_id,
+        )
+        by_parent: dict[tuple[str, int], list[dict]] = {}
+        parent_count = 0
+        for parents, parent_kind in (
+            (tracks, "track"), (returns, "return"), (master, "master"),
+        ):
+            for parent in parents:
+                parent_count += 1
+                idx = parent["ableton_index"]
+                probed = _probe_one_device_chain(parent_kind, idx)
+                if probed is not None:
+                    by_parent[(parent_kind, idx)] = probed
+        return by_parent, parent_count
 
     def _read_device_params(node: dict[str, Any]) -> dict[str, Any] | None:
         """PSH-3K9D: read one device's current Live parameters for the
@@ -1079,7 +1251,32 @@ def execute_push(
                 result_entry["set_parameter_fallback"] = set_param_fallback
             results.append(result_entry)
 
-            if not ok:
+            # A chain-mixer write Live refuses BECAUSE THE PARAMETER IS DISABLED
+            # is a no-op, and halting fourteen phases over it is wrong. A
+            # macro-mapped or locked chain mixer cannot be changed by us, by the
+            # user in the UI, or by anything else — so the DB's value can never
+            # audibly diverge from Live, and there is nothing for a retry or a
+            # human to fix. (Live's own 606 Core Kit hi-hat pads do this.) The
+            # capture side now declines to record such params at all
+            # (`_chain_mixer_nondefault`), so this is the belt to that braces:
+            # snapshots authored before the capture fix, or a param that becomes
+            # macro-mapped after capture, still must not take down a push.
+            #
+            # Deliberately NOT converted to ok=True: nothing succeeded, so the
+            # result must not be applied as though the value had been written.
+            # It is recorded as a warning and skipped.
+            tolerated = not ok and _is_tolerated_failure(
+                tool=call.tool, action=action, err_msg=err_msg,
+            )
+            if tolerated:
+                result_entry["skipped_param_disabled"] = True
+                warning_messages.append(
+                    f"devices: chain property skipped — Live reports the "
+                    f"parameter is disabled (macro-mapped or locked), so the "
+                    f"write is a no-op ({call.key})"
+                )
+
+            if not ok and not tolerated:
                 error_records.append({
                     "key": call.key,
                     "tool": call.tool,
@@ -1171,13 +1368,37 @@ def execute_push(
         ``alerts`` (operator-facing), NOT ``notes`` (diagnostic "nothing to
         push" / "not linked yet" noise). Deduped by message so the devices-phase
         convergence re-plan (which regenerates the full plan, alerts included)
-        doesn't double-report an already-surfaced warning."""
+        doesn't double-report an already-surfaced warning.
+
+        PSH-ARRPROBE: alerts that are ALSO ``blocked_reasons`` are excluded —
+        they are not benign (they make the push INCOMPLETE), and the phase
+        outcome carries them into their own summary section. Routing them here
+        too would both double-print them and label them "push still OK"."""
+        blocked = set(getattr(plan_obj, "blocked_reasons", ()))
         for alert in plan_obj.alerts:
+            if alert in blocked:
+                continue
             if alert not in warning_messages:
                 warning_messages.append(alert)
 
+    def _note_blocked() -> None:
+        """PSH-ARRPROBE: flip the run off "clean" because a phase reported work
+        it could NOT determine and honestly skipped.
+
+        Does not halt (the determinable work still landed, and later phases
+        still run) and never downgrades a stronger terminal state — a later
+        halt overwrites ``incomplete`` with ``partial`` /
+        ``connection_lost``. Reuses ``EXIT_PARTIAL`` rather than minting a
+        fourth exit code: every caller's contract is "0 means the push did
+        everything", and an incomplete push did not."""
+        nonlocal outcome, exit_code
+        if outcome == "ok":
+            outcome = "incomplete"
+            exit_code = EXIT_PARTIAL
+
     def _halt(phase_name: str, idx: int, *, outcome_label: str,
-              exit_code_val: int, calls_ok: int, calls_failed: int) -> None:
+              exit_code_val: int, calls_ok: int, calls_failed: int,
+              blocked_reasons: list[str] | None = None) -> None:
         """Record a phase halt: mark the phase HALTED, set the terminal
         outcome/exit, and fill every later phase as PENDING so the state file is
         uniform. The three halt causes (plan-error, connection-lost, call-fail)
@@ -1194,6 +1415,9 @@ def execute_push(
         phase_outcomes.append(PhaseOutcome(
             name=phase_name, status=_STATUS_HALTED,
             calls_ok=calls_ok, calls_failed=calls_failed,
+            # A halted phase can ALSO have skipped undeterminable work; carry
+            # the reasons so the halt doesn't swallow them.
+            blocked_reasons=list(blocked_reasons or ()),
         ))
         halt_phase = phase_name
         outcome = outcome_label
@@ -1203,6 +1427,93 @@ def execute_push(
                 name=remaining.name, status=_STATUS_PENDING, calls_planned=0,
             ))
         _emit_progress(f"[{phase_name}] HALTED — {outcome_label}")
+
+    def _device_chains_verified(phase_name: str, idx: int, calls_ok: int) -> bool:
+        """PSH-DEVDUP PREVENTION assert — the devices-phase sibling of the
+        arrangement integrity check, and the same contract: a materialize step
+        that can corrupt state silently proves it didn't, or the push HALTs.
+
+        Re-probes every addressable parent's chain in a FRESH read (never the
+        pre-phase map — that one predates the loads) and compares Live's
+        authored device classes against the DB's. Live carrying MORE of a class
+        the DB authors on that parent than the DB authors is the duplication
+        signature; anything else (a factory device, a hand-dropped utility, a
+        short chain, an unreadable parent) is surfaced as a warning and does not
+        halt. Returns True when the phase may be recorded OK."""
+        if phase_name != "devices":
+            return True
+        from hallucinote.sync.device_chain_verify import (
+            DeviceChainIntegrityError,
+            assert_device_chains_materialized,
+            CHAIN_PROBE_FAILED,
+        )
+        try:
+            report = assert_device_chains_materialized(
+                conn, song_id=song_id, session_id=session_id,
+                probe_fn=_probe_one_device_chain,
+            )
+        except DeviceChainIntegrityError as exc:
+            error_records.append({
+                "key": None,
+                "tool": phase_name,
+                "action": "integrity_assert",
+                "args_summary": {"phase": phase_name},
+                "error": str(exc),
+                "hint": (
+                    "Live's device chain carries a duplicate of a device the DB "
+                    "already authors there. Live has no reorder API, so a "
+                    "re-push cannot undo it: delete the duplicates in Live (or "
+                    "push into a fresh set), then re-run `push_cli "
+                    "probe-and-link <session> --song <slug> --probe`."
+                ),
+            })
+            _halt(
+                phase_name, idx, outcome_label="partial",
+                exit_code_val=EXIT_PARTIAL, calls_ok=calls_ok,
+                calls_failed=1,
+            )
+            return False
+        except _CONNECTION_EXCS as exc:
+            error_records.append({
+                "key": None,
+                "tool": phase_name,
+                "action": "integrity_assert",
+                "args_summary": {"phase": phase_name},
+                "error": (
+                    "connection lost during the device-chain integrity "
+                    f"re-probe: {exc}"
+                ),
+                "hint": "see ableton://guides/error-recovery; re-execute (idempotent).",
+            })
+            _halt(
+                phase_name, idx, outcome_label="connection_lost",
+                exit_code_val=EXIT_CONNECTION_LOST, calls_ok=calls_ok,
+                calls_failed=1,
+            )
+            return False
+        # Non-fatal disagreements: say them, don't swallow them. "Couldn't
+        # verify" must read differently from "verified clean" — that gap is the
+        # whole reason the assert exists.
+        for anomaly in report.anomalies():
+            msg = f"devices integrity: {anomaly.describe()}"
+            if msg not in warning_messages:
+                warning_messages.append(msg)
+        unverified = [
+            r for r in report.results if r.status == CHAIN_PROBE_FAILED
+        ]
+        if unverified:
+            msg = (
+                f"devices integrity: {len(unverified)} device chain(s) could "
+                f"NOT be verified (Live re-probe failed) — a duplicated chain "
+                f"on those would NOT have been caught: "
+                + ", ".join(
+                    f"{r.parent_kind} {r.parent_name!r}" for r in unverified[:5]
+                )
+                + (" ..." if len(unverified) > 5 else "")
+            )
+            if msg not in warning_messages:
+                warning_messages.append(msg)
+        return True
 
     # MICROTUNE Chunk 3: before the phase loop, emit the gated tuning notices —
     # the re-load instruction + a non-blocking drift warning — for an alt-tuned
@@ -1228,6 +1539,10 @@ def execute_push(
         _flush_state(current_phase=phase.name)
         plan = phase.plan_fn()
         _drain_plan_warnings(plan)
+        # PSH-ARRPROBE: work this planner refused to guess at (a failed probe,
+        # a missing link). Collected BEFORE the halt branches so every exit path
+        # from this iteration can carry it.
+        blocked_reasons: list[str] = list(getattr(plan, "blocked_reasons", []))
 
         # SYN-6B4Q: a planner can flag a hard authoring error (e.g. a cue past
         # the composed song length). Halt the phase WITHOUT dispatching — the
@@ -1252,11 +1567,36 @@ def execute_push(
                 phase.name, idx, outcome_label="partial",
                 exit_code_val=EXIT_PARTIAL, calls_ok=0,
                 calls_failed=len(plan.errors),
+                blocked_reasons=blocked_reasons,
             )
             break
 
         if not plan.calls:
+            # PSH-DEVDUP: an empty devices plan is the fully-idempotent
+            # re-push — every device already linked. That is exactly the state
+            # a doubled chain hides in (the second copy IS linked), so verify
+            # here too rather than trusting "nothing to do".
+            if not _device_chains_verified(phase.name, idx, 0):
+                break
             pad_ok, pad_failed = _maybe_pad_probe(phase.name)
+            # PSH-ARRPROBE: an empty plan has two very different causes, and
+            # collapsing them is the silent-failure bug this split closes.
+            # "Nothing to push" is idempotent and clean; "couldn't determine
+            # the state, so pushed nothing" left the song un-materialized and
+            # must NOT read as a clean skip in the summary or the exit code.
+            if blocked_reasons:
+                _note_blocked()
+                phase_outcomes.append(PhaseOutcome(
+                    name=phase.name, status=_STATUS_INCOMPLETE,
+                    pad_probes_ok=pad_ok, pad_probes_failed=pad_failed,
+                    blocked_reasons=blocked_reasons,
+                ))
+                _emit_progress(
+                    f"[{phase.name}] INCOMPLETE — nothing pushed; "
+                    f"{len(blocked_reasons)} precondition(s) could not be "
+                    "determined"
+                )
+                continue
             phase_outcomes.append(PhaseOutcome(
                 name=phase.name, status=_STATUS_SKIPPED,
                 pad_probes_ok=pad_ok, pad_probes_failed=pad_failed,
@@ -1356,6 +1696,11 @@ def execute_push(
             # become visible in this re-plan — drain its new notes too, or the
             # same-pass case stays silent.
             _drain_plan_warnings(replan)
+            # PSH-ARRPROBE: the re-plan can surface blocked work the first plan
+            # couldn't see (links only exist post-apply) — merge, don't drop.
+            for reason in getattr(replan, "blocked_reasons", ()):
+                if reason not in blocked_reasons:
+                    blocked_reasons.append(reason)
             dispatched_keys = {c.key for c in plan.calls}
             extra_calls = [
                 c for c in replan.calls
@@ -1396,6 +1741,7 @@ def execute_push(
                 phase.name, idx, outcome_label="connection_lost",
                 exit_code_val=EXIT_CONNECTION_LOST, calls_ok=calls_ok,
                 calls_failed=calls_failed + 1,
+                blocked_reasons=blocked_reasons,
             )
             break
 
@@ -1409,6 +1755,7 @@ def execute_push(
                 phase.name, idx, outcome_label="partial",
                 exit_code_val=EXIT_PARTIAL, calls_ok=calls_ok,
                 calls_failed=calls_failed + 1,
+                blocked_reasons=blocked_reasons,
             )
             break
 
@@ -1417,6 +1764,7 @@ def execute_push(
                 phase.name, idx, outcome_label="partial",
                 exit_code_val=EXIT_PARTIAL, calls_ok=calls_ok,
                 calls_failed=calls_failed,
+                blocked_reasons=blocked_reasons,
             )
             break
 
@@ -1435,12 +1783,19 @@ def execute_push(
                 integrity_report = assert_arrangement_materialized(
                     conn, song_id=song_id, session_id=session_id, send_fn=send_fn,
                 )
-                # The assert HALTs only on SILENT corruption; a per-clip re-probe
-                # FAILURE is not corruption, so the assert returns normally — but
-                # those placements went UNVERIFIED, so "OK" would overstate the
-                # guarantee (the exact gap the assert exists to close). Surface the
-                # unverified count as a benign warning (does not flip the exit) so
-                # "couldn't verify N clips" reads distinctly from "verified all N".
+                # The assert HALTs only on SILENT corruption; a per-clip NOTE
+                # re-probe failure is not corruption (the clip is demonstrably at
+                # the right position — only its contents could not be read), so the
+                # assert returns normally — but those placements went UNVERIFIED, so
+                # "OK" would overstate the guarantee (the exact gap the assert
+                # exists to close). Surface the unverified count as a benign warning
+                # (does not flip the exit) so "couldn't verify N clips" reads
+                # distinctly from "verified all N".
+                #
+                # ARR-ORPHAN2: a whole-LANE probe failure is deliberately NOT in
+                # this benign channel — it now raises above (`lane_probe_failed` is
+                # corruption), because the pusher plans its clear from that same
+                # probe, so an unreadable lane was never cleared and never rebuilt.
                 unverified = [
                     r for r in integrity_report.results
                     if r.status == "probe_failed"
@@ -1473,16 +1828,20 @@ def execute_push(
                     "error": str(exc),
                     "hint": (
                         "the materialized arrangement does not match the DB "
-                        "(drop / orphan / stack / drift). Re-run `execute --only "
-                        "arrangement --probe` (idempotent clear+rebuild); if it "
-                        "persists, run `hallucinote verify-arrangement` and inspect "
-                        "the named track/section."
+                        "(drop / orphan / stack / drift), or a track's arrangement "
+                        "lane could not be read at all — an unreadable lane was "
+                        "never cleared and never rebuilt, so its content is "
+                        "unproven. Re-run `execute --only arrangement --probe` "
+                        "(idempotent clear+rebuild); if it persists, run "
+                        "`hallucinote verify-arrangement` and inspect the named "
+                        "track/section."
                     ),
                 })
                 _halt(
                     phase.name, idx, outcome_label="partial",
                     exit_code_val=EXIT_PARTIAL, calls_ok=calls_ok,
                     calls_failed=1,
+                    blocked_reasons=blocked_reasons,
                 )
                 break
             except _CONNECTION_EXCS as exc:
@@ -1502,10 +1861,33 @@ def execute_push(
                     phase.name, idx, outcome_label="connection_lost",
                     exit_code_val=EXIT_CONNECTION_LOST, calls_ok=calls_ok,
                     calls_failed=calls_failed + 1,
+                    blocked_reasons=blocked_reasons,
                 )
                 break
 
+        # PSH-DEVDUP: the devices phase just dispatched loads/params. Prove Live
+        # doesn't now carry a doubled chain before recording OK — the exact
+        # claim the 2026-08-08 `23/23 ok` made falsely.
+        if not _device_chains_verified(phase.name, idx, calls_ok):
+            break
+
         pad_ok, pad_failed = _maybe_pad_probe(phase.name)
+        # PSH-ARRPROBE: every dispatched call succeeded, but the planner may
+        # still have refused to guess at part of the phase (e.g. 8 of 9 tracks
+        # materialized, one lane unprobed). "ok" would overstate that.
+        if blocked_reasons:
+            _note_blocked()
+            phase_outcomes.append(PhaseOutcome(
+                name=phase.name, status=_STATUS_INCOMPLETE,
+                calls_ok=calls_ok, calls_failed=0,
+                pad_probes_ok=pad_ok, pad_probes_failed=pad_failed,
+                blocked_reasons=blocked_reasons,
+            ))
+            _emit_progress(
+                f"[{phase.name}] INCOMPLETE — {calls_ok} call(s) ok, "
+                f"{len(blocked_reasons)} precondition(s) could not be determined"
+            )
+            continue
         phase_outcomes.append(PhaseOutcome(
             name=phase.name, status=_STATUS_OK,
             calls_ok=calls_ok, calls_failed=0,
@@ -1553,7 +1935,11 @@ def execute_push(
         # connection_lost) onto REQUEST_OUTCOMES (ok / partial / failed).
         # connection_lost lands as 'failed' because nothing further could
         # happen; partial keeps its name.
-        request_outcome = {"ok": "ok", "partial": "partial",
+        # PSH-ARRPROBE: 'incomplete' maps to 'partial' — the request DID land
+        # work, just not all of it. Same bucket a halt uses; the state file's
+        # per-phase blocked_reasons carry the distinction.
+        request_outcome = {"ok": "ok", "incomplete": "partial",
+                           "partial": "partial",
                            "connection_lost": "failed"}[outcome]
         M.close_request(
             conn,
@@ -1582,6 +1968,18 @@ def format_summary(result: ExecuteResult) -> str:
         header = (
             f"push_cli execute: OK — all {len(result.phases)} phases completed"
         )
+    elif result.outcome == "incomplete":
+        # PSH-ARRPROBE: nothing failed and nothing halted, but a phase could not
+        # determine part of its work and skipped it. Saying OK here is what let
+        # a first push report success over an empty arrangement.
+        stuck = [p for p in result.phases if p.status == _STATUS_INCOMPLETE]
+        header = (
+            f"push_cli execute: INCOMPLETE — "
+            f"{len(stuck)} of {len(result.phases)} phase(s) could not determine "
+            f"part of their work and pushed nothing for it "
+            f"({', '.join(p.name for p in stuck)}). No call failed; the song "
+            f"is NOT fully materialized."
+        )
     elif result.outcome == "partial":
         ok_count = sum(1 for p in result.phases if p.status in {_STATUS_OK, _STATUS_SKIPPED})
         header = (
@@ -1602,7 +2000,21 @@ def format_summary(result: ExecuteResult) -> str:
             detail = f"{p.calls_ok}/{p.calls_ok} ok"
         elif p.status == _STATUS_SKIPPED:
             mark = "[ok]  "
-            detail = "skipped (idempotent)"
+            detail = "skipped (nothing to push)"
+        elif p.status == _STATUS_INCOMPLETE:
+            # Never "skipped (idempotent)": nothing here was idempotent.
+            mark = "[GAP] "
+            n = len(p.blocked_reasons)
+            if p.calls_ok:
+                detail = (
+                    f"{p.calls_ok}/{p.calls_ok} ok, INCOMPLETE — "
+                    f"{n} could not be determined"
+                )
+            else:
+                detail = (
+                    f"NOT PUSHED — could not determine state "
+                    f"({n} reason{'s' if n != 1 else ''})"
+                )
         elif p.status == _STATUS_HALTED:
             mark = "[FAIL]"
             total = p.calls_ok + p.calls_failed
@@ -1628,6 +2040,27 @@ def format_summary(result: ExecuteResult) -> str:
             plural = "s" if count != 1 else ""
             lines.append(f"  - {target}: {substr!r} ({count} call{plural})")
             lines.append(f"    next: {_suggest_next_step(pat, outcome=result.outcome)}")
+    # PSH-ARRPROBE: the un-determinable work, verbatim, in its own section —
+    # above the benign warnings so it can't be read as one. This is the "what
+    # is my song missing, and why" surface.
+    # Keyed on blocked_reasons rather than the status, so reasons carried by a
+    # phase that ALSO halted (a partial materialization caught downstream) still
+    # print instead of being swallowed by the halt.
+    incomplete_phases = [p for p in result.phases if p.blocked_reasons]
+    if incomplete_phases:
+        lines.append("")
+        lines.append(
+            "INCOMPLETE — pushed nothing for this, and did not guess "
+            "(exit is non-zero):"
+        )
+        for p in incomplete_phases:
+            for reason in p.blocked_reasons:
+                lines.append(f"  - [{p.name}] {reason}")
+        lines.append(
+            "  next: fix the named precondition (a failed probe usually means "
+            "Live was unreachable for that track — re-run `execute --probe`, "
+            "which re-probes and is idempotent)."
+        )
     # SYN-6B4Q: deferred-cue warnings are benign (the push is still OK) — show
     # them in their own section so they never read as a halt cause.
     if result.warnings:

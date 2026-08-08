@@ -606,9 +606,25 @@ class Finding:
 class MixReport:
     """Top-level wire format. Mutable so ``analyze_mix`` can populate
     progressively without re-allocating; the ``to_json_dict()`` boundary
-    is where it becomes pure data."""
+    is where it becomes pure data.
+
+    Every path this report records — ``captures_dir`` and
+    ``compare_to.baseline.ref`` — is a PORTABLE reference, not a machine
+    path: song-relative (``captures/20260807T161909Z``) when it lives under
+    the song dir, ``~``-collapsed otherwise. Resolve one with
+    ``hallucinote.paths.resolve_portable_path(song_dir, ref)``, where
+    ``song_dir`` is the parent of the directory the report was read from.
+    That helper also passes an absolute path straight through, so reports
+    written before AUD-PORTPATH (which recorded ``/Users/<account>/…``)
+    still load and still resolve — the change is representational, not a
+    schema break, which is why ``SCHEMA_VERSION`` did not move: bumping it
+    would make every existing report un-diffable (``compare.ensure_comparable``
+    refuses across versions) to no consumer's benefit."""
 
     song_slug: str
+    # Portable reference (see the class docstring), NOT a machine path — this
+    # file is git-tracked, and an absolute path here commits the author's home
+    # directory into the repo.
     captures_dir: str
     captured_at: str
     analyzer_signature: str

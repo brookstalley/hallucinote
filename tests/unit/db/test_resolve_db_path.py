@@ -21,18 +21,36 @@ from hallucinote.db.connection import _git_current_branch, resolve_db_path
 # ---------------------------------------------------------------------------
 
 
-def test_explicit_branch_main():
+@pytest.fixture
+def _legacy_fallback(monkeypatch, tmp_path):
+    """Pin song-dir resolution to the legacy ``songs/<slug>`` fallback.
+
+    These tests are about the DB *filename* (the per-branch suffix), not about
+    where the song dir is. They used to reach the legacy fallback by accident —
+    no env, and an ambient start directory (this repo's root) that happened to
+    have no workspace marker at or above it. That coupling was invisible until
+    marker discovery learned to descend (precedence step 4), at which point the
+    repo's own ``examples/`` workspace answered instead and three filename
+    tests failed for a reason having nothing to do with filenames. Naming the
+    marker-free start directory makes the precondition explicit and hermetic;
+    the asserted paths are unchanged.
+    """
+    monkeypatch.delenv("HALLUCINOTE_SONGS_ROOT", raising=False)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+
+
+def test_explicit_branch_main(_legacy_fallback):
     path = resolve_db_path("falling-walking", branch="main")
     assert path == Path("songs") / "falling-walking" / "falling-walking-main.db"
 
 
-def test_explicit_branch_with_slash_sanitized():
+def test_explicit_branch_with_slash_sanitized(_legacy_fallback):
     """feat/wave-12 -> feat--wave-12. Mirrors .prawduct/.pr-reviews/ naming."""
     path = resolve_db_path("falling-walking", branch="feat/wave-12")
     assert path == Path("songs") / "falling-walking" / "falling-walking-feat--wave-12.db"
 
 
-def test_explicit_branch_none_falls_back_to_legacy_name():
+def test_explicit_branch_none_falls_back_to_legacy_name(_legacy_fallback):
     """Detached HEAD / outside-repo case: drop the branch suffix entirely."""
     path = resolve_db_path("falling-walking", branch=None)
     assert path == Path("songs") / "falling-walking" / "falling-walking.db"

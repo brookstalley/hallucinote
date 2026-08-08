@@ -195,7 +195,14 @@ disable_error_code = ["arg-type", "assignment", "union-attr"]
 
 [tool.pytest.ini_options]
 # Songs now live in their own repo (hallucinote-songs) with their own pytest
-# config — the framework tests the ENGINE + MCP server only.
+# config — the framework tests the ENGINE + MCP server only. The one exception
+# is `examples/`, the in-repo demo workspace: its song is documentation that has
+# to keep working, and its tests assert the composition's own thesis (the intro
+# and chorus chords are the same pitch-class set, their roots a tritone apart,
+# the outro REUSES the chorus voicing rather than restating it). Those are
+# contracts on a public artifact, so they belong in the default run — and the
+# demo's whole claim is that it builds headless with no Live present, which only
+# a suite that actually executes it can back.
 # Front-insert THIS checkout's source dirs (relative to rootdir) so a bare
 # `pytest` always tests the local tree — critical in a git worktree, where the
 # editable-install `.pth` files resolve `hallucinote`/`hallucinote_mcp` to the
@@ -204,7 +211,7 @@ disable_error_code = ["arg-type", "assignment", "union-attr"]
 # green against the wrong tree. In the primary dir these are the same paths the
 # `.pth` already targets, so it's a no-op there.
 pythonpath = ["src", "hallucinote_mcp/src"]
-testpaths = ["tests", "hallucinote_mcp/tests"]
+testpaths = ["tests", "hallucinote_mcp/tests", "examples"]
 python_files = ["test_*.py"]
 markers = [
     "audio: exercises the native audio/DSP stack (librosa/numba/scipy). The root conftest auto-applies this by path; set HALLUCINOTE_SKIP_AUDIO=1 to skip in CPU-only/container sessions where that stack is unstable.",

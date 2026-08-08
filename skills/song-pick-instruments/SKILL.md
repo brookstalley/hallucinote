@@ -141,6 +141,20 @@ Today you pick by name + rationale, not by sound — the skill can't yet play a 
 
 Picks can also land in `captured_session.json` via composer-time `preset_query` selectors (`{root, pattern}`) without Live running — see `docs/snapshot-schema.md`. Built-in Live content is portable across machines via `preset_query`; third-party plugins are per-machine and must be re-resolved consumer-side.
 
+## Exit criteria — this stage is done when
+
+- Every part the brief names has a **resolved chain** in the snapshot —
+  instrument + post-instrument FX + initial sends — not a bare instrument.
+- Where the brief says the sonic worlds differ (two arguing palettes, a raw
+  bridge against a slick verse), that difference **exists as chain
+  differences**, here, now. Sound design is composition; nothing is deferred to
+  a "mix pass".
+- Any sonic character the brief names with no device to carry it is either
+  assigned one or written into the brief as an open row with an owner — never
+  left as prose that reads as settled.
+
+Full model: [docs/song-workflow.md](../../docs/song-workflow.md#stage-exit-criteria).
+
 ## Next: compose
 
 With chains picked, compose the parts with **`/compose-part`** (author-as-code in

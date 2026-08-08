@@ -17,8 +17,13 @@ import soundfile as sf
 
 from hallucinote.db import mutations as M
 from hallucinote.db.connection import init_db
+from hallucinote.paths import resolve_portable_path
 from hallucinote_mcp.server_side import analysis as analysis_handlers
 from hallucinote_mcp.server_side.analysis import ANALYSIS_STATUS_FILENAME
+
+# The repo's own publish gate, imported rather than restated — see
+# test_analyze_handler_writes_nothing_publishable_into_the_tracked_tree.
+from tools.tour_transcript import FORBIDDEN
 
 
 SAMPLE_RATE = 48_000
@@ -200,7 +205,58 @@ def test_analyze_handler_writes_status_json_done(synthetic_song: Path):
     assert status_path.exists()
     status = json.loads(status_path.read_text(encoding="utf-8"))
     assert status["state"] == "done"
-    assert status["report_path"] == result["report_path"]
+    # status.json is written into the git-tracked analysis/ dir, so the path it
+    # records is portable (song-relative), not this machine's absolute one
+    # (AUD-PORTPATH). The poller's contract is unchanged — it still points AT
+    # the report the call returned, which is what the second assertion pins.
+    assert status["report_path"] == f"analysis/{Path(result['report_path']).name}"
+    assert (
+        resolve_portable_path(synthetic_song, status["report_path"])
+        == Path(result["report_path"])
+    )
+
+
+def test_analyze_handler_writes_nothing_publishable_into_the_tracked_tree(
+    tmp_path: Path, monkeypatch,
+):
+    """Every file a run leaves in ``analysis/`` is publishable as-is.
+
+    ``analysis/`` is git-tracked (``.gitignore`` ignores the heavy
+    ``captures/`` WAVs and explicitly keeps the small MixReport JSONs), so
+    both the report AND the ``status.json`` heartbeat ship to whoever clones
+    the repo. The rule is imported from the repo's own publish gate
+    (``tools.tour_transcript.FORBIDDEN``) instead of restated, so the write
+    side and the publish side cannot drift apart — one part of the codebase
+    refusing to publish what another part commits was the defect.
+
+    The song is planted under a home-SHAPED tree (``…/Users/test-account/…``)
+    so the assertion has something to bite on: written absolutely, both files
+    match the account-segment pattern. No real account name appears here.
+    """
+    slug = "test-song"
+    song_dir = _make_song_dir(tmp_path / "Users" / "test-account", slug)
+    db_path = song_dir / f"{slug}.db"
+    monkeypatch.setattr(
+        analysis_handlers, "resolve_db_path", lambda s, **_: db_path,
+    )
+    captures_dir = _write_captures(
+        song_dir / "captures" / "20260528T140000Z", song_slug=slug,
+    )
+
+    analysis_handlers.analyze_handler(
+        None, song_slug=slug, captures_dir=str(captures_dir),
+    )
+
+    written = sorted((song_dir / "analysis").glob("*.json"))
+    assert len(written) == 2, "expected the report JSON + the status heartbeat"
+    for path in written:
+        text = path.read_text(encoding="utf-8")
+        for pattern, description in FORBIDDEN:
+            match = pattern.search(text)
+            assert match is None, (
+                f"{path.name} carries {description}: {match.group(0)!r} — "
+                "analysis/ is checked in, so this ships with the repo"
+            )
 
 
 def test_analyze_handler_writes_status_json_error_on_failure(
@@ -229,6 +285,45 @@ def test_analyze_handler_writes_status_json_error_on_failure(
     status = json.loads(status_path.read_text(encoding="utf-8"))
     assert status["state"] == "error"
     assert "analyze blew up" in status["error"]
+
+
+def test_analyze_handler_error_status_does_not_commit_the_home_dir(
+    synthetic_song: Path, monkeypatch,
+):
+    """The failure heartbeat quotes the exception message verbatim, and the
+    messages that reach it name absolute files — a soundfile IO error is
+    ``Error opening <abs path>``. status.json is checked in, so a failed run
+    must not commit the author's home directory with it (AUD-PORTPATH).
+
+    ``Path.home()`` is redirected at the tmp tree — the same definition of home
+    ``portable_text`` collapses against — so the assertion bites without any
+    real account name appearing in this test.
+    """
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: synthetic_song))
+    captures_dir = _write_captures(
+        synthetic_song / "captures" / "20260528T140000Z",
+        song_slug="test-song",
+    )
+    wav = captures_dir / "master.wav"
+
+    def _boom(*_a, **_k):
+        raise RuntimeError(f"Error opening {wav}: System error.")
+
+    monkeypatch.setattr(analysis_handlers, "analyze_mix", _boom)
+    with pytest.raises(RuntimeError, match="Error opening"):
+        analysis_handlers.analyze_handler(
+            None, song_slug="test-song", captures_dir=str(captures_dir),
+        )
+
+    status = json.loads(
+        (synthetic_song / "analysis" / "status.json").read_text(encoding="utf-8")
+    )
+    assert status["state"] == "error"
+    # The diagnosis survives — only the home prefix is collapsed.
+    assert status["error"] == (
+        "Error opening ~/captures/20260528T140000Z/master.wav: System error."
+    )
+    assert str(synthetic_song) not in status["error"]
 
 
 def test_analyze_handler_surfaces_analysis_code_version(synthetic_song: Path):
@@ -1289,9 +1384,19 @@ def test_analyze_handler_compare_to_seq_end_to_end(synthetic_song: Path):
     )
     report = json.loads(Path(result["report_path"]).read_text(encoding="utf-8"))
     assert report["db_seq"] == 2
-    assert report["compare_to"]["baseline"]["ref"] == baseline_result["report_path"]
+    # In the FILE the ref is portable (song-relative) — analysis/ is checked in
+    # (AUD-PORTPATH) — and it still names the baseline the call returned.
+    assert report["compare_to"]["baseline"]["ref"] == (
+        f"analysis/{Path(baseline_result['report_path']).name}"
+    )
+    assert (
+        resolve_portable_path(synthetic_song, report["compare_to"]["baseline"]["ref"])
+        == Path(baseline_result["report_path"])
+    )
     # Identical synthetic captures → nothing significant; the overshoot
     # delta rides the summary so a count change can't hide in the report.
+    # On the WIRE the ref stays absolute: a returned path is one the caller
+    # opens, and it has no reason to know the anchor.
     assert result["summary"]["compare_to"] == {
         "baseline_ref": baseline_result["report_path"],
         "significant_delta_count": 0,
@@ -1361,3 +1466,194 @@ def test_latest_captures_dir_agrees_with_the_retention_sweeps_ordering(
     # And the survivor of a keep=1 sweep is exactly what the selector picks.
     plan = T.plan_sweep(captures, keep=1)
     assert [t.path for t in plan.kept] == [selector_pick]
+
+
+# ---------------------------------------------------------------------------
+# `_existing_db_path` — the missing-DB message must diagnose, not misdirect.
+#
+# The failure that motivated this: `ableton_analysis` on a song that WAS built
+# reported "slug 'angle-of-the-light' doesn't name a built song. `python3
+# songs/angle-of-the-light/build.py --reset` creates it." The song was built —
+# in a workspace the server hadn't resolved. Following the advice would have
+# scaffolded a duplicate over real work.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def _clean_workspace_env(monkeypatch):
+    monkeypatch.delenv("HALLUCINOTE_SONGS_ROOT", raising=False)
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+
+
+@pytest.fixture
+def proj(tmp_path):
+    """An isolated project dir, one level inside `tmp_path`.
+
+    Resolution consults the project dir's SIBLINGS (the two-repo topology rung),
+    and pytest's `tmp_path` siblings are other tests' `tmp_path`s — several of
+    which plant workspace markers and build songs. Nesting one level gives each
+    test its own neighbourhood so no test can be steered by another's fixtures.
+    """
+    d = tmp_path / "proj"
+    d.mkdir()
+    return d
+
+
+def test_missing_db_message_names_the_workspace_it_searched(
+    proj, monkeypatch, _clean_workspace_env,
+):
+    """"Found a workspace; the song isn't in it" — name the workspace and the
+    songs it does have, instead of a bare "doesn't name a built song"."""
+    ws = proj / "examples"
+    ws.mkdir()
+    (ws / "hallucinote.toml").write_text(
+        '[workspace]\nlayout = "monorepo"\nsongs_root = "."\n'
+    )
+    _make_song_dir(ws.parent, "unused")  # keeps proj/songs/ realistic
+    built = ws / "real-song"
+    built.mkdir()
+    (built / "build.py").write_text("# built\n")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj))
+
+    with pytest.raises(analysis_handlers._AnalysisError) as exc:
+        analysis_handlers._existing_db_path("typo-song")
+    msg = str(exc.value)
+    assert str(ws.resolve()) in msg, msg
+    assert "real-song" in msg, msg
+    assert "doesn't name a built song" not in msg
+
+
+def test_missing_db_message_does_not_advise_rebuilding_a_song_built_elsewhere(
+    proj, monkeypatch, _clean_workspace_env,
+):
+    """The exact misdirection: never send an operator to `build.py --reset` for
+    a song that exists somewhere the resolver simply didn't look.
+
+    Staged as two workspaces that BOTH hold `demo`, which is what "the resolver
+    didn't look there" now means: a single holder is resolved outright (that is
+    the slug-aware rung), so only a genuine ambiguity still declines — and the
+    advice must name where the song is rather than offer to make another one.
+    """
+    for name in ("one", "two"):
+        d = proj / name
+        d.mkdir()
+        (d / "hallucinote.toml").write_text(
+            '[workspace]\nlayout = "monorepo"\nsongs_root = "."\n'
+        )
+        song = d / "demo"                  # both hold `demo` ⇒ ambiguous
+        song.mkdir()                       # ⇒ resolution falls back to legacy
+        (song / "build.py").write_text("# built\n")
+    built = proj / "two" / "demo"
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj))
+    monkeypatch.chdir(proj)
+
+    with pytest.raises(analysis_handlers._AnalysisError) as exc:
+        analysis_handlers._existing_db_path("demo")
+    msg = str(exc.value)
+    assert "--reset" not in msg, msg
+    assert str(built.resolve()) in msg, msg
+
+
+def test_missing_db_message_distinguishes_no_marker_from_wrong_workspace(
+    proj, monkeypatch, _clean_workspace_env,
+):
+    """No marker anywhere is a third, differently-remediated diagnosis."""
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj))
+
+    with pytest.raises(analysis_handlers._AnalysisError) as exc:
+        analysis_handlers._existing_db_path("nowhere")
+    msg = str(exc.value)
+    assert "no hallucinote.toml workspace marker was found at or above" in msg
+    assert "HALLUCINOTE_SONGS_ROOT" in msg
+
+
+def test_analysis_resolves_a_song_in_a_workspace_below_the_project_dir(
+    proj, monkeypatch, _clean_workspace_env,
+):
+    """The defect end-to-end at the analysis boundary: project dir above,
+    workspace below, song built. It must resolve — not report it unbuilt."""
+    ws = proj / "examples"
+    ws.mkdir()
+    (ws / "hallucinote.toml").write_text(
+        '[workspace]\nlayout = "monorepo"\nsongs_root = "."\n'
+    )
+    song_dir = ws / "demo"
+    song_dir.mkdir()
+    conn = init_db(song_dir / "demo.db")
+    conn.execute("INSERT INTO songs (id, name) VALUES (?, ?)", ("song-demo", "demo"))
+    conn.commit()
+    conn.close()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj))
+
+    resolved = analysis_handlers._existing_db_path("demo")
+    assert resolved.parent == song_dir.resolve()
+
+
+def _built_song_db(song_dir: Path, slug: str) -> None:
+    song_dir.mkdir(parents=True, exist_ok=True)
+    (song_dir / "build.py").write_text("# built\n")
+    conn = init_db(song_dir / f"{slug}.db")
+    conn.execute("INSERT INTO songs (id, name) VALUES (?, ?)", (f"song-{slug}", slug))
+    conn.commit()
+    conn.close()
+
+
+def test_analysis_resolves_a_song_in_the_sibling_songs_repo(
+    proj, monkeypatch, _clean_workspace_env,
+):
+    """THE REPORTED FAILURE, at the boundary where it had no workaround.
+
+    Session rooted at the framework repo (which ships a demo workspace at
+    `examples/`), song living in the sibling songs repo — the supported two-repo
+    topology. The nested demo workspace used to capture the slug, and
+    `ableton_analysis` — unlike `ableton_render`, which can be steered with an
+    explicit `output_dir` — hard-failed with "no song DB at .../examples/<slug>".
+    """
+    demo_ws = proj / "examples"
+    demo_ws.mkdir()
+    (demo_ws / "hallucinote.toml").write_text(
+        '[workspace]\nlayout = "monorepo"\nsongs_root = "."\n'
+    )
+    _built_song_db(demo_ws / "b-natural", "b-natural")
+
+    songs_repo = proj.parent / "songs-repo"
+    songs_repo.mkdir()
+    (songs_repo / "hallucinote.toml").write_text(
+        '[workspace]\nlayout = "monorepo"\nsongs_root = "songs"\n'
+    )
+    _built_song_db(songs_repo / "songs" / "the-argument", "the-argument")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj))
+
+    resolved = analysis_handlers._existing_db_path("the-argument")
+    assert resolved.parent == (songs_repo / "songs" / "the-argument").resolve()
+    # …and the demo workspace still answers for the song it does hold.
+    assert analysis_handlers._existing_db_path("b-natural").parent == (
+        (demo_ws / "b-natural").resolve()
+    )
+
+
+def test_analysis_names_both_workspaces_when_two_hold_the_song(
+    proj, monkeypatch, _clean_workspace_env,
+):
+    """Genuinely ambiguous ⇒ a teaching error naming the candidates, never a
+    silent pick of one of two real songs."""
+    roots = []
+    for name in ("repo-a", "repo-b"):
+        root = proj.parent / name
+        root.mkdir()
+        (root / "hallucinote.toml").write_text(
+            '[workspace]\nlayout = "monorepo"\nsongs_root = "songs"\n'
+        )
+        _built_song_db(root / "songs" / "demo", "demo")
+        roots.append(root)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj))
+    monkeypatch.chdir(proj)
+
+    with pytest.raises(analysis_handlers._AnalysisError) as exc:
+        analysis_handlers._existing_db_path("demo")
+    msg = str(exc.value)
+    assert "ambiguous" in msg, msg
+    for root in roots:
+        assert str(root.resolve()) in msg, msg
+    assert "HALLUCINOTE_SONGS_ROOT" in msg, msg
+    assert "--reset" not in msg, msg

@@ -300,3 +300,56 @@ generous `MCP_TIMEOUT`; a pre-warm hook is best-effort, not the mitigation.**
 ## A test asserting ambient git state is green on `push:` and red on `pull_request:` — CI checks PRs out DETACHED
 
 **`actions/checkout` checks a `pull_request` event out at the detached merge commit, so `git symbolic-ref --short HEAD` exits non-zero and any branch-name probe legitimately returns nothing; a `push:` run checks out a real branch ref and passes. A test that reads the AMBIENT checkout (`assert "branch" in provenance_metadata()`) therefore passes locally and on every develop push, and only goes red the first time it runs in PR context — this one hid from 2026-05-21 to 2026-07-20. Fix the TEST, not the probe: a best-effort probe dropping a key it genuinely cannot resolve is correct behavior, and "make CI report a branch" would mean inventing a placeholder. Build a throwaway repo (`git init -q` + `-c commit.gpgsign=false commit --allow-empty` + `checkout -b <name>`) and `chdir` into it, so the expected branch is a value the test CONTROLS — that is strictly stronger than asserting against the ambient tree, which only ever proved "the suite runs from some worktree". Same trap in tolerant disguise: `assert "git_sha" in meta or "branch" in meta` survives detached HEAD but still breaks outside a checkout. To verify a fix for this class, reproduce with `git worktree add --detach` and confirm the OLD test fails there first — a local attached checkout cannot tell you anything. (PR #213, 2026-07-20)**
+
+## Guards sharing one unverified premise don't corroborate each other — honour the producer's trust flags
+
+**When several checks all derive from the same source file, their agreement is not independent evidence: an incomplete Hallucinote render yields a SHORT BUT PERFECTLY VALID master WAV, so open clip bounds derive from the truncated length, the post-encode duration check compares against that same derived number, and the non-empty-file check passes — every guard agrees and they are wrong together, publishing a truncated take as the tour's central evidence. Adding another derived check cannot find this class; only reading what the PRODUCER already recorded can. The capture manifest carries `status`, `analyzer_not_terminal` and per-entry `terminal` for exactly this reason ("never measure-and-lie"), so any consumer — especially one whose output is published — must honour them and require an explicit `--allow-incomplete` to override, while treating ABSENCE of the fields as fine, since manifests predating them must stay readable. Generalises: before adding a fourth check derived from an input, ask whether the input's producer already told you not to trust it. (TOUR A3, Critic rev-20260807T011821Z R-13)**
+
+## A comment asserting how an external tool fails is a test, not a comment
+
+**When you write down how a subprocess behaves on a failure path AND build a guard on it, verify the claim — the guard is only as good as an assumption nobody checked. "ffmpeg writes a zero-length file on an out-of-range seek" was wrong: it exits 0, with EMPTY stderr, writing ~428 bytes of valid mp3 header, which sails straight through the file-is-non-empty check written to catch it. The fix was not a better threshold but a different KIND of check (re-measure the encoded duration), and the same shape recurs — a gate sharing its patterns with the mechanism it guards cannot catch that mechanism's blind spot (TOUR A1), and a traceback guard catching only the tool's own exception class misses FileNotFoundError, the likeliest failure at that step (A1, R-14). Pin the external behaviour in a test so a version bump that changes it goes red. (TOUR A3, 2026-08-06)**
+
+## Verify a from-scratch reproduction, not a re-push onto matching state
+
+When testing that something can be rebuilt, push into an EMPTY target, because a
+push into state that already matches skips the work and reports OK. Hallucinote's
+devices phase diff-reconciles, so every push onto an already-correct Live set had
+been skipping the loads entirely; the first push into a fresh set exposed a
+preset-shadowing bug and a stale-link permanent halt within minutes. Reading the
+code finds neither — the code is correct in the state it usually runs in.
+(2026-08-07, TOUR B1)
+
+## A test you have not seen fail is not evidence — plant the failure
+
+For any guard or scanner, verify RED by planting the thing it should catch, not
+just GREEN on a clean tree. A repo-wide secret/path scan passed vacuously because
+the constant it iterated was `(regex, description)` pairs and the loop called
+`.search` on the tuple — it matched nothing, forever, while looking thorough. Also
+verify the OVER-drop direction: a scan that flags legitimate fixtures gets deleted
+rather than fixed. (2026-08-07, TOUR B1)
+
+## Prose naming a mechanism reads as a decision — DESCRIBED-BUT-UNBUILT
+
+A docstring or design note that says how something works is indistinguishable from
+a record that it was built. `build.py` documented an outro pitch-drop as riding a
+Shifter envelope; no Shifter and no envelope ever existed, the build ran clean and
+the push reported OK. This is the only defect class with no symptoms. When a stage
+cannot decide something, mark it explicitly OPEN — never hand it downstream in the
+clothes of a decision. (2026-08-07, TOUR B1)
+
+## A required CLI argument can forbid the stage that should supply it
+
+Before concluding a missing step is a discipline problem, check whether the
+tooling makes it impossible. Hallucinote never elicited musical requirements
+partly because `/song-new`'s scaffold CLI takes tempo, meter and the section list
+as REQUIRED arguments — the agent must invent them to run the command, and the
+invented values become the song. Ordering forbade the stage; no amount of norm
+would have fixed it. (2026-08-07, TOUR B1)
+
+## Check whether a rule describes the tooling before obeying it
+
+The PR skill says a develop-bound change-log entry stays statusless. Following it
+made a chunk invisible to this repo's derived views, because only `status=shipped`
+feeds them. When a written rule and the implementation disagree, the rule may be
+describing a different repo's tooling — verify which, and record the departure
+rather than silently matching either. (2026-08-07, TOUR B1)

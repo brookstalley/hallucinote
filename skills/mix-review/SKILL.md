@@ -357,6 +357,26 @@ State these when they bear on a finding; never present masking as ground truth:
   a choir, unison strings) over-report — the ear separates them by pitch and
   melody. Down-rank or caveat such findings; never call a blend-group "muddy."
 
+## Exit criteria — this stage is done when
+
+- The measurements are read against intent **per section**.
+- **Every audible gesture the brief names is either confirmed in the
+  measurement, or logged as not-yet-landed.** This is the last stage that can
+  catch a gesture nobody built: the demo song's closing octave drop was cited as
+  load-bearing in a decision record, described in a docstring, and simply absent
+  from the audio. Verify on the render — never assert.
+- Revealed intent is written back as an annotation, so nothing here re-flags
+  next run.
+
+**How to run the gesture check:** `/song-brief <slug>` sweeps an *existing* song
+and reports which dimensions are still UNDECIDED or DESCRIBED-BUT-UNBUILT — the
+retrospective mode is built for this checkpoint. Run it, then confirm each
+surviving gesture against the render rather than against the prose.
+
+This criterion is deliberately redundant with `/compose-part`'s and
+`/ableton-push`'s. The gap that matters is the one that survives every stage.
+Full model: [docs/song-workflow.md](../../docs/song-workflow.md#stage-exit-criteria).
+
 ## One-line thesis
 
 Commercial meters answer *"where do frequencies collide?"* You answer *"which

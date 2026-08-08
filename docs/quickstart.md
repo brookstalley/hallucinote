@@ -63,11 +63,16 @@ name). For example:
 
 Claude will:
 
-1. Scaffold `songs/punk-fate/` (`/hallucinote:song-new punk-fate`) — `build.py`,
-   a snapshot, tests, and intent/decision folders.
-2. Pick instrument **chains** per track (instrument + effects + send levels).
-3. Write note-generating code in `build.py` using the generator library.
-4. Build the song's DB and **push it into Live** through fourteen ordered
+1. Come back **once** (`/hallucinote:song-brief`) with proposals for whatever the
+   prompt left open and load-bearing — here, the key Beethoven's progressions get
+   condensed into and how the 2 minutes are budgeted across the four parts. Each
+   comes with reasoning and a recommendation, so *"yep"* is a complete answer.
+   The result is written down as the song's brief.
+2. Scaffold `songs/punk-fate/` (`/hallucinote:song-new punk-fate`) — `build.py`,
+   a snapshot, tests, and intent/decision folders — using the brief's values.
+3. Pick instrument **chains** per track (instrument + effects + send levels).
+4. Write note-generating code in `build.py` using the generator library.
+5. Build the song's DB and **push it into Live** through fourteen ordered
    phases — with sound design baked in:
 
    ```

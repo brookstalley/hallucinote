@@ -534,6 +534,132 @@ def test_probe_and_link_cascades_device_link_when_parent_track_mislinked(
     ) is None
 
 
+def test_probe_and_link_unlinks_device_when_its_index_vanished_from_live(
+    conn, song, session,
+):
+    """A surviving PARENT does not make a device link valid — the index has to
+    still exist.
+
+    This is the fresh-set path, and Live's own defaults are what make it
+    routine. Every new Live set ships `A-Reverb` / `B-Delay`, and DB return
+    names are stored slot-prefix-stripped, so a song return called `Delay`
+    matches Live's stock `B-Delay` — a return that already holds a factory
+    device at index 1. The authored device loads at index 2 and the link
+    records 2. Reopen a FRESH set and that return is factory-fresh again: the
+    parent still matches by name, so the parent-scoped sweep keeps the link,
+    but index 2 is gone. `_emit_device_calls` then reads the link as present,
+    SKIPS the load, and every parameter write addresses the missing index —
+    the devices phase halts on IndexError and never converges, because nothing
+    emits the load that would create index 2.
+    """
+    rid = M.create_return(conn, song_id=song, name="Delay", position=1)
+    device_id = _make_chain_with_device(
+        conn, parent_return_id=rid, position=1, kind="Echo",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="return", db_id=rid, ableton_index=2,
+    )
+    # Recorded when the authored Echo loaded behind Live's factory Delay.
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=device_id,
+        ableton_index=2,
+    )
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[],
+        # The parent still matches by name, so it is NOT dropped...
+        live_returns=[{"return_index": 2, "name": "B-Delay"}],
+        # ...but the fresh set carries only the factory device at index 1.
+        live_devices_by_parent={
+            ("return", 2): [
+                {"device_index": 1, "name": "Delay", "class_name": "Delay"},
+            ],
+        },
+    )
+    assert result.unlinked_stale_devices == [
+        {"db_id": device_id, "ableton_index": 2}
+    ]
+    # Unlinked is the whole point: it is what makes the devices planner emit the
+    # load instead of writing parameters into a hole.
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="device", db_id=device_id,
+    ) is None
+    # The parent itself must survive — dropping it would re-create a duplicate
+    # return rather than reusing Live's.
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="return", db_id=rid,
+    ) == 2
+
+
+def test_probe_and_link_keeps_device_link_when_index_still_present(
+    conn, song, session,
+):
+    """The mirror of the vanished-index case: do not over-drop.
+
+    A device still sitting at its recorded index is the ordinary re-push, and
+    dropping its link would make the planner load a SECOND copy of the device.
+    Guards the fix above from being written as an unconditional drop.
+    """
+    rid = M.create_return(conn, song_id=song, name="Delay", position=1)
+    device_id = _make_chain_with_device(
+        conn, parent_return_id=rid, position=1, kind="Echo",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="return", db_id=rid, ableton_index=2,
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=device_id,
+        ableton_index=2,
+    )
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[],
+        live_returns=[{"return_index": 2, "name": "B-Delay"}],
+        live_devices_by_parent={
+            ("return", 2): [
+                {"device_index": 1, "name": "Delay", "class_name": "Delay"},
+                {"device_index": 2, "name": "Echo", "class_name": "Echo"},
+            ],
+        },
+    )
+    assert result.unlinked_stale_devices == []
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="device", db_id=device_id,
+    ) == 2
+
+
+def test_probe_and_link_keeps_device_link_when_parent_not_probed(
+    conn, song, session,
+):
+    """Absence of evidence is not evidence of absence.
+
+    On the snapshot-fallback path no device data is probed at all. Treating an
+    unprobed parent as "index missing" would drop every good device link and
+    force a full reload on a push that merely skipped the device probe.
+    """
+    rid = M.create_return(conn, song_id=song, name="Delay", position=1)
+    device_id = _make_chain_with_device(
+        conn, parent_return_id=rid, position=1, kind="Echo",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="return", db_id=rid, ableton_index=2,
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=device_id,
+        ableton_index=2,
+    )
+    result = push.probe_and_link(
+        conn, song_id=song, session_id=session,
+        live_tracks=[],
+        live_returns=[{"return_index": 2, "name": "B-Delay"}],
+        # No live_devices_by_parent at all — the device probe did not run.
+    )
+    assert result.unlinked_stale_devices == []
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="device", db_id=device_id,
+    ) == 2
+
+
 def test_probe_and_link_keeps_track_link_when_renamed_not_scaffold(
     conn, song, session,
 ):
@@ -3266,3 +3392,122 @@ def test_cli_execute_resume_resolves_and_passes_targeting(
     assert captured["start_at"] == "routing"       # --resume resolved it
     assert captured["stop_after"] == "arrangement"  # passed through
     assert captured["only"] is None
+
+
+# ---------------------------------------------------------------------------
+# PSH-ARRPROBE — `execute` must not probe arrangement lanes before `tracks`
+# ---------------------------------------------------------------------------
+
+
+def test_cli_execute_defers_the_arrangement_probe_until_the_phase_runs(
+    conn, song, session, db_path, monkeypatch, tmp_path,
+):
+    """The CLI half of the first-push silent no-op.
+
+    `execute` used to probe arrangement lanes up front, reusing the COHERENCE
+    probe's track list — Live's state BEFORE the `tracks` phase created the
+    song's tracks. On a first push into a set holding the 4 default scaffold
+    tracks that map covered indices 1-4 while the song's tracks landed at 5-13,
+    so the projection planner saw every lane as unprobed and built nothing.
+
+    Contract: what reaches `execute_push` is a CALLABLE that has NOT run yet,
+    and running it issues a FRESH `ableton_track(list)` rather than reusing the
+    coherence snapshot.
+    """
+    coherence_tracks = [{"track_index": 1, "name": "1-MIDI", "kind": "midi"}]
+    post_tracks_phase = coherence_tracks + [
+        {"track_index": 5, "name": "Drums", "kind": "midi"},
+    ]
+    track_probes: list[str] = []
+    lane_probe_inputs: list[list[int]] = []
+
+    def _fake_probe_live(send_fn=None):
+        # First call = the coherence probe (pre-phases); any later call is the
+        # deferred lane probe, which must see the newly-created tracks.
+        track_probes.append("probe")
+        if len(track_probes) == 1:
+            return (list(coherence_tracks), [])
+        return (list(post_tracks_phase), [])
+
+    def _fake_lane_probe(*, live_tracks, send_fn=None):
+        lane_probe_inputs.append([t["track_index"] for t in live_tracks])
+        return {t["track_index"]: [] for t in live_tracks}
+
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", _fake_probe_live)
+    monkeypatch.setattr(
+        push_cli, "_probe_live_arrangement_clips_via_mcp", _fake_lane_probe,
+    )
+    monkeypatch.setattr(
+        push, "check_coherence", lambda *a, **kw: push.CoherenceResult(ok=True),
+    )
+
+    captured: dict = {}
+
+    def _fake_execute(**kwargs):
+        from hallucinote.sync.push_execute import ExecuteResult
+        captured["probe"] = kwargs["live_arrangement_clips_by_track"]
+        # Not resolved yet at hand-off — that is the whole point.
+        assert lane_probe_inputs == []
+        return ExecuteResult(
+            outcome="ok", exit_code=0, phase_halted=None,
+            phases=[], state_file=None, errors_file=None,
+        )
+
+    monkeypatch.setattr(push_cli.push_execute, "execute_push", _fake_execute)
+
+    rc = push_cli.main([
+        "execute", session, "--db", str(db_path), "--probe",
+        "--state-dir", str(tmp_path),
+    ])
+    assert rc == 0
+    assert callable(captured["probe"])
+
+    # Resolving it (what the arrangement phase does) re-probes Live and sees
+    # the track the `tracks` phase created, at its OFFSET index.
+    lanes = captured["probe"]()
+    assert lane_probe_inputs == [[1, 5]]
+    assert 5 in lanes
+
+
+def test_cli_execute_lane_probe_failure_degrades_to_empty_not_none(
+    conn, song, session, db_path, monkeypatch, tmp_path, capsys,
+):
+    """The lane probe now runs MID-RUN, so a Live-unreachable failure must not
+    escape the phase loop (that would abandon the push with no terminal state
+    file and an open request row).
+
+    It degrades to an EMPTY map — "probed, and no lane's state is known" — which
+    the projection planner reads as blocked-per-track: the phase reports
+    INCOMPLETE and writes nothing. It must NOT degrade to ``None``, which means
+    "no probe taken" and emits create+fill with NO clear (the stacking path)."""
+    def _fake_probe_live(send_fn=None):
+        if not getattr(_fake_probe_live, "called", False):
+            _fake_probe_live.called = True  # the coherence probe succeeds
+            return ([{"track_index": 1, "name": "1-MIDI", "kind": "midi"}], [])
+        raise SystemExit("push_cli --probe: ableton_track(list) failed — no Live")
+
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", _fake_probe_live)
+    monkeypatch.setattr(
+        push, "check_coherence", lambda *a, **kw: push.CoherenceResult(ok=True),
+    )
+
+    captured: dict = {}
+
+    def _fake_execute(**kwargs):
+        from hallucinote.sync.push_execute import ExecuteResult
+        captured["probe"] = kwargs["live_arrangement_clips_by_track"]
+        return ExecuteResult(
+            outcome="ok", exit_code=0, phase_halted=None,
+            phases=[], state_file=None, errors_file=None,
+        )
+
+    monkeypatch.setattr(push_cli.push_execute, "execute_push", _fake_execute)
+    push_cli.main([
+        "execute", session, "--db", str(db_path), "--probe",
+        "--state-dir", str(tmp_path),
+    ])
+
+    lanes = captured["probe"]()
+    assert lanes == {}
+    assert lanes is not None
+    assert "INCOMPLETE" in capsys.readouterr().err

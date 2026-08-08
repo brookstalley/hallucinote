@@ -15,6 +15,109 @@ pending entries when `operator_verification_required: true`.
 
 ---
 
+## MST-LEAK — a master device load no longer leaks into the focused track (2026-08-07) — PENDING
+
+Field report (Live 12.4 Suite, 2026-08-07): with the view on `Detail/Clip` and
+track 3 selected, two `ableton_device(action='load')` calls addressing the MASTER
+put `Shifter` + `Limiter` on the master (correct, `ok`, `parent_kind: "master"`)
+AND appended both to track 3, which nobody addressed. `browser.load_item` takes
+no destination argument — Live aims it from view state, and the loader was moving
+only one half of that state (`song.view.selected_track`), leaving the Detail
+pane's device-chain binding on track 3.
+
+Fix (`handlers/device.py`): retarget the Detail pane at the destination's device
+chain as well, restore the caller's selection + Detail pane afterwards, and
+bracket the load with a FULL-SESSION device census so a device landing in an
+unaddressed chain is removed + reported (or raises) instead of returning `ok`.
+
+**Fingerprint flips** (`handlers/` is in `_FINGERPRINT_PATHS`) → **re-vendor the
+Remote Script + full Live quit/reopen required** before this check can run.
+
+**Check (Ableton open, a set with 3+ tracks and an empty master):**
+1. `ableton_session(action='set_view', view='detail')`, then select track 3 in
+   Live by hand and leave the Detail pane showing the CLIP.
+2. `ableton_device(action='load', node={'parent': {'kind': 'master'}, 'terminal': 'master'}, kind='Shifter')`
+   → expect `ok`, `parent_kind: "master"`, `device_index: 1`, and NO
+   `collateral_removed` key in the response.
+3. `ableton_device(action='list', track_index=3)` → expect track 3's chain
+   byte-for-byte what it was in step 1. Repeat 2-3 with `kind='Limiter'`.
+4. Confirm Live's selection is back on **track 3** and the Detail pane is back on
+   **Clip** (not the device chain) — the load must not move the composer's view.
+5. Collapse the Detail pane entirely, repeat step 2 with a third device →
+   expect the pane still collapsed afterwards.
+6. Repeat 2-4 with a RETURN destination (`{'kind': 'return', 'index': 1}`) — the
+   same aiming defect is latent there (a return is likewise not a member of
+   `song.tracks`), and the fix is destination-kind agnostic.
+
+**Why it can't be headless-verified:** the leak is Live's own load-aiming
+behaviour. The unit tests model the two-halves mechanism in a fake browser
+(`_LeakyBrowser` in `hallucinote_mcp/tests/unit/test_actions_device.py`) — per
+the NODE-ADDR learning, a fake that encodes how an EXTERNAL system responds
+proves nothing until an operator confirms it. The full-session census backstop
+(`_AlwaysLeakyBrowser`) is what protects the composer if the prevention half
+turns out not to be the whole mechanism.
+## PSH-4L6C — the perform_batch locate settle is real, not just modelled (2026-08-07) — PENDING
+
+`ableton_automation(action='perform_batch')` intermittently timed out on an
+8-beat arc (beats 96..104, 3.4 s at 140 BPM) against a 12.3 s budget, with
+`song.loop` False and `song.count_in_duration` 0 — both causes the old message
+named. The identical arc had succeeded minutes earlier in the same session, and
+the operator heard the transport roll with a start that sounded "a little weird".
+
+**Root cause (inferred, not Live-confirmed):** the handler set
+`song.current_song_time = union_start` and called `start_playing()` without
+waiting for the locate to land. Live applies a locate ASYNCHRONOUSLY — the same
+class of behaviour `record_mode` already has a settle-verify for (probe 10). When
+the record_mode settle happened to return immediately, the locate got no
+incidental cover and playback started from the old position: the ramp then had to
+travel 104 beats, not 8, and blew a budget sized for the span.
+
+**The fix is a settle-verify** (`_wait_for_locate_on_worker`) bounded by the
+existing `settle_timeout_ms`, plus a timeout message that reports the OBSERVED
+transport state instead of asserting causes.
+
+**What is proven and what is not.** The wait, the tolerance, the budget
+re-basing and the message are covered by 10 unit tests against the fake LOM, and
+all four locate tests fail without the wait. What CANNOT be verified without a
+live instance is the model of Live underneath:
+
+- that `current_song_time` is genuinely async on a locate (asserted by analogy
+  with `record_mode`, plus the symptom — never probed directly);
+- that an in-flight locate is LOST when `start_playing()` fires (the test fake
+  models this; the alternative — the locate lands late and the transport jumps —
+  would produce an audibly wrong start but not necessarily this timeout);
+- that `_PERFORM_LOCATE_TOLERANCE_BEATS = 1.0` is wide enough for whatever
+  snapping Live does to a locate. Too tight would turn the old intermittent
+  timeout into an intermittent hard failure at the settle boundary.
+
+**Fingerprint flip: YES.** `handlers/automation.py` and `actions/automation.py`
+are both inside `_FINGERPRINT_PATHS`, so the Remote Script vendored into Live's
+User Library is stale until re-vendored — Live keeps running the old code, and
+this fix does not take effect, silently.
+
+**Checks (Ableton open, a song with a master-chain device parameter arc):**
+
+1. **Re-vendor first.** `/ableton-mcp-install`, then quit Live completely and
+   reopen (Live caches Control Surface modules at launch), then `/mcp`. Confirm
+   `ableton://server/info`'s fingerprint matches the vendored copy.
+2. **The race is gone.** Park the playhead at 0, then perform an arc whose span
+   starts far downstream (the 96..104 master Shifter `Pitch Coarse` arc is the
+   exact repro). Run it 5+ times back to back, including immediately after a
+   manual `song.stop_playing()` — the case that failed twice in a row. Every pass
+   must report `1/1 ok`, and the audible start must be AT the span start, not a
+   run-up from the old position.
+3. **The tolerance is not too tight.** Watch for any `could not locate the
+   playhead` abort on a set where the transport is healthy. If that appears, the
+   1-beat tolerance is narrower than Live's locate behaviour and needs widening —
+   that would be this fix trading an intermittent timeout for an intermittent
+   hard failure, which is worse.
+4. **The message earns its keep.** Force a timeout (start a perform, then hold
+   the transport with a modal dialog) and read the error. It must name the
+   playhead beat, `transport rolling=`, `loop=`, and `count_in_duration=` as
+   OBSERVED values.
+
+---
+
 ## AUD-2D6T — automatic capture sweep fires on a real render (2026-08-03) — PENDING
 
 The CLI half is verified against this repo's real `songs/missing/captures/` (406 MB
@@ -1425,3 +1528,175 @@ Checks (a pushed song with an arrangement clip carrying known stale notes — e.
    warning (collapse is faithful, not a leak).
 4. **Session view unaffected.** A `replace_notes` on a session clip still
    total-replaces correctly (the defensive clear is harmless there).
+
+---
+
+## 2026-08-06 — TOUR A2: deterministic Ableton screenshot capture (feat/tour-walkthrough)
+
+Visual change: **yes**. Fingerprint flip: no — `tools/` is outside the MCP
+wire-shape paths, so no re-vendor and no Live restart is needed for this.
+
+Why it can't be auto-verified: framing and legibility of a screenshot are exactly
+what a test cannot speak to, and the capture itself is blocked on a permission
+only the operator can grant.
+
+**Blocked, and the block is the first check.** `CGPreflightScreenCaptureAccess()`
+returns `False` on this machine, so `screencapture` cannot photograph another
+application's window at all — it exits 1 with *"could not create image from
+window"*. Everything up to that point is verified: the tool resolves the real
+Live window through the window server (`--list` prints `id 56749 layer 0
+1576x949` against a running Live) and refuses with a precise, actionable error
+naming `Visual Studio Code.app`, writing no file and without stealing focus.
+
+Checks (Live running with the demo set open):
+
+1. **Grant the permission.** System Settings → Privacy & Security → Screen
+   Recording → enable the application hosting the terminal (the tool names it;
+   here `Visual Studio Code.app`). **Restart that application** — the grant is
+   read at launch, so a running process keeps its old answer.
+2. **It captures the window, not the screen.** `python
+   tools/capture_live_shot.py --out /tmp/shot.png` writes a PNG showing the Live
+   window alone — no desktop, no other application, and no soft grey drop-shadow
+   halo around the edges (that is what `-o` removes).
+3. **Fixed width, which is the determinism being promised.** The image is
+   exactly 1600 px wide. Run it twice without touching the Live window: both
+   images have identical dimensions.
+4. **It refuses rather than photographing the wrong window.** Open a plug-in
+   editor or Preferences so Live owns two normal windows, then run it again: it
+   must error listing both ids and sizes and capture nothing. `--window-id
+   <id>` from that listing then captures the one you chose.
+5. **Legibility at the committed width.** Open the result and confirm clip
+   names, device names and the transport are readable at 1600 px — this is the
+   width the tour ships, and text that is unreadable there makes the screenshot
+   worthless regardless of framing.
+
+---
+
+## 2026-08-06 — TOUR A4: lifecycle diagram, light/dark aware (feat/tour-walkthrough)
+
+Visual change: **yes**. Fingerprint flip: no — `docs/` is outside the MCP
+wire-shape paths.
+
+Why it can't be auto-verified: an SVG's correctness is whether it *reads*, and
+on the surface that matters — a GitHub page, in the reader's theme.
+
+Already verified locally, so these checks are about GitHub specifically: the file
+is well-formed XML with zero external references (no font, no image, no
+`@import`), and all four theme combinations were rendered in headless Chrome and
+inspected — light palette on white, dark on `#0d1117`, and **both mismatched
+pairings**. The mismatch cases are the point: the `prefers-color-scheme` query
+follows the operating system while GitHub's light/dark toggle is its own setting,
+so the two can disagree. Every piece of text sits inside an opaque card
+specifically so that a disagreement changes only the colour of the gaps.
+
+Checks (on the pushed branch's rendered page, not a local preview):
+
+1. **It renders at all.** `docs/assets/lifecycle.svg` displays on the GitHub page
+   rather than showing a broken-image icon — the failure mode when a sanitizer
+   strips something the file depends on.
+2. **Light theme.** With GitHub set to light, the cards read as light panels with
+   dark text; connectors and arrowheads are visible against the page.
+3. **Dark theme.** Switch GitHub to dark and reload. The cards must not stay
+   light-on-light or go dark-on-dark; text stays legible and the return arrow is
+   still visible.
+4. **Theme mismatch.** Set the OS to one scheme and GitHub to the other. The
+   diagram may look inverted relative to the page — that is expected and
+   accepted — but every label must remain readable.
+
+---
+
+## 2026-08-07 — TOUR B1: the engine/MCP fix batch (feat/tour-walkthrough)
+
+Visual change: no. **Fingerprint flip: YES.**
+
+This is the ship instruction for the bundle. Six files inside
+`_FINGERPRINT_PATHS` changed (`schema.py`, `dispatcher.py`, `actions/device.py`,
+`handlers/browser.py`, `handlers/device.py`, `remote_script/dispatch.py`), so the
+Remote Script vendored into Live's User Library is **stale until re-vendored**.
+Until the handshake below, Live keeps running the old code and none of the
+Live-side fixes take effect — silently, because a stale script still answers.
+
+The `run_on_main` concurrency rewrite is the load-bearing one: its admission
+control and per-bout timeouts are Live-side, and its thresholds can only be
+confirmed against a real Live. It now has 26 unit tests against an injected
+scheduler, but those prove the state machine, not the deployment.
+
+Checks:
+
+1. **Re-vendor and restart.** Run `/ableton-mcp-install`, then **quit Ableton
+   Live completely and reopen it** — Live caches Control Surface modules at
+   launch, so a running instance keeps the old script. Then `/mcp` to respawn the
+   server. Confirm `ableton://server/info`'s `fingerprint` matches the vendored
+   copy (`preflight` reports `matches_mcp_server: true`).
+2. **The browser-path fix takes effect.** Push a song whose snapshot names a
+   preset that is a strict prefix of a sibling — Live's `Kit-BritishVintage.adg`
+   beside `MPE Kit-BritishVintage.adg` is the case that broke. The devices phase
+   must load the captured kit rather than refusing the pair as ambiguous.
+3. **A slow Live call no longer hangs the DAW.** Start a long operation (a large
+   `devices` push), and while it runs issue a second call from another surface.
+   The second must come back as a REFUSAL naming the incumbent operation and its
+   elapsed time — not block, and not stack behind it.
+4. **The do-not-retry message is now reachable.** This is the one that was
+   provably unreachable before: every client read timeout equalled its Live-side
+   ceiling while admission burned up to 2 s first, so the client always gave up
+   first and the agent saw a bare socket timeout. Force a bounded operation past
+   its `main_thread_timeout` and confirm the reply is Live's "IT IS STILL RUNNING
+   — Do not retry immediately", not `FrameError: socket read timed out`.
+5. **Captures land in the right workspace.** With a song in a workspace nested
+   below the session root, `ableton_render` must write into that workspace's
+   `captures/`, NOT into a `songs/<slug>/` tree at the repo root. The old
+   behaviour created that tree silently and stranded ~290 MB in it.
+
+---
+
+## 2026-08-07 — PSH-DEVDUP: the devices phase must not double an FX chain (fix/devices-duplicate-chain)
+
+Visual change: no. Fingerprint flip: no (engine-side only — `src/hallucinote/sync/`;
+no `hallucinote_mcp` handler, schema or Remote Script file changed, so no
+re-vendor and no Live restart is needed).
+
+What shipped: `push_cli execute` now probes each linked parent's device chain
+(`ableton_device(action='list')`) once per push, reconciles the DB↔Live device
+links from it, refuses to emit a `load` onto a slot Live already occupies, and
+re-probes after the phase to assert no chain came out duplicated.
+
+**What cannot be proven without Live**, and is therefore queued here rather than
+claimed: the fix rests on a model of Live 12.4 in which (a) a device `load`
+always TAIL-APPENDS to the destination chain, and (b) `ableton_device(list)`
+reports `class_display_name` for a preset-loaded device identically to what
+`/song-snapshot` stored as the DB's `kind` (the `the-argument` evidence says it
+does — `Tension`, `Instrument Rack`, `Amp` all matched positionally when
+`probe-and-link` ran at 04:32 — but that is one set). If (b) is false for some
+device class, the reconcile won't bind it and the push will REFUSE rather than
+duplicate: safe, but it will look like a false halt. Checks 3 and 4 are what
+would surface that.
+
+Checks (run against the repaired `the-argument` set, or any song with a
+snapshot-loaded FX chain):
+
+1. **Idempotent re-push appends nothing.** With the set already carrying every
+   chain, run `push execute <session> --song <slug> --probe`. The devices phase
+   must report ok, dispatch **zero** `load` calls, and `ableton_device(list)` on
+   each track must show the same chain length as before. Repeat once more — the
+   second run must also be a no-op. (Before the fix, each run appended a full
+   copy of every post-instrument effect.)
+2. **A rebuilt DB still appends nothing.** Run `python songs/<slug>/build.py
+   --reset`, then re-push with `--probe`. Same expectation: zero loads, chain
+   lengths unchanged.
+3. **A genuinely missing device still loads.** Delete one effect from the end of
+   one track's chain in Live, re-push. That one device must load (and only that
+   one); the rest of the chain must be untouched.
+4. **A drifted slot refuses instead of doubling.** Replace one mid-chain effect
+   in Live with a different device class (e.g. swap an Overdrive for a Phaser),
+   re-push. The devices phase must HALT before dispatch with `REFUSING to load
+   …`, naming the track and the device it saw, and dispatch zero loads. Confirm
+   the recovery it names works: `push probe-and-link <session> --song <slug>
+   --probe` then re-push.
+5. **The integrity assert catches an already-doubled set.** On a set you have
+   deliberately doubled by hand (duplicate one effect on one track), re-push.
+   The phase must halt with `devices integrity: … DUPLICATE`, naming the track,
+   rather than reporting ok.
+6. **A trailing HallucinoteAnalyzer is invisible to all of the above.** Run a
+   render first (so every chain ends with the analyzer), then repeat check 1.
+   Still zero loads, still ok — the analyzer must neither be matched against an
+   authored slot nor counted as an extra device.

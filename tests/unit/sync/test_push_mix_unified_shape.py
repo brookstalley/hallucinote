@@ -67,7 +67,7 @@ def test_planner_master_emit_validates_against_dispatcher(setup_master, conn):
             self._song = _FakeSong()
         @property
         def song(self): return self._song
-        def run_on_main(self, fn): return fn()
+        def run_on_main(self, fn, **_kwargs): return fn()
 
     with isolated_actions():
         sid, _mid, sess = setup_master
@@ -186,7 +186,7 @@ def test_planner_track_and_return_emits_validate_against_dispatcher(conn):
             self._song = _Song()
         @property
         def song(self): return self._song
-        def run_on_main(self, fn): return fn()
+        def run_on_main(self, fn, **_kwargs): return fn()
 
     with isolated_actions():
         ctx = _Ctx()
@@ -282,7 +282,7 @@ def test_planner_track_create_emit_validates_against_dispatcher(conn):
         def __init__(self): self._song = _Song()
         @property
         def song(self): return self._song
-        def run_on_main(self, fn): return fn()
+        def run_on_main(self, fn, **_kwargs): return fn()
 
     with isolated_actions():
         ctx = _Ctx()
@@ -339,7 +339,7 @@ def test_planner_cue_list_pull_validates_against_dispatcher(conn):
         def __init__(self): self._song = _Song()
         @property
         def song(self): return self._song
-        def run_on_main(self, fn): return fn()
+        def run_on_main(self, fn, **_kwargs): return fn()
 
     with isolated_actions():
         ctx = _Ctx()
@@ -451,7 +451,7 @@ def test_planner_device_load_emit_validates_against_dispatcher(conn):
         def song(self): return self._song
         @property
         def application(self): return self._application
-        def run_on_main(self, fn): return fn()
+        def run_on_main(self, fn, **_kwargs): return fn()
 
     with isolated_actions():
         ctx = _Ctx()
@@ -541,7 +541,7 @@ def test_planner_replace_notes_emit_validates_against_dispatcher(conn):
         def __init__(self): self._song = _Song()
         @property
         def song(self): return self._song
-        def run_on_main(self, fn): return fn()
+        def run_on_main(self, fn, **_kwargs): return fn()
 
     with isolated_actions():
         ctx = _Ctx()

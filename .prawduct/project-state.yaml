@@ -317,7 +317,45 @@ design_decisions:
     - decision: "Songs as self-contained units under songs/<slug>/"
       rationale: "A song = build.py + captured_session.json + tests/ + per-song SQLite DB (gitignored). Tests live next to the song so the directory is forkable as a unit."
       date: "2026-05-17 (J-2b)"
-  interaction_patterns: []
+  interaction_patterns:
+    - name: "Propose-and-react, never interrogate"
+      summary: >-
+        Where a choice is the user's to own, the agent states an informed
+        proposal carrying its reasoning and a recommendation, inviting a
+        one-word reaction — never a blank question. A blank question is
+        auto-accompaniment wearing a politeness costume: it looks collaborative
+        and transfers zero expertise. Cheap-to-revise choices are made
+        tastefully and *shown* (the artifact becomes the next proposal); only
+        expensive-to-reverse forks earn a proposal.
+      artifact: .prawduct/artifacts/intent-collaboration-model.md
+    - name: "One consolidated turn, bounded"
+      summary: >-
+        Elicitation gets exactly one turn, with every proposal, disclosure and
+        piece of arithmetic in a single message. Sequential Q&A burns patience
+        and violates the stop-less norm for real. An item the user leaves
+        unanswered does NOT earn a second round — it becomes an UNDECIDED row
+        with an owner and a closing stage, and work proceeds. Bounds two
+        failure modes that both look like diligence: the stage that never
+        converges, and the turn that fragments.
+      artifact: .prawduct/artifacts/elicitation-and-stage-exit-criteria.md
+    - name: "Three states, and a forbidden fourth"
+      summary: >-
+        Every dimension a stage touches ends DECIDED (value AND mechanism
+        named), UNDECIDED (named, with an owner), or NOT-APPLICABLE (recorded
+        by the agent's own judgement, never asked about). Only UNDECIDED blocks
+        a stage. DESCRIBED-BUT-UNBUILT — prose naming a mechanism that does not
+        exist — is not a legal state; it is the defect, and the only one with
+        no symptoms. Silence about a non-applicable dimension is correct;
+        silence about an undecided one is the defect.
+      artifact: .prawduct/artifacts/elicitation-and-stage-exit-criteria.md
+    - name: "Measurements are questions, never verdicts"
+      summary: >-
+        Every read-side lens (mix, melody, recurrence, masking) surfaces a
+        producer's question graded against DECLARED intent — "you wanted the
+        chorus to lift; does it?" — never a universal score. Revealed intent is
+        learned back per-song so a confirmed choice never re-flags. Aesthetic
+        judgements never fail a build.
+      artifact: .prawduct/artifacts/gate-verdict-policy.md
   accessibility_approach: null
   error_handling_approach: "Plain exceptions (ValueError, KeyError); no custom hierarchy. Broad catches require `# prawduct:ok-broad-except` annotation with rationale; every catch logs context. Narrow carve-out (ONBOARD-M4L): two leaf classes callers catch by identity — `PresetQueryNoMatchError` (device.py) and `AnalyzerNotInstalledError` (analyzer/setup.py); new code still defaults to plain exceptions."
   observability_approach: "The event log IS the audit trail. Every mutator emits an event with actor (in events.ACTORS), reason, request_id, and monotonic seq. No logging frameworks beyond stdlib `logging`. The `requests` table groups events under higher-level intent for cross-mutator correlation."
@@ -460,6 +498,14 @@ artifact_manifest:
       file_path: .prawduct/backlog.md
       version: 2
       depends_on: []
+    - name: elicitation-and-stage-exit-criteria
+      file_path: .prawduct/artifacts/elicitation-and-stage-exit-criteria.md
+      version: 1
+      # Conceptually builds on onboarding-and-teaching-model and
+      # intent-collaboration-model; neither is registered here yet (most of this
+      # repo's artifacts aren't), and a dangling name is worse than an honest
+      # gap — add the edges when those get registered.
+      depends_on: [gate-verdict-policy]
 
 # =============================================================================
 # BUILD STATE
@@ -486,7 +532,7 @@ build_state:
 # `artifacts/plans/<id>/` is invisible to it and regen-views then refuses to write
 # ANY view), and on gitflow a plan must survive until the develop->main release —
 # so the generic name would be contended by the next plan authored in that window.
-active_build_plan: .prawduct/artifacts/plans/PUB-READY/build-plan.md
+active_build_plan: .prawduct/artifacts/plans/TOUR/build-plan.md
 
 # =============================================================================
 # CHANGE LOG
@@ -662,6 +708,9 @@ scope_rollups:
   song-author-hygiene+kit-strict+negative-beats-refusal:
     chunks: ["H1", "H2", "H3", "H4", "H5", "backlog-scrub"]
     releases: ["v1.4.0"]
+  song-lifecycle:
+    chunks: []
+    releases: ["unreleased"]
   sync,artifacts,tests:
     chunks: ["SYN-8Q3F"]
     releases: ["v1.7.0"]
@@ -692,6 +741,12 @@ scope_rollups:
   tools-dont-narrow-the-art+helpers-dry:
     chunks: ["GEN-1S4K", "LNT-1V9K", "REV-2W8K", "chunk0", "helpers"]
     releases: ["v0.9.2"]
+  tour:
+    chunks: ["A1", "A2", "A3", "A4"]
+    releases: ["unreleased"]
+  tour+push+workspace+db-converger:
+    chunks: ["B1"]
+    releases: ["unreleased"]
   tuning,mcp-bridge,mcp-render,sync-push,sync-pull,db,analysis,methodology,docs,tests:
     chunks: ["ARR-ORPHAN", "DEC-CAP", "DOC-7K3M", "FK-clip-guard", "IDX-5W2P", "MCP-2K9F", "MCP-5N8K", "MCP-7F2K", "MCP-7P3R", "MCP-8H4N", "MCP-9R3T", "MICROTUNE", "PSH-3K9D", "PSH-8K3D", "REC-4Z8Q", "SYN-4R7P", "SYN-7N4K", "SYN-9F4K", "SYN-RACK-PRESET-RELINK", "SYN-RENDER-RELINK", "SYN-SCAFFOLD-MISLINK", "master-true-peak"]
     releases: ["v1.6.0"]

@@ -32,7 +32,7 @@ from pydantic import Field
 
 from . import client, schema
 from .dispatcher import dispatch
-from .wire import Request
+from .wire import Request, Response
 
 
 # Param.type → Python type used for FastMCP's pydantic-derived JSONSchema.
@@ -110,14 +110,17 @@ Resources (read via resources/read, no turn cost):
 Multi-step workflows live as Claude Code skills (skills/) — not
 MCP prompts — so the agent can invoke them directly. For ANY song
 work, read /song-workflow first — it is the lifecycle map. The arc:
-  /song-new -> /song-pick-instruments -> /compose-part ->
-  /compose-review (READ the composition) -> /ableton-push ->
+  /song-brief (ELICIT the brief) -> /song-new -> /song-pick-instruments ->
+  /compose-part -> /compose-review (READ the composition) -> /ableton-push ->
   /render-analyze (render+analyze in one step, poll loops kept out of context) ->
   /mix-review (READ the mix; needs Max for Live) ->
   /song-snapshot, then loop. Building blocks: /track-new-with-instrument,
   /return-new, /mix-sidechain, /clip-humanize, /ableton-pull, /song-context.
-  The two review checkpoints (/compose-review, /mix-review) are easy to
-  skip and shouldn't be — they apply the framework's ear to your work.
+  The three checkpoints (/song-brief, /compose-review, /mix-review) are easy
+  to skip and shouldn't be — /song-brief specifies the work, the other two
+  apply the framework's ear to it. Each stage has a definition of done
+  (docs/song-workflow.md): a stage may not hand a load-bearing question
+  downstream dressed as a decision.
 
 Hard constraints:
   - 1-based indexing throughout (track_index >= 1).
@@ -230,6 +233,9 @@ def handle_tool_call(
     # only render entry now — the synchronous ``render`` action was retired,
     # MCP-9R3T; it took the same output_dir/db_seq preprocessing.)
     if request.tool == "ableton_render" and request.action == "start":
+        refusal = _refuse_render_into_phantom_song_dir(request)
+        if refusal is not None:
+            return refusal.to_dict()
         request = _absolutize_render_output_dir(request)
         request = _attach_render_db_seq(request)
         _sweep_stale_takes(request)
@@ -277,6 +283,76 @@ def _refine_version_mismatch(response: "client.Response") -> "client.Response":
     if hint is None:
         return response
     return dataclasses.replace(response, hint=hint)
+
+
+def _refuse_render_into_phantom_song_dir(request: Request) -> "Response | None":
+    """Refuse a default-destination render when the song dir doesn't exist.
+
+    A render is gigabytes of WAVs. When the slug-derived default resolves to a
+    directory that isn't there, ``mkdir(parents=True)`` inside Live happily
+    invents the whole tree and fills it — the capture is *written*, so nothing
+    downstream looks wrong until analysis reports the song "isn't built" and
+    the operator discovers ~290 MB parked in a phantom ``songs/<slug>/``. The
+    resolver's job is to be right; this is the seatbelt for when it can't be
+    (an ambiguous descent, a typo'd slug, a workspace nobody named), and it
+    turns a silent misfile into a message that says where it looked and why.
+
+    Scoped narrowly, so it can never block legitimate work:
+
+    - only the *derived default* — an explicit ``output_dir`` is the caller
+      saying "put it here", and a caller may render anywhere.
+    - only when the engine is importable (an MCP-only install has no resolver
+      to be wrong, and keeps its legacy cwd-relative fallback).
+    - only on a missing song **directory** — not a missing DB. A song dir that
+      exists but hasn't been built yet is a normal state to render from.
+
+    Returns ``None`` to proceed, or the refusal to return to the caller.
+    """
+    params = request.params
+    raw = params.get("output_dir")
+    if isinstance(raw, str) and raw:
+        return None
+    song_slug = params.get("song_slug")
+    if not isinstance(song_slug, str) or not song_slug:
+        return None  # let the handler emit its own teaching error
+    try:
+        from hallucinote.workspace import (
+            explain_unresolved_song,
+            resolve_song_dir,
+        )
+    except ImportError:
+        # An MCP-only install (uvx, no engine) has no resolver to check, so the
+        # legacy cwd-relative fallback stands and this render is unguarded. Say
+        # so rather than fail silently: the condition is PERMANENT, and an
+        # operator who later finds captures in an unexpected `songs/<slug>/`
+        # needs this line to explain it. Mirrors the retention sweep's
+        # engine-absent notice for the same reason.
+        logger.info(
+            "render: destination check unavailable — the hallucinote engine "
+            "isn't importable in this server, so %r falls back to a "
+            "cwd-relative songs/<slug> without workspace resolution.",
+            song_slug,
+        )
+        return None
+    song_dir = pathlib.Path(resolve_song_dir(song_slug))
+    if not song_dir.is_absolute():
+        song_dir = pathlib.Path(os.getcwd()) / song_dir
+    if song_dir.is_dir():
+        return None
+    from .wire import error as wire_error
+
+    logger.warning(
+        "render refused: %r resolves to %s, which does not exist",
+        song_slug, song_dir,
+    )
+    return wire_error(
+        f"render: refusing to write captures into {song_dir}, which does not "
+        f"exist — {explain_unresolved_song(song_slug)}",
+        hint=(
+            "Pass an explicit output_dir to render somewhere else deliberately, "
+            "or fix the resolution so captures land in the song's own workspace."
+        ),
+    )
 
 
 def _absolutize_render_output_dir(request: Request) -> Request:

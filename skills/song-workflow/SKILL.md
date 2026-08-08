@@ -1,7 +1,7 @@
 ---
 name: song-workflow
 description: >-
-  The song-creation lifecycle map — the phases of making a song here, the skill that runs each, the two review checkpoints agents most often miss (`/compose-review` after composing, `/mix-review` after the mix), and the expertise behind them. READ THIS FIRST for any song work: when the user asks to make / build / write / compose / arrange / mix a song, or when you're unsure which skill comes next. The stance is creativity-first (intent is the ruler; aesthetics never block) with the tools to go as deep as the art demands. Links to docs/song-workflow.md for the full depth and the research corpus.
+  The song-creation lifecycle map — the phases of making a song here, the skill that runs each, each stage's definition of done, and the three checkpoints agents most often miss (`/song-brief` before scaffolding, `/compose-review` after composing, `/mix-review` after the mix). READ THIS FIRST for any song work: when the user asks to make / build / write / compose / arrange / mix a song, or when you're unsure which skill comes next. Carries the rule that a stage may not emit an unresolved gap. The stance is creativity-first (intent is the ruler; aesthetics never block) with the tools to go as deep as the art demands. Links to docs/song-workflow.md for the full depth and the research corpus.
 argument-hint: "[phase or topic — optional]"
 user-invocable: true
 disable-model-invocation: false
@@ -10,9 +10,9 @@ allowed-tools: Read
 
 # /song-workflow — the map for making a song here
 
-Making a song is a **loop, not a line**: you scaffold, compose, push to Live,
-mix, and circle back. This skill is the map of that arc — which skill runs each
-phase, and the two review checkpoints that are easy to skip and shouldn't be.
+Making a song is a **loop, not a line**: you elicit, scaffold, compose, push to
+Live, mix, and circle back. This skill is the map of that arc — which skill runs
+each phase, and the three checkpoints that are easy to skip and shouldn't be.
 The depth (the *why*, grounded in the research) is
 [docs/song-workflow.md](../../docs/song-workflow.md); this is the at-a-glance
 version.
@@ -29,11 +29,18 @@ hand-authored notes if that's what the art needs.
 
 ## The arc
 
-1. **Frame the intent** — `/song-new` scaffolds the song; `/song-context`
-   recalls prior intent. At an elementary fork the user hasn't directed (key, the
-   central tension, what the chorus does), *propose and read their reaction* —
-   don't auto-decide. Before re-touching a part you've worked before, `/song-attempts`
-   recalls what was already tried (and reverted) so you don't re-propose a dead end.
+0. ⭐ **Elicit the brief** — **`/song-brief`**. Before scaffolding, sweep the
+   load-bearing dimensions the prompt left open and close them in **one
+   consolidated turn of informed proposals** (never a questionnaire). Output is
+   `annotations/01-the-brief.md` — the origin record, and the source of the
+   tempo / meter / section values `/song-new` needs as arguments. Skipped
+   silently when a directed prompt leaves nothing applicable open.
+1. **Frame the intent** — `/song-new` scaffolds the song *from the brief's
+   values*; `/song-context` recalls prior intent. At an elementary fork the user
+   hasn't directed (key, the central tension, what the chorus does), *propose and
+   read their reaction* — don't auto-decide. Before re-touching a part you've
+   worked before, `/song-attempts` recalls what was already tried (and reverted)
+   so you don't re-propose a dead end.
 2. **Pick instrument chains** — `/song-pick-instruments`. The chain (instrument +
    FX + sends) is authorship that ships in the snapshot — sound design *is*
    composition, not a mix-time todo.
@@ -58,18 +65,45 @@ hand-authored notes if that's what the art needs.
    ledger** (the two review checkpoints propose the entries; recall via `/song-attempts`),
    so each loop starts smarter instead of re-running a move that already failed.
 
-## The two checkpoints agents miss
+## A stage may not emit an unresolved gap
 
-`/compose-review` (step 4) and `/mix-review` (step 7) are **not optional
-polish** — they are how the framework's *ear* gets applied to your work. Reach
-for them after a compositional pass and after an analysis pass respectively, or
-whenever the user asks "does this work?", "is the hook landing?", "how's the
-mix?", "is anything masking the vocal?", "what's missing?". Both surface a
-producer's question (never a score) and learn revealed intent back so they never
-re-flag a choice you've confirmed.
+Under-specifying is the user's prerogative; **closing the gap is the stage's
+job** — by deciding it in-stage (propose, read the reaction) or by marking it
+explicitly open. What is forbidden is passing an unresolved gap downstream *in
+the clothes of a decision*: a docstring naming a device nobody built, a brief
+naming a destination with no route. Nothing fails when that happens — the build
+runs clean and the push reports OK — which is exactly why it needs a rule.
 
-If you only remember one thing: **after you compose, run `/compose-review`;
-after you analyze, run `/mix-review`.**
+Every dimension a stage touches ends **DECIDED**, **UNDECIDED** (named, with an
+owner), or **NOT-APPLICABLE** (recorded, never asked about). Only UNDECIDED
+blocks a stage. Not-applicable is a real answer you reach by your own judgement
+— an ambient piece has no drum style to specify, and asking anyway reads as
+incompetence.
+
+Each stage's **definition of done** is in
+[docs/song-workflow.md](../../docs/song-workflow.md#stage-exit-criteria); the
+design is
+[elicitation-and-stage-exit-criteria.md](../../.prawduct/artifacts/elicitation-and-stage-exit-criteria.md).
+
+## The three checkpoints agents miss
+
+`/song-brief` (step 0) **specifies** the work; `/compose-review` (step 4) and
+`/mix-review` (step 7) apply the framework's *ear* to it. None is optional
+polish.
+
+`/song-brief` runs before you scaffold, because `/song-new` takes tempo, meter
+and the section list as **required arguments** — skip the brief and you invent
+those three values to make a command run, and the invented values become the
+song.
+
+Reach for the other two after a compositional pass and after an analysis pass
+respectively, or whenever the user asks "does this work?", "is the hook
+landing?", "how's the mix?", "is anything masking the vocal?", "what's
+missing?". Both surface a producer's question (never a score) and learn revealed
+intent back so they never re-flag a choice you've confirmed.
+
+If you only remember one thing: **before you scaffold, run `/song-brief`; after
+you compose, run `/compose-review`; after you analyze, run `/mix-review`.**
 
 ## Go deeper
 

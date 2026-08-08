@@ -648,6 +648,27 @@ def probe_and_link(
     # pass — so a missing track link there is normal, not orphaned. Runs after
     # the track sweep so parent-link lookups reflect the drops; fresh snapshot
     # because the unlink mutator mutates the same table.
+    # A SURVIVING parent is not enough on its own: the link also has to still
+    # point at a device that EXISTS. Live's own default returns are why this
+    # bites in practice. Every fresh Live set ships `A-Reverb` and `B-Delay`,
+    # and DB return names are stored slot-prefix-stripped (see return_naming),
+    # so a song with a return called `Delay` legitimately matches Live's stock
+    # one — a return that already holds a factory device at index 1. The
+    # authored device therefore loads at index 2, and the link records 2. Open a
+    # FRESH set and that return is factory-fresh again: the parent still matches
+    # by name, so the sweep above keeps the link, but index 2 no longer exists.
+    # `_emit_device_calls` then reads the link as present, SKIPS the load, and
+    # every parameter write addresses the missing index — the devices phase
+    # halts on IndexError and re-running never converges, because nothing in the
+    # loop ever emits the load that would create index 2.
+    #
+    # Only the link's own index can catch that, so check it against the probe.
+    # Deliberately conservative: drop ONLY when this parent WAS probed and the
+    # index is absent from it outright. An unprobed parent (no device data in
+    # this run) teaches nothing, and dropping on absence-of-evidence would
+    # discard good links on the snapshot fallback path. An index that exists but
+    # holds the wrong device is a different failure with its own handling in
+    # _match_devices_for_linked_parents — not this sweep's business.
     for link in [
         ln for ln in Q.get_ableton_links_for_session(conn, session_id)
         if ln["db_kind"] == "device"
@@ -655,33 +676,58 @@ def probe_and_link(
         device_row = Q.get_device(conn, link["db_id"])
         parent_linked = False
         is_master_device = False
+        parent_key: tuple[str, int] | None = None
         if device_row is not None:
             chain_row = Q.get_device_chain(conn, device_row["chain_id"])
             if chain_row is not None and chain_row["parent_track_id"] is not None:
                 parent_track = Q.get_track(conn, chain_row["parent_track_id"])
                 if parent_track is not None and parent_track["kind"] == "master":
                     is_master_device = True
+                    parent_key = ("master", 0)
                 else:
-                    parent_linked = Q.get_ableton_link(
+                    parent_link = Q.get_ableton_link(
                         conn, session_id=session_id, db_kind="track",
                         db_id=chain_row["parent_track_id"],
-                    ) is not None
+                    )
+                    parent_linked = parent_link is not None
+                    if parent_link is not None:
+                        parent_key = ("track", parent_link)
             elif chain_row is not None and chain_row["parent_return_id"] is not None:
-                parent_linked = Q.get_ableton_link(
+                parent_link = Q.get_ableton_link(
                     conn, session_id=session_id, db_kind="return",
                     db_id=chain_row["parent_return_id"],
-                ) is not None
+                )
+                parent_linked = parent_link is not None
+                if parent_link is not None:
+                    parent_key = ("return", parent_link)
             # parent_rack_device_id (a nested device) never carries a top-level
             # ableton_link, so it won't appear in this device-link loop.
         if is_master_device or parent_linked:
-            continue
+            probed_siblings = (
+                live_devices_by_parent.get(parent_key)
+                if live_devices_by_parent and parent_key is not None
+                else None
+            )
+            if probed_siblings is None:
+                continue
+            if any(
+                d.get("device_index") == link["ableton_index"]
+                for d in probed_siblings
+            ):
+                continue
+            drop_reason = (
+                "probe-and-link: stale device link (device_index no longer "
+                "present in Live)"
+            )
+        else:
+            drop_reason = "probe-and-link: stale device link (parent unlinked)"
         M.unlink_db_from_ableton(
             conn,
             session_id=session_id,
             db_kind="device",
             db_id=link["db_id"],
             actor=actor,
-            reason=reason or "probe-and-link: stale device link (parent unlinked)",
+            reason=reason or drop_reason,
         )
         result.unlinked_stale_devices.append({
             "db_id": link["db_id"],
@@ -748,6 +794,274 @@ def probe_and_link(
     return result
 
 
+@dataclass
+class DeviceLinkReconcileResult:
+    """Outcome of :func:`reconcile_device_links` (PSH-DEVDUP).
+
+    ``matched`` are ``ableton_links`` device bindings written (or re-affirmed)
+    against a device Live already carries; ``unlinked_stale`` are bindings
+    dropped because their ``ableton_index`` is no longer in the probed chain;
+    ``notes`` carry per-slot drift the reconcile deliberately did NOT bind
+    (the devices planner turns those into a refusal rather than a duplicate
+    load).
+    """
+    matched: list[dict[str, Any]] = field(default_factory=list)
+    unlinked_stale: list[dict[str, Any]] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def linked_device_parents(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Return ``(tracks, returns, master)`` — the device-chain parents this
+    session can address, each as ``{"db_id", "ableton_index", "name"}``.
+
+    Resolved from ``ableton_links`` (not from a name match), so it describes
+    exactly the parents :func:`~hallucinote.sync.push.devices.plan_push_devices`
+    will address. The master is a DB singleton with no track link; it is keyed
+    ``ableton_index=0`` to match the device probe map's ``("master", 0)``.
+    """
+    tracks: list[dict[str, Any]] = []
+    returns: list[dict[str, Any]] = []
+    master: list[dict[str, Any]] = []
+    for t in Q.get_tracks_for_song(conn, song_id):
+        if t["kind"] == "master":
+            master.append({
+                "db_id": t["id"], "ableton_index": 0, "name": t["name"],
+            })
+            continue
+        at = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="track", db_id=t["id"],
+        )
+        if at is not None:
+            tracks.append({
+                "db_id": t["id"], "ableton_index": at, "name": t["name"],
+            })
+    for r in Q.get_returns_for_song(conn, song_id):
+        at = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="return", db_id=r["id"],
+        )
+        if at is not None:
+            returns.append({
+                "db_id": r["id"], "ableton_index": at, "name": r["name"],
+            })
+    return tracks, returns, master
+
+
+def reconcile_device_links(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+    live_devices_by_parent: dict[tuple[str, int], list[dict[str, Any]]],
+    actor: str = "sync",
+    reason: str | None = None,
+) -> DeviceLinkReconcileResult:
+    """PSH-DEVDUP: bind DB devices to the devices Live ALREADY carries, for
+    every parent this session has a link for — the standalone, execute-path
+    half of W20-A's ``probe_and_link`` device matching.
+
+    Why this exists as its own entry point: ``probe_and_link`` runs only in the
+    ``push_cli probe-and-link`` subcommand, and it derives its parents from a
+    NAME match. ``push_cli execute`` never called it, so a device that entered
+    the DB from a snapshot replay (``/song-pick-instruments`` loads the chain in
+    Live via MCP; the chain reaches the DB only later, via
+    ``captured_session.json`` → ``replay_capture``) had **no** ``ableton_links``
+    row — and ``plan_push_devices``'s "unlinked ⇒ load" branch appended a second
+    copy of the whole post-instrument FX chain on the next push, reporting
+    success. Reconciling here, from the links the `tracks` / `returns` phases
+    just wrote, makes the devices phase idempotent against a set that already
+    holds the chain.
+
+    Two passes per probed parent:
+
+    1. **Stale drop.** A ``device`` link whose ``ableton_index`` is absent from
+       the freshly-probed chain is deleted (it would otherwise make the planner
+       skip the load and address a dead index).
+    2. **Positional bind.** Same rule as ``probe_and_link``: DB
+       ``devices.position`` == Live ``device_index`` AND DB ``kind`` == Live
+       ``class_display_name`` (falling back to ``class_name``). A class mismatch
+       at an occupied slot is recorded as a note and NOT bound — the planner
+       refuses on it rather than loading a duplicate over the top.
+
+    Only parents PRESENT in ``live_devices_by_parent`` are touched: an unprobed
+    parent teaches nothing, and acting on absence-of-evidence would drop good
+    links (same conservatism as ``probe_and_link``'s device sweep).
+    """
+    result = DeviceLinkReconcileResult()
+    tracks, returns, master = linked_device_parents(
+        conn, song_id=song_id, session_id=session_id,
+    )
+    for parents, parent_kind, get_devices_fn in (
+        (tracks, "track", Q.get_devices_for_track),
+        (returns, "return", Q.get_devices_for_return),
+        (master, "master", Q.get_devices_for_track),
+    ):
+        for parent in parents:
+            ableton_index = parent["ableton_index"]
+            live_devices = live_devices_by_parent.get((parent_kind, ableton_index))
+            if live_devices is None:
+                continue
+            # The stale-drop acts only on a NON-EMPTY probed chain. Dropping is
+            # destructive (it makes the planner load), and an empty list is the
+            # weakest possible evidence — it is also the shape a parent that was
+            # not really read produces. A chain we can see, that demonstrably
+            # lacks the index, is positive evidence; "I saw nothing" is not. An
+            # emptied-in-Live chain is still caught, just one step later and
+            # loudly: the planner keeps the link, its parameter writes fail
+            # against the dead index, and the phase halts with per-device errors
+            # (the pre-existing behavior) rather than being silently doubled.
+            if live_devices:
+                _drop_stale_device_links_for_parent(
+                    conn,
+                    session_id=session_id,
+                    parent_db_id=parent["db_id"],
+                    get_devices_fn=get_devices_fn,
+                    live_devices=live_devices,
+                    unlinked_stale=result.unlinked_stale,
+                    actor=actor,
+                    reason=reason,
+                )
+            _bind_parent_devices(
+                conn,
+                session_id=session_id,
+                parent=parent,
+                parent_kind=parent_kind,
+                get_devices_fn=get_devices_fn,
+                live_devices=live_devices,
+                matched=result.matched,
+                notes=result.notes,
+                actor=actor,
+                reason=reason,
+            )
+    return result
+
+
+def _drop_stale_device_links_for_parent(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    parent_db_id: str,
+    get_devices_fn: Callable[[sqlite3.Connection, str], list[sqlite3.Row]],
+    live_devices: list[dict[str, Any]],
+    unlinked_stale: list[dict[str, Any]],
+    actor: str,
+    reason: str | None,
+) -> None:
+    """Delete this parent's ``device`` links whose ``ableton_index`` is absent
+    from the freshly-probed chain. Without this a link surviving a Live-side
+    device delete makes ``_emit_device_calls`` skip the load and address an
+    index that no longer exists (the devices phase then halts on IndexError and
+    never converges). Membership is tested against the RAW probe (analyzer
+    included) — the positional rebind below is what re-homes an authored device
+    whose index shifted."""
+    live_indexes = {d.get("device_index") for d in live_devices}
+    for db_dev in get_devices_fn(conn, parent_db_id):
+        at = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="device", db_id=db_dev["id"],
+        )
+        if at is None or at in live_indexes:
+            continue
+        M.unlink_db_from_ableton(
+            conn,
+            session_id=session_id,
+            db_kind="device",
+            db_id=db_dev["id"],
+            actor=actor,
+            reason=reason or (
+                "reconcile-device-links: stale device link "
+                "(device_index no longer present in Live)"
+            ),
+        )
+        unlinked_stale.append({"db_id": db_dev["id"], "ableton_index": at})
+
+
+def _bind_parent_devices(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    parent: dict[str, Any],
+    parent_kind: str,
+    get_devices_fn: Callable[[sqlite3.Connection, str], list[sqlite3.Row]],
+    live_devices: list[dict[str, Any]],
+    matched: list[dict[str, Any]],
+    notes: list[str],
+    actor: str,
+    reason: str | None,
+) -> None:
+    """Bind one parent's DB devices to its probed Live chain by
+    ``(position, class)``. The single implementation of the W20-A match rule —
+    shared by :func:`probe_and_link` (name-matched parents) and
+    :func:`reconcile_device_links` (link-resolved parents) so the two can never
+    disagree about what "already present" means."""
+    ableton_index = parent["ableton_index"]
+    db_devices = list(get_devices_fn(conn, parent["db_id"]))
+    # Devices are 1-based by position in both spaces.
+    # BUG1A: the HallucinoteAnalyzer is measurement infrastructure (a
+    # render leaves it trailing the chain), not authored content — exclude
+    # it before position-matching. Otherwise an authored DB device whose
+    # position lands on the analyzer's slot compared against it, produced a
+    # false "device drift" note, and skipped its link (so a param re-push
+    # over an analyzer-laden set forced manual analyzer-deletion first). The
+    # render keeps the analyzer terminal, so dropping it preserves the
+    # authored devices' real `device_index` for the link.
+    authored_live = [d for d in live_devices if not is_analyzer_device(d)]
+    live_by_pos = {d["device_index"]: d for d in authored_live}
+    for db_dev in db_devices:
+        pos = db_dev["position"]
+        live_dev = live_by_pos.get(pos)
+        if live_dev is None:
+            # Live's chain is shorter — push will create the
+            # missing devices via _emit_device_calls. No link
+            # to write yet.
+            continue
+        db_class = db_dev["kind"]
+        # Arc 4 / D4: DB stores `kind` as the post-rename display
+        # name (`class_display_name`). The MCP probe surfaces both
+        # `class_display_name` (display) and `class_name` (internal,
+        # e.g. `Eq8`, `Compressor2`, `InstrumentVector`). Compare
+        # against the display value to match the DB's storage
+        # convention; fall back to `class_name` so older probe
+        # responses (pre-`class_display_name`) still resolve.
+        live_class = (
+            live_dev.get("class_display_name")
+            or live_dev.get("class_name", "")
+        )
+        if db_class != live_class:
+            notes.append(
+                f"device drift at {parent_kind}#{ableton_index} "
+                f"position {pos}: DB has {db_class!r}, Live has "
+                f"{live_class!r}; not linking (the devices planner refuses "
+                f"rather than loading a duplicate over the top)"
+            )
+            continue
+        M.link_db_to_ableton(
+            conn,
+            session_id=session_id,
+            db_kind="device",
+            db_id=db_dev["id"],
+            ableton_index=pos,
+            actor=actor,
+            reason=reason or (
+                f"probe-and-link: device match at {parent_kind}"
+                f"#{ableton_index} pos {pos}"
+            ),
+        )
+        matched.append({
+            "db_id": db_dev["id"],
+            "parent_kind": parent_kind,
+            "parent_index": ableton_index,
+            "position": pos,
+            "class_name": db_class,
+        })
+
+
 def _match_devices_for_linked_parents(
     conn: sqlite3.Connection,
     *,
@@ -812,68 +1126,28 @@ def _match_devices_for_linked_parents(
         (master_matched, "master", Q.get_devices_for_track),
     ):
         for parent in matched:
-            ableton_index = parent["ableton_index"]
-            live_devices = live_devices_by_parent.get((parent_kind, ableton_index))
+            live_devices = live_devices_by_parent.get(
+                (parent_kind, parent["ableton_index"]),
+            )
             if not live_devices:
                 continue
-            db_devices = list(get_devices_fn(conn, parent["db_id"]))
-            # Devices are 1-based by position in both spaces.
-            # BUG1A: the HallucinoteAnalyzer is measurement infrastructure (a
-            # render leaves it trailing the chain), not authored content — exclude
-            # it before position-matching. Otherwise an authored DB device whose
-            # position lands on the analyzer's slot compared against it, produced a
-            # false "device drift" note, and skipped its link (so a param re-push
-            # over an analyzer-laden set forced manual analyzer-deletion first). The
-            # render keeps the analyzer terminal, so dropping it preserves the
-            # authored devices' real `device_index` for the link.
-            authored_live = [d for d in live_devices if not is_analyzer_device(d)]
-            live_by_pos = {
-                d["device_index"]: d for d in authored_live
-            }
-            for db_dev in db_devices:
-                pos = db_dev["position"]
-                live_dev = live_by_pos.get(pos)
-                if live_dev is None:
-                    # Live's chain is shorter — push will create the
-                    # missing devices via _emit_device_calls. No link
-                    # to write yet.
-                    continue
-                db_class = db_dev["kind"]
-                # Arc 4 / D4: DB stores `kind` as the post-rename display
-                # name (`class_display_name`). The MCP probe surfaces both
-                # `class_display_name` (display) and `class_name` (internal,
-                # e.g. `Eq8`, `Compressor2`, `InstrumentVector`). Compare
-                # against the display value to match the DB's storage
-                # convention; fall back to `class_name` so older probe
-                # responses (pre-`class_display_name`) still resolve.
-                live_class = (
-                    live_dev.get("class_display_name")
-                    or live_dev.get("class_name", "")
-                )
-                if db_class != live_class:
-                    result.notes.append(
-                        f"device drift at {parent_kind}#{ableton_index} "
-                        f"position {pos}: DB has {db_class!r}, Live has "
-                        f"{live_class!r}; not linking (push will load "
-                        f"the DB device over Live's at this slot)"
-                    )
-                    continue
-                M.link_db_to_ableton(
-                    conn,
-                    session_id=session_id,
-                    db_kind="device",
-                    db_id=db_dev["id"],
-                    ableton_index=pos,
-                    actor=actor,
-                    reason=reason or f"probe-and-link: device match at {parent_kind}#{ableton_index} pos {pos}",
-                )
-                result.matched_devices.append({
-                    "db_id": db_dev["id"],
-                    "parent_kind": parent_kind,
-                    "parent_index": ableton_index,
-                    "position": pos,
-                    "class_name": db_class,
-                })
+            # PSH-DEVDUP: the (position, class) match rule now lives in ONE
+            # place, shared with `reconcile_device_links` (the execute path's
+            # entry point) — the two must never disagree about what "already
+            # present in Live" means, or one of them re-opens the duplicate-
+            # chain hole the other closes.
+            _bind_parent_devices(
+                conn,
+                session_id=session_id,
+                parent=parent,
+                parent_kind=parent_kind,
+                get_devices_fn=get_devices_fn,
+                live_devices=live_devices,
+                matched=result.matched_devices,
+                notes=result.notes,
+                actor=actor,
+                reason=reason,
+            )
 
 
 def _flag_stale_analyzer_set(

@@ -25,11 +25,70 @@ def _browser_path_names_preset_file(browser_path: list[str]) -> bool:
     )
 
 
+# PSH-DEVDUP: the three verdicts of "is this DB device's slot already occupied
+# in Live?", answered from a freshly-probed device-chain map.
+#
+#   "absent"  — Live's authored chain does not run as deep as this device's
+#               position, so a `load` (which Live tail-appends) lands it at the
+#               right place. The ONLY verdict that may emit a load.
+#   "present" — a device already sits at that position. Reconciliation should
+#               have bound it; reaching the load branch anyway means the bind
+#               was refused (class drift), so loading would DOUBLE the chain.
+#   "unknown" — no probe data for this parent. "Can't determine" is not
+#               "absent"; guessing here is exactly what doubled every FX chain
+#               on `the-argument` (2026-08-08).
+_LOAD_TARGET_ABSENT = "absent"
+_LOAD_TARGET_PRESENT = "present"
+_LOAD_TARGET_UNKNOWN = "unknown"
+
+
+def classify_load_target(
+    live_devices_by_parent: dict[tuple[str, int], list[dict]] | None,
+    *,
+    parent_kind: str,
+    parent_index: int | None,
+    position: int,
+) -> tuple[str, dict | None]:
+    """Decide whether a `load` at ``position`` on this parent is safe.
+
+    Returns ``(verdict, occupant)`` where ``occupant`` is the probed Live device
+    already sitting at ``position`` (only for ``"present"``).
+
+    ``parent_index=None`` (a track/return with no resolved Live index) is
+    ``"unknown"`` for the same reason an unprobed parent is: there is nothing to
+    look the chain up by, so presence cannot be established.
+
+    ``live_devices_by_parent=None`` means the caller supplied no probe at all
+    (the pure-planner contract used by ``push_cli plan`` and the unit suite);
+    the verdict is ``"absent"`` so the legacy behavior is preserved for callers
+    that never had Live truth to begin with. The EXECUTE path always supplies a
+    map, so the guard is live exactly where the corruption happened.
+
+    The HallucinoteAnalyzer is excluded before positional comparison — it is
+    measurement infrastructure the render appends, never an authored slot
+    (SNP-8R4K).
+    """
+    if live_devices_by_parent is None:
+        return _LOAD_TARGET_ABSENT, None
+    if parent_index is None:
+        return _LOAD_TARGET_UNKNOWN, None
+    live_devices = live_devices_by_parent.get((parent_kind, parent_index))
+    if live_devices is None:
+        return _LOAD_TARGET_UNKNOWN, None
+    for d in live_devices:
+        if is_analyzer_device(d):
+            continue
+        if d.get("device_index") == position:
+            return _LOAD_TARGET_PRESENT, d
+    return _LOAD_TARGET_ABSENT, None
+
+
 def plan_push_devices(
     conn: sqlite3.Connection,
     *,
     song_id: str,
     session_id: str,
+    live_devices_by_parent: dict[tuple[str, int], list[dict]] | None = None,
 ) -> PushPlan:
     """Plan the push of device chains — instruments + effects on tracks/returns
     plus their dialed parameters.
@@ -65,6 +124,24 @@ def plan_push_devices(
          devices are NOT loaded — they arrive with the rack preset — so push
          only sets their params. This is what makes a deep by-ear fix survive a
          `build.py` rebuild.
+
+    ``live_devices_by_parent`` (PSH-DEVDUP) is a freshly-probed
+    ``{(parent_kind, parent_index): [live device dict, ...]}`` map — Live's
+    CURRENT device chains, the same shape ``probe_and_link`` consumes. Supplying
+    it makes step 2 a real diff: a load is emitted only for a position Live's
+    authored chain does not already reach. Without it the planner had no way to
+    tell "this device is missing" from "this device is present but unlinked",
+    and answered `load` to both — which appends a SECOND copy of the whole
+    post-instrument FX chain onto a set that already carries it, silently, while
+    reporting every call ok (observed on `the-argument`, 2026-08-08: nine tracks,
+    every effect doubled). When the map is supplied but says the slot is
+    occupied — or says nothing at all about that parent — the planner raises a
+    hard :meth:`PushPlan.error`, halting the phase BEFORE dispatch. Refusing to
+    guess is the contract: a doubled signal chain is silent, audible, and
+    compounds on every push, so "load nothing and say why" strictly beats it.
+
+    ``None`` (the default) preserves the pre-PSH-DEVDUP behavior for callers
+    that have no Live truth to offer (``push_cli plan``, unit tests).
     """
     plan = PushPlan()
     tracks = Q.get_tracks_for_song(conn, song_id)
@@ -88,6 +165,7 @@ def plan_push_devices(
                         parent_at=None,
                         parent_name=t["name"],
                         device=device,
+                        live_devices_by_parent=live_devices_by_parent,
                     )
             continue
         track_at = Q.get_ableton_link(
@@ -110,6 +188,7 @@ def plan_push_devices(
                     parent_at=track_at,
                     parent_name=t["name"],
                     device=device,
+                    live_devices_by_parent=live_devices_by_parent,
                 )
 
     for r in returns:
@@ -133,6 +212,7 @@ def plan_push_devices(
                     parent_at=return_at,
                     parent_name=r["name"],
                     device=device,
+                    live_devices_by_parent=live_devices_by_parent,
                 )
 
     return plan
@@ -147,6 +227,7 @@ def _emit_device_calls(
     parent_at: int | None,
     parent_name: str,
     device: sqlite3.Row,
+    live_devices_by_parent: dict[tuple[str, int], list[dict]] | None = None,
 ) -> None:
     """Emit load + parameter calls for a single device. If the device isn't
     yet linked in this session, emit the load and skip parameter writes —
@@ -205,6 +286,51 @@ def _emit_device_calls(
     # load executes and the device links via the same `device:<id>` key path —
     # no PARTIAL-by-master halt, no hand-placement step.
     if device_at is None:
+        # PSH-DEVDUP: before emitting a load, establish that Live's chain does
+        # NOT already carry this device. Live 12.4 has no reorder API, so a load
+        # tail-APPENDS — which means "load onto a chain that already has it"
+        # doesn't repair anything, it doubles the signal path (and the doubling
+        # compounds on every subsequent push). Unlinked no longer implies
+        # absent: a chain loaded into Live by hand or by /song-pick-instruments
+        # enters the DB later, via the capture snapshot, and never had a link.
+        verdict, occupant = classify_load_target(
+            live_devices_by_parent,
+            parent_kind=parent_kind,
+            parent_index=0 if parent_kind == "master" else parent_at,
+            position=device["position"],
+        )
+        if verdict == _LOAD_TARGET_PRESENT:
+            occupant_class = (
+                (occupant or {}).get("class_display_name")
+                or (occupant or {}).get("class_name")
+                or "?"
+            )
+            occupant_name = (occupant or {}).get("name") or occupant_class
+            plan.error(
+                f"devices: REFUSING to load {device['kind']!r} "
+                f"('{device['display_name']}') at position {device['position']} "
+                f"on {parent_kind} {parent_name!r} — that slot is ALREADY "
+                f"occupied in Live by {occupant_name!r} ({occupant_class}), and "
+                f"the DB has no link to it, so this device could not be matched "
+                f"to what is there. Live has no reorder API: a load would "
+                f"APPEND a second copy and silently double the chain. Nothing "
+                f"was pushed for this track. Fix: run `push_cli probe-and-link "
+                f"<session> --song <slug> --probe` to bind the chain that is "
+                f"already there, or re-snapshot the set (/song-snapshot) so the "
+                f"DB describes it, then re-run execute."
+            )
+            return
+        if verdict == _LOAD_TARGET_UNKNOWN:
+            plan.error(
+                f"devices: REFUSING to load {device['kind']!r} "
+                f"('{device['display_name']}') at position {device['position']} "
+                f"on {parent_kind} {parent_name!r} — Live's device chain for "
+                f"that {parent_kind} could not be read, so whether the chain is "
+                f"already there is UNKNOWN. Appending on a guess would double "
+                f"the signal path if it is. Nothing was pushed for this track. "
+                f"Fix: re-run `execute --probe` once Live answers (idempotent)."
+            )
+            return
         # Wave M-4: unified ableton_device(action='load') replaces the
         # legacy fork's load_device / load_device_on_return narrow tools.
         # The handler accepts a Live device class name as `kind` and an

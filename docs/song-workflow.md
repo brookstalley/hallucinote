@@ -1,8 +1,9 @@
 # Song creation in Hallucinote — the full picture
 
 This is the map for making a song here: the **lifecycle** (which skill runs each
-phase, and the two review checkpoints agents most often miss), and the
-**expertise** behind every tool — grounded in the framework's research corpus,
+phase, and the checkpoints agents most often miss), each stage's
+[**definition of done**](#stage-exit-criteria), and the **expertise** behind
+every tool — grounded in the framework's research corpus,
 linked so it never rots out of sync. Read it when you start song work, or when
 you want to understand *why* a tool does what it does and how to go deeper.
 
@@ -49,6 +50,7 @@ and mix many times. But the arc has a natural order, and two of its phases are
 
 | # | Phase | Skill(s) | The expertise behind it |
 |---|-------|----------|-------------------------|
+| 0 | **Elicit the brief** ⭐ | **`/song-brief`** | [elicitation-and-stage-exit-criteria.md](../.prawduct/artifacts/elicitation-and-stage-exit-criteria.md), [onboarding-and-teaching-model.md](../.prawduct/artifacts/onboarding-and-teaching-model.md) |
 | 1 | Frame the intent | `/song-new`, `/song-context` | [onboarding-and-teaching-model.md](../.prawduct/artifacts/onboarding-and-teaching-model.md), [intent-architecture.md](../.prawduct/artifacts/intent-architecture.md) |
 | 2 | Pick instrument **chains** | `/song-pick-instruments` | sound design is composition (below) |
 | 3 | Compose the parts | `/compose-part` | [melody-model.md](../.prawduct/artifacts/melody-model.md), [performance-model.md](../.prawduct/artifacts/performance-model.md), [arrangement-model.md](../.prawduct/artifacts/arrangement-model.md) |
@@ -58,8 +60,24 @@ and mix many times. But the arc has a natural order, and two of its phases are
 | 7 | **Read the mix** ⭐ | **`/mix-review`** | masking · loudness · feel · energy vs intent — *needs Max for Live* |
 | 8 | Snapshot + iterate | `/song-snapshot` (durable mix bake), `/ableton-pull` (build.py-staging) | — |
 
-The two ⭐ checkpoints are the ones agents forget exist. **They are not
-optional polish — they are how the framework's ear gets applied to your work.**
+The ⭐ checkpoints are the ones agents forget exist. **They are not optional
+polish** — stage 0 is where the work gets specified, and stages 4 and 7 are how
+the framework's ear gets applied to it.
+
+### 0 — Elicit the brief ⭐ `/song-brief`
+A starting prompt is not a brief. `/song-brief` sweeps the load-bearing
+dimensions the prompt left open — harmony, tempo, production stance, what a
+named narrative turn means musically, meter, the section time budget, and the
+**mechanism behind every named gesture** — and closes them in **one consolidated
+turn of informed proposals**, each carrying its reasoning and a recommendation
+so a one-word reaction settles it. Never a questionnaire, never sequential Q&A.
+
+Its output is `annotations/01-the-brief.md`: the prompt verbatim, plus the
+resolution table every later stage reads. It also produces the tempo, meter and
+section values `/song-new` requires as command arguments — which is why it runs
+first. Skipped silently when a directed prompt leaves nothing applicable open.
+
+→ [elicitation-and-stage-exit-criteria.md](../.prawduct/artifacts/elicitation-and-stage-exit-criteria.md)
 
 ### 1 — Frame the intent
 `/song-new` scaffolds `songs/<slug>/` (build.py, captured_session.json, tests,
@@ -210,6 +228,86 @@ from re-running a move that already failed — distinct from `annotations/` (rev
 and `decisions/` (what you kept and why). Schema + worked example:
 [`.prawduct/artifacts/song-conventions.md`](../.prawduct/artifacts/song-conventions.md)
 "The attempt ledger".
+
+---
+
+## Stage exit criteria
+
+**A stage may not emit an unresolved gap.** Under-specifying is the user's
+prerogative; *closing* the gap is the stage's job — by deciding it in-stage
+(propose, and read the reaction) or by marking it explicitly open. What is
+forbidden is passing an unresolved gap downstream **in the clothes of a
+decision**.
+
+The failure this exists to stop leaves no trace: the demo song's `_outro`
+docstring said the closing octave drop "rides a Shifter device-parameter
+envelope", there was no Shifter and no envelope anywhere in the song, the build
+ran clean, the push reported OK, and the song ended flat while every document
+about it said otherwise. **A documented mechanism with no implementation is
+worse than an admitted gap, because every later reader takes it as done.**
+
+### Three states, and a forbidden fourth
+
+| State | Meaning | Blocks stage exit? |
+|---|---|---|
+| **DECIDED** | a value is chosen **and** the mechanism that realizes it is named | no |
+| **UNDECIDED** | the song depends on this and nobody has chosen | **yes** |
+| **NOT-APPLICABLE** | the song does not depend on this dimension at all | no |
+
+**DESCRIBED-BUT-UNBUILT** — prose naming a mechanism that does not exist in
+`build.py`, the snapshot or the DB — is not a legal state. It is the defect.
+UNDECIDED is the honest form of the same situation and is always available.
+
+NOT-APPLICABLE is a **first-class answer**, reached by the agent's own judgement
+from the material and never by asking. Record it, then say nothing: silence
+about a non-applicable dimension is correct; silence about an undecided one is
+the defect. An ambient soundscape has no drum style, no meter argument and
+possibly no tempo worth pinning — asking anyway is not thoroughness, it reads as
+incompetence, and it is how a mechanism becomes a compliance ritual people route
+around.
+
+### Definitions of done
+
+Every one is applicability-gated — read each as *"…for the dimensions this song
+depends on."*
+
+| Stage | Done when |
+|---|---|
+| **0 · `/song-brief`** | `annotations/01-the-brief.md` exists with the prompt verbatim and a resolution table in which every applicable dimension is DECIDED or UNDECIDED-with-an-owner. NOT-APPLICABLE rows are recorded, not asked about. The time budget is costed if a duration was stated. |
+| **1 · `/song-new`** | Tempo, meter and the section/bar list are **values from the brief**, not invented at the command line. Scaffold builds; shape tests pass. Each brief decision is filed in `decisions/`. If the CLI needs a value the brief lacks, that is an UNDECIDED row — close it before scaffolding, never default it silently. |
+| **2 · `/song-pick-instruments`** | Every part the brief names has a resolved **chain** in the snapshot. Where the brief says the sonic worlds differ, that difference exists **as chain differences**. No chain is "TBD at mix time" — sound design is composition. |
+| **3 · `/compose-part`** | Every gesture the section needs **exists in `build.py`** — notes, envelope, or device. **The docstring test:** if prose in the song names a device, an envelope or a mechanism, grep the song for it; absent ⇒ the stage is not done. Per-part `feel` is set explicitly, not defaulted by omission. |
+| **4 · `/compose-review`** | The composition is read against intent per section. The time budget is **re-costed against actual bar counts** and reconciled with any stated duration. Every brief row this stage owned is now DECIDED or re-stated UNDECIDED with a new owner. ADRs filed for kept bright-line moves; `attempts/` for reverted ones. |
+| **5 · `/ableton-push`** | Push reports OK **and** every phase the brief depends on moved something. A phase that pushed zero of a thing the brief requires is a gap, not a clean run. |
+| **6 · `/render-analyze`** | A MixReport exists **for the current build** (not a stale take) and the render covered the full arrangement length. |
+| **7 · `/mix-review`** | The measurements are read against intent per section, and **every audible gesture the brief names is either confirmed in the measurement or logged as not-yet-landed.** Verified on the render, never asserted. |
+
+Stages 5 and 7 are deliberately redundant with stage 3: the gap that matters is
+the one that survives every stage.
+
+**Stage 8 (snapshot + iterate) has no criterion, and that is deliberate** — it is
+the loop-back, not a stage handing work downstream. It cannot emit a gap dressed
+as a decision because it emits no decisions; the next pass through stages 3–7
+re-applies theirs.
+
+### Meter is a projection concern
+
+The song's meter is a property of the authored work; Live's ability to represent
+it is a materialization detail the user should never have to hold. Elicit what
+the meter genuinely **is** (*"full 7-rhythm, or 4-then-3?"* is a real musical
+question) and never offer "we'll represent it as a global 1/4" as a creative
+option.
+
+**Known limitation:** `M.add_time_signature_point` currently refuses any
+`start_bar > 1.0` (Live 12.4's MCP has no `song_signature` automation target), so
+a within-song meter change cannot yet be recorded in the DB. Author the true
+meter into the brief regardless and mark the row open with **the engine** as its
+owner. The criterion is the requirement; the code is what has to move — tracked
+as **TMP-7B3X** (lift the refusal out of the source of truth) and **TMP-4J6Q**
+(how a declared meter map materializes in Live).
+
+→ Full design, including the worked examples and what is deliberately not built:
+[elicitation-and-stage-exit-criteria.md](../.prawduct/artifacts/elicitation-and-stage-exit-criteria.md)
 
 ---
 

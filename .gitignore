@@ -116,3 +116,15 @@ incoming-bugs/
 # Prawduct session files
 .prawduct/.critic-partials-archive/
 .prawduct/.handoff-notes.md
+
+# The example workspace generates the same per-song build artifacts as songs/,
+# so it needs the same exclusions — otherwise a demo push commits its rendered
+# takes and push state. Kept adjacent to the songs/* rules above, which these
+# mirror line for line.
+examples/*/.last-push-state.json
+examples/*/.last-push-errors.json
+examples/*/captures/
+
+# Tour capture working directory — shoot liberally here, commit selectively.
+# The committed evidence lives in docs/assets/ under a hard byte budget.
+examples/*/_capture/

@@ -1586,6 +1586,23 @@ _PERFORM_STALL_TIMEOUT_S = 15.0
 # can't drive it below what Live accepts.
 _PERFORM_MIN_RECORD_TEMPO_BPM = 20.0
 
+# PSH-4L6C — the locate settle tolerance. ``song.current_song_time = x`` is a
+# LOCATE, and Live applies it ASYNCHRONOUSLY (the same class of behaviour as
+# record_mode / session_automation_record, probe 10). If ``start_playing()``
+# fires while the locate is still in flight, the transport rolls from the OLD
+# position: the ramp loop then measures from the wrong beat and burns its whole
+# span-proportional budget travelling a distance nobody budgeted for (an 8-beat
+# arc at beats 96..104 turns into a 104-beat journey), and the operator hears the
+# pass start in the wrong place. THAT is the failure this tolerance guards.
+#
+# The tolerance is a BEAT, not an epsilon, deliberately: the harm is a locate
+# that has not landed AT ALL (playhead tens of beats away), not a sub-beat
+# residual. The ramp is beat-space interpolated — ``_open_entering`` /
+# ``_write_or_close`` compare the ACTUAL playhead beat — so a fraction of a beat
+# of slop is self-correcting, while a whole-beat gate cannot be tripped
+# spuriously by Live snapping the locate to a grid.
+_PERFORM_LOCATE_TOLERANCE_BEATS = 1.0
+
 
 @dataclass
 class _PreparedArc:
@@ -1808,6 +1825,148 @@ def _wait_for_song_flag_on_worker(
         time.sleep(poll_interval_s)
 
 
+def _wait_for_locate_on_worker(
+    context: LiveContext,
+    target_beats: float,
+    *,
+    timeout_s: float,
+    tolerance_beats: float = _PERFORM_LOCATE_TOLERANCE_BEATS,
+    poll_interval_s: float = _PERFORM_SETTLE_POLL_S,
+) -> float:
+    """Settle-poll ``song.current_song_time`` until the playhead has actually
+    ARRIVED at ``target_beats`` (within ``tolerance_beats``); return the beat
+    finally observed.
+
+    PSH-4L6C: ``current_song_time = x`` is an async LOCATE. Starting playback
+    before it lands makes the transport roll from the OLD position — the ramp
+    then measures from the wrong beat and blows its wall-clock budget travelling
+    a distance nobody budgeted for, and the pass is audibly wrong at the start.
+    So the locate gets the same settle-verify treatment ``record_mode`` already
+    has, bounded by the SAME ``settle_timeout_ms`` knob rather than a new one.
+
+    Like ``_wait_for_song_flag_on_worker`` this MUST be called DIRECTLY on the
+    worker thread — it polls via ``run_on_main`` itself, so nesting it inside a
+    main-thread bout would deadlock.
+    """
+    deadline = time.monotonic() + timeout_s
+    while True:
+        observed = context.run_on_main(
+            lambda: float(context.song.current_song_time)
+        )
+        if abs(observed - target_beats) <= tolerance_beats:
+            return observed
+        if time.monotonic() >= deadline:
+            raise TimeoutError(
+                f"perform_batch could not locate the playhead to beat "
+                f"{target_beats:g} within {timeout_s:.1f}s — it still reads "
+                f"{observed:.3f} ({abs(observed - target_beats):.3f} beats "
+                f"away). Live applies a locate asynchronously; starting the "
+                f"record pass here would roll the transport from the WRONG "
+                f"position. Live may be busy or showing a modal dialog; retry, "
+                f"or pass a larger settle_timeout_ms. The handler's cleanup "
+                f"disarms the set and restores transport state."
+            )
+        time.sleep(poll_interval_s)
+
+
+def _read_transport_diagnostics(context: LiveContext) -> dict[str, Any]:
+    """Snapshot the transport state that EXPLAINS a perform timeout, in one
+    main-thread bout: where the playhead actually is, whether it is rolling,
+    and the loop / count-in state a timeout message would otherwise only be
+    guessing at.
+
+    Never raises — a diagnostic read that fails must not mask the timeout it
+    was called to describe; unreadable fields come back as ``None``.
+    """
+    def _read() -> dict[str, Any]:
+        song = context.song
+        out: dict[str, Any] = {}
+        for key, attr, cast in (
+            ("beat", "current_song_time", float),
+            ("is_playing", "is_playing", bool),
+            ("loop", "loop", bool),
+            ("count_in_duration", "count_in_duration", int),
+            ("tempo", "tempo", float),
+        ):
+            try:
+                out[key] = cast(getattr(song, attr))
+            except Exception:  # prawduct:allow prawduct/broad-except -- a diagnostic read must never mask the failure it describes
+                out[key] = None
+        return out
+
+    try:
+        return context.run_on_main(_read)
+    except Exception:  # prawduct:allow prawduct/broad-except -- a diagnostic read must never mask the failure it describes
+        return {
+            "beat": None, "is_playing": None, "loop": None,
+            "count_in_duration": None, "tempo": None,
+        }
+
+
+def _describe_perform_stall(
+    diag: dict[str, Any], *, union_start: float, union_end: float
+) -> str:
+    """Turn a transport snapshot into a sentence that names what was OBSERVED
+    (not a list of causes that may all be absent) plus the one reading that
+    actually follows from it."""
+    beat = diag.get("beat")
+    playing = diag.get("is_playing")
+    loop = diag.get("loop")
+    count_in = diag.get("count_in_duration")
+
+    def _fmt(v: Any) -> str:
+        return "unreadable" if v is None else (
+            f"{v:.3f}" if isinstance(v, float) else str(v)
+        )
+
+    observed = (
+        f"observed at give-up: playhead beat {_fmt(beat)} "
+        f"(the pass was located to {union_start:g} and needed to reach "
+        f"{union_end:g}), transport rolling={_fmt(playing)}, "
+        f"loop={_fmt(loop)}, count_in_duration={_fmt(count_in)}, "
+        f"tempo={_fmt(diag.get('tempo'))}"
+    )
+
+    if playing is False:
+        reading = (
+            "The transport is NOT rolling — playback was stopped externally "
+            "(a manual stop, or Live refusing to start: a modal dialog, or a "
+            "set that cannot play)."
+        )
+    elif beat is None:
+        reading = (
+            "The playhead position could not be read, so the shortfall cannot "
+            "be attributed; check the server log for the per-tick beats."
+        )
+    elif beat < union_start - _PERFORM_LOCATE_TOLERANCE_BEATS:
+        reading = (
+            f"The transport IS rolling but the playhead is BEHIND the span "
+            f"start ({_fmt(beat)} < {union_start:g}) — it is playing from the "
+            f"wrong position, i.e. the locate did not hold. That is a "
+            f"transport race, not a budget problem: the ramp is travelling a "
+            f"distance nobody budgeted for."
+        )
+    elif loop:
+        reading = (
+            "The transport is rolling inside an ACTIVE loop that the "
+            "pre-perform reset did not clear — the playhead is trapped in a "
+            "sub-span that never reaches the span end."
+        )
+    elif count_in:
+        reading = (
+            "The transport is rolling but a non-zero count-in is configured — "
+            "the count-in bars ate part of the budget."
+        )
+    else:
+        reading = (
+            "The transport IS rolling and past the span start, just too "
+            "slowly to finish in budget — suspect a tempo map / tempo "
+            "automation slowing the pass well below the tempo read at span "
+            "start, or a heavily loaded audio engine."
+        )
+    return f"{observed}. {reading}"
+
+
 def perform_batch_handler(
     context: LiveContext,
     *,
@@ -1830,6 +1989,14 @@ def perform_batch_handler(
     across the whole song. Arcs active at the union start open BEFORE
     ``start_playing`` (matching the proven single-arc order); later arcs
     open mid-ramp.
+
+    PSH-4L6C: the pre-play LOCATE to the union start is settle-VERIFIED (like
+    ``record_mode``) before anything opens a gesture or starts the transport.
+    Live applies ``current_song_time`` asynchronously, and playing before it
+    lands rolls the transport from the OLD position — the ramp then measures
+    from the wrong beat and blows a budget sized for the span, not for the
+    journey. The wall-clock budget is measured from the moment playback
+    starts, so the settle waits never eat into it.
 
     ``arc_id`` is an opaque caller correlation id echoed back per arc so
     the push apply layer can gate each arc's performed-state independently
@@ -2090,6 +2257,20 @@ def perform_batch_handler(
                 context, "record_mode", True, timeout_s=settle_timeout_s
             )
 
+            # PSH-4L6C — settle the LOCATE before playing. The seek above is
+            # async: without this wait, `start_playing()` can fire while the
+            # playhead is still at its OLD position, so the transport rolls from
+            # the wrong place (audibly wrong at the start) and the ramp below
+            # measures a journey nobody budgeted for — an 8-beat arc at 96..104
+            # becomes a 104-beat travel that blows the wall-clock ceiling. It
+            # runs AFTER the record_mode settle on purpose: that wait has
+            # already given the locate ~300 ms of cover, and arming is the last
+            # thing that could disturb the playhead. Bounded by the SAME
+            # settle_timeout_ms — no new knob.
+            _wait_for_locate_on_worker(
+                context, float(union_start), timeout_s=settle_timeout_s
+            )
+
             # Open the gestures for arcs already active at the union start
             # (begin_gesture BEFORE start_playing, as the single-arc path
             # did), THEN play. Values are written by the ramp loop while the
@@ -2103,10 +2284,18 @@ def perform_batch_handler(
             # Ramp loop over the union span. Beat-space interpolation makes
             # tempo maps free: the playhead position IS the authored
             # coordinate, so each arc's window is compared in beats.
+            #
+            # PSH-4L6C: the budget is measured from HERE (the moment the
+            # transport starts), not from ``wall_start`` before the arm bout.
+            # Two settle waits now precede the ramp; charging their time to the
+            # ramp's budget would manufacture exactly the spurious timeout this
+            # fix exists to remove. ``wall_start`` still measures the whole
+            # pass for the result's ``wall_clock_s``.
+            ramp_start = time.monotonic()
             expected_s = (
                 (union_end - union_start) / (max(record_tempo, 1.0) / 60.0)
             )
-            deadline = wall_start + max(
+            deadline = ramp_start + max(
                 expected_s * _PERFORM_WALL_CLOCK_FACTOR,
                 _PERFORM_WALL_CLOCK_FLOOR_S,
             ) + settle_timeout_s
@@ -2150,14 +2339,25 @@ def perform_batch_handler(
                         f"transport state."
                     )
                 if now >= deadline:
+                    # PSH-4L6C: report what was OBSERVED, not a guess-list.
+                    # The old message named "modal dialog, count-in" as the
+                    # likely causes; in the failure that motivated this both
+                    # were provably absent (loop False, count_in_duration 0)
+                    # and the real cause was an unsettled locate. Read the
+                    # actual transport state and say what it shows, so the next
+                    # operator is not sent looking at the wrong things.
+                    stall = _describe_perform_stall(
+                        _read_transport_diagnostics(context),
+                        union_start=union_start,
+                        union_end=union_end,
+                    )
                     raise TimeoutError(
                         f"perform_batch ramp did not reach union span end "
                         f"{union_end} beats within its wall-clock budget "
-                        f"({deadline - wall_start:.1f}s). Transport may be "
-                        f"blocked (modal dialog, count-in) — the handler's "
-                        f"cleanup disarms the set and restores transport state "
-                        f"(check record_mode in Live if a restore step also "
-                        f"failed; those are logged)."
+                        f"({deadline - ramp_start:.1f}s) — {stall} "
+                        f"The handler's cleanup disarms the set and restores "
+                        f"transport state (check record_mode in Live if a "
+                        f"restore step also failed; those are logged)."
                     )
                 time.sleep(_PERFORM_UPDATE_PERIOD_S)
         finally:

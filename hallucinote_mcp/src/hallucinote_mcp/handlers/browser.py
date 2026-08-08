@@ -28,7 +28,16 @@ from ..dispatcher import LiveContext
 
 
 _ROOTS = ("instruments", "audio_effects", "midi_effects", "drums", "plugins",
-          "samples", "user_library", "packs")
+          "samples", "user_library", "packs", "max_for_live")
+# ``max_for_live`` is Live's own browser root (``Browser.max_for_live``) holding
+# Max Audio Effect / Max Instrument / Max MIDI Effect. It was missing here, and
+# the omission was not cosmetic: on Live 12.4.2 a .amxd installed into the User
+# Library is served from THIS root (uri ``query:M4L#...``, with
+# ``source == "User Library"``) while ``browser.user_library.children`` comes
+# back EMPTY. So the device an install placed on disk was invisible to every
+# search this tool could perform, and the only way to see it was to drop to
+# ``ableton_probe``. Any root Live exposes belongs here — a root we omit is a
+# capability the agent cannot reach and, worse, cannot diagnose.
 
 
 def _resolve_browser(context: LiveContext) -> Any:

@@ -186,7 +186,20 @@ When changing this surface:
   read the song DB.
 - **Consumers**: `audio/io.py` `load_capture` → `analyze_mix` (stamps `db_seq`
   into the MixReport), `resolve_baseline` (seq → report resolution),
-  `hallucinote/takes.py` `recency_key` (retention ordering — see Deleter).
+  `hallucinote/takes.py` `recency_key` (retention ordering — see Deleter),
+  and `tools/make_demo_media.py` `master_wav`/`untrustworthy` — the only
+  consumer outside `src/`, and the only one whose output is **published**.
+  It reads `master.filename` (never `absolute_path`, which records the
+  authoring machine's layout), plus the three trust flags below.
+- **The trust flags bind every consumer, and hardest on the published one.**
+  `status`, top-level `analyzer_not_terminal`, and per-entry `terminal` exist so
+  a reader "never trusts an under-measured stem as if it were faithful". A
+  consumer that ignores them cannot detect the failure by any other means: an
+  incomplete render yields a *short but valid* WAV, so every downstream
+  duration, bounds and size check agrees with itself and is wrong together.
+  `make_demo_media` refuses on an explicit bad value and requires
+  `--allow-incomplete` to override. **Absence is not failure** — manifests
+  predating these fields omit them and must still be readable.
 - **Deleter**: `hallucinote/takes.py` (`plan_sweep`/`execute_sweep`), driven
   automatically from `server._sweep_stale_takes` at render start and manually
   from `hallucinote captures prune`. This is the manifest's only *destructive*

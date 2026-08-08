@@ -305,9 +305,10 @@ register(
                 minimum=1,
                 description=(
                     "How long to wait for async Song state "
-                    "(record_mode applies ~300 ms late — probe 10) and "
-                    "the post-perform automation_state read. Default "
-                    "2000."
+                    "(record_mode applies ~300 ms late — probe 10; the "
+                    "pre-play LOCATE to the span start is async too and "
+                    "gets the same settle-verify) and the post-perform "
+                    "automation_state read. Default 2000."
                 ),
             ),
             ParamSpec(

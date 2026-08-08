@@ -55,6 +55,7 @@ When it finishes you have a finished session — named tracks, clips, device cha
   - **musical** — *"a Bach-style Baroque prelude in G minor built from a single broken-chord figuration"*
   - **stylistic** — *"a pure-electronica ska tune that keeps the traditional structure but goes wild with the harmony"*
   - **derivative** — *"the song Duran Duran would have written if they dropped acid with Black Sabbath"*
+- **Under-specify on purpose.** A prompt isn't a spec, and you shouldn't have to write one. `/hallucinote:song-brief` works out what your prompt actually leans on — the key, the tempo, whether two sonic worlds argue in the production or only in the writing, what a named turn means musically — and comes back **once** with informed proposals you can wave through or redirect in a word. It stays quiet about what your song doesn't have: an ambient piece never gets asked about drum style.
 - **Iterate by talking.** *"Raise the verse ghost snares,"* *"swap the chorus walk for a fill at bar 12,"* *"route the drums through a sub-bus and glue-compress it"* — Claude edits the code and re-pushes.
 - **Treat sound design as authorship.** Device chains, dialed parameters, and sends ship in the snapshot, not in a vague post-push mix pass. A finished song has the sound it's supposed to have.
 - **Pull manual edits back.** Move faders, mutes, or notes in Live, then `/hallucinote:ableton-pull` to fold them into the DB.

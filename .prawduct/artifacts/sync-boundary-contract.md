@@ -85,8 +85,12 @@ probe, and every prior phase that creates X halted the push if it failed.
     (:415-488 SYN-9F2L); orphan-param hint rewrite (:261-281 SYN-2D9K).
   - *arrangement*: post-phase integrity assert — FRESH re-probe of every clip's
     audible note set vs the DB collapsed set; HALT on silent corruption; per-clip
-    probe failures degrade to a benign "N unverified" warning (:1423-1507,
-    ARR-PROJ Chunk 3).
+    NOTE probe failures degrade to a benign "N unverified" warning (:1423-1507,
+    ARR-PROJ Chunk 3). ARR-ORPHAN2: a per-track LANE probe failure
+    (`ableton_clip(list, location='arrangement')`) does NOT degrade — it is
+    `lane_probe_failed`, counted as corruption, and HALTs. The planner reads the
+    clear inventory from that same probe, so an unreadable lane was never cleared
+    and never rebuilt, and orphan detection could not run on it.
   - *cues*: handler-deferred cues (`skipped_out_of_range`) surface as benign
     warnings, never failures (:1039-1064, SYN-6B4Q).
   - *pre-loop*: alt-tuning notices (gated, inert for tuning_ref NULL;
@@ -288,7 +292,10 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
   Live clips for the clear (§Gates); a lane ABSENT from the probe map → alert +
   skip that track (:191-202 — unknown state must not be cleared into). Probe map
   `None` (non-execute callers) → loud alert, no clear emitted (:155-161).
-  Post-phase: the executor's integrity assert re-probes every placement FRESH.
+  Post-phase: the executor's integrity assert re-probes every placement FRESH —
+  and (ARR-ORPHAN2) HALTs when that re-probe cannot list a lane, which is what
+  makes the alert+skip above loud instead of an exit-0 "phase ok" over a track
+  that kept its stale clips and got none of its placements.
 - **Failure/halt:** §6a all-or-nothing per track — every link validated BEFORE
   any of that track's calls (clear included) join the plan; an unmaterializable
   track emits nothing + alert (audio/CLP-AUD2 → warn) (:204-291). Clears emitted

@@ -2036,6 +2036,105 @@ def test_execute_arrangement_probe_failure_warns_not_silent_ok(
     assert any("could NOT be verified" in w for w in state.get("warnings", []))
 
 
+def _arrangement_witness(conn, song, tiny_song):
+    """One MIDI placement with notes — the minimum a materialize can drop."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4,
+    )
+    M.insert_notes(conn, clip_id=tiny_song["clip_id"], notes=[
+        {"pitch": 60, "start_beats": 0.0, "duration_beats": 1.0, "velocity": 100},
+    ])
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=tiny_song["track_id"],
+        clip_id=tiny_song["clip_id"], start_bar=1.0, end_bar=2.0,
+    )
+
+
+def test_execute_arrangement_lane_probe_failure_halts_not_ok(
+    conn, song, session, tiny_song, state_dir,
+):
+    """ARR-ORPHAN2 regression — the witness bug, end to end.
+
+    The push planner reads each track's arrangement lane from
+    ``ableton_clip(list, location='arrangement')``; when that listing FAILS the
+    lane is skipped — no clear, no rebuild — and any orphan already in it
+    survives. The post-phase assert used to file the same failure under the
+    benign ``probe_failed`` bucket, so the phase reported ok and the push exited
+    0 over a track that had lost every placement (observed: Lead Gtr silent at
+    -180 dBFS while push printed "97/97 ok"). An unreadable lane must HALT."""
+    _arrangement_witness(conn, song, tiny_song)
+    base = _make_send_fn()
+
+    def lane_list_fails(req, *, read_timeout=None):
+        if (req.tool == "ableton_clip" and req.action == "list"
+                and req.params.get("location") == "arrangement"):
+            return FakeResponse(ok=False, error="simulated lane-probe failure")
+        return base(req, read_timeout=read_timeout)
+
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=lane_list_fails,
+    )
+    assert result.outcome == "partial"
+    assert result.exit_code == push_execute.EXIT_PARTIAL
+    assert result.phase_halted == "arrangement"
+    blob = json.dumps(json.loads((state_dir / ".last-push-errors.json").read_text()))
+    assert "integrity" in blob.lower()
+    assert "lane_unreadable" in blob
+
+
+def test_execute_arrangement_dropped_placement_with_orphan_halts(
+    conn, song, session, tiny_song, state_dir,
+):
+    """ARR-ORPHAN2 regression: a track whose placements were DROPPED and which
+    kept an orphan clip must fail the phase, not report ok. Both halves of the
+    observed divergence (`missing_clip` + `extra_clip`) are already what
+    ``verify-arrangement`` prints — the defect was that the pusher's own assert
+    reached a different conclusion from its verifier on the same facts."""
+    _arrangement_witness(conn, song, tiny_song)
+    base = _make_send_fn()
+
+    def lane_lies(req, *, read_timeout=None):
+        resp = base(req, read_timeout=read_timeout)
+        if (req.tool == "ableton_clip" and req.action == "list"
+                and req.params.get("location") == "arrangement"):
+            # Materialization "succeeded", but the lane actually holds only a
+            # stale orphan far from any DB placement.
+            resp.result = {"clips": [{
+                "arrangement_clip_index": 1, "start_beats": 500.0,
+                "name": "Lead Gtr 2", "length": 400.0,
+            }]}
+        return resp
+
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=lane_lies,
+    )
+    assert result.outcome == "partial"
+    assert result.phase_halted == "arrangement"
+    blob = json.dumps(json.loads((state_dir / ".last-push-errors.json").read_text()))
+    assert "missing_clip" in blob
+    assert "extra_clip" in blob
+
+
+def test_execute_arrangement_faithful_materialize_still_reports_ok(
+    conn, song, session, tiny_song, state_dir,
+):
+    """ARR-ORPHAN2 happy path: with the assert tightened, a faithful projection
+    must still complete clean — no false halt, no spurious warning."""
+    _arrangement_witness(conn, song, tiny_song)
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=_make_send_fn(),
+    )
+    assert result.outcome == "ok"
+    assert result.phase_halted is None
+    arrangement = next(p for p in result.phases if p.name == "arrangement")
+    assert arrangement.status == "ok"
+    assert arrangement.calls_failed == 0
+    assert not any("integrity" in w.lower() for w in result.warnings), result.warnings
+
+
 # ---------------------------------------------------------------------------
 # PSH-2R7K — phase-targeting (--only / --start-at / --stop-after)
 # ---------------------------------------------------------------------------

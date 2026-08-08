@@ -88,6 +88,30 @@ and after a `git pull` that touched `hallucinote_mcp/`, rerun
 isn't enough — Live caches Control Surface modules at startup).
 `python -m hallucinote_mcp.cli preflight` diagnoses install state.
 
+## How does Hallucinote find my song? It looked in the wrong place.
+
+From a song slug, it looks — in order — at `$HALLUCINOTE_SONGS_ROOT`, then the
+`hallucinote.toml` workspace marker **above** your session directory, then the
+workspace that actually **holds that song** among the ones nested below your
+session directory or sitting **beside** it (the usual framework-repo +
+songs-repo pair). Only if nothing holds the song does a lone nested workspace
+win, so a new song still scaffolds where you'd expect.
+
+It never guesses between two real candidates: if two workspaces both hold the
+slug, it says so and names them instead of picking one.
+
+If your songs live somewhere that search can't see — a songs repo more than one
+directory sideways, or several candidates — say so once:
+
+```sh
+export HALLUCINOTE_SONGS_ROOT=/path/to/your-songs/songs   # the dir holding the song dirs
+```
+
+That beats everything else, and every "couldn't resolve" message points at it.
+The other reliable fix is simply to start Claude Code **inside** your songs
+workspace (the folder with `hallucinote.toml`); `--plugin-dir` can still point
+at the framework repo from there.
+
 ## Can I edit `build.py` by hand?
 
 Yes. It's plain Python against the generator library, and the build is a

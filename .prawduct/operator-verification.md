@@ -1646,3 +1646,57 @@ Checks:
    below the session root, `ableton_render` must write into that workspace's
    `captures/`, NOT into a `songs/<slug>/` tree at the repo root. The old
    behaviour created that tree silently and stranded ~290 MB in it.
+
+---
+
+## 2026-08-07 — PSH-DEVDUP: the devices phase must not double an FX chain (fix/devices-duplicate-chain)
+
+Visual change: no. Fingerprint flip: no (engine-side only — `src/hallucinote/sync/`;
+no `hallucinote_mcp` handler, schema or Remote Script file changed, so no
+re-vendor and no Live restart is needed).
+
+What shipped: `push_cli execute` now probes each linked parent's device chain
+(`ableton_device(action='list')`) once per push, reconciles the DB↔Live device
+links from it, refuses to emit a `load` onto a slot Live already occupies, and
+re-probes after the phase to assert no chain came out duplicated.
+
+**What cannot be proven without Live**, and is therefore queued here rather than
+claimed: the fix rests on a model of Live 12.4 in which (a) a device `load`
+always TAIL-APPENDS to the destination chain, and (b) `ableton_device(list)`
+reports `class_display_name` for a preset-loaded device identically to what
+`/song-snapshot` stored as the DB's `kind` (the `the-argument` evidence says it
+does — `Tension`, `Instrument Rack`, `Amp` all matched positionally when
+`probe-and-link` ran at 04:32 — but that is one set). If (b) is false for some
+device class, the reconcile won't bind it and the push will REFUSE rather than
+duplicate: safe, but it will look like a false halt. Checks 3 and 4 are what
+would surface that.
+
+Checks (run against the repaired `the-argument` set, or any song with a
+snapshot-loaded FX chain):
+
+1. **Idempotent re-push appends nothing.** With the set already carrying every
+   chain, run `push execute <session> --song <slug> --probe`. The devices phase
+   must report ok, dispatch **zero** `load` calls, and `ableton_device(list)` on
+   each track must show the same chain length as before. Repeat once more — the
+   second run must also be a no-op. (Before the fix, each run appended a full
+   copy of every post-instrument effect.)
+2. **A rebuilt DB still appends nothing.** Run `python songs/<slug>/build.py
+   --reset`, then re-push with `--probe`. Same expectation: zero loads, chain
+   lengths unchanged.
+3. **A genuinely missing device still loads.** Delete one effect from the end of
+   one track's chain in Live, re-push. That one device must load (and only that
+   one); the rest of the chain must be untouched.
+4. **A drifted slot refuses instead of doubling.** Replace one mid-chain effect
+   in Live with a different device class (e.g. swap an Overdrive for a Phaser),
+   re-push. The devices phase must HALT before dispatch with `REFUSING to load
+   …`, naming the track and the device it saw, and dispatch zero loads. Confirm
+   the recovery it names works: `push probe-and-link <session> --song <slug>
+   --probe` then re-push.
+5. **The integrity assert catches an already-doubled set.** On a set you have
+   deliberately doubled by hand (duplicate one effect on one track), re-push.
+   The phase must halt with `devices integrity: … DUPLICATE`, naming the track,
+   rather than reporting ok.
+6. **A trailing HallucinoteAnalyzer is invisible to all of the above.** Run a
+   render first (so every chain ends with the analyzer), then repeat check 1.
+   Still zero loads, still ok — the analyzer must neither be matched against an
+   authored slot nor counted as an extra device.

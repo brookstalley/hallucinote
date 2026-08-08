@@ -22,6 +22,36 @@ from .tempo import plan_push_tempo_map, plan_push_time_signature_map
 from .tracks import plan_push_song_returns, plan_push_song_tracks
 
 
+# PSH-DEVDUP: the device-chain probe is either an already-materialized
+# ``{(parent_kind, parent_index): [live device, ...]}`` dict (tests / callers
+# that probed themselves) or a ZERO-ARG THUNK the devices phase calls at PLAN
+# time. The thunk form is what the execute path passes, and the laziness is
+# load-bearing: the map is keyed by the Live indices recorded in
+# ``ableton_links``, and on a FIRST push those don't exist until the `tracks` /
+# `returns` phases have run. ``None`` (directly, or returned by the thunk) keeps
+# the pre-PSH-DEVDUP "no Live truth → load on faith" contract for pure-planner
+# callers.
+LiveDeviceProbe = (
+    dict[tuple[str, int], list[dict[str, Any]]]
+    | Callable[[], dict[tuple[str, int], list[dict[str, Any]]] | None]
+    | None
+)
+
+
+def resolve_live_device_probe(
+    probe: LiveDeviceProbe,
+) -> dict[tuple[str, int], list[dict[str, Any]]] | None:
+    """Materialize a device-chain probe map, calling it if it's a thunk.
+
+    Called from inside the devices phase's ``plan_fn``, i.e. once `tracks` and
+    `returns` have created + linked every parent, so the probe map is keyed by
+    the SAME Live indices the planner resolves from ``ableton_links``.
+    """
+    if probe is None or isinstance(probe, dict):
+        return probe
+    return probe()
+
+
 @dataclass(frozen=True)
 class PushPhase:
     """One phase of the song-level master push.
@@ -196,6 +226,7 @@ def plan_push_song(
     session_id: str,
     perform_slowdown_factor: float = 1.0,
     live_arrangement_clips_by_track: dict[int, list[dict]] | None = None,
+    live_device_chains: LiveDeviceProbe = None,
 ) -> list[PushPhase]:
     """Master orchestration: return the fourteen phases of a full song push, in order.
 
@@ -213,6 +244,13 @@ def plan_push_song(
     phase's full boundary contract -- what it ASSUMES from prior phases vs
     what it RE-PROBES from Live, and its failure/halt policy -- lives in
     ``.prawduct/artifacts/sync-boundary-contract.md``.
+
+    ``live_device_chains`` (PSH-DEVDUP) may be a dict OR a zero-arg thunk
+    (:data:`LiveDeviceProbe`), resolved inside the devices ``plan_fn``. It is
+    what lets the devices planner tell a device that is MISSING from Live apart
+    from one that is PRESENT but unlinked. Without it the planner treated both
+    as "load", and since Live 12.4 tail-appends, a push onto a set that already
+    carried the chain silently doubled every effect.
 
     Sections (``plan_push_sections``) is NOT a phase: it emits no
     canonical calls (Live has no section-marker concept distinct from
@@ -275,6 +313,13 @@ def plan_push_song(
             name="devices",
             plan_fn=lambda: plan_push_devices(
                 conn, song_id=song_id, session_id=session_id,
+                # PSH-DEVDUP: resolved HERE (inside the thunk), not at
+                # plan_push_song time — the probe must see the parents the
+                # `tracks` / `returns` phases created, and its result is what
+                # tells the planner "already present" from "genuinely missing".
+                live_devices_by_parent=resolve_live_device_probe(
+                    live_device_chains,
+                ),
             ),
             description="Load instruments+effects and set parameters on tracks/returns.",
         ),

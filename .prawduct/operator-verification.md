@@ -56,6 +56,67 @@ the NODE-ADDR learning, a fake that encodes how an EXTERNAL system responds
 proves nothing until an operator confirms it. The full-session census backstop
 (`_AlwaysLeakyBrowser`) is what protects the composer if the prevention half
 turns out not to be the whole mechanism.
+## PSH-4L6C — the perform_batch locate settle is real, not just modelled (2026-08-07) — PENDING
+
+`ableton_automation(action='perform_batch')` intermittently timed out on an
+8-beat arc (beats 96..104, 3.4 s at 140 BPM) against a 12.3 s budget, with
+`song.loop` False and `song.count_in_duration` 0 — both causes the old message
+named. The identical arc had succeeded minutes earlier in the same session, and
+the operator heard the transport roll with a start that sounded "a little weird".
+
+**Root cause (inferred, not Live-confirmed):** the handler set
+`song.current_song_time = union_start` and called `start_playing()` without
+waiting for the locate to land. Live applies a locate ASYNCHRONOUSLY — the same
+class of behaviour `record_mode` already has a settle-verify for (probe 10). When
+the record_mode settle happened to return immediately, the locate got no
+incidental cover and playback started from the old position: the ramp then had to
+travel 104 beats, not 8, and blew a budget sized for the span.
+
+**The fix is a settle-verify** (`_wait_for_locate_on_worker`) bounded by the
+existing `settle_timeout_ms`, plus a timeout message that reports the OBSERVED
+transport state instead of asserting causes.
+
+**What is proven and what is not.** The wait, the tolerance, the budget
+re-basing and the message are covered by 10 unit tests against the fake LOM, and
+all four locate tests fail without the wait. What CANNOT be verified without a
+live instance is the model of Live underneath:
+
+- that `current_song_time` is genuinely async on a locate (asserted by analogy
+  with `record_mode`, plus the symptom — never probed directly);
+- that an in-flight locate is LOST when `start_playing()` fires (the test fake
+  models this; the alternative — the locate lands late and the transport jumps —
+  would produce an audibly wrong start but not necessarily this timeout);
+- that `_PERFORM_LOCATE_TOLERANCE_BEATS = 1.0` is wide enough for whatever
+  snapping Live does to a locate. Too tight would turn the old intermittent
+  timeout into an intermittent hard failure at the settle boundary.
+
+**Fingerprint flip: YES.** `handlers/automation.py` and `actions/automation.py`
+are both inside `_FINGERPRINT_PATHS`, so the Remote Script vendored into Live's
+User Library is stale until re-vendored — Live keeps running the old code, and
+this fix does not take effect, silently.
+
+**Checks (Ableton open, a song with a master-chain device parameter arc):**
+
+1. **Re-vendor first.** `/ableton-mcp-install`, then quit Live completely and
+   reopen (Live caches Control Surface modules at launch), then `/mcp`. Confirm
+   `ableton://server/info`'s fingerprint matches the vendored copy.
+2. **The race is gone.** Park the playhead at 0, then perform an arc whose span
+   starts far downstream (the 96..104 master Shifter `Pitch Coarse` arc is the
+   exact repro). Run it 5+ times back to back, including immediately after a
+   manual `song.stop_playing()` — the case that failed twice in a row. Every pass
+   must report `1/1 ok`, and the audible start must be AT the span start, not a
+   run-up from the old position.
+3. **The tolerance is not too tight.** Watch for any `could not locate the
+   playhead` abort on a set where the transport is healthy. If that appears, the
+   1-beat tolerance is narrower than Live's locate behaviour and needs widening —
+   that would be this fix trading an intermittent timeout for an intermittent
+   hard failure, which is worse.
+4. **The message earns its keep.** Force a timeout (start a perform, then hold
+   the transport with a modal dialog) and read the error. It must name the
+   playhead beat, `transport rolling=`, `loop=`, and `count_in_duration=` as
+   OBSERVED values.
+
+---
 
 ## AUD-2D6T — automatic capture sweep fires on a real render (2026-08-03) — PENDING
 

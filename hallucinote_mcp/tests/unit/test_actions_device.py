@@ -141,20 +141,60 @@ class FakeBrowserRoot(FakeBrowserItem):
 class FakeApplicationView:
     """Models Live's ``Application.View`` for device-load tests.
 
-    ``show_view(name)`` focuses a top-level view; ``current`` records which
-    one is focused. ``browser.load_item`` is view-sensitive — it silently
-    no-ops when Arranger is focused (MCP-1V8K), so the loader must focus
-    Session first. Defaults to Session so the pre-existing load tests (which
-    don't touch the view) keep exercising the happy path.
+    Live's view state has two INDEPENDENT axes and the loader touches both:
+
+    * the main document view — ``"Session"`` / ``"Arranger"``. ``load_item``
+      is view-sensitive here: it silently no-ops when Arranger is focused
+      (MCP-1V8K), so the loader must focus Session first. ``current`` records
+      it, defaulting to Session so pre-existing load tests keep exercising the
+      happy path.
+    * the Detail pane's sub-view — ``"Detail/Clip"`` / ``"Detail/DeviceChain"``.
+      Showing one of these does NOT change the main document view (that is why
+      it is a separate field, not a second write to ``current``). It decides
+      which chain the Detail pane is BOUND to, and that binding is the second
+      half of what aims a browser load (MST-LEAK). Defaults to ``Detail/Clip``
+      — the state ``ableton_session(action='set_view', view='detail')`` leaves
+      behind, and the state the master-load leak was observed in.
     """
 
-    def __init__(self, current: str = "Session") -> None:
+    _DETAIL_PREFIX = "Detail/"
+
+    def __init__(
+        self,
+        current: str = "Session",
+        detail_view: str = "Detail/Clip",
+        detail_open: bool = True,
+    ) -> None:
         self.current = current
+        self.detail_view = detail_view
+        # Live lets the composer collapse the Detail pane entirely; `show_view`
+        # on a sub-view re-opens it, so the loader has to be able to put that
+        # back too.
+        self.detail_open = detail_open
         self.show_view_calls: list[str] = []
+        self.hide_view_calls: list[str] = []
 
     def show_view(self, name: str) -> None:
         self.show_view_calls.append(name)
-        self.current = name
+        if name == "Detail":
+            self.detail_open = True
+        elif name.startswith(self._DETAIL_PREFIX):
+            self.detail_view = name
+            self.detail_open = True
+        else:
+            self.current = name
+
+    def hide_view(self, name: str) -> None:
+        self.hide_view_calls.append(name)
+        if name == "Detail" or name.startswith(self._DETAIL_PREFIX):
+            self.detail_open = False
+
+    def is_view_visible(self, name: str) -> bool:
+        if name == "Detail":
+            return self.detail_open
+        if name.startswith(self._DETAIL_PREFIX):
+            return self.detail_open and name == self.detail_view
+        return name == self.current
 
 
 class FakeBrowser:
@@ -3498,6 +3538,290 @@ def test_load_on_master_appends_to_master_chain(loaded_actions):
     assert resp.result["device_index"] == 2
     # No regular track was touched.
     assert all(t.devices == [] for t in ctx.song.tracks)
+
+
+# ---------------------------------------------------------------------------
+# MST-LEAK: a browser load must change exactly ONE chain
+# ---------------------------------------------------------------------------
+#
+# Field report, Ableton Live 12.4 Suite, 2026-08-07. Live's view was on
+# `Detail/Clip` with track 3 selected. Two `ableton_device(action='load')` calls
+# addressed the MASTER (`Shifter`, then `Limiter`). The master chain came out
+# right — `[1:Shifter, 2:Limiter]` — and both calls returned `ok` with
+# `parent_kind: "master"`. But track 3 ALSO grew both devices, at positions 6
+# and 7, which nobody had asked for. No other track was affected.
+#
+# `browser.load_item` takes no destination argument: Live aims it from VIEW
+# state, and that state has two halves — the Session selection and the Detail
+# pane's device-chain binding. The loader moved only the first. Selecting the
+# master moves the Session selection off the track list entirely (the master is
+# the one destination that is not a member of `song.tracks`), so the Detail pane
+# stayed bound to track 3 and the load materialized in both chains. The old
+# post-condition re-read only `parent.devices`, so "the chain I aimed at grew"
+# was reported as success while a stray sat on the composer's track.
+#
+# `_LeakyBrowser` models exactly that mechanism; `_AlwaysLeakyBrowser` models a
+# Live where retargeting the Detail pane is NOT enough, so the census backstop
+# is exercised on its own.
+
+
+class _LeakyBrowser(FakeBrowser):
+    """Live 12.4's two-halves load aiming (MST-LEAK).
+
+    The load lands on ``song.view.selected_track`` (as always) AND on whatever
+    chain the Detail pane is bound to, when the two disagree. The Detail pane
+    re-binds to the current selection only while it is actually SHOWING the
+    device chain — which is the behaviour the loader has to establish before
+    calling ``load_item``.
+    """
+
+    def __init__(self, song, view, *, detail_bound_track):
+        super().__init__(song, view)
+        self.detail_bound_track = detail_bound_track
+
+    def load_item(self, item: FakeBrowserItem) -> None:
+        if self._view.detail_view == "Detail/DeviceChain":
+            self.detail_bound_track = self._song.view.selected_track
+        selected = self._song.view.selected_track
+        super().load_item(item)
+        bound = self.detail_bound_track
+        if bound is not None and bound is not selected:
+            bound.devices.append(
+                FakeDevice(name=item.name, class_name=item.name)
+            )
+
+
+class _AlwaysLeakyBrowser(FakeBrowser):
+    """A load that ALWAYS also appends to ``leak_into``, whatever the view says.
+
+    Stands in for a Live/plugin combination where retargeting the Detail pane
+    doesn't prevent the second insertion. Keeps the census backstop honest
+    independently of the prevention step.
+    """
+
+    def __init__(self, song, view, *, leak_into, leak_class=None):
+        super().__init__(song, view)
+        self.leak_into = leak_into
+        self.leak_class = leak_class
+
+    def load_item(self, item: FakeBrowserItem) -> None:
+        super().load_item(item)
+        name = self.leak_class or item.name
+        self.leak_into.devices.append(FakeDevice(name=name, class_name=name))
+
+
+def _ctx_focused_on_track_three(browser_factory) -> FakeCtx:
+    """The field-report session: three tracks, track 3 authored + focused, the
+    Detail pane on Clip, an empty master. ``browser_factory(song, view, track3)``
+    builds the browser under test."""
+    track3 = FakeTrack("Gtr", devices=[
+        FakeDevice(name=n, class_name=n)
+        for n in ("StringStudio", "Overdrive", "Amp", "Cabinet", "Saturator")
+    ])
+    song = FakeSong(
+        tracks=[FakeTrack("Drums"), FakeTrack("Bass"), track3],
+        returns=[FakeReturn("A-Rev")],
+        master=FakeTrack("Master"),
+    )
+    ctx = FakeCtx(song)
+    ctx.application.view.detail_view = "Detail/Clip"
+    song.view.selected_track = track3
+    ctx.application.browser = browser_factory(
+        song, ctx.application.view, track3,
+    )
+    return ctx
+
+
+def test_load_on_master_does_not_leak_into_the_focused_track(loaded_actions):
+    """MST-LEAK, prevention half: retarget BOTH halves of Live's load-aiming
+    state before ``load_item``, so the device is never created on the
+    previously focused track in the first place.
+
+    Without the Detail-pane retarget the leaky browser appends the device to
+    track 3 as well — the reported field bug."""
+    ctx = _ctx_focused_on_track_three(
+        lambda song, view, t3: _LeakyBrowser(song, view, detail_bound_track=t3)
+    )
+    item = FakeBrowserItem(
+        name="Shifter", uri="query:Audio Effects#Shifter", is_loadable=True,
+    )
+    ctx.application.browser.audio_effects.children.append(item)
+
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={
+                "node": {"parent": {"kind": "master"}, "terminal": "master"},
+                "kind": "Shifter",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert resp.result["parent_kind"] == "master"
+    assert resp.result["device_index"] == 1
+    assert [d.name for d in ctx.song.master_track.devices] == ["Shifter"]
+    # The composer's track is byte-for-byte what it was.
+    assert [d.name for d in ctx.song.tracks[2].devices] == [
+        "StringStudio", "Overdrive", "Amp", "Cabinet", "Saturator",
+    ]
+    # Prevented, not repaired — nothing had to be cleaned up.
+    assert "collateral_removed" not in resp.result
+    # The loader pointed the Detail pane at the destination's device chain.
+    assert "Detail/DeviceChain" in ctx.application.view.show_view_calls
+
+
+def test_load_restores_the_callers_selection_and_detail_pane(loaded_actions):
+    """A load is a chain mutation, not a navigation command: the composer's
+    selected track and Detail pane come back exactly as they were.
+
+    Without the restore the loader leaves the master selected and the Detail
+    pane on the device chain — the user's screen silently rearranged, and the
+    next load inherits a target they never chose."""
+    ctx = _ctx_focused_on_track_three(
+        lambda song, view, t3: _LeakyBrowser(song, view, detail_bound_track=t3)
+    )
+    track3 = ctx.song.tracks[2]
+    item = FakeBrowserItem(name="Limiter", uri="query:Limiter", is_loadable=True)
+    ctx.application.browser.audio_effects.children.append(item)
+
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={
+                "node": {"parent": {"kind": "master"}, "terminal": "master"},
+                "kind": "Limiter",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert ctx.song.view.selected_track is track3
+    assert ctx.application.view.detail_view == "Detail/Clip"
+    assert ctx.application.view.detail_open is True
+
+
+def test_load_leaves_a_collapsed_detail_pane_collapsed(loaded_actions):
+    """Retargeting the Detail pane RE-OPENS it. A composer who had it collapsed
+    gets it back collapsed — the load must not rearrange their screen at all."""
+    ctx = _ctx_focused_on_track_three(
+        lambda song, view, t3: _LeakyBrowser(song, view, detail_bound_track=t3)
+    )
+    ctx.application.view.detail_open = False
+    item = FakeBrowserItem(name="Shifter", uri="query:Shifter", is_loadable=True)
+    ctx.application.browser.audio_effects.children.append(item)
+
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={
+                "node": {"parent": {"kind": "master"}, "terminal": "master"},
+                "kind": "Shifter",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert [d.name for d in ctx.song.master_track.devices] == ["Shifter"]
+    assert ctx.application.view.detail_open is False
+
+
+def test_load_removes_and_reports_a_collateral_device(loaded_actions):
+    """MST-LEAK, detection half: the destination chain growing is NOT proof the
+    load behaved. A device that appears in a chain nobody addressed is removed
+    and named on the response — never reported as a clean ``ok``.
+
+    Without the full-session census the old post-condition (re-read
+    ``parent.devices``, see it grew) returns ``ok`` and the stray survives into
+    the next ``/song-snapshot``."""
+    ctx = _ctx_focused_on_track_three(
+        lambda song, view, t3: _AlwaysLeakyBrowser(song, view, leak_into=t3)
+    )
+    item = FakeBrowserItem(name="Shifter", uri="query:Shifter", is_loadable=True)
+    ctx.application.browser.audio_effects.children.append(item)
+
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={
+                "node": {"parent": {"kind": "master"}, "terminal": "master"},
+                "kind": "Shifter",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert [d.name for d in ctx.song.master_track.devices] == ["Shifter"]
+    # The stray was undone.
+    assert [d.name for d in ctx.song.tracks[2].devices] == [
+        "StringStudio", "Overdrive", "Amp", "Cabinet", "Saturator",
+    ]
+    assert resp.result["collateral_removed"] == [{
+        "parent_kind": "track",
+        "index": 3,
+        "device_index": 6,
+        "class_name": "Shifter",
+    }]
+    assert "track 3" in resp.result["warning"]
+
+
+def test_load_raises_when_a_collateral_change_cannot_be_undone(loaded_actions):
+    """A chain we did not address changed in a way this load cannot be blamed
+    for — so we must not touch it, and we must not claim success. Removing a
+    device we can't prove we created would be a worse bug than the leak."""
+    ctx = _ctx_focused_on_track_three(
+        lambda song, view, t3: _AlwaysLeakyBrowser(
+            song, view, leak_into=t3, leak_class="Utility",
+        )
+    )
+    item = FakeBrowserItem(name="Shifter", uri="query:Shifter", is_loadable=True)
+    ctx.application.browser.audio_effects.children.append(item)
+
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={
+                "node": {"parent": {"kind": "master"}, "terminal": "master"},
+                "kind": "Shifter",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "not aimed at" in resp.error
+    assert "track 3" in resp.error
+    # Left in place — an unattributable device is the operator's call.
+    assert [d.name for d in ctx.song.tracks[2].devices][-1] == "Utility"
+
+
+def test_load_on_return_does_not_leak_into_the_focused_track(loaded_actions):
+    """The same aiming defect is latent on RETURN loads — a return is also not a
+    member of ``song.tracks``, so selecting one moves the Session selection off
+    the focused track exactly like the master does. The fix is destination-kind
+    agnostic, so this passes for the same reason the master case does."""
+    ctx = _ctx_focused_on_track_three(
+        lambda song, view, t3: _LeakyBrowser(song, view, detail_bound_track=t3)
+    )
+    item = FakeBrowserItem(name="Reverb", uri="query:Reverb", is_loadable=True)
+    ctx.application.browser.audio_effects.children.append(item)
+
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={
+                "node": {"parent": {"kind": "return", "index": 1},
+                         "terminal": "return"},
+                "kind": "Reverb",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert [d.name for d in ctx.song.return_tracks[0].devices] == ["Reverb"]
+    assert [d.name for d in ctx.song.tracks[2].devices] == [
+        "StringStudio", "Overdrive", "Amp", "Cabinet", "Saturator",
+    ]
+    assert "collateral_removed" not in resp.result
 
 
 # `plan_push_devices` master-strip walk lives in tests/unit/sync/test_push_devices.py

@@ -68,6 +68,21 @@ class PushPlan:
     # still completes (exit 0). Severity-, not phase-, scoped: any planner can
     # raise one and it surfaces.
     alerts: list[str] = field(default_factory=list)
+    # PSH-ARRPROBE: work the planner did NOT plan because it could not
+    # DETERMINE the state it needed (a failed probe, a missing link) — as
+    # opposed to work there was genuinely none of. The distinction is the whole
+    # point: "nothing to do" is a clean skip; "could not determine, so did
+    # nothing" is an INCOMPLETE push that must not report OK. The executor marks
+    # any phase whose plan carries these `incomplete` and flips the run's
+    # outcome + exit code; nothing halts (sibling tracks and later phases still
+    # run — the work that COULD be determined still lands).
+    #
+    # Every blocked reason is ALSO an alert (it is operator-actionable by
+    # definition — :meth:`blocked` appends to both), so alert-shaped consumers
+    # keep seeing it; `blocked_reasons` is the strictly-stronger subset. The
+    # executor drains alerts MINUS blocked reasons into the benign
+    # "push still OK" channel, so a blocked reason is never labeled benign.
+    blocked_reasons: list[str] = field(default_factory=list)
 
     def add(self, call: ToolCall) -> None:
         self.calls.append(call)
@@ -81,12 +96,26 @@ class PushPlan:
     def alert(self, msg: str) -> None:
         self.alerts.append(msg)
 
+    def blocked(self, msg: str) -> None:
+        """Record work skipped because its precondition could not be DETERMINED.
+
+        Strictly stronger than :meth:`alert` (which it also records): a blocked
+        reason makes the push report INCOMPLETE with a non-zero exit, because
+        the song did not get something it asked for. Use :meth:`warn` for a
+        deliberate, known-scope no-op (e.g. audio tracks, CLP-AUD2) and
+        :meth:`error` for authoring Live can NEVER materialize (that halts the
+        phase before dispatch).
+        """
+        self.blocked_reasons.append(msg)
+        self.alerts.append(msg)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "calls": [asdict(c) for c in self.calls],
             "notes": self.notes,
             "errors": self.errors,
             "alerts": self.alerts,
+            "blocked_reasons": self.blocked_reasons,
         }
 
 

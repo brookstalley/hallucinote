@@ -40,7 +40,8 @@ phases = push.plan_push_song(conn, song_id, session_id)
 for phase in phases:
     plan = phase.plan_fn()         # fresh — sees latest ableton_links
     if not plan.calls:
-        record phase as "skipped (idempotent)"
+        # PSH-ARRPROBE: two causes, two statuses.
+        record phase as "incomplete" if plan.blocked_reasons else "skipped"
         continue
     results = []
     for call in plan.calls:
@@ -144,7 +145,7 @@ return 0
   "ts": "2026-05-20T22:14:08Z",
   "song_id": "...",
   "session_id": "...",
-  "outcome": "ok | partial | connection_lost",
+  "outcome": "ok | incomplete | partial | connection_lost",
   "phase_halted": "clips",          // null on ok
   "current_phase": null,            // PSH-5T9D: phase executing now; null at the terminal flush (as here — this is a finished, halted run)
   "scope": null,                    // PSH-2R7K: phase-targeting filter; null for a full run
@@ -153,7 +154,9 @@ return 0
     {"name": "time_signature", "status": "skipped", "calls_ok": 0, "calls_failed": 0},
     {"name": "tracks",         "status": "ok",      "calls_ok": 8, "calls_failed": 0},
     {"name": "clips",          "status": "halted",  "calls_ok": 27, "calls_failed": 2},
-    {"name": "mix",            "status": "pending", "calls_planned": 3}
+    {"name": "mix",            "status": "pending", "calls_planned": 3},
+    {"name": "arrangement",    "status": "incomplete", "calls_ok": 0, "calls_failed": 0,
+     "blocked_reasons": ["arrangement: no Live arrangement probe for track '…' …"]}
   ],
   "errors_file": ".last-push-errors.json", // null when no errors
   "warnings": []                            // SYN-6B4Q: benign warnings (deferred cues); [] when none
@@ -161,9 +164,20 @@ return 0
 ```
 
 Phase `status` values: `ok` (all calls succeeded), `skipped` (planner emitted
-zero calls — idempotent re-push), `halted` (one or more calls failed OR the
-plan carried a hard error; phase did not necessarily round-trip to Live),
-`pending` (phase not attempted due to upstream halt).
+zero calls — idempotent re-push), `incomplete` (PSH-ARRPROBE: the planner
+refused to plan work whose precondition it could not DETERMINE — a failed probe,
+a missing link — and said why in `blocked_reasons`; may co-exist with successful
+calls when only part of the phase was undeterminable), `halted` (one or more
+calls failed OR the plan carried a hard error; phase did not necessarily
+round-trip to Live), `pending` (phase not attempted due to upstream halt).
+
+`incomplete` exists because collapsing "nothing to do" and "could not tell, so
+did nothing" into one `skipped` let a first push report `OK — all 14 phases
+completed` over an empty arrangement. An incomplete phase does NOT halt the run
+(later phases still get their chance) but the terminal `outcome` becomes
+`incomplete` and the exit code `EXIT_PARTIAL` — a push that left the song
+un-materialized must never exit 0. `blocked_reasons` is present only on phases
+that have them, so a reader can branch on the key alone.
 
 **`current_phase` + per-phase flush (PSH-5T9D).** The state file is now written
 **after every phase** (and once at the terminal state), not only at exit — so it is
@@ -227,7 +241,7 @@ Small by design — full detail lives in the JSON files.
 push_cli execute: PARTIAL — halted at phase 'clips' (4/10 phases ok)
 
   ✓ tempo_map       1/1 ok
-  ✓ time_signature  skipped (idempotent)
+  ✓ time_signature  skipped (nothing to push)
   ✓ tracks          8/8 ok
   ✓ returns         2/2 ok
   ✗ clips           27/29 ok, 2 failed → halted

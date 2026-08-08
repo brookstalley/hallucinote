@@ -38,7 +38,7 @@ probe, and every prior phase that creates X halted the push if it failed.
 |---|---|---|
 | Phase-target validation (`push_execute.validate_phase_targets`, push_execute.py:91-131; called pre-probe at push_cli.py:763-774 per PSH-PHASEORDER) | `--only/--start-at/--stop-after` name real phases, coherent window | `PhaseTargetError` → stderr teaching message, exit 2, no Live traffic |
 | Coherence check (`push/probe.py:976-1134 check_coherence`; wired push_cli.py:776-796) | session row exists; every `track`/`return` link points at a live index; no link points at a canonical default-scaffold track (set-swap signature) | refuse execute, exit 1, per-error `recovery` hints. **Opt-out:** `--no-coherence-check`. Nested links (clip/device) are NOT validated — a stale parent cascade-invalidates them (probe.py:1003-1007); residual risk note R1 below |
-| Arrangement probe (`_probe_live_arrangement_clips_via_mcp`, push_cli.py:798-808) | per-track Live arrangement clip inventory, feeding the projection's clear | a per-track probe failure leaves the lane out of the map; the arrangement planner then skips that track with an alert (arrangement.py:191-202) rather than guess |
+| Arrangement probe (`_probe_live_arrangement_clips_via_mcp`, wrapped by `_cmd_execute._probe_arrangement_lanes`) | per-track Live arrangement clip inventory, feeding the projection's clear | **NOT a pre-phase gate** (PSH-ARRPROBE): it is passed as a THUNK and resolved inside the arrangement phase's planner, because the map is keyed by Live track index and a first push CREATES those tracks in the `tracks` phase — a pre-phase map described the pre-push numbering and made every track read as unprobed. The thunk re-probes `ableton_track(list)` itself; it does NOT reuse the coherence probe's track list. A per-track probe failure still leaves the lane out of the map, and the arrangement planner still skips that track rather than guess — but now via `PushPlan.blocked`, so the phase reports `incomplete` (non-zero exit), not `skipped` |
 | `probe_and_link` (separate subcommand, NOT run by execute; push/probe.py:360-748) | name-matched track/return links; W20-A device links by (parent, position, class); W18-B/SYN-3C8K/SYN-SCAFFOLD-MISLINK stale-link reconciliation | additive only (never deletes Live entities); duplicate names link-first + note; case near-matches noted, not linked |
 
 ## Executor cross-phase contract (`push_execute.execute_push`, push_execute.py:640-1576)
@@ -303,14 +303,18 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
 - **Assumes:** tracks linked (alert + skip whole track otherwise); envelope-bearing
   placements' source clips linked (duplicate route); the DB is the ONLY author of
   the timeline (projection: clear then rebuild, ARR-PROJ).
-- **Re-probes:** the pre-phase arrangement probe supplies each track's current
-  Live clips for the clear (§Gates); a lane ABSENT from the probe map → alert +
-  skip that track (:191-202 — unknown state must not be cleared into). Probe map
-  `None` (non-execute callers) → loud alert, no clear emitted (:155-161).
+- **Re-probes:** the arrangement probe (resolved at THIS phase, not before the
+  loop — §Gates) supplies each track's current Live clips for the clear; a lane
+  ABSENT from the probe map → `blocked` + skip that track (unknown state must
+  not be cleared into). Probe map `None` (non-execute callers) → loud alert, no
+  clear emitted (:155-161) — an alert, not `blocked`: everything is still
+  planned.
   Post-phase: the executor's integrity assert re-probes every placement FRESH.
 - **Failure/halt:** §6a all-or-nothing per track — every link validated BEFORE
   any of that track's calls (clear included) join the plan; an unmaterializable
-  track emits nothing + alert (audio/CLP-AUD2 → warn) (:204-291). Clears emitted
+  track emits nothing + `blocked` (audio/CLP-AUD2 → warn, a deliberate no-op)
+  (:204-291). A phase carrying blocked reasons is reported `incomplete` with a
+  non-zero exit and its reasons verbatim — never `skipped (idempotent)`. Clears emitted
   descending-index (:298-320). Per-call failure → boundary halt;
   `ArrangementIntegrityError` → halt (silent corruption must not report OK).
   Keys: `arrangement_clip:` (link), `arrangement_clip_clear:` /

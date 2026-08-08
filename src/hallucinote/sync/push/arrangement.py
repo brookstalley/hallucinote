@@ -135,6 +135,14 @@ def plan_push_arrangement(
     never PLANS a half-materialization (apply-time failures still fail loud via
     the executor halt + the Chunk-3 integrity assert).
 
+    Skip severity (PSH-ARRPROBE). A track skipped because its state could not be
+    DETERMINED — lane absent from the probe, track not linked, envelope-bearing
+    source clip not linked, placement referencing a missing clip — is recorded
+    via :meth:`PushPlan.blocked`, so the executor reports the phase INCOMPLETE
+    with a non-zero exit instead of the "skipped (idempotent)" clean OK that hid
+    an empty timeline. A DELIBERATE no-op (audio track, CLP-AUD2) stays a
+    :meth:`PushPlan.warn` — nothing was asked for and nothing is owed.
+
     Each ``create`` / ``duplicate`` call is keyed ``arrangement_clip:{db_id}`` so
     :func:`apply_push_results` records the binding from ``arrangement_clip_index``;
     each ``delete`` is keyed ``arrangement_clip_clear:{track}:{idx}`` (ack-only —
@@ -174,7 +182,7 @@ def plan_push_arrangement(
             conn, session_id=session_id, db_kind="track", db_id=track_id,
         )
         if track_at is None:
-            plan.alert(
+            plan.blocked(
                 f"arrangement: track {track_id!r} not linked in session "
                 f"{session_id!r}; skipping all {len(rows)} placement(s) on it. "
                 "Run the tracks phase + apply_push_results first."
@@ -192,7 +200,7 @@ def plan_push_arrangement(
             live_arrangement_clips_by_track is not None
             and track_at not in live_arrangement_clips_by_track
         ):
-            plan.alert(
+            plan.blocked(
                 f"arrangement: no Live arrangement probe for track {track_id!r} "
                 f"(Live index {track_at}) — the per-track probe failed, so the "
                 "lane state is unknown; skipping to avoid create+fill stacking "
@@ -287,7 +295,12 @@ def plan_push_arrangement(
                 f"rebuild) — {skip_reason}. The clear is destructive, so a track "
                 "is materialized only when it can be fully rebuilt (§6a)."
             )
-            (plan.warn if skip_is_known_scope else plan.alert)(msg)
+            # Known scope (audio / CLP-AUD2) is a DELIBERATE no-op → a
+            # diagnostic note. A real gap (missing clip row, unlinked
+            # envelope-bearing source) is work the song asked for that this push
+            # could not determine how to do → `blocked`, so the run reports
+            # INCOMPLETE instead of a clean OK over a silently-unbuilt track.
+            (plan.warn if skip_is_known_scope else plan.blocked)(msg)
             skipped_tracks += 1
             continue
 

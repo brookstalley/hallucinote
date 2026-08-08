@@ -1783,12 +1783,19 @@ def execute_push(
                 integrity_report = assert_arrangement_materialized(
                     conn, song_id=song_id, session_id=session_id, send_fn=send_fn,
                 )
-                # The assert HALTs only on SILENT corruption; a per-clip re-probe
-                # FAILURE is not corruption, so the assert returns normally — but
-                # those placements went UNVERIFIED, so "OK" would overstate the
-                # guarantee (the exact gap the assert exists to close). Surface the
-                # unverified count as a benign warning (does not flip the exit) so
-                # "couldn't verify N clips" reads distinctly from "verified all N".
+                # The assert HALTs only on SILENT corruption; a per-clip NOTE
+                # re-probe failure is not corruption (the clip is demonstrably at
+                # the right position — only its contents could not be read), so the
+                # assert returns normally — but those placements went UNVERIFIED, so
+                # "OK" would overstate the guarantee (the exact gap the assert
+                # exists to close). Surface the unverified count as a benign warning
+                # (does not flip the exit) so "couldn't verify N clips" reads
+                # distinctly from "verified all N".
+                #
+                # ARR-ORPHAN2: a whole-LANE probe failure is deliberately NOT in
+                # this benign channel — it now raises above (`lane_probe_failed` is
+                # corruption), because the pusher plans its clear from that same
+                # probe, so an unreadable lane was never cleared and never rebuilt.
                 unverified = [
                     r for r in integrity_report.results
                     if r.status == "probe_failed"
@@ -1821,10 +1828,13 @@ def execute_push(
                     "error": str(exc),
                     "hint": (
                         "the materialized arrangement does not match the DB "
-                        "(drop / orphan / stack / drift). Re-run `execute --only "
-                        "arrangement --probe` (idempotent clear+rebuild); if it "
-                        "persists, run `hallucinote verify-arrangement` and inspect "
-                        "the named track/section."
+                        "(drop / orphan / stack / drift), or a track's arrangement "
+                        "lane could not be read at all — an unreadable lane was "
+                        "never cleared and never rebuilt, so its content is "
+                        "unproven. Re-run `execute --only arrangement --probe` "
+                        "(idempotent clear+rebuild); if it persists, run "
+                        "`hallucinote verify-arrangement` and inspect the named "
+                        "track/section."
                     ),
                 })
                 _halt(

@@ -1444,3 +1444,78 @@ def test_every_emitted_pull_key_kind_is_declared():
         side="pull",
         declare_hint="Declare each in _HANDLERS in sync/pull/plan.py.",
     )
+
+
+# --- ARR-ORPHAN2: the clear must remove orphans, and a lane it cannot
+# read is corruption, not a benign skip ---
+
+
+def test_plan_push_arrangement_clears_unlinked_orphan_clip(
+    conn, song, session, track, clip
+):
+    """ARR-ORPHAN2 regression. An ORPHAN arrangement clip — one with no DB
+    placement and no ``ableton_link`` binding, e.g. a hand edit or a leftover
+    from a mis-materialized push — must be deleted by the clear like any other.
+    The clear is driven purely by the probe inventory, never by "clips I can map
+    back to a DB row"; the witness bug (a surviving orphan on Lead Gtr while the
+    lane's three real placements vanished) is only reproducible when the lane was
+    never probed at all, not when a probed clip was spared."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=4
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip,
+        start_bar=57.0, end_bar=61.0,  # beat 224
+    )
+    # Live's lane holds ONLY an orphan at beat 0 (no DB placement there, and no
+    # arrangement_clip link was ever recorded for it).
+    live = {4: [
+        {"arrangement_clip_index": 1, "start_beats": 0.0, "name": "Lead Gtr 2"},
+    ]}
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track=live,
+    )
+    seq = [(c.args["action"], c.args.get("clip_index")) for c in plan.calls]
+    assert seq == [("delete", 1), ("create", None)]
+    assert plan.calls[0].key == "arrangement_clip_clear:4:1"
+    assert plan.calls[1].args["start_beats"] == 224.0
+
+
+def test_plan_push_arrangement_full_extent_clip_at_zero_does_not_block_creates(
+    conn, song, session, track, clip
+):
+    """ARR-ORPHAN2 regression: a single clip at beat 0 whose LENGTH spans the
+    whole arrangement must not swallow later placements. The projection deletes
+    it FIRST, so every subsequent create lands on empty timeline — the creates
+    are never issued into an occupied region (where Live would refuse and the MCP
+    create handler would fail loud)."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=4
+    )
+    for start_bar in (57.0, 60.5, 66.5):  # beats 224 / 238 / 262
+        M.add_arrangement_clip(
+            conn, song_id=song, track_id=track, clip_id=clip,
+            start_bar=start_bar, end_bar=start_bar + 4.0,
+        )
+    live = {4: [
+        # One clip at 0 covering the entire song (length 400 beats).
+        {"arrangement_clip_index": 1, "start_beats": 0.0, "length": 400.0,
+         "name": "Lead Gtr 2"},
+    ]}
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track=live,
+    )
+    actions = [c.args["action"] for c in plan.calls]
+    assert actions == ["delete", "create", "create", "create"]
+    assert [c.args["start_beats"] for c in plan.calls[1:]] == [224.0, 238.0, 262.0]
+
+
+# --- arrangement projection: routing + §6a all-or-nothing ---

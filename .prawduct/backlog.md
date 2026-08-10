@@ -1172,8 +1172,12 @@ sections only via explicit `/backlog update` calls.
 
   **Scope boundary — framework owns decision-free primitives ONLY.** The **windowed-reveal generator** (center-pinning, `width = f(breath)`, the forward-mirror fold, the summit release) is deliberately NOT a framework ask — it encodes per-song musical decisions and lives in `songs/swell/breath.py` (great-art-not-software: helpers remove bookkeeping, never make the musical decision). The only promotable seam is the thin decision-free translation *(window start/length, reverse, level) per phrase → trigger note + device-parameter envelopes* — promote on the **rule of three**, not pre-emptively. **Why `stage: requirements`:** the DB schema + push materialization for "instrument-with-assigned-sample" needs a spec (where the sample assignment lives in the device-chain model, how it composes with the device-load push phase, how it reuses `audio_file`/`assets/` resolution). **Verifiable signal:** a `build.py` authoring a Simpler-with-assigned-sample part + `S Start`/`S Length` device-parameter envelopes + a volume aura **pushes to Live and plays the windowed, center-pinned reveal audibly, idempotently** — with no audio-clip-push dependency. **Sized:** medium (schema + push device-load-with-sample + a decision-record on placement). (swell buried-"we" centerpiece cluster, user, 2026-06-12)
 
+## Archive
+
+Closed investigations — no fix possible / structural-close on Ableton's roadmap. Kept for search so a future scrub doesn't re-open them without new evidence. Status `dropped` = investigated and intentionally not pursued; `shipped` = built and closed.
+
 - **[STR-4C8N]** Stereo correlation / mono-compatibility as a mix-review lens, with no-op detection for width controls
-  `effort: M · impact: L · area: analysis · source: user · added: 2026-08-10 · status: promoted · related: STR-9P4M, MIX-3S7P, AUD-8H2M · stage: requirements · reviewed: 2026-08-10`
+  `effort: M · impact: L · area: analysis · source: user · added: 2026-08-10 · status: shipped · related: STR-9P4M, MIX-3S7P, AUD-8H2M · stage: requirements · reviewed: 2026-08-10 · closed-by: str-4c8n`
 
   **Raised by the user (2026-08-10, dogfood on `the-argument`).** `MixReport` should carry a **per-stem stereo-correlation / mono-sum** measurement, and `/mix-review` should read it as a lens beside masking. Today every review input (masking, bed buildup, loudness, attribution, reverb, timing/feel, cross-rhythm, melody, recurrence) is blind to whether a part is actually *in stereo*, and to whether it *survives a mono fold*.
 
@@ -1198,10 +1202,6 @@ sections only via explicit `/backlog update` calls.
   **Why `stage: requirements` (needs design before code, per Principle 6):** open questions — the per-stem metrics `ableton_analysis` must emit (correlation, mono-sum loss in dB, per-band vs. broadband — low-frequency mono-compat is the classic case), the **grain** (per-stem / per-section / both), how "element-aware" expectations are expressed without becoming a threshold table, how a **declared stereo intent** is stated so the lens has something to contradict (shared with STR-9P4M's authoring half), and the **no-op detection** rule specifically (a large width/spread setting paired with a near-+1.0 correlation is the signature — it needs the *setting* alongside the *measurement*, so the lens reads the device chain, not only the audio).
 
   **Verifiable signal:** `MixReport` carries per-stem correlation + mono-sum loss in dB; `/mix-review` surfaces it **only** where it contradicts a declared intent, as a producer's question (the flanger case reads *"you added the flanger to give the guitars stereo — they're measuring bit-exact mono; intended?"*), learns the revealed intent back as a per-song annotation so it never re-flags, and the no-op case (high width setting + near-mono measurement) is distinguished from the honest-mono case. **Sized:** medium (analyzer metric + lens + finding, on the proven declared-intent-lens pattern; discovery-gated, and gated on the STR-9P4M altitude call above). (user mono-compatibility dogfood request, `the-argument` chorus flanger incident, 2026-08-10)
-
-## Archive
-
-Closed investigations — no fix possible / structural-close on Ableton's roadmap. Kept for search so a future scrub doesn't re-open them without new evidence. Status `dropped` = investigated and intentionally not pursued; `shipped` = built and closed.
 
 - **[DOC-5H2T]** CLAUDE.md still enumerates the pre-`/song-brief` lifecycle — the elicitation stage is inert for any agent that doesn't open `/song-workflow`
   `effort: S · impact: M · area: framework-wiring · source: builder · added: 2026-08-07 · reviewed: 2026-08-07 · status: shipped · stage: ready · closed-by: feat/song-elicitation · related: DOC-2P6J, TST-4M9P, TMP-7B3X · refs: .prawduct/artifacts/elicitation-and-stage-exit-criteria.md#recommendation--the-claudemd-amendment-not-applied, CLAUDE.md`

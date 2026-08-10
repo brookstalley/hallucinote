@@ -14,15 +14,66 @@
      key delimiter); keys are freeform (unknown keys are preserved). A tag line
      placed after prose is treated as body text, not metadata.
 
-     RELEASE VOCAB for in-flight work (VEW-9QH4): tag `release=unreleased` while the
-     work sits on develop with no release cut. At release cut, flip it to the real
-     `release=vX.Y.Z` (mirrors how v1.4.0/v1.5.0 tags were flipped). This avoids
-     pre-bumping a version (against `feedback_no_premature_version_bump`) or
-     mislabeling in-flight work as an already-shipped version. -->
+     RELEASE VOCAB for in-flight work: an entry sitting on develop with no release
+     cut carries NO `release=` key at all — that ABSENCE is the release-pending
+     state, and it is what `check-releasability` enumerates. At release cut, ADD
+     `release=vX.Y.Z`. Do not write a placeholder: the checker treats ANY value as
+     "already released", so `release=unreleased` silently drops the entry's whole
+     scope out of the pending set and the work never ships. (This supersedes the
+     VEW-9QH4 placeholder convention, which four entries followed until 2026-08-10
+     — the checker rejects it outright. Omitting the key satisfies the same
+     original concern: no version is pre-bumped, and nothing is mislabelled as
+     already shipped.) -->
 
-## 2026-08-07 — `/song-brief`: a stage may not emit an unresolved gap
+## 2026-08-10 — Stereo as a measured lens: correlation, mono-sum, and width that reads as a no-op
 
-<!-- prawduct: type=feature | scope=song-lifecycle | status=shipped | release=unreleased -->
+<!-- prawduct: type=feature | chunks=A1,A2,A3 | scope=str-4c8n | status=shipped -->
+
+A `MixReport` that could not see whether a part was actually in stereo, and an
+automation verifier that called a working comb filter unrealized. Both were found
+the same way — by a device doing nothing while every symbolic and API-level check
+said it worked.
+
+**The incident.** A chorus flanger was added to `the-argument` to give a mono
+guitar chain stereo. `Spread` was 75 %, its `Dry/Wet` automation verified both
+recorded and playing, the playhead reading back the authored value exactly. The
+rendered stem was bit-exact mono: `L−R` at −180 dB. `Mod Phase` was 0.0°, so both
+channels' LFOs ran in lockstep — `Spread` spreads notch frequencies *within* a
+channel; `Mod Phase` is the L/R offset. Nothing in the report could have said so.
+
+**A1 — per-stem stereo metrics.** A new `audio/stereo.py` carries Pearson L/R
+correlation and mono-sum loss in dB, per stem and per section, in the same shape
+`masking` uses. Mono-native surfaces report `+1.0` / `0.00 dB` rather than null:
+bit-exact mono is a measurement, not a gap.
+
+**A2 — the verifier had one probe where it needed two.** `_verify_timbre` judged
+a device parameter by spectral centroid alone, so a comb filter — which changes
+the stereo image and leaves the brightness where it was — read as "not realized".
+It now accepts timbre OR image. Two real bugs surfaced under that fix: the
+silence gate summed to mono first, so a near-anti-phase window (the single signal
+shape the image probe most wants to see) took the "too quiet to characterise"
+branch at full stereo level; and the centroid was computed on the same mono sum,
+so anti-phase read as a 440→0 Hz timbre collapse. Both now measure per-channel.
+
+**A3 — declared width joined to measured width.** Width controls a song declares
+are collected through the MCP handler (mirroring `declared_reverb_sends`, so
+`analyze.py` stays DB-agnostic) and paired with what the audio did. This is what
+catches the second failure mode, which is quieter than the first: Drone's
+`Utility Stereo Width` at **165 %** — the most aggressive setting in the song —
+producing the *least* effect, correlation +0.898 and only −0.23 dB of mono-sum
+loss, because it was multiplying a side signal that wasn't there. Three instances
+of that one bug class were in a single song. A width control on a *return* is
+reported as invisible-to-this-measurement rather than skipped, because per-stem
+measurement cannot see it — a distinction the first cut got wrong.
+
+**The lens emits no findings.** Measurement is neutral; all of the reading lives
+in `/mix-review`, which now carries guidance for both failure modes. The plan's
+original wording claimed findings at severity `info`; it ships none, which
+conforms more strictly than it was written.
+
+**Not settled here:** aesthetic stereo grading (placement, width, movement against
+declared spatial intent) stays with **STR-9P4M**. This work catches deliverability
+and no-op failures, which is a different question from taste.
 
 A new lifecycle **stage 0**, `/song-brief`, in front of `/song-new`, plus a
 **definition of done for every authoring stage**. The rule both serve: *a stage
@@ -87,7 +138,7 @@ instructions string and `resources/` are both outside `_FINGERPRINT_PATHS`, so
 
 ## 2026-08-07 — Six defects the demo song found by actually being rebuilt
 
-<!-- prawduct: type=bugfix | chunks=B1 | scope=tour+push+workspace+db-converger | status=shipped | release=unreleased -->
+<!-- prawduct: type=bugfix | chunks=B1 | scope=tour+push+workspace+db-converger | status=shipped -->
 
 Building `examples/angle-of-the-light` end to end surfaced six framework defects.
 Every one was found by *reproducing from scratch* — pushing into an empty Live set,
@@ -170,7 +221,7 @@ Suite 4830 -> 4865 passing across the batch; ruff and mypy clean.
 
 ## 2026-08-06 — The tour's capture tooling, built against probes that kept saying no
 
-<!-- prawduct: type=feature | chunks=A2,A3,A4 | scope=tour | status=shipped | release=unreleased -->
+<!-- prawduct: type=feature | chunks=A2,A3,A4 | scope=tour | status=shipped -->
 
 Three chunks of Phase A tooling, and all three had the mechanism their plan specified
 falsified by the verify-api probe that plan required first. That is the whole story of
@@ -219,7 +270,7 @@ test, not a comment.
 
 ## 2026-08-06 — Session transcripts become publishable, behind a gate that fails closed
 
-<!-- prawduct: type=feature | chunks=A1 | scope=tour | status=shipped | release=unreleased -->
+<!-- prawduct: type=feature | chunks=A1 | scope=tour | status=shipped -->
 
 `tools/tour_transcript.py` renders a real Claude Code session JSONL into a markdown
 excerpt fit to publish, so the tour quotes genuine agent output instead of a hand-written

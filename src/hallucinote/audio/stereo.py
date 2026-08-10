@@ -36,8 +36,9 @@ import numpy as np
 from .report import StereoMetrics
 
 # A fully-cancelling mono sum is -inf dB, which is not valid JSON and not a
-# useful reading. Floor it at the same depth the rest of the codebase treats as
-# digital silence, so the number stays finite and obviously "gone".
+# useful reading. Floor it deep enough to read unambiguously as "gone" while
+# staying finite. (-180 dBFS is far below any real signal; it is this module's
+# own choice, not a shared constant — nothing else in the codebase defines one.)
 _SILENCE_FLOOR_DB = -180.0
 
 # Below this RMS the window carries no signal to characterise — reporting a

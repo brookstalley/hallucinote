@@ -501,3 +501,42 @@ b-natural's first push reported `OK — all 14 phases completed` with both `enve
 b-natural's melody lens raised three declared-vs-measured questions, and all three resolved differently. `contour_intent="arch"` was declared out of habit and the line genuinely climbed to a late apex — the *declaration* moved. The chorus had drifted off its motif to 27% cell coverage, which meant a listener would hear a nice tune rather than the same tune resolved — the *music* was rewritten. `repetition_appetite` still read "moderate" afterwards and was left that way, because the claim being made was motivic ECONOMY, which the recurrence lens asserts separately (1/1 motifs recurring, 100% coverage) — the metric was measuring literal repetition, which a line that varies its cell every return should score low on.
 
 **How to apply.** (1) Write which side moved, and why, next to the declaration — the reasoning is the artifact, the value is not. (2) A declaration that changes to match a measurement is only honest if the measurement described the intent better than the declaration did; say so. (3) When one lens's metric and another lens's metric disagree about the same musical claim, name which lens owns the claim rather than optimizing both. (4) Two different lines under one layer name need two profiles; a single profile flattens a real intent and makes the lens question the arc the song is.
+
+## When a declared audible gesture "doesn't happen", measure the RENDERED AUDIO before diagnosing the mechanism, because a verified-correct automation arc proves the arc and not the sound
+
+Two consecutive sessions misdiagnosed the same silent failure. Session one blamed
+a latched `back_to_arranger` override; session two (me) blamed short automation
+arcs not landing. Both were wrong, and both were reached by inspecting mechanism
+— `automation_state` read 1 (playing), and parking the playhead mid-sweep read
+back the exact authored value 0.387. The arc was perfect. The device it drove
+could not do what was asked: `Mod Phase 0.0°` ran both channels' LFOs in
+lockstep, so a wet flanger stayed bit-exact mono. Only a per-stem `L−R`
+measurement on rendered audio separates "the automation didn't land" from "it
+landed on a parameter that cannot express the intent". (2026-08-10, STR-4C8N)
+
+**How to apply.** (1) Before diagnosing WHY a gesture didn't happen, render and measure the stem — `automation_state`, a parameter read-back and a green push all describe the mechanism, not the sound. (2) A lens that verifies the arc is not verifying the intent; ask which one you actually need. (3) When two sessions running reach two different wrong causes, the shared mistake is usually the missing measurement, not the reasoning.
+
+## When a verification lens reports "no effect", check whether the PROBE can see the effect that device produces, because the wrong probe manufactures false negatives that look like real defects
+
+Device-parameter verification probed spectral centroid alone. A flanger is a comb
+filter and notches roughly symmetrically, so it barely moves the centroid however
+wet it gets — producing `no audible timbre shift (2244→2219 Hz, 1% < 12%)`
+against automation that provably landed. The fix is a second probe (stereo
+correlation), not a looser threshold. The regression test that matters pins the
+opposite direction: identical before/after windows must STILL read not-realized,
+because a fix for false positives that becomes a rubber stamp is worse than the
+bug. (2026-08-10, STR-4C8N A2)
+
+**How to apply.** (1) Ask what the device physically does to the signal before trusting a probe's verdict — a comb filter moves the image, not the brightness. (2) Fix a false negative by ADDING a probe, never by loosening a threshold. (3) Pair every such fix with a test asserting the opposite direction still fails, or the fix is a rubber stamp. (4) Check the fixture models the real mechanism: simulating width with injected noise also changes the spectrum, so it tests something else.
+
+## When an acceptance criterion is derived from a COUNT of symptoms, re-derive it per-symptom before treating a partial pass as failure, because some of the symptoms may be the tool being right
+
+A2's criterion said "the three Dry/Wet findings stop being reported as
+not-realized", written from the finding count on the assumption all were false.
+Each arc had three change points; the beat-288 move was `0.38 → 0.42`, a 4 %
+change that is genuinely inaudible, so "not realized" there was correct. Meeting
+the criterion as written would have required making the probe lie. Correct the
+criterion in the plan and say so — never quietly pass, and never loosen the code
+to satisfy a wrong spec. (2026-08-10, STR-4C8N A2)
+
+**How to apply.** (1) Expand a count into its individual symptoms before calling a partial pass a failure. (2) If satisfying the criterion would require the tool to report something untrue, the criterion is wrong — correct it in the plan and say so. (3) Never tune a threshold until a count reaches zero; that is how a rubber stamp gets built and called a fix.

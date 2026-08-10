@@ -434,10 +434,10 @@ def _realize_widths(
                 "no declared width controls were RECOGNISED, so there is no "
                 "declared-vs-measured pairing to make (the per-stem `stereo` "
                 "block is still measured and reported). Recognition is a closed "
-                "set of exact parameter names on top-level track and return "
-                "devices; a width control under another name, or inside a rack's "
-                "nested chain, is not seen — so this is 'none recognised', NOT "
-                "'none authored'"
+                "set of exact parameter names (currently: Stereo Width) on top-level "
+                "track and return devices; a width control under another name, or "
+                "inside a rack's nested chain, is not seen — so this is "
+                "'none recognised', NOT 'none authored'"
             ),
         }]
 

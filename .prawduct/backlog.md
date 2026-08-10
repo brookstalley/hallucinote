@@ -1104,6 +1104,21 @@ sections only via explicit `/backlog update` calls.
 
   **Verifiable signal:** `track:3 Dry/Wet` at beat 265 reads **realized** on the capture above, while the beat-288 verifications (a `0.38 → 0.42` move, genuinely inaudible) keep reading **NOT realized** — the fix must not become a rubber stamp. Today: `automation.py:191` clamps the before-window to `b_beat - 2.0` regardless of whether the preceding segment ramps. (found during STR-4C8N A2, 2026-08-10)
 
+- **[SYN-6Q3D]** `compat check --probe` probes a preset_query with the wrong matcher, producing a false `kind_ambiguous` refusal
+  `effort: S · impact: M · area: sync · source: builder · added: 2026-08-10 · status: open · stage: ready · related: STR-4C8N, SYN-3P8M · refs: src/hallucinote/sync/compat.py, src/hallucinote/preset_query.py`
+
+  **Mechanism.** `_dry_run_key()` (`src/hallucinote/sync/compat.py:318`) keys the browser dry-run cache on `(root, pattern, path_prefix)` and **omits `mode`**. `_probe_browser_dry_runs` (`:813`) then builds the `ableton_browser(action='search')` params from `pattern` / `root` / `path_prefix` only (`:840–847`) — so a `preset_query` authored as `mode='exact'` is probed with the browser's DEFAULT substring matcher, and the gate classifies on a match count the real loader would never produce.
+
+  **Reproduced.** `the-argument`'s Rock Drums declares `{root: 'drums', pattern: 'Kit-BigPunchy.adg', mode: 'exact'}`. Exact returns **1** match; substring returns **2** (`Kit-BigPunchy.adg` and `MPE Kit-BigPunchy.adg`). `compat check` therefore reported `kind_ambiguous` and exited 1 — "the strict loader refuses on multi-match" — on a device that loads perfectly. Proven false empirically: the push proceeded, the kit loaded, and the drum stem rendered at −23.6 dB RMS.
+
+  **Why it matters.** The gate is a refuse-and-confirm barrier in `/ableton-push` step 0b: exit 1 asks the user "some devices won't load cleanly… continue anyway?" So this can block a push, or train users to wave the gate through, on a song that is fine. The loader itself honors `mode` (`src/hallucinote/preset_query.py` → `name_matches(name, pattern, mode, case_sensitive)`, the lock-tested mirror of the MCP resolver) — this is purely a gate-vs-loader disagreement, which is the worst kind: the check disagrees with the thing it is checking.
+
+  **Second, quieter consequence.** Because `mode` is not in the key, two devices whose `preset_query` differs ONLY in `mode` collide in the dry-run cache and share one match count (`_collect_preset_query_specs` dedupes by that key, `:807`). `case_sensitive` has the same defect on both halves — absent from the key and absent from the probe params — and `name_matches` takes it, so fix both together.
+
+  **Fix sketch.** Include `mode` (and `case_sensitive`) in `_dry_run_key`, and pass both through in `_probe_browser_dry_runs`'s search params so the probe uses the same matcher the loader will. The wire side already supports it: `ableton_browser(action='search')` declares optional `mode` and `case_sensitive` params (`hallucinote_mcp/src/hallucinote_mcp/actions/browser.py:145,157`), so this is a pass-through, not a new capability. The key's type annotation (`tuple[str, str, tuple[str, ...]]`) is threaded through `check_song`/`_walk`/`classify_*` signatures and widens with it.
+
+  **Verifiable signal:** `hallucinote compat check the-argument --probe` exits 0 with `kind_ambiguous: 0`, while a genuinely ambiguous substring query still reports `kind_ambiguous` — the fix must not become a rubber stamp. Today: `compat.py:318` returns a 3-tuple with no `mode`, and `:840` builds search params with no `mode`. (found 2026-08-10 while pushing `the-argument`)
+
 ## Promoted
 
 - **[SMP-7K2D]** Sample-instrument + the playback-parameter model — author a Simpler/Sampler with an assigned sample file from build.py/DB (the swell buried-"we" keystone primitive; absorbs the cluster)

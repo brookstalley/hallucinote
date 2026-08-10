@@ -42,7 +42,15 @@ _SILENCE_FLOOR_DB = -180.0
 
 # Below this RMS the window carries no signal to characterise — reporting a
 # correlation for dither-level noise would be inventing a reading.
-_QUIET_RMS = 1e-9
+#
+# Deliberately the SAME value as ``automation._QUIET_RMS``, and for a sharper
+# reason than tidiness: this lens's "healthy" reading (+1.0 correlation, 0 dB
+# loss) is also its FAILURE SIGNATURE — bit-exact mono. A floor low enough to
+# measure an inaudible stem would hand back that signature for a track nobody can
+# hear, which reads as "declared wide, measured mono" and sends a producer
+# chasing a width bug on silence. Anything too quiet for the automation lens to
+# characterise is too quiet for this one to accuse.
+_QUIET_RMS = 1e-5
 
 
 def measure_stereo(audio: np.ndarray) -> StereoMetrics:

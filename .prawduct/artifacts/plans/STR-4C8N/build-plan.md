@@ -10,7 +10,7 @@ governed_by:
   - artifact: masking-analyzer-goals
     dispositions:
       - "measurement is neutral; the report never grades → conforms (this plan adds metrics + a declared-vs-measured join to the report, and puts ALL grading in the /mix-review skill)"
-      - "a measurement must never become a verdict → conforms (findings are emitted as neutral evidence with severity `info`; the skill gates surfacing on intent)"
+      - "a measurement must never become a verdict → conforms, and MORE strictly than first written: this lens emits no findings at all. The original wording claimed findings at severity `info`; it ships none, so the skill is the only place any judgement happens."
   - artifact: intent-architecture
     dispositions:
       - "declared intent enters analysis through the MCP handler, not by analyze.py reaching into the DB → conforms (A3 mirrors `declared_reverb_sends`)"
@@ -169,7 +169,7 @@ item — filed rather than smuggled in here.
 declared width-type device params from the song DB and passes them into
 `analyze_mix` as `declared_width_controls`, mirroring `declared_reverb_sends`
 exactly — `analyze.py` stays DB-agnostic. The report gains a neutral
-`width_realization` list: declared control, its declared value, the measured
+`width_realizations` list: declared control, its declared value, the measured
 `mono_sum_loss_db` on that surface, and nothing else. No severity, no verdict.
 
 *Skill side:* `/mix-review`'s MEASURE section gains a `stereo` /
@@ -184,8 +184,10 @@ correlation, element-aware. The canonical example is the motivating incident.
 - A declared width control with a large measured loss is likewise represented
   (the Brass case as it was: 155 % declared, −3.84 dB measured).
 - `analyze_mix` gains no DB import; the join happens in the handler.
-- When nothing declares a width control, `width_realization` is a
-  `skipped_analyses` entry, not silently absent.
+- When nothing declares a width control, a `width_realization`-kind
+  `skipped_analyses` entry is recorded, not silently absent — and it says
+  "none RECOGNISED", never "none authored", because recognition is a closed
+  name set over top-level devices only.
 - `/mix-review`'s SKILL.md states the dB-not-correlation rule and the
   only-on-contradiction gate, and carries the caveat that broadband correlation
   is blunt for a part that is wide in one band and mono in another.

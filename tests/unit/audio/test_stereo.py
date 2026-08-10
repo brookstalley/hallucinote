@@ -79,32 +79,29 @@ class TestDecorrelation:
         assert -3.0 < m.mono_sum_loss_db < 0.0
 
 
-class TestRealRenderValues:
-    """Reproduce the hand-computed numbers from the-argument's render.
+class TestNoOpVersusRealWidth:
+    """The property that makes the lens diagnostic: a near-mono surface and a
+    genuinely wide one must separate, and separate in the ACTIONABLE number.
 
-    These are the plan's A1 acceptance criteria. They are expressed as the
-    RELATIONSHIPS that made each case diagnostic, not as frozen constants — a
-    re-render legitimately shifts the third decimal, and a test that pins noise
-    would have to be weakened later, which tests must never be.
+    These are synthetic signals chosen to bracket the two shapes — they do NOT
+    reproduce the-argument's measured values, and must not claim to. That
+    verification was done against the real render and is recorded in the plan's
+    A1 acceptance criteria and the commit; asserting a rendered constant here
+    would pin audio this test never loads.
     """
 
-    def test_no_op_width_control_is_distinguishable_from_real_width(self) -> None:
-        # Drone: 165% declared width, +0.898 correlation, -0.23 dB loss — an
-        # aggressive setting doing almost nothing, because there is barely any
-        # side signal to multiply.
+    def test_near_mono_and_wide_separate_in_mono_sum_loss(self) -> None:
         rng = np.random.default_rng(11)
         base = rng.standard_normal(48000).astype(np.float32)
         near_mono = measure_stereo(
-            _stereo(base + base * 0.0, base + rng.standard_normal(48000).astype(np.float32) * 0.05)
+            _stereo(base, base + rng.standard_normal(48000).astype(np.float32) * 0.05)
         )
-        # Brass: -0.174 correlation, -3.84 dB — real width, costing mono level.
         wide = measure_stereo(
             _stereo(base, -base + rng.standard_normal(48000).astype(np.float32) * 0.5)
         )
         assert near_mono.correlation > wide.correlation
         assert near_mono.mono_sum_loss_db > wide.mono_sum_loss_db
-        # The separation is the whole point: a no-op reads near 0 dB loss while
-        # genuine width costs real mono level.
+        # A no-op costs almost no mono level; genuine width costs real level.
         assert near_mono.mono_sum_loss_db > -1.0
         assert wide.mono_sum_loss_db < -3.0
 

@@ -321,6 +321,16 @@ def _collect_declared_width_controls(
     Mirrors ``_collect_declared_sends``: the DB is keyed by UUID, captures by
     surface index, so the translation happens HERE and ``analyze_mix`` stays
     DB-agnostic and joins on ``surface_id`` alone.
+
+    **Two known blind spots, disclosed rather than silent** (the report's skipped
+    entry says "none recognised", never "none authored"):
+
+    * Only names in :data:`_WIDTH_PARAMETER_NAMES` are recognised.
+    * Only TOP-LEVEL devices on tracks and returns are walked —
+      ``get_devices_for_track`` / ``get_devices_for_return`` do not recurse into a
+      rack's nested chains, so a Utility inside an Instrument or Audio Effect Rack
+      is invisible here. Widening this means a nested-chain walk; until then the
+      honest claim is the narrow one.
     """
     controls: list[DeclaredWidthControl] = []
 

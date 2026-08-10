@@ -178,9 +178,17 @@ first — see "Refreshing the analysis"). For each section, you have:
   `conflicting_declarations` (non-empty) means sends into one return declared
   different RT60s — one device can't have two decay times; surface the conflict.
 - `automation_verifications` — was authored time-varying automation realized in
-  audio? Per value-changing breakpoint: a `device_parameter` flip (e.g. Amp
-  Type Clean→Heavy) is a **directional** timbre verdict (`spectral_centroid_hz`
-  before/after — "a shift occurred", not a scalar target); a `send_level` step
+  audio? Per value-changing breakpoint: a `device_parameter` flip is verified on
+  **TWO probes — timbre OR image** (STR-4C8N), because spectral centroid alone
+  cannot see a comb/width effect (a flanger notches roughly symmetrically, so it
+  barely moves the centroid however wet it gets, and centroid-only verification
+  reported "not realized" against automation that provably landed). **The
+  `metric`/`before`/`after` fields are ALWAYS the centroid pair, whichever probe
+  fired — so never read them as the evidence.** A realized verdict carried by the
+  image probe sits beside a nearly-unchanged centroid, and reporting that as a
+  brightness change is a claim the audio does not support. **Read the `note`: it
+  names the probe** ("timbre shift realized …" vs "image shift realized: L/R
+  correlation moved …"). A `send_level` step
   is a level move in the declared direction; the post-fader mixer kinds are
   verified on the MASTER (AUD-3F8M) — `mixer_volume` as a `master_rms_db`
   level step, `mixer_pan` as a `master_balance_db` L−R shift, each judged
@@ -205,7 +213,10 @@ first — see "Refreshing the analysis"). For each section, you have:
   than 2 sections declare energy. It is a RULER — it never re-authors the curve
   or names a target loudness.
 - `stereo` per surface + `width_realizations` — the image lens (STR-4C8N).
-  Per stem, `correlation` (Pearson L/R, +1 = bit-exact mono) and
+  Per stem, `correlation` (Pearson L/R; `+1` is bit-exact mono OR any
+  perfectly correlated pair — a level-imbalanced but correlated stem also reads
+  `+1.0` while still losing mono level, so never narrate `+1` as "bit-exact
+  mono" on its own) and
   **`mono_sum_loss_db`** — the level the surface LOSES summed to mono.
   **Quote the dB, never the correlation.** "-3.8 dB in mono" says what a listener
   on a phone speaker loses, in units a composer already thinks in; "-0.174" needs
@@ -285,9 +296,11 @@ When you do recommend, rank musically (the order working engineers prefer):
    don't boost the hero) — for steady tonal clashes (mud, box).
 3. **Sidechain / dynamic duck** (`/mix-sidechain`) — for intermittent collisions
    where both must coexist; section-conditional.
-4. **Pan / depth** — weakest, mono-fragile; and note: the analyzer is mono-sum,
-   so it can't *see* pan separation (it may over-report a part that's already
-   panned clear — see caveats).
+4. **Pan / depth** — weakest, mono-fragile; and note: the MASKING pass is
+   mono-sum, so it can't *see* pan separation (it may over-report a part that's
+   already panned clear — see caveats). The per-surface `stereo` block is a
+   separate lens and DOES measure the image; it just says nothing about where
+   two parts sit relative to each other.
 
 Propose ranked options with rationale. Let the user choose. The industry
 consensus is unanimous that auto-applying produces generic, formulaic mixes.
@@ -372,8 +385,10 @@ State these when they bear on a finding; never present masking as ground truth:
   the analyzer applies the (Live-calibrated) fader gain to approximate mix
   level. Volume *automation* isn't applied yet, so a part that ducks under one
   section may read slightly hot. (build-plan F1/C3.)
-- **Mono-sum is pan-blind.** Two parts separated by panning may read as masking
-  when the ear separates them fine. Don't push the "pan" fix on a finding the
+- **Mono-sum is pan-blind — in the MASKING pass.** Two parts separated by
+  panning may read as masking when the ear separates them fine. (Per-surface
+  `stereo` is measured from the stereo file and is not subject to this; the two
+  answer different questions.) Don't push the "pan" fix on a finding the
   pan itself would resolve.
 - **Spectral ≠ perceptual.** Same-timbre / same-register parts (doubled guitars,
   a choir, unison strings) over-report — the ear separates them by pitch and

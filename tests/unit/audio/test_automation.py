@@ -424,18 +424,21 @@ def test_mixer_pan_model_breakdown_is_unmeasurable_not_false_verdict():
 # ---------------------------------------------------------------------------
 
 
-def _widened(mono_src: np.ndarray, *, spread: float) -> np.ndarray:
-    """Decorrelate a stereo pair by injecting an anti-correlated side signal.
+def _widened(mono_src: np.ndarray, *, shift_samples: int) -> np.ndarray:
+    """Decorrelate a stereo pair by PHASE-shifting one channel.
 
-    Stands in for what a flanger with a non-zero Mod Phase does: the channels
-    stop being identical while the CENTROID stays put, which is exactly the
-    case centroid-only verification cannot see.
+    This is how a flanger with a non-zero Mod Phase actually creates width, and
+    why it is invisible to a brightness probe: each channel keeps an identical
+    magnitude spectrum, so no per-channel timbre changes at all — only the
+    relationship between the channels does.
+
+    (An earlier version of this fixture injected white noise as the side signal.
+    That decorrelates too, but it genuinely brightens both channels, so it was
+    modelling a change the centroid SHOULD see — it only looked right because a
+    mono sum cancelled the noise away.)
     """
-    rng = np.random.default_rng(4028)
-    side = rng.standard_normal(mono_src.shape[0]) * spread
     out = mono_src.astype(np.float64).copy()
-    out[:, 0] += side
-    out[:, 1] -= side
+    out[:, 1] = np.roll(out[:, 1], shift_samples)
     return out
 
 
@@ -444,7 +447,7 @@ def test_device_parameter_image_shift_is_realized_without_a_timbre_shift():
     half = 2.0
     tone = sine(440.0, half, amplitude=0.5)
     dry = tone                      # channels identical — bit-exact mono
-    wet = _widened(sine(440.0, half, amplitude=0.5), spread=0.15)
+    wet = _widened(sine(440.0, half, amplitude=0.5), shift_samples=27)
     audio = _two_half_audio(dry, wet)
     env = DeclaredEnvelope(
         target_surface_id="track:3",
@@ -534,3 +537,34 @@ def test_timbre_shift_still_reported_as_timbre():
     v = results[0]
     assert v.realized is True
     assert "timbre" in v.note.lower()
+
+
+def test_anti_phase_window_is_not_mistaken_for_silence():
+    """The silence gate must read STEREO energy, not the mono sum.
+
+    A near anti-phase window sums to almost nothing while the surface plays at
+    full level. Gating on the mono sum called it "too quiet to characterise" and
+    skipped the whole verification — including the image probe, for which
+    anti-phase is the single most informative shape there is.
+    """
+    half = 2.0
+    tone = sine(440.0, half, amplitude=0.5)
+    mono_pair = tone                       # channels identical
+    anti = tone.copy()
+    anti[:, 1] = -anti[:, 1]               # sums to ~zero, still plainly audible
+    audio = _two_half_audio(mono_pair, anti)
+    env = DeclaredEnvelope(
+        target_surface_id="track:3",
+        target_kind="device_parameter",
+        parameter_path="Dry/Wet",
+        breakpoints=((0.0, 0.0), (8.0, 1.0)),
+    )
+    results = verify_envelope_realization(
+        env, audio, sample_rate=SAMPLE_RATE,
+        beat_map=_beat_map(audio), master_audio=audio,
+    )
+    assert len(results) == 1
+    v = results[0]
+    assert v.measurable is True, "an audible anti-phase window is not silence"
+    assert v.realized is True
+    assert "image" in v.note.lower()

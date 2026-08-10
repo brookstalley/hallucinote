@@ -10,14 +10,18 @@ wrapper that resolves the song DB connection, calls this function,
 serializes the report to JSON at
 ``songs/<slug>/analysis/<iso-ts>.json``, and returns the path.
 
-Intent extraction is narrow: DB-declared RT60s flow in via the
-``sends.intended_rt60_s`` column (see ``set_send_intended_rt60`` +
-``get_reverb_send_intents_for_song``). The MCP handler reads them and
-passes ``declared_reverb_sends=...`` here; this module is DB-agnostic
-and does the work on the list it's given. When no intent is declared,
-the reverb-verification section is emitted as a structured
-``skipped_analyses`` entry rather than silently absent — per CLAUDE.md
-"Never silently drop a requirement."
+Declared intent arrives as ARGUMENTS, never by reaching into the DB —
+this module is DB-agnostic and does the work on the lists it is given.
+The MCP handler resolves each from the song DB and passes it in:
+``declared_reverb_sends`` (``sends.intended_rt60_s``),
+``declared_envelopes`` (automation to verify), ``declared_width_controls``
+(dialled stereo-width params), ``sections`` and ``declared_energy``. The
+join is always on capture ``surface_id``, which is why no DB import
+belongs here.
+
+When a declared analysis has no intent to work from, it is emitted as a
+structured ``skipped_analyses`` entry rather than silently absent — per
+CLAUDE.md "Never silently drop a requirement."
 """
 from __future__ import annotations
 
@@ -427,10 +431,13 @@ def _realize_widths(
         return [], [{
             "kind": "width_realization",
             "reason": (
-                "no declared width controls — nothing in the song's device "
-                "parameters sets a stereo-width control, so there is no "
+                "no declared width controls were RECOGNISED, so there is no "
                 "declared-vs-measured pairing to make (the per-stem `stereo` "
-                "block is still measured and reported)"
+                "block is still measured and reported). Recognition is a closed "
+                "set of exact parameter names on top-level track and return "
+                "devices; a width control under another name, or inside a rack's "
+                "nested chain, is not seen — so this is 'none recognised', NOT "
+                "'none authored'"
             ),
         }]
 

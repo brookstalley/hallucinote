@@ -155,6 +155,20 @@ def _rms(mono: np.ndarray) -> float:
     return float(np.sqrt(np.mean(mono ** 2)))
 
 
+def _window_energy(stereo: np.ndarray, mono: np.ndarray) -> float:
+    """How much signal a window actually carries, for the silence gate.
+
+    The stereo RMS, falling back to the mono sum when no stereo window is
+    available. Using the mono sum alone would report a near anti-phase window as
+    silent at full level — the channels cancel in the sum but the surface is
+    plainly audible, and it is precisely the shape the image probe exists to
+    measure.
+    """
+    if stereo.size:
+        return float(np.sqrt(np.mean(stereo ** 2)))
+    return _rms(mono)
+
+
 def _change_points(breakpoints: Sequence[tuple[float, float]]) -> list[int]:
     """Indices i (≥1) where the value changes from breakpoints[i-1] — the beats
     at which an authored gesture takes effect."""
@@ -194,6 +208,8 @@ def verify_envelope_realization(
             hi = min(bps[i + 1][0], hi)
         before = _mono_window(surface_audio, beat_map, lo, b_beat)
         after = _mono_window(surface_audio, beat_map, b_beat, hi)
+        stereo_before = _stereo_window(surface_audio, beat_map, lo, b_beat)
+        stereo_after = _stereo_window(surface_audio, beat_map, b_beat, hi)
 
         if env.target_kind == "mixer_volume":
             master_before = _mono_window(master_audio, beat_map, lo, b_beat)
@@ -216,7 +232,15 @@ def verify_envelope_realization(
             ))
             continue
 
-        if _rms(before) < _QUIET_RMS or _rms(after) < _QUIET_RMS:
+        # Gate on the surface's STEREO energy, not its mono sum. A near
+        # anti-phase window has a near-zero mono sum at full stereo level, so a
+        # mono-only gate calls it "too quiet to characterise" and skips the whole
+        # verification — including the image probe, for which anti-phase is the
+        # single most informative signal shape there is.
+        if (
+            _window_energy(stereo_before, before) < _QUIET_RMS
+            or _window_energy(stereo_after, after) < _QUIET_RMS
+        ):
             results.append(EnvelopeVerification(
                 target_surface_id=env.target_surface_id,
                 target_kind=env.target_kind,
@@ -238,14 +262,38 @@ def verify_envelope_realization(
         if env.target_kind in _TIMBRE_KINDS:
             results.append(_verify_timbre(
                 env, b_beat, before, after, sample_rate,
-                stereo_before=_stereo_window(surface_audio, beat_map, lo, b_beat),
-                stereo_after=_stereo_window(surface_audio, beat_map, b_beat, hi),
+                stereo_before=stereo_before,
+                stereo_after=stereo_after,
             ))
         elif env.target_kind in _LEVEL_KINDS:
             results.append(_verify_level(env, bps, i, before, after))
         # Unknown kinds are filtered out by the handler before reaching here;
         # if one slips through, skip it silently (no false verdict).
     return results
+
+
+def _phase_robust_centroid(
+    stereo: np.ndarray, mono: np.ndarray, sample_rate: int
+) -> float:
+    """Spectral centroid that phase cancellation cannot fake.
+
+    Averaging L and R in the TIME domain cancels an anti-phase pair to silence,
+    whose centroid reads 0 Hz — so a purely spatial change reports as a total
+    timbre collapse ("440→0 Hz, +100%"). Averaging the two channels' MAGNITUDE
+    spectra instead measures the brightness each channel actually carries, which
+    is what "did the timbre change" means. Falls back to the mono window when no
+    stereo is available (hand-built fixtures).
+    """
+    if stereo.size == 0:
+        return spectral_centroid_hz(mono, sample_rate)
+    spec = 0.5 * (
+        np.abs(np.fft.rfft(stereo[:, 0])) + np.abs(np.fft.rfft(stereo[:, 1]))
+    )
+    total = float(spec.sum())
+    if total <= 0.0:
+        return 0.0
+    freqs = np.fft.rfftfreq(stereo.shape[0], d=1.0 / sample_rate)
+    return float((freqs * spec).sum() / total)
 
 
 def _verify_timbre(
@@ -270,8 +318,8 @@ def _verify_timbre(
     field's meaning never depends on which probe happened to fire; the note names
     the probe that carried the verdict.
     """
-    c_before = spectral_centroid_hz(before, sample_rate)
-    c_after = spectral_centroid_hz(after, sample_rate)
+    c_before = _phase_robust_centroid(stereo_before, before, sample_rate)
+    c_after = _phase_robust_centroid(stereo_after, after, sample_rate)
     rel = abs(c_after - c_before) / c_before if c_before > 0 else 0.0
     timbre_moved = rel >= _CENTROID_REL_THRESHOLD
     pct = rel * 100.0

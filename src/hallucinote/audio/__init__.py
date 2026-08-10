@@ -30,7 +30,7 @@ inside ``src/hallucinote/``" — audio is a sibling of ``db``, ``sync``,
 """
 from __future__ import annotations
 
-from .analyze import DeclaredReverbSend, analyze_mix
+from .analyze import DeclaredReverbSend, DeclaredWidthControl, analyze_mix
 from .automation import DeclaredEnvelope
 from .codeversion import disk_signature, is_stale, loaded_signature
 from .energy import realize_energy
@@ -55,6 +55,7 @@ __all__ = [
     "BandContribution",
     "DeclaredEnvelope",
     "DeclaredReverbSend",
+    "DeclaredWidthControl",
     "disk_signature",
     "EnergyInversion",
     "EnergyRealization",

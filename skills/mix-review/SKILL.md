@@ -204,6 +204,28 @@ first — see "Refreshing the analysis"). For each section, you have:
   authorship, not a defect. The whole `energy_realization` is `null` when fewer
   than 2 sections declare energy. It is a RULER — it never re-authors the curve
   or names a target loudness.
+- `stereo` per surface + `width_realizations` — the image lens (STR-4C8N).
+  Per stem, `correlation` (Pearson L/R, +1 = bit-exact mono) and
+  **`mono_sum_loss_db`** — the level the surface LOSES summed to mono.
+  **Quote the dB, never the correlation.** "-3.8 dB in mono" says what a listener
+  on a phone speaker loses, in units a composer already thinks in; "-0.174" needs
+  a decoder ring. `width_realizations` pairs each DECLARED width control with what
+  the audio actually did — the one reading no other tool can produce, because it
+  needs the declaration and the render together.
+  Two failure shapes, both otherwise SILENT:
+  **the no-op** — an above-unity declared width with a mono loss near zero, i.e.
+  a control multiplying a side signal that isn't there (measured on
+  `the-argument`: Drone declared 165 %, the most aggressive setting in the song,
+  measuring −0.23 dB, while Brass at 125 % measured −2.86 dB); and
+  **over-widening** — a large mono loss on an element that has to survive mono.
+  Gate exactly like masking: **surface only when it CONTRADICTS a declared
+  intent.** Element-aware, never a global threshold — a pad at +0.2 correlation is
+  fine, a kick at +0.2 is a problem, and a threshold that fires on both turns this
+  into a linter. The canonical case is a contradiction, not a number: a flanger
+  added expressly to give a mono guitar chain stereo, with the guitars measuring
+  bit-exact mono. Caveat to carry: both metrics are BROADBAND, so a part wide in
+  the highs and mono in the lows averages to something unremarkable and neither
+  localises where the image lives.
 
 Timing caveats to carry (don't over-claim): drift is measured against a
 constant-tempo grid and a swung part reads as small drift on the fine grid

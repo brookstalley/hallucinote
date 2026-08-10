@@ -62,7 +62,7 @@ numbers. That is A1's acceptance criterion, so nothing needs deciding first.
 
 - [x] Chunk A1: Per-stem stereo metrics in the MixReport
 - [x] Chunk A2: Dual-probe device-parameter verification (timbre OR image)
-- [ ] Chunk A3: Declared-vs-measured width join + `/mix-review` reading guidance
+- [x] Chunk A3: Declared-vs-measured width join + `/mix-review` reading guidance
 
 Context: Plan authored 2026-08-10 on `feat/str-4c8n-stereo-lens` off `develop`.
 Backlog item **STR-4C8N**; the sibling altitude question against **STR-9P4M**

@@ -126,6 +126,35 @@ class StereoMetrics:
 
 
 @dataclass(frozen=True)
+class WidthRealization:
+    """A declared width control beside what the audio actually did (STR-4C8N).
+
+    Neutral evidence, deliberately with NO severity and NO verdict — the same
+    stance as ``masking``. A width control doing nothing may be an oversight or
+    may be a part that simply has no side content to widen; a large mono loss may
+    be exactly the image the composer wanted. Only the reader knows, so
+    ``/mix-review`` grades this against declared intent and this row does not.
+
+    The pairing is the point: a declared value with no measured effect is the
+    silent failure nothing else in the toolchain can see, because catching it
+    needs BOTH the declaration and the rendered audio.
+
+      ``declared_display``    the control's value as authored ("165 %").
+      ``mono_sum_loss_db``    what the surface loses summed to mono. Near ``0``
+                              against an above-unity declared width is the
+                              no-op signature.
+      ``correlation``         the L/R correlation behind that loss.
+    """
+    surface_id: str
+    surface_name: str
+    device_name: str
+    parameter_name: str
+    declared_display: str
+    correlation: float
+    mono_sum_loss_db: float
+
+
+@dataclass(frozen=True)
 class StemMetrics:
     """One row per captured surface (audio track / return / master)."""
     track_id: str
@@ -662,6 +691,10 @@ class MixReport:
     overshoots: list[MasterOvershoot] = field(default_factory=list)
     reverb_verifications: list[ReverbVerification] = field(default_factory=list)
     automation_verifications: list[EnvelopeVerification] = field(default_factory=list)
+    # Declared width controls beside their measured effect (STR-4C8N). Empty
+    # with a skipped_analyses entry when the song declares none — never
+    # silently absent.
+    width_realizations: list[WidthRealization] = field(default_factory=list)
     per_section: list[SectionMetrics] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
     skipped_analyses: list[dict[str, Any]] = field(default_factory=list)
@@ -736,6 +769,18 @@ class MixReport:
             ],
             "automation_verifications": [
                 _envelope_to_dict(e) for e in self.automation_verifications
+            ],
+            "width_realizations": [
+                {
+                    "surface_id": w.surface_id,
+                    "surface_name": w.surface_name,
+                    "device_name": w.device_name,
+                    "parameter_name": w.parameter_name,
+                    "declared_display": w.declared_display,
+                    "correlation": _finite_or_none(w.correlation),
+                    "mono_sum_loss_db": _finite_or_none(w.mono_sum_loss_db),
+                }
+                for w in self.width_realizations
             ],
             "per_section": [
                 _section_to_dict(s, surface_names) for s in self.per_section

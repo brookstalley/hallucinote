@@ -59,6 +59,7 @@ try:
     from hallucinote.audio import (
         DeclaredEnvelope,
         DeclaredReverbSend,
+        DeclaredWidthControl,
         SectionEnergy,
         SectionWindow,
         TempoSegment,
@@ -96,6 +97,7 @@ except ImportError:  # pragma: no cover - exercised in Live's vendored env
     # to a type") on top of [assignment] for the None fallbacks.
     DeclaredEnvelope = None  # type: ignore[assignment, misc]
     DeclaredReverbSend = None  # type: ignore[assignment, misc]
+    DeclaredWidthControl = None  # type: ignore[assignment, misc]
     SectionEnergy = None  # type: ignore[assignment, misc]
     SectionWindow = None  # type: ignore[assignment, misc]
     TempoSegment = None  # type: ignore[assignment, misc]
@@ -300,6 +302,45 @@ def _collect_declared_sends(
         )
         for row in rows
     ]
+
+
+# Device parameters that are stereo-WIDTH controls. Deliberately a small closed
+# set of exact names rather than a substring match: "Spread" on a Phaser-Flanger
+# spreads notch frequencies WITHIN a channel and is not a width control at all —
+# mistaking it for one is the exact confusion that made a wet flanger read as
+# stereo when the stem was bit-exact mono (STR-4C8N). Add names here only after
+# confirming the parameter moves the L/R image.
+_WIDTH_PARAMETER_NAMES = frozenset({"Stereo Width"})
+
+
+def _collect_declared_width_controls(
+    conn: "sqlite3.Connection", song_id: str,
+) -> list["DeclaredWidthControl"]:
+    """Lift dialled stereo-width device params into ``DeclaredWidthControl``.
+
+    Mirrors ``_collect_declared_sends``: the DB is keyed by UUID, captures by
+    surface index, so the translation happens HERE and ``analyze_mix`` stays
+    DB-agnostic and joins on ``surface_id`` alone.
+    """
+    controls: list[DeclaredWidthControl] = []
+    for track in Q.get_tracks_for_song(conn, song_id):
+        surface = _track_surface(conn, track["id"])
+        if surface is None:
+            continue
+        for device in Q.get_devices_for_track(conn, track["id"]):
+            for param in Q.get_device_parameters(conn, device["id"]):
+                if param["name"] not in _WIDTH_PARAMETER_NAMES:
+                    continue
+                display = param["value_display"]
+                if display is None:
+                    continue
+                controls.append(DeclaredWidthControl(
+                    surface_id=surface,
+                    device_name=str(device["display_name"]),
+                    parameter_name=str(param["name"]),
+                    declared_display=str(display),
+                ))
+    return controls
 
 
 def _collect_declared_envelopes(
@@ -589,6 +630,7 @@ def analyze_handler(
         song_id = song["id"] if song is not None else None
         declared_sends = _collect_declared_sends(conn, song_id) if song_id else []
         declared_envelopes = _collect_declared_envelopes(conn, song_id) if song_id else []
+        declared_widths = _collect_declared_width_controls(conn, song_id) if song_id else []
         sections = _collect_sections(conn, song_id) if song_id else []
         declared_energy = _collect_declared_energy(conn, song_id) if song_id else []
         tempo_map = _collect_tempo_map(conn, song_id) if song_id else []
@@ -617,6 +659,7 @@ def analyze_handler(
             captures_path,
             declared_reverb_sends=declared_sends,
             declared_envelopes=declared_envelopes,
+            declared_width_controls=declared_widths,
             sections=sections,
             declared_energy=declared_energy,
             tempo_map=tempo_map,

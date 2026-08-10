@@ -353,3 +353,9 @@ made a chunk invisible to this repo's derived views, because only `status=shippe
 feeds them. When a written rule and the implementation disagree, the rule may be
 describing a different repo's tooling — verify which, and record the departure
 rather than silently matching either. (2026-08-07, TOUR B1)
+
+## When a part's instrument is a sampler or drum device, verify its note mapping by RENDERING and checking per-stem RMS, because no symbolic gate can see a note sent where nothing is mapped
+
+## When a push reports OK with a phase `skipped (idempotent)`, read the warning block before concluding anything, because the same word covers both work-done-elsewhere and precondition-probe-failed
+
+## When a review lens reports declared-vs-measured drift, record explicitly whether the DECLARATION or the WORK was wrong, because tuning the declaration until the question disappears is gaming the lens

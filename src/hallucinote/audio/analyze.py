@@ -43,6 +43,7 @@ from .attribution import (
 from .io import CaptureSet, Surface, load_capture
 from .levels import apply_stem_gains, live_fader_db
 from .loudness import MIN_LOUDNESS_DURATION_S, measure_loudness
+from .stereo import measure_stereo
 from .timbre import measure_timbre
 from .cross_rhythm import (
     analyze_cross_rhythm_window,
@@ -376,6 +377,7 @@ def _measure_surface(surface) -> StemMetrics:
         surface_name=surface.surface_name,
         loudness=loudness,
         timbre=measure_timbre(surface.audio, surface.sample_rate),
+        stereo=measure_stereo(surface.audio),
     )
 
 
@@ -903,6 +905,7 @@ def _measure_window(surface: Surface, window_slice: WindowSlice) -> StemMetrics:
         surface_name=surface.surface_name,
         loudness=loudness,
         timbre=measure_timbre(sliced, surface.sample_rate),
+        stereo=measure_stereo(sliced),
     )
 
 

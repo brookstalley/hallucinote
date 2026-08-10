@@ -101,6 +101,31 @@ class TimbreMetrics:
 
 
 @dataclass(frozen=True)
+class StereoMetrics:
+    """Per-surface stereo image descriptors (STR-4C8N).
+
+    A read-side lens — neutral measurement, never a grade. ``NaN`` (→ JSON
+    ``null`` via ``_finite_or_none``) when the window is silent or empty, so a
+    silent surface never reads as a healthy image.
+
+      ``correlation``       Pearson L/R, -1..+1. ``+1`` is bit-exact mono or a
+                            perfectly correlated pair; ``0`` fully decorrelated;
+                            negative means the channels partly cancel.
+      ``mono_sum_loss_db``  Level LOST when summed to mono,
+                            ``20·log10(rms(mono)/rms(stereo))``. ``0 dB`` = nothing
+                            lost; ``≈-3 dB`` = two equal uncorrelated channels;
+                            large negatives mean the part cancels itself on mono
+                            playback. This is the actionable number — it says what
+                            a listener loses, in units a composer thinks in.
+
+    Both are BROADBAND: a part wide in the highs and mono in the lows averages to
+    something unremarkable, and neither localises where the image lives.
+    """
+    correlation: float
+    mono_sum_loss_db: float
+
+
+@dataclass(frozen=True)
 class StemMetrics:
     """One row per captured surface (audio track / return / master)."""
     track_id: str
@@ -111,6 +136,9 @@ class StemMetrics:
     # hand-built fixtures and pre-timbre baselines stay valid (AUD-2N6K
     # optional-field pattern); ``analyze_mix`` always populates it.
     timbre: "TimbreMetrics | None" = None
+    # Standing stereo descriptors (STR-4C8N). Same optional-field pattern, same
+    # reason: pre-stereo baselines and hand-built fixtures stay valid.
+    stereo: "StereoMetrics | None" = None
 
     def __post_init__(self) -> None:
         if self.surface_kind not in _VALID_SURFACE_KINDS:
@@ -748,6 +776,16 @@ def _stem_to_dict(s: StemMetrics) -> dict[str, Any]:
                 "spectral_rolloff_hz": _finite_or_none(s.timbre.spectral_rolloff_hz),
             }
             if s.timbre is not None
+            else None
+        ),
+        # Standing stereo image (STR-4C8N). None when not measured (hand-built
+        # fixture); NaN "unmeasurable" collapses to null like the others.
+        "stereo": (
+            {
+                "correlation": _finite_or_none(s.stereo.correlation),
+                "mono_sum_loss_db": _finite_or_none(s.stereo.mono_sum_loss_db),
+            }
+            if s.stereo is not None
             else None
         ),
     }

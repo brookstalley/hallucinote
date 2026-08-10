@@ -238,9 +238,11 @@ class EnvelopeVerification:
     One record per value-changing breakpoint of a declared envelope. ``metric``
     + ``before`` / ``after`` are the measured quantity across the change
     (``spectral_centroid_hz`` for a device-parameter flip, ``rms_db``
-    for a send-level step, ``master_rms_db`` / ``master_balance_db`` for the
-    post-fader mixer_volume / mixer_pan kinds — measured on the master, the
-    post-fader sum, per AUD-3F8M). ``realized`` says whether the authored
+    for a send-level step — the return's STEREO RMS, the same quantity the
+    silence gate reads, so a wide return is not judged on a half-cancelling mono
+    sum — and ``master_rms_db`` / ``master_balance_db`` for the post-fader
+    mixer_volume / mixer_pan kinds, measured on the master, the post-fader sum,
+    per AUD-3F8M). ``realized`` says whether the authored
     change actually happened in the audio. ``measurable`` is False when the
     change can't be verified from this capture — a window too quiet to
     characterise, a mixer move whose predicted master effect is below the
@@ -998,6 +1000,11 @@ def _envelope_to_dict(e: EnvelopeVerification) -> dict[str, Any]:
         "measurable": e.measurable,
         "realized": e.realized,
         "note": e.note,
+        # Which probe carried the verdict (STR-4C8N). The whole point of the
+        # field is that a consumer never has to string-match `note` to learn
+        # it, and /mix-review reads this JSON rather than the dataclass — so
+        # omitting it here would leave the capability existing in-process only.
+        "probe": e.probe,
     }
 
 

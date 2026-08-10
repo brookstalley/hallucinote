@@ -188,10 +188,14 @@ first — see "Refreshing the analysis"). For each section, you have:
   `metric`/`before`/`after` fields are ALWAYS the centroid pair, whichever probe
   fired — so never read them as the evidence.** A realized verdict carried by the
   image probe sits beside a nearly-unchanged centroid, and reporting that as a
-  brightness change is a claim the audio does not support. **Read the `note`: it
-  names the probe** ("timbre shift realized …" vs "image shift realized: L/R
-  correlation moved …"). A `send_level` step
-  is a level move in the declared direction; the post-fader mixer kinds are
+  brightness change is a claim the audio does not support. **Read the `probe`
+  field: it names the basis** — `"timbre"`, `"image"`, or `null` (every non-
+  `device_parameter` kind, and any unmeasurable window). The `note` narrates the
+  same thing in prose, but `probe` is the one to branch on; don't string-match
+  the note. A `send_level` step
+  is a level move in the declared direction, measured as the return's STEREO
+  RMS (so a wide return is judged on what it actually plays, not on a mono sum
+  that half-cancels); the post-fader mixer kinds are
   verified on the MASTER (AUD-3F8M) — `mixer_volume` as a `master_rms_db`
   level step, `mixer_pan` as a `master_balance_db` L−R shift, each judged
   against a prediction from the declared values + the stem's contribution.

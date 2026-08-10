@@ -349,7 +349,7 @@ def analyze_mix(
     skipped.extend(energy_skips)
 
     width_realizations, width_skips = _realize_widths(
-        declared_width_controls, stem_metrics
+        declared_width_controls, [*stem_metrics, *return_metrics]
     )
     skipped.extend(width_skips)
 
@@ -407,9 +407,13 @@ def _measure_surface(surface) -> StemMetrics:
 
 def _realize_widths(
     declared: Sequence[DeclaredWidthControl],
-    stems: Sequence[StemMetrics],
+    surfaces: Sequence[StemMetrics],
 ) -> tuple[list[WidthRealization], list[dict]]:
     """Pair each declared width control with the measured image on its surface.
+
+    ``surfaces`` is tracks AND returns — a width control on a reverb bus is an
+    ordinary move, and a join that saw only tracks would report such a control as
+    unmeasurable when the audio for it was captured all along.
 
     Neutral evidence only: the declared value beside what the audio did. No
     threshold, no severity, no verdict — a control doing nothing may be an
@@ -430,7 +434,7 @@ def _realize_widths(
             ),
         }]
 
-    by_surface = {s.track_id: s for s in stems}
+    by_surface = {s.track_id: s for s in surfaces}
     realizations: list[WidthRealization] = []
     skipped: list[dict] = []
     for control in declared:

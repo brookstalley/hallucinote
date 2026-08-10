@@ -84,3 +84,31 @@ def test_stem_without_measured_stereo_is_skipped_not_guessed():
     realizations, skipped = _realize_widths([_control("track:1", "150 %")], [stem])
     assert realizations == []
     assert len(skipped) == 1
+
+
+def test_width_control_on_a_return_is_joined_not_reported_unmeasurable():
+    """A width control on a reverb/delay bus is an ordinary move.
+
+    The join receives tracks AND returns; a version that saw only tracks would
+    report such a control as unmeasurable when its audio was captured all along.
+    """
+    surfaces = [
+        _stem("track:1", "Drums", 0.8, -0.5),
+        StemMetrics(
+            track_id="return:2",
+            surface_kind="return",
+            surface_name="B-Room",
+            loudness=LoudnessMetrics(
+                lufs_i=-30.0, lufs_s_median=-30.0, lufs_m_peak=-28.0,
+                true_peak_dbtp=-12.0,
+            ),
+            stereo=StereoMetrics(correlation=0.407, mono_sum_loss_db=-1.9),
+        ),
+    ]
+    realizations, skipped = _realize_widths(
+        [_control("return:2", "140 %")], surfaces
+    )
+    assert skipped == []
+    assert len(realizations) == 1
+    assert realizations[0].surface_name == "B-Room"
+    assert realizations[0].mono_sum_loss_db == -1.9

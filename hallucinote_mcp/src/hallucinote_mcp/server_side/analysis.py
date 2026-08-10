@@ -323,11 +323,11 @@ def _collect_declared_width_controls(
     DB-agnostic and joins on ``surface_id`` alone.
     """
     controls: list[DeclaredWidthControl] = []
-    for track in Q.get_tracks_for_song(conn, song_id):
-        surface = _track_surface(conn, track["id"])
+
+    def _collect(surface: "str | None", devices) -> None:
         if surface is None:
-            continue
-        for device in Q.get_devices_for_track(conn, track["id"]):
+            return
+        for device in devices:
             for param in Q.get_device_parameters(conn, device["id"]):
                 if param["name"] not in _WIDTH_PARAMETER_NAMES:
                     continue
@@ -340,6 +340,20 @@ def _collect_declared_width_controls(
                     parameter_name=str(param["name"]),
                     declared_display=str(display),
                 ))
+
+    for track in Q.get_tracks_for_song(conn, song_id):
+        _collect(
+            _track_surface(conn, track["id"]),
+            Q.get_devices_for_track(conn, track["id"]),
+        )
+    # Returns too: a width control on a reverb/delay bus is an ordinary move, and
+    # collecting only tracks would make it INVISIBLE rather than skipped — a
+    # silent drop, which reads to the caller as "nothing declared".
+    for ret in Q.get_returns_for_song(conn, song_id):
+        _collect(
+            _return_surface(conn, ret["id"]),
+            Q.get_devices_for_return(conn, ret["id"]),
+        )
     return controls
 
 

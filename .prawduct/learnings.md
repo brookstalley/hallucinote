@@ -359,3 +359,36 @@ rather than silently matching either. (2026-08-07, TOUR B1)
 ## When a push reports OK with a phase `skipped (idempotent)`, read the warning block before concluding anything, because the same word covers both work-done-elsewhere and precondition-probe-failed
 
 ## When a review lens reports declared-vs-measured drift, record explicitly whether the DECLARATION or the WORK was wrong, because tuning the declaration until the question disappears is gaming the lens
+
+## When a declared audible gesture "doesn't happen", measure the RENDERED AUDIO before diagnosing the mechanism, because a verified-correct automation arc proves the arc and not the sound
+
+Two consecutive sessions misdiagnosed the same silent failure. Session one blamed
+a latched `back_to_arranger` override; session two (me) blamed short automation
+arcs not landing. Both were wrong, and both were reached by inspecting mechanism
+— `automation_state` read 1 (playing), and parking the playhead mid-sweep read
+back the exact authored value 0.387. The arc was perfect. The device it drove
+could not do what was asked: `Mod Phase 0.0°` ran both channels' LFOs in
+lockstep, so a wet flanger stayed bit-exact mono. Only a per-stem `L−R`
+measurement on rendered audio separates "the automation didn't land" from "it
+landed on a parameter that cannot express the intent". (2026-08-10, STR-4C8N)
+
+## When a verification lens reports "no effect", check whether the PROBE can see the effect that device produces, because the wrong probe manufactures false negatives that look like real defects
+
+Device-parameter verification probed spectral centroid alone. A flanger is a comb
+filter and notches roughly symmetrically, so it barely moves the centroid however
+wet it gets — producing `no audible timbre shift (2244→2219 Hz, 1% < 12%)`
+against automation that provably landed. The fix is a second probe (stereo
+correlation), not a looser threshold. The regression test that matters pins the
+opposite direction: identical before/after windows must STILL read not-realized,
+because a fix for false positives that becomes a rubber stamp is worse than the
+bug. (2026-08-10, STR-4C8N A2)
+
+## When an acceptance criterion is derived from a COUNT of symptoms, re-derive it per-symptom before treating a partial pass as failure, because some of the symptoms may be the tool being right
+
+A2's criterion said "the three Dry/Wet findings stop being reported as
+not-realized", written from the finding count on the assumption all were false.
+Each arc had three change points; the beat-288 move was `0.38 → 0.42`, a 4 %
+change that is genuinely inaudible, so "not realized" there was correct. Meeting
+the criterion as written would have required making the probe lie. Correct the
+criterion in the plan and say so — never quietly pass, and never loosen the code
+to satisfy a wrong spec. (2026-08-10, STR-4C8N A2)

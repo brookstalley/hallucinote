@@ -54,7 +54,7 @@ nothing needs a narrator.
 | 0–24 s | one drone, near silence | **IDEATION** | empty set; a sentence of intent typed |
 | 24–51 s | voices accumulate | **CO-DEVELOPED PROPOSAL** | the two questions it won't answer for you, beside the craft it decides without asking |
 | 51–82 s | machine pulse emerges, tremolo enters | **MUSIC → LIVE** | `build.py`, then 10 tracks + 50 clips materialising |
-| 82–90 s | exponential urgency | **SOUND → LIVE** | the device chain assembling, envelopes drawing |
+| 82–90 s | exponential urgency | **SOUND → LIVE** | the device strip, visible but nearly static — see below |
 | **90 s** | **THE CRASH** | *the false summit* | `14/14 phases OK · 50/50 faithful` |
 | 90–108 s | the argument (rock vs brass) | **MEASURE** | the lenses disagree with all of it |
 | 108–112 s | 5/8 industrial deadlock | *the hard part* | two wrong diagnoses, then the real one |
@@ -62,6 +62,12 @@ nothing needs a narrator.
 | 124.3–127.7 s | the octave teardown | *coda* | the reason gets written down |
 
 ### The three beats that carry the story
+
+The brief lands across two owner turns BEFORE Claude answers. Replying after the
+opening line alone made it a questionnaire served on a blank brief — and it
+opened with "two things I can't decide for you", which frames an unprompted list
+rather than an answer to what was just said. Letting the brief arrive first also
+fills the dead air at the top of the piece.
 
 **Collaboration (24–51 s)** — the philosophical heart, and almost nobody demos it.
 Two registers in two colours: the questions it ASKS (*is anyone singing? does the
@@ -100,12 +106,30 @@ Closing card:
 Owner constraint: **one play-through of the song**, and the audio must change to
 reflect what the chat window shows.
 
-Every render is the same arrangement at the same tempo, sample-aligned and the
-same length, so the audio track is a **stitched sequence of real renders** that
-switch state at musical boundaries. Nothing is faked: each segment is genuine
-audio of the song at a state it actually occupied. The only artifice is the splice,
-and the owner has ruled the piece need not be authentic to real-time UX — only
-accurate about capability.
+Every render is the same arrangement at the same tempo, so the audio track is a
+**stitched sequence of real renders** that switch state at musical boundaries.
+Nothing is faked: each segment is genuine audio of the song at a state it
+actually occupied. The only artifice is the splice, and the owner has ruled the
+piece need not be authentic to real-time UX — only accurate about capability.
+
+Two things this originally assumed, both since MEASURED and neither quite true:
+
+- **The renders are not sample-aligned.** Capture starts when transport crosses
+  the start beat, which lands on an audio-buffer boundary that varies per run.
+  Against S0, S1 is 1024 samples EARLY and S2 is 1024 samples LATE (21.33 ms) —
+  constant across the verse, chorus and outro, so a single per-state shift fixes
+  it. Do not try to derive this by correlating the intro: it is a sustained
+  drone and matches at many lags, which produced a spurious 152 ms / 813 ms
+  reading before drum transients gave the real answer.
+- **Render time is not song time.** A little pre-roll survives the
+  transport-cross detection, so the file clock runs ~280 ms BEHIND the song.
+  Beat 262 is at file 112.573 s, not 112.286 s. Anchor splices to the measured
+  transient, and hunt in a window well under half a beat (214 ms at 140 BPM) —
+  a ±1 s search lands on the wrong beat entirely.
+
+`stitch_audio.py` (next to `make_video.py`) carries both corrections and writes
+`demo-audio.wav`. Its crossfade is linear, not equal-power: the three states are
+renders of one performance, so cos/sin summed them to +1.28 dBFS and clipped.
 
 Splices land on the two biggest transients in the song, which mask them:
 
@@ -114,10 +138,23 @@ Splices land on the two biggest transients in the song, which mask them:
 | 90 s (verse crash) | **S1** | brass width corrected 155 % → 125 % |
 | 112.3 s (chorus) | **S2** | guitars genuinely stereo; chorus bass audible |
 
-`S0` = brass 155 %, guitars mono (pre-fix). `S2` = current state
-(`captures/20260810T154011Z`). **S0 must be regenerated — capture retention already
-pruned the original.** Demo masters must live OUTSIDE `captures/`, or the
-retention sweep will eat them again mid-production.
+`S0` = brass 155 %, guitars mono, chorus bass silent (pre-fix). `S2` = every fix
+landed. **All three now exist and are verified**, in
+`~/Movies/hallucinote-capture/audio-states/{S0,S1,S2,S2-fresh}/` — outside
+`captures/`, where the retention sweep cannot prune them as it pruned the
+original S0.
+
+Regenerating S0/S1 needed more than the flanger `Mod Phase` twiddle the first
+plan assumed: **the chorus bass is a `build.py` fact, not a device parameter.**
+Its roots were raised to E2/C#2/A1/B1 to clear the Electric Bass Palm rack's
+lowest sample, so re-creating the silent-bass state means dropping
+`CHORUS_HARMONY`'s roots an octave, rebuilding, and scoped-pushing that one clip
+— then restoring. Skipping it would have quietly cost the 112.3 s splice its most
+audible fix, leaving that boundary carrying only a stereo-width change.
+
+`S2-fresh` is a fourth render taken AFTER the restore, and is what proves the
+round-trip: it reproduces canonical S2 within measurement noise (Rhythm Gtr
+corr +0.986 vs +0.985, brass +0.043 vs +0.035, chorus bass −23.4 vs −23.5 dB).
 
 ## Picture: two recordings, one locked
 
@@ -133,6 +170,15 @@ Optionally shoot REC-B as the **performed-automation pass** rather than plain
 playback: it is already a real-time transport pass, Live is visibly armed, and the
 eight arcs draw themselves under the playhead. More interesting, and it is the
 tool genuinely working.
+
+**The device chain is thin in REC-A, and no framing can thicken it.** The push
+loads devices over the API without moving Live's selection, so the detail view
+sits on the C-Delay for the whole 86-second phase. Across source 140 → 178 s the
+only pixel that changes is that Delay's Dry/Wet, 50 % → 100 % — verified by
+diffing the two frames. Under the split frame the strip is at least never
+hidden, and the sound-design beat is carried by the transcript's room/hall line.
+Making it the image the storyboard wanted needs a pickup shot: load a chain with
+Live's detail view focused, and record that separately.
 
 **Reorder the push for REC-A.** A full push runs `performed_automation` BEFORE
 `arrangement`, so that 132.5 s realtime pass happens over an EMPTY timeline — two
@@ -151,32 +197,74 @@ performed_automation 132.5 · arrangement 62.9 · cues 5.1.
 proportional `F_BODY`, which reads as a messaging product. It runs from a
 terminal, so it should look like one.
 
-**A caveat card covering BOTH the simulated window and the video's compression.**
-The point is precise and worth not blurring: *everything shown is real; the UX
-does not happen this way.* Wording to the effect of —
+**The terminal does not sit on Live. It sits beside it.** The frame is an
+ultrawide split — 4500×1898, ~2.37:1 — with a 1476 px terminal column on the
+left and Live's whole 3024 px window on the right.
 
-> Simulated chat window. Hallucinote runs from any Claude Code terminal session.
+That is the resolution of an argument the overlay layout could not win. As an
+overlay the panel had to be somewhere, and every somewhere covered something:
+parked bottom-left it sat exactly on Live's device-detail strip, so the chain
+was never seen building; moved aside for that beat, it read as the window
+jumping. Sizing it to its contents made all 25 turns resize it. Given its own
+column, none of those questions exist — it opens at full size, never moves,
+never resizes, and hides nothing.
+
+Two things fall out of the split. Live is carried at **native 3024×1898**,
+neither cropped nor resampled: fitting it to a 1080-tall frame was discarding
+43 % of the vertical detail, and Live's UI is one-pixel rules and 11 px labels,
+so it went soft exactly where the film asks you to read a value. And the column
+is tall enough to hold 14 turns instead of 5, so the transcript reads as a
+session rather than a ticker.
+
+**A caveat pinned to the top of the terminal, for the whole film.** What it
+qualifies is that window, so a band across the picture invited the reader to
+attach it to Live instead. It no longer times out: the split frame gave the
+terminal room to carry it permanently, and a disclosure that scrolls away after
+nine seconds is one most viewers never see. Its band is *reserved* rather than
+overdrawn, so a full transcript cannot grow up underneath it.
+
+> Simulated chat window.
+> Hallucinote runs from any Claude Code terminal session.
 > Real song creation is more iterative and takes longer than shown.
+> The Ableton build is pulled forward to run under the chat, not after it,
+> so the conversation has something to watch.
 
 This is the honest counterpart to the piece's thesis. The demo claims the tool
 CHECKS ITS OWN WORK; it must not also imply the work happens in two minutes.
-Every measurement, finding and render in the video is genuine — the timeline is
-what is compressed, along with the panel being a reconstruction rather than a
-screen capture of a terminal.
+Every measurement, finding and render in the video is genuine — what is not
+genuine is the *timeline*: it is compressed, the panel is a reconstruction
+rather than a screen capture, and the Ableton build really runs AFTER the whole
+conversation rather than underneath it. That last one is the disclosure the
+earlier cuts owed and never paid; it is the single biggest liberty the piece
+takes, and it is the one a viewer is least able to infer.
 
 ## Tooling still to build
 
 `~/Movies/hallucinote-capture/make_video.py` needs three things:
 
-1. **Punch-in framing per action window.** `windowrec` captures 2520×1396, so at
-   1080p delivery there is a free ~2.3× digital punch-in with no softness — a
-   5-second knob move becomes a real close-up. `action_windows` currently carry
-   only a speed; they need a crop rect (interpolated across the window) plus an
-   optional highlight.
-2. **A lens block kind.** `block_for()` has only `PROMPT` and `CLAUDE`, so a
+1. **A lens block kind.** `block_for()` has only `PROMPT` and `CLAUDE`, so a
    structured lens read wraps as a paragraph wall. Needs a compact mono stat block.
-3. **Audio-state switching** at the two splice boundaries.
-4. **Terminal styling + the caveat card** — see the owner requirements above.
+2. **Audio-state switching** at the two splice boundaries.
+3. **Terminal styling + the caveat** — see the owner requirements above.
+
+**There are no zooms.** Punch-ins were built, refined twice, and then cut. They
+drew the eye to the framing rather than to what Live was doing; the one crop
+that would have made the device chain legible was the corner the terminal had to
+occupy; and animating a crop is not something `crop` can do, so the first
+implementation was a stack of constant-crop slices that stepped up to 12 frames
+at a time and read as chunky. (The fix for *that* — animating a uniform scale
+by `k(t) = 1920 / w(t)` with `scale=…:eval=frame` and taking a constant window
+out of it with `crop` — is the technique to reach for if a zoom is ever wanted
+again. It is per-frame smooth and costs one encode per segment.) Side by side at
+native resolution there is nothing to zoom past, so `action_windows` now carry
+pacing only.
+
+**The frame is too wide for the hardware encoder.** VideoToolbox refuses a
+compression session above 4096 px (−12903) and this frame is 4500, so the
+encoder is `libx264`. It is also quality-targeted (CRF) rather than
+bitrate-targeted: the content is UI, which is what a fixed bitrate smears first,
+and CRF spends nothing on the many near-static stretches — the whole 2:22 cut is
+23 MB.
 
 Retiming: `beats-final.json` currently has `beats: []` and 27 `tail_beats` all
 crammed into the tail — that is what collapsed an earlier cut into "scroll text

@@ -1119,6 +1119,44 @@ sections only via explicit `/backlog update` calls.
 
   **Verifiable signal:** `hallucinote compat check the-argument --probe` exits 0 with `kind_ambiguous: 0`, while a genuinely ambiguous substring query still reports `kind_ambiguous` — the fix must not become a rubber stamp. Today: `compat.py:318` returns a 3-tuple with no `mode`, and `:840` builds search params with no `mode`. (found 2026-08-10 while pushing `the-argument`)
 
+- **[WSP-8Q4M]** `resolve_db_path` probes the git branch in the PROCESS cwd when given an explicit `root`, so `build.py` mints a different per-branch DB depending on where it is run from
+  `effort: S · impact: M · area: workspace/project-root · source: user · added: 2026-08-10 · status: open · stage: ready · related: WSP-1K4D, WSP-6N4Q, SYN-4T7B · refs: src/hallucinote/db/connection.py, .prawduct/artifacts/project-root-contract.md`
+
+  Bug. `resolve_db_path` (`src/hallucinote/db/connection.py:471`) has two root paths and they probe git in **different directories**:
+
+  - **resolved root** (the default — every reader: `sync/compat.py:728`, `sync/pull_cli.py`, `tuning/pull_cli.py:53`, `tools/tuning_caveat.py:43`) sets `probe_cwd = song_dir` when the song dir exists (`:501–506`), so the branch comes from **the song's own repo**.
+  - **explicit root** (`:507–509`) sets `probe_cwd = None`, so `_git_current_branch` (`:440`) runs `git symbolic-ref --short HEAD` with `cwd=None` — i.e. **the process cwd**.
+
+  The scaffolded song `build.py` takes the explicit-root path: `DB_PATH = resolve_db_path("{{slug}}", root=Path(__file__).parent.parent)` (`src/hallucinote/tools/templates/song/build.py.tmpl:29`). The `root=` argument correctly makes the song *directory* cwd-independent — but the *filename* is not, because the branch suffix comes from wherever the process happened to be launched. So `python /path/to/songs/the-argument/build.py` run from a checkout of the framework repo on `feat/str-4c8n-stereo-lens` writes `the-argument-feat--str-4c8n-stereo-lens.db` into the songs dir, while every reader resolving the same song looks for `the-argument-<songs-repo-branch>.db`. Two DBs for one song, silently, with the split determined by the shell's cwd.
+
+  This is **not** cosmetic: the split also duplicates the sibling push-state files that live next to the DB (`.last-push-state.json`, `.last-notes-push.json` — `sync/push_notes.py:43–45`), so a scoped/`--changed` push can compare against the wrong fingerprint set. Observed in the wild 2026-08-10 on `the-argument`; it is one of the two confounds in **SYN-4T7B**.
+
+  The current behavior is *documented* (`:482–485`: "Byte-identical to the historical behavior; the git branch is probed in the process cwd"), so the docstring is honest — but the invariant it preserves is the wrong one. `root=` exists precisely so a song resolves its DB relative to its own file "regardless of cwd," and the branch probe breaks that guarantee for the one caller the argument was added for.
+
+  **Fix sketch.** In the explicit-root branch, probe the resolved `song_dir` when it exists (mirroring `:503–506`), falling back to the process cwd when it doesn't so a fresh `build.py --reset` still picks up a branch. Note this **remaps DB filenames** for anyone who has been running `build.py` from a foreign cwd, so it is a resolution-semantics change, not a pure bugfix — pair it with the legacy `<slug>.db` fallback readers already have, and say so in the change-log.
+
+  **Verifiable signal:** with a song dir in repo A on branch `main` and the process cwd in repo B on branch `feat/x`, `resolve_db_path(slug, root=<songs-root>)` returns `<song_dir>/<slug>-main.db` (today it returns `<slug>-feat--x.db`); a test pins the two-repo case, and `resolve_db_path(slug)` and `resolve_db_path(slug, root=...)` agree on the filename for the same song. (found 2026-08-10 while regenerating `the-argument` demo audio)
+
+- **[SYN-4T7B]** `push-notes --changed` reported `0 pushed / 50 unchanged` on a run after which Live's arrangement clip had demonstrably changed — unexplained, root cause NOT established
+  `effort: M · impact: M · area: sync/push · source: user · added: 2026-08-10 · status: open · stage: ready · related: WSP-8Q4M · refs: src/hallucinote/sync/push_notes.py`
+
+  Bug report, **investigation item — do not treat the fingerprint path as the confirmed cause.** Observed 2026-08-10 on song `the-argument` while regenerating demo audio states:
+
+  1. `push-notes --song the-argument --changed` → reported **50 pushed**. Live's Bass chorus arrangement clip (`song.tracks[1].arrangement_clips[3]`) then read pitches **40/37/33/35**.
+  2. The song DB was rebuilt so that clip's pitches became **21/23/25/28** (clip_id `29fd8f3502e84f9f8d0448ede4c88144`).
+  3. `push-notes --song the-argument --changed` → reported **`pushed: 0, skipped: 50`**, every clip's reason `"unchanged"`.
+  4. Probing Live immediately after step 3 showed the arrangement clip now held **21/23/25/28** — it HAD changed, despite the report saying nothing was pushed.
+
+  **Why it matters.** An operator reading the `--changed` counts cannot tell whether a scoped push actually reached Live. The report and the observable state disagreed, which makes the counts unusable as evidence — the failure mode `--changed` exists to prevent.
+
+  **Workaround found.** Push by explicit `--clip <id>` (which reported `1 pushed` correctly), then verify against Live directly with `ableton_probe(action='call', path='song.tracks[N].arrangement_clips[M]', method='get_notes', args=[0,0,32,128])`.
+
+  **Known confound — this is why the item is framed as a discrepancy, not a fingerprint bug.** The same session had a stray per-branch DB (`the-argument-feat--str-4c8n-stereo-lens.db`) created by running `build.py` from the wrong cwd (**WSP-8Q4M**). For part of the sequence **two DBs were in play**, and because `.last-notes-push.json` lives next to the DB (`push_notes.py:43–45`), each DB carries its **own** fingerprint state. So it is entirely possible the two runs read different DBs and different prior-fingerprint files, and nothing in `push_notes.py` is wrong. Reproduce with a single, known DB before concluding anything.
+
+  **Where to look, if the confound is ruled out.** `src/hallucinote/sync/push_notes.py` — `clip_fingerprint` (`:48`, hashes the MCP wire shape) and the `changed_only` skip (`:210`: `if changed_only and prior_fps.get(cid) == fp`), plus `.last-notes-push.json` load/save around `:184–186` (when `new_fps` is written relative to when the push is attempted).
+
+  **Verifiable signal:** with WSP-8Q4M fixed (or a single DB pinned via an explicit path), a rebuild that changes one clip's pitches followed by `push-notes --changed` reports `pushed: 1` for exactly that clip, and a `get_notes` probe of the corresponding Live clip matches the DB — and conversely, a `--changed` run reporting `pushed: 0` leaves every probed Live clip byte-identical to before the run. Until then the item stands as "counts disagreed with Live once, cause unknown." (found 2026-08-10 regenerating `the-argument` demo audio)
+
 ## Promoted
 
 - **[SMP-7K2D]** Sample-instrument + the playback-parameter model — author a Simpler/Sampler with an assigned sample file from build.py/DB (the swell buried-"we" keystone primitive; absorbs the cluster)

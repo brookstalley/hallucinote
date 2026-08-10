@@ -158,10 +158,16 @@ sections only via explicit `/backlog update` calls.
 
   **Verifiable signal:** the command above still reports zero recalls in `[coda]`; and `src/hallucinote/recurrence/match.py` still declares identity as `(relative-onset, pitch, duration)` with no onset-only relaxation and no `transpose ∘ diminish` composition in its op vocabulary. (missing /compose-review, user, 2026-07-11)
 
-- **[AUD-TIMBRE-CALIB]** Calibrate timbre significance thresholds against re-capture jitter
-  `effort: S · impact: S · area: audio · source: discovered-from-friction · added: 2026-06-24 · status: open · stage: requirements · related: AUD-8T3K, AUD-4W7K · refs: src/hallucinote/audio/compare.py`
+- **[AUD-TIMBRE-CALIB]** Calibrate the provisional timbre AND stereo-image significance thresholds against re-capture jitter
+  `effort: S · impact: S · area: audio · source: discovered-from-friction · added: 2026-06-24 · status: open · stage: requirements · related: AUD-8T3K, AUD-4W7K, STR-4C8N · refs: src/hallucinote/audio/compare.py, src/hallucinote/audio/automation.py · reviewed: 2026-08-10`
 
   AUD-8T3K shipped standing per-stem/per-section timbre metrics (centroid · flatness · rolloff) and wires them through `compare.diff_reports`, but — unlike the loudness floors in `SIGNIFICANCE_DB` (calibrated against the sun-zone-done re-capture jitter set, AUD-4W7K) — the timbre floors in `SIGNIFICANCE_TIMBRE` are conservative first guesses, so every timbre delta carries `provisional: true`. **This item:** measure the re-render/re-capture jitter of centroid/flatness/rolloff on an identical mix (as AUD-4W7K did for loudness), set evidence-based floors, and drop the `provisional` flag. `stage: requirements` — needs a render-jitter study (Live + a stable mix); the provisional thresholds + the honest raw before/after/delta hold in the meantime.
+
+  **Scope extended to the stereo floors (2026-08-10, STR-4C8N).** The shipped stereo-image lens carries the *same* uncalibrated-first-guess problem, for the same root reason — no render-jitter calibration set exists for these metrics either:
+  - `compare.SIGNIFICANCE_STEREO` — `correlation` and `mono_sum_loss_db` (0.5 dB); every stereo delta is emitted with `provisional: true`, exactly as the timbre family is.
+  - `automation.CORRELATION_ABS_THRESHOLD` (`0.05`) — the image-probe floor for "did this width/comb move actually change the picture?". `SIGNIFICANCE_STEREO["correlation"]` **imports** it rather than restating it, deliberately: the two answer the same question, and recalibrating one without the other would leave an A/B and the automation verifier disagreeing about the same audio. So the calibration must set **both together**, and any outcome that splits them needs an explicit reason.
+
+  **Why one item, not two:** a single re-capture-jitter sweep on an identical mix yields the noise floor for *all* of these families at once (centroid · flatness · rolloff · correlation · mono-sum loss) — the study is the expensive part, not the per-metric arithmetic. Filing a second item would have duplicated the sweep. Definition of done accordingly covers both families: evidence-based floors set, `provisional: true` dropped from timbre **and** stereo deltas, and the correlation floor's single-source-of-truth import preserved (or its split justified).
 
 - **[ARR-FROMBUILD]** `verify-arrangement --from-build`: audit Live against a fresh `build.py` rebuild, not just the current DB
   `effort: M · impact: S · area: sync · source: user · added: 2026-06-22 · reviewed: 2026-06-22 · status: open · stage: requirements · related: ARR-ORPHAN, ARR-PROJ · refs: backlog ARR-VERIFY, src/hallucinote/sync/verify_arrangement_cli.py`
@@ -1177,7 +1183,7 @@ sections only via explicit `/backlog update` calls.
 Closed investigations — no fix possible / structural-close on Ableton's roadmap. Kept for search so a future scrub doesn't re-open them without new evidence. Status `dropped` = investigated and intentionally not pursued; `shipped` = built and closed.
 
 - **[STR-4C8N]** Stereo correlation / mono-compatibility as a mix-review lens, with no-op detection for width controls
-  `effort: M · impact: L · area: analysis · source: user · added: 2026-08-10 · status: shipped · related: STR-9P4M, MIX-3S7P, AUD-8H2M · stage: requirements · reviewed: 2026-08-10 · closed-by: str-4c8n`
+  `effort: M · impact: L · area: analysis · source: user · added: 2026-08-10 · status: shipped · related: STR-9P4M, MIX-3S7P, AUD-8H2M, AUD-TIMBRE-CALIB · stage: requirements · reviewed: 2026-08-10 · closed-by: str-4c8n`
 
   **Raised by the user (2026-08-10, dogfood on `the-argument`).** `MixReport` should carry a **per-stem stereo-correlation / mono-sum** measurement, and `/mix-review` should read it as a lens beside masking. Today every review input (masking, bed buildup, loudness, attribution, reverb, timing/feel, cross-rhythm, melody, recurrence) is blind to whether a part is actually *in stereo*, and to whether it *survives a mono fold*.
 

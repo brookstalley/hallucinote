@@ -95,3 +95,37 @@ def test_song_with_no_width_controls_collects_nothing(tmp_path: Path):
     M.set_device_parameter(conn, device_id=dev, name="Drive", value_display="6.0 dB")
     conn.commit()
     assert _collect_declared_width_controls(conn, "song-2") == []
+
+
+def test_a_control_left_at_unity_is_not_a_declaration(tmp_path: Path):
+    """Presence in the DB is not evidence of intent.
+
+    A pull writes a row for EVERY parameter Live reports, not only the ones an
+    author touched, so every untouched Utility in a song carries a ``Stereo
+    Width`` at Live's default ``100 %``. Collecting those would hand /mix-review
+    a "declared 100 %" for a width nobody set — and a naturally wide stem
+    carrying one then presents as ``declared 100 % / measured -3 dB``, a
+    contradiction with an intent that was never expressed.
+    """
+    conn = init_db(tmp_path / "s.db")
+    conn.execute("INSERT INTO songs (id, name) VALUES (?, ?)", ("song-1", "s"))
+    track = M.create_track(conn, song_id="song-1", track_index=0, name="Pad")
+    chain = M.create_device_chain(conn, parent_track_id=track, position=0)
+    untouched = M.create_device(
+        conn, chain_id=chain, position=1, kind="Utility",
+        display_name="Utility", class_name="StereoGain",
+    )
+    M.set_device_parameter(
+        conn, device_id=untouched, name="Stereo Width", value_display="100 %",
+    )
+    conn.commit()
+
+    assert _collect_declared_width_controls(conn, "song-1") == []
+
+    # The same device, dialled — now it IS a declaration.
+    M.set_device_parameter(
+        conn, device_id=untouched, name="Stereo Width", value_display="165 %",
+    )
+    conn.commit()
+    controls = _collect_declared_width_controls(conn, "song-1")
+    assert [c.declared_display for c in controls] == ["165 %"]

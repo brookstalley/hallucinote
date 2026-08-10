@@ -44,14 +44,17 @@ _SILENCE_FLOOR_DB = -180.0
 # Below this RMS the window carries no signal to characterise — reporting a
 # correlation for dither-level noise would be inventing a reading.
 #
-# Deliberately the SAME value as ``automation._QUIET_RMS``, and for a sharper
-# reason than tidiness: this lens's "healthy" reading (+1.0 correlation, 0 dB
-# loss) is also its FAILURE SIGNATURE — bit-exact mono. A floor low enough to
-# measure an inaudible stem would hand back that signature for a track nobody can
-# hear, which reads as "declared wide, measured mono" and sends a producer
+# THE definition of the silence floor for both this lens and the automation
+# verifier, which imports it (``automation`` already depends on this module, so
+# there is no cycle). It is one constant rather than two matching literals for a
+# sharper reason than tidiness: this lens's "healthy" reading (+1.0 correlation,
+# 0 dB loss) is also its FAILURE SIGNATURE — bit-exact mono. A floor low enough
+# to measure an inaudible stem would hand back that signature for a track nobody
+# can hear, which reads as "declared wide, measured mono" and sends a producer
 # chasing a width bug on silence. Anything too quiet for the automation lens to
-# characterise is too quiet for this one to accuse.
-_QUIET_RMS = 1e-5
+# characterise is too quiet for this one to accuse — an invariant a shared
+# literal could quietly lose, and this name cannot.
+QUIET_RMS = 1e-5
 
 
 def measure_stereo(audio: np.ndarray) -> StereoMetrics:
@@ -80,14 +83,14 @@ def measure_stereo(audio: np.ndarray) -> StereoMetrics:
     right = audio[:, 1].astype(np.float64)
 
     stereo_rms = float(np.sqrt(np.mean(audio.astype(np.float64) ** 2)))
-    if stereo_rms <= _QUIET_RMS:
+    if stereo_rms <= QUIET_RMS:
         # Silence is unmeasurable, NOT "perfectly mono" — a silent stem must not
         # read as a healthy correlation of 1.0 and get graded as fine.
         return StereoMetrics(correlation=float("nan"), mono_sum_loss_db=float("nan"))
 
     mono = (left + right) / 2.0
     mono_rms = float(np.sqrt(np.mean(mono**2)))
-    if mono_rms <= _QUIET_RMS:
+    if mono_rms <= QUIET_RMS:
         loss_db = _SILENCE_FLOOR_DB
     else:
         loss_db = 20.0 * float(np.log10(mono_rms / stereo_rms))

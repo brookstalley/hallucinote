@@ -237,7 +237,7 @@ class EnvelopeVerification:
 
     One record per value-changing breakpoint of a declared envelope. ``metric``
     + ``before`` / ``after`` are the measured quantity across the change
-    (``spectral_centroid_hz`` for a device-parameter timbre flip, ``rms_db``
+    (``spectral_centroid_hz`` for a device-parameter flip, ``rms_db``
     for a send-level step, ``master_rms_db`` / ``master_balance_db`` for the
     post-fader mixer_volume / mixer_pan kinds — measured on the master, the
     post-fader sum, per AUD-3F8M). ``realized`` says whether the authored
@@ -247,7 +247,20 @@ class EnvelopeVerification:
     detectability floor (stem too diluted in the mix), or a master-chain-
     compressed window where the prediction model breaks down; in that case
     ``realized`` is meaningless and ``before``/``after`` are NaN. ``note`` is
-    the human-readable explanation the interpreter (``/mix-review``) surfaces."""
+    the human-readable explanation the interpreter (``/mix-review``) surfaces.
+
+    **``device_parameter`` is verified on TWO probes — timbre OR image
+    (STR-4C8N) — and ``probe`` names which one carried the verdict**
+    (``"timbre"`` / ``"image"``, ``None`` for every other kind and for an
+    unmeasurable window). Spectral centroid alone cannot see a comb/width
+    effect, so a working flanger read as unrealized; accepting either probe
+    fixes that, at the cost that ``metric``/``before``/``after`` are ALWAYS the
+    centroid pair whichever probe fired. **On an image-carried verdict they are
+    therefore a near-unchanged centroid sitting beside a ``realized: true``, and
+    reading them as the evidence asserts a brightness change the audio does not
+    support.** ``probe`` exists so that basis is machine-readable rather than
+    recoverable only by string-matching ``note``.
+    """
     target_surface_id: str
     target_kind: str
     parameter_path: str | None
@@ -258,6 +271,7 @@ class EnvelopeVerification:
     measurable: bool
     realized: bool
     note: str
+    probe: str | None = None
 
 
 @dataclass(frozen=True)

@@ -427,23 +427,30 @@ def _realize_widths(
     Catching this needs BOTH halves — the declaration and the rendered audio —
     which is why no DAW reports it and why the join lives here.
     """
+    # The recognition scope is disclosed on EVERY analysis, not only when nothing
+    # was recognised. The partial case is the dangerous one and the common one:
+    # one control recognised and three missed produces a non-empty list that a
+    # reader takes for the complete set of declared width controls, and concludes
+    # an unlisted one is absent or fine — which is the "declared but silently
+    # doing nothing" failure this lens exists to end, one layer up.
+    scope_note = {
+        "kind": "width_realization_scope",
+        "reason": (
+            f"`width_realizations` lists the {len(declared)} width control(s) "
+            "RECOGNISED, which is not necessarily every one AUTHORED. Recognition "
+            "is a closed set of exact parameter names (currently: Stereo Width) at "
+            "a non-default value, on top-level track and return devices; a width "
+            "control under another name, inside a rack's nested chain, or left at "
+            "unity is not listed. Read an absence as 'not recognised', never as "
+            "'not authored'"
+        ),
+    }
     if not declared:
-        return [], [{
-            "kind": "width_realization",
-            "reason": (
-                "no declared width controls were RECOGNISED, so there is no "
-                "declared-vs-measured pairing to make (the per-stem `stereo` "
-                "block is still measured and reported). Recognition is a closed "
-                "set of exact parameter names (currently: Stereo Width) on top-level "
-                "track and return devices; a width control under another name, or "
-                "inside a rack's nested chain, is not seen — so this is "
-                "'none recognised', NOT 'none authored'"
-            ),
-        }]
+        return [], [scope_note]
 
     by_surface = {s.track_id: s for s in surfaces}
     realizations: list[WidthRealization] = []
-    skipped: list[dict] = []
+    skipped: list[dict] = [scope_note]
     for control in declared:
         stem = by_surface.get(control.surface_id)
         if stem is None or stem.stereo is None:

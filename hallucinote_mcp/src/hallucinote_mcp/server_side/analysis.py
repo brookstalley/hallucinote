@@ -312,6 +312,18 @@ def _collect_declared_sends(
 # confirming the parameter moves the L/R image.
 _WIDTH_PARAMETER_NAMES = frozenset({"Stereo Width"})
 
+# Unity width — Live's Utility default. A pull writes a row for EVERY parameter
+# Live reports on a device, not only the ones an author touched, so presence in
+# the DB is not evidence of intent: without this filter every untouched Utility
+# in the song contributes a "declared 100 %" row, and a naturally wide stem
+# carrying one presents to /mix-review as `declared 100 % / measured -3 dB` — a
+# contradiction with an intent nobody expressed. The cost is the reverse case: a
+# width DELIBERATELY held at unity is indistinguishable from an untouched one and
+# is not listed. That asymmetry is the right way round — the lens exists to
+# surface contradictions with real intent, and a fabricated declaration
+# manufactures them.
+_UNITY_WIDTH_DISPLAYS = frozenset({"100 %", "100%", "100.0 %", "100.0%", "100"})
+
 
 def _collect_declared_width_controls(
     conn: "sqlite3.Connection", song_id: str,
@@ -322,8 +334,9 @@ def _collect_declared_width_controls(
     surface index, so the translation happens HERE and ``analyze_mix`` stays
     DB-agnostic and joins on ``surface_id`` alone.
 
-    **Two known blind spots, disclosed rather than silent** (the report's skipped
-    entry says "none recognised", never "none authored"):
+    **Three known blind spots, disclosed rather than silent** — ``analyze.py``
+    attaches the recognition-scope note to EVERY report, not just the zero case,
+    so a partial list never reads as a complete one:
 
     * Only names in :data:`_WIDTH_PARAMETER_NAMES` are recognised.
     * Only TOP-LEVEL devices on tracks and returns are walked —
@@ -331,6 +344,8 @@ def _collect_declared_width_controls(
       rack's nested chains, so a Utility inside an Instrument or Audio Effect Rack
       is invisible here. Widening this means a nested-chain walk; until then the
       honest claim is the narrow one.
+    * A control at unity (:data:`_UNITY_WIDTH_DISPLAYS`) is not a declaration —
+      see that constant for why presence in the DB is not evidence of intent.
     """
     controls: list[DeclaredWidthControl] = []
 
@@ -343,6 +358,8 @@ def _collect_declared_width_controls(
                     continue
                 display = param["value_display"]
                 if display is None:
+                    continue
+                if str(display).strip() in _UNITY_WIDTH_DISPLAYS:
                     continue
                 controls.append(DeclaredWidthControl(
                     surface_id=surface,

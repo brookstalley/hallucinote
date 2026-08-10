@@ -27,6 +27,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .automation import CORRELATION_ABS_THRESHOLD
+
 # Calibrated significance floors (dB). See module docstring for evidence.
 SIGNIFICANCE_DEFAULT_DB = 0.5
 SIGNIFICANCE_SHORT_TERM_DB = 1.0
@@ -57,7 +59,11 @@ SIGNIFICANCE_TIMBRE: dict[str, float] = {
 # over-wide element moved its mono-sum loss ~1 dB — while re-render jitter on a
 # stable image, which sits far below that, does not.
 SIGNIFICANCE_STEREO: dict[str, float] = {
-    "correlation": 0.05,        # -1..+1 Pearson; matches the image-probe floor
+    # IS the image-probe floor, imported rather than restated — the two answer
+    # the same question ("is this correlation move real, or jitter?"), and a
+    # recalibration of one that left the other behind would have an A/B and the
+    # automation verifier disagree about the same audio.
+    "correlation": CORRELATION_ABS_THRESHOLD,
     "mono_sum_loss_db": 0.5,    # dB lost summed to mono
 }
 

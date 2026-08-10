@@ -568,3 +568,80 @@ def test_anti_phase_window_is_not_mistaken_for_silence():
     assert v.measurable is True, "an audible anti-phase window is not silence"
     assert v.realized is True
     assert "image" in v.note.lower()
+
+
+def test_image_carried_verdict_names_its_probe():
+    """`probe` makes the verdict's basis machine-readable.
+
+    An image-carried verdict sits beside a near-unchanged centroid in
+    `metric`/`before`/`after`, so a consumer that reads those as the evidence
+    asserts a brightness change the audio does not support. `probe` says which
+    probe fired without string-matching the note.
+    """
+    half = 2.0
+    tone = sine(440.0, half, amplitude=0.5)
+    anti = tone.copy()
+    anti[:, 1] = -anti[:, 1]
+    audio = _two_half_audio(tone, anti)
+    env = DeclaredEnvelope(
+        target_surface_id="track:3",
+        target_kind="device_parameter",
+        parameter_path="Dry/Wet",
+        breakpoints=((0.0, 0.0), (8.0, 1.0)),
+    )
+    v = verify_envelope_realization(
+        env, audio, sample_rate=SAMPLE_RATE,
+        beat_map=_beat_map(audio), master_audio=audio,
+    )[0]
+    assert v.probe == "image"
+    # The centroid pair is unchanged — which is exactly why it must not be read
+    # as the evidence for this verdict.
+    assert v.metric == "spectral_centroid_hz"
+    assert abs(v.after - v.before) / v.before < 0.12
+
+    # A genuine timbre move reports the other probe.
+    bright = _two_half_audio(
+        sine(300.0, half, amplitude=0.5), sine(3500.0, half, amplitude=0.5)
+    )
+    v2 = verify_envelope_realization(
+        env, bright, sample_rate=SAMPLE_RATE,
+        beat_map=_beat_map(bright), master_audio=bright,
+    )[0]
+    assert v2.probe == "timbre"
+
+
+def test_send_level_is_graded_on_the_same_signal_the_gate_measures():
+    """A decorrelated return must not be judged on two cancellation residues.
+
+    The silence gate reads STEREO energy for every kind. If `_verify_level`
+    graded the MONO SUM instead, a wide return — a ping-pong delay, a stereo
+    reverb — would clear the gate at full level and then have its send step
+    measured on near-silent residue, yielding a confident dB verdict from noise.
+    Here the send is declared UP and the return genuinely gets louder while
+    staying decorrelated throughout; the verdict must follow the audible level.
+    """
+    half = 2.0
+
+    def _decorrelated(amplitude: float) -> np.ndarray:
+        # L and R are different tones, so the mono sum is NOT a scaled copy of
+        # the stereo signal — the two measurements genuinely disagree.
+        left = sine(440.0, half, amplitude=amplitude)[:, 0]
+        right = sine(441.7, half, amplitude=amplitude, phase=math.pi)[:, 0]
+        return np.stack([left, right], axis=1).astype(np.float32)
+
+    audio = _two_half_audio(_decorrelated(0.05), _decorrelated(0.5))
+    env = DeclaredEnvelope(
+        target_surface_id="return:1",
+        target_kind="send_level",
+        parameter_path=None,
+        breakpoints=((0.0, 0.2), (8.0, 0.8)),  # declared UP at beat 8
+    )
+    v = verify_envelope_realization(
+        env, audio, sample_rate=SAMPLE_RATE,
+        beat_map=_beat_map(audio), master_audio=audio,
+    )[0]
+    assert v.measurable is True
+    assert v.realized is True, "a 20 dB rise on a wide return is a realized send step"
+    # ~20 dB (0.05 → 0.5), which is the STEREO level move. Grading the mono sum
+    # would read some unrelated residue delta here.
+    assert 18.0 < (v.after - v.before) < 22.0

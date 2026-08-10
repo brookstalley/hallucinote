@@ -96,6 +96,10 @@ put any narrative there.
 
 **Corollary (read-SHAPE, not just settability): when a foreign-API field's shape is only documented loosely — or not at all — STUB LOUD (raise) until a real probe pins it; do NOT guess the shape to "unblock."** MICROTUNE (verify-api, 2026-06-19): the Cycling '74 ref typed Live's `TuningSystem.note_tunings` as "dictionary"; we refused to guess and shipped `read.py`'s extraction as a `raise`-ing stub with a fixture test pinning the held contract. When a real tuning (Wendy Carlos gamma) was finally loadable, the probe showed the shape was BOTH simpler AND *different* from the doc — a flat `list[float]` (degree-indexed, unison at `[0]`, period excluded), and `reference_pitch` a standard 12-key anchor, not a dict. A guessed dict-shape would have passed its own unit tests (the fake encodes the guess — see the NODE-ADDR test-trap learning below) while being silently wrong about pitch. The loud stub cost one extra session of waiting for Live; the wrong guess would have cost a corrupted tuning shipped green. Stubbing-loud-until-probed is the cheap insurance.
 
+## A shipped "can't" is a dated snapshot — re-probe a challenged capability verdict before defending it
+
+**When a recorded capability verdict ("can't / not supported / impossible") is challenged and the platform is live, RE-PROBE before citing the artifact — it is a dated snapshot of one build, not a law, and the re-probe costs minutes against a false premise that can span many surfaces. Capability claims must record the build they were verified against; a build-less verdict is untrustable on a later one.**
+
 ## Link, don't summarize
 
 **When an artifact needs to reference a fact that lives in another artifact, file, or code path, link to the source — don't restate the fact in this artifact's prose.**
@@ -354,14 +358,26 @@ feeds them. When a written rule and the implementation disagree, the rule may be
 describing a different repo's tooling — verify which, and record the departure
 rather than silently matching either. (2026-08-07, TOUR B1)
 
-## When a part's instrument is a sampler or drum device, verify its note mapping by RENDERING and checking per-stem RMS, because no symbolic gate can see a note sent where nothing is mapped
+## A sampler/drum part's note mapping is only verifiable by rendering it
 
-## When a push reports OK with a phase `skipped (idempotent)`, read the warning block before concluding anything, because the same word covers both work-done-elsewhere and precondition-probe-failed
+**When a part's instrument is a sampler or drum device, verify its note mapping by RENDERING and checking per-stem RMS. No symbolic gate can see a note sent where nothing is mapped — the clip, the push and the arrangement all report success while the pad stays silent.**
 
-## When a review lens reports declared-vs-measured drift, record explicitly whether the DECLARATION or the WORK was wrong, because tuning the declaration until the question disappears is gaming the lens
+## `skipped (idempotent)` is two different outcomes wearing one word
 
-## When a declared audible gesture "doesn't happen", measure the RENDERED AUDIO before diagnosing the mechanism, because a verified-correct automation arc proves the arc and not the sound
+**When a push reports OK with a phase `skipped (idempotent)`, read the warning block before concluding anything. The same word covers both work-already-done-elsewhere and precondition-probe-failed, and only the warnings separate them.**
 
-## When a verification lens reports "no effect", check whether the PROBE can see the effect that device produces, because the wrong probe manufactures false negatives that look like real defects
+## A declared-vs-measured gap has two possible culprits — name which
 
-## When an acceptance criterion is derived from a COUNT of symptoms, re-derive it per-symptom before treating a partial pass as failure, because some of the symptoms may be the tool being right
+**When a review lens reports declared-vs-measured drift, record explicitly whether the DECLARATION or the WORK was wrong. Tuning the declaration until the question disappears is gaming the lens, and it leaves no trace that anything was ever off.**
+
+## A correct automation arc is not evidence of an audible result
+
+**When a declared audible gesture "doesn't happen", measure the RENDERED AUDIO before diagnosing the mechanism. A verified-correct automation arc proves the arc and not the sound — the parameter can read back its exact authored value mid-sweep while the stem is bit-exact mono.**
+
+## A "no effect" verdict indicts the probe as much as the device
+
+**When a verification lens reports "no effect", check whether the PROBE can see the effect that device produces. The wrong probe manufactures false negatives that look like real defects — a comb filter changes the stereo picture, so a centroid-only check calls a working flanger unrealized.**
+
+## A criterion built from a symptom COUNT can fail by being satisfied
+
+**When an acceptance criterion is derived from a COUNT of symptoms, re-derive it per-symptom before treating a partial pass as failure. Some of the symptoms may be the tool being right, in which case the count was never the thing to hold.**

@@ -9,6 +9,14 @@ from hallucinote.audio.analyze import DeclaredWidthControl, _realize_widths
 from hallucinote.audio.report import LoudnessMetrics, StemMetrics, StereoMetrics
 
 
+def _scope_notes(skipped: list[dict]) -> list[dict]:
+    return [s for s in skipped if s["kind"] == "width_realization_scope"]
+
+
+def _other_skips(skipped: list[dict]) -> list[dict]:
+    return [s for s in skipped if s["kind"] != "width_realization_scope"]
+
+
 def _stem(track_id: str, name: str, corr: float, loss: float) -> StemMetrics:
     return StemMetrics(
         track_id=track_id,
@@ -42,7 +50,7 @@ def test_no_op_and_real_width_are_both_representable():
 
     realizations, skipped = _realize_widths(declared, stems)
 
-    assert skipped == []
+    assert _other_skips(skipped) == []
     by_name = {r.surface_name: r for r in realizations}
     # The no-op: highest declared value, lowest measured effect.
     assert by_name["Drone"].declared_display == "165 %"
@@ -56,8 +64,30 @@ def test_no_declared_controls_is_recorded_not_silently_absent():
     realizations, skipped = _realize_widths([], [_stem("track:1", "Drums", 0.8, -0.5)])
     assert realizations == []
     assert len(skipped) == 1
-    assert skipped[0]["kind"] == "width_realization"
-    assert "no declared width controls" in skipped[0]["reason"]
+    assert skipped[0]["kind"] == "width_realization_scope"
+    assert "not necessarily every one AUTHORED" in skipped[0]["reason"]
+
+
+def test_recognition_scope_is_disclosed_even_when_controls_WERE_found():
+    """The partial case is the dangerous one, and it is the common one.
+
+    One control recognised and three missed produces a NON-EMPTY list, which a
+    reader takes for the complete set of declared width controls and concludes
+    an unlisted one is absent or fine. Disclosing only in the zero case leaves
+    exactly that reading unguarded, so the note rides every analysis.
+    """
+    realizations, skipped = _realize_widths(
+        [_control("track:9", "165 %")], [_stem("track:9", "Drone", 0.896, -0.23)]
+    )
+    assert len(realizations) == 1
+    notes = _scope_notes(skipped)
+    assert len(notes) == 1
+    reason = notes[0]["reason"]
+    assert "1 width control(s) RECOGNISED" in reason
+    # The three blind spots a reader must know about before reading an absence.
+    assert "Stereo Width" in reason
+    assert "nested chain" in reason
+    assert "unity" in reason
 
 
 def test_declared_control_on_an_uncaptured_surface_is_reported_not_dropped():
@@ -67,8 +97,10 @@ def test_declared_control_on_an_uncaptured_surface_is_reported_not_dropped():
         [_control("track:42", "150 %")], [_stem("track:1", "Drums", 0.8, -0.5)]
     )
     assert realizations == []
-    assert len(skipped) == 1
-    assert "track:42" in skipped[0]["reason"]
+    others = _other_skips(skipped)
+    assert len(others) == 1
+    assert "track:42" in others[0]["reason"]
+    assert len(_scope_notes(skipped)) == 1
 
 
 def test_stem_without_measured_stereo_is_skipped_not_guessed():
@@ -83,7 +115,7 @@ def test_stem_without_measured_stereo_is_skipped_not_guessed():
     )
     realizations, skipped = _realize_widths([_control("track:1", "150 %")], [stem])
     assert realizations == []
-    assert len(skipped) == 1
+    assert len(_other_skips(skipped)) == 1
 
 
 def test_width_control_on_a_return_is_joined_not_reported_unmeasurable():
@@ -108,7 +140,7 @@ def test_width_control_on_a_return_is_joined_not_reported_unmeasurable():
     realizations, skipped = _realize_widths(
         [_control("return:2", "140 %")], surfaces
     )
-    assert skipped == []
+    assert _other_skips(skipped) == []
     assert len(realizations) == 1
     assert realizations[0].surface_name == "B-Room"
     assert realizations[0].mono_sum_loss_db == -1.9

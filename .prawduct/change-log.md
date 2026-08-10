@@ -62,18 +62,64 @@ catches the second failure mode, which is quieter than the first: Drone's
 `Utility Stereo Width` at **165 %** — the most aggressive setting in the song —
 producing the *least* effect, correlation +0.898 and only −0.23 dB of mono-sum
 loss, because it was multiplying a side signal that wasn't there. Three instances
-of that one bug class were in a single song. A width control on a *return* is
-reported as invisible-to-this-measurement rather than skipped, because per-stem
-measurement cannot see it — a distinction the first cut got wrong.
+of that one bug class were in a single song. Returns are collected and measured
+alongside tracks, so a width control on a reverb or delay bus gets a full
+declared-vs-measured row; the first cut walked tracks only, which made such a
+control *invisible* rather than skipped — a silent drop that reads to the caller
+as "nothing declared". Nothing about it was ever unmeasurable, only uncollected.
+
+A control left at unity is deliberately NOT collected. A pull writes a row for
+every parameter Live reports, not only the ones an author touched, so presence
+in the DB is not evidence of intent — without that filter every untouched
+Utility contributes a "declared 100 %" row, and a naturally wide stem carrying
+one presents as `declared 100 % / measured −3 dB`: a contradiction with an
+intent nobody expressed. The cost is that a width deliberately *held* at unity
+is indistinguishable from an untouched one and goes unlisted, which is the right
+way round — the lens surfaces contradictions with real intent, and a fabricated
+declaration manufactures them. The recognition scope (closed name set,
+top-level devices only, non-unity) is disclosed on every analysis rather than
+only when nothing is recognised: a partial list is the dangerous case, because
+it reads as a complete one.
+
+**A/B sees it too.** `compare.py` gains a third `_surface_deltas` family beside
+loudness and timbre, because a comparison that enumerates families by name was
+blind to exactly the change this lens exists to expose — reducing Brass from
+−3.84 dB to −2.86 dB of mono loss showed as no delta at all. Its floors ship
+`provisional: true`; the calibration debt is recorded on **AUD-TIMBRE-CALIB**,
+which now covers both families since one re-capture-jitter sweep answers both.
 
 **The lens emits no findings.** Measurement is neutral; all of the reading lives
 in `/mix-review`, which now carries guidance for both failure modes. The plan's
 original wording claimed findings at severity `info`; it ships none, which
 conforms more strictly than it was written.
 
+**Three things the third review round changed, all of them real.** The silence
+gate had moved to stereo energy for every envelope kind while the send-level
+metric still graded the mono sum, so a decorrelated return — a ping-pong delay,
+a stereo reverb — cleared the gate at full level and was then judged on two
+cancellation residues: a confident dB verdict built from noise, which is the
+failure class this work exists to remove. The centroid math had forked back into
+`automation.py`, undoing AUD-8T3K's recorded one-place consolidation; the stereo
+form now lives in `timbre.py` beside the mono one, sharing a single weighted-mean
+helper. And `QUIET_RMS` / `CORRELATION_ABS_THRESHOLD` were pairs of matching
+literals tied only by a comment — each is now one definition the other imports,
+because the invariant ("too quiet for one lens is too quiet for the other") is
+the kind a duplicate silently loses.
+
+**`probe` names the evidence.** A dual-probe verdict leaves `metric`/`before`/
+`after` as the centroid pair whichever probe fired, so an image-carried
+`realized: true` sits beside a barely-moved centroid. Reading those as the
+evidence asserts a brightness change the audio does not support — the record now
+carries a structured `probe` field (`"timbre"` / `"image"`) so the basis is
+machine-readable rather than recoverable only by string-matching the note.
+
 **Not settled here:** aesthetic stereo grading (placement, width, movement against
 declared spatial intent) stays with **STR-9P4M**. This work catches deliverability
 and no-op failures, which is a different question from taste.
+
+## 2026-08-07 — `/song-brief`: a stage may not emit an unresolved gap
+
+<!-- prawduct: type=feature | scope=song-lifecycle | status=shipped -->
 
 A new lifecycle **stage 0**, `/song-brief`, in front of `/song-new`, plus a
 **definition of done for every authoring stage**. The rule both serve: *a stage

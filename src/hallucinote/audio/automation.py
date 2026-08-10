@@ -48,8 +48,8 @@ import numpy as np
 from .levels import live_fader_gain
 from .report import EnvelopeVerification
 from .section import BeatSampleMap
-from .stereo import measure_stereo
-from .timbre import spectral_centroid_hz
+from .stereo import QUIET_RMS, measure_stereo
+from .timbre import spectral_centroid_hz, spectral_centroid_stereo_hz
 
 # Beats measured on each side of a breakpoint, clamped to the neighbouring
 # breakpoints (so adjacent changes don't bleed into each other).
@@ -66,16 +66,20 @@ _CENTROID_REL_THRESHOLD = 0.12
 # opening from bit-exact mono (+1.000) to a working image (~+0.907) moves ~0.09,
 # comfortably clear of this floor, while a dry-signal correlation sits stable
 # well inside it.
-_CORRELATION_ABS_THRESHOLD = 0.05
+#
+# Public because ``compare.py``'s A/B correlation significance imports it rather
+# than restating the number: the two answer the same question ("is this
+# correlation move real, or jitter?"), so a recalibration of one that left the
+# other behind would make an A/B disagree with the verifier about the same audio.
+CORRELATION_ABS_THRESHOLD = 0.05
 
 # A send-level step counts as realized when the return RMS moves at least this
 # many dB in the DECLARED direction.
 _SEND_DB_THRESHOLD = 1.5
 
-# RMS below this (≈ -100 dBFS) is silence — a window this quiet can't be
-# characterised, so the breakpoint is reported unmeasurable rather than
-# misread as "not realized".
-_QUIET_RMS = 1e-5
+# The silence floor is stereo.QUIET_RMS, imported rather than restated: a
+# window too quiet for the image lens to characterise is too quiet for this one
+# to hand back a verdict on. See that constant for why the tie must not drift.
 
 # A declared mixer_volume move must predict at least this much master-level
 # change to be measurable there. Below it the stem is too diluted in the mix
@@ -238,8 +242,8 @@ def verify_envelope_realization(
         # verification — including the image probe, for which anti-phase is the
         # single most informative signal shape there is.
         if (
-            _window_energy(stereo_before, before) < _QUIET_RMS
-            or _window_energy(stereo_after, after) < _QUIET_RMS
+            _window_energy(stereo_before, before) < QUIET_RMS
+            or _window_energy(stereo_after, after) < QUIET_RMS
         ):
             results.append(EnvelopeVerification(
                 target_surface_id=env.target_surface_id,
@@ -266,7 +270,11 @@ def verify_envelope_realization(
                 stereo_after=stereo_after,
             ))
         elif env.target_kind in _LEVEL_KINDS:
-            results.append(_verify_level(env, bps, i, before, after))
+            results.append(_verify_level(
+                env, bps, i, before, after,
+                stereo_before=stereo_before,
+                stereo_after=stereo_after,
+            ))
         # Unknown kinds are filtered out by the handler before reaching here;
         # if one slips through, skip it silently (no false verdict).
     return results
@@ -275,25 +283,17 @@ def verify_envelope_realization(
 def _phase_robust_centroid(
     stereo: np.ndarray, mono: np.ndarray, sample_rate: int
 ) -> float:
-    """Spectral centroid that phase cancellation cannot fake.
+    """The phase-robust centroid for this window, or the mono form when no stereo
+    window is available (hand-built fixtures).
 
-    Averaging L and R in the TIME domain cancels an anti-phase pair to silence,
-    whose centroid reads 0 Hz — so a purely spatial change reports as a total
-    timbre collapse ("440→0 Hz, +100%"). Averaging the two channels' MAGNITUDE
-    spectra instead measures the brightness each channel actually carries, which
-    is what "did the timbre change" means. Falls back to the mono window when no
-    stereo is available (hand-built fixtures).
+    Both centroid definitions live in ``timbre.py`` — see
+    :func:`~hallucinote.audio.timbre.spectral_centroid_stereo_hz` for why the
+    magnitude-spectrum average is the right one here. This is the fixture
+    fallback only; it deliberately holds no centroid math of its own.
     """
     if stereo.size == 0:
         return spectral_centroid_hz(mono, sample_rate)
-    spec = 0.5 * (
-        np.abs(np.fft.rfft(stereo[:, 0])) + np.abs(np.fft.rfft(stereo[:, 1]))
-    )
-    total = float(spec.sum())
-    if total <= 0.0:
-        return 0.0
-    freqs = np.fft.rfftfreq(stereo.shape[0], d=1.0 / sample_rate)
-    return float((freqs * spec).sum() / total)
+    return spectral_centroid_stereo_hz(stereo, sample_rate)
 
 
 def _verify_timbre(
@@ -325,7 +325,7 @@ def _verify_timbre(
     pct = rel * 100.0
 
     corr_delta = _image_delta(stereo_before, stereo_after)
-    image_moved = corr_delta is not None and corr_delta >= _CORRELATION_ABS_THRESHOLD
+    image_moved = corr_delta is not None and corr_delta >= CORRELATION_ABS_THRESHOLD
 
     realized = timbre_moved or image_moved
     if timbre_moved:
@@ -361,6 +361,9 @@ def _verify_timbre(
         measurable=True,
         realized=realized,
         note=note,
+        # Which probe carried the verdict — timbre wins the tie, matching the
+        # note. None when neither fired: there is no basis to name.
+        probe=("timbre" if timbre_moved else "image" if image_moved else None),
     )
 
 
@@ -394,7 +397,7 @@ def _verify_mixer_volume(
     ``measurable=False``, never a false verdict.
     """
     b_beat = bps[i][0]
-    if _rms(master_before) < _QUIET_RMS or _rms(master_after) < _QUIET_RMS:
+    if _rms(master_before) < QUIET_RMS or _rms(master_after) < QUIET_RMS:
         return EnvelopeVerification(
             target_surface_id=env.target_surface_id,
             target_kind=env.target_kind,
@@ -528,7 +531,7 @@ def _verify_mixer_pan(
 
     rms_lb, rms_rb = _ch_rms(master_before, 0), _ch_rms(master_before, 1)
     rms_la, rms_ra = _ch_rms(master_after, 0), _ch_rms(master_after, 1)
-    if min(rms_lb, rms_rb, rms_la, rms_ra) < _QUIET_RMS:
+    if min(rms_lb, rms_rb, rms_la, rms_ra) < QUIET_RMS:
         return _unmeasurable(
             "master window too quiet to characterise around this "
             "breakpoint — can't confirm or refute the pan move here"
@@ -591,9 +594,22 @@ def _verify_mixer_pan(
     )
 
 
-def _verify_level(env, bps, i, before, after) -> EnvelopeVerification:
-    db_before = 20.0 * math.log10(max(_rms(before), 1e-12))
-    db_after = 20.0 * math.log10(max(_rms(after), 1e-12))
+def _verify_level(
+    env, bps, i, before, after, *, stereo_before, stereo_after,
+) -> EnvelopeVerification:
+    """Verify a send-level step on the return's own level.
+
+    The level measured here is the window's STEREO RMS, the same quantity the
+    silence gate uses (``_window_energy``). Grading the mono sum instead would
+    let gate and metric measure different signals: a decorrelated return window
+    — a wide reverb, a ping-pong delay — is loud in stereo and near-silent in
+    its mono sum, so it clears the gate and is then judged on two cancellation
+    residues, which yields a confident dB verdict from noise. That is the same
+    false-verdict class STR-4C8N exists to remove, and a send into a wide return
+    is the ordinary case, not a corner.
+    """
+    db_before = 20.0 * math.log10(max(_window_energy(stereo_before, before), 1e-12))
+    db_after = 20.0 * math.log10(max(_window_energy(stereo_after, after), 1e-12))
     delta_db = db_after - db_before
     declared_dir = bps[i][1] - bps[i - 1][1]  # +ve = more send, -ve = less
     # Realized when the level moved in the declared direction by a real amount.

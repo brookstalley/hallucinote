@@ -48,6 +48,7 @@ import numpy as np
 from .levels import live_fader_gain
 from .report import EnvelopeVerification
 from .section import BeatSampleMap
+from .stereo import measure_stereo
 from .timbre import spectral_centroid_hz
 
 # Beats measured on each side of a breakpoint, clamped to the neighbouring
@@ -58,6 +59,14 @@ _WINDOW_BEATS = 2.0
 # moves at least this fraction (relative) across the breakpoint. ~12% is well
 # above measurement jitter but below a real Clean→distorted move.
 _CENTROID_REL_THRESHOLD = 0.12
+
+# The second probe: a device-parameter change also counts as realized when the
+# L/R correlation moves at least this much (absolute, on a -1..+1 scale) across
+# the breakpoint. Sized against the case that motivated it — a chorus flanger
+# opening from bit-exact mono (+1.000) to a working image (~+0.907) moves ~0.09,
+# comfortably clear of this floor, while a dry-signal correlation sits stable
+# well inside it.
+_CORRELATION_ABS_THRESHOLD = 0.05
 
 # A send-level step counts as realized when the return RMS moves at least this
 # many dB in the DECLARED direction.
@@ -227,7 +236,11 @@ def verify_envelope_realization(
             continue
 
         if env.target_kind in _TIMBRE_KINDS:
-            results.append(_verify_timbre(env, b_beat, before, after, sample_rate))
+            results.append(_verify_timbre(
+                env, b_beat, before, after, sample_rate,
+                stereo_before=_stereo_window(surface_audio, beat_map, lo, b_beat),
+                stereo_after=_stereo_window(surface_audio, beat_map, b_beat, hi),
+            ))
         elif env.target_kind in _LEVEL_KINDS:
             results.append(_verify_level(env, bps, i, before, after))
         # Unknown kinds are filtered out by the handler before reaching here;
@@ -235,22 +248,57 @@ def verify_envelope_realization(
     return results
 
 
-def _verify_timbre(env, b_beat, before, after, sample_rate) -> EnvelopeVerification:
+def _verify_timbre(
+    env, b_beat, before, after, sample_rate, *, stereo_before, stereo_after,
+) -> EnvelopeVerification:
+    """Verify a device-parameter change on TWO probes: timbre and image.
+
+    Spectral centroid alone is the wrong probe for an image effect. A flanger is
+    a comb filter — it notches roughly symmetrically, so it barely moves the
+    centroid however wet it gets. Verified on centroid alone, a working chorus
+    flanger reports "no audible timbre shift (2244→2219 Hz, 1% < 12%)" and lands
+    a warning on automation that provably DID happen: the parameter read back its
+    exact authored value mid-sweep and the stereo appeared in the render.
+
+    So the claim is "the declared change produced a measurable effect in some
+    probed dimension", which is strictly more correct than the timbre-only test.
+    Deliberately NOT selected by device class: class isn't available at this
+    layer, and threading it would cross ``analyze_mix``'s DB-agnostic boundary
+    for no gain.
+
+    The reported ``metric``/``before``/``after`` stay the centroid pair so the
+    field's meaning never depends on which probe happened to fire; the note names
+    the probe that carried the verdict.
+    """
     c_before = spectral_centroid_hz(before, sample_rate)
     c_after = spectral_centroid_hz(after, sample_rate)
     rel = abs(c_after - c_before) / c_before if c_before > 0 else 0.0
-    realized = rel >= _CENTROID_REL_THRESHOLD
+    timbre_moved = rel >= _CENTROID_REL_THRESHOLD
     pct = rel * 100.0
-    if realized:
+
+    corr_delta = _image_delta(stereo_before, stereo_after)
+    image_moved = corr_delta is not None and corr_delta >= _CORRELATION_ABS_THRESHOLD
+
+    realized = timbre_moved or image_moved
+    if timbre_moved:
         note = (
             f"timbre shift realized: spectral centroid {c_before:.0f}→"
             f"{c_after:.0f} Hz ({pct:+.0f}%) at the declared "
             f"{env.parameter_path or 'device-parameter'} change"
         )
+    elif image_moved:
+        note = (
+            f"image shift realized: L/R correlation moved {corr_delta:.2f} at the "
+            f"declared {env.parameter_path or 'device-parameter'} change, with no "
+            f"timbre move ({c_before:.0f}→{c_after:.0f} Hz, {pct:.0f}%) — expected "
+            "for a comb/width effect, which changes the stereo picture rather "
+            "than the brightness"
+        )
     else:
         note = (
             f"no audible timbre shift ({c_before:.0f}→{c_after:.0f} Hz, "
-            f"{pct:.0f}% < {_CENTROID_REL_THRESHOLD * 100:.0f}%) — the declared "
+            f"{pct:.0f}% < {_CENTROID_REL_THRESHOLD * 100:.0f}%) and no stereo "
+            f"image shift — the declared "
             f"{env.parameter_path or 'device-parameter'} change may not have "
             "been realized in the render"
         )
@@ -266,6 +314,20 @@ def _verify_timbre(env, b_beat, before, after, sample_rate) -> EnvelopeVerificat
         realized=realized,
         note=note,
     )
+
+
+def _image_delta(stereo_before, stereo_after) -> float | None:
+    """Absolute L/R-correlation change across the breakpoint, or ``None`` when
+    either window is unmeasurable (silent/empty — ``measure_stereo`` returns NaN
+    there, and a NaN must never read as "no change" and vote against realization).
+    """
+    if stereo_before.shape[0] == 0 or stereo_after.shape[0] == 0:
+        return None
+    c_before = measure_stereo(stereo_before).correlation
+    c_after = measure_stereo(stereo_after).correlation
+    if math.isnan(c_before) or math.isnan(c_after):
+        return None
+    return abs(c_after - c_before)
 
 
 def _verify_mixer_volume(

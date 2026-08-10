@@ -409,3 +409,128 @@ def test_mixer_pan_model_breakdown_is_unmeasurable_not_false_verdict():
     assert len(results) == 1
     assert results[0].measurable is False
     assert "breaks down" in results[0].note
+
+
+# ---------------------------------------------------------------------------
+# Dual-probe device-parameter verification (STR-4C8N A2).
+#
+# Spectral centroid alone is the wrong probe for an IMAGE effect. A flanger is a
+# comb filter: it notches roughly symmetrically, so it barely moves the centroid
+# however wet it gets. On `the-argument` that produced three `warning` findings
+# ("no audible timbre shift ... 1% < 12%") against automation that provably DID
+# land — the parameter read back its exact authored value mid-sweep, and the
+# stereo appeared in the render. A device-parameter change is realized when it
+# moves the timbre OR the image.
+# ---------------------------------------------------------------------------
+
+
+def _widened(mono_src: np.ndarray, *, spread: float) -> np.ndarray:
+    """Decorrelate a stereo pair by injecting an anti-correlated side signal.
+
+    Stands in for what a flanger with a non-zero Mod Phase does: the channels
+    stop being identical while the CENTROID stays put, which is exactly the
+    case centroid-only verification cannot see.
+    """
+    rng = np.random.default_rng(4028)
+    side = rng.standard_normal(mono_src.shape[0]) * spread
+    out = mono_src.astype(np.float64).copy()
+    out[:, 0] += side
+    out[:, 1] -= side
+    return out
+
+
+def test_device_parameter_image_shift_is_realized_without_a_timbre_shift():
+    """The flanger case: the image opens, the centroid does not move."""
+    half = 2.0
+    tone = sine(440.0, half, amplitude=0.5)
+    dry = tone                      # channels identical — bit-exact mono
+    wet = _widened(sine(440.0, half, amplitude=0.5), spread=0.15)
+    audio = _two_half_audio(dry, wet)
+    env = DeclaredEnvelope(
+        target_surface_id="track:3",
+        target_kind="device_parameter",
+        parameter_path="Dry/Wet",
+        breakpoints=((0.0, 0.0), (8.0, 0.38)),
+    )
+    results = verify_envelope_realization(
+        env, audio, sample_rate=SAMPLE_RATE,
+        beat_map=_beat_map(audio), master_audio=audio,
+    )
+    assert len(results) == 1
+    v = results[0]
+    assert v.measurable is True
+    assert v.realized is True, (
+        "an image change with no centroid change must count as realized — this "
+        "is the false-positive class the dual probe exists to remove"
+    )
+    # The note must say WHICH probe fired, or a reader can't tell a timbre move
+    # from an image move.
+    assert "image" in v.note.lower()
+
+
+def test_device_parameter_flat_image_and_flat_timbre_is_still_not_realized():
+    """The regression that matters most: the dual probe must not become a
+    rubber stamp. Nothing moved, so nothing is realized."""
+    flat = sine(440.0, 4.0, amplitude=0.5)
+    env = DeclaredEnvelope(
+        target_surface_id="track:3",
+        target_kind="device_parameter",
+        parameter_path="Dry/Wet",
+        breakpoints=((0.0, 0.0), (8.0, 0.38)),
+    )
+    results = verify_envelope_realization(
+        env, flat, sample_rate=SAMPLE_RATE,
+        beat_map=_beat_map(flat), master_audio=flat,
+    )
+    assert len(results) == 1
+    assert results[0].measurable is True
+    assert results[0].realized is False
+
+
+def test_wet_but_mono_flanger_is_still_not_realized():
+    """The true positive the old code got right for the wrong reason.
+
+    A flanger whose Mod Phase is 0° combs both channels identically: the stem
+    stays bit-exact mono and the centroid barely shifts. Neither probe fires, so
+    the reading stays 'not realized' — which is the correct diagnosis of a
+    device that cannot do what was declared.
+    """
+    half = 2.0
+    dry = sine(440.0, half, amplitude=0.5)
+    # Same signal, marginally comb-filtered IN BOTH CHANNELS EQUALLY.
+    combed = sine(440.0, half, amplitude=0.5) * 0.97
+    audio = _two_half_audio(dry, combed)
+    env = DeclaredEnvelope(
+        target_surface_id="track:3",
+        target_kind="device_parameter",
+        parameter_path="Dry/Wet",
+        breakpoints=((0.0, 0.0), (8.0, 0.38)),
+    )
+    results = verify_envelope_realization(
+        env, audio, sample_rate=SAMPLE_RATE,
+        beat_map=_beat_map(audio), master_audio=audio,
+    )
+    assert len(results) == 1
+    assert results[0].realized is False
+
+
+def test_timbre_shift_still_reported_as_timbre():
+    """The existing centroid path keeps its own voice — a brightness flip must
+    not start describing itself as an image move."""
+    half = 2.0
+    audio = _two_half_audio(
+        sine(300.0, half, amplitude=0.5), sine(3500.0, half, amplitude=0.5)
+    )
+    env = DeclaredEnvelope(
+        target_surface_id="track:3",
+        target_kind="device_parameter",
+        parameter_path="Amp Type",
+        breakpoints=((0.0, 0.0), (8.0, 1.0)),
+    )
+    results = verify_envelope_realization(
+        env, audio, sample_rate=SAMPLE_RATE,
+        beat_map=_beat_map(audio), master_audio=audio,
+    )
+    v = results[0]
+    assert v.realized is True
+    assert "timbre" in v.note.lower()

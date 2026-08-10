@@ -61,7 +61,7 @@ numbers. That is A1's acceptance criterion, so nothing needs deciding first.
 ## Status
 
 - [x] Chunk A1: Per-stem stereo metrics in the MixReport
-- [ ] Chunk A2: Dual-probe device-parameter verification (timbre OR image)
+- [x] Chunk A2: Dual-probe device-parameter verification (timbre OR image)
 - [ ] Chunk A3: Declared-vs-measured width join + `/mix-review` reading guidance
 
 Context: Plan authored 2026-08-10 on `feat/str-4c8n-stereo-lens` off `develop`.
@@ -121,9 +121,23 @@ Today that yields `no audible timbre shift (2244→2219 Hz, 1% < 12%)` and a
 `the-argument` alone. Centroid is the wrong probe for an image effect.
 
 **Acceptance criteria:**
-- The three `track:3`/`track:4`/`track:6 Dry/Wet` findings on `the-argument`'s
-  current render stop being reported as not-realized, and the note says the image
-  probe fired.
+
+> **Criterion corrected mid-build, 2026-08-10.** It originally read "the three
+> `Dry/Wet` findings stop being reported as not-realized." That was written from
+> the finding COUNT and assumed all of them were false. They are not: each arc has
+> three change points (beats 265, 288, 290), and the beat-288 move is
+> `0.38 → 0.42` — a 4 % Dry/Wet change that is genuinely inaudible, so
+> "not realized" there is the lens being RIGHT. A criterion that demanded those
+> flip would have been satisfied only by making the probe lie.
+
+- Findings on `the-argument`'s current render drop from 9 to 5, and per-breakpoint
+  **6 of the 9 `Dry/Wet` verifications realize** (verified 2026-08-10: track:6 all
+  three; track:4 at 265 via image +0.09 and at 290 via timbre +22 %; track:3 at 290
+  via image +0.07).
+- Every realization note names the probe that carried it, so a reader can tell an
+  image move from a timbre move.
+- The beat-288 verifications (`0.38 → 0.42`) correctly stay not-realized — an
+  inaudible declared move must keep reporting as inaudible.
 - A genuinely unrealized device-parameter change (synthetic: identical before and
   after windows) is STILL reported as not realized — the fix must not become a
   rubber stamp. This is the regression test that matters most.
@@ -134,6 +148,18 @@ Today that yields `no audible timbre shift (2244→2219 Hz, 1% < 12%)` and a
 
 **Done when:** the above pass, and the false-positive count on `the-argument`
 drops from 9 findings to the ones that survive on their merits.
+
+**Residual, discovered at A2 and deliberately NOT fixed here:** `track:3` at beat
+265 still reads not-realized, and that one IS an artifact. The arc ramps 0 → 0.38
+across beats 261–265, but the before-window is clamped to
+`max(prev_breakpoint, beat − _WINDOW_BEATS)` = 263 — already halfway up the ramp —
+so both windows contain a partly-wet flanger and the delta collapses. This is
+**window placement on a smooth ramp**, a different defect from probe choice, and
+it affects every target kind rather than just device parameters. Fixing it means
+changing window semantics for all of them (sample where the OLD value is actually
+in effect, i.e. around the previous breakpoint, rather than a fixed span back from
+this one). That is a bigger, riskier change than A2's scope and belongs in its own
+item — filed rather than smuggled in here.
 
 ## Chunk A3: Declared-vs-measured width join + `/mix-review` guidance
 

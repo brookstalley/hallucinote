@@ -1255,8 +1255,8 @@ def test_extract_flattens_nested_rack_devices(tmp_path: Path, monkeypatch):
     none of the signal path inside them, while the extract looked complete.
 
     The rack container is still reported — flattening reaches the contents, it
-    does not replace them — and nested entries carry `rack_depth` + `chain_id`
-    so a consumer can still tell them from top-level siblings.
+    does not replace them — and nested entries carry `rack_depth`, which is what
+    tells them from top-level siblings (`chain_id` is NOT NULL on every row).
     """
     slug = "nested-rack-song"
     song_dir = tmp_path / "songs" / slug

@@ -121,7 +121,7 @@ except ImportError:  # pragma: no cover - exercised in Live's vendored env
 from ..analyzer.setup import track_id_for_surface  # noqa: E402
 # The nested-rack descent cap, shared with the wire-side resolver so the
 # extract and `device_path` cannot disagree about how deep a rack may go.
-from ..handlers.device import _DEVICE_PATH_DEPTH_CAP  # noqa: E402
+from ..handlers.device import DEVICE_PATH_DEPTH_CAP  # noqa: E402
 
 
 class _AnalysisError(ValueError):
@@ -695,13 +695,17 @@ def analyze_handler(
     # (potentially long) analyze_mix call (BUG3). The report write below
     # reuses it.
     analysis_dir.mkdir(parents=True, exist_ok=True)
-    # WSP-3R7K: ignore this dir's contents where they are WRITTEN, so a
-    # workspace created before `init-workspace` shipped its managed root block
-    # (or by a bare `git init`) stops surfacing MixReports as committable.
-    # Guarded like every other engine symbol here — in Live's vendored env
-    # there is no hallucinote to import, and no git working copy to tidy.
-    if self_ignore_dir is not None:
-        self_ignore_dir(analysis_dir)
+    # WSP-3R7K deliberately does NOT self-ignore this directory, unlike
+    # `captures/`. Two records say MixReports here are meant to be COMMITTED —
+    # the root `.gitignore` ("the small MixReport JSONs in analysis/ ARE checked
+    # in") and `hallucinote.paths`, whose `portable_path` exists precisely
+    # because they land in git and must not carry an author's home directory.
+    # A directory-local `*` would beat the root file's silence and quietly make
+    # a tracked artifact class uncommittable.
+    #
+    # `init_workspace.GITIGNORE_BLOCK` carries `**/analysis/`, which contradicts
+    # both. That conflict predates this branch and is the owner's to settle; it
+    # is named here rather than resolved by whichever writer ran last.
 
     # Heartbeat=running before analyze_mix — analyze_mix has no progress
     # callback (and the spec is not to plumb one in), so the pre/post writes
@@ -1058,7 +1062,7 @@ def _devices_with_nested(
     and an extract is not the place to hang on it. One cap, one definition.
     """
     out: list[dict[str, Any]] = []
-    if _depth > _DEVICE_PATH_DEPTH_CAP:
+    if _depth > DEVICE_PATH_DEPTH_CAP:
         return out
     for device in devices:
         device_d = dict(device)
@@ -1097,8 +1101,9 @@ def _extract_song_structure(conn: "sqlite3.Connection", song_id: str) -> dict[st
     Devices are flattened across nested rack chains to arbitrary depth
     (DEV-4X2N, via :func:`_devices_with_nested`), so a song built on Instrument
     or Audio Effect Racks reports the devices INSIDE its racks and not just the
-    rack containers. Nested entries carry ``chain_id`` + ``rack_depth`` so a
-    consumer can still distinguish them from top-level siblings.
+    rack containers. Nested entries carry ``rack_depth``, which is what
+    distinguishes them from top-level siblings (``chain_id`` is NOT NULL on
+    every device row, so it does not).
     """
     song_row = Q.get_song(conn, song_id)
     song = dict(song_row) if song_row is not None else {"id": song_id}

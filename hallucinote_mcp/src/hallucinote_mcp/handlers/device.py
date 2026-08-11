@@ -111,7 +111,13 @@ def _resolve_device(parent: Any, device_index: int) -> Any:
 # Defensive cap on device_path depth. Live racks can't nest cyclically, so
 # this is a backstop against pathological wire input, not a real capability
 # ceiling — real device trees are a handful of levels deep at most.
-_DEVICE_PATH_DEPTH_CAP = 16
+#
+# PUBLIC (no underscore) because it is shared: the analysis extract's nested-rack
+# walk imports it so the extract and `device_path` cannot disagree about how deep
+# a rack may go. `_DEVICE_PATH_DEPTH_CAP` remains as a deprecated alias so any
+# in-flight branch keeps importing cleanly.
+DEVICE_PATH_DEPTH_CAP = 16
+_DEVICE_PATH_DEPTH_CAP = DEVICE_PATH_DEPTH_CAP
 
 
 def _nth_device(chain: Any, device_position: int) -> Any:

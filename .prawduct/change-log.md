@@ -142,8 +142,14 @@ checked.
   emitted server-side off the render status response and deduped on
   `captures_dir` because the caller is a poll (#263); and tools now ignore their
   own regenerable output where they write it — `analysis/.gitignore` for
-  whole-directory output, a named list for the song dir, which also holds
-  authored work (#303). A confirmation lock pins that a `device_parameter`
+  whole-directory output (`captures/` — every take under it is regenerable),
+  a named list for the song dir, which also holds authored work (#303).
+  **`analysis/` is deliberately NOT self-ignored:** the root `.gitignore`
+  and `hallucinote.paths` both say MixReports there are meant to be
+  committed (`portable_path` exists precisely because they land in git),
+  while `init_workspace`'s root block carries `**/analysis/`. That
+  contradiction predates this branch and is the owner's to settle — it is
+  named in the code rather than resolved by whichever writer ran last. A confirmation lock pins that a `device_parameter`
   envelope covered by its session clip stays on the sample-accurate path rather
   than regressing to the ~2.5 Hz perform path, together with the note-on
   ordering convention that makes per-phrase sample windows land right (#236).

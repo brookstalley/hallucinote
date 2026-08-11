@@ -49,6 +49,7 @@ from typing import Literal
 
 from hallucinote.db import init_db, queries as Q, resolve_db_path
 from hallucinote.preset_query import BROWSER_ROOTS as _VALID_BROWSER_ROOTS
+from hallucinote.preset_query import SEARCH_MODES as _VALID_MATCH_MODES
 from hallucinote.workspace import resolve_song_dir
 
 
@@ -310,6 +311,27 @@ def classify_preset_query(
         return (
             "preset_query_invalid",
             f"preset_query.pattern must be a string, got {type(pattern).__name__}",
+        )
+    # SYN-6Q3D: `mode` and `case_sensitive` now ride the wire into
+    # `ableton_browser(action='search')`, so they are structural too. Without
+    # this check an unknown mode reaches the probe, the browser rejects the
+    # enum, and `_probe_browser_dry_runs` raises SystemExit — killing the WHOLE
+    # `--probe` report over one bad device instead of flagging that device. The
+    # enum is IMPORTED from `preset_query` (the lock-tested mirror of the
+    # MCP resolver) rather than restated, so the gate cannot drift from the
+    # matcher — the exact class of disagreement this item existed to fix.
+    mode = pq.get("mode")
+    if mode is not None and mode not in _VALID_MATCH_MODES:
+        return (
+            "preset_query_invalid",
+            f"preset_query.mode={mode!r} not in {sorted(_VALID_MATCH_MODES)}",
+        )
+    case_sensitive = pq.get("case_sensitive")
+    if case_sensitive is not None and not isinstance(case_sensitive, bool):
+        return (
+            "preset_query_invalid",
+            "preset_query.case_sensitive must be a boolean, got "
+            f"{type(case_sensitive).__name__}",
         )
     # Structure is fine — caller will dispatch the dry-run.
     return None

@@ -47,14 +47,20 @@ checked.
   directory** instead of the process cwd. This **remaps DB filenames for anyone
   who has been running a song's `build.py` from a foreign cwd** — that shell
   was minting `<slug>-<the-other-repo's-branch>.db` while every reader looked
-  for `<slug>-<songs-repo-branch>.db`, so one song silently owned two DBs (and
-  two sets of `.last-push-state.json` / `.last-notes-push.json` siblings,
-  which is how a scoped `--changed` push could compare against the wrong
-  fingerprints). It is a resolution-semantics change, not a pure bugfix: a DB
-  that was being written under the foreign name will not be found under the
-  new one. The legacy `<slug>.db` fallback readers already carry is unchanged.
-  Both root paths now probe the same place, so `resolve_db_path(slug)` and
-  `resolve_db_path(slug, root=...)` agree by construction.
+  for `<slug>-<songs-repo-branch>.db`, so one song silently owned two DBs. The
+  sibling push-state files are the sharp end, and by SHARING rather than
+  duplicating: `.last-push-state.json` / `.last-notes-push.json` have fixed
+  names and live in the song dir, which both DBs share — so two DBs wrote one
+  set of fingerprints, and a scoped `--changed` push compared one DB's clips
+  against the other DB's fingerprints. It is a resolution-semantics change,
+  not a pure bugfix: a DB written under the foreign name will not be found
+  under the new one. `resolve_db_path` now prints a stderr line naming any
+  differently-branched sibling when the resolved DB is absent — `build.py`
+  regenerates authored content, but rows pulled from Live (and the pull events
+  arming the replay guard) live only in the DB that recorded them. The legacy
+  `<slug>.db` fallback readers already carry is unchanged. Both root paths now
+  probe the same place, so `resolve_db_path(slug)` and `resolve_db_path(slug,
+  root=...)` agree by construction.
 
 - **`compat check --probe` stopped lying about ambiguity** (#326). The dry-run
   cache key omitted `mode` and `case_sensitive`, and the probe never sent them,
@@ -64,6 +70,15 @@ checked.
   perfectly. Both fields now ride the key and the wire. The second, quieter
   half is closed too: two devices differing only in `mode` no longer collide on
   one cache entry and share a match count.
+
+- **The BAK-7D2V closure note** (#317) was stale on two counts — it advertised
+  the superseded empty-diff re-stamp, and said "checks 7-8" where
+  `operator-verification.md` carries 7-9. Fixed on **closed issue #337**, not in
+  `.prawduct/backlog.md`. That file was frozen on 2026-08-10 as the migration's
+  source corpus with an explicit "preserve it verbatim" — it is what
+  `verify-migration` and any rollback read, so editing it would corrupt them.
+  The note migrated verbatim into #337, which is the record a future scrub
+  actually reads; the frozen copy stays wrong on purpose, as history.
 
 - **Waivers, citations, and the pre-split layout** (#447, #445, #320): all 21
   legacy `prawduct:ok-broad-except` pragmas migrated to the current form

@@ -86,7 +86,15 @@ durability contract). #318 decides `restamp`'s fate and #315 documents whatever
      "When changing this surface" bullets.
   5. **#317** the BAK-7D2V closure note describes the shipped empty-diff **bake**
      (not the superseded re-stamp) and its check range matches the numbered
-     checks in `.prawduct/operator-verification.md`.
+     checks in `.prawduct/operator-verification.md` — corrected on **closed
+     issue #337**, NOT in `.prawduct/backlog.md`.
+     **Resolved tension:** the issue (filed 2026-07-20) names the backlog file,
+     but the 2026-08-10 cutover froze that file as the migration's source corpus
+     under an explicit "preserve it verbatim" — it is what `verify-migration`
+     and rollback read. The note migrated verbatim into #337, so #337 is the
+     record a future scrub trusts and the frozen copy stays wrong as history.
+     A grep of `.prawduct/backlog.md` will therefore still match the old text;
+     that is the intended end state, not an undelivered item.
 
 ## Chunk 2 — stale citations + waiver hygiene
 
@@ -100,8 +108,11 @@ longer true", spread across source comments, pragmas and a governing artifact.
      `.prawduct/`; the user-facing MCP error string at `clip.py:358` no longer
      names any tracker; the quantize/groove comment no longer cites dropped
      GEN-2T8M.
-  2. **#447** `grep -rn 'ok-broad-except' --include='*.py' src hallucinote_mcp
-     tests | wc -l` returns 0, and each of the 21 rewritten sites carries a
+  2. **#447** `grep -rn 'ok-broad-except'` returns 0 **tree-wide, not just in
+     `*.py`** — the code sites AND every place that instructs the spelling
+     (`CONTRIBUTING.md`, `project-state.yaml`, `project-preferences.md`). A
+     sweep that stops at one file extension leaves the retired form being taught
+     to the next contributor. Each of the 21 rewritten code sites carries a
      reason **specific to that catch**. A blanket reason string is a failure of
      this item, not a completion of it — any catch whose reason cannot be written
      honestly gets narrowed instead.
@@ -233,15 +244,23 @@ would unblock it**, so the burndown leaves no silent residue.
 
 ## Status
 
-- [ ] Chunk 1 — PR #213 deferred-warning cluster (#318, #315, #314, #316, #317)
-- [ ] Chunk 2 — stale citations + waiver hygiene (#445, #447, #320)
-- [ ] Chunk 3 — path resolution + compat gate (#327, #326)
-- [ ] Chunk 4 — push/capture robustness (#225, #264)
-- [ ] Chunk 5 — self-ignoring artifacts + capture event (#303, #263)
+- [x] Chunk 1 — PR #213 deferred-warning cluster (#318, #315, #314, #316, #317)
+- [x] Chunk 2 — stale citations + waiver hygiene (#445, #447, #320)
+- [x] Chunk 3 — path resolution + compat gate (#327, #326)
+- [x] Chunk 4 — push/capture robustness (#225, #264)
+- [x] Chunk 5 — self-ignoring artifacts + capture event (#303, #263)
 - [ ] Chunk 6 — screen-recording grant + envelope lock (#223, #236)
 - [ ] Chunk 7 — energy spectral correlate (#274)
 - [ ] Chunk 8 — coherence guard, eval refresh, overview derivation (#248, #252, #233)
 - [ ] Chunk 9 — dispositions for the 10 non-buildable items
 
-**Context:** branch created from `develop` at `aa682e1`. Baseline suite run
-started at branch time; result recorded at Chunk 1 close.
+**Context:** branch created from `develop` at `aa682e1`. Baseline 4986 passed /
+2 skipped. Chunks 1-5 shipped; cumulative Critic `rev-20260811T130031Z-327d4a5c`
+returned 0 blocking / 12 warning / 11 note, and its actionable findings were
+fixed in one batch (tree-wide waiver sweep, the change-log's inverted
+sibling-file mechanism, a stale re-stamp self-reference, `mode`/
+`case_sensitive` structural validation, and a stderr signal for the DB-filename
+remap). **#225 needed no code** — both halves had already shipped (capture-side
+`is_enabled` decline at `capture.py:1435`, executor-side tolerance via
+`_is_tolerated_failure`); it was verified and closed, not rebuilt.
+Next: chunks 6-9.

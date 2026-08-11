@@ -1601,3 +1601,82 @@ def test_inline_notes_warning_parity_between_create_and_replace(loaded_actions):
     create_warning = _create_result(FakeCtx(), notes).result["warning"]
     replace_warning = _replace_result(FakeCtx(), notes).result["warning"]
     assert create_warning == replace_warning
+
+
+def test_duplicate_to_arrangement_detects_spurious_clip_colliding_with_an_existing_start(
+    loaded_actions,
+):
+    """ARR-6T8N: spurious-clip detection used a SET of before-start_times, so a
+    pre-existing clip sitting at exactly ``dest_beats + source.length`` — the
+    very position Live's B-24 split emits its copy at — masked the new one:
+    the start_time was already in the set, so the surplus clip was waved
+    through and left in the arrangement.
+
+    Layout: Scaffold 0..32 (the clip that gets split) plus a Marker clip that
+    already starts at 20.0 = dest(16) + source length(4). After the duplicate
+    there are TWO clips at 20.0 and only one of them existed before.
+    """
+    ctx = FakeCtx()
+    track = ctx.song.tracks[0]
+    track.arrangement_clips.append(
+        FakeArrangementClip(name="Scaffold", length=32.0, start_time=0.0)
+    )
+    # Sits exactly where the B-24 side effect will land.
+    track.arrangement_clips.append(
+        FakeArrangementClip(name="Marker", length=2.0, start_time=20.0)
+    )
+    track.clip_slots[1].clip = FakeClip(name="DupSource", length=4.0)
+
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="duplicate_to_arrangement",
+            params={"track_index": 1, "clip_index": 2, "start_beats": 16.0},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+
+    names_and_starts = sorted(
+        (c.start_time, c.name) for c in track.arrangement_clips
+    )
+    assert names_and_starts == [
+        (0.0, "Scaffold"),
+        (16.0, "DupSource"),
+        (20.0, "Marker"),
+    ], (
+        "the spurious split copy at 20.0 must be removed while the "
+        f"pre-existing Marker at 20.0 survives; got {names_and_starts}"
+    )
+    removed = resp.result.get("spurious_clips_removed") or []
+    assert len(removed) == 1, (
+        "exactly one surplus clip should be detected — a start-time SET sees "
+        "20.0 as 'already present' and detects nothing"
+    )
+    assert removed[0]["name"] == "Scaffold"
+
+
+def test_duplicate_to_arrangement_leaves_a_pre_existing_clip_at_the_destination_alone(
+    loaded_actions,
+):
+    """The counting walk must not mistake a pre-existing clip for the new one
+    (or vice versa) when both sit at the destination beat. Nothing is spurious
+    here — no overlap split fires — so nothing may be deleted."""
+    ctx = FakeCtx()
+    track = ctx.song.tracks[0]
+    track.arrangement_clips.append(
+        FakeArrangementClip(name="Pre", length=2.0, start_time=16.0)
+    )
+    track.clip_slots[1].clip = FakeClip(name="DupSource", length=4.0)
+
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="duplicate_to_arrangement",
+            params={"track_index": 1, "clip_index": 2, "start_beats": 16.0},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    names = sorted(c.name for c in track.arrangement_clips)
+    assert names == ["DupSource", "Pre"], (
+        f"neither clip at the destination may be deleted; got {names}"
+    )

@@ -279,3 +279,46 @@ def test_explicit_root_falls_back_to_cwd_when_the_song_dir_is_new(
     path = resolve_db_path("brand-new", root=songs_root)
 
     assert path == songs_root / "brand-new" / "brand-new-feat--x.db"
+
+
+def test_resolution_names_an_orphaned_sibling_db(tmp_path, monkeypatch, capsys, _no_root_env):
+    """The WSP-8Q4M fix REMAPS filenames, so a song built from a foreign cwd
+    has a DB under the old name that nothing will open again.
+
+    `build.py` regenerates authored content, so the silent casualty is what it
+    can't: rows pulled from Live, and the pull events that arm the replay
+    guard. Say so rather than resolving quietly to a name that doesn't exist.
+    """
+    songs_repo = _make_repo(tmp_path / "songs-repo", "main")
+    song_dir = songs_repo / "the-argument"
+    song_dir.mkdir()
+    (song_dir / "the-argument-feat--str-4c8n.db").write_text("")
+
+    resolve_db_path("the-argument", root=songs_repo)
+
+    err = capsys.readouterr().err
+    assert "the-argument-feat--str-4c8n.db" in err
+    assert "the-argument-main.db" in err
+
+
+def test_no_warning_when_the_resolved_db_is_present(tmp_path, capsys, _no_root_env):
+    """The ordinary case stays silent — nothing was lost."""
+    songs_repo = _make_repo(tmp_path / "songs-repo", "main")
+    song_dir = songs_repo / "the-argument"
+    song_dir.mkdir()
+    (song_dir / "the-argument-main.db").write_text("")
+    (song_dir / "the-argument-feat--x.db").write_text("")
+
+    resolve_db_path("the-argument", root=songs_repo)
+
+    assert capsys.readouterr().err == ""
+
+
+def test_no_warning_for_a_brand_new_song(tmp_path, capsys, _no_root_env):
+    """A song with no DBs at all has nothing to have lost."""
+    songs_repo = _make_repo(tmp_path / "songs-repo", "main")
+    (songs_repo / "brand-new").mkdir()
+
+    resolve_db_path("brand-new", root=songs_repo)
+
+    assert capsys.readouterr().err == ""

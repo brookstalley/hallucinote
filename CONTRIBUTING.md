@@ -93,8 +93,10 @@ check before bundling unrelated edits to them into a feature PR.
 
 - Match the style of the surrounding code (naming, comment density, idioms).
 - **Never swallow exceptions** — catch specific ones and log with context. A
-  genuinely necessary broad catch is marked `# prawduct:ok-broad-except` with a
-  reason.
+  genuinely necessary broad catch is marked
+  `# prawduct:allow prawduct/broad-except -- <reason>`, and the reason says what
+  is being absorbed and why absorbing it there is correct. A catch whose reason
+  cannot be written honestly is one to narrow, not to annotate.
 - **Update artifacts when code changes what they describe** — stale docs are
   worse than none. If you change a contract surface (API, DB, IPC,
   frontend/backend), verify consumers aren't broken.

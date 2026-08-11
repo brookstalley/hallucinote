@@ -150,9 +150,8 @@ def has_usable_captured_at(snapshot: dict[str, Any]) -> bool:
     the guard can order it against pulled events instead of falling back to the
     legacy warn-and-proceed branch.
 
-    The one public read of :data:`_CAPTURED_AT_SHAPE`, so callers that must
-    distinguish a stamped snapshot from a legacy one (the guard itself, and the
-    re-stamp override, which refuses on an unstamped file) share one definition
+    The one public read of :data:`_CAPTURED_AT_SHAPE`, so every caller that must
+    distinguish a stamped snapshot from a legacy one shares a single definition
     of "usable" rather than re-deriving the shape.
     """
     captured_at = snapshot.get("captured_at")

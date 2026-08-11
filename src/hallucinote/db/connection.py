@@ -4,6 +4,7 @@ from __future__ import annotations
 import shutil
 import sqlite3
 import subprocess
+import sys
 import threading
 from contextlib import contextmanager
 from pathlib import Path
@@ -526,9 +527,51 @@ def resolve_db_path(
     else:
         resolved_branch = branch
     if resolved_branch is None:
-        return song_dir / f"{slug}.db"
-    sanitized = resolved_branch.replace("/", "--")
-    return song_dir / f"{slug}-{sanitized}.db"
+        resolved = song_dir / f"{slug}.db"
+    else:
+        sanitized = resolved_branch.replace("/", "--")
+        resolved = song_dir / f"{slug}-{sanitized}.db"
+    _warn_orphaned_branch_dbs(song_dir, slug, resolved)
+    return resolved
+
+
+def _warn_orphaned_branch_dbs(song_dir: Path, slug: str, resolved: Path) -> None:
+    """Name the sibling DBs this resolution is NOT going to open.
+
+    Fixing the cwd-branch probe REMAPS filenames: a song built from a foreign
+    cwd was writing `<slug>-<that-repo's-branch>.db`, and now resolves to
+    `<slug>-<songs-repo-branch>.db`. Rebuilding is cheap — `build.py`
+    regenerates everything it authored — so the silent casualty is the part
+    code CANNOT regenerate: rows pulled from Live, and the pull events that arm
+    the BAK-7D2V replay guard. A fresh DB reads with the guard disarmed, which
+    is exactly the state that guard exists to prevent.
+
+    So say it. One stderr line naming the orphans, only when the resolved DB is
+    absent and a differently-branched sibling exists — silence in the ordinary
+    case where the right DB is simply there, and silence on a genuinely new
+    song where there is nothing to have lost.
+    """
+    if resolved.exists():
+        return
+    try:
+        siblings = sorted(
+            p for p in song_dir.glob(f"{slug}-*.db") if p != resolved
+        )
+    except OSError:
+        return
+    if not siblings:
+        return
+    names = ", ".join(p.name for p in siblings)
+    print(
+        f"hallucinote: {resolved.name} does not exist yet, but this song dir "
+        f"already holds {names}. Until 2026-08-11 a build launched from another "
+        f"repo's checkout named its DB for THAT repo's branch, so an older DB "
+        f"may hold work this one does not. `build.py` regenerates authored "
+        f"content, but rows pulled from Live (and the pull events arming the "
+        f"replay guard) live only in the DB that recorded them — check the "
+        f"sibling before discarding it.",
+        file=sys.stderr,
+    )
 
 
 @contextmanager

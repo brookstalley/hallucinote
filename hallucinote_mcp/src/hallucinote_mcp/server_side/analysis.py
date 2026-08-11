@@ -77,6 +77,7 @@ try:
         portable_path,
         portable_text,
         resolve_portable_path,
+        self_ignore_dir,
     )
     from hallucinote.workspace import explain_unresolved_song
     # Reuse the canonical bar→beat converter the push planner uses — it walks
@@ -108,6 +109,7 @@ except ImportError:  # pragma: no cover - exercised in Live's vendored env
     portable_path = None  # type: ignore[assignment]
     portable_text = None  # type: ignore[assignment]
     resolve_portable_path = None  # type: ignore[assignment]
+    self_ignore_dir = None  # type: ignore[assignment]
     _position_bar_to_beats = None  # type: ignore[assignment]
     recency_key = None  # type: ignore[assignment]
     _HAS_HALLUCINOTE = False
@@ -690,6 +692,13 @@ def analyze_handler(
     # (potentially long) analyze_mix call (BUG3). The report write below
     # reuses it.
     analysis_dir.mkdir(parents=True, exist_ok=True)
+    # WSP-3R7K: ignore this dir's contents where they are WRITTEN, so a
+    # workspace created before `init-workspace` shipped its managed root block
+    # (or by a bare `git init`) stops surfacing MixReports as committable.
+    # Guarded like every other engine symbol here — in Live's vendored env
+    # there is no hallucinote to import, and no git working copy to tidy.
+    if self_ignore_dir is not None:
+        self_ignore_dir(analysis_dir)
 
     # Heartbeat=running before analyze_mix — analyze_mix has no progress
     # callback (and the spec is not to plumb one in), so the pre/post writes

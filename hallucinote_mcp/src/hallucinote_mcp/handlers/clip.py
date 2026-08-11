@@ -25,6 +25,7 @@ gap #4 — see ``handlers/note.py`` for those stubs.
 """
 from __future__ import annotations
 
+from collections import Counter
 from typing import Any, Iterable
 
 from ..dispatcher import LiveContext
@@ -753,9 +754,19 @@ def duplicate_to_arrangement_handler(
 
     # Snapshot start_times before the duplicate so we can identify the
     # spurious overlap-split side effect afterward.
-    before_starts: set[float] = {
+    #
+    # A MULTISET, not a set: a set answers "was anything here before?", which
+    # is the wrong question when Live adds a SECOND clip at a position that
+    # already had one. If a pre-existing clip happens to sit at exactly
+    # `dest_beats + source_length` — precisely where the B-24 split emits its
+    # copy — a set-based check sees the start_time already present and waves
+    # the spurious clip through. Counting occurrences instead asks "is there
+    # one MORE clip here than before?", which is the question that catches it.
+    # Identity (`id(c)`) would also answer it, but Live recreates its clip
+    # wrappers (B-1), so identities don't survive the call.
+    before_starts: Counter[float] = Counter(
         round(float(c.start_time), 6) for c in track.arrangement_clips
-    }
+    )
     duplicate_fn(source_clip, dest_beats)
 
     # The new arrangement clip is whichever one starts at dest_beats.
@@ -771,15 +782,26 @@ def duplicate_to_arrangement_handler(
             "clip after Live's duplicate call"
         )
 
-    # Identify any NEW arrangement clip whose start_time wasn't present
-    # before AND isn't our intended destination — that's Live's B-24
+    # Identify any arrangement clip that is SURPLUS to what was here before,
+    # once our intended destination clip is accounted for — that's Live's B-24
     # split-and-shift side effect.
+    #
+    # Walk the after-state drawing down the before-counts: each clip that can
+    # be paired with one that existed before is accounted for, the first
+    # unaccounted clip at the destination is the one we asked Live to make,
+    # and anything still unaccounted after that is spurious. Pairing by count
+    # rather than by "start_time seen before" is what makes a collision at
+    # `dest_beats + source_length` detectable.
+    unaccounted = Counter(before_starts)
+    destination_seen = False
     spurious_clips: list[Any] = []
     for c in track.arrangement_clips:
         start_key = round(float(c.start_time), 6)
-        if start_key in before_starts:
+        if unaccounted.get(start_key, 0) > 0:
+            unaccounted[start_key] -= 1
             continue
-        if start_key == expected_start_key:
+        if start_key == expected_start_key and not destination_seen:
+            destination_seen = True
             continue
         spurious_clips.append(c)
 
@@ -937,9 +959,9 @@ def replace_notes_handler(
 #     songs, version-controlled with the rest of the project, and immune to
 #     Live's per-set Groove Pool isolation.
 #
-# No tracker item currently carries the Hallucinote-side quantize/groove module —
-# the rationale above is the whole record, which is why it is written out here
-# rather than deferred to a link.
+# The Hallucinote-side quantize/groove module has no LIVE tracker item: GEN-2T8M
+# (issue #272) was dropped, not deferred. The rationale above is therefore the
+# whole record, which is why it is written out here rather than left to a link.
 
 
 __all__ = [

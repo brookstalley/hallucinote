@@ -262,7 +262,76 @@ def handle_tool_call(
             ),
         ).to_dict()
 
+    _record_audio_capture_event(request, remote_response)
     return _refine_version_mismatch(remote_response).to_dict()
+
+
+def _record_audio_capture_event(
+    request: Request, response: "client.Response",
+) -> None:
+    """AUD-5M8H: append an ``AUDIO_CAPTURED`` audit event when a render lands.
+
+    Fires HERE, in the MCP server process, because the render worker runs
+    inside Live's vendored env with no `hallucinote` engine and no DB access —
+    the same constraint that makes `_attach_render_db_seq` a server-side
+    preprocessor. The status response is the first moment this side learns a
+    capture finished.
+
+    Keyed off ``status`` rather than ``start``: at start time there is no
+    captures dir on disk and no track count, and the render may still fail.
+
+    Idempotent downstream — the agent polls until it reads ``done`` and every
+    later poll reads ``done`` too, so `record_audio_capture` dedupes on
+    ``captures_dir`` inside its transaction rather than trusting one emit here.
+
+    Best-effort and never render-affecting, mirroring `_attach_render_db_seq`:
+    a capture that succeeded must not be reported as failed because an audit
+    row could not be written.
+    """
+    if request.tool != "ableton_render" or request.action != "status":
+        return
+    if not getattr(response, "ok", False):
+        return
+    result = getattr(response, "result", None) or {}
+    if result.get("state") != "done":
+        return
+    # `status_result()` is flat: captures_dir + manifest sit at the top level.
+    # The status request carries only job_id, so the slug comes from the
+    # manifest the render itself wrote.
+    captures_dir = result.get("captures_dir")
+    manifest = result.get("manifest") or {}
+    song_slug = manifest.get("song_slug")
+    if not isinstance(captures_dir, str) or not captures_dir:
+        return
+    if not isinstance(song_slug, str) or not song_slug:
+        return
+    try:
+        from hallucinote.db import mutations as M, queries as Q
+        from hallucinote.db.connection import connect, resolve_db_path
+
+        db_path = resolve_db_path(song_slug)
+        if not db_path.exists():
+            return
+        conn = connect(db_path)
+        try:
+            song = Q.get_song_by_name(conn, song_slug)
+            if song is None:
+                return
+            M.record_audio_capture(
+                conn,
+                song_id=song["id"],
+                captures_dir=captures_dir,
+                manifest_seq=manifest.get("db_seq"),
+                track_count=len(manifest.get("tracks") or []),
+                reason="ableton_render capture pass",
+            )
+        finally:
+            conn.close()
+    except Exception:  # prawduct:allow prawduct/broad-except -- the capture audit row is best-effort provenance; a render that actually succeeded must never be reported as failed because the event write did not land
+        logger.warning(
+            "render: could not record AUDIO_CAPTURED for %r (captures_dir=%s)",
+            song_slug, captures_dir, exc_info=True,
+        )
 
 
 def _refine_version_mismatch(response: "client.Response") -> "client.Response":

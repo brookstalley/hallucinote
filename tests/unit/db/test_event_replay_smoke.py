@@ -71,6 +71,9 @@ NOT_YET_FOLDED: dict[str, str] = {
                              "rebuilt from disk, never from events",
     E.AUTOMATION_PERFORMED: "sync-state fingerprint (performed_automation is "
                             "disposable, rebuilt by the next push)",
+    E.AUDIO_CAPTURED: "audit-only: records that a capture pass ran and where "
+                      "its WAVs landed; the captures dir is a regenerable "
+                      "build artifact, so there is no song state to fold",
     # --- outside this smoke slice (payloads look fold-sufficient) ---
     E.RETURN_UPDATED: "outside slice",
     E.RETURN_DELETED: "outside slice",

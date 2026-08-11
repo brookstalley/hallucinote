@@ -26,6 +26,7 @@ sync layer carries no heavy deps).
 from __future__ import annotations
 
 from pathlib import Path, PurePosixPath
+from typing import Iterable
 
 
 def resolve_audio_path(song_dir: str | Path, ref: str) -> Path:
@@ -144,3 +145,98 @@ def _relative_or_none(path: Path, base: Path) -> str | None:
         except ValueError:
             continue
     return None
+
+
+# ---------------------------------------------------------------------------
+# Self-ignoring tool output (WSP-3R7K)
+# ---------------------------------------------------------------------------
+#
+# `hallucinote init-workspace` writes a managed root `.gitignore` covering
+# regenerable tool output — but only for workspaces bootstrapped THROUGH it.
+# A workspace created before that shipped, or by a bare `git init`, never gets
+# the block, so every render and every push keeps surfacing MixReports, push
+# state caches and snapshot backups as committable noise.
+#
+# The durable fix is for each generating tool to ignore its own output at the
+# moment it creates it: the ignore then travels WITH the artifact regardless of
+# when or how the workspace was made, and a fresh clone needs no root-file edit.
+
+# The regenerable files tools write INTO the song directory, which also holds
+# authored work (build.py, captured_session.json, decisions/). Listed by name so
+# the ignore covers exactly these — a blanket `*` here would swallow the song.
+# Any tool that writes one of them ignores the whole family, so whichever runs
+# first covers the rest.
+SONG_DIR_IGNORED_FILES = (
+    ".last-notes-push.json",
+    ".last-push-state.json",
+    ".last-push-errors.json",
+    "captured_session.json.bak",
+)
+
+_MANAGED_HEADER = (
+    "# Managed by Hallucinote — regenerable tool output, safe to delete.\n"
+    "# Rewritten if removed; edit the workspace root .gitignore instead.\n"
+)
+
+
+def self_ignore_dir(directory: Path) -> None:
+    """Mark a whole directory of regenerable output as ignored.
+
+    Writes ``<directory>/.gitignore`` containing ``*`` — which ignores the
+    ``.gitignore`` itself too, so nothing here is ever committable and the file
+    is invisible in `git status`.
+
+    For directories whose ENTIRE contents are regenerable (``analysis/``,
+    ``captures/``). Never point this at a directory holding authored work; see
+    :func:`self_ignore_files` for the mixed case.
+
+    Idempotent, and best-effort: a read-only or missing parent must never take
+    down the render or analysis that was actually the point. Skips the write
+    when the file already carries the marker, so it does not churn mtimes.
+    """
+    target = directory / ".gitignore"
+    body = _MANAGED_HEADER + "*\n"
+    try:
+        if target.exists() and target.read_text() == body:
+            return
+        directory.mkdir(parents=True, exist_ok=True)
+        target.write_text(body)
+    except OSError:
+        # Disk hygiene is never worth failing a capture over.
+        pass
+
+
+def self_ignore_files(directory: Path, filenames: Iterable[str]) -> None:
+    """Ignore SPECIFIC filenames inside a directory that also holds authored work.
+
+    The song directory carries `build.py`, `captured_session.json`, `decisions/`
+    — all of it committable — alongside tool-written state caches and backups.
+    A blanket ``*`` here would ignore the song itself, so this lists the
+    generated names and nothing else.
+
+    Merges with any existing entries rather than overwriting: another tool may
+    have added its own, and a song dir has several writers. Best-effort and
+    idempotent on the same terms as :func:`self_ignore_dir`.
+    """
+    target = directory / ".gitignore"
+    wanted = [n for n in filenames if n]
+    if not wanted:
+        return
+    try:
+        existing: list[str] = []
+        if target.exists():
+            existing = target.read_text().splitlines()
+        entries = list(existing)
+        added = False
+        for name in wanted:
+            if name not in entries:
+                entries.append(name)
+                added = True
+        if not added:
+            return
+        if not existing:
+            entries = _MANAGED_HEADER.rstrip("\n").split("\n") + entries
+        directory.mkdir(parents=True, exist_ok=True)
+        target.write_text("\n".join(entries).rstrip("\n") + "\n")
+    except OSError:
+        pass

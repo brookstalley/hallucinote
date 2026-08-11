@@ -1,0 +1,246 @@
+{
+  "_note": "Punk Fate: four-piece punk band \u2014 drums, bass, lead guitar, and a staccato mono-synth playing the vocal line. Returns are a short room and a slap delay. Chains land here via /song-pick-instruments.",
+  "_capture_status": "synthetic scaffold + authored chains + mix bake (levels/sends/master verified by A/B render 20260811T051617Z: true peak +5.5 -> +1.29 dBTP bus, overshoots 257 -> 1)",
+  "snapshot_version": 1,
+  "captured_at": "2026-08-11T04:42:00.879Z",
+  "song": {
+    "tempo": 200.0,
+    "signature": "4/4",
+    "track_count": 4,
+    "return_track_count": 2,
+    "master": {
+      "volume": 0.75,
+      "panning": 0.0
+    }
+  },
+  "returns": [
+    {
+      "index": 1,
+      "name": "Reverb",
+      "volume": 0.85,
+      "panning": 0.0,
+      "devices": [
+        {
+          "index": 1,
+          "name": "Reverb",
+          "class": "Reverb",
+          "params_dialed": {
+            "Decay Time": {
+              "value": "1.10 s"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "name": "Delay",
+      "volume": 0.85,
+      "panning": 0.0,
+      "devices": [
+        {
+          "index": 1,
+          "name": "Delay",
+          "class": "Delay"
+        }
+      ]
+    }
+  ],
+  "tracks": [
+    {
+      "index": 1,
+      "name": "01 Drums",
+      "type": "midi",
+      "volume": 0.695,
+      "panning": 0.0,
+      "sends": {
+        "Reverb": 0.3,
+        "Delay": 0.0
+      },
+      "devices": [
+        {
+          "index": 1,
+          "name": "Garage Kit",
+          "class": "Drum Rack",
+          "class_name": "DrumGroupDevice",
+          "kind": "instrument",
+          "preset_query": {
+            "root": "drums",
+            "pattern": "Garage Kit.adg",
+            "mode": "exact"
+          }
+        },
+        {
+          "index": 2,
+          "name": "Saturator",
+          "class": "Saturator",
+          "kind": "audio_effect",
+          "preset_query": {
+            "root": "audio_effects",
+            "pattern": "Hard Punch.adv",
+            "mode": "exact",
+            "path_prefix": [
+              "Saturator"
+            ]
+          }
+        },
+        {
+          "index": 3,
+          "name": "Glue Compressor",
+          "class": "Glue Compressor",
+          "kind": "audio_effect",
+          "preset_query": {
+            "root": "audio_effects",
+            "pattern": "Drum - Rock Parallel Room.adv",
+            "mode": "exact",
+            "path_prefix": [
+              "Glue Compressor"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "name": "02 Bass",
+      "type": "midi",
+      "volume": 0.83,
+      "panning": 0.0,
+      "sends": {
+        "Reverb": 0.0,
+        "Delay": 0.0
+      },
+      "devices": [
+        {
+          "index": 1,
+          "name": "Electric Bass Palm",
+          "class": "Instrument Rack",
+          "class_name": "InstrumentGroupDevice",
+          "kind": "instrument",
+          "preset_query": {
+            "root": "instruments",
+            "pattern": "Electric Bass Palm.adg",
+            "mode": "exact",
+            "path_prefix": [
+              "Instrument Rack",
+              "Bass"
+            ]
+          }
+        },
+        {
+          "index": 2,
+          "name": "Saturator",
+          "class": "Saturator",
+          "kind": "audio_effect",
+          "preset_query": {
+            "root": "audio_effects",
+            "pattern": "Gritty Bass.adv",
+            "mode": "exact",
+            "path_prefix": [
+              "Saturator"
+            ]
+          }
+        },
+        {
+          "index": 3,
+          "name": "Glue Compressor",
+          "class": "Glue Compressor",
+          "kind": "audio_effect",
+          "preset_query": {
+            "root": "audio_effects",
+            "pattern": "Bass - Punch.adv",
+            "mode": "exact",
+            "path_prefix": [
+              "Glue Compressor"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "name": "03 Guitar",
+      "type": "midi",
+      "volume": 0.7275,
+      "panning": -0.12,
+      "sends": {
+        "Reverb": 0.26,
+        "Delay": 0.18
+      },
+      "devices": [
+        {
+          "index": 1,
+          "name": "Guitar-Dual Amped Crunch",
+          "class": "Instrument Rack",
+          "class_name": "InstrumentGroupDevice",
+          "kind": "instrument",
+          "preset_query": {
+            "root": "instruments",
+            "pattern": "Guitar-Dual Amped Crunch.adg",
+            "mode": "exact",
+            "path_prefix": [
+              "Instrument Rack",
+              "Guitar & Plucked"
+            ]
+          }
+        },
+        {
+          "index": 2,
+          "name": "Glue Compressor",
+          "class": "Glue Compressor",
+          "kind": "audio_effect",
+          "preset_query": {
+            "root": "audio_effects",
+            "pattern": "Guitar - Controlled Dynamics.adv",
+            "mode": "exact",
+            "path_prefix": [
+              "Glue Compressor"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "index": 4,
+      "name": "04 Voice",
+      "type": "midi",
+      "volume": 0.55,
+      "panning": 0.0,
+      "sends": {
+        "Reverb": 0.38,
+        "Delay": 0.4
+      },
+      "devices": [
+        {
+          "index": 1,
+          "name": "Square Dirty Lead",
+          "class": "Operator",
+          "kind": "instrument",
+          "preset_query": {
+            "root": "instruments",
+            "pattern": "Square Dirty Lead.adv",
+            "mode": "exact",
+            "path_prefix": [
+              "Operator",
+              "Synth Lead"
+            ]
+          }
+        },
+        {
+          "index": 2,
+          "name": "Glue Compressor",
+          "class": "Glue Compressor",
+          "kind": "audio_effect",
+          "preset_query": {
+            "root": "audio_effects",
+            "pattern": "Guitar - Lead Solo.adv",
+            "mode": "exact",
+            "path_prefix": [
+              "Glue Compressor"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

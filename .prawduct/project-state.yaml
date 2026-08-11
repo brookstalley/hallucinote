@@ -528,12 +528,10 @@ build_state:
 #   SMP-7K2D — chunks 1-2 + no-Live 5 done; probe chunk 0 + push chunks 3-4 pending.
 #   ARR-PROJ — all 5 headless chunks built on plan/arr-proj-arrangement-materialization;
 #     cumulative-Critic PR gate + live e2e + ARR-9X4T/ARR-7H2N backlog close remain.
-#   TOUR — chunks C1 and D1 still unbuilt (capture the evidence from the
-#     finished set; docs/tour.md + the README graft + freshness tests). A1-A4
-#     and B1 shipped in v1.8.0. plan-backfill WANTED to archive this at the
-#     v1.8.0 cut because scope=tour was tagged — archiving it would have
-#     declared two unbuilt chunks done, so it was restored deliberately. Nothing
-#     else tracks it: this list is it.
+#   TOUR — ALL CHUNKS COMPLETE (2026-08-11, feat/tour-evidence): punk-fate
+#     landed in examples/, C1 evidence + docs/tour.md + freshness tests
+#     shipped, cumulative Critic 0 blocking. Awaiting PR/merge to develop;
+#     archive the plan at the merge, not before.
 # Shipped/stale plan history: the git history of this file (pre-2026-07-04,
 # PRC-5W2N trim) has the full narrative; a per-machine copy also sits in the
 # gitignored reflections archive where present.

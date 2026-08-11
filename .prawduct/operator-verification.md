@@ -1700,3 +1700,31 @@ snapshot-loaded FX chain):
    render first (so every chain ends with the analyzer), then repeat check 1.
    Still zero loads, still ok — the analyzer must neither be matched against an
    authored slot nor counted as an extra device.
+
+## 2026-08-11 — TOUR C1+D1: the tour's evidence set and the rendered pages (feat/tour-evidence)
+
+Visual change: yes — committed screenshots, waveform stills, and two rendered
+markdown pages (README "See it" graft + the new `docs/tour.md`).
+
+What shipped: the C1 evidence set under `docs/assets/` (4 screenshots, 3 audio
+clips each with a waveform still, all produced by the A2/A3 tools or curated
+from the 2026-08-11 punk-fate session's tool-captured frames) and `docs/tour.md`
+grafted into the README. The freshness tests are machine-verified (adversarial
+red/green recorded in the D1 close); what needs eyes:
+
+1. **The audio is the right audio.** Play `docs/assets/tour-full.mp3` (the
+   final render), then the A/B pair `tour-chorus-before.mp3` /
+   `tour-chorus-after.mp3` (same verse→chorus passage, bars 21–36). Before
+   should audibly clip with a buried bass; after should hold together with the
+   bass carrying. If the pair sounds identical, the wrong capture round was
+   encoded.
+2. **The screenshots read at README/tour width.** On the pushed branch's
+   rendered pages (both GitHub themes): the off-grid MIDI shot must visibly
+   show notes ahead of gridlines; the arrangement shot must be legible as
+   eight sections; the drum-rack and session-render shots must not be
+   squinting material.
+3. **Every media link plays/downloads from the rendered page** (GitHub serves
+   committed mp3s as download links — the poster/waveform images must render
+   inline, the links must resolve).
+4. **The tour reads in ~10 minutes and the story holds** — beats 0→10 with no
+   step that requires insider knowledge.

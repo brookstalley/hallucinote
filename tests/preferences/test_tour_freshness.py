@@ -40,9 +40,9 @@ _MEDIA_BUDGET_BYTES = 12 * 1024 * 1024
 # artifact carries that rule, this manifest only enumerates what it permits.
 # Chapter 1 (composing) spent 4 screenshots · 1 hero · 3 audio clips; chapter 2
 # (the listening session) spends 2 screenshots · 1 clip — one artifact per move,
-# and chapter 1's
-# full-song render doubles as its before/after "before". The hero and each
-# clip ship with the still that stands in for them. This manifest IS the cap:
+# and chapter 1's full-song render doubles as its before/after "before". The hero
+# and each clip ship with the still that stands in for them. This manifest IS the
+# cap:
 # adding media means consciously editing this set, and a stray file under
 # docs/assets/ fails the suite instead of riding along.
 _EXPECTED_ASSETS = {
@@ -181,7 +181,10 @@ def test_quoted_chapter2_numbers_match_the_committed_measurements():
     device invalidated the render) instead of from the committed captures —
     the chapter-1 lock above not covering chapter 2 is exactly how that got
     through."""
-    tour = _TOUR.read_text(encoding="utf-8")
+    # Whitespace-normalized: these are number locks, and a paragraph reflow
+    # must not break one (nor let a multi-word anchor silently stop matching
+    # because the line happened to wrap mid-phrase).
+    tour = " ".join(_TOUR.read_text(encoding="utf-8").split())
     punk = _measurement("2026-08-11-punk-pass-full-song.json")
     sound = _measurement("2026-08-11-sound-punk-full-song.json")
     lead = _measurement("2026-08-11-lead-guitar-full-song.json")
@@ -213,7 +216,11 @@ def test_quoted_chapter2_numbers_match_the_committed_measurements():
         # stale-fader artifact. They shipped unlocked in the commit that fixed
         # the mislabel — the same drift the rest of this test exists to stop.
         f"−{abs(sound['delivered_true_peak_dbtp']):.2f}",
-        f"−{abs(sound['master_fader_db']):.1f}",
+        # Anchored to the surrounding phrase, NOT the bare number: "−4.0" also
+        # appears at tour.md:259 in an unrelated chapter-1 fader row, so a bare
+        # substring assertion passes on that line and can never fail here —
+        # coverage that looks real and is not.
+        f"reported as −{abs(sound['master_fader_db']):.1f} when the fader",
     ]
     for expected in expectations:
         assert expected in tour, (

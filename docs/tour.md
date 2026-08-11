@@ -473,9 +473,11 @@ intent.
 And the rule bites the measurement too. The committed report for this render
 disagrees with that −0.34: its `delivered_true_peak_dbtp` field reads −4.34,
 because it *derives* delivered from a `master_fader_db` the analyzer reported as
-−4.0 when the fader was already at unity. The next render, fader untouched,
-reports the same field correctly — so the bus figure is the honest one here,
-and the derived one is the artifact
+−4.0 when the fader was already at unity. The tell is a coincidence that can't
+be one: this report and the previous pass's carry byte-identical fader readings,
+across two renders with a fader move between them. The next render reports the
+field as unity — so the bus figure is the honest one here, and the derived one is
+the artifact
 ([`decisions/10`](../examples/punk-fate/decisions/10-it-has-to-sound-punk.md)
 records both readings). A number that ships next to its evidence is checkable;
 this is what checking it looks like.

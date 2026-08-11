@@ -159,9 +159,6 @@ def test_subprocesses_resolve_this_checkout_not_the_installed_one():
     regression names itself instead of resurfacing as phantom failures.
     """
     import os
-    import subprocess
-    import sys
-    from pathlib import Path
 
     repo_root = Path(__file__).resolve().parents[2]
 
@@ -180,7 +177,10 @@ def test_subprocesses_resolve_this_checkout_not_the_installed_one():
         "another tree. Check `_export_source_path_for_subprocesses` in "
         "conftest.py and that PYTHONPATH is still in os.environ."
     )
-    assert os.environ.get("PYTHONPATH"), (
-        "PYTHONPATH is unset in the pytest process — the conftest export was "
-        "dropped; subprocess tests are now silently testing the installed tree."
+    exported = os.environ.get("PYTHONPATH", "").split(os.pathsep)
+    assert str(repo_root / "src") in exported, (
+        f"this checkout's src/ is not on PYTHONPATH ({exported}) — the conftest "
+        "export was dropped or reordered. A merely non-empty PYTHONPATH is not "
+        "enough: an ambient one from the shell would satisfy that while children "
+        "still resolved the installed tree."
     )

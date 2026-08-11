@@ -341,3 +341,109 @@ def test_the_parser_reads_what_the_scaffold_renderer_writes(song, tmp_path):
     assert parse_docstring_layout(
         f'"""Doc.\n\nSection bar layout (1-based):\n{section_layout(req)}\n\nRun:\n"""\nimport os\n'
     ) == {"Intro": 1, "Verse": 9, "Chorus": 17}
+
+
+# --- main(): the on-demand path, and the ONLY one older songs have -----------
+
+
+@pytest.fixture
+def cli_song(tmp_path, monkeypatch):
+    """A song dir + DB that `main()` can resolve, with sections seeded."""
+    from hallucinote.db import init_db as _init
+
+    song_dir = tmp_path / "a-song"
+    song_dir.mkdir()
+    db = song_dir / "a-song.db"
+    conn = _init(db)
+    song_id = M.create_song(conn, name="a-song", title="A Song")
+    for name, start, end in [("Intro", 1, 8), ("Verse", 9, 16), ("Chorus", 17, 24)]:
+        M.create_section(
+            conn, song_id=song_id, name=name, start_bar=start, end_bar=end,
+        )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(
+        "hallucinote.db.connection.resolve_db_path", lambda slug, **_: db,
+    )
+    monkeypatch.setattr(
+        "hallucinote.workspace.resolve_song_dir", lambda slug, **_: song_dir,
+    )
+    return song_dir
+
+
+def test_main_exits_1_and_names_both_drifted_surfaces(cli_song, capsys):
+    """`main()` is the only drift check a song scaffolded before 2026-08-11 has,
+    so a revert to the markdown-only detector, a wrong build_py_path, or an
+    inverted no-op guard must not ship green."""
+    from hallucinote.tools.overview_drift import main
+
+    (cli_song / "a-song.md").write_text(_overview("| `Intro` | 1–8 | x |\n"))
+    (cli_song / "build.py").write_text(
+        _build_py("    Intro        bars  1-8    (8 bars)\n")
+    )
+
+    assert main(["a-song"]) == 1
+    err = capsys.readouterr().err
+    assert "Chorus" in err
+    assert "Structure table" in err, "the markdown surface must be named"
+    assert "build.py" in err, "the docstring surface must be named too"
+
+
+def test_main_exits_0_when_both_surfaces_match(cli_song, capsys):
+    from hallucinote.tools.overview_drift import main
+
+    rows = "".join(
+        f"| `{n}` | {s}–{e} | x |\n"
+        for n, s, e in [("Intro", 1, 8), ("Verse", 9, 16), ("Chorus", 17, 24)]
+    )
+    (cli_song / "a-song.md").write_text(_overview(rows))
+    (cli_song / "build.py").write_text(_build_py(
+        "    Intro        bars  1-8    (8 bars)\n",
+        "    Verse        bars  9-16   (8 bars)\n",
+        "    Chorus       bars 17-24   (8 bars)\n",
+    ))
+
+    assert main(["a-song"]) == 0
+    assert "match the form" in capsys.readouterr().err
+
+
+def test_main_still_checks_the_docstring_when_the_overview_is_absent(cli_song, capsys):
+    """One surface missing must not read as "nothing to compare" — the other is
+    still checkable, and for an older song it may be the only one that exists."""
+    from hallucinote.tools.overview_drift import main
+
+    (cli_song / "build.py").write_text(
+        _build_py("    Intro        bars  1-8    (8 bars)\n")
+    )
+
+    assert main(["a-song"]) == 1
+    err = capsys.readouterr().err
+    assert "Chorus" in err and "build.py" in err
+
+
+def test_main_reports_nothing_to_compare_when_neither_surface_parses(cli_song, capsys):
+    from hallucinote.tools.overview_drift import main
+
+    (cli_song / "a-song.md").write_text("# A Song\n\n## Structure\n\n_TODO_\n")
+    (cli_song / "build.py").write_text('"""Just prose."""\nimport os\n')
+
+    assert main(["a-song"]) == 0
+    assert "nothing to compare" in capsys.readouterr().err
+
+
+def test_main_names_only_the_surface_it_actually_compared(cli_song, capsys):
+    """With no build.py, the success message must not claim the docstring
+    matched — that comparison never ran."""
+    from hallucinote.tools.overview_drift import main
+
+    rows = "".join(
+        f"| `{n}` | {s}–{e} | x |\n"
+        for n, s, e in [("Intro", 1, 8), ("Verse", 9, 16), ("Chorus", 17, 24)]
+    )
+    (cli_song / "a-song.md").write_text(_overview(rows))
+
+    assert main(["a-song"]) == 0
+    err = capsys.readouterr().err
+    assert "a-song.md matches the form" in err
+    assert "build.py" not in err

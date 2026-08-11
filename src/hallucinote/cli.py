@@ -54,7 +54,7 @@ _SUMMARY: dict[str, str] = {
     "recurrence": "symbolic recurrence lens (motif reuse, form)",
     "reindex": "rebuild a song's markdown FTS index",
     "scaffold": "scaffold a new song directory from templates",
-    "overview-drift": "report a <slug>.md Structure table that has drifted from the form",
+    "overview-drift": "report a <slug>.md Structure table or build.py docstring layout that has drifted from the form",
     "init-workspace": "create a hallucinote.toml songs-workspace marker (+ git init)",
     "inventory": "refresh the offline browser/instrument cache",
 }

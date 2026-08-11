@@ -331,8 +331,11 @@ def classify_preset_query(
             "preset_query_invalid",
             f"preset_query.mode={mode!r} not in {sorted(_VALID_MATCH_MODES)}",
         )
-    case_sensitive = pq.get("case_sensitive")
-    if case_sensitive is not None and not isinstance(case_sensitive, bool):
+    # Same presence-not-truthiness rule as `mode` above: an explicit null is a
+    # different statement from an absent key, and the two fields should not
+    # disagree about how they read their own absence.
+    case_sensitive = pq["case_sensitive"] if "case_sensitive" in pq else False
+    if not isinstance(case_sensitive, bool):
         return (
             "preset_query_invalid",
             "preset_query.case_sensitive must be a boolean, got "

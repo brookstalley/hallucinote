@@ -1386,3 +1386,14 @@ def test_classify_preset_query_accepts_an_absent_mode():
     assert C.classify_preset_query(json.dumps({
         "root": "instruments", "pattern": "Pad",
     })) is None
+
+
+def test_classify_preset_query_rejects_an_explicit_null_case_sensitive():
+    """Same presence-not-truthiness rule as `mode`: `{"case_sensitive": null}`
+    is a different statement from an absent key, and the two fields must not
+    disagree about how they read their own absence."""
+    status, detail = C.classify_preset_query(json.dumps({
+        "root": "instruments", "pattern": "Pad", "case_sensitive": None,
+    }))
+    assert status == "preset_query_invalid"
+    assert "case_sensitive" in detail

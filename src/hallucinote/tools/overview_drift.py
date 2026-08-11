@@ -350,9 +350,17 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
     if not drift:
+        # Name only what was actually compared. Claiming both surfaces match
+        # when one of them is absent asserts a comparison that never ran.
+        checked = [
+            name for name, d in (
+                (f"{args.slug}.md", drift.overview),
+                ("build.py's docstring", drift.docstring),
+            ) if d is not None
+        ]
         print(
-            f"overview-drift: {args.slug}'s overview and build.py docstring both "
-            f"match the form.",
+            f"overview-drift: {' and '.join(checked)} "
+            f"match{'' if len(checked) > 1 else 'es'} the form.",
             file=sys.stderr,
         )
         return 0

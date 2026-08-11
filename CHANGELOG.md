@@ -8,6 +8,19 @@ per-fix narratives if you want the deep story behind any entry.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.1] — 2026-08-10
+
+Internal housekeeping; no behavior changes.
+
+- The development backlog moved from an in-repo markdown file to
+  [GitHub Issues](https://github.com/brookstalley/hallucinote/issues), so open
+  work is publicly visible and linkable.
+- The release process document was corrected where the v1.8.0 cut proved it
+  wrong.
+
+No re-vendor required — no bridge code changed; the Remote Script handshake is
+unaffected.
+
 ## [1.8.0] — 2026-08-10
 
 ### Added

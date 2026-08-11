@@ -121,6 +121,10 @@ written against those numbers; without this paragraph they have no unambiguous t
 and the likely outcome is a test relaxed to permit arbitrary extras — exactly what the
 byte cap exists to prevent.
 
+Every screenshot is a maintenance liability, so they are spent only where text
+cannot carry the point: off-grid MIDI, the full arrangement, the session filling
+in, meters during playback.
+
 ### Amendment 2026-08-11 — the item cap is per editing session
 
 **What changed.** The item cap above (4 screenshots · 1 hero · 3 audio clips, ≤ 12
@@ -143,9 +147,6 @@ this artifact as its authority — a norm changed in code instead of in the norm
 amendment is the missing record, written after the fact and **open to veto**: if the
 owner rejects per-session accounting, the fix is to drop two of chapter 2's four media
 items, not to re-relax the test.
-Everything else is text or code. Every screenshot is a maintenance liability, so
-they are spent only where text cannot carry the point: off-grid MIDI, the full
-arrangement, the session filling in, meters during playback.
 
 ## The tour outline
 

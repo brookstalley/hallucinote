@@ -144,3 +144,43 @@ def test_module_imports_without_heavy_deps():
         "assert 'numpy' not in sys.modules, 'numpy loaded'\n"
     )
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def test_subprocesses_resolve_this_checkout_not_the_installed_one():
+    """The root conftest exports this checkout's source dirs into PYTHONPATH so
+    that tests shelling out to `sys.executable -m hallucinote...` exercise the
+    tree under test.
+
+    Without it, a child resolves `hallucinote` through the editable-install
+    `.pth` — the PRIMARY checkout. From a worktree that is a different, possibly
+    older tree, and the symptom is brutal to diagnose: six `test_restamp_*`
+    failures for a feature the worktree HAS and the primary lacks, with the code
+    under test correct the whole time. This asserts the mechanism directly so a
+    regression names itself instead of resurfacing as phantom failures.
+    """
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[2]
+
+    proc = subprocess.run(
+        [sys.executable, "-c", "import hallucinote; print(hallucinote.__file__)"],
+        capture_output=True, text=True, cwd=repo_root, timeout=120,
+    )
+    assert proc.returncode == 0, f"child failed to import hallucinote:\n{proc.stderr}"
+    resolved = Path(proc.stdout.strip()).resolve()
+    expected = (repo_root / "src" / "hallucinote").resolve()
+
+    assert expected in resolved.parents or resolved.parent == expected, (
+        f"a subprocess resolved `hallucinote` to {resolved}, outside this "
+        f"checkout's {expected}. The root conftest's PYTHONPATH export is not "
+        "reaching children, so every CLI test that shells out is exercising "
+        "another tree. Check `_export_source_path_for_subprocesses` in "
+        "conftest.py and that PYTHONPATH is still in os.environ."
+    )
+    assert os.environ.get("PYTHONPATH"), (
+        "PYTHONPATH is unset in the pytest process — the conftest export was "
+        "dropped; subprocess tests are now silently testing the installed tree."
+    )

@@ -57,6 +57,14 @@ a published figure against the run it came from — and what lets a test recompu
 it. Copy a run into `measurements/` when you cite it; leave it in `analysis/`
 when you don't.
 
+**The split is also tracked-vs-untracked, and that is the operational reason it
+exists.** `init-workspace` gitignores `**/analysis/` in every scaffolded
+workspace (renders are large and regenerable), while `measurements/` is tracked.
+So a decision that cites a path under `analysis/` dangles for everyone but the
+machine that ran it — copying the run into `measurements/` is what makes the
+citation survive a clone. (This repo's `examples/punk-fate/` tracks its
+`analysis/` too, as shipped documentation; a normal song workspace does not.)
+
 The `attempts/` ledger (`kind: attempt`) records what you *tried* and how it turned out — query it via `/song-attempts` before re-touching a part you've worked before, so you don't re-try a known dead end. Schema + worked example: [`.prawduct/artifacts/song-conventions.md`](../.prawduct/artifacts/song-conventions.md) "The attempt ledger".
 
 The DB lives at `songs/<slug>/<slug>-<branch>.db` (per-branch convention; outside a repo or on detached HEAD, falls back to `<slug>.db`). Both forms are gitignored.

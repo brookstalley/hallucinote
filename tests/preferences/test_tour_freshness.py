@@ -209,6 +209,11 @@ def test_quoted_chapter2_numbers_match_the_committed_measurements():
         f"**{flat(punk)} → {flat(lead)}**",
         # beat 16 — the final delivered true peak
         dbtp(lead["delivered_true_peak_dbtp"]),
+        # beat 14's own qualification quotes the two figures that expose the
+        # stale-fader artifact. They shipped unlocked in the commit that fixed
+        # the mislabel — the same drift the rest of this test exists to stop.
+        f"−{abs(sound['delivered_true_peak_dbtp']):.2f}",
+        f"−{abs(sound['master_fader_db']):.1f}",
     ]
     for expected in expectations:
         assert expected in tour, (

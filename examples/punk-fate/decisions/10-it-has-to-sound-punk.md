@@ -77,8 +77,12 @@ depending on `master_fader_db` — a field the analyzer reports **stale**, prove
 twice. Here: `measurements/2026-08-11-sound-punk-full-song.json` carries
 `master_fader_db: -4.0` and derives `delivered_true_peak_dbtp: -4.34` from it
 (the bus's −0.34, minus that 4.0) — while the fader was already at unity. The
-next render settles it: `2026-08-11-lead-guitar-full-song.json`, same fader
-position, reports `master_fader_db` ≈ 0 and bus == delivered to six decimals.
+tell is a coincidence that cannot be one: this report and the *previous* pass's
+(`2026-08-11-punk-pass-full-song.json`) carry byte-identical fader readings —
+`master_fader_volume: 0.75`, `master_fader_db: -4.0` — across two different
+renders with a fader move between them. The next render settles it:
+`2026-08-11-lead-guitar-full-song.json` reports `master_fader_volume: 0.85`
+(unity) with bus and delivered agreeing to within 1e-6 dB.
 A day earlier the same field misread the other way on the chapter-1 mix — the
 analyzer reported `master_fader_db: 0.0` while Live's own session info returned
 a master volume of 0.775, about 3 dB down.

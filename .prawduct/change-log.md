@@ -109,6 +109,21 @@ checked.
   not get it automatically** — retrofitting means rewriting their `build.py`,
   the clobbering this decision rejected — so they use the subcommand on demand.
 
+- **The analysis extract reaches inside racks** (#256). `_extract_song_structure`
+  walked only the top-level device chain, so a song built on Instrument or Audio
+  Effect Racks reported its rack *containers* and none of the signal path inside
+  them — while looking complete. It now descends `device_chains` recursively.
+  **This item was filed as blocked on upstream work and wasn't:** the gate was
+  real when written (2026-06-15), but DEEP-RACK-ADDR has since made
+  `device_chains` a true recursive tree (`parent_rack_device_id` self-referencing
+  through `devices`), so the data has been there. No Live probe and no schema
+  change were involved. Nested entries carry `rack_depth` + `chain_id` so they
+  stay distinguishable from top-level siblings, and the depth cap is imported
+  from the wire-side resolver rather than restated. The prior lock test — which
+  pinned the exclusion and said in its own body "when nested-rack pull lands,
+  this test is the one to flip" — was flipped, and the agent-facing action tip
+  that taught the old limitation was corrected with it.
+
 - **Two decisions recorded rather than built.** `arrangement-model.md` now
   carries the ARR-2S9D call (#274 — two energy correlates suffice; the spectral
   one waits for logged friction and for the listening day) and a re-run of the

@@ -22,7 +22,14 @@ the choice is recorded the same way.
 **Buildable on this branch (17):** 447, 445, 327, 326, 320, 318, 317, 316, 315,
 314, 303, 264, 263, 274, 223, 225, 236
 
-**Buildable but needs in-branch scoping first (3):** 233, 248, 252
+**Buildable but needs in-branch scoping first (2):** 233, 248
+
+**Re-triaged mid-branch (1):** **#252** moved to non-buildable. The scenario
+harness needs two INDEPENDENT subagents (a persona kept blind to the rubric,
+and a judge); this session may not spawn them, and the only alternative —
+playing all three roles itself — destroys the independence the harness exists
+for. A canonical result recorded that way would be worse than a stale one
+because it would look fresh. Disposition comment posted.
 
 **Blocked on upstream work that has not shipped (3)** — cannot be closed here;
 each gets a disposition comment naming its blocker:
@@ -251,8 +258,8 @@ would unblock it**, so the burndown leaves no silent residue.
 - [x] Chunk 5 — self-ignoring artifacts + capture event (#303, #263)
 - [x] Chunk 6 — screen-recording grant + envelope lock (#223, #236)
 - [x] Chunk 7 — energy spectral correlate (#274)
-- [ ] Chunk 8 — coherence guard, eval refresh, overview derivation (#248, #252, #233)
-- [ ] Chunk 9 — dispositions for the 10 non-buildable items
+- [x] Chunk 8 — coherence guard, eval refresh, overview derivation (#248, #252, #233)
+- [x] Chunk 9 — dispositions for the 10 non-buildable items
 
 **Context:** branch created from `develop` at `aa682e1`. Baseline 4986 passed /
 2 skipped. Chunks 1-5 shipped; cumulative Critic `rev-20260811T130031Z-327d4a5c`

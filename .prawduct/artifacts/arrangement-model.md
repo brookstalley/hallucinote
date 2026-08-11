@@ -88,6 +88,34 @@ conformance lint) and **performance** (the perf lens) the shipped precedents. Ea
 *lens* — it reports declared-vs-realized divergence as info/coaching, never a stamp or a
 verdict the composer didn't ask for. (Links to the siblings' designs; not restated here.)
 
+**Coherence pass 2026-08-11 (ARR-8P5K, the recurring guard).** Re-run against
+the siblings that landed since the 2026-06-03 pass. Two findings, both recorded
+rather than built — the umbrella still owes no code:
+
+- **Spatial image is a shipped lens for a dimension this taxonomy never names.**
+  STR-4C8N (v1.8.0) added per-stem/per-section L/R correlation + mono-sum loss
+  and a stereo reading in `/mix-review`. "Stereo" appears nowhere above. Placed
+  now: it is **not** a structure intent (nobody authors a spatial curve) but part
+  of the **sound-design subsystem** — width and placement are dialled in the
+  device chain, which is where `feedback_sound_is_composition` already puts them.
+  Its read side belongs to the mix lenses, beside masking.
+- **And it is in the half-built state this doc warns about.** The MEASURE half
+  shipped with no authoring intent: `DeclaredWidthControl` is a *readback of a
+  dialled device parameter*, not a declared spatial intent, so there is nothing
+  for the lens to grade the song against — only "here is what the audio did".
+  By this doc's own both-sides rule (*"a dimension measured but un-authorable is
+  half-built"*) spatial image is currently half-built. The authoring/graded half
+  is **STR-9P4M**, deliberately gated: it grades taste, so the analyzer freeze
+  binds it until the listening day (QLT-3D8R). This is a known, dated gap, not
+  an oversight — naming it is the guard's whole job.
+
+**The rule for adding any new lens (2026-08-10 owner ruling).** The analyzer
+freeze is no longer a blanket "no new lenses": it is **no new lens that GRADES
+or COACHES**. A determinate physical measurement that emits no findings and no
+grades — correlation, mono-sum loss in dB — is outside it; a lens whose
+thresholds encode taste is inside it and waits for the listening day. Read that
+before adding a read side to any dimension here.
+
 A fourth relationship exists: a **composite line that reads the other dimensions**.
 **Melody** is the case (decided 2026-05-31) — not an orthogonal structure intent
 with universal rules, and not a derived realization, but a *line* whose PITCH reads

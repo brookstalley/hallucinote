@@ -80,6 +80,33 @@ checked.
   The note migrated verbatim into #337, which is the record a future scrub
   actually reads; the frozen copy stays wrong on purpose, as history.
 
+- **The screen-recording grant is now REQUESTED, not just reported** (#223).
+  `assert_capture_permission` preflighted but never called
+  `CGRequestScreenCaptureAccess`, and nothing else in the tool raises a TCC
+  dialog — so a denied grant was a dead end that sent the operator hunting
+  System Settings mid-capture. The actionable error survives the request on both
+  branches, deliberately: the grant is read at process launch, so granting
+  through the prompt does not enable a *running* process, and the relaunch
+  instruction stays load-bearing.
+
+- **New: `hallucinote overview-drift <slug>`** (#233) reports a `<slug>.md`
+  Structure table that has drifted from the form `build.py` materialized. The
+  generate-vs-warn question is **decided as warn**: both derived surfaces carry
+  composer prose (the table's Feel column, and `build.py`'s docstring in the
+  composer's own source), so regenerating them would clobber real work to fix a
+  bookkeeping problem. The canonical form is the DB — what `build.py` actually
+  materialized, and what every other reader already treats as true.
+
+- **Two decisions recorded rather than built.** `arrangement-model.md` now
+  carries the ARR-2S9D call (#274 — two energy correlates suffice; the spectral
+  one waits for logged friction and for the listening day) and a re-run of the
+  ARR-8P5K taxonomy coherence guard (#248), which found that STR-4C8N shipped a
+  **stereo lens for a dimension the taxonomy never named**, in the
+  measured-but-un-authorable half-built state the doc itself warns about. Spatial
+  image is now placed in the sound-design subsystem, its authoring half named
+  (STR-9P4M, gated), and the 2026-08-10 owner ruling — *no new lens that grades
+  or coaches* — written where a lens-adder will meet it.
+
 - **Waivers, citations, and the pre-split layout** (#447, #445, #320): all 21
   legacy `prawduct:ok-broad-except` pragmas migrated to the current form
   carrying a per-catch reason; the four source citations into the frozen

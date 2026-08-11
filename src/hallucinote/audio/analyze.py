@@ -10,14 +10,18 @@ wrapper that resolves the song DB connection, calls this function,
 serializes the report to JSON at
 ``songs/<slug>/analysis/<iso-ts>.json``, and returns the path.
 
-Intent extraction is narrow: DB-declared RT60s flow in via the
-``sends.intended_rt60_s`` column (see ``set_send_intended_rt60`` +
-``get_reverb_send_intents_for_song``). The MCP handler reads them and
-passes ``declared_reverb_sends=...`` here; this module is DB-agnostic
-and does the work on the list it's given. When no intent is declared,
-the reverb-verification section is emitted as a structured
-``skipped_analyses`` entry rather than silently absent — per CLAUDE.md
-"Never silently drop a requirement."
+Declared intent arrives as ARGUMENTS, never by reaching into the DB —
+this module is DB-agnostic and does the work on the lists it is given.
+The MCP handler resolves each from the song DB and passes it in:
+``declared_reverb_sends`` (``sends.intended_rt60_s``),
+``declared_envelopes`` (automation to verify), ``declared_width_controls``
+(dialled stereo-width params), ``sections`` and ``declared_energy``. The
+join is always on capture ``surface_id``, which is why no DB import
+belongs here.
+
+When a declared analysis has no intent to work from, it is emitted as a
+structured ``skipped_analyses`` entry rather than silently absent — per
+CLAUDE.md "Never silently drop a requirement."
 """
 from __future__ import annotations
 
@@ -43,6 +47,7 @@ from .attribution import (
 from .io import CaptureSet, Surface, load_capture
 from .levels import apply_stem_gains, live_fader_db
 from .loudness import MIN_LOUDNESS_DURATION_S, measure_loudness
+from .stereo import measure_stereo
 from .timbre import measure_timbre
 from .cross_rhythm import (
     analyze_cross_rhythm_window,
@@ -68,6 +73,7 @@ from .report import (
     SectionEnergy,
     SectionMetrics,
     StemMetrics,
+    WidthRealization,
 )
 from .reverb import find_decay_onset, measure_return_rt60
 from .section import (
@@ -149,11 +155,28 @@ class DeclaredReverbSend:
     declared_rt60_s: float
 
 
+@dataclass(frozen=True)
+class DeclaredWidthControl:
+    """One authored width control, to be read beside what the audio did.
+
+    The MCP handler builds these from the song's dialled device parameters; this
+    module stays DB-agnostic and joins on ``surface_id`` alone. ``declared_display``
+    is carried verbatim rather than parsed to a number on purpose — the report
+    quotes what the author wrote ("165 %"), and the *measurement* beside it is
+    what carries the argument, so nothing depends on parsing a unit string.
+    """
+    surface_id: str
+    device_name: str
+    parameter_name: str
+    declared_display: str
+
+
 def analyze_mix(
     captures_dir: Path | str,
     *,
     declared_reverb_sends: Sequence[DeclaredReverbSend] = (),
     declared_envelopes: Sequence[DeclaredEnvelope] = (),
+    declared_width_controls: Sequence[DeclaredWidthControl] = (),
     sections: Sequence[SectionWindow] = (),
     declared_energy: Sequence[SectionEnergy] = (),
     tempo_map: Sequence[TempoSegment] = (),
@@ -329,6 +352,11 @@ def analyze_mix(
     energy_realization, energy_skips = _realize_energy(declared_energy, per_section)
     skipped.extend(energy_skips)
 
+    width_realizations, width_skips = _realize_widths(
+        declared_width_controls, [*stem_metrics, *return_metrics]
+    )
+    skipped.extend(width_skips)
+
     findings = _derive_findings(
         master=master_metrics,
         stems=stem_metrics,
@@ -349,6 +377,7 @@ def analyze_mix(
         overshoots=overshoots,
         reverb_verifications=reverb_verifications,
         automation_verifications=automation_verifications,
+        width_realizations=width_realizations,
         per_section=per_section,
         findings=findings,
         skipped_analyses=skipped,
@@ -376,7 +405,76 @@ def _measure_surface(surface) -> StemMetrics:
         surface_name=surface.surface_name,
         loudness=loudness,
         timbre=measure_timbre(surface.audio, surface.sample_rate),
+        stereo=measure_stereo(surface.audio),
     )
+
+
+def _realize_widths(
+    declared: Sequence[DeclaredWidthControl],
+    surfaces: Sequence[StemMetrics],
+) -> tuple[list[WidthRealization], list[dict]]:
+    """Pair each declared width control with the measured image on its surface.
+
+    ``surfaces`` is tracks AND returns — a width control on a reverb bus is an
+    ordinary move, and a join that saw only tracks would report such a control as
+    unmeasurable when the audio for it was captured all along.
+
+    Neutral evidence only: the declared value beside what the audio did. No
+    threshold, no severity, no verdict — a control doing nothing may be an
+    oversight or may be a part with no side content to widen, and only the
+    reader knows which. ``/mix-review`` grades it against declared intent.
+
+    Catching this needs BOTH halves — the declaration and the rendered audio —
+    which is why no DAW reports it and why the join lives here.
+    """
+    # The recognition scope is disclosed on EVERY analysis, not only when nothing
+    # was recognised. The partial case is the dangerous one and the common one:
+    # one control recognised and three missed produces a non-empty list that a
+    # reader takes for the complete set of declared width controls, and concludes
+    # an unlisted one is absent or fine — which is the "declared but silently
+    # doing nothing" failure this lens exists to end, one layer up.
+    scope_note = {
+        "kind": "width_realization_scope",
+        "reason": (
+            f"`width_realizations` lists the {len(declared)} width control(s) "
+            "RECOGNISED, which is not necessarily every one AUTHORED. Recognition "
+            "is a closed set of exact parameter names (currently: Stereo Width) at "
+            "a non-default value, on top-level track and return devices; a width "
+            "control under another name, inside a rack's nested chain, or left at "
+            "unity is not listed. Read an absence as 'not recognised', never as "
+            "'not authored'"
+        ),
+    }
+    if not declared:
+        return [], [scope_note]
+
+    by_surface = {s.track_id: s for s in surfaces}
+    realizations: list[WidthRealization] = []
+    skipped: list[dict] = [scope_note]
+    for control in declared:
+        stem = by_surface.get(control.surface_id)
+        if stem is None or stem.stereo is None:
+            skipped.append({
+                "kind": "width_realization",
+                "reason": (
+                    f"declared width control {control.parameter_name!r} on "
+                    f"{control.device_name!r} targets surface "
+                    f"{control.surface_id!r}, which this capture has no measured "
+                    f"stereo for — the control cannot be checked against audio "
+                    f"that wasn't captured"
+                ),
+            })
+            continue
+        realizations.append(WidthRealization(
+            surface_id=control.surface_id,
+            surface_name=stem.surface_name,
+            device_name=control.device_name,
+            parameter_name=control.parameter_name,
+            declared_display=control.declared_display,
+            correlation=stem.stereo.correlation,
+            mono_sum_loss_db=stem.stereo.mono_sum_loss_db,
+        ))
+    return realizations, skipped
 
 
 def _rebeat_overshoot(
@@ -903,6 +1001,7 @@ def _measure_window(surface: Surface, window_slice: WindowSlice) -> StemMetrics:
         surface_name=surface.surface_name,
         loudness=loudness,
         timbre=measure_timbre(sliced, surface.sample_rate),
+        stereo=measure_stereo(sliced),
     )
 
 

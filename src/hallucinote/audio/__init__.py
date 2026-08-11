@@ -21,6 +21,14 @@ Module layout:
                      per section) — neutral evidence for the interpreter.
   ``timing``       — per-part onset-vs-grid feel (push/drag/swing), the
                      read-side counterpart to the ``feel`` generator.
+  ``timbre``       — standing per-surface brightness/noisiness descriptors,
+                     and the whole-window centroid the verifier reads.
+  ``density``      — per-section note/onset density.
+  ``stereo``       — per-surface L/R correlation + mono-sum loss (the image
+                     lens); ``analyze`` joins it to declared width controls.
+  ``energy``       — declared-vs-measured section energy arc.
+  ``automation``   — realized-vs-declared verdicts for authored envelopes.
+  ``compare``      — A/B diff of two reports (loudness + timbre + stereo).
 
 The MCP wrapper that exposes this as a tool lives in
 ``hallucinote_mcp/src/hallucinote_mcp/{actions,handlers}/analysis.py``;
@@ -30,7 +38,7 @@ inside ``src/hallucinote/``" — audio is a sibling of ``db``, ``sync``,
 """
 from __future__ import annotations
 
-from .analyze import DeclaredReverbSend, analyze_mix
+from .analyze import DeclaredReverbSend, DeclaredWidthControl, analyze_mix
 from .automation import DeclaredEnvelope
 from .codeversion import disk_signature, is_stale, loaded_signature
 from .energy import realize_energy
@@ -47,7 +55,9 @@ from .report import (
     SectionEnergy,
     SectionMetrics,
     StemMetrics,
+    StereoMetrics,
     TimbreMetrics,
+    WidthRealization,
 )
 from .section import SectionWindow, TempoSegment
 
@@ -55,6 +65,7 @@ __all__ = [
     "BandContribution",
     "DeclaredEnvelope",
     "DeclaredReverbSend",
+    "DeclaredWidthControl",
     "disk_signature",
     "EnergyInversion",
     "EnergyRealization",
@@ -71,7 +82,9 @@ __all__ = [
     "SectionMetrics",
     "SectionWindow",
     "StemMetrics",
+    "StereoMetrics",
     "TempoSegment",
     "TimbreMetrics",
+    "WidthRealization",
     "analyze_mix",
 ]

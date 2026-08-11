@@ -59,6 +59,7 @@ try:
     from hallucinote.audio import (
         DeclaredEnvelope,
         DeclaredReverbSend,
+        DeclaredWidthControl,
         SectionEnergy,
         SectionWindow,
         TempoSegment,
@@ -96,6 +97,7 @@ except ImportError:  # pragma: no cover - exercised in Live's vendored env
     # to a type") on top of [assignment] for the None fallbacks.
     DeclaredEnvelope = None  # type: ignore[assignment, misc]
     DeclaredReverbSend = None  # type: ignore[assignment, misc]
+    DeclaredWidthControl = None  # type: ignore[assignment, misc]
     SectionEnergy = None  # type: ignore[assignment, misc]
     SectionWindow = None  # type: ignore[assignment, misc]
     TempoSegment = None  # type: ignore[assignment, misc]
@@ -300,6 +302,86 @@ def _collect_declared_sends(
         )
         for row in rows
     ]
+
+
+# Device parameters that are stereo-WIDTH controls. Deliberately a small closed
+# set of exact names rather than a substring match: "Spread" on a Phaser-Flanger
+# spreads notch frequencies WITHIN a channel and is not a width control at all —
+# mistaking it for one is the exact confusion that made a wet flanger read as
+# stereo when the stem was bit-exact mono (STR-4C8N). Add names here only after
+# confirming the parameter moves the L/R image.
+_WIDTH_PARAMETER_NAMES = frozenset({"Stereo Width"})
+
+# Unity width — Live's Utility default. A pull writes a row for EVERY parameter
+# Live reports on a device, not only the ones an author touched, so presence in
+# the DB is not evidence of intent: without this filter every untouched Utility
+# in the song contributes a "declared 100 %" row, and a naturally wide stem
+# carrying one presents to /mix-review as `declared 100 % / measured -3 dB` — a
+# contradiction with an intent nobody expressed. The cost is the reverse case: a
+# width DELIBERATELY held at unity is indistinguishable from an untouched one and
+# is not listed. That asymmetry is the right way round — the lens exists to
+# surface contradictions with real intent, and a fabricated declaration
+# manufactures them.
+_UNITY_WIDTH_DISPLAYS = frozenset({"100 %", "100%", "100.0 %", "100.0%", "100"})
+
+
+def _collect_declared_width_controls(
+    conn: "sqlite3.Connection", song_id: str,
+) -> list["DeclaredWidthControl"]:
+    """Lift dialled stereo-width device params into ``DeclaredWidthControl``.
+
+    Mirrors ``_collect_declared_sends``: the DB is keyed by UUID, captures by
+    surface index, so the translation happens HERE and ``analyze_mix`` stays
+    DB-agnostic and joins on ``surface_id`` alone.
+
+    **Three known blind spots, disclosed rather than silent** — ``analyze.py``
+    attaches the recognition-scope note to EVERY report, not just the zero case,
+    so a partial list never reads as a complete one:
+
+    * Only names in :data:`_WIDTH_PARAMETER_NAMES` are recognised.
+    * Only TOP-LEVEL devices on tracks and returns are walked —
+      ``get_devices_for_track`` / ``get_devices_for_return`` do not recurse into a
+      rack's nested chains, so a Utility inside an Instrument or Audio Effect Rack
+      is invisible here. Widening this means a nested-chain walk; until then the
+      honest claim is the narrow one.
+    * A control at unity (:data:`_UNITY_WIDTH_DISPLAYS`) is not a declaration —
+      see that constant for why presence in the DB is not evidence of intent.
+    """
+    controls: list[DeclaredWidthControl] = []
+
+    def _collect(surface: "str | None", devices) -> None:
+        if surface is None:
+            return
+        for device in devices:
+            for param in Q.get_device_parameters(conn, device["id"]):
+                if param["name"] not in _WIDTH_PARAMETER_NAMES:
+                    continue
+                display = param["value_display"]
+                if display is None:
+                    continue
+                if str(display).strip() in _UNITY_WIDTH_DISPLAYS:
+                    continue
+                controls.append(DeclaredWidthControl(
+                    surface_id=surface,
+                    device_name=str(device["display_name"]),
+                    parameter_name=str(param["name"]),
+                    declared_display=str(display),
+                ))
+
+    for track in Q.get_tracks_for_song(conn, song_id):
+        _collect(
+            _track_surface(conn, track["id"]),
+            Q.get_devices_for_track(conn, track["id"]),
+        )
+    # Returns too: a width control on a reverb/delay bus is an ordinary move, and
+    # collecting only tracks would make it INVISIBLE rather than skipped — a
+    # silent drop, which reads to the caller as "nothing declared".
+    for ret in Q.get_returns_for_song(conn, song_id):
+        _collect(
+            _return_surface(conn, ret["id"]),
+            Q.get_devices_for_return(conn, ret["id"]),
+        )
+    return controls
 
 
 def _collect_declared_envelopes(
@@ -589,6 +671,7 @@ def analyze_handler(
         song_id = song["id"] if song is not None else None
         declared_sends = _collect_declared_sends(conn, song_id) if song_id else []
         declared_envelopes = _collect_declared_envelopes(conn, song_id) if song_id else []
+        declared_widths = _collect_declared_width_controls(conn, song_id) if song_id else []
         sections = _collect_sections(conn, song_id) if song_id else []
         declared_energy = _collect_declared_energy(conn, song_id) if song_id else []
         tempo_map = _collect_tempo_map(conn, song_id) if song_id else []
@@ -617,6 +700,7 @@ def analyze_handler(
             captures_path,
             declared_reverb_sends=declared_sends,
             declared_envelopes=declared_envelopes,
+            declared_width_controls=declared_widths,
             sections=sections,
             declared_energy=declared_energy,
             tempo_map=tempo_map,

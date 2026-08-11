@@ -483,3 +483,60 @@ A 0.9.0 song DB (swell) crashed `push_cli execute` at `plan_push_routing` readin
 SNP-MIX-CLUSTER's plan used `## Chunk C — MIX-3S7P close-out`. `verify-chunk-refs` errored with `chunk 'C — MIX-3S7P close-out' not found in build-plan` (exit 0 — advisory, doesn't gate the PR). I first chased it as a text-divergence between the Status line and the heading and made them byte-identical — it STILL failed. The Critic's verify-resolutions pass named the real cause: `lib/buildplan_refs.py` `_chunk_section_lines` anchors only on `### Chunk <id>:` (h3 + colon), and `_current_chunk_id_from_status` extracts a bare id from a `Chunk X: name` Status line. Rewriting all three headings to `### Chunk A:` / `### Chunk B:` / `### Chunk C:` and the Status lines to the `Chunk X:` form made it pass (`ok: chunk C — 0 file ref(s) verified`).
 
 **How to apply.** (1) Author build-plan chunk headings as `### Chunk <id>: <name>` (h3, colon after the id) and Status checkboxes as `- [ ] Chunk <id>: <name>` from the start — not `## Chunk X — …`. (2) When a verifier complains despite text that looks right, stop tuning the text and check what the verifier actually keys on (heading LEVEL, a delimiter char) — read the resolver, don't guess. (3) `verify-chunk-refs` is exit-0 advisory, so a wrong heading form silently gives the plan zero chunk-ref coverage — it won't block, it just stops protecting you.
+
+## A sampler/drum part's note mapping is only verifiable by rendering it
+
+`examples/b-natural`'s `11 Latin Perc` rendered as digital silence (-180 dB) while all ten other stems had audio. The part was authored against a Drum Rack's pad layout (C1 = MIDI 36); its instrument was an Instrument Rack wrapping an **Impulse**, whose eight slots are C3-G3 in Live's display — MIDI **60-67**. Every gate in the system was green: the notes were in the DB (129 of them), the notes were in Live, `verify-arrangement` passed on all 34 placements, `compat check` was 38/38 native, and the push reported `OK — all 14 phases completed`. The defect was found by rendering and listing per-stem RMS.
+
+**How to apply.** (1) After the first push of any song with a sampler/drum-device part, render once and print per-stem RMS before doing any mix work — a stem at -180 dB is a mapping bug, not a quiet part. (2) Probe the actual pad layout (`ableton_device(action='get_device_chains')` exposes `in_note` per DrumChain) rather than assuming GM; `Kit.from_dict` with probed values documents what you measured. (3) An Impulse exposes no drum chains at all, so a chain walk returns nothing and tells you nothing — that silence in the probe is itself the signal to check the device class. (4) Never carry a pad constant across device kinds: "the first pad" is 36 on a Drum Rack and 60 on an Impulse.
+
+## `skipped (idempotent)` is two different outcomes wearing one word
+
+b-natural's first push reported `OK — all 14 phases completed` with both `envelopes` and `arrangement` showing `skipped (idempotent)`. They meant opposite things. `envelopes` skipped correctly: all 17 arcs had been routed through `performed_automation`, which recorded them in one realtime pass — the warning block enumerated every arc by name. `arrangement` skipped because its per-track probe had failed for all 11 tracks (Live's default scaffold tracks were still present and shifting indices), so nothing was placed on the timeline at all. The phase table rendered both as `[ok]`.
+
+**How to apply.** (1) Treat the warning block as part of the exit criteria, not as decoration. (2) For each skipped phase, ask which of the two it is: work-done-elsewhere or precondition-failed. (3) `arrangement`, `envelopes`, `performed_automation` and `devices` are the four that report success on zero work — check the thing the brief names is actually present, rather than trusting the count. (4) Run the default-scaffold cleanup before concluding a probe failure is real; leftover default tracks were the cause here.
+
+## A declared-vs-measured gap has two possible culprits — name which
+
+b-natural's melody lens raised three declared-vs-measured questions, and all three resolved differently. `contour_intent="arch"` was declared out of habit and the line genuinely climbed to a late apex — the *declaration* moved. The chorus had drifted off its motif to 27% cell coverage, which meant a listener would hear a nice tune rather than the same tune resolved — the *music* was rewritten. `repetition_appetite` still read "moderate" afterwards and was left that way, because the claim being made was motivic ECONOMY, which the recurrence lens asserts separately (1/1 motifs recurring, 100% coverage) — the metric was measuring literal repetition, which a line that varies its cell every return should score low on.
+
+**How to apply.** (1) Write which side moved, and why, next to the declaration — the reasoning is the artifact, the value is not. (2) A declaration that changes to match a measurement is only honest if the measurement described the intent better than the declaration did; say so. (3) When one lens's metric and another lens's metric disagree about the same musical claim, name which lens owns the claim rather than optimizing both. (4) Two different lines under one layer name need two profiles; a single profile flattens a real intent and makes the lens question the arc the song is.
+
+## A correct automation arc is not evidence of an audible result
+
+Two consecutive sessions misdiagnosed the same silent failure. Session one blamed
+a latched `back_to_arranger` override; session two (me) blamed short automation
+arcs not landing. Both were wrong, and both were reached by inspecting mechanism
+— `automation_state` read 1 (playing), and parking the playhead mid-sweep read
+back the exact authored value 0.387. The arc was perfect. The device it drove
+could not do what was asked: `Mod Phase 0.0°` ran both channels' LFOs in
+lockstep, so a wet flanger stayed bit-exact mono. Only a per-stem `L−R`
+measurement on rendered audio separates "the automation didn't land" from "it
+landed on a parameter that cannot express the intent". (2026-08-10, STR-4C8N)
+
+**How to apply.** (1) Before diagnosing WHY a gesture didn't happen, render and measure the stem — `automation_state`, a parameter read-back and a green push all describe the mechanism, not the sound. (2) A lens that verifies the arc is not verifying the intent; ask which one you actually need. (3) When two sessions running reach two different wrong causes, the shared mistake is usually the missing measurement, not the reasoning.
+
+## A "no effect" verdict indicts the probe as much as the device
+
+Device-parameter verification probed spectral centroid alone. A flanger is a comb
+filter and notches roughly symmetrically, so it barely moves the centroid however
+wet it gets — producing `no audible timbre shift (2244→2219 Hz, 1% < 12%)`
+against automation that provably landed. The fix is a second probe (stereo
+correlation), not a looser threshold. The regression test that matters pins the
+opposite direction: identical before/after windows must STILL read not-realized,
+because a fix for false positives that becomes a rubber stamp is worse than the
+bug. (2026-08-10, STR-4C8N A2)
+
+**How to apply.** (1) Ask what the device physically does to the signal before trusting a probe's verdict — a comb filter moves the image, not the brightness. (2) Fix a false negative by ADDING a probe, never by loosening a threshold. (3) Pair every such fix with a test asserting the opposite direction still fails, or the fix is a rubber stamp. (4) Check the fixture models the real mechanism: simulating width with injected noise also changes the spectrum, so it tests something else.
+
+## A criterion built from a symptom COUNT can fail by being satisfied
+
+A2's criterion said "the three Dry/Wet findings stop being reported as
+not-realized", written from the finding count on the assumption all were false.
+Each arc had three change points; the beat-288 move was `0.38 → 0.42`, a 4 %
+change that is genuinely inaudible, so "not realized" there was correct. Meeting
+the criterion as written would have required making the probe lie. Correct the
+criterion in the plan and say so — never quietly pass, and never loosen the code
+to satisfy a wrong spec. (2026-08-10, STR-4C8N A2)
+
+**How to apply.** (1) Expand a count into its individual symptoms before calling a partial pass a failure. (2) If satisfying the criterion would require the tool to report something untrue, the criterion is wrong — correct it in the plan and say so. (3) Never tune a threshold until a count reaches zero; that is how a rubber stamp gets built and called a fix.

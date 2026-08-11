@@ -129,7 +129,7 @@ into the failing region.
 | `ableton_scene` | Session-view scenes |
 | `ableton_browser` | Instruments, effects, plugins; search and fetch |
 | `ableton_render` | Audio capture pipeline (`start` + `status`; sync `render` retired) |
-| `ableton_analysis` | Loudness, masking, RT60, realized-vs-declared automation |
+| `ableton_analysis` | Loudness, masking, RT60, stereo image / declared width, realized-vs-declared automation |
 | `ableton_probe` | LOM capability probing under a constrained path grammar |
 
 **Deliberate exclusion.** Timing transforms — quantize, swing, groove — are *not* on

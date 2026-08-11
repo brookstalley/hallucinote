@@ -102,6 +102,7 @@ def test_to_json_dict_round_trips_through_json():
                 measurable=True,
                 realized=True,
                 note="timbre shift realized",
+                probe="timbre",
             )
         ],
         findings=[
@@ -136,6 +137,10 @@ def test_to_json_dict_round_trips_through_json():
     assert av["target_kind"] == "device_parameter"
     assert av["metric"] == "spectral_centroid_hz"
     assert av["measurable"] is True and av["realized"] is True
+    # `probe` must cross the JSON boundary: /mix-review reads this file, never
+    # the in-process dataclass, and the field exists precisely so it need not
+    # string-match `note` to learn which probe carried the verdict.
+    assert av["probe"] == "timbre"
     assert deserialized["findings"][0]["kind"] == "master_overshoot"
     assert deserialized["compare_to"] is None  # no baseline requested
 

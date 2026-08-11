@@ -520,6 +520,11 @@ build_state:
 #   SMP-7K2D — chunks 1-2 + no-Live 5 done; probe chunk 0 + push chunks 3-4 pending.
 #   ARR-PROJ — all 5 headless chunks built on plan/arr-proj-arrangement-materialization;
 #     cumulative-Critic PR gate + live e2e + ARR-9X4T/ARR-7H2N backlog close remain.
+#   STR-4C8N — all 3 chunks built on feat/str-4c8n-stereo-lens; retained live
+#     until the develop->main release archives it.
+#   TOUR — chunks B1, C1, D1 still unbuilt (the examples/ workspace + demo song,
+#     the evidence capture, and docs/tour.md + the README graft). The pointer
+#     moved off it to STR-4C8N, so this list is the only thing tracking it.
 # Shipped/stale plan history: the git history of this file (pre-2026-07-04,
 # PRC-5W2N trim) has the full narrative; a per-machine copy also sits in the
 # gitignored reflections archive where present.
@@ -527,12 +532,14 @@ build_state:
 # pointer reader treats the post-colon text as a path, so `null` resolves to
 # `.prawduct/null` and mis-fires the "missing build plan" advisory.
 #
-# Named `build-plan-<scope>.md`, not the generic `build-plan.md`: regen-views'
-# scope->plan resolver globs `artifacts/*.md` non-recursively (a plan nested in
-# `artifacts/plans/<id>/` is invisible to it and regen-views then refuses to write
-# ANY view), and on gitflow a plan must survive until the develop->main release —
-# so the generic name would be contended by the next plan authored in that window.
-active_build_plan: .prawduct/artifacts/plans/TOUR/build-plan.md
+# The `artifacts/plans/<ID>/build-plan.md` layout is what this repo uses (~48
+# plans). The per-ID directory is what keeps the generic filename uncontended —
+# on gitflow a plan must survive until the develop->main release, so several are
+# live at once. (The older rule here required a `build-plan-<scope>.md` name
+# because the scope->plan resolver globbed `artifacts/*.md` non-recursively and
+# could not see a nested plan; discovery is recursive now, so that reason is
+# gone.)
+active_build_plan: .prawduct/artifacts/plans/STR-4C8N/build-plan.md
 
 # =============================================================================
 # CHANGE LOG
@@ -763,6 +770,15 @@ scope_rollups:
 # to opt out.
 
 views_enabled: true
+
+# Test roots for the evidence recorder, which otherwise discovers repo-root
+# `tests/` only. This repo is a two-package layout: the engine's suite is under
+# `tests/`, the MCP server's under `hallucinote_mcp/tests/`, and `examples/`
+# carries the demo song's own assertions — the same three roots as pyproject's
+# `testpaths`, and they must stay in step with it. Without this the recorded
+# `tests_executed` lists engine tests only, so an MCP-side test reads as
+# unevidenced even though the counted run included it.
+tests_dirs: tests hallucinote_mcp/tests examples
 
 # Backlog format: 2 = structured (id + metadata bar + body, three canonical
 # sections). Set by `/backlog migrate` 2026-05-29. Resolves the

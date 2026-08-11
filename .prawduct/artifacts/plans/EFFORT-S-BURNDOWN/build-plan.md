@@ -19,7 +19,7 @@ the choice is recorded the same way.
 
 ## Triage — all 30 items
 
-**Buildable on this branch (17):** 447, 445, 327, 326, 320, 318, 317, 316, 315,
+**Buildable on this branch (18, incl. #256 re-triaged in):** 447, 445, 327, 326, 320, 318, 317, 316, 315,
 314, 303, 264, 263, 274, 223, 225, 236
 
 **Buildable but needs in-branch scoping first (2):** 233, 248
@@ -31,19 +31,30 @@ playing all three roles itself — destroys the independence the harness exists
 for. A canonical result recorded that way would be worse than a stale one
 because it would look fresh. Disposition comment posted.
 
-**Blocked on upstream work that has not shipped (3)** — cannot be closed here;
+**Blocked on upstream work that has not shipped (2, was 3)** — each verified
+against the CODE, not the issue text, after #256 proved that distinction matters;
 each gets a disposition comment naming its blocker:
 - **#268** envelope: mixer envelopes on audio *session* clips — gated on
-  **CLP-AUD2** (session-view audio-clip placement). CLP-AUD1 chunks 01–02 are
-  still unticked; CLP-AUD2 has no plan directory.
-- **#256** device: flatten nested-rack devices in analysis extract — gated on
-  recursive chain data from NODE-ADDR Chunk A. Chunk A shipped deep *addressing*
-  (`device_path`), but `get_device_chains` is still one-level; the extract has
-  nothing recursive to flatten.
-- **#255** device: extract the shared plugin-discriminator — gated on the
-  **W11-A** `hallucinote-core` shared package, which does not exist (`src/` holds
-  only `hallucinote`). The lock-test already pins the two copies in sync, so
-  there is no live drift risk to fix.
+  **CLP-AUD2**. Verified: `sync/push/clips.py:51` refuses `kind='audio'` clips
+  outright, so an audio session clip cannot reach Live at all; deleting the
+  `refused_audio` route would emit a wire call targeting a clip that does not
+  exist.
+- **#256** — **RE-TRIAGED AND BUILT (2026-08-11).** Originally filed here as
+  gated, and that was my error: I re-confirmed the gate from the issue's own
+  text instead of checking the tree. `_extract_song_structure` reads **DB
+  queries**, not Live probes, and `device_chains` has been a recursive tree
+  since DEEP-RACK-ADDR. The gate had lifted; the extract now flattens nested
+  racks to arbitrary depth. **Lesson worth keeping: a "blocked" label ages, and
+  re-confirming it from the item's own body reproduces the original assumption
+  rather than testing it.**
+- **#255** device: extract the shared plugin-discriminator — gated on **W11-A**.
+  Verified, and the reason is sharper than "the package hasn't landed": the
+  duplication is **cross-process**. `handlers/device.py` runs inside Live's
+  Remote Script, whose vendored env has no `hallucinote` at all, so it cannot
+  import a shared module from `src/` under any arrangement — not even a
+  stdlib-only leaf. Sharing needs a package vendored beside the Remote Script,
+  i.e. W11-A. The lock-test pins the copies in sync meanwhile, so there is
+  duplication but no drift risk.
 
 **Needs the user's ears, a second human, or a live Ableton probe (6)** — not
 agent-buildable by construction; each gets a disposition comment:

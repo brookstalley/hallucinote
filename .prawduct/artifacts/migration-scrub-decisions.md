@@ -19,6 +19,39 @@ Recorded because a migration later found incomplete must be able to answer
 *which build ran it* — the `samsung-frame-art-loader` precedent (7 of 9 items
 never reached GitHub, cutover already recorded, no build recorded anywhere).
 
+## Preservation legs — all three, and where each one is
+
+The runbook names the source markdown as the pre-migration backup and the MG2
+export as the full-fidelity restorable dump. Both exist:
+
+1. **Source markdown, git-tracked.** `.prawduct/backlog.md` at commit `fb1aea2`
+   is exactly the file the import consumed — pinned deliberately before the first
+   write. This is also why the file must be preserved verbatim rather than
+   emptied: it is the corpus `verify-migration` and any rollback read.
+2. **MG2 full-fidelity export — RUN 2026-08-10**, after the import completed:
+   `prawduct-hook backlog export --repo brookstalley/hallucinote --to <dir>` →
+   **225 items exported** (`export-manifest.json` + one `item-<n>.json` per
+   issue). This is the only leg carrying the **native graph** (issue numbers,
+   labels, link edges), which the markdown never held. It was written to the
+   session scratchpad, i.e. **outside the repo and not durable** — re-run it to a
+   retained location if a restorable dump is wanted long-term. Recorded here
+   because a preservation leg that is cited but not located is not a backup.
+3. **Git history of the source file**, which the frozen-history banner points at.
+
+## Completeness detection after cutover — a retired gate with no replacement
+
+`verify-migration` is the only mechanism that could ever detect "an item was
+stranded" or "an `id:` alias was lost," and it is **single-use by construction**:
+re-running it after the dispositions reports each owner-confirmed drop as
+`status_mismatch` and exits 4 on a correct migration. So from cutover onward
+there is **no detector** for alias loss or a silently missing item — if someone
+hand-edits an issue's `id_aliases` or deletes a label, nothing notices.
+
+Accepted rather than solved. The exposure is bounded: the import is finished, so
+new drift can only come from manual edits to issue bodies/labels, and the MG2
+export above plus `cache-query resolve <PFX>` give a manual spot-check. Worth a
+follow-up only if alias drift is ever actually observed.
+
 ## Step 0 — target repo
 
 | Decision | Value |
@@ -31,6 +64,15 @@ never reached GitHub, cutover already recorded, no build recorded anywhere).
 
 Not inferred from the git remote — named and confirmed by the owner, per the
 runbook's Step 0 guard.
+
+**Label taxonomy provisioned** against the confirmed target before any import
+could create labels ad hoc: `prawduct-hook backlog provision --repo
+brookstalley/hallucinote` → **7 labels created, 0 already present** (the
+`stage:` ×5 and `status:` ×2 base labels). Idempotent and collision-free — it
+only creates the `<facet>:`-namespaced base labels it does not find and never
+touches existing ones, which is why the repo's nine stock GitHub labels survived
+untouched. The value-carrying facets (`area:`, `kind:`, `effort:`, `impact:`,
+`source:`, `id:`) are minted per value by the import itself.
 
 **Flagged and accepted:** the backlog carries candid internal material — owner
 rulings, Critic findings, dogfood bug reports. These stay private only as long as
@@ -146,6 +188,20 @@ discriminator is still only in `compat.py`), `SCF-2N6T` (no rename path in
   split mints new ids, and 1 PFX = 1 issue): `DOC-7K3M`, `MCP-3D6Q`, `MCP-4B7W`,
   `AUD-7R3M`, `ARR-2B6K`, `AUD-3K9D`, `AUD-7W1N`, `EVT-4K8H`, `TST-8K1M`,
   `SYN-8Q3F`, `MEL-1A7K`.
+
+  **These 11 are NOT the same measure as the 127 `title-non-atomic` lint hits
+  above, and the two numbers are not in conflict.** The lint is a *syntactic*
+  test on the old title — a space-delimited dash or a semicolon in the summary —
+  and 127 titles tripped it, nearly all because this backlog's house style joins
+  a symptom to its explanation with an em dash. Every one of those 127 was
+  discharged by rewriting the title to a single atomic claim. The 11 are a
+  *semantic* judgement that survived the rewrite: the item genuinely carries two
+  or more deliverables, so no title can be honest and atomic at once, and only an
+  owner can split it. A short title is not evidence of an atomic item, which is
+  exactly why the flag exists alongside the lint.
+
+  **Neither number is tracked anywhere but here.** The 11 have no expiry and no
+  issue of their own; they are recorded in each issue's `note` and in this file.
 - **143 `body-too-long` WARN-only lint findings.** Not blocking on any write
   path; these bodies are deliberately rich (rationale, boundary notes, probes).
 

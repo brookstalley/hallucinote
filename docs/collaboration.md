@@ -157,4 +157,7 @@ These are surfaced as backlog items:
 - Compat-check coverage of Live Pack presence (would require a Live-side capability probe we don't yet have).
 - Inline iteration support — the `hallucinote://` DB read surface that lets collaborators inspect songs from within an MCP session without running `python3 -c "…"`.
 
-See `.prawduct/backlog.md` for the open items.
+See the [open items](https://github.com/brookstalley/hallucinote/issues) for these and
+the rest of the backlog — or `prawduct-hook backlog list --repo brookstalley/hallucinote`.
+(`.prawduct/backlog.md` is frozen history since the 2026-08-10 cutover; every item in it
+still reads as open regardless of what shipped.)

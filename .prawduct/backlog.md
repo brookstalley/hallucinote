@@ -8,8 +8,17 @@
 > All 225 items below were migrated (111 live, 114 archived as closed issues) and
 > the completeness gate passed with every source item alias-keyed on the target.
 > `backlog_service_repo` in `.prawduct/project-state.yaml` now points the tooling
-> at Issues, and **nothing reads this file any more.** Do not add items here, and
-> do not edit a status here expecting it to matter.
+> at Issues. **No backlog read or write goes through this file — do not add items
+> here, and do not edit a status here expecting it to matter.**
+>
+> It is not inert, though, and that is deliberate: this file remains the
+> **migration's source corpus**, so it is what `verify-migration` and any rollback
+> read. Preserve it verbatim. What it no longer holds is *norms* — the three
+> load-bearing backlog rules that used to live in the header comment (the
+> PRC-5W2N ship-stamp rule, verifiable-signal-required, trust-but-verify-on-scrub)
+> moved to the **Backlog norms** section of
+> `.prawduct/artifacts/project-preferences.md` at cutover, because a live rule
+> cannot live in a dead file.
 >
 > **Read the live backlog with:**
 >

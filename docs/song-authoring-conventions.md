@@ -308,7 +308,7 @@ ADR capture is obligation 3 of the **compose-pass close-out protocol** (next sec
 
 ## The compose-pass close-out protocol (the ONE bookkeeping checklist)
 
-A compose/mix pass carries **exactly four bookkeeping obligations** — two before touching a part, two at the close. This is the single close-out protocol: `/compose-part`, `/compose-review`, and `/mix-review` link here instead of each carrying its own list. Everything musical in those skills (feel, kit probing, one-axis-per-turn, fix order) is authorship, not bookkeeping, and stays there. Framework-repo bookkeeping (change-log entries, backlog closes) is **not** a compose-pass obligation — it belongs to the one ship-stamp commit (`.prawduct/backlog.md` header rule 1) when engine/skill code ships.
+A compose/mix pass carries **exactly four bookkeeping obligations** — two before touching a part, two at the close. This is the single close-out protocol: `/compose-part`, `/compose-review`, and `/mix-review` link here instead of each carrying its own list. Everything musical in those skills (feel, kit probing, one-axis-per-turn, fix order) is authorship, not bookkeeping, and stays there. Framework-repo bookkeeping (change-log entries, backlog closes) is **not** a compose-pass obligation — it belongs to the one ship-stamp commit (the **Backlog norms** in `.prawduct/artifacts/project-preferences.md`, rule 1) when engine/skill code ships.
 
 **Before touching a part:**
 

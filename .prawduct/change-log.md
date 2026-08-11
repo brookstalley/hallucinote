@@ -63,10 +63,32 @@ falsifies the premise `MCP-7J2Q` built on); `VEW-3M8F`, `INS-6K1T`, `SYN-7T3M`,
 merged — `ENV-3M7K`/`ENV-4M2T`/`MIX-7K2D` are three mechanisms, and the `ING-*`
 family are intended legs of one design.
 
+**The freeze had to be propagated, not just declared** — the independent review
+found the file still carrying load after being called dead. Three live citations
+pointed into it: `docs/collaboration.md` sent readers there for "the open items",
+and both `docs/release-process.md` and `docs/song-authoring-conventions.md` cited
+its header **rule 1** (the PRC-5W2N ship-stamp rule) as canonical. A live norm
+cannot live in a dead file, so the three load-bearing backlog rules — ship-stamp,
+verifiable-signal-required, and trust-but-verify-on-scrub — moved to a
+**Backlog norms** section in `project-preferences.md`, and all three citations
+now point there. The banner also stops overclaiming: the file is not read for any
+backlog operation, but it remains the migration's source corpus for
+`verify-migration` and rollback, so it must be preserved verbatim.
+
+Recorded alongside: `infrastructure_dependencies` no longer claims "No external
+services" (GitHub Issues is one — though not on the product's runtime path: a
+song builds, pushes and renders with GitHub unreachable), the cutover is now a
+`technical_decisions.operational` entry with its alternatives and its rollback
+cost, and its publish-exposure acceptance is linked to **PRC-6N2X**, which is the
+entry whoever flips this repo public will actually read.
+
 Also here: `.prawduct/.handoff-notes.md` is now gitignored alongside its siblings
 (`.session-handoff.md`, `.session-reflected`), which it was missing from — it is
 the same class of ephemeral session channel and should never have been
-committable.
+committable. And the metadata-bar legend gained a `revisit:` row, documenting a
+field that was specified but undocumented; note it describes the format of a file
+that is now history, so its "raises an advisory once past" clock no longer fires
+from here — on the Issues backend that expiry is the service's to enforce.
 
 Carried across as disclosed debt, not silently fixed: **32 live items have no
 verifiable signal** and migrated with no Acceptance section (criteria were

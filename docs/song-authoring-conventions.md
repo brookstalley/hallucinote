@@ -16,7 +16,8 @@ Conventions for authoring `build.py` against the Hallucinote library. Companion 
 - [Repeated sections (verse twice, chorus three times)](#repeated-sections-verse-twice-chorus-three-times)
 - [Cue points and duplicate names](#cue-points-and-duplicate-names)
 - [Meter (4/4 vs. other)](#meter-44-vs-other)
-- [Master and audio-track envelopes](#master-and-audio-track-envelopes)
+- [Master, group, and return envelopes — performed automation](#master-group-and-return-envelopes--performed-automation)
+- [Audio-track + song-spanning envelopes](#audio-track--song-spanning-envelopes-env-9p4t-now-performed)
 - [The PRE-MAIN submaster bus (master-like automation without `.als`)](#the-pre-main-submaster-bus-master-like-automation-without-als)
 - [Enum-parameter envelopes (Amp Type, Filter Type, LFO Sync, …)](#enum-parameter-envelopes-amp-type-filter-type-lfo-sync-)
 - [Tempo of non-4/4 BPM](#tempo-of-non-44-bpm)
@@ -404,7 +405,7 @@ Anti-pattern: a `/hallucinote:clip-humanize` pass run after composition to "add 
 
 ### Human breathing: the performance profile (phase 2b)
 
-The `feel` dict above is a **deterministic** offset — a constant shift per within-bar position. That is the *generative* half of feel, and on its own it reads **mechanical** to the performance lens: a precisely-shifted grid is still a machine (tightness, not lateness, is the mechanical signal). The missing half — the one the research names as decisive ([Hennig 2011](../.prawduct/artifacts/performance-model.md#references)) — is a small, additive, **1/f-correlated** breathing layer: structured deviation, *never* white-noise jitter. That is what separates *human* from both *mechanical* and *sloppy*, and it's a **measurable property of structure, not magnitude**.
+The `feel` dict above is a **deterministic** offset — a constant shift per within-bar position. That is the *generative* half of feel, and on its own it reads **mechanical** to the performance lens: a precisely-shifted grid is still a machine (tightness, not lateness, is the mechanical signal). The missing half — the one the research names as decisive ([Hennig 2011](../.prawduct/artifacts/performance-model.md#9-references)) — is a small, additive, **1/f-correlated** breathing layer: structured deviation, *never* white-noise jitter. That is what separates *human* from both *mechanical* and *sloppy*, and it's a **measurable property of structure, not magnitude**.
 
 Author it by declaring a `PerformanceProfile` and realizing a finished part through it (ruler-not-stamp: you declare the *what*, the layer computes the per-note *how*):
 

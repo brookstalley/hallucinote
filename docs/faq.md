@@ -21,9 +21,8 @@ Hallucinote itself, yes — see [`CONTRIBUTING.md`](../CONTRIBUTING.md).
 
 ## Does it work on Windows?
 
-Yes — macOS and Windows, with **Ableton Live 12**. On Windows, if `python` opens
-the Microsoft Store, use `py -3` everywhere. See [README → Requirements and
-Install](../README.md#requirements).
+Yes — macOS and Windows, with **Ableton Live 12**. See
+[README → Install](../README.md#install).
 
 ## Can I mix the song inside Hallucinote?
 
@@ -85,8 +84,10 @@ See [README troubleshooting](../README.md#troubleshooting). The two most common
 fixes: assign **Hallucinote** to a Control Surface slot in Live's Preferences,
 and after a `git pull` that touched `hallucinote_mcp/`, rerun
 `/hallucinote:ableton-mcp-install` then fully **quit and reopen Live** (a `/mcp` reconnect
-isn't enough — Live caches Control Surface modules at startup).
-`python -m hallucinote_mcp.cli preflight` diagnoses install state.
+isn't enough — Live caches Control Surface modules at startup). To diagnose
+install state, ask Claude to **run preflight** — the CLI lives inside the
+plugin's environment, so running `python -m hallucinote_mcp.cli preflight` from
+your own shell will usually just fail to import.
 
 ## How does Hallucinote find my song? It looked in the wrong place.
 

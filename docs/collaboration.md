@@ -21,7 +21,7 @@ songs/<slug>/
 └── tests/                      # per-song structural assertions
 ```
 
-Plus the DB itself (`<slug>-<branch>.db` or `<slug>.db`), which is **gitignored** by default — collaborators regenerate it locally by running `python songs/<slug>/build.py`.
+Plus the DB itself (`<slug>-<branch>.db` or `<slug>.db`), which is **gitignored** by default — collaborators regenerate it locally by building the song (step 3 below).
 
 What you're **not** sharing: the `<slug> Project/` directory (Ableton's actual `.als` and audio assets). That belongs in the consumer's working copy of Ableton; Hallucinote only describes the song, it doesn't ship binary Live state.
 
@@ -62,9 +62,12 @@ If the song has no third-party requirements, `REQUIREMENTS.md` says so explicitl
 
 ### 3. Build the DB
 
-```bash
-python songs/<slug>/build.py
-```
+In Claude Code, just ask — *"build `<slug>`"* — and the agent runs the song's
+`build.py` with the plugin's own interpreter. (The engine ships inside the
+plugin's environment, so a bare `python songs/<slug>/build.py` from your shell
+won't find it; the supported invocation is
+[`"$PY" songs/<slug>/build.py`](running-the-engine.md) if you want to run it
+by hand.)
 
 This produces the SQLite DB at `songs/<slug>/<slug>-<branch>.db` (per-branch convention) or `songs/<slug>/<slug>.db` outside a git repo. The DB is the source of truth for everything Hallucinote does: clips, notes, arrangement, automation, devices, mix state.
 
@@ -83,7 +86,7 @@ In Claude Code, with the project loaded:
 The skill walks the song into Live across fourteen ordered phases. **Before the first phase**, it now runs a compat check:
 
 - The skill probes Live for the installed-plugin list via the MCP browser.
-- It runs `python -m hallucinote.sync.compat check <slug> --installed-plugins …`.
+- It runs the engine's compat check (`hallucinote.cli compat check`) against that list.
 - If the report flags any third-party plugin as missing (in the DB but not in Live's plugin scanner) or unverified (couldn't probe — Live wasn't responsive), the skill stops and asks you to confirm.
 
 If you confirm "no, install missing plugins first": go install them, then rerun. If you confirm "yes, push anyway": push will fail at device-load for the missing plugins (the chain stays empty; nothing is substituted), but other devices, clips, arrangement, automation, and cue points still apply. You can fix the empty chains by hand in Live afterward.
@@ -141,9 +144,9 @@ The composer's session id is irrelevant to the collaborator — sessions are per
 
 A short checklist for handoff hygiene.
 
-1. **Regenerate `REQUIREMENTS.md`** after material device changes: `python -m hallucinote.sync.compat write-requirements <slug>`. Commit the result. (A `push_cli execute --song <slug>` whose devices phase applied changes already regenerates it in the same flow (DOC-5W8B) — the manual command covers `--db`-only pushes and out-of-band edits.)
+1. **Regenerate `REQUIREMENTS.md`** after material device changes: `"$PY" -m hallucinote.cli compat write-requirements <slug>` (see [`running-the-engine.md`](running-the-engine.md) for `$PY`), or just ask Claude. Commit the result. (A push whose devices phase applied changes already regenerates it in the same flow — the manual command covers out-of-band edits.)
 2. **Refresh `captured_session.json`** if the mix has moved since the snapshot. See the `/hallucinote:song-snapshot` skill for the diff-and-confirm workflow.
-3. **Verify the song builds clean** in a fresh checkout. Delete the local DB (`rm songs/<slug>/<slug>*.db*`) and run `python songs/<slug>/build.py`. The tests in `songs/<slug>/tests/` should pass.
+3. **Verify the song builds clean** in a fresh checkout. Delete the local DB (`rm songs/<slug>/<slug>*.db*`) and rebuild (step 3 above). The tests in `songs/<slug>/tests/` should pass.
 4. **Document content dependencies in `<slug>.md`** if the song needs a specific Live Pack or sample library. Compat check won't catch these (Case C).
 5. **Commit and push.** The collaborator clones; the round-trip above takes over.
 
@@ -151,10 +154,8 @@ A short checklist for handoff hygiene.
 
 ## What's NOT in this walkthrough
 
-These are surfaced as backlog items:
+Known gaps, tracked for future work:
 
 - Automated regeneration of `REQUIREMENTS.md` as part of build.py or `/hallucinote:song-snapshot`.
 - Compat-check coverage of Live Pack presence (would require a Live-side capability probe we don't yet have).
-- Inline iteration support — the `hallucinote://` DB read surface that lets collaborators inspect songs from within an MCP session without running `python3 -c "…"`.
-
-See `.prawduct/backlog.md` for the open items.
+- A read-only DB surface for inspecting a shared song from within an MCP session.

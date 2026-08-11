@@ -9,8 +9,9 @@ Report privately through GitHub's [Security Advisories](https://github.com/brook
 **brooks@tangentry.com** with `[hallucinote security]` in the subject.
 
 Please include what you can: what you observed, how to reproduce it, the Hallucinote
-version (`python -m hallucinote_mcp.cli preflight` prints it), your OS, and your Live
-version. A proof of concept helps a lot.
+version (ask Claude to *run preflight* — it prints the version; the CLI lives inside
+the plugin's environment, so it won't import from a bare shell), your OS, and your
+Live version. A proof of concept helps a lot.
 
 **What to expect.** This is a small project, so response is best-effort rather than
 contractual: an acknowledgement within about a week, an assessment of severity and a

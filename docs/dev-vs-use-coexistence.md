@@ -1,5 +1,9 @@
 # Developing Hallucinote on the machine you make music on
 
+> **Maintainer note.** Read this only if you hack on Hallucinote itself *and*
+> make music with it on the same machine. If you just installed the plugin to
+> make music, none of this applies.
+
 You both **develop** Hallucinote (the framework/plugin/MCP server, this repo) and
 **use** it to write music (the `../hallucinote-songs` repo) on one machine. Those two
 roles want incompatible things from the same Live instance, and getting it wrong

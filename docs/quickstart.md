@@ -31,10 +31,10 @@ Surface in Live's Preferences. This quickstart assumes that's done.
    selected as a Control Surface from setup — Preferences → Link, Tempo & MIDI.)
 2. In a terminal, `cd` into your **song workspace** — a repo with a
    `hallucinote.toml` marker at its root. Don't have one yet? Make an empty
-   folder, `cd` into it, and run `hallucinote init-workspace` — it writes the
-   marker, a `.gitignore` for the regenerable build artifacts (DB, captures,
-   analysis), and `git init`s for you. (Or clone your existing songs repo.) The
-   marker is just:
+   folder, `cd` into it, start `claude`, and ask it to *"set up a songs
+   workspace here"* — it writes the marker, a `.gitignore` for the regenerable
+   build artifacts (DB, captures, analysis), and `git init`s for you. (Or clone
+   your existing songs repo.) The marker is just:
 
    ```toml
    # hallucinote.toml

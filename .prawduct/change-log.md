@@ -25,6 +25,65 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-08-10 — The direction this project already had, written down where it binds
+
+<!-- prawduct: type=chore | scope=norm-ratification -->
+
+Twenty-seven norms were ratified into `## Direction` sections across six strategy
+artifacts, and the Enforcement table in `project-preferences.md` became the norm index it
+was always described as. Nothing here is a new decision: binding force comes from the
+owner having declared a direction, and every statement ratified was already written in
+this repo's prose. What changed is that a departure from one is now detectable instead of
+being laundered through documentation upkeep — the failure the norm spec exists to
+prevent, where work that diverges from a declared direction gets *documented as the new
+reality* and every reviewer correctly certifies it.
+
+Six candidates could not be ratified as written, and each was a real fork:
+
+- **The `internal` API classification survived the repo going public.** `api-contract.md`
+  had already argued that publishing does not convert these interfaces into public
+  commitments; that argument is now the norm, and `exposes_programmatic_interface` stays
+  `consumers: internal`. The alternative — flipping the characteristic — would have forced
+  an artifact re-derivation and an assumption audit for a trust posture that never changed.
+- **Arrangement projection is contained, not in transition.** Push projects; pull still
+  diffs positionally. The three backlog items that looked like tracking refs are all dead
+  (`#350` shipped, `#286` dropped, `#351` shipped), so an `in-transition` norm here would
+  have been born citing a dead id — the exact decay the registry detects. Recorded as
+  `Retroactivity: contain`, with the pull planner as the modeled boundary, because the
+  renumbering hazard is a write-path problem that does not transfer to reading.
+- **Three preferences statements were false as written** and are now scoped to what was
+  actually decided: `Async: Sync throughout` contradicted the MCP server's hard
+  availability norm (handlers are `async` or one blocking call freezes the server);
+  `stdlib only at runtime` contradicted the engine's own numpy/scipy/librosa stack, when
+  the real rule is stdlib-only *at import time*; and `pip`/`.venv` had drifted from the
+  `uv` toolchain that CI actually gates.
+- **The tool budget is ratified; the count is not.** "Thirteen tools" decays. The norm is
+  the band where tool-selection accuracy holds, with the count left in descriptive prose
+  where it can change without unmaking the decision.
+
+The waiver pragma documented in `project-preferences.md` was also a generation behind —
+21 sites still carry the reasonless legacy `ok-broad-except` spelling against 26 on the
+current `prawduct:allow … -- <reason>` form, filed as brookstalley/hallucinote#447 with
+scope-out language saying a blanket reason on all 21 fails the item rather than completing
+it.
+
+Alongside the ratification, `/prawduct:doctor` cleared three pieces of governance residue:
+the retired `views_enabled` flag had reappeared in `project-state.yaml` (a flag returns by
+someone copying an older state file, not by anyone deciding to reinstate it) along with
+220 lines of the dead `scope_rollups` block it fed; `release-notes.md` gained the archive
+notice that stops it reading as a current record; and `learnings.md` regained the
+`prawduct:descent-obligation` marker, without which `/prawduct:learnings` had been
+pointing all 84 rules' readers at a statement that was not there.
+
+**One correction worth recording because the repo had already learned it once.**
+`plan-backfill --apply` archived `plans/TOUR/build-plan.md` during this pass, and it should
+not have: chunks C1 and D1 are unbuilt, `docs/tour.md` does not exist, and
+`release-plan-v1.8.1.md` says "no plans archived, deliberately." This is the same defect
+the v1.8.0 cut hit, which is why `docs/release-process.md` § 3 already says the command
+"archives by SCOPE, not by completeness" and to check each plan against its own `## Status`.
+The archive was reverted. The lesson generalizes past this command: a documented manual
+check standing behind a mechanical sweep is a check the sweep trains you to skip.
+
 ## 2026-08-10 — The backlog moves to GitHub Issues, and 225 titles learn a budget
 
 <!-- prawduct: type=chore | scope=backlog-migration | release=v1.8.1 -->

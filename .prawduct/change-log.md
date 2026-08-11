@@ -27,7 +27,7 @@
 
 ## 2026-08-10 — The backlog moves to GitHub Issues, and 225 titles learn a budget
 
-<!-- prawduct: type=chore | scope=backlog-migration -->
+<!-- prawduct: type=chore | scope=backlog-migration | release=v1.8.1 -->
 
 The markdown backlog is now frozen history. All **225 items** live in this repo's
 GitHub Issues — 111 live, 114 archived as closed — reached through
@@ -115,6 +115,40 @@ split. Full audit record, including which plugin build ran the scrub:
 `.prawduct/artifacts/migration-scrub-decisions.md`.
 
 **Re-vendor: not required** — no `_FINGERPRINT_PATHS` file is touched.
+
+## 2026-08-10 — The release runbook learns two things the v1.8.0 cut taught it
+
+<!-- prawduct: type=docs | scope=release-process-docs | release=v1.8.1 -->
+
+`docs/release-process.md` was wrong in two places, both found by following it.
+
+**Step 9 pointed at a mechanism that no longer runs.** It said plans for shipped
+clusters are retained "until the next release's `regen-views` re-derives status" —
+but `regen-views` is inert and warns it will be removed, and step 3 archives plans
+instead. Rewritten to what the cut actually needs, including the two judgements
+`plan-backfill` cannot make for you:
+
+- **It archives by SCOPE, not by completeness.** At the v1.8.0 cut it wanted to
+  archive `TOUR` because `scope=tour` had shipped, while chunks C1 and D1 were
+  unbuilt — accepting it would have declared them done. Check each plan it names
+  against that plan's own `## Status` and restore any with open chunks.
+- **`active_build_plan` is cleared only when the plan it names just archived**, and
+  is left **empty**, never the literal `null` — the pointer reader treats
+  post-colon text as a path, so `null` resolves to `.prawduct/null` and mis-fires
+  the missing-build-plan advisory.
+
+**The Version-surfaces table carried a stale copy of a moving value.** Its "Today"
+column listed a literal `1.6.0` for the four lockstep product surfaces; it had sat
+through three cuts and read as authoritative. It now names the file to look in,
+which cannot go stale — one rule, one carrier.
+
+Shipped alongside the backlog migration deliberately: these corrections describe
+the procedure that cut this very release, and the release-plan artifact gap they
+did *not* yet cover (`check-releasability` wants a
+`release-plan-vX.Y.Z*.md` that no prior version had) is recorded in
+`.prawduct/artifacts/release-plan-v1.8.1.md` for a follow-up pass.
+
+Doc-only. No behaviour change. **Re-vendor: not required.**
 
 ## 2026-08-08 — Seven push/sync correctness fixes, six of them reported as OK
 

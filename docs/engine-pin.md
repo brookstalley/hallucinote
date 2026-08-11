@@ -15,8 +15,8 @@ execute in the exact same env. No clone, no `pip install`, no PyPI.
 
 ## Current pin (keep honest when versions move)
 
-- Engine `hallucinote`: **1.8.0** (`pyproject.toml`; `uv.lock` pins the same, editable).
-- Plugin: **1.8.0** (`.claude-plugin/plugin.json`).
+- Engine `hallucinote`: **1.8.1** (`pyproject.toml`; `uv.lock` pins the same, editable).
+- Plugin: **1.8.1** (`.claude-plugin/plugin.json`).
 
 **Plugin, engine, and MCP-package versions move in lockstep (since 1.5.0).** Root
 `pyproject.toml [project].version` is the canonical product version; the plugin

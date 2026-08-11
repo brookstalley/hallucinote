@@ -159,3 +159,6 @@ Known gaps, tracked for future work:
 - Automated regeneration of `REQUIREMENTS.md` as part of build.py or `/hallucinote:song-snapshot`.
 - Compat-check coverage of Live Pack presence (would require a Live-side capability probe we don't yet have).
 - A read-only DB surface for inspecting a shared song from within an MCP session.
+
+See the [open items](https://github.com/brookstalley/hallucinote/issues) for these and
+the rest of the backlog.

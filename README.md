@@ -18,11 +18,12 @@ Tweak a fader in Live and pull the change back through the same path. The song i
 
 > *"Make a 2-minute punk song that crams the chord progression of Beethoven's 5th into those two minutes. Drums, bass, lead guitar, and vocals on a staccato synth. Call it punk-fate."*
 
-That one sentence produced this, in one forty-minute session:
+That one sentence produced a mixed four-track song in one forty-minute
+session — and a listening session the same day made it *sound* like the brief:
 
-[![Punk Fate — full song waveform](docs/assets/tour-chapter1.png)](docs/assets/tour-chapter1.mp3)
+[![Punk Fate — full song waveform](docs/assets/tour-chapter2.png)](docs/assets/tour-chapter2.mp3)
 
-**[▶ Listen — punk-fate, 1:55](docs/assets/tour-chapter1.mp3)** · The finished song ships in this repo as source: [`examples/punk-fate/`](examples/punk-fate/).
+**[▶ Listen — punk-fate, 1:58](docs/assets/tour-chapter2.mp3)** · The finished song ships in this repo as source: [`examples/punk-fate/`](examples/punk-fate/).
 
 Claude scaffolds the song directory, picks an instrument chain per track, writes the note-generating code, and pushes the whole thing into Live through fourteen ordered phases:
 

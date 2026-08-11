@@ -36,28 +36,38 @@ _ANALYSIS = _REPO / "examples" / "punk-fate" / "analysis"
 _MEDIA_BUDGET_BYTES = 12 * 1024 * 1024
 
 # The evidence budget's ITEM half (tour-walkthrough-design.md §The concision
-# rule): 4 screenshots · 1 hero · 3 audio clips, where the hero and each clip
-# ship with the still that stands in for them. This manifest IS the cap:
+# rule), accounted per editing session: chapter 1 (composing) spent
+# 4 screenshots · 1 hero · 3 audio clips; chapter 2 (the listening session)
+# spends 2 screenshots · 1 clip — one artifact per move, and chapter 1's
+# full-song render doubles as its before/after "before". The hero and each
+# clip ship with the still that stands in for them. This manifest IS the cap:
 # adding media means consciously editing this set, and a stray file under
 # docs/assets/ fails the suite instead of riding along.
 _EXPECTED_ASSETS = {
     # the one lifecycle diagram (TOUR A4) and the hero still
     "lifecycle.svg",
     "hero.png",
-    # 4 screenshots
+    # chapter 1's 4 screenshots
     "tour-offgrid-midi.png",
     "tour-arrangement.png",
     "tour-session-render.png",
     "tour-drum-rack.png",
-    # 3 audio items, each an mp3 + its waveform still. The full-song render
-    # is numbered per editing session — chapter 1 is the composing session;
-    # a chapter-2 render joins this set when the listening session lands.
+    # chapter 1's 3 audio items, each an mp3 + its waveform still. The
+    # full-song render is numbered per editing session — chapter 1 is the
+    # composing session.
     "tour-chapter1.mp3",
     "tour-chapter1.png",
     "tour-chorus-before.mp3",
     "tour-chorus-before.png",
     "tour-chorus-after.mp3",
     "tour-chorus-after.png",
+    # chapter 2's 2 screenshots — the garage-kit vocabulary in the clip
+    # editor, and the drum saturator read back at its dialed values
+    "tour-garage-drums.png",
+    "tour-drum-saturation.png",
+    # chapter 2's 1 audio item: the full-song render after the punk passes
+    "tour-chapter2.mp3",
+    "tour-chapter2.png",
 }
 
 # A fenced block whose first line is this marker claims its remaining lines

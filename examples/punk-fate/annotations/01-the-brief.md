@@ -45,16 +45,31 @@ tags: [intent, origin, brief]
 
 | Dimension | Owner | Closes at |
 |---|---|---|
-| Mix balance — send levels, per-device params, whether the guitar needs a third gain stage | agent | `/mix-review` → `/song-snapshot` |
+| — | — | *(nothing open; see below)* |
 
 **Closed since this brief was written:**
 
 - *Instrument chains* — DECIDED at `/song-pick-instruments`; see
-  [[../decisions/05-signal-chains]]. All 12 devices stock Live, `compat check
-  --probe` clean.
+  [[../decisions/05-signal-chains]]. Stock Live only, `compat check --probe`
+  clean — 12 devices then, **14 now** after the dirt pass added Pedal *Guitar
+  Dirt* and a Saturator on the voice ([[../decisions/09-the-dirt]]).
 - *Energy arc* — the first pass put verse and chorus at identical density,
   contradicting this brief's own "the chorus is the lift" row. Closed at
   `/compose-review`; see [[../decisions/06-the-chorus-has-to-arrive]].
+
+- *Mix balance, and whether the guitar needs a third gain stage* — CLOSED. The
+  balance landed at `/mix-review` ([[../decisions/07-the-bass-carries-the-engine]]).
+  The third gain stage question was answered **yes, by ear**, in a later session:
+  Pedal *Guitar Dirt* on the guitar and Saturator *Rough Tone* on the voice
+  ([[../decisions/09-the-dirt]]). [[../decisions/05-signal-chains]] had predicted
+  a third stage would smear the 8th-note wall; it didn't, because the drive sits
+  after the compressor. Measured full-song: delivered −2.1 to −2.6 dBTP, 2–4 bus overshoots
+  (realtime capture, so the figure has run-to-run spread).
+
+- *Microtiming feel* — the row above still describes the shipped `drag` offsets,
+  but they turned out to be only half the story: a constant offset is a quantized
+  band slid a few ticks. Per-note 1/f breathing now sits on top
+  ([[../decisions/08-sloppy-but-enthusiastic]]).
 
 ## Section time budget
 

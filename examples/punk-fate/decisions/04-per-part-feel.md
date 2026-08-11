@@ -32,3 +32,25 @@ authored; a post-hoc velocity/timing jitter pass would smear the guitar-vs-bass
 gap that the groove depends on. Bar-1 downbeats clamp at 0.0 rather than going
 negative (the mutator refuses negative absolute starts), which is correct — the
 push should not exist before the song does.
+
+---
+
+**EXTENDED 2026-08-11 by [[08-sloppy-but-enthusiastic]] — read that one for the
+live spec.** The shift column above is still exactly right and still shipping:
+it is the `drag` dial on each of the four `Player` objects, and the ~16-tick
+guitar-vs-bass gap is untouched. What this decision got wrong is that it was
+*sufficient*. A constant per-part offset is a perfectly quantized band slid a
+few ticks: measured on the committed build, the bass's grid deviation had a
+**standard deviation of 0.00 ms** across all 623 notes — every note the identical
+distance from the grid, which is exactly what this decision specified and
+exactly why the song read as correct rather than as punk. The project's own
+performance lens grades that shape *mechanical*. **1/f-correlated breathing**,
+declared per player and realized by `performance.apply_profile`, now sits on top
+of these offsets — not a per-note random nudge, which the same lens grades
+*sloppy*.
+
+The "do not humanize" warning stands as written: it refuses a **uniform**
+post-hoc jitter pass over every part equally, which would smear the gap. It does
+not refuse per-player breathing declared at generation time — and the gap
+survived, measured after the rework: guitar −2.6 ms (ahead), bass +1.3 ms
+(behind), 12.5 ticks apart in the declared direction.

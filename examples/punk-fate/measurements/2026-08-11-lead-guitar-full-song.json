@@ -1,0 +1,3425 @@
+{
+  "schema_version": "1",
+  "song_slug": "punk-fate",
+  "captures_dir": "/private/tmp/punk-fate-renders/captures/20260811-lead-guitar-v1",
+  "captured_at": "20260811T190357Z",
+  "analyzer_signature": "hallucinote-analyzer-v1",
+  "db_seq": 3332,
+  "master": {
+    "track_id": "master",
+    "surface_kind": "master",
+    "surface_name": "Main",
+    "loudness": {
+      "lufs_i": -11.42745296587592,
+      "lufs_s_median": -11.43407492525493,
+      "lufs_m_peak": -8.75338892655555,
+      "true_peak_dbtp": -0.3963514247105022
+    },
+    "timbre": {
+      "spectral_centroid_hz": 594.7575440258713,
+      "spectral_flatness": 0.24708709988347508,
+      "spectral_rolloff_hz": 773.4375
+    },
+    "stereo": {
+      "correlation": 0.8961647656794466,
+      "mono_sum_loss_db": -0.23649923766333086
+    }
+  },
+  "master_fader_volume": 0.8500000238418579,
+  "master_fader_db": 9.536743172944276e-07,
+  "delivered_true_peak_dbtp": -0.3963504710361849,
+  "stems": [
+    {
+      "track_id": "track:1",
+      "surface_kind": "track",
+      "surface_name": "01 Drums",
+      "loudness": {
+        "lufs_i": -10.412751628268797,
+        "lufs_s_median": -10.382268837001149,
+        "lufs_m_peak": -7.287514052930079,
+        "true_peak_dbtp": -4.658203728049531
+      },
+      "timbre": {
+        "spectral_centroid_hz": 493.25756988279613,
+        "spectral_flatness": 0.07635048669665684,
+        "spectral_rolloff_hz": 257.8125
+      },
+      "stereo": {
+        "correlation": 0.99811907031241,
+        "mono_sum_loss_db": -0.0040863680853425064
+      }
+    },
+    {
+      "track_id": "track:2",
+      "surface_kind": "track",
+      "surface_name": "02 Bass",
+      "loudness": {
+        "lufs_i": -18.734572635041108,
+        "lufs_s_median": -20.890076236261592,
+        "lufs_m_peak": -15.298553899480869,
+        "true_peak_dbtp": -1.5831505041055443
+      },
+      "timbre": {
+        "spectral_centroid_hz": 75.26026873191998,
+        "spectral_flatness": 0.001671732135013192,
+        "spectral_rolloff_hz": 117.1875
+      },
+      "stereo": {
+        "correlation": 1.0,
+        "mono_sum_loss_db": 0.0
+      }
+    },
+    {
+      "track_id": "track:3",
+      "surface_kind": "track",
+      "surface_name": "03 Guitar",
+      "loudness": {
+        "lufs_i": -11.525143514514104,
+        "lufs_s_median": -11.295841576923523,
+        "lufs_m_peak": -10.68642976140107,
+        "true_peak_dbtp": -4.804299778405098
+      },
+      "timbre": {
+        "spectral_centroid_hz": 602.7395301947649,
+        "spectral_flatness": 0.15447649121783036,
+        "spectral_rolloff_hz": 867.1875
+      },
+      "stereo": {
+        "correlation": 0.7844580769727925,
+        "mono_sum_loss_db": -0.5298580846297941
+      }
+    },
+    {
+      "track_id": "track:4",
+      "surface_kind": "track",
+      "surface_name": "04 Voice",
+      "loudness": {
+        "lufs_i": -11.275106605522717,
+        "lufs_s_median": -11.321768103786352,
+        "lufs_m_peak": -9.267794947936645,
+        "true_peak_dbtp": -6.84144836230386
+      },
+      "timbre": {
+        "spectral_centroid_hz": 2309.1611593965263,
+        "spectral_flatness": 0.14714343788204576,
+        "spectral_rolloff_hz": 4171.875
+      },
+      "stereo": {
+        "correlation": 0.6592145752546404,
+        "mono_sum_loss_db": -0.8116610254685476
+      }
+    }
+  ],
+  "returns": [
+    {
+      "track_id": "return:1",
+      "surface_kind": "return",
+      "surface_name": "A-Reverb",
+      "loudness": {
+        "lufs_i": -60.450639399372406,
+        "lufs_s_median": -60.23140072759817,
+        "lufs_m_peak": -56.02747805490099,
+        "true_peak_dbtp": -47.57591393320111
+      },
+      "timbre": {
+        "spectral_centroid_hz": 1099.5095771426084,
+        "spectral_flatness": 0.4014963166526653,
+        "spectral_rolloff_hz": 2203.125
+      },
+      "stereo": {
+        "correlation": 0.30063304015127945,
+        "mono_sum_loss_db": -1.8720783388515514
+      }
+    },
+    {
+      "track_id": "return:2",
+      "surface_kind": "return",
+      "surface_name": "B-Delay",
+      "loudness": {
+        "lufs_i": -69.33013833927888,
+        "lufs_s_median": -69.80683896222583,
+        "lufs_m_peak": -67.81716720228074,
+        "true_peak_dbtp": -62.20264368787639
+      },
+      "timbre": {
+        "spectral_centroid_hz": 1850.4456687407205,
+        "spectral_flatness": 0.4702024176110556,
+        "spectral_rolloff_hz": 3773.4375
+      },
+      "stereo": {
+        "correlation": 0.6800814341447935,
+        "mono_sum_loss_db": -0.7626230234335531
+      }
+    }
+  ],
+  "overshoots": [],
+  "reverb_verifications": [],
+  "automation_verifications": [],
+  "width_realizations": [],
+  "per_section": [
+    {
+      "section_name": "intro-fate",
+      "section_id": "ed4b59ca02924e5a86758942e632275c",
+      "start_beat": 0.0,
+      "end_beat": 32.0,
+      "master": {
+        "track_id": "master",
+        "surface_kind": "master",
+        "surface_name": "Main",
+        "loudness": {
+          "lufs_i": -11.419571778357366,
+          "lufs_s_median": -12.497754123379362,
+          "lufs_m_peak": -8.75338892655555,
+          "true_peak_dbtp": -0.4317340750741816
+        },
+        "timbre": {
+          "spectral_centroid_hz": 706.7082522372787,
+          "spectral_flatness": 0.16004905340827344,
+          "spectral_rolloff_hz": 1078.125
+        },
+        "stereo": {
+          "correlation": 0.9017927084318371,
+          "mono_sum_loss_db": -0.2266059732722504
+        }
+      },
+      "stems": [
+        {
+          "track_id": "track:1",
+          "surface_kind": "track",
+          "surface_name": "01 Drums",
+          "loudness": {
+            "lufs_i": -10.236585220528177,
+            "lufs_s_median": -11.43986305017295,
+            "lufs_m_peak": -7.316228426158546,
+            "true_peak_dbtp": -4.671281625595214
+          },
+          "timbre": {
+            "spectral_centroid_hz": 1340.954524511811,
+            "spectral_flatness": 0.16188116380279086,
+            "spectral_rolloff_hz": 2027.34375
+          },
+          "stereo": {
+            "correlation": 0.9967215036985253,
+            "mono_sum_loss_db": -0.007126051876778099
+          }
+        },
+        {
+          "track_id": "track:2",
+          "surface_kind": "track",
+          "surface_name": "02 Bass",
+          "loudness": {
+            "lufs_i": -19.28375402291017,
+            "lufs_s_median": -21.714288344396916,
+            "lufs_m_peak": -15.860209263771242,
+            "true_peak_dbtp": -2.1426417201679056
+          },
+          "timbre": {
+            "spectral_centroid_hz": 71.13783447876006,
+            "spectral_flatness": 0.002322846100477194,
+            "spectral_rolloff_hz": 93.75
+          },
+          "stereo": {
+            "correlation": 1.0,
+            "mono_sum_loss_db": 0.0
+          }
+        },
+        {
+          "track_id": "track:3",
+          "surface_kind": "track",
+          "surface_name": "03 Guitar",
+          "loudness": {
+            "lufs_i": -12.030988131251442,
+            "lufs_s_median": -13.380358294201503,
+            "lufs_m_peak": -11.024488731939982,
+            "true_peak_dbtp": -5.145039823602804
+          },
+          "timbre": {
+            "spectral_centroid_hz": 682.9972766149049,
+            "spectral_flatness": 0.14447670671648205,
+            "spectral_rolloff_hz": 1242.1875
+          },
+          "stereo": {
+            "correlation": 0.7827838848287663,
+            "mono_sum_loss_db": -0.5339795980392579
+          }
+        },
+        {
+          "track_id": "track:4",
+          "surface_kind": "track",
+          "surface_name": "04 Voice",
+          "loudness": {
+            "lufs_i": -12.837857055758386,
+            "lufs_s_median": -16.802000476799762,
+            "lufs_m_peak": -10.913343576824278,
+            "true_peak_dbtp": -7.15334784389139
+          },
+          "timbre": {
+            "spectral_centroid_hz": 2309.519541074727,
+            "spectral_flatness": 0.20085052873640982,
+            "spectral_rolloff_hz": 4148.4375
+          },
+          "stereo": {
+            "correlation": 0.18059454494538238,
+            "mono_sum_loss_db": -2.29001045026655
+          }
+        }
+      ],
+      "returns": [
+        {
+          "track_id": "return:1",
+          "surface_kind": "return",
+          "surface_name": "A-Reverb",
+          "loudness": {
+            "lufs_i": -60.25964331540976,
+            "lufs_s_median": -61.68803344401391,
+            "lufs_m_peak": -57.919839615127536,
+            "true_peak_dbtp": -47.65090086589299
+          },
+          "timbre": {
+            "spectral_centroid_hz": 1433.6078334151018,
+            "spectral_flatness": 0.40399100446185743,
+            "spectral_rolloff_hz": 2835.9375
+          },
+          "stereo": {
+            "correlation": 0.29381831605266073,
+            "mono_sum_loss_db": -1.8950255286230588
+          }
+        },
+        {
+          "track_id": "return:2",
+          "surface_kind": "return",
+          "surface_name": "B-Delay",
+          "loudness": {
+            "lufs_i": -69.80992132036143,
+            "lufs_s_median": -75.57756670905124,
+            "lufs_m_peak": -69.67097331095228,
+            "true_peak_dbtp": -63.51807144041176
+          },
+          "timbre": {
+            "spectral_centroid_hz": 903.741264389839,
+            "spectral_flatness": 0.2606606577933766,
+            "spectral_rolloff_hz": 1804.6875
+          },
+          "stereo": {
+            "correlation": 0.47137991316787825,
+            "mono_sum_loss_db": -1.3529431555665152
+          }
+        }
+      ],
+      "attribution": [
+        {
+          "band": "sub_20_60",
+          "contributors": [
+            [
+              "track:1",
+              0.7628855691533221
+            ],
+            [
+              "track:2",
+              0.17380718689171895
+            ],
+            [
+              "track:3",
+              0.047043465783772165
+            ],
+            [
+              "track:4",
+              0.01626377817118677
+            ]
+          ]
+        },
+        {
+          "band": "low_60_200",
+          "contributors": [
+            [
+              "track:1",
+              0.38679100092400104
+            ],
+            [
+              "track:3",
+              0.31503882972275044
+            ],
+            [
+              "track:2",
+              0.26995670706292396
+            ],
+            [
+              "track:4",
+              0.02821346229032462
+            ]
+          ]
+        },
+        {
+          "band": "low_mid_200_500",
+          "contributors": [
+            [
+              "track:3",
+              0.4667506292790541
+            ],
+            [
+              "track:1",
+              0.28708701791523256
+            ],
+            [
+              "track:2",
+              0.14537674710868181
+            ],
+            [
+              "track:4",
+              0.1007856056970316
+            ]
+          ]
+        },
+        {
+          "band": "mid_500_2k",
+          "contributors": [
+            [
+              "track:3",
+              0.4308051391284218
+            ],
+            [
+              "track:1",
+              0.3207784345438651
+            ],
+            [
+              "track:4",
+              0.17900522576310735
+            ],
+            [
+              "track:2",
+              0.06941120056460572
+            ]
+          ]
+        },
+        {
+          "band": "high_mid_2k_6k",
+          "contributors": [
+            [
+              "track:1",
+              0.43770779173371005
+            ],
+            [
+              "track:3",
+              0.29876909964510023
+            ],
+            [
+              "track:4",
+              0.2536928925817689
+            ],
+            [
+              "track:2",
+              0.009830216039420945
+            ]
+          ]
+        },
+        {
+          "band": "air_6k_plus",
+          "contributors": [
+            [
+              "track:1",
+              0.7611917582420918
+            ],
+            [
+              "track:4",
+              0.19297854316606305
+            ],
+            [
+              "track:3",
+              0.04247890248942401
+            ],
+            [
+              "track:2",
+              0.003350796102421149
+            ]
+          ]
+        }
+      ],
+      "masking": [
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:2",
+          "masker_surface_name": "03 Guitar",
+          "maskee_surface_name": "02 Bass",
+          "masked_fraction": 0.5791512590244762,
+          "dominant_band": "body (500-2k)",
+          "dominant_region_hz": [
+            510.0,
+            630.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:4",
+          "masker_surface_name": "03 Guitar",
+          "maskee_surface_name": "04 Voice",
+          "masked_fraction": 0.3251898994046397,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        },
+        {
+          "masker_track_id": "track:1",
+          "maskee_track_id": "track:2",
+          "masker_surface_name": "01 Drums",
+          "maskee_surface_name": "02 Bass",
+          "masked_fraction": 0.30868110582849095,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:1",
+          "masker_surface_name": "03 Guitar",
+          "maskee_surface_name": "01 Drums",
+          "masked_fraction": 0.24287197508186248,
+          "dominant_band": "body (500-2k)",
+          "dominant_region_hz": [
+            510.0,
+            630.0
+          ]
+        },
+        {
+          "masker_track_id": "track:1",
+          "maskee_track_id": "track:4",
+          "masker_surface_name": "01 Drums",
+          "maskee_surface_name": "04 Voice",
+          "masked_fraction": 0.23834941490453707,
+          "dominant_band": "brilliance (5k-8k)",
+          "dominant_region_hz": [
+            6400.0,
+            7700.0
+          ]
+        }
+      ],
+      "bed_masking": [
+        {
+          "maskee_track_id": "track:2",
+          "maskee_surface_name": "02 Bass",
+          "masked_fraction": 0.6249339672477549,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:4",
+          "maskee_surface_name": "04 Voice",
+          "masked_fraction": 0.4725928967357832,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:1",
+          "maskee_surface_name": "01 Drums",
+          "masked_fraction": 0.2629182972606022,
+          "dominant_band": "body (500-2k)",
+          "dominant_region_hz": [
+            510.0,
+            630.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:3",
+          "maskee_surface_name": "03 Guitar",
+          "masked_fraction": 0.17381105963760043,
+          "dominant_band": "sub (0-60)",
+          "dominant_region_hz": [
+            0.0,
+            100.0
+          ]
+        }
+      ],
+      "timing": [
+        {
+          "track_id": "track:1",
+          "onset_count": 44,
+          "mean_drift_beats": 0.06804135486898498,
+          "drift_stdev_beats": 0.023687832360386577,
+          "swing_ratio": 1.1351508120649711,
+          "confidence": 0.7039020954951678
+        },
+        {
+          "track_id": "track:3",
+          "onset_count": 20,
+          "mean_drift_beats": 0.05184845603549961,
+          "drift_stdev_beats": 0.04723760623419349,
+          "swing_ratio": 1.2461100376283998,
+          "confidence": 0.4095299220725813
+        }
+      ],
+      "cross_rhythm": [],
+      "phasing": [
+        {
+          "track_a": "track:3",
+          "track_b": "track:4",
+          "drift_beats_per_cycle": 1.0693652087295107,
+          "confidence": 0.6194547253544415
+        }
+      ],
+      "polymeter": [],
+      "onset_density": 3.8125026971997937
+    },
+    {
+      "section_name": "verse-cm",
+      "section_id": "26935b588bf64c13962c216da4f69e42",
+      "start_beat": 32.0,
+      "end_beat": 96.0,
+      "master": {
+        "track_id": "master",
+        "surface_kind": "master",
+        "surface_name": "Main",
+        "loudness": {
+          "lufs_i": -11.615338013529604,
+          "lufs_s_median": -11.636054354929582,
+          "lufs_m_peak": -10.35536290997599,
+          "true_peak_dbtp": -0.7493417609208595
+        },
+        "timbre": {
+          "spectral_centroid_hz": 900.91958550603,
+          "spectral_flatness": 0.37785490094707064,
+          "spectral_rolloff_hz": 1687.5
+        },
+        "stereo": {
+          "correlation": 0.8743451508621166,
+          "mono_sum_loss_db": -0.2933459471369758
+        }
+      },
+      "stems": [
+        {
+          "track_id": "track:1",
+          "surface_kind": "track",
+          "surface_name": "01 Drums",
+          "loudness": {
+            "lufs_i": -10.731177439375008,
+            "lufs_s_median": -10.908985704624028,
+            "lufs_m_peak": -7.883557881492647,
+            "true_peak_dbtp": -4.690289081036708
+          },
+          "timbre": {
+            "spectral_centroid_hz": 1418.9525882774058,
+            "spectral_flatness": 0.15841473623886593,
+            "spectral_rolloff_hz": 2320.3125
+          },
+          "stereo": {
+            "correlation": 0.9943537038607804,
+            "mono_sum_loss_db": -0.01227897906365667
+          }
+        },
+        {
+          "track_id": "track:2",
+          "surface_kind": "track",
+          "surface_name": "02 Bass",
+          "loudness": {
+            "lufs_i": -21.42129682662913,
+            "lufs_s_median": -23.519468093779604,
+            "lufs_m_peak": -18.372227832330502,
+            "true_peak_dbtp": -1.6975889993760465
+          },
+          "timbre": {
+            "spectral_centroid_hz": 80.99944655691915,
+            "spectral_flatness": 0.0026189986032271713,
+            "spectral_rolloff_hz": 93.75
+          },
+          "stereo": {
+            "correlation": 1.0,
+            "mono_sum_loss_db": 0.0
+          }
+        },
+        {
+          "track_id": "track:3",
+          "surface_kind": "track",
+          "surface_name": "03 Guitar",
+          "loudness": {
+            "lufs_i": -12.305927762274989,
+            "lufs_s_median": -12.356805087860563,
+            "lufs_m_peak": -11.23973366117578,
+            "true_peak_dbtp": -4.973554781911014
+          },
+          "timbre": {
+            "spectral_centroid_hz": 584.2680946092681,
+            "spectral_flatness": 0.13994493157019136,
+            "spectral_rolloff_hz": 843.75
+          },
+          "stereo": {
+            "correlation": 0.7859574801306098,
+            "mono_sum_loss_db": -0.524853263389934
+          }
+        },
+        {
+          "track_id": "track:4",
+          "surface_kind": "track",
+          "surface_name": "04 Voice",
+          "loudness": {
+            "lufs_i": -11.694434952974838,
+            "lufs_s_median": -11.617726496811883,
+            "lufs_m_peak": -9.61635463744685,
+            "true_peak_dbtp": -6.883296503206431
+          },
+          "timbre": {
+            "spectral_centroid_hz": 2371.5482598843246,
+            "spectral_flatness": 0.16543668731284583,
+            "spectral_rolloff_hz": 4335.9375
+          },
+          "stereo": {
+            "correlation": 0.5731774010856727,
+            "mono_sum_loss_db": -1.043301845248244
+          }
+        }
+      ],
+      "returns": [
+        {
+          "track_id": "return:1",
+          "surface_kind": "return",
+          "surface_name": "A-Reverb",
+          "loudness": {
+            "lufs_i": -60.137049648109276,
+            "lufs_s_median": -60.21326706562199,
+            "lufs_m_peak": -56.95310215543943,
+            "true_peak_dbtp": -48.009885721726334
+          },
+          "timbre": {
+            "spectral_centroid_hz": 1286.7695513199621,
+            "spectral_flatness": 0.4379397674622028,
+            "spectral_rolloff_hz": 2484.375
+          },
+          "stereo": {
+            "correlation": 0.29271125225746847,
+            "mono_sum_loss_db": -1.8977930896190844
+          }
+        },
+        {
+          "track_id": "return:2",
+          "surface_kind": "return",
+          "surface_name": "B-Delay",
+          "loudness": {
+            "lufs_i": -69.44976948348153,
+            "lufs_s_median": -70.14162238012202,
+            "lufs_m_peak": -68.07574820225332,
+            "true_peak_dbtp": -62.75655041031355
+          },
+          "timbre": {
+            "spectral_centroid_hz": 1903.431801729269,
+            "spectral_flatness": 0.4970099116246287,
+            "spectral_rolloff_hz": 3937.5
+          },
+          "stereo": {
+            "correlation": 0.60902403642654,
+            "mono_sum_loss_db": -0.9481131442797139
+          }
+        }
+      ],
+      "attribution": [
+        {
+          "band": "sub_20_60",
+          "contributors": [
+            [
+              "track:1",
+              0.7948833988526441
+            ],
+            [
+              "track:2",
+              0.12508842889462085
+            ],
+            [
+              "track:3",
+              0.05446908506482103
+            ],
+            [
+              "track:4",
+              0.025559087187913963
+            ]
+          ]
+        },
+        {
+          "band": "low_60_200",
+          "contributors": [
+            [
+              "track:1",
+              0.4034957090843322
+            ],
+            [
+              "track:3",
+              0.3465686408357993
+            ],
+            [
+              "track:2",
+              0.19231975245960975
+            ],
+            [
+              "track:4",
+              0.057615897620258816
+            ]
+          ]
+        },
+        {
+          "band": "low_mid_200_500",
+          "contributors": [
+            [
+              "track:3",
+              0.4223610561075388
+            ],
+            [
+              "track:1",
+              0.2681105499702127
+            ],
+            [
+              "track:4",
+              0.20596087093944118
+            ],
+            [
+              "track:2",
+              0.10356752298280729
+            ]
+          ]
+        },
+        {
+          "band": "mid_500_2k",
+          "contributors": [
+            [
+              "track:3",
+              0.32914922749329495
+            ],
+            [
+              "track:4",
+              0.3174552915462537
+            ],
+            [
+              "track:1",
+              0.31403328106706824
+            ],
+            [
+              "track:2",
+              0.039362199893383104
+            ]
+          ]
+        },
+        {
+          "band": "high_mid_2k_6k",
+          "contributors": [
+            [
+              "track:4",
+              0.44854061869984646
+            ],
+            [
+              "track:1",
+              0.32835757494374457
+            ],
+            [
+              "track:3",
+              0.21655299936015435
+            ],
+            [
+              "track:2",
+              0.006548806996254622
+            ]
+          ]
+        },
+        {
+          "band": "air_6k_plus",
+          "contributors": [
+            [
+              "track:1",
+              0.5956436873041645
+            ],
+            [
+              "track:4",
+              0.3634826784172394
+            ],
+            [
+              "track:3",
+              0.03874667131455543
+            ],
+            [
+              "track:2",
+              0.0021269629640406776
+            ]
+          ]
+        }
+      ],
+      "masking": [
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:2",
+          "masker_surface_name": "03 Guitar",
+          "maskee_surface_name": "02 Bass",
+          "masked_fraction": 0.6275545549012816,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            200.0,
+            300.0
+          ]
+        },
+        {
+          "masker_track_id": "track:4",
+          "maskee_track_id": "track:2",
+          "masker_surface_name": "04 Voice",
+          "maskee_surface_name": "02 Bass",
+          "masked_fraction": 0.45090058884655354,
+          "dominant_band": "presence (2k-5k)",
+          "dominant_region_hz": [
+            2320.0,
+            2700.0
+          ]
+        },
+        {
+          "masker_track_id": "track:1",
+          "maskee_track_id": "track:2",
+          "masker_surface_name": "01 Drums",
+          "maskee_surface_name": "02 Bass",
+          "masked_fraction": 0.3963456875649463,
+          "dominant_band": "sub (0-60)",
+          "dominant_region_hz": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:4",
+          "masker_surface_name": "03 Guitar",
+          "maskee_surface_name": "04 Voice",
+          "masked_fraction": 0.29800708248248764,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        },
+        {
+          "masker_track_id": "track:1",
+          "maskee_track_id": "track:4",
+          "masker_surface_name": "01 Drums",
+          "maskee_surface_name": "04 Voice",
+          "masked_fraction": 0.24380282782329982,
+          "dominant_band": "sub (0-60)",
+          "dominant_region_hz": [
+            0.0,
+            100.0
+          ]
+        }
+      ],
+      "bed_masking": [
+        {
+          "maskee_track_id": "track:2",
+          "maskee_surface_name": "02 Bass",
+          "masked_fraction": 0.7290439903013509,
+          "dominant_band": "sub (0-60)",
+          "dominant_region_hz": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:4",
+          "maskee_surface_name": "04 Voice",
+          "masked_fraction": 0.4004187453149637,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:1",
+          "maskee_surface_name": "01 Drums",
+          "masked_fraction": 0.290757254069356,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:3",
+          "maskee_surface_name": "03 Guitar",
+          "masked_fraction": 0.2556547547811101,
+          "dominant_band": "sub (0-60)",
+          "dominant_region_hz": [
+            0.0,
+            100.0
+          ]
+        }
+      ],
+      "timing": [
+        {
+          "track_id": "track:1",
+          "onset_count": 166,
+          "mean_drift_beats": -0.005309611169492463,
+          "drift_stdev_beats": 0.03507916957459374,
+          "swing_ratio": 0.9055260773908939,
+          "confidence": 0.5615103803175783
+        },
+        {
+          "track_id": "track:3",
+          "onset_count": 111,
+          "mean_drift_beats": -0.02059598310618218,
+          "drift_stdev_beats": 0.044907843714992055,
+          "swing_ratio": 0.906842218864643,
+          "confidence": 0.43865195356259934
+        }
+      ],
+      "cross_rhythm": [],
+      "phasing": [],
+      "polymeter": [],
+      "onset_density": 7.890622034396117
+    },
+    {
+      "section_name": "chorus-eb",
+      "section_id": "5c282fa21432433da7aee974393e1466",
+      "start_beat": 96.0,
+      "end_beat": 144.0,
+      "master": {
+        "track_id": "master",
+        "surface_kind": "master",
+        "surface_name": "Main",
+        "loudness": {
+          "lufs_i": -11.130761323133719,
+          "lufs_s_median": -11.139951870253434,
+          "lufs_m_peak": -9.88348552073302,
+          "true_peak_dbtp": -0.3963514247105022
+        },
+        "timbre": {
+          "spectral_centroid_hz": 822.5640977010701,
+          "spectral_flatness": 0.3722961816367936,
+          "spectral_rolloff_hz": 1289.0625
+        },
+        "stereo": {
+          "correlation": 0.8760488554463025,
+          "mono_sum_loss_db": -0.28042701599036085
+        }
+      },
+      "stems": [
+        {
+          "track_id": "track:1",
+          "surface_kind": "track",
+          "surface_name": "01 Drums",
+          "loudness": {
+            "lufs_i": -10.196453479994197,
+            "lufs_s_median": -10.182604258533166,
+            "lufs_m_peak": -7.941794823253529,
+            "true_peak_dbtp": -4.681526760846204
+          },
+          "timbre": {
+            "spectral_centroid_hz": 2005.0013669310363,
+            "spectral_flatness": 0.18324243067839444,
+            "spectral_rolloff_hz": 3820.3125
+          },
+          "stereo": {
+            "correlation": 0.9986469925680679,
+            "mono_sum_loss_db": -0.0029407590770108264
+          }
+        },
+        {
+          "track_id": "track:2",
+          "surface_kind": "track",
+          "surface_name": "02 Bass",
+          "loudness": {
+            "lufs_i": -18.05846387116267,
+            "lufs_s_median": -20.11594870809234,
+            "lufs_m_peak": -15.664169013930739,
+            "true_peak_dbtp": -1.919373025529418
+          },
+          "timbre": {
+            "spectral_centroid_hz": 73.7241520965819,
+            "spectral_flatness": 0.0014613444815364585,
+            "spectral_rolloff_hz": 117.1875
+          },
+          "stereo": {
+            "correlation": 1.0,
+            "mono_sum_loss_db": -9.643274665532871e-16
+          }
+        },
+        {
+          "track_id": "track:3",
+          "surface_kind": "track",
+          "surface_name": "03 Guitar",
+          "loudness": {
+            "lufs_i": -11.200005677331598,
+            "lufs_s_median": -11.19394832315055,
+            "lufs_m_peak": -11.049767710980202,
+            "true_peak_dbtp": -4.913414011113318
+          },
+          "timbre": {
+            "spectral_centroid_hz": 660.202944213668,
+            "spectral_flatness": 0.1780716680118379,
+            "spectral_rolloff_hz": 1054.6875
+          },
+          "stereo": {
+            "correlation": 0.7675007015902922,
+            "mono_sum_loss_db": -0.5764102990942862
+          }
+        },
+        {
+          "track_id": "track:4",
+          "surface_kind": "track",
+          "surface_name": "04 Voice",
+          "loudness": {
+            "lufs_i": -11.64883892393913,
+            "lufs_s_median": -11.639825312864197,
+            "lufs_m_peak": -10.461026608120072,
+            "true_peak_dbtp": -6.84144836230386
+          },
+          "timbre": {
+            "spectral_centroid_hz": 2289.5537092523014,
+            "spectral_flatness": 0.35717545960957464,
+            "spectral_rolloff_hz": 4195.3125
+          },
+          "stereo": {
+            "correlation": 0.5983968744469671,
+            "mono_sum_loss_db": -0.9742289235010914
+          }
+        }
+      ],
+      "returns": [
+        {
+          "track_id": "return:1",
+          "surface_kind": "return",
+          "surface_name": "A-Reverb",
+          "loudness": {
+            "lufs_i": -59.877100918904326,
+            "lufs_s_median": -59.8592905018712,
+            "lufs_m_peak": -57.98032897426374,
+            "true_peak_dbtp": -48.377063950773675
+          },
+          "timbre": {
+            "spectral_centroid_hz": 1411.932763719782,
+            "spectral_flatness": 0.4968016230187419,
+            "spectral_rolloff_hz": 2765.625
+          },
+          "stereo": {
+            "correlation": 0.28655889846389804,
+            "mono_sum_loss_db": -1.9178840462082405
+          }
+        },
+        {
+          "track_id": "return:2",
+          "surface_kind": "return",
+          "surface_name": "B-Delay",
+          "loudness": {
+            "lufs_i": -69.62271239122924,
+            "lufs_s_median": -70.00773705630642,
+            "lufs_m_peak": -68.88104635368592,
+            "true_peak_dbtp": -63.0074029270439
+          },
+          "timbre": {
+            "spectral_centroid_hz": 1886.1624199055332,
+            "spectral_flatness": 0.5783920509337447,
+            "spectral_rolloff_hz": 3773.4375
+          },
+          "stereo": {
+            "correlation": 0.6322686210207624,
+            "mono_sum_loss_db": -0.8875751126214557
+          }
+        }
+      ],
+      "attribution": [
+        {
+          "band": "sub_20_60",
+          "contributors": [
+            [
+              "track:1",
+              0.735606965005729
+            ],
+            [
+              "track:2",
+              0.16689207760167674
+            ],
+            [
+              "track:3",
+              0.05705856957038047
+            ],
+            [
+              "track:4",
+              0.040442387822213766
+            ]
+          ]
+        },
+        {
+          "band": "low_60_200",
+          "contributors": [
+            [
+              "track:1",
+              0.3553619160175559
+            ],
+            [
+              "track:3",
+              0.29176690900467395
+            ],
+            [
+              "track:2",
+              0.2876749180699825
+            ],
+            [
+              "track:4",
+              0.06519625690778766
+            ]
+          ]
+        },
+        {
+          "band": "low_mid_200_500",
+          "contributors": [
+            [
+              "track:3",
+              0.45329597337159094
+            ],
+            [
+              "track:1",
+              0.244738752889627
+            ],
+            [
+              "track:4",
+              0.16891749730102534
+            ],
+            [
+              "track:2",
+              0.13304777643775684
+            ]
+          ]
+        },
+        {
+          "band": "mid_500_2k",
+          "contributors": [
+            [
+              "track:3",
+              0.35380695283243685
+            ],
+            [
+              "track:4",
+              0.29977844023886635
+            ],
+            [
+              "track:1",
+              0.28561946151179163
+            ],
+            [
+              "track:2",
+              0.06079514541690523
+            ]
+          ]
+        },
+        {
+          "band": "high_mid_2k_6k",
+          "contributors": [
+            [
+              "track:4",
+              0.4268493484126659
+            ],
+            [
+              "track:1",
+              0.32094898093695134
+            ],
+            [
+              "track:3",
+              0.24404866573086859
+            ],
+            [
+              "track:2",
+              0.008153004919514194
+            ]
+          ]
+        },
+        {
+          "band": "air_6k_plus",
+          "contributors": [
+            [
+              "track:1",
+              0.6852493839063045
+            ],
+            [
+              "track:4",
+              0.2751887811275608
+            ],
+            [
+              "track:3",
+              0.037932521603720154
+            ],
+            [
+              "track:2",
+              0.0016293133624145485
+            ]
+          ]
+        }
+      ],
+      "masking": [
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:2",
+          "masker_surface_name": "03 Guitar",
+          "maskee_surface_name": "02 Bass",
+          "masked_fraction": 0.529269168611959,
+          "dominant_band": "body (500-2k)",
+          "dominant_region_hz": [
+            510.0,
+            630.0
+          ]
+        },
+        {
+          "masker_track_id": "track:1",
+          "maskee_track_id": "track:2",
+          "masker_surface_name": "01 Drums",
+          "maskee_surface_name": "02 Bass",
+          "masked_fraction": 0.30400430957083857,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "masker_track_id": "track:4",
+          "maskee_track_id": "track:2",
+          "masker_surface_name": "04 Voice",
+          "maskee_surface_name": "02 Bass",
+          "masked_fraction": 0.30400430957083857,
+          "dominant_band": "presence (2k-5k)",
+          "dominant_region_hz": [
+            2320.0,
+            2700.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:4",
+          "masker_surface_name": "03 Guitar",
+          "maskee_surface_name": "04 Voice",
+          "masked_fraction": 0.29499018629943047,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            200.0,
+            300.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:1",
+          "masker_surface_name": "03 Guitar",
+          "maskee_surface_name": "01 Drums",
+          "masked_fraction": 0.25319627132382744,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        }
+      ],
+      "bed_masking": [
+        {
+          "maskee_track_id": "track:2",
+          "maskee_surface_name": "02 Bass",
+          "masked_fraction": 0.5904112048841803,
+          "dominant_band": "body (500-2k)",
+          "dominant_region_hz": [
+            510.0,
+            630.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:4",
+          "maskee_surface_name": "04 Voice",
+          "masked_fraction": 0.4399433701213038,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            200.0,
+            300.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:1",
+          "maskee_surface_name": "01 Drums",
+          "masked_fraction": 0.29715191039386907,
+          "dominant_band": "sub (0-60)",
+          "dominant_region_hz": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:3",
+          "maskee_surface_name": "03 Guitar",
+          "masked_fraction": 0.21069172700662456,
+          "dominant_band": "sub (0-60)",
+          "dominant_region_hz": [
+            0.0,
+            100.0
+          ]
+        }
+      ],
+      "timing": [
+        {
+          "track_id": "track:2",
+          "onset_count": 91,
+          "mean_drift_beats": 0.001870482195962189,
+          "drift_stdev_beats": 0.04981141842089514,
+          "swing_ratio": 1.0016369903167623,
+          "confidence": 0.3773572697388108
+        }
+      ],
+      "cross_rhythm": [],
+      "phasing": [],
+      "polymeter": [],
+      "onset_density": 7.541672002111063
+    },
+    {
+      "section_name": "break-ab",
+      "section_id": "e71810dc9b52467297372cda18255882",
+      "start_beat": 144.0,
+      "end_beat": 192.0,
+      "master": {
+        "track_id": "master",
+        "surface_kind": "master",
+        "surface_name": "Main",
+        "loudness": {
+          "lufs_i": -11.945233611999997,
+          "lufs_s_median": -11.931982709940293,
+          "lufs_m_peak": -9.53415971369751,
+          "true_peak_dbtp": -0.9017984978113414
+        },
+        "timbre": {
+          "spectral_centroid_hz": 569.5785849177213,
+          "spectral_flatness": 0.24483782788271832,
+          "spectral_rolloff_hz": 796.875
+        },
+        "stereo": {
+          "correlation": 0.8766864979010847,
+          "mono_sum_loss_db": -0.2846668437177575
+        }
+      },
+      "stems": [
+        {
+          "track_id": "track:1",
+          "surface_kind": "track",
+          "surface_name": "01 Drums",
+          "loudness": {
+            "lufs_i": -12.493556424772724,
+            "lufs_s_median": -13.423230562946902,
+            "lufs_m_peak": -7.4200311796772995,
+            "true_peak_dbtp": -5.296796442699376
+          },
+          "timbre": {
+            "spectral_centroid_hz": 166.73047167501582,
+            "spectral_flatness": 0.02117876527172673,
+            "spectral_rolloff_hz": 93.75
+          },
+          "stereo": {
+            "correlation": 0.9959471796733499,
+            "mono_sum_loss_db": -0.008809849928396804
+          }
+        },
+        {
+          "track_id": "track:2",
+          "surface_kind": "track",
+          "surface_name": "02 Bass",
+          "loudness": {
+            "lufs_i": -19.209420917793235,
+            "lufs_s_median": -20.99938965572257,
+            "lufs_m_peak": -16.337925892912327,
+            "true_peak_dbtp": -2.600240428464054
+          },
+          "timbre": {
+            "spectral_centroid_hz": 48.75189671291538,
+            "spectral_flatness": 0.0002628076774562005,
+            "spectral_rolloff_hz": 93.75
+          },
+          "stereo": {
+            "correlation": 1.0,
+            "mono_sum_loss_db": 0.0
+          }
+        },
+        {
+          "track_id": "track:3",
+          "surface_kind": "track",
+          "surface_name": "03 Guitar",
+          "loudness": {
+            "lufs_i": -11.368586792981317,
+            "lufs_s_median": -11.19652226343342,
+            "lufs_m_peak": -10.813314237343658,
+            "true_peak_dbtp": -5.200246700908517
+          },
+          "timbre": {
+            "spectral_centroid_hz": 541.1478607154876,
+            "spectral_flatness": 0.13689557925982387,
+            "spectral_rolloff_hz": 726.5625
+          },
+          "stereo": {
+            "correlation": 0.7896610823939391,
+            "mono_sum_loss_db": -0.521831069533109
+          }
+        },
+        {
+          "track_id": "track:4",
+          "surface_kind": "track",
+          "surface_name": "04 Voice",
+          "loudness": {
+            "lufs_i": -11.49605344488513,
+            "lufs_s_median": -11.568679170224062,
+            "lufs_m_peak": -9.771287229424345,
+            "true_peak_dbtp": -7.286314641775579
+          },
+          "timbre": {
+            "spectral_centroid_hz": 2200.729649680225,
+            "spectral_flatness": 0.07830532488825086,
+            "spectral_rolloff_hz": 4171.875
+          },
+          "stereo": {
+            "correlation": 0.6778598067095143,
+            "mono_sum_loss_db": -0.76354438734124
+          }
+        }
+      ],
+      "returns": [
+        {
+          "track_id": "return:1",
+          "surface_kind": "return",
+          "surface_name": "A-Reverb",
+          "loudness": {
+            "lufs_i": -63.11530036921348,
+            "lufs_s_median": -63.78893008303051,
+            "lufs_m_peak": -57.75003742462105,
+            "true_peak_dbtp": -47.96152173475037
+          },
+          "timbre": {
+            "spectral_centroid_hz": 1069.9879318875887,
+            "spectral_flatness": 0.3239384701089334,
+            "spectral_rolloff_hz": 2132.8125
+          },
+          "stereo": {
+            "correlation": 0.32414401192154135,
+            "mono_sum_loss_db": -1.7951787799568026
+          }
+        },
+        {
+          "track_id": "return:2",
+          "surface_kind": "return",
+          "surface_name": "B-Delay",
+          "loudness": {
+            "lufs_i": -69.43873099884435,
+            "lufs_s_median": -69.99246119649985,
+            "lufs_m_peak": -68.42187203693284,
+            "true_peak_dbtp": -62.45205170632674
+          },
+          "timbre": {
+            "spectral_centroid_hz": 1748.9249110886117,
+            "spectral_flatness": 0.46412666713206513,
+            "spectral_rolloff_hz": 3726.5625
+          },
+          "stereo": {
+            "correlation": 0.6968939876586213,
+            "mono_sum_loss_db": -0.720212404813622
+          }
+        }
+      ],
+      "attribution": [
+        {
+          "band": "sub_20_60",
+          "contributors": [
+            [
+              "track:1",
+              0.7485578399847924
+            ],
+            [
+              "track:2",
+              0.16757426626404526
+            ],
+            [
+              "track:3",
+              0.05753545170387347
+            ],
+            [
+              "track:4",
+              0.026332442047288872
+            ]
+          ]
+        },
+        {
+          "band": "low_60_200",
+          "contributors": [
+            [
+              "track:1",
+              0.3474482113702373
+            ],
+            [
+              "track:3",
+              0.34517695383959573
+            ],
+            [
+              "track:2",
+              0.2565463012036242
+            ],
+            [
+              "track:4",
+              0.05082853358654278
+            ]
+          ]
+        },
+        {
+          "band": "low_mid_200_500",
+          "contributors": [
+            [
+              "track:3",
+              0.4647686452548684
+            ],
+            [
+              "track:4",
+              0.21795061144363648
+            ],
+            [
+              "track:1",
+              0.20953417027979418
+            ],
+            [
+              "track:2",
+              0.10774657302170097
+            ]
+          ]
+        },
+        {
+          "band": "mid_500_2k",
+          "contributors": [
+            [
+              "track:3",
+              0.4098695265889584
+            ],
+            [
+              "track:4",
+              0.33885340035387007
+            ],
+            [
+              "track:1",
+              0.20515126300673067
+            ],
+            [
+              "track:2",
+              0.04612581005044084
+            ]
+          ]
+        },
+        {
+          "band": "high_mid_2k_6k",
+          "contributors": [
+            [
+              "track:4",
+              0.5047879599796948
+            ],
+            [
+              "track:1",
+              0.2553532866709069
+            ],
+            [
+              "track:3",
+              0.2344308326913529
+            ],
+            [
+              "track:2",
+              0.005427920658045372
+            ]
+          ]
+        },
+        {
+          "band": "air_6k_plus",
+          "contributors": [
+            [
+              "track:1",
+              0.5480672260233036
+            ],
+            [
+              "track:4",
+              0.401243086284641
+            ],
+            [
+              "track:3",
+              0.047811449659762674
+            ],
+            [
+              "track:2",
+              0.0028782380322927383
+            ]
+          ]
+        }
+      ],
+      "masking": [
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:2",
+          "masker_surface_name": "03 Guitar",
+          "maskee_surface_name": "02 Bass",
+          "masked_fraction": 0.5612967333250528,
+          "dominant_band": "body (500-2k)",
+          "dominant_region_hz": [
+            510.0,
+            630.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:1",
+          "masker_surface_name": "03 Guitar",
+          "maskee_surface_name": "01 Drums",
+          "masked_fraction": 0.31601326030556354,
+          "dominant_band": "body (500-2k)",
+          "dominant_region_hz": [
+            510.0,
+            630.0
+          ]
+        },
+        {
+          "masker_track_id": "track:4",
+          "maskee_track_id": "track:2",
+          "masker_surface_name": "04 Voice",
+          "maskee_surface_name": "02 Bass",
+          "masked_fraction": 0.30219848466029064,
+          "dominant_band": "body (500-2k)",
+          "dominant_region_hz": [
+            770.0,
+            920.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:4",
+          "masker_surface_name": "03 Guitar",
+          "maskee_surface_name": "04 Voice",
+          "masked_fraction": 0.25140007358050936,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        }
+      ],
+      "bed_masking": [
+        {
+          "maskee_track_id": "track:2",
+          "maskee_surface_name": "02 Bass",
+          "masked_fraction": 0.6040243448018879,
+          "dominant_band": "sub (0-60)",
+          "dominant_region_hz": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:1",
+          "maskee_surface_name": "01 Drums",
+          "masked_fraction": 0.36163159411934276,
+          "dominant_band": "body (500-2k)",
+          "dominant_region_hz": [
+            510.0,
+            630.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:4",
+          "maskee_surface_name": "04 Voice",
+          "masked_fraction": 0.31014184687078444,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:3",
+          "maskee_surface_name": "03 Guitar",
+          "masked_fraction": 0.16870226547645903,
+          "dominant_band": "sub (0-60)",
+          "dominant_region_hz": [
+            0.0,
+            100.0
+          ]
+        }
+      ],
+      "timing": [
+        {
+          "track_id": "track:1",
+          "onset_count": 54,
+          "mean_drift_beats": 0.053009688976744046,
+          "drift_stdev_beats": 0.059814316490541544,
+          "swing_ratio": 0.47056485760476113,
+          "confidence": 0.25232104386823073
+        }
+      ],
+      "cross_rhythm": [],
+      "phasing": [],
+      "polymeter": [],
+      "onset_density": 3.5208307386947517
+    },
+    {
+      "section_name": "scherzo-cm",
+      "section_id": "a63f5e998ddc42b189cfb4989c35ad50",
+      "start_beat": 192.0,
+      "end_beat": 256.0,
+      "master": {
+        "track_id": "master",
+        "surface_kind": "master",
+        "surface_name": "Main",
+        "loudness": {
+          "lufs_i": -11.399023042848363,
+          "lufs_s_median": -11.505441390160874,
+          "lufs_m_peak": -10.003389509465565,
+          "true_peak_dbtp": -0.6202969650864849
+        },
+        "timbre": {
+          "spectral_centroid_hz": 694.0286088859118,
+          "spectral_flatness": 0.2853484788317922,
+          "spectral_rolloff_hz": 984.375
+        },
+        "stereo": {
+          "correlation": 0.8919638110656405,
+          "mono_sum_loss_db": -0.25350478952793354
+        }
+      },
+      "stems": [
+        {
+          "track_id": "track:1",
+          "surface_kind": "track",
+          "surface_name": "01 Drums",
+          "loudness": {
+            "lufs_i": -10.438560581396263,
+            "lufs_s_median": -10.572080390186178,
+            "lufs_m_peak": -7.8033050747520765,
+            "true_peak_dbtp": -6.552290996765495
+          },
+          "timbre": {
+            "spectral_centroid_hz": 268.12546409167305,
+            "spectral_flatness": 0.07199796775723247,
+            "spectral_rolloff_hz": 164.0625
+          },
+          "stereo": {
+            "correlation": 0.9990186873634429,
+            "mono_sum_loss_db": -0.0021320236938547074
+          }
+        },
+        {
+          "track_id": "track:2",
+          "surface_kind": "track",
+          "surface_name": "02 Bass",
+          "loudness": {
+            "lufs_i": -19.97778582379162,
+            "lufs_s_median": -22.249679804918838,
+            "lufs_m_peak": -18.052264362668446,
+            "true_peak_dbtp": -2.907522321738307
+          },
+          "timbre": {
+            "spectral_centroid_hz": 131.5758806438066,
+            "spectral_flatness": 0.002867470732754629,
+            "spectral_rolloff_hz": 210.9375
+          },
+          "stereo": {
+            "correlation": 1.0,
+            "mono_sum_loss_db": 0.0
+          }
+        },
+        {
+          "track_id": "track:3",
+          "surface_kind": "track",
+          "surface_name": "03 Guitar",
+          "loudness": {
+            "lufs_i": -11.42552316023914,
+            "lufs_s_median": -11.416656875792764,
+            "lufs_m_peak": -10.709388218809162,
+            "true_peak_dbtp": -4.804299778405098
+          },
+          "timbre": {
+            "spectral_centroid_hz": 544.0107160337578,
+            "spectral_flatness": 0.14826411898889802,
+            "spectral_rolloff_hz": 796.875
+          },
+          "stereo": {
+            "correlation": 0.7949903976163389,
+            "mono_sum_loss_db": -0.5040085105398324
+          }
+        },
+        {
+          "track_id": "track:4",
+          "surface_kind": "track",
+          "surface_name": "04 Voice",
+          "loudness": {
+            "lufs_i": -10.864602018001039,
+            "lufs_s_median": -11.00760962976259,
+            "lufs_m_peak": -9.562478014639547,
+            "true_peak_dbtp": -7.295597716964424
+          },
+          "timbre": {
+            "spectral_centroid_hz": 2234.605630262129,
+            "spectral_flatness": 0.12315992701758513,
+            "spectral_rolloff_hz": 3960.9375
+          },
+          "stereo": {
+            "correlation": 0.7074213374136381,
+            "mono_sum_loss_db": -0.6873950827254959
+          }
+        }
+      ],
+      "returns": [
+        {
+          "track_id": "return:1",
+          "surface_kind": "return",
+          "surface_name": "A-Reverb",
+          "loudness": {
+            "lufs_i": -59.97897863864513,
+            "lufs_s_median": -60.101309422036714,
+            "lufs_m_peak": -56.63930485943419,
+            "true_peak_dbtp": -47.57591393320111
+          },
+          "timbre": {
+            "spectral_centroid_hz": 1013.5203771623605,
+            "spectral_flatness": 0.39990506554710803,
+            "spectral_rolloff_hz": 2039.0625
+          },
+          "stereo": {
+            "correlation": 0.3067901868019769,
+            "mono_sum_loss_db": -1.851657207239064
+          }
+        },
+        {
+          "track_id": "return:2",
+          "surface_kind": "return",
+          "surface_name": "B-Delay",
+          "loudness": {
+            "lufs_i": -69.19848398180062,
+            "lufs_s_median": -69.49299054099872,
+            "lufs_m_peak": -68.00951648261488,
+            "true_peak_dbtp": -62.77104471304146
+          },
+          "timbre": {
+            "spectral_centroid_hz": 1856.1606504135261,
+            "spectral_flatness": 0.44776841878392903,
+            "spectral_rolloff_hz": 3679.6875
+          },
+          "stereo": {
+            "correlation": 0.7169873258674746,
+            "mono_sum_loss_db": -0.6663056717552213
+          }
+        }
+      ],
+      "attribution": [
+        {
+          "band": "sub_20_60",
+          "contributors": [
+            [
+              "track:1",
+              0.8179647405002403
+            ],
+            [
+              "track:2",
+              0.09558535618291171
+            ],
+            [
+              "track:3",
+              0.057964831286666234
+            ],
+            [
+              "track:4",
+              0.028485072030181788
+            ]
+          ]
+        },
+        {
+          "band": "low_60_200",
+          "contributors": [
+            [
+              "track:1",
+              0.4261949953967606
+            ],
+            [
+              "track:3",
+              0.33886425405368886
+            ],
+            [
+              "track:2",
+              0.17034140245611892
+            ],
+            [
+              "track:4",
+              0.06459934809343164
+            ]
+          ]
+        },
+        {
+          "band": "low_mid_200_500",
+          "contributors": [
+            [
+              "track:3",
+              0.4473754450348427
+            ],
+            [
+              "track:1",
+              0.29292045009383366
+            ],
+            [
+              "track:4",
+              0.1444716148864795
+            ],
+            [
+              "track:2",
+              0.11523248998484419
+            ]
+          ]
+        },
+        {
+          "band": "mid_500_2k",
+          "contributors": [
+            [
+              "track:4",
+              0.35312467071060893
+            ],
+            [
+              "track:3",
+              0.3171837369850548
+            ],
+            [
+              "track:1",
+              0.28262288067177527
+            ],
+            [
+              "track:2",
+              0.047068711632560926
+            ]
+          ]
+        },
+        {
+          "band": "high_mid_2k_6k",
+          "contributors": [
+            [
+              "track:4",
+              0.49205652636329794
+            ],
+            [
+              "track:1",
+              0.27907964084820724
+            ],
+            [
+              "track:3",
+              0.21826982433051534
+            ],
+            [
+              "track:2",
+              0.010594008457979425
+            ]
+          ]
+        },
+        {
+          "band": "air_6k_plus",
+          "contributors": [
+            [
+              "track:1",
+              0.5107072570257543
+            ],
+            [
+              "track:4",
+              0.43316922347448056
+            ],
+            [
+              "track:3",
+              0.051441464246815366
+            ],
+            [
+              "track:2",
+              0.004682055252949864
+            ]
+          ]
+        }
+      ],
+      "masking": [
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:2",
+          "masker_surface_name": "03 Guitar",
+          "maskee_surface_name": "02 Bass",
+          "masked_fraction": 0.5500493760660742,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            200.0,
+            300.0
+          ]
+        },
+        {
+          "masker_track_id": "track:1",
+          "maskee_track_id": "track:2",
+          "masker_surface_name": "01 Drums",
+          "maskee_surface_name": "02 Bass",
+          "masked_fraction": 0.38809587934284945,
+          "dominant_band": "sub (0-60)",
+          "dominant_region_hz": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "masker_track_id": "track:4",
+          "maskee_track_id": "track:2",
+          "masker_surface_name": "04 Voice",
+          "maskee_surface_name": "02 Bass",
+          "masked_fraction": 0.3817218780860041,
+          "dominant_band": "body (500-2k)",
+          "dominant_region_hz": [
+            770.0,
+            920.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:4",
+          "masker_surface_name": "03 Guitar",
+          "maskee_surface_name": "04 Voice",
+          "masked_fraction": 0.29484310634186034,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:1",
+          "masker_surface_name": "03 Guitar",
+          "maskee_surface_name": "01 Drums",
+          "masked_fraction": 0.2542413097639103,
+          "dominant_band": "body (500-2k)",
+          "dominant_region_hz": [
+            510.0,
+            630.0
+          ]
+        }
+      ],
+      "bed_masking": [
+        {
+          "maskee_track_id": "track:2",
+          "maskee_surface_name": "02 Bass",
+          "masked_fraction": 0.6731304425891014,
+          "dominant_band": "sub (0-60)",
+          "dominant_region_hz": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:4",
+          "maskee_surface_name": "04 Voice",
+          "masked_fraction": 0.38854701724050245,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            400.0,
+            510.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:1",
+          "maskee_surface_name": "01 Drums",
+          "masked_fraction": 0.312136671016728,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            200.0,
+            300.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:3",
+          "maskee_surface_name": "03 Guitar",
+          "masked_fraction": 0.19897994829874938,
+          "dominant_band": "sub (0-60)",
+          "dominant_region_hz": [
+            0.0,
+            100.0
+          ]
+        }
+      ],
+      "timing": [
+        {
+          "track_id": "track:1",
+          "onset_count": 128,
+          "mean_drift_beats": -0.01746740723764284,
+          "drift_stdev_beats": 0.03673593107464509,
+          "swing_ratio": 2.490236747755371,
+          "confidence": 0.5408008615669364
+        },
+        {
+          "track_id": "track:3",
+          "onset_count": 81,
+          "mean_drift_beats": -0.0030933720931817575,
+          "drift_stdev_beats": 0.03986324295319441,
+          "swing_ratio": 2.1925700398419337,
+          "confidence": 0.5017094630850698
+        },
+        {
+          "track_id": "track:4",
+          "onset_count": 112,
+          "mean_drift_beats": -0.0018598158497579018,
+          "drift_stdev_beats": 0.05690880189560952,
+          "swing_ratio": 1.4989993423236991,
+          "confidence": 0.28863997630488103
+        }
+      ],
+      "cross_rhythm": [],
+      "phasing": [],
+      "polymeter": [],
+      "onset_density": 6.562497533557161
+    },
+    {
+      "section_name": "bridge-pedal",
+      "section_id": "0cc74bc83d144f858bfd721b6c49f1c2",
+      "start_beat": 256.0,
+      "end_beat": 288.0,
+      "master": {
+        "track_id": "master",
+        "surface_kind": "master",
+        "surface_name": "Main",
+        "loudness": {
+          "lufs_i": -11.47259566694428,
+          "lufs_s_median": -11.362767892304134,
+          "lufs_m_peak": -10.805004354495734,
+          "true_peak_dbtp": -0.8897961396571086
+        },
+        "timbre": {
+          "spectral_centroid_hz": 348.4048894212774,
+          "spectral_flatness": 0.14674196274720636,
+          "spectral_rolloff_hz": 421.875
+        },
+        "stereo": {
+          "correlation": 0.9263117169865621,
+          "mono_sum_loss_db": -0.16460691151785034
+        }
+      },
+      "stems": [
+        {
+          "track_id": "track:1",
+          "surface_kind": "track",
+          "surface_name": "01 Drums",
+          "loudness": {
+            "lufs_i": -10.067339443644894,
+            "lufs_s_median": -9.736791440978878,
+            "lufs_m_peak": -9.044260588904978,
+            "true_peak_dbtp": -6.640716269767139
+          },
+          "timbre": {
+            "spectral_centroid_hz": 83.85736297458112,
+            "spectral_flatness": 0.007761873085545188,
+            "spectral_rolloff_hz": 70.3125
+          },
+          "stereo": {
+            "correlation": 0.9999997652309377,
+            "mono_sum_loss_db": -5.477282804932586e-07
+          }
+        },
+        {
+          "track_id": "track:2",
+          "surface_kind": "track",
+          "surface_name": "02 Bass",
+          "loudness": {
+            "lufs_i": -19.387589974685664,
+            "lufs_s_median": -19.21109503582958,
+            "lufs_m_peak": -16.19900523535157,
+            "true_peak_dbtp": -1.957206498715915
+          },
+          "timbre": {
+            "spectral_centroid_hz": 62.1845686469331,
+            "spectral_flatness": 0.0023257160796103593,
+            "spectral_rolloff_hz": 93.75
+          },
+          "stereo": {
+            "correlation": 1.0,
+            "mono_sum_loss_db": 0.0
+          }
+        },
+        {
+          "track_id": "track:3",
+          "surface_kind": "track",
+          "surface_name": "03 Guitar",
+          "loudness": {
+            "lufs_i": -11.276430767594858,
+            "lufs_s_median": -11.263376671413011,
+            "lufs_m_peak": -10.765459152713944,
+            "true_peak_dbtp": -5.050861802076715
+          },
+          "timbre": {
+            "spectral_centroid_hz": 472.17359916177395,
+            "spectral_flatness": 0.13353454713543433,
+            "spectral_rolloff_hz": 656.25
+          },
+          "stereo": {
+            "correlation": 0.8084496595485415,
+            "mono_sum_loss_db": -0.47239845229855276
+          }
+        },
+        {
+          "track_id": "track:4",
+          "surface_kind": "track",
+          "surface_name": "04 Voice",
+          "loudness": {
+            "lufs_i": -10.592962022424649,
+            "lufs_s_median": -10.53809393164271,
+            "lufs_m_peak": -9.300452167871308,
+            "true_peak_dbtp": -8.180683596189631
+          },
+          "timbre": {
+            "spectral_centroid_hz": 2184.9019399981653,
+            "spectral_flatness": 0.020612777781901508,
+            "spectral_rolloff_hz": 3937.5
+          },
+          "stereo": {
+            "correlation": 0.7860729042373837,
+            "mono_sum_loss_db": -0.49158469342969124
+          }
+        }
+      ],
+      "returns": [
+        {
+          "track_id": "return:1",
+          "surface_kind": "return",
+          "surface_name": "A-Reverb",
+          "loudness": {
+            "lufs_i": -61.492817097831264,
+            "lufs_s_median": -61.431179856252726,
+            "lufs_m_peak": -59.08574189580082,
+            "true_peak_dbtp": -49.04677093650774
+          },
+          "timbre": {
+            "spectral_centroid_hz": 521.0006860389118,
+            "spectral_flatness": 0.18031197308904207,
+            "spectral_rolloff_hz": 773.4375
+          },
+          "stereo": {
+            "correlation": 0.3242919072681719,
+            "mono_sum_loss_db": -1.795907550823708
+          }
+        },
+        {
+          "track_id": "return:2",
+          "surface_kind": "return",
+          "surface_name": "B-Delay",
+          "loudness": {
+            "lufs_i": -68.97166597855434,
+            "lufs_s_median": -68.9076341144669,
+            "lufs_m_peak": -67.77284026533377,
+            "true_peak_dbtp": -62.20264368787639
+          },
+          "timbre": {
+            "spectral_centroid_hz": 1758.5415998699912,
+            "spectral_flatness": 0.3306857206990285,
+            "spectral_rolloff_hz": 3539.0625
+          },
+          "stereo": {
+            "correlation": 0.7836101502858108,
+            "mono_sum_loss_db": -0.5040826083458501
+          }
+        }
+      ],
+      "attribution": [
+        {
+          "band": "sub_20_60",
+          "contributors": [
+            [
+              "track:1",
+              0.783816330400297
+            ],
+            [
+              "track:2",
+              0.1529946485295697
+            ],
+            [
+              "track:3",
+              0.04634786249309619
+            ],
+            [
+              "track:4",
+              0.016841158577037177
+            ]
+          ]
+        },
+        {
+          "band": "low_60_200",
+          "contributors": [
+            [
+              "track:1",
+              0.42523738204536365
+            ],
+            [
+              "track:3",
+              0.32522143447697544
+            ],
+            [
+              "track:2",
+              0.21674959436370275
+            ],
+            [
+              "track:4",
+              0.032791589113958165
+            ]
+          ]
+        },
+        {
+          "band": "low_mid_200_500",
+          "contributors": [
+            [
+              "track:3",
+              0.4435769390952188
+            ],
+            [
+              "track:1",
+              0.2966369527138882
+            ],
+            [
+              "track:2",
+              0.14725310873528816
+            ],
+            [
+              "track:4",
+              0.11253299945560481
+            ]
+          ]
+        },
+        {
+          "band": "mid_500_2k",
+          "contributors": [
+            [
+              "track:4",
+              0.41599246377643656
+            ],
+            [
+              "track:3",
+              0.29516395961456604
+            ],
+            [
+              "track:1",
+              0.22046754748026237
+            ],
+            [
+              "track:2",
+              0.06837602912873503
+            ]
+          ]
+        },
+        {
+          "band": "high_mid_2k_6k",
+          "contributors": [
+            [
+              "track:4",
+              0.5829225550252024
+            ],
+            [
+              "track:3",
+              0.22280149297414673
+            ],
+            [
+              "track:1",
+              0.18122893399346252
+            ],
+            [
+              "track:2",
+              0.01304701800718836
+            ]
+          ]
+        },
+        {
+          "band": "air_6k_plus",
+          "contributors": [
+            [
+              "track:4",
+              0.5940823315714674
+            ],
+            [
+              "track:1",
+              0.3360742190603737
+            ],
+            [
+              "track:3",
+              0.0640653073519972
+            ],
+            [
+              "track:2",
+              0.005778142016161779
+            ]
+          ]
+        }
+      ],
+      "masking": [
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:2",
+          "masker_surface_name": "03 Guitar",
+          "maskee_surface_name": "02 Bass",
+          "masked_fraction": 0.568506609503394,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "masker_track_id": "track:4",
+          "maskee_track_id": "track:2",
+          "masker_surface_name": "04 Voice",
+          "maskee_surface_name": "02 Bass",
+          "masked_fraction": 0.3837084673097535,
+          "dominant_band": "presence (2k-5k)",
+          "dominant_region_hz": [
+            2320.0,
+            2700.0
+          ]
+        },
+        {
+          "masker_track_id": "track:1",
+          "maskee_track_id": "track:2",
+          "masker_surface_name": "01 Drums",
+          "maskee_surface_name": "02 Bass",
+          "masked_fraction": 0.32002500893176133,
+          "dominant_band": "sub (0-60)",
+          "dominant_region_hz": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:4",
+          "masker_surface_name": "03 Guitar",
+          "maskee_surface_name": "04 Voice",
+          "masked_fraction": 0.22672145271389754,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            400.0,
+            510.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:1",
+          "masker_surface_name": "03 Guitar",
+          "maskee_surface_name": "01 Drums",
+          "masked_fraction": 0.21341111609718572,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            400.0,
+            510.0
+          ]
+        }
+      ],
+      "bed_masking": [
+        {
+          "maskee_track_id": "track:2",
+          "maskee_surface_name": "02 Bass",
+          "masked_fraction": 0.6622007859949982,
+          "dominant_band": "sub (0-60)",
+          "dominant_region_hz": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:1",
+          "maskee_surface_name": "01 Drums",
+          "masked_fraction": 0.29905763189948076,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            400.0,
+            510.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:4",
+          "maskee_surface_name": "04 Voice",
+          "masked_fraction": 0.26476240970243226,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:3",
+          "maskee_surface_name": "03 Guitar",
+          "masked_fraction": 0.17998317914213624,
+          "dominant_band": "sub (0-60)",
+          "dominant_region_hz": [
+            0.0,
+            100.0
+          ]
+        }
+      ],
+      "timing": [],
+      "cross_rhythm": [],
+      "phasing": [
+        {
+          "track_a": "track:1",
+          "track_b": "track:2",
+          "drift_beats_per_cycle": -0.042364695583929746,
+          "confidence": 0.670367071867866
+        }
+      ],
+      "polymeter": [],
+      "onset_density": 8.406255947104466
+    },
+    {
+      "section_name": "finale-cmaj",
+      "section_id": "d3b8ff647e784db690f07b126b12bb14",
+      "start_beat": 288.0,
+      "end_beat": 352.0,
+      "master": {
+        "track_id": "master",
+        "surface_kind": "master",
+        "surface_name": "Main",
+        "loudness": {
+          "lufs_i": -11.112318774086432,
+          "lufs_s_median": -11.120651744995884,
+          "lufs_m_peak": -10.303157951820355,
+          "true_peak_dbtp": -0.8146511372077331
+        },
+        "timbre": {
+          "spectral_centroid_hz": 526.0885254505125,
+          "spectral_flatness": 0.2571617228641655,
+          "spectral_rolloff_hz": 703.125
+        },
+        "stereo": {
+          "correlation": 0.9048737718242321,
+          "mono_sum_loss_db": -0.1981399536115152
+        }
+      },
+      "stems": [
+        {
+          "track_id": "track:1",
+          "surface_kind": "track",
+          "surface_name": "01 Drums",
+          "loudness": {
+            "lufs_i": -9.958192199652633,
+            "lufs_s_median": -9.955370039839476,
+            "lufs_m_peak": -7.980780638159912,
+            "true_peak_dbtp": -4.658203728049531
+          },
+          "timbre": {
+            "spectral_centroid_hz": 1388.8161563302112,
+            "spectral_flatness": 0.10773171983224024,
+            "spectral_rolloff_hz": 2179.6875
+          },
+          "stereo": {
+            "correlation": 0.9989722607150965,
+            "mono_sum_loss_db": -0.002233552670813438
+          }
+        },
+        {
+          "track_id": "track:2",
+          "surface_kind": "track",
+          "surface_name": "02 Bass",
+          "loudness": {
+            "lufs_i": -17.073896750212654,
+            "lufs_s_median": -17.083333664325142,
+            "lufs_m_peak": -15.675845701287418,
+            "true_peak_dbtp": -2.0459960207214127
+          },
+          "timbre": {
+            "spectral_centroid_hz": 81.23078553958544,
+            "spectral_flatness": 0.0016645839844591222,
+            "spectral_rolloff_hz": 140.625
+          },
+          "stereo": {
+            "correlation": 1.0,
+            "mono_sum_loss_db": 0.0
+          }
+        },
+        {
+          "track_id": "track:3",
+          "surface_kind": "track",
+          "surface_name": "03 Guitar",
+          "loudness": {
+            "lufs_i": -11.21680031331527,
+            "lufs_s_median": -11.21893133634944,
+            "lufs_m_peak": -10.968897877959135,
+            "true_peak_dbtp": -5.169962798564114
+          },
+          "timbre": {
+            "spectral_centroid_hz": 709.7826871544471,
+            "spectral_flatness": 0.17902570628037048,
+            "spectral_rolloff_hz": 1054.6875
+          },
+          "stereo": {
+            "correlation": 0.7737485140375517,
+            "mono_sum_loss_db": -0.5529654659012999
+          }
+        },
+        {
+          "track_id": "track:4",
+          "surface_kind": "track",
+          "surface_name": "04 Voice",
+          "loudness": {
+            "lufs_i": -10.980014744750951,
+            "lufs_s_median": -10.998321641278325,
+            "lufs_m_peak": -10.118706852567259,
+            "true_peak_dbtp": -6.89950743471143
+          },
+          "timbre": {
+            "spectral_centroid_hz": 2479.4971189478315,
+            "spectral_flatness": 0.2665024438090636,
+            "spectral_rolloff_hz": 4289.0625
+          },
+          "stereo": {
+            "correlation": 0.6449460847619696,
+            "mono_sum_loss_db": -0.848836210683791
+          }
+        }
+      ],
+      "returns": [
+        {
+          "track_id": "return:1",
+          "surface_kind": "return",
+          "surface_name": "A-Reverb",
+          "loudness": {
+            "lufs_i": -60.10955623814828,
+            "lufs_s_median": -60.13955839774231,
+            "lufs_m_peak": -58.11191718863898,
+            "true_peak_dbtp": -48.461786657039966
+          },
+          "timbre": {
+            "spectral_centroid_hz": 1257.071051162199,
+            "spectral_flatness": 0.4856762974406703,
+            "spectral_rolloff_hz": 2531.25
+          },
+          "stereo": {
+            "correlation": 0.2910731868989315,
+            "mono_sum_loss_db": -1.903849211368682
+          }
+        },
+        {
+          "track_id": "return:2",
+          "surface_kind": "return",
+          "surface_name": "B-Delay",
+          "loudness": {
+            "lufs_i": -69.39917173826898,
+            "lufs_s_median": -69.45191042813377,
+            "lufs_m_peak": -68.69097318489061,
+            "true_peak_dbtp": -62.57121669652999
+          },
+          "timbre": {
+            "spectral_centroid_hz": 2037.0687991489472,
+            "spectral_flatness": 0.5531200382751911,
+            "spectral_rolloff_hz": 3937.5
+          },
+          "stereo": {
+            "correlation": 0.665392095918092,
+            "mono_sum_loss_db": -0.8019952885029252
+          }
+        }
+      ],
+      "attribution": [
+        {
+          "band": "sub_20_60",
+          "contributors": [
+            [
+              "track:1",
+              0.7089503702079346
+            ],
+            [
+              "track:2",
+              0.21356028664972446
+            ],
+            [
+              "track:3",
+              0.0448369985092998
+            ],
+            [
+              "track:4",
+              0.03265234463304108
+            ]
+          ]
+        },
+        {
+          "band": "low_60_200",
+          "contributors": [
+            [
+              "track:1",
+              0.36835042359947734
+            ],
+            [
+              "track:2",
+              0.3366860139973502
+            ],
+            [
+              "track:3",
+              0.24033900136191205
+            ],
+            [
+              "track:4",
+              0.05462456104126042
+            ]
+          ]
+        },
+        {
+          "band": "low_mid_200_500",
+          "contributors": [
+            [
+              "track:3",
+              0.4156506753127006
+            ],
+            [
+              "track:1",
+              0.25155713800315743
+            ],
+            [
+              "track:2",
+              0.19234563769237925
+            ],
+            [
+              "track:4",
+              0.14044654899176273
+            ]
+          ]
+        },
+        {
+          "band": "mid_500_2k",
+          "contributors": [
+            [
+              "track:3",
+              0.3710224185257944
+            ],
+            [
+              "track:4",
+              0.3090521448574857
+            ],
+            [
+              "track:1",
+              0.2388902296758404
+            ],
+            [
+              "track:2",
+              0.0810352069408795
+            ]
+          ]
+        },
+        {
+          "band": "high_mid_2k_6k",
+          "contributors": [
+            [
+              "track:4",
+              0.4610983582835946
+            ],
+            [
+              "track:1",
+              0.28621236143727213
+            ],
+            [
+              "track:3",
+              0.24112181172998565
+            ],
+            [
+              "track:2",
+              0.011567468549147643
+            ]
+          ]
+        },
+        {
+          "band": "air_6k_plus",
+          "contributors": [
+            [
+              "track:1",
+              0.6540074193406172
+            ],
+            [
+              "track:4",
+              0.3049892971749956
+            ],
+            [
+              "track:3",
+              0.038928859275716786
+            ],
+            [
+              "track:2",
+              0.002074424208670291
+            ]
+          ]
+        }
+      ],
+      "masking": [
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:2",
+          "masker_surface_name": "03 Guitar",
+          "maskee_surface_name": "02 Bass",
+          "masked_fraction": 0.5007306380905991,
+          "dominant_band": "body (500-2k)",
+          "dominant_region_hz": [
+            510.0,
+            630.0
+          ]
+        },
+        {
+          "masker_track_id": "track:4",
+          "maskee_track_id": "track:2",
+          "masker_surface_name": "04 Voice",
+          "maskee_surface_name": "02 Bass",
+          "masked_fraction": 0.2993742740454869,
+          "dominant_band": "presence (2k-5k)",
+          "dominant_region_hz": [
+            2320.0,
+            2700.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:1",
+          "masker_surface_name": "03 Guitar",
+          "maskee_surface_name": "01 Drums",
+          "masked_fraction": 0.26401167754551214,
+          "dominant_band": "body (500-2k)",
+          "dominant_region_hz": [
+            510.0,
+            630.0
+          ]
+        },
+        {
+          "masker_track_id": "track:1",
+          "maskee_track_id": "track:2",
+          "masker_surface_name": "01 Drums",
+          "maskee_surface_name": "02 Bass",
+          "masked_fraction": 0.2632545243358687,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:4",
+          "masker_surface_name": "03 Guitar",
+          "maskee_surface_name": "04 Voice",
+          "masked_fraction": 0.2630596544330937,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        }
+      ],
+      "bed_masking": [
+        {
+          "maskee_track_id": "track:2",
+          "maskee_surface_name": "02 Bass",
+          "masked_fraction": 0.563115890441755,
+          "dominant_band": "lows (60-250)",
+          "dominant_region_hz": [
+            100.0,
+            200.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:4",
+          "maskee_surface_name": "04 Voice",
+          "masked_fraction": 0.3935931391095977,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:1",
+          "maskee_surface_name": "01 Drums",
+          "masked_fraction": 0.33545401966454597,
+          "dominant_band": "sub (0-60)",
+          "dominant_region_hz": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:3",
+          "maskee_surface_name": "03 Guitar",
+          "masked_fraction": 0.22641204078329827,
+          "dominant_band": "sub (0-60)",
+          "dominant_region_hz": [
+            0.0,
+            100.0
+          ]
+        }
+      ],
+      "timing": [],
+      "cross_rhythm": [],
+      "phasing": [],
+      "polymeter": [],
+      "onset_density": 7.4531221988256355
+    },
+    {
+      "section_name": "coda",
+      "section_id": "7e865f1525ca4682b10258576b940036",
+      "start_beat": 352.0,
+      "end_beat": 384.0,
+      "master": {
+        "track_id": "master",
+        "surface_kind": "master",
+        "surface_name": "Main",
+        "loudness": {
+          "lufs_i": -11.421126182795577,
+          "lufs_s_median": -11.366779365222142,
+          "lufs_m_peak": -9.901325599025746,
+          "true_peak_dbtp": -0.9062769269283448
+        },
+        "timbre": {
+          "spectral_centroid_hz": 405.1133326437174,
+          "spectral_flatness": 0.16814300349549763,
+          "spectral_rolloff_hz": 539.0625
+        },
+        "stereo": {
+          "correlation": 0.9223677552446105,
+          "mono_sum_loss_db": -0.17053566398071512
+        }
+      },
+      "stems": [
+        {
+          "track_id": "track:1",
+          "surface_kind": "track",
+          "surface_name": "01 Drums",
+          "loudness": {
+            "lufs_i": -9.56756272552319,
+            "lufs_s_median": -9.608097823104481,
+            "lufs_m_peak": -7.369500462695236,
+            "true_peak_dbtp": -4.998317047282043
+          },
+          "timbre": {
+            "spectral_centroid_hz": 154.34121923873715,
+            "spectral_flatness": 0.03400277892011236,
+            "spectral_rolloff_hz": 93.75
+          },
+          "stereo": {
+            "correlation": 0.9999998904312607,
+            "mono_sum_loss_db": -2.5882861933595054e-07
+          }
+        },
+        {
+          "track_id": "track:2",
+          "surface_kind": "track",
+          "surface_name": "02 Bass",
+          "loudness": {
+            "lufs_i": -18.590108126389733,
+            "lufs_s_median": -18.472715028173198,
+            "lufs_m_peak": -16.37804620517264,
+            "true_peak_dbtp": -1.5831505041055443
+          },
+          "timbre": {
+            "spectral_centroid_hz": 54.62528051809862,
+            "spectral_flatness": 0.001378238001673123,
+            "spectral_rolloff_hz": 93.75
+          },
+          "stereo": {
+            "correlation": 1.0,
+            "mono_sum_loss_db": 0.0
+          }
+        },
+        {
+          "track_id": "track:3",
+          "surface_kind": "track",
+          "surface_name": "03 Guitar",
+          "loudness": {
+            "lufs_i": -11.52848911436298,
+            "lufs_s_median": -11.42664327593426,
+            "lufs_m_peak": -10.782358616858785,
+            "true_peak_dbtp": -5.248914075730237
+          },
+          "timbre": {
+            "spectral_centroid_hz": 629.4961946112016,
+            "spectral_flatness": 0.15077353238203017,
+            "spectral_rolloff_hz": 890.625
+          },
+          "stereo": {
+            "correlation": 0.775655816558734,
+            "mono_sum_loss_db": -0.5460925244387669
+          }
+        },
+        {
+          "track_id": "track:4",
+          "surface_kind": "track",
+          "surface_name": "04 Voice",
+          "loudness": {
+            "lufs_i": -11.31922790074362,
+            "lufs_s_median": -11.212431526170556,
+            "lufs_m_peak": -9.762937668108576,
+            "true_peak_dbtp": -7.302154834511848
+          },
+          "timbre": {
+            "spectral_centroid_hz": 2148.823159231387,
+            "spectral_flatness": 0.0936988697168089,
+            "spectral_rolloff_hz": 3937.5
+          },
+          "stereo": {
+            "correlation": 0.7482299050543562,
+            "mono_sum_loss_db": -0.5844058054156663
+          }
+        }
+      ],
+      "returns": [
+        {
+          "track_id": "return:1",
+          "surface_kind": "return",
+          "surface_name": "A-Reverb",
+          "loudness": {
+            "lufs_i": -61.06142864712312,
+            "lufs_s_median": -61.00159800029138,
+            "lufs_m_peak": -58.102363203710496,
+            "true_peak_dbtp": -49.5503953486994
+          },
+          "timbre": {
+            "spectral_centroid_hz": 707.0466796532719,
+            "spectral_flatness": 0.2966619393063709,
+            "spectral_rolloff_hz": 1171.875
+          },
+          "stereo": {
+            "correlation": 0.3077114509377945,
+            "mono_sum_loss_db": -1.8515478523639992
+          }
+        },
+        {
+          "track_id": "return:2",
+          "surface_kind": "return",
+          "surface_name": "B-Delay",
+          "loudness": {
+            "lufs_i": -69.39899740462916,
+            "lufs_s_median": -69.6520570309555,
+            "lufs_m_peak": -68.35297261285929,
+            "true_peak_dbtp": -62.998049126593926
+          },
+          "timbre": {
+            "spectral_centroid_hz": 1813.3998212926765,
+            "spectral_flatness": 0.4017546285836369,
+            "spectral_rolloff_hz": 3726.5625
+          },
+          "stereo": {
+            "correlation": 0.7403145438557666,
+            "mono_sum_loss_db": -0.6110304419801303
+          }
+        }
+      ],
+      "attribution": [
+        {
+          "band": "sub_20_60",
+          "contributors": [
+            [
+              "track:1",
+              0.7636015599553398
+            ],
+            [
+              "track:2",
+              0.179310273752386
+            ],
+            [
+              "track:3",
+              0.03632162811601491
+            ],
+            [
+              "track:4",
+              0.0207665381762592
+            ]
+          ]
+        },
+        {
+          "band": "low_60_200",
+          "contributors": [
+            [
+              "track:1",
+              0.4162954777797586
+            ],
+            [
+              "track:3",
+              0.27668022458202285
+            ],
+            [
+              "track:2",
+              0.2599446634408889
+            ],
+            [
+              "track:4",
+              0.04707963419732957
+            ]
+          ]
+        },
+        {
+          "band": "low_mid_200_500",
+          "contributors": [
+            [
+              "track:3",
+              0.4199880790535591
+            ],
+            [
+              "track:1",
+              0.2626441042575404
+            ],
+            [
+              "track:2",
+              0.16729842344266743
+            ],
+            [
+              "track:4",
+              0.150069393246233
+            ]
+          ]
+        },
+        {
+          "band": "mid_500_2k",
+          "contributors": [
+            [
+              "track:3",
+              0.37667583901960194
+            ],
+            [
+              "track:4",
+              0.3718358138969257
+            ],
+            [
+              "track:1",
+              0.18166945800842146
+            ],
+            [
+              "track:2",
+              0.06981888907505081
+            ]
+          ]
+        },
+        {
+          "band": "high_mid_2k_6k",
+          "contributors": [
+            [
+              "track:4",
+              0.4606608554733386
+            ],
+            [
+              "track:1",
+              0.3021872948575974
+            ],
+            [
+              "track:3",
+              0.22687299304997122
+            ],
+            [
+              "track:2",
+              0.010278856619092743
+            ]
+          ]
+        },
+        {
+          "band": "air_6k_plus",
+          "contributors": [
+            [
+              "track:1",
+              0.6639447030564087
+            ],
+            [
+              "track:4",
+              0.29352180197189115
+            ],
+            [
+              "track:3",
+              0.039106008301382174
+            ],
+            [
+              "track:2",
+              0.003427486670317901
+            ]
+          ]
+        }
+      ],
+      "masking": [
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:2",
+          "masker_surface_name": "03 Guitar",
+          "maskee_surface_name": "02 Bass",
+          "masked_fraction": 0.5482532952345839,
+          "dominant_band": "body (500-2k)",
+          "dominant_region_hz": [
+            510.0,
+            630.0
+          ]
+        },
+        {
+          "masker_track_id": "track:4",
+          "maskee_track_id": "track:2",
+          "masker_surface_name": "04 Voice",
+          "maskee_surface_name": "02 Bass",
+          "masked_fraction": 0.3327495621716287,
+          "dominant_band": "body (500-2k)",
+          "dominant_region_hz": [
+            630.0,
+            770.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:4",
+          "masker_surface_name": "03 Guitar",
+          "maskee_surface_name": "04 Voice",
+          "masked_fraction": 0.28908159702013736,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            400.0,
+            510.0
+          ]
+        },
+        {
+          "masker_track_id": "track:3",
+          "maskee_track_id": "track:1",
+          "masker_surface_name": "03 Guitar",
+          "maskee_surface_name": "01 Drums",
+          "masked_fraction": 0.284878232962054,
+          "dominant_band": "body (500-2k)",
+          "dominant_region_hz": [
+            510.0,
+            630.0
+          ]
+        },
+        {
+          "masker_track_id": "track:1",
+          "maskee_track_id": "track:2",
+          "masker_surface_name": "01 Drums",
+          "maskee_surface_name": "02 Bass",
+          "masked_fraction": 0.2640796386763757,
+          "dominant_band": "sub (0-60)",
+          "dominant_region_hz": [
+            0.0,
+            100.0
+          ]
+        }
+      ],
+      "bed_masking": [
+        {
+          "maskee_track_id": "track:2",
+          "maskee_surface_name": "02 Bass",
+          "masked_fraction": 0.6219928103972716,
+          "dominant_band": "sub (0-60)",
+          "dominant_region_hz": [
+            0.0,
+            100.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:4",
+          "maskee_surface_name": "04 Voice",
+          "masked_fraction": 0.3995460365498778,
+          "dominant_band": "mud (250-500)",
+          "dominant_region_hz": [
+            300.0,
+            400.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:1",
+          "maskee_surface_name": "01 Drums",
+          "masked_fraction": 0.33861934428292745,
+          "dominant_band": "body (500-2k)",
+          "dominant_region_hz": [
+            510.0,
+            630.0
+          ]
+        },
+        {
+          "maskee_track_id": "track:3",
+          "maskee_surface_name": "03 Guitar",
+          "masked_fraction": 0.18956160634231514,
+          "dominant_band": "sub (0-60)",
+          "dominant_region_hz": [
+            0.0,
+            100.0
+          ]
+        }
+      ],
+      "timing": [
+        {
+          "track_id": "track:1",
+          "onset_count": 42,
+          "mean_drift_beats": -0.0073864395890200826,
+          "drift_stdev_beats": 0.028144784438497928,
+          "swing_ratio": 0.9966776282332171,
+          "confidence": 0.6481901945187759
+        },
+        {
+          "track_id": "track:3",
+          "onset_count": 30,
+          "mean_drift_beats": -0.014968381176669255,
+          "drift_stdev_beats": 0.0540163002481751,
+          "swing_ratio": 0.8653125428879931,
+          "confidence": 0.3247962468978113
+        }
+      ],
+      "cross_rhythm": [],
+      "phasing": [],
+      "polymeter": [],
+      "onset_density": 7.718755460724188
+    }
+  ],
+  "findings": [],
+  "skipped_analyses": [
+    {
+      "kind": "reverb_verification",
+      "reason": "no declared RT60 sends \u2014 call set_send_intended_rt60(from_track_id, to_return_id, intended_rt60_s=<seconds>) on each reverb-bus send to declare composer intent the analyzer can verify"
+    },
+    {
+      "kind": "automation_verification",
+      "reason": "no declared automation envelopes \u2014 author time-varying intent (create_enum_envelope for a device-parameter flip, generators.envelopes.volume_swell / a dynamic send) so the analyzer can confirm it was realized in the render"
+    },
+    {
+      "kind": "energy_realization",
+      "reason": "no per-section energy declared \u2014 author energy via Arrangement.section(energy=) (or create_section(energy=)) so the lens can rank declared intensity intent against the rendered per-section intensity (LUFS-S + onset density)"
+    },
+    {
+      "kind": "width_realization_scope",
+      "reason": "`width_realizations` lists the 0 width control(s) RECOGNISED, which is not necessarily every one AUTHORED. Recognition is a closed set of exact parameter names (currently: Stereo Width) at a non-default value, on top-level track and return devices; a width control under another name, inside a rack's nested chain, or left at unity is not listed. Read an absence as 'not recognised', never as 'not authored'"
+    }
+  ],
+  "energy_realization": null,
+  "alignment": {
+    "method": "trim_to_common_length",
+    "common_length": 5654016,
+    "sample_rate": 48000,
+    "max_drift_samples": 5632,
+    "max_drift_ms": 117.33333333333333,
+    "surfaces": [
+      {
+        "track_id": "master",
+        "surface_kind": "master",
+        "original_length": 5658112,
+        "trimmed_samples": 4096
+      },
+      {
+        "track_id": "track:1",
+        "surface_kind": "track",
+        "original_length": 5658624,
+        "trimmed_samples": 4608
+      },
+      {
+        "track_id": "track:2",
+        "surface_kind": "track",
+        "original_length": 5654016,
+        "trimmed_samples": 0
+      },
+      {
+        "track_id": "track:3",
+        "surface_kind": "track",
+        "original_length": 5656576,
+        "trimmed_samples": 2560
+      },
+      {
+        "track_id": "track:4",
+        "surface_kind": "track",
+        "original_length": 5659648,
+        "trimmed_samples": 5632
+      },
+      {
+        "track_id": "return:1",
+        "surface_kind": "return",
+        "original_length": 5655040,
+        "trimmed_samples": 1024
+      },
+      {
+        "track_id": "return:2",
+        "surface_kind": "return",
+        "original_length": 5656064,
+        "trimmed_samples": 2048
+      }
+    ]
+  },
+  "compare_to": null
+}

@@ -111,3 +111,28 @@ def test_self_ignore_files_is_a_no_op_for_an_empty_list(tmp_path: Path):
     song.mkdir()
     self_ignore_files(song, [])
     assert not (song / ".gitignore").exists()
+
+
+def test_the_song_dir_names_are_a_subset_of_the_workspace_root_block(tmp_path):
+    """WSP-3R7K parity lock. `paths.SONG_DIR_IGNORED_FILES` (travels with the
+    artifact, for workspaces that predate the bootstrap) and
+    `init_workspace.GITIGNORE_BLOCK` (covers a fresh workspace wholesale) are a
+    mirrored contract kept in step only by a comment.
+
+    Add a name to one and not the other, and a pre-bootstrap workspace silently
+    stops ignoring it — #303's exact symptom back, with nothing red. Pin it.
+    """
+    from hallucinote.tools.init_workspace import GITIGNORE_BLOCK
+
+    root_entries = {
+        line.strip().lstrip("*/") for line in GITIGNORE_BLOCK.splitlines()
+    }
+    missing = [
+        name for name in SONG_DIR_IGNORED_FILES
+        if name not in root_entries
+    ]
+    assert not missing, (
+        f"{missing} self-ignore in the song dir but are absent from the "
+        "workspace-root block — a freshly-bootstrapped workspace would stop "
+        "ignoring them. Add them to init_workspace.GITIGNORE_BLOCK too."
+    )

@@ -266,9 +266,10 @@ would unblock it**, so the burndown leaves no silent residue.
 
 - **Type:** chore
 - **Critic mode:** chunk
-- **Done when:** each of #268, #256, #255, #279, #242, #227, #305, #311, #281,
-  #308 carries a dated disposition comment, and this plan's triage section
-  matches what the comments say.
+- **Done when:** each of #268, #255, #279, #242, #227, #305, #311, #281, #308
+  carries a dated disposition comment, and this plan's triage section matches
+  what the comments say. **#256 left this roster** — re-examination showed it was
+  buildable, so it got a "built" comment rather than a "not closed here" one.
 
 ---
 
@@ -297,7 +298,8 @@ call) and the `case_sensitive: null` tightening (it made the gate stricter than
 the loader, reintroducing a variant of the bug #326 fixed). Both reverts are
 better outcomes than the original fixes.
 
-**Item-level outcome: 19 closed, 11 not closable here.** The 11 each carry a
+**Item-level outcome: 20 closed, 10 not closable here.** (#256 was re-triaged
+into the built set mid-branch — see the triage section.) The 10 each carry a
 dated disposition comment naming the blocker and what would unblock it.
 **#281's disposition improved mid-branch**: its blocker was recorded as "needs
 Live 12.5+", and checking rather than assuming showed **there is no Live 12.5** —
@@ -305,5 +307,5 @@ the newest release is 12.4 (2026-05-05). The version half of that item is now
 answered and dated in `.prawduct/artifacts/research-envelope-lom-gaps.md`; only
 the M4L-bridge probe remains.
 
-**At merge:** close the 19 issues then, not before — they carry "closed by"
+**At merge:** close the 20 issues then, not before — they carry "closed by"
 comments but closing them on an unmerged branch would misreport shipped state.

@@ -452,7 +452,11 @@ def _cmd_execute(args: argparse.Namespace) -> int:
 
 def _add_db_args(p: argparse.ArgumentParser) -> None:
     group = p.add_mutually_exclusive_group(required=True)
-    group.add_argument("--song", help="song slug (resolves to songs/<slug>/<slug>.db)")
+    group.add_argument(
+        "--song",
+        help="song slug; its DB is resolved by resolve_db_path (per-branch name "
+             "in the song's own dir, legacy <slug>.db fallback)",
+    )
     group.add_argument("--db", help="explicit path to the SQLite DB (escape hatch)")
 
 

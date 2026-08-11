@@ -1047,9 +1047,11 @@ def _devices_with_nested(
     caveat cited "recursive racks not modeled" — that was true when written and
     stopped being true when the deep-addressing work landed.)
 
-    Each nested device carries `chain_id` and `rack_depth` so a consumer can
-    still tell a rack's contents from its top-level siblings — flattening is for
-    reachability, not for pretending the tree was flat.
+    Nested devices carry `rack_depth` so a consumer can still tell a rack's
+    contents from its top-level siblings — flattening is for reachability, not
+    for pretending the tree was flat. (`chain_id` is NOT the discriminator: it is
+    `NOT NULL` on every device row, so a top-level device has one too. Depth is
+    what distinguishes them.)
 
     Depth reuses `handlers/device.py`'s cap rather than declaring a second one —
     Live racks cannot nest cyclically, so a runaway depth means malformed data,
@@ -1072,8 +1074,6 @@ def _devices_with_nested(
                 Q.get_devices_for_chain(conn, chain["id"]),
                 _depth=_depth + 1,
             )
-            for nested_d in nested:
-                nested_d.setdefault("chain_id", chain["id"])
             out.extend(nested)
     return out
 

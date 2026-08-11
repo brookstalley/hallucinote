@@ -308,6 +308,16 @@ def _record_audio_capture_event(
     try:
         from hallucinote.db import mutations as M, queries as Q
         from hallucinote.db.connection import connect, resolve_db_path
+        from hallucinote.paths import self_ignore_dir
+
+        # WSP-3R7K: ignore the captures ROOT, not this one take — every take
+        # under it is regenerable. Done here rather than in the render worker
+        # for the same reason the audit event is: that worker runs inside Live's
+        # vendored env, which has no `hallucinote` to import. Without this, #303's
+        # whole-directory arm reached `analysis/` only, so a pre-bootstrap
+        # workspace still surfaced a directory of WAVs as committable on every
+        # render.
+        self_ignore_dir(pathlib.Path(captures_dir).parent)
 
         db_path = resolve_db_path(song_slug)
         if not db_path.exists():

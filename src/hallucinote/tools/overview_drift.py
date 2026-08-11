@@ -27,12 +27,15 @@ territory the rest of the system sees?*
 """
 from __future__ import annotations
 
+import logging
 import re
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
 from hallucinote.db import queries as Q
+
+logger = logging.getLogger(__name__)
 
 
 # `| `Intro` | 1–8 | some feel |` — the shape `scaffold_song.section_table`
@@ -61,12 +64,16 @@ class OverviewDrift:
     def __bool__(self) -> bool:
         return bool(self.missing or self.extra or self.moved)
 
-    def describe(self, *, slug: str) -> str:
-        """A stderr-shaped report naming each divergence and what to do."""
-        lines = [
-            f"{slug}.md's Structure table has drifted from the form build.py "
-            f"materialized:"
-        ]
+    def describe(self, *, slug: str, surface: str | None = None) -> str:
+        """A stderr-shaped report naming each divergence and what to do.
+
+        ``surface`` names which derived surface drifted; it defaults to the
+        overview's Structure table. Passed in rather than string-substituted by
+        the caller, so the two surfaces' reports are generated the same way
+        instead of one being surgery on the other's text.
+        """
+        where = surface or f"{slug}.md's Structure table"
+        lines = [f"{where} has drifted from the form build.py materialized:"]
         if self.missing:
             lines.append(
                 f"  - in the song, missing from the table: "
@@ -82,8 +89,8 @@ class OverviewDrift:
                 f"{db_start:g}"
             )
         lines.append(
-            "  The overview is hand-maintained on purpose (its Feel column is "
-            "yours) — update the table; nothing rewrites it for you."
+            f"  {where} is hand-maintained on purpose — update it there; "
+            f"nothing rewrites it for you."
         )
         return "\n".join(lines)
 
@@ -222,10 +229,8 @@ class FormDrift:
             parts.append(self.overview.describe(slug=slug))
         if self.docstring:
             parts.append(
-                self.docstring.describe(slug=slug).replace(
-                    f"{slug}.md's Structure table",
-                    "build.py's docstring section layout",
-                    1,
+                self.docstring.describe(
+                    slug=slug, surface="build.py's docstring section layout",
                 )
             )
         return "\n".join(parts)
@@ -288,6 +293,13 @@ def warn_on_form_drift(
             build_py_path=song_dir / "build.py",
         )
     except Exception:  # prawduct:allow prawduct/broad-except -- an overview bookkeeping check must never fail the build that ran it; a rotted map is a smaller problem than a build that won't finish
+        # Logged, never silent: the project norm is that a broad catch may
+        # absorb a failure but must not hide it. Without this the check becomes
+        # a permanent no-op indistinguishable from "the surfaces match".
+        logger.warning(
+            "overview drift check failed for %r; the form may have drifted "
+            "without being reported", slug, exc_info=True,
+        )
         return False
     if not drift:
         return False

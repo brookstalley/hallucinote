@@ -25,6 +25,57 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-08-10 — The backlog moves to GitHub Issues, and 225 titles learn a budget
+
+<!-- prawduct: type=chore | scope=backlog-migration -->
+
+The markdown backlog is now frozen history. All **225 items** live in this repo's
+GitHub Issues — 111 live, 114 archived as closed — reached through
+`prawduct-hook backlog <op> --repo brookstalley/hallucinote`. The one key that
+makes it so is `backlog_service_repo` in `project-state.yaml`; setting it is what
+makes `.prawduct/backlog.md` stop being read, which is why it was set only after
+the completeness gate passed.
+
+**The gate is the point, not the count.** `verify-migration --archive-scope all`
+exited 0 with `source_items: 225, aliased: 225` and all five lists empty
+(`missing`, `unaliasable`, `collisions`, `status_mismatch`, `duplicate_alias`).
+A raw issue count would not have been enough: the precedent this gate exists for
+(`samsung-frame-art-loader`) recorded a cutover with 7 of 9 items stranded and
+counts that looked plausible, because natively-filed issues carry a prawduct
+block but no `id:PFX` alias. Coverage of the source set against alias keying is
+the only comparison that holds.
+
+**192 of 225 titles did not conform** to the issue standard's §1 (182 over the
+72-char budget, 127 joining ≥2 claims) and the importer refuses a non-conforming
+corpus before the first write. So the migration carried a reviewed restructure
+plan: every title rewritten atomic and inside budget, `kind` assigned, and the
+111 live items given template body sections derived from their own structure
+(`**Verifiable signal:**` → Acceptance, boundary/NARROWED paragraphs → Scope-out).
+Nothing was paraphrased and every original is preserved verbatim in the issue's
+`original_title:` / `original_body:`.
+
+**Six owner-confirmed dispositions**, applied after the gate because they are
+deliberate divergence from the source and the gate cannot tell that apart from a
+stranded item: `MCP-6B4W` folded into `MCP-7J2Q` (one `run_on_main` timeout
+defect, not two — the `finally` releases the bout lock on the timeout path, which
+falsifies the premise `MCP-7J2Q` built on); `VEW-3M8F`, `INS-6K1T`, `SYN-7T3M`,
+`GEN-2T8M`, `MIG-3T7K` dropped. Two clusters were examined and deliberately NOT
+merged — `ENV-3M7K`/`ENV-4M2T`/`MIX-7K2D` are three mechanisms, and the `ING-*`
+family are intended legs of one design.
+
+Also here: `.prawduct/.handoff-notes.md` is now gitignored alongside its siblings
+(`.session-handoff.md`, `.session-reflected`), which it was missing from — it is
+the same class of ephemeral session channel and should never have been
+committable.
+
+Carried across as disclosed debt, not silently fixed: **32 live items have no
+verifiable signal** and migrated with no Acceptance section (criteria were
+deliberately not invented), and **11 are flagged `non_atomic`** awaiting an owner
+split. Full audit record, including which plugin build ran the scrub:
+`.prawduct/artifacts/migration-scrub-decisions.md`.
+
+**Re-vendor: not required** — no `_FINGERPRINT_PATHS` file is touched.
+
 ## 2026-08-08 — Seven push/sync correctness fixes, six of them reported as OK
 
 <!-- prawduct: type=bugfix | scope=push+arrangement+workspace+device-load | release=v1.8.0 -->

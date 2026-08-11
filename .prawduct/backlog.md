@@ -1,5 +1,53 @@
 # Backlog — Hallucinote
 
+> ## ⚠️ FROZEN HISTORY — this file is no longer the backlog
+>
+> **Cut over 2026-08-10** to GitHub Issues:
+> **<https://github.com/brookstalley/hallucinote/issues>**
+>
+> All 225 items below were migrated (111 live, 114 archived as closed issues) and
+> the completeness gate passed with every source item alias-keyed on the target.
+> `backlog_service_repo` in `.prawduct/project-state.yaml` now points the tooling
+> at Issues. **No backlog read or write goes through this file — do not add items
+> here, and do not edit a status here expecting it to matter.**
+>
+> It is not inert, though, and that is deliberate: this file remains the
+> **migration's source corpus**, so it is what `verify-migration` and any rollback
+> read. Preserve it verbatim.
+>
+> **Which means the three load-bearing backlog norms are still written out below,
+> in the header comment, under a heading that calls them live — and
+> `.prawduct/artifacts/project-preferences.md` § *Backlog norms* is CANONICAL if
+> the two ever differ.** Those rules (the PRC-5W2N ship-stamp rule,
+> verifiable-signal-required, trust-but-verify-on-scrub) were copied there at
+> cutover rather than moved, because "preserve verbatim" and "a live rule cannot
+> live in a dead file" both had to hold. Amend them there, never here: an
+> amendment landing in the copy below would never reach the canonical one.
+>
+> **Read the live backlog with:**
+>
+> ```sh
+> prawduct-hook backlog list  --repo brookstalley/hallucinote
+> prawduct-hook backlog pick  --repo brookstalley/hallucinote
+> prawduct-hook backlog get <PFX> --repo brookstalley/hallucinote
+> ```
+>
+> Each issue carries an `id:<PFX>` label, so the ids used throughout this file
+> (`ARR-PROJ`, `MCP-7J2Q`, …) still resolve — `get`/`link` accept them directly.
+> Archived items are closed issues: reaching them needs `--state closed` or
+> `--state all`, since `list` defaults to open.
+>
+> **Divergence from the tracker is expected, not a bug.** The owner-confirmed
+> scrub dispositions were applied on the tracker *after* this snapshot froze and
+> were deliberately not backported here. So this file still shows as open several
+> items the tracker has closed — `VEW-3M8F`, `INS-6K1T`, `SYN-7T3M`, `GEN-2T8M`,
+> `MIG-3T7K` (dropped) and `MCP-6B4W` (folded into `MCP-7J2Q`). Titles also differ
+> by design: the migration rewrote them to the ≤72-char issue standard, preserving
+> each original verbatim in the issue's `original_title:` field.
+>
+> Why the migration ran, what was decided, and which plugin build performed it:
+> **`.prawduct/artifacts/migration-scrub-decisions.md`**.
+
 <!--
 Migrated 2026-05-29 from the legacy priority-band format (P0–P6) to the
 structured `/backlog` v2 format (id + metadata bar + body). Migration was
@@ -33,7 +81,10 @@ Metadata-bar field legend (canonical /backlog v2 format):
   `refs:` (links to governing requirement/design docs) · `related:` (item→item) ·
   `closes:` (this item supersedes another) · `closed-by:` (the chunk/PR/release
   that shipped this item) · `accepted-by:` (@actor soft claim — someone is working
-  it; cleared on ship/drop).
+  it; cleared on ship/drop) · `revisit:` (expiry clock on a norm exception or
+  stopgap — `YYYY-MM-DD` raises an advisory once past while the item is open, or
+  free-text event-trigger prose the janitor's Norm Health sweep walks; so a
+  temporary non-application of a live norm expires visibly, never silently).
 
 Three canonical sections below: ## Open (pickable) · ## Promoted (in an active
 build plan) · ## Archive (shipped/dropped, kept for search). Items move between

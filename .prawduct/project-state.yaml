@@ -301,6 +301,10 @@ technical_decisions:
       rationale: "The PUB-READY scrub cleaned the tracked tree, not the commits behind it: as of daa9ba6 (develop @ v1.7.1, the last commit before this branch), 17 commits carry absolute home-directory paths and 4 name a private sibling project, one of them holding that project's local source path plus a file inventory. Publishing the repo publishes those commits. Owner accepted the exposure on 2026-08-06: no credentials are involved, the private project's repo URL was already redacted before any of it was written, and stable SHAs are worth more than the residue is worth removing. Recorded here so `we scrubbed it` is never later misread as `it is not in the repo` — the distinction is tree vs history, and only the tree was cleaned. NOTE the count is anchored to a SHA on purpose: `git log <rev> -S'/Users/' --oneline | wc -l` SELF-COUNTS, because the scrub commits and this record are themselves commits containing the string. It reads 17 at daa9ba6, 19 after the scrub, 21 after this entry — re-running it today and comparing against a bare number would look like a regression that never happened. Do not `fix` this by adding a `':!.prawduct/'` pathspec; that returns a different, smaller number and silently measures something else."
       alternatives_considered: "git-filter-repo over all refs before publishing — rejected: it invalidates every open branch and PR, and the residue does not justify that. The window was genuinely cheap only until the first external clone or fork, so this decision is effectively one-way once the repo is public."
       date: "2026-08-06 (PRC-6N2X; from the independent PR review of chore/public-readiness)"
+    - decision: "The backlog of record is GitHub Issues on brookstalley/hallucinote; .prawduct/backlog.md is frozen history (backlog_service_repo cutover)"
+      rationale: "Forced by the plugin: while a structured markdown backlog existed with backlog_service_repo unset, every session raised the backlog-service-migration-required advisory, and a future upgrade retires the shared markdown read path — so the choice was migrate deliberately or be degraded to a zeroed backlog count later. Archive scope was `all` (225 items, not just the 111 live) on a MEASURED basis: 70 of 111 live items (63%) cite at least one archived id, spanning 60 distinct archived items, and under `open` those citations would dangle because no adapter op reads the skipped set. Recorded only after `verify-migration --archive-scope all` exited 0 with all five lists empty (225 source items, 225 aliased) — the gate is what makes the key safe to set, since setting it is what makes the markdown stop being read. Full audit record incl. which plugin build ran it: .prawduct/artifacts/migration-scrub-decisions.md. PUBLISH EXPOSURE: this puts 225 issues carrying candid internal material (owner rulings, Critic findings, dogfood reports) in the repo's Issues — private today, public the moment the repo is, which is the same tree-vs-history exposure question PRC-6N2X answered for commits. Accepted 2026-08-10 on the same basis: no credentials are involved. ROLLBACK IS NOT FREE and takes all three halves — unset the key, close the migrated issues (filter on the `id:` alias namespace; never delete, GitHub does not reuse numbers), and revert backlog.md's frozen-history banner. Skip the third and the restored live backlog announces that it is frozen and redirects to a tracker you just closed. It also silently discards every post-cutover tracker edit and returns the six disposed items to open, because the frozen markdown still records them that way."
+      alternatives_considered: "Stay on markdown — rejected: the advisory is permanent and the read path is scheduled for retirement, so this defers a forced migration into a worse one. Archive scope `open` (111 items, half the title work, ~7min not ~20) — rejected on the 63%-citation measurement above; it is also only nominally reversible, since a later `all` backfill re-syncs status on already-migrated items and would reopen anything closed since cutover. A dedicated backlog repo — rejected: cross-repo links to code for no gain while the repo is private."
+      date: "2026-08-10 (migration-scrub MG4; owner-confirmed target, archive scope and dispositions)"
 
 # =============================================================================
 # DESIGN DECISIONS
@@ -359,7 +363,7 @@ design_decisions:
   accessibility_approach: null
   error_handling_approach: "Plain exceptions (ValueError, KeyError); no custom hierarchy. Broad catches require `# prawduct:ok-broad-except` annotation with rationale; every catch logs context. Narrow carve-out (ONBOARD-M4L): two leaf classes callers catch by identity — `PresetQueryNoMatchError` (device.py) and `AnalyzerNotInstalledError` (analyzer/setup.py); new code still defaults to plain exceptions."
   observability_approach: "The event log IS the audit trail. Every mutator emits an event with actor (in events.ACTORS), reason, request_id, and monotonic seq. No logging frameworks beyond stdlib `logging`. The `requests` table groups events under higher-level intent for cross-mutator correlation."
-  infrastructure_dependencies: "SQLite (embedded, WAL mode) for state. Ableton Live + hallucinote-mcp Remote Script for the rendering engine. No external services. Live-Ableton tests are manual; CI runs against mocked dispatcher tests in hallucinote_mcp/tests/."
+  infrastructure_dependencies: "SQLite (embedded, WAL mode) for state. Ableton Live + hallucinote-mcp Remote Script for the rendering engine. GitHub Issues on brookstalley/hallucinote is the backlog of record since the 2026-08-10 cutover — a real external service dependency, reached via the `gh` CLI (needs `repo` scope + network). It is NOT on the product's runtime path: no shipped code calls it, so a song builds, pushes and renders with GitHub unreachable; what degrades is development workflow (backlog read/write), and `prawduct-hook backlog cache-query` serves the last synced state offline. Live-Ableton tests are manual; CI runs against mocked dispatcher tests in hallucinote_mcp/tests/."
   visual_direction: null
 
 # =============================================================================
@@ -442,6 +446,10 @@ artifact_manifest:
       file_path: .prawduct/artifacts/project-preferences.md
       version: 3
       depends_on: []
+    - name: migration-scrub-decisions
+      file_path: .prawduct/artifacts/migration-scrub-decisions.md
+      version: 1
+      depends_on: [project-preferences]
     - name: boundary-patterns
       file_path: .prawduct/artifacts/boundary-patterns.md
       version: 3
@@ -552,9 +560,12 @@ active_build_plan:
 # =============================================================================
 # SCOPE ROLLUPS (derived view, v1.4+)
 # =============================================================================
-# Auto-generated by `python3 tools/product-hook regen-views` from
-# .prawduct/change-log.md `scope=` tags. Do not hand-edit — edits will be
-# overwritten on next regen.
+# HISTORICALLY auto-generated from .prawduct/change-log.md `scope=` tags. The
+# generator no longer exists: `tools/product-hook` is gone, and its successor
+# `prawduct-hook regen-views` is inert and warns that it will be removed
+# (docs/release-process.md step 3). So nothing overwrites this block — it is now
+# hand-maintained if it is maintained at all, and no command will regenerate it.
+# Do not go looking for the generator; that hunt is why this note is here.
 
 scope_rollups:
   analysis,docs,tests:
@@ -767,8 +778,10 @@ scope_rollups:
 #   * build-plan `## Status` block (checkboxes from `status=shipped` tags)
 #   * `.prawduct/release-notes.md` (from `release=` tags)
 #   * `scope_rollups:` block above (from `scope=` tags)
-# Run `python3 tools/product-hook regen-views` to apply. Set to `false`
-# to opt out.
+# No command applies these any more: `tools/product-hook` is gone and
+# `prawduct-hook regen-views` is inert (see the SCOPE ROLLUPS note above). The
+# release notes ARE the change log, and the `release=` tags set at each cut are
+# the record. Set to `false` to opt out.
 
 views_enabled: true
 
@@ -788,6 +801,20 @@ backlog_format_version: 2
 
 # Stamped by /prawduct:backlog list/pick/triage — resolves the backlog-overdue-grooming advisory.
 backlog_last_groomed_at: 2026-07-04
+
+# THE LIVE BACKLOG. Set at the MG4 migration-scrub cutover 2026-08-10, after
+# `verify-migration` exited 0 with all five lists empty (225 source items, 225
+# aliased). From this point `.prawduct/backlog.md` is FROZEN HISTORY and is no
+# longer read: the backlog lives in this repo's GitHub Issues, reached through
+# `prawduct-hook backlog <op> --repo …`. Decisions + audit record:
+# `.prawduct/artifacts/migration-scrub-decisions.md`.
+#
+# Unsetting this key restores markdown as live, but that is only one of three
+# halves — the migrated issues must also be closed (filter on the `id:` alias
+# namespace; never delete, GitHub does not reuse numbers) and backlog.md's
+# frozen-history banner reverted. Skip the third and the restored backlog
+# announces that it is frozen and redirects to a tracker that is closed.
+backlog_service_repo: brookstalley/hallucinote
 
 # Distribution mode — set by /prawduct:migrate (v2.0.0 plugin cutover).
 # `plugin` tells the legacy file-sync hook to stand down (Chunk 8).

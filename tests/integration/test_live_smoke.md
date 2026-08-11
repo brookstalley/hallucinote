@@ -16,7 +16,8 @@ Smokes here are gates for round-trip reliability — when a Live API behavior is
 
 **Pass criterion.** Reading the same envelope twice in a row returns the same breakpoints both times, identical to what was written.
 
-**Fail criterion.** The second read returns empty / different breakpoints — indicating the first read destroyed (or modified) the envelope. **If this fires**, the read path must switch to **iterate `clip.automation_envelopes` and match by parameter identity** (already noted as the fallback in W6-G's design — see `.prawduct/backlog.md:11`).
+**Fail criterion.** The second read returns empty / different breakpoints — indicating the first read destroyed (or modified) the envelope. **If this fires**, the read path must switch to **iterate `clip.automation_envelopes` and match by parameter identity** (already noted as the fallback in W6-G's design — see `ENV-1T9M`, resolvable with
+`prawduct-hook backlog get ENV-1T9M --repo brookstalley/hallucinote`).
 
 ### Prerequisites
 

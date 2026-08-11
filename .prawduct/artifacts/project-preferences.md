@@ -110,6 +110,7 @@ the norm dying slowly.
 | Close-in-the-same-PR, as ONE ship-stamp commit (PRC-5W2N) | Critic + PR reviewer | Both flag a PR shipping work that matches an open backlog item without closing it | janitor | The git log is the audit trail; three bookkeeping commits scatter one decision across a history nobody can then read back |
 | Every backlog item names a verifiable signal a future scrub can run | Critic | `/prawduct:backlog` add/update review | janitor | An item with no probe is unscrubbable, so it can only ever be re-read rather than re-verified — 32 items migrated at cutover carry this debt |
 | Trust-but-verify on scrub; items older than 30 days are suspect | janitor | Scrub re-reads code against each item, not the item's text | janitor | Tightened from 60d by the 2026-07-02 audit — this repo's velocity made 60d too slow (BLG-7K2Q found 4 of 8 `ready` items already shipped; the 2026-08-10 migration scrub found 2 more) |
+| Committed media under `docs/assets/` stays ≤ 12 MB; tour snippets/mix numbers match their sources verbatim | Test | `tests/preferences/test_tour_freshness.py` | janitor | The repo is public and its history permanent, so media weight is a one-way door; and a worked example that drifts from its source is worse than none (tour-walkthrough-design §Capture tooling 5) |
 
 ### Architectural norms — homed in their artifacts
 

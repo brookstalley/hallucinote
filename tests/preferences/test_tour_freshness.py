@@ -1,0 +1,137 @@
+"""Freshness tests for the tour — a worked example that rots is worse than none.
+
+`docs/tour.md` quotes real artifacts: code snippets from the demo song's
+`build.py`, mix-report numbers from the committed analysis JSONs, and media
+under `docs/assets/`. Each of those claims is locked here so it cannot drift
+quietly.
+
+Design constraints (tour-walkthrough-design.md §Capture tooling item 5, and
+the TOUR build plan's D1 chunk):
+
+- **Assert only over content the test controls** — committed files read by
+  path. No mtimes, no `git log` recency: CI checks PRs out detached, and an
+  ambient-state assertion is green on `push:` and red on `pull_request:`.
+- **Deliberately one-directional.** doc → source is asserted (every quoted
+  snippet appears verbatim in `build.py`); source → doc is NOT, because the
+  tour shows a curated subset by design — the concision rule is the point. A
+  future reviewer applying the repo's usual both-directions rule: this is why
+  this one departs from it.
+"""
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+
+_REPO = Path(__file__).resolve().parents[2]
+_TOUR = _REPO / "docs" / "tour.md"
+_README = _REPO / "README.md"
+_ASSETS = _REPO / "docs" / "assets"
+_BUILD = _REPO / "examples" / "punk-fate" / "build.py"
+_ANALYSIS = _REPO / "examples" / "punk-fate" / "analysis"
+
+# The committed-media byte cap. The evidence budget caps items (4 screenshots
+# · 1 hero · 3 audio clips); this is the missing byte half — the repo is
+# public and its history permanent, so media weight is a one-way door.
+_MEDIA_BUDGET_BYTES = 12 * 1024 * 1024
+
+# A fenced block whose first line is this marker claims its remaining lines
+# appear verbatim in the demo song's build.py.
+_SNIPPET_MARKER = "# examples/punk-fate/build.py"
+
+_FENCE = re.compile(r"```[a-z]*\n(.*?)```", re.DOTALL)
+_ASSET_REF = re.compile(r"\(((?:docs/)?assets/[^)\s]+)\)")
+
+
+def _tour_snippets() -> list[str]:
+    blocks = _FENCE.findall(_TOUR.read_text(encoding="utf-8"))
+    out = []
+    for block in blocks:
+        lines = block.splitlines()
+        if lines and lines[0].strip() == _SNIPPET_MARKER:
+            out.append("\n".join(lines[1:]))
+    return out
+
+
+def test_tour_quotes_at_least_three_build_snippets():
+    """The marker convention only guards blocks that carry it — this guards
+    the convention itself. If a rewrite drops the markers, the verbatim test
+    below would pass vacuously; this one fails instead."""
+    assert len(_tour_snippets()) >= 3, (
+        "docs/tour.md is expected to quote the demo build.py in at least "
+        f"three fenced blocks whose first line is '{_SNIPPET_MARKER}'"
+    )
+
+
+def test_every_quoted_snippet_appears_verbatim_in_build_py():
+    source = _BUILD.read_text(encoding="utf-8")
+    for snippet in _tour_snippets():
+        assert snippet.strip("\n") in source, (
+            "docs/tour.md quotes a snippet that no longer appears verbatim in "
+            f"examples/punk-fate/build.py:\n---\n{snippet}\n---\n"
+            "Update the tour to match the source (never the reverse — the "
+            "source is the truth the tour documents)."
+        )
+
+
+def _referenced_assets(doc: Path) -> set[Path]:
+    text = doc.read_text(encoding="utf-8")
+    refs = set()
+    for ref in _ASSET_REF.findall(text):
+        rel = ref if ref.startswith("docs/") else f"docs/{ref}"
+        refs.add(_REPO / rel)
+    return refs
+
+
+def test_every_referenced_asset_exists():
+    missing = [
+        str(p.relative_to(_REPO))
+        for doc in (_TOUR, _README)
+        for p in sorted(_referenced_assets(doc))
+        if not p.is_file()
+    ]
+    assert not missing, f"referenced media missing from docs/assets/: {missing}"
+
+
+def test_committed_media_stays_under_the_byte_budget():
+    total = sum(p.stat().st_size for p in _ASSETS.iterdir() if p.is_file())
+    assert total <= _MEDIA_BUDGET_BYTES, (
+        f"docs/assets/ holds {total / 1024 / 1024:.1f} MB of committed media; "
+        f"the budget is {_MEDIA_BUDGET_BYTES / 1024 / 1024:.0f} MB. Re-encode "
+        "or drop an asset — do not raise the budget without an owner decision "
+        "(public repo, permanent history)."
+    )
+
+
+def test_readme_has_no_hero_placeholder():
+    assert "HERO:" not in _README.read_text(encoding="utf-8"), (
+        "README.md carries a 'HERO:' placeholder comment — the real hero "
+        "shipped; the placeholder must not return."
+    )
+
+
+def test_quoted_mix_numbers_match_the_committed_reports():
+    """The tour's beat-8/9 story quotes the measured before/after. Recompute
+    those numbers from the committed analysis JSONs and require the tour to
+    carry exactly them."""
+    tour = _TOUR.read_text(encoding="utf-8")
+    reports = sorted(_ANALYSIS.glob("*.json"))
+    assert len(reports) == 2, (
+        f"expected the before and after analysis reports in {_ANALYSIS}, "
+        f"found {[p.name for p in reports]}"
+    )
+    before = json.loads(reports[0].read_text(encoding="utf-8"))
+    after = json.loads(reports[1].read_text(encoding="utf-8"))
+    expectations = [
+        f"+{before['delivered_true_peak_dbtp']:.2f} dBTP",  # +5.51 dBTP
+        f"{len(before['overshoots'])} true-peak overshoots",  # 257
+        f"+{before['delivered_true_peak_dbtp']:.2f} → "
+        f"+{after['delivered_true_peak_dbtp']:.2f} dBTP",  # +5.51 → +1.29
+        f"{len(before['overshoots'])} → {len(after['overshoots'])}",  # 257 → 1
+    ]
+    for expected in expectations:
+        assert expected in tour, (
+            f"docs/tour.md does not carry the measured value {expected!r} "
+            "from the committed analysis reports — the quoted mix numbers "
+            "and the committed evidence have drifted apart."
+        )

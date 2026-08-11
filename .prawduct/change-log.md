@@ -27,7 +27,7 @@
 
 ## 2026-08-11 — Chapter 2: the song goes back into the studio until it sounds punk
 
-<!-- prawduct: type=feature | scope=tour | status=shipped -->
+<!-- prawduct: type=feature | scope=tour | status=shipped | release=v1.8.3 -->
 
 punk-fate passed every meter at the end of chapter 1 and still didn't sound
 like punk. Three re-cuts the same day, each measured, each with its rationale
@@ -108,7 +108,7 @@ no retention lifecycle while `docs/assets/` has two).
 
 ## 2026-08-11 — The tour ships: punk-fate lands in examples/, and the evidence gets teeth
 
-<!-- prawduct: type=feature | chunks=B1,C1,D1 | scope=tour | status=shipped -->
+<!-- prawduct: type=feature | chunks=B1,C1,D1 | scope=tour | status=shipped | release=v1.8.3 -->
 
 The TOUR plan's last three pieces, on `feat/tour-evidence`. The demo song
 punk-fate — authored end-to-end from a one-sentence prompt in a live session —

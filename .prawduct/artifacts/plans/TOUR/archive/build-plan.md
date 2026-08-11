@@ -24,7 +24,13 @@ governed_by:
       - "every new preference gets an enforcement mechanism (Linter | Test | Critic) → conforms (the media budget and snippet-freshness rules each get a test; see D1)"
       - "numbers that drift are not restated in prose; point at the canonical source → conforms (the tour quotes no test counts)"
 last_validated: 2026-08-06
+lifecycle: completed
+archived: 2026-08-11
+released_in: v1.8.3
+maintained: false
 ---
+
+> **Archived — no longer maintained.** This plan records what was built, not what will be. Do not edit it to reflect later changes; write those where they are true.
 
 ## Requirements Confidence
 

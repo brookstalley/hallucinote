@@ -8,6 +8,50 @@ per-fix narratives if you want the deep story behind any entry.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.3] — 2026-08-11
+
+The worked-example release: a real song ships in the repo, and a two-chapter
+walkthrough of how it actually got made. No behavior changes.
+
+### Added
+
+- **A demo song you can rebuild** — [`examples/punk-fate/`](examples/punk-fate/)
+  is Beethoven's Fifth crammed into 115 seconds of basement punk, composed by
+  Claude end-to-end from a one-sentence prompt in a live session.
+  `python examples/punk-fate/build.py` rebuilds its database from a clean
+  checkout with no Ableton Live installed, and CI runs exactly that — so the
+  example can't quietly rot.
+- **[The tour](docs/tour.md)** — that song documented beat by beat, with the real
+  session transcript, screenshots taken while it ran, and the mix numbers the
+  agent measured. **Chapter 1** is the composing session: one prompt to a mixed
+  four-track song in about forty minutes. **Chapter 2** is what happened when
+  somebody listened and said it didn't sound punk — three measured re-cuts
+  covering performance feel, garage-drum vocabulary, gain staging, and finally
+  swapping the synth "vocal" for a second guitar. It ends on something
+  deliberately *not* finished.
+- Every figure the tour quotes is recomputed from committed evidence by tests, so
+  a number that drifts fails the build instead of going quietly stale.
+
+### Changed
+
+- The demo song's overview and `REQUIREMENTS.md` describe the band that's
+  actually playing, and the docs index no longer counts the tour's parts.
+- `docs/song-authoring-conventions.md` now documents the `analysis/` vs
+  `measurements/` split — the log of every mix run versus the specific runs a
+  decision cites.
+- Building the demo song no longer prints a spurious warning about return-track
+  names.
+
+### Fixed
+
+- A test-harness bug where tests that launch a subprocess could exercise a
+  different checkout of Hallucinote than the one under test. It showed up as
+  confusing failures in the `capture` CLI tests when working from a git worktree,
+  and it meant a plain `pytest` couldn't be trusted there.
+
+No re-vendor required — no bridge code changed; the Remote Script handshake is
+unaffected.
+
 ## [1.8.2] — 2026-08-11
 
 The documentation release: the repo gets the public face the code already

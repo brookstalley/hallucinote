@@ -63,17 +63,32 @@ falsifies the premise `MCP-7J2Q` built on); `VEW-3M8F`, `INS-6K1T`, `SYN-7T3M`,
 merged — `ENV-3M7K`/`ENV-4M2T`/`MIX-7K2D` are three mechanisms, and the `ING-*`
 family are intended legs of one design.
 
-**The freeze had to be propagated, not just declared** — the independent review
-found the file still carrying load after being called dead. Three live citations
-pointed into it: `docs/collaboration.md` sent readers there for "the open items",
-and both `docs/release-process.md` and `docs/song-authoring-conventions.md` cited
-its header **rule 1** (the PRC-5W2N ship-stamp rule) as canonical. A live norm
-cannot live in a dead file, so the three load-bearing backlog rules — ship-stamp,
-verifiable-signal-required, and trust-but-verify-on-scrub — moved to a
-**Backlog norms** section in `project-preferences.md`, and all three citations
-now point there. The banner also stops overclaiming: the file is not read for any
-backlog operation, but it remains the migration's source corpus for
-`verify-migration` and rollback, so it must be preserved verbatim.
+**The freeze had to be propagated, not just declared** — the independent reviews
+found the file still carrying load after being called dead. **Eight tracked
+citations pointed into it.** Three were in `docs/` and are fixed here:
+`docs/collaboration.md` sent readers there for "the open items", and both
+`docs/release-process.md` and `docs/song-authoring-conventions.md` cited its
+header **rule 1** (the PRC-5W2N ship-stamp rule) as canonical. A live norm cannot
+live in a dead file, so the three load-bearing backlog rules — ship-stamp,
+verifiable-signal-required, and trust-but-verify-on-scrub — were **copied** to a
+**Backlog norms** section in `project-preferences.md`, which is now canonical, and
+those citations point there. Copied rather than moved because the corpus must stay
+verbatim; the banner names which copy wins so a later amendment cannot land in the
+dead one.
+
+A fourth, `tests/integration/test_live_smoke.md`, cited `backlog.md:11` — a line
+number that was already stale and now resolves to banner prose; repointed at the
+item id. **The remaining three are source citations and are deliberately NOT fixed
+here** — `cost-of-commit` prices those `.py` files `costs-a-round`, so buying a
+full review round for three comment/string edits is the wrong trade. They are
+filed as **#445** (including the sharp one: a *user-facing* MCP error string in
+`handlers/clip.py:358`, and a comment pointing at GEN-2T8M, an item this same
+cutover dropped) to ride the next code chunk. Filed rather than noted, because
+`.handoff-notes.md` is gitignored as of this bundle and would have made it a drop.
+
+The banner also stops overclaiming: the file is not read for any backlog
+operation, but it remains the migration's source corpus for `verify-migration` and
+rollback, so it must be preserved verbatim.
 
 Recorded alongside: `infrastructure_dependencies` no longer claims "No external
 services" (GitHub Issues is one — though not on the product's runtime path: a
@@ -88,7 +103,10 @@ the same class of ephemeral session channel and should never have been
 committable. And the metadata-bar legend gained a `revisit:` row, documenting a
 field that was specified but undocumented; note it describes the format of a file
 that is now history, so its "raises an advisory once past" clock no longer fires
-from here — on the Issues backend that expiry is the service's to enforce.
+from here — and **that expiry currently has no enforcer on the Issues backend
+either**, since the field has no write path there yet (the plugin's
+`probe_revisit_due` stands down post-cutover). Nothing is lost today: no item ever
+carried a clock, so the only `revisit:` in the file is the legend row itself.
 
 Carried across as disclosed debt, not silently fixed: **32 live items have no
 verifiable signal** and migrated with no Acceptance section (criteria were

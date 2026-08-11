@@ -13,12 +13,16 @@
 >
 > It is not inert, though, and that is deliberate: this file remains the
 > **migration's source corpus**, so it is what `verify-migration` and any rollback
-> read. Preserve it verbatim. What it no longer holds is *norms* — the three
-> load-bearing backlog rules that used to live in the header comment (the
-> PRC-5W2N ship-stamp rule, verifiable-signal-required, trust-but-verify-on-scrub)
-> moved to the **Backlog norms** section of
-> `.prawduct/artifacts/project-preferences.md` at cutover, because a live rule
-> cannot live in a dead file.
+> read. Preserve it verbatim.
+>
+> **Which means the three load-bearing backlog norms are still written out below,
+> in the header comment, under a heading that calls them live — and
+> `.prawduct/artifacts/project-preferences.md` § *Backlog norms* is CANONICAL if
+> the two ever differ.** Those rules (the PRC-5W2N ship-stamp rule,
+> verifiable-signal-required, trust-but-verify-on-scrub) were copied there at
+> cutover rather than moved, because "preserve verbatim" and "a live rule cannot
+> live in a dead file" both had to hold. Amend them there, never here: an
+> amendment landing in the copy below would never reach the canonical one.
 >
 > **Read the live backlog with:**
 >

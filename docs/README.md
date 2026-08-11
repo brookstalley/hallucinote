@@ -1,7 +1,8 @@
 # Hallucinote docs
 
-Everything in this directory, grouped by who it's for. Start at the top; the
-further down you go, the more internal it gets.
+Every doc in this directory, grouped by who it's for. Start at the top; the
+further down you go, the more internal it gets. (A parity test keeps this index
+complete — a doc added without a row here fails the suite.)
 
 ## Making music
 
@@ -37,4 +38,5 @@ further down you go, the more internal it gets.
 | [`dev-vs-use-coexistence.md`](dev-vs-use-coexistence.md) | Developing Hallucinote and making music on the same machine |
 | [`polyrhythms.md`](polyrhythms.md) | Design/status of the cross-rhythm detection in mix analysis |
 | [`dubler.md`](dubler.md) | Design note for not-yet-shipped Dubler/MPE pitch round-trip |
+| [`research/`](research/) | Raw research corpus (probe drivers, producer/mastering practice) behind the audio models |
 | [`archive/`](archive/README.md) | Historical docs, preserved for audit |

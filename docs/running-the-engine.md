@@ -56,8 +56,8 @@ WAV per track, return and master, roughly 23 MB per surface-minute, so a
 full-length multi-track song costs gigabytes per take. A rolling window runs
 automatically **at render start**: it keeps the **2 newest takes already on
 disk** and removes the rest, then the render writes its own — so a song settles
-at **3 takes** after each render. (`captures prune --keep 2` run on its own
-leaves 2, because no new take follows it.)
+at **3 takes** after each render. (`captures prune --song <slug> --keep 2` run
+on its own leaves 2, because no new take follows it.)
 
 Deleting an old take is safe because the durable measurement is the MixReport
 in `songs/<slug>/analysis/` — analysis reads a take once and writes a

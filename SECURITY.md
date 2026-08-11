@@ -78,5 +78,6 @@ port, or that the installer writes into your own Live installation.
   supported configuration.
 - Hallucinote sends no telemetry and makes no outbound network calls of its own.
 - A song's SQLite database and its captures are regenerable build artifacts and are
-  gitignored by default; `hallucinote init-workspace` sets that up. If you commit
+  gitignored by default; the workspace setup (ask Claude to *"set up a songs
+  workspace"*) writes that `.gitignore`. If you commit
   them anyway, be aware they carry absolute paths from your machine.

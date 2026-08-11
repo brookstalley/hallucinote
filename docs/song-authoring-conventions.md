@@ -57,7 +57,7 @@ with M.build_session(conn, song_name="<slug>", owner="build.py"):
 ```
 
 This buys:
-- **Idempotency**: re-running `python songs/<slug>/build.py` (no `--reset`) is a no-op if nothing in build.py changed. Re-runs produce zero net state-change events.
+- **Idempotency**: re-running `build.py` (no `--reset`; invocation in [`running-the-engine.md`](running-the-engine.md)) is a no-op if nothing in build.py changed. Re-runs produce zero net state-change events.
 - **Tombstoning**: any row that build owned on a previous run but isn't touched this run gets deleted automatically. Pulled rows (actor='sync'), LLM-authored rows (actor='llm'), and generator-authored rows survive.
 - **Per-branch DB filename**: branch switches pick up the right DB silently (no `--reset` ceremony when switching to a feature branch).
 

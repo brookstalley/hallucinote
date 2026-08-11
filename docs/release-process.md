@@ -134,17 +134,30 @@ Record the verdict in the release commit body and the change-log entry as
 **`Re-vendor: required`** or **`Re-vendor: not required`**, so consumers know without
 having to diff.
 
-### 6. Commit the release on `develop` and push
+### 6. Distill the public CHANGELOG entry
+
+`CHANGELOG.md` is the **public** release record — the file README sends users to
+— and its header promises it is distilled at release time from the internal
+change-log. Keep that promise here, at the cut, or it strands again (it sat two
+minors stale between v1.6.0 and v1.8.0 precisely because no step owned it):
+
+- Write a `## [vNEW] — YYYY-MM-DD` section at the top: user-facing
+  Added/Fixed/Changed entries distilled from this release's change-log clusters.
+  Translate away chunk ids and backlog ids; write for someone *using* Hallucinote.
+- Carry the step-5 verdict as an **Upgrade note** whenever the re-vendor is
+  required — that is the consumer-facing fact of the release.
+
+### 7. Commit the release on `develop` and push
 
 ```sh
 git add pyproject.toml hallucinote_mcp/pyproject.toml src/hallucinote/__init__.py \
         .claude-plugin/plugin.json .prawduct/change-log.md .prawduct/project-state.yaml \
-        .prawduct/release-notes.md docs/engine-pin.md
+        .prawduct/release-notes.md docs/engine-pin.md CHANGELOG.md
 git commit -m "chore(release): vNEW — <headline>"   # body: clusters + Re-vendor verdict
 git push origin develop
 ```
 
-(These eight files plus `uv.lock` are the canonical release fileset. The first three
+(These nine files plus `uv.lock` are the canonical release fileset. The first three
 are the lockstep product-version surfaces from step 2 beyond `plugin.json`. `uv.lock`
 **does** record the workspace members' versions — a bump without a re-lock leaves the
 lock stale, and the plugin launches with `uv run --frozen`, which uses the lock as-is.
@@ -155,7 +168,7 @@ lock still recording 0.9.0. CI now enforces `uv lock --check` on every push/PR t
 `develop` and `main` (`.github/workflows/ci.yml`), so a stale lock can no longer
 reach a release unnoticed.)
 
-### 7. Promote `develop` → `main`
+### 8. Promote `develop` → `main`
 
 `main` accumulates only merge commits, so it diverges from `develop` by the historical
 release-merge commits (none introduce unique file content — verify with
@@ -171,7 +184,7 @@ git push origin main
 A merge-tree dry-run (`git merge-tree $(git merge-base main develop) main develop`)
 should show no conflicts — `develop` is strictly ahead in file content.
 
-### 8. Tag the merge commit and return to `develop`
+### 9. Tag the merge commit and return to `develop`
 
 Tags are **annotated** and sit on the **`main`-side merge commit** (not the
 `chore(release)` commit) — matching every prior `vX` tag:
@@ -191,7 +204,7 @@ back-merge introduces no file content — `develop` is strictly ahead in content
 it only reconciles history so `git rev-list --left-right --count main...develop`
 reads `0 <N>` instead of `<releases> <N>`.
 
-### 9. Verify
+### 10. Verify
 
 ```sh
 git rev-list --count origin/main..develop        # 0 — develop fully promoted
@@ -326,6 +339,7 @@ env, one source. See [`docs/engine-pin.md`](engine-pin.md).
 - [ ] `prawduct-hook regen-views` run; `release-notes.md` `## vNEW` lists all clusters
 - [ ] `engine-pin.md` Engine + Plugin rows bumped
 - [ ] **Re-vendor verdict computed (step 5) and recorded in the release commit + notes**
+- [ ] `CHANGELOG.md` `## [vNEW]` entry distilled (step 6), upgrade note if re-vendor required
 - [ ] `chore(release): vNEW` committed + pushed to `develop`
 - [ ] `develop`→`main` `--no-ff` merge pushed
 - [ ] annotated `vNEW` tag on the merge commit pushed

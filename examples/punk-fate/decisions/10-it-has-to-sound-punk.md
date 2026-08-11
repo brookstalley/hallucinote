@@ -86,15 +86,25 @@ ceiling now lives on a device that can be read back honestly.
 | pre-fader bus overshoots | 2–4 | **0** |
 | findings | 1 (`info`) | **0** |
 | sections analyzed | 8 | **8** |
-| guitar spectral centroid | 481 Hz | **604 Hz** |
-| guitar spectral flatness | 0.117 | **0.156** |
-| master spectral flatness | 0.158 | **0.192** |
+| guitar spectral centroid | 752 Hz | **604 Hz** |
+| guitar spectral flatness | 0.083 | **0.156** |
+| master spectral flatness | 0.191 | **0.192** |
 
 Flatness is the one worth reading twice: it rises as a signal moves from tone
-toward noise. The guitar's went up ~33 % and the master's ~21 % **with zero
-overshoots and 2 dB more delivered level** — which is the measurable shape of
+toward noise. The guitar stem's **nearly doubled** (0.083 → 0.156) **with zero
+overshoots and ~1.7 dB more delivered level** — which is the measurable shape of
 "noisier and louder at the same time," and the thing every previous pass traded
-away. Evidence: `measurements/2026-08-11-sound-punk-full-song.json`.
+away. The *master's* flatness barely moved here (0.191 → 0.192): at the bus, the
+square-wave voice still dominated the noisiness budget, and that is the number
+[[11-the-vocal-line-is-a-lead-guitar]] finally moved. Evidence:
+`measurements/2026-08-11-punk-pass-full-song.json` (before) and
+`measurements/2026-08-11-sound-punk-full-song.json` (after).
+
+**Corrected against the committed evidence, post-review.** This table
+originally quoted its before-column as 481 Hz / 0.117 / master 0.158 — figures
+read from the in-session v1 analysis, which was taken while the drum-bus Glue
+was accidentally missing and was superseded by the committed captures. The
+numbers above are the ones this record's own evidence files carry.
 
 ## The rule this pass earns
 

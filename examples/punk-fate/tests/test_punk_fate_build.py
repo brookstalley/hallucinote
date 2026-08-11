@@ -176,7 +176,7 @@ def test_no_note_sounds_past_its_own_retrigger(build_module):
     try:
         offenders = []
         for track in Q.get_tracks_for_song(conn, song_id):
-            for clip in Q.get_clips_for_track(conn, clip_track := track["id"]):
+            for clip in Q.get_clips_for_track(conn, track["id"]):
                 by_pitch: dict[int, list[tuple[float, float]]] = {}
                 for note in Q.get_notes_for_clip(conn, clip["id"]):
                     by_pitch.setdefault(note["pitch"], []).append(

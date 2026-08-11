@@ -463,19 +463,19 @@ mid-forward, pedal drive to **42 %**, the hidden room dialed nearly dry, drums u
 **11 dB** — affordable because the master finally got what three passes of
 pulling faders down had been substituting for: a **Glue Compressor into a
 Limiter**. Punk loudness comes from glue and clipping, not politeness.
-Measured, full song: **−0.34 dBTP delivered, 0 overshoots**, guitar spectral
-flatness up a third — noisier *and* louder, the trade every earlier pass had
-gotten backwards. The rule it earns: **a preset name is a claim, not a
-measurement** — after loading a chain, read back the parameters that carry
-the intent.
+Measured, full song: **−0.34 dBTP delivered, 0 overshoots**, and the guitar
+stem's spectral flatness nearly doubled, **0.083 → 0.156** — noisier *and*
+louder, the trade every earlier pass had gotten backwards. The rule it earns:
+**a preset name is a claim, not a measurement** — after loading a chain, read
+back the parameters that carry the intent.
 
 ## 15 · The vocal line is a lead guitar now
 
 One synthetic thing remained. *"The voice patch is still very main street
 electrical parade … it's the timbre that's very beep beep beep bloop."* The
 measured tell had been there the whole time: the Voice stem's spectral
-centroid sat at **2112 Hz** while every other part in the band sat at
-75–604 Hz — a separate, obviously-electronic object floating on top.
+centroid sat at **2125 Hz** while every other part in the band sat at
+77–604 Hz — a separate, obviously-electronic object floating on top.
 
 Chapter 1's formant argument for a square wave (it sits where a shouted
 vocal sits) was *correct about frequency range and still wrong about genre* —
@@ -488,8 +488,9 @@ slapback sends cut back hard
 The preset lied *again* — "Heavy" loaded as mid-gain `Rock` — and was caught
 in one `get_parameters` call this time, because beat 14's rule was already
 filed. The swap moved master spectral flatness **0.192 → 0.247**, the single
-biggest jump in noisiness of any pass on this song, with the other three
-stems unchanged to three decimals. The track is still named `04 Voice`: the
+biggest jump in noisiness of any pass on this song, while the other three
+stems' flatness moved by at most 0.001 — confirming the teardown disturbed
+nothing else. The track is still named `04 Voice`: the
 *role* is unchanged, and the name records the part's function while the
 decision records its instrument.
 
@@ -511,10 +512,10 @@ playing through Live, queued mid-capture, verbatim:
 
 > oh that's great. chef's kiss, thumbs up.
 
-The two tone passes together moved master spectral flatness **0.158 → 0.247**
-(the measured shape of "noisier"), delivered true peak landed at **−0.40 dBTP
-with zero overshoots**, and all four parts read **human** on the performance
-lens.
+The tone passes moved master spectral flatness **0.191 → 0.247** (the
+measured shape of "noisier" — and almost all of it came from retiring the
+square wave), delivered true peak landed at **−0.40 dBTP with zero
+overshoots**, and all four parts read **human** on the performance lens.
 Every number ships next to the song in
 [`measurements/`](../examples/punk-fate/measurements/), each cited by the
 decision that acted on it.

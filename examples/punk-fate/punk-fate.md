@@ -95,9 +95,10 @@ electronic trumpet". Nothing was broken; every chain had been chosen by preset
   faders down, which is what made the record polite.
 
 Measured full-song after: **−0.34 dBTP delivered, 0 overshoots, 0 findings**,
-8/8 sections, with guitar spectral flatness 0.117 → **0.156** and master
-0.158 → **0.192** — noisier *and* louder, which is the trade every earlier pass
-had gotten backwards.
+8/8 sections, with guitar-stem spectral flatness nearly doubled, 0.083 →
+**0.156** — noisier *and* louder, which is the trade every earlier pass had
+gotten backwards. (The master's flatness barely moved in this pass; the
+square-wave voice still dominated the bus, which is what the next pass fixed.)
 
 Then the last synthetic thing in the band went: the Operator square lead that had
 been standing in for the vocal read as *"main street electrical parade — beep
@@ -108,8 +109,8 @@ slapback sends cut roughly in half. The formant argument that picked a square
 wave in the first place was right about frequency range and wrong about genre.
 Voice-stem spectral flatness **0.110 → 0.147**, master **0.192 → 0.247** — the
 biggest single jump in noisiness of any pass on this song, at
-**−0.40 dBTP, 0 overshoots, 0 findings**, with the other three stems unchanged to
-three decimals.
+**−0.40 dBTP, 0 overshoots, 0 findings**, with the other three stems' flatness
+moved by at most 0.001.
 
 The concept line above still says "a staccato mono-synth singing the vocal line."
 That was true of the song for two days and is kept here as history; the band is

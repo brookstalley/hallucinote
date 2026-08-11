@@ -135,8 +135,8 @@ def test_committed_media_matches_the_evidence_manifest():
     assert not stray and not missing, (
         f"docs/assets/ diverges from the tour's evidence manifest — "
         f"stray: {sorted(stray)}, missing: {sorted(missing)}. The manifest "
-        "in this test is the item cap (4 screenshots · 1 hero · 3 clips, "
-        "each clip and the hero with its still); adding media is a conscious "
+        "in this test is the item cap, accounted per editing session (see "
+        "the comment on _EXPECTED_ASSETS); adding media is a conscious "
         "edit to the manifest, not a drive-by."
     )
 
@@ -156,6 +156,62 @@ def test_readme_has_no_hero_placeholder():
         "README.md carries a 'HERO:' placeholder comment — the real hero "
         "shipped; the placeholder must not return."
     )
+
+
+def _measurement(name: str) -> dict:
+    path = _REPO / "examples" / "punk-fate" / "measurements" / name
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _stem(report: dict, surface_name: str) -> dict:
+    for stem in report["stems"]:
+        if stem["surface_name"] == surface_name:
+            return stem
+    raise AssertionError(f"no stem named {surface_name!r} in the report")
+
+
+def test_quoted_chapter2_numbers_match_the_committed_measurements():
+    """Chapter 2 closes on "every number ships next to the song in
+    `measurements/`" — so recompute the chapter's quoted figures from those
+    committed JSONs and require the tour to carry exactly them. This lock
+    exists because chapter 2's "before" figures once shipped from a
+    superseded in-session analysis run (taken while a deleted drum-bus
+    device invalidated the render) instead of from the committed captures —
+    the chapter-1 lock above not covering chapter 2 is exactly how that got
+    through."""
+    tour = _TOUR.read_text(encoding="utf-8")
+    punk = _measurement("2026-08-11-punk-pass-full-song.json")
+    sound = _measurement("2026-08-11-sound-punk-full-song.json")
+    lead = _measurement("2026-08-11-lead-guitar-full-song.json")
+
+    def flat(report: dict) -> str:
+        return f"{report['master']['timbre']['spectral_flatness']:.3f}"
+
+    def dbtp(value: float) -> str:
+        return f"{value:.2f}".replace("-", "−") + " dBTP"
+
+    expectations = [
+        # beat 14 — the guitar stem's flatness jump, before → after
+        f"**{_stem(punk, '03 Guitar')['timbre']['spectral_flatness']:.3f} → "
+        f"{_stem(sound, '03 Guitar')['timbre']['spectral_flatness']:.3f}**",
+        # beat 14 — the sound pass's delivered peak (fader at unity, so the
+        # bus true peak IS the delivered figure; decision 10 records why)
+        dbtp(sound["master"]["loudness"]["true_peak_dbtp"]),
+        # beat 15 — the square lead's spectral-centroid tell
+        f"**{round(_stem(sound, '04 Voice')['timbre']['spectral_centroid_hz'])} Hz**",
+        # beat 15 — master flatness, square lead → lead guitar
+        f"**{flat(sound)} → {flat(lead)}**",
+        # beat 16 — master flatness across the tone passes
+        f"**{flat(punk)} → {flat(lead)}**",
+        # beat 16 — the final delivered true peak
+        dbtp(lead["delivered_true_peak_dbtp"]),
+    ]
+    for expected in expectations:
+        assert expected in tour, (
+            f"docs/tour.md does not carry the measured value {expected!r} "
+            "from the committed chapter-2 measurement JSONs — the quoted "
+            "numbers and the committed evidence have drifted apart."
+        )
 
 
 def test_quoted_mix_numbers_match_the_committed_reports():

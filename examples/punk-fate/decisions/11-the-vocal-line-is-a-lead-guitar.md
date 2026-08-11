@@ -28,7 +28,9 @@ in the right frequency range makes a sound *legible* as a vocal line; it does no
 make it sound like a person, and a stable square wave with 33 ms glide reads as a
 synth lead — which in a punk record is a genre error, not a timbre nuance. The
 measured tell was there the whole time: the Voice stem's spectral centroid was
-**2112 Hz** while every other part sat at 75–604 Hz. Nothing else in the band was
+**2125 Hz** while every other part sat at 77–604 Hz (committed:
+`measurements/2026-08-11-sound-punk-full-song.json`; an earlier draft quoted
+2112 Hz from the superseded in-session v1 analysis). Nothing else in the band was
 anywhere near it, so it floated on top as a separate, obviously-electronic
 object.
 
@@ -98,9 +100,10 @@ Flatness is the number that answers "beep beep bloop": it rises as a signal
 moves from pure tone toward noise, and a square wave is about as tonal as a
 synthesised sound gets. The Voice stem's went up a third, and it dragged the
 whole master up 29 % with it — **the single biggest jump in noisiness of any
-pass on this song**, larger than the entire dirt pass in [[09-the-dirt]]. Drums,
-bass and rhythm guitar are unchanged to three decimal places, which confirms
-nothing else was disturbed by the teardown. Evidence:
+pass on this song**, larger than the entire dirt pass in [[09-the-dirt]]. The
+drums, bass and rhythm-guitar stems' flatness moved by at most 0.001 (the
+guitar's third decimal shifts, 0.1557 → 0.1545), which confirms nothing else
+was disturbed by the teardown. Evidence:
 `measurements/2026-08-11-lead-guitar-full-song.json`.
 
 ## Still open

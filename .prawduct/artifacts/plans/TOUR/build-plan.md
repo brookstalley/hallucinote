@@ -64,7 +64,7 @@ decision before A1 starts — Phase A is fully specified.
 - [x] Chunk A2: Deterministic Ableton screenshot capture
 - [x] Chunk A3: Media encode — audio clips, waveform stills, hero post, and the GitHub-video probe
 - [x] Chunk A4: One lifecycle diagram, light/dark aware
-- [ ] Chunk B1: The `examples/` workspace and the demo song
+- [x] Chunk B1: The `examples/` workspace and the demo song
 - [ ] Chunk C1: Capture the evidence from the finished set
 - [ ] Chunk D1: `docs/tour.md`, the README graft, and the freshness tests
 Context: Plan authored 2026-08-06 against `tour-walkthrough-design.md`, on

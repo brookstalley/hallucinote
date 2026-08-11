@@ -89,16 +89,29 @@ The handshake `BASE_VERSION` is **not** one of these — it is the wire-protocol
 deliberately decoupled from the product version (see
 [§Version surfaces](#version-surfaces) and step 5).
 
-### 3. Regenerate derived views
+### 3. Archive the plans this release shipped
+
+**There are no derived views to regenerate.** `prawduct-hook regen-views` is inert
+and warns that it will be removed — build-plan `## Status` boxes are ticked by hand
+(nothing overwrites them), and the release notes ARE the change log. Do not
+hand-write `.prawduct/release-notes.md` to compensate; the `release=vNEW` tags you
+set in step 1 are the record.
+
+What this step *is*, on gitflow: the plans whose scopes this release just tagged
+have been retained live since their feature merges, and now retire.
 
 ```sh
-prawduct-hook regen-views
+prawduct-hook plan-backfill --apply
 ```
 
-Rewrites three derived surfaces from the change-log `release=` tags (never hand-edit
-them): `.prawduct/release-notes.md`, the `scope_rollups:` block in `project-state.yaml`,
-and each build plan's `## Status`. Confirm the new `## vNEW` section in
-`release-notes.md` lists **every** cluster you tagged.
+It archives every plan whose scope the release tagged. Then clear
+`active_build_plan` in `project-state.yaml` if it names one that just archived —
+leave it **empty**, never the literal `null` (the pointer reader treats the
+post-colon text as a path, so `null` resolves to `.prawduct/null` and mis-fires the
+missing-build-plan advisory).
+
+Verify with `prawduct-hook check-releasability --release vNEW` — it should report
+`releasable` with no pending scopes.
 
 ### 4. Update the engine-pin row
 

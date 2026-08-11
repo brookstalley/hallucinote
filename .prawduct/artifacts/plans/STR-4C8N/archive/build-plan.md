@@ -20,7 +20,13 @@ governed_by:
       - "numbers that drift are not restated in prose → conforms"
 Critic mode: cumulative-final
 last_validated: 2026-08-10
+lifecycle: completed
+archived: 2026-08-11
+released_in: v1.8.0
+maintained: false
 ---
+
+> **Archived — no longer maintained.** This plan records what was built, not what will be. Do not edit it to reflect later changes; write those where they are true.
 
 ## Requirements Confidence
 
@@ -75,7 +81,18 @@ fixture: a chorus flanger declared to give a mono guitar chain stereo, whose
 `L−R = −180 dB` (bit-exact mono). Cause was `Mod Phase 0.0°`. Every symbolic and
 API-level check passed; only rendered-audio measurement caught it.
 
-### Disposition: the QLT-3D8R analyzer-freeze — RECORDED, NOT RESOLVED
+### Disposition: the QLT-3D8R analyzer-freeze — RULED 2026-08-10: INAPPLICABLE
+
+> **OWNER RULING (2026-08-10, brookstalley).** The freeze is **inapplicable to
+> this plan** and v1.8.0 ships the stereo lens on that ruling. The owner accepted
+> the agent's read below: the freeze's rationale is unvalidated measurement
+> *compounding*, and this lens emits no findings and no grades. Neither remedy
+> was taken. **Narrow scope:** the ruling covers STR-4C8N only — **STR-9P4M**
+> (the aesthetic, intent-graded sibling) is NOT covered and stays frozen. The
+> standing guidance is reconciled from "no new analysis lenses" to **no new lens
+> that GRADES or COACHES**. The listening day is still owed; QLT-3D8R stays open,
+> and `CORRELATION_ABS_THRESHOLD` + `SIGNIFICANCE_STEREO` remain uncalibrated on
+> AUD-TIMBRE-CALIB. The section below is preserved as the pre-ruling record.
 
 **QLT-3D8R** carries a dated, user-owned hold from the 2026-07-02 audit: *hold
 the listening day before shipping another analyzer*, target on/before

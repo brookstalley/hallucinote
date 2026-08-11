@@ -25,9 +25,66 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-08-08 — Seven push/sync correctness fixes, six of them reported as OK
+
+<!-- prawduct: type=bugfix | scope=push+arrangement+workspace+device-load | release=v1.8.0 -->
+
+Reconstructed at release time from commit bodies: this cluster reached `main` in
+`53c7014` with no change-log entry, so it was invisible to the release flow until
+an `origin/main..develop` audit found it. The unifying defect is not in any one
+fix — **six of the seven reported success while doing the wrong thing**, which is
+the class of failure that costs the most to find.
+
+- **The devices phase doubled every FX chain and said `23/23 ok`.** `push_cli
+  execute` never reconciled DB↔Live device links — `probe_and_link` does that
+  binding but runs only in its own subcommand — so the planner saw "no
+  `ableton_links` row" and concluded "not in Live" for a chain sitting right
+  there. Live 12.4 has no reorder API, so every emitted `load` tail-appended: on
+  `the-argument`, all eighteen post-instrument effects across nine tracks were
+  duplicated in one push, and the mix was rendered and *measured* through doubly
+  distorted guitars.
+- **An unreadable arrangement lane was treated as a benign warning.** `push
+  execute --only arrangement --probe` reported `97/97 ok` / exit 0 while Lead Gtr
+  lost all three placements and kept an orphan clip at beat 0 — the stem rendered
+  −180 dBFS. The integrity assert that should have caught it re-probed the same
+  lane, hit the same failure, and filed everything under `probe_failed`, which
+  corruption detection deliberately excludes: the one signal that could have
+  caught it was blinded by the failure it was meant to report. `lane_probe_failed`
+  is now a distinct, corrupting outcome.
+- **Arrangement silently no-opped on a first push and said OK.** The lane probe
+  ran before the phase loop, keyed by Live track index — but a first push
+  *creates* those tracks, so the map described the scaffold's lanes 1–4 while the
+  song's tracks landed at 5–13. Every track read as "probe failed" and the planner
+  correctly refused to touch an unknown lane. The probe is now a thunk resolved
+  inside the phase; and a phase carrying blocked reasons is `incomplete`, not
+  `skipped (idempotent)` — non-zero exit, reasons verbatim.
+- **A browser load changed two chains instead of one.** `browser.load_item` takes
+  no destination; Live aims it from view state, which has two halves, and the
+  handler moved only the Session selection. Selecting the master moves that
+  selection off the track list entirely, so the Detail pane stayed bound to the
+  previously focused track and a master Shifter+Limiter load appended both to
+  track 3 as well. The post-condition re-read only the chain it aimed at, so it
+  could not see the stray. Loads are now bracketed by a full-session device
+  census.
+- **A slug resolved to the nearest workspace, not the one holding it.** The
+  framework repo ships a demo workspace at `examples/`, so a session rooted there
+  — the normal setup — found exactly one marker below, took it as unambiguous,
+  and resolved *every* slug into the demo workspace. Renders wrote captures into
+  the wrong tree; analysis, which has no `output_dir` escape hatch, hard-failed
+  on songs that existed all along. Inference now asks which workspace HOLDS the
+  song and only tiebreaks on nearness.
+- **A locate was not settled before the transport rolled.** Live applies a locate
+  asynchronously, so when the `record_mode` settle happened to return fast,
+  playback started from the old position — an 8-beat arc at 96..104 became a
+  104-beat journey that blew a budget sized for the span, while the operator
+  heard the pass start in the wrong place.
+- **Docs:** `snapshot-schema.md` called master automation an unbuilt surface;
+  ENV-7G4K and ENV-9P4T had shipped the route before that line was written.
+  MAW-4K7P is a *fidelity* gap (lossless `.als` write), not an authorability one.
+
 ## 2026-08-10 — Four scopes were invisible to the release flow, and the convention that hid them
 
-<!-- prawduct: type=bugfix | scope=release-bookkeeping -->
+<!-- prawduct: type=bugfix | scope=release-bookkeeping | release=v1.8.0 -->
 
 **Whoever cuts the next release should read this before assuming the pending set
 is what it was.** Four entries just became visible that were not before.
@@ -60,7 +117,7 @@ the generic filename uncontended while several plans are live at once.
 
 ## 2026-08-10 — Stereo as a measured lens: correlation, mono-sum, and width that reads as a no-op
 
-<!-- prawduct: type=feature | chunks=A1,A2,A3 | scope=str-4c8n | status=shipped -->
+<!-- prawduct: type=feature | chunks=A1,A2,A3 | scope=str-4c8n | status=shipped | release=v1.8.0 -->
 
 A `MixReport` that could not see whether a part was actually in stereo, and an
 automation verifier that called a working comb filter unrealized. Both were found
@@ -152,7 +209,7 @@ and no-op failures, which is a different question from taste.
 
 ## 2026-08-07 — `/song-brief`: a stage may not emit an unresolved gap
 
-<!-- prawduct: type=feature | scope=song-lifecycle | status=shipped -->
+<!-- prawduct: type=feature | scope=song-lifecycle | status=shipped | release=v1.8.0 -->
 
 A new lifecycle **stage 0**, `/song-brief`, in front of `/song-new`, plus a
 **definition of done for every authoring stage**. The rule both serve: *a stage
@@ -217,7 +274,7 @@ instructions string and `resources/` are both outside `_FINGERPRINT_PATHS`, so
 
 ## 2026-08-07 — Six defects the demo song found by actually being rebuilt
 
-<!-- prawduct: type=bugfix | chunks=B1 | scope=tour+push+workspace+db-converger | status=shipped -->
+<!-- prawduct: type=bugfix | chunks=B1 | scope=tour+push+workspace+db-converger | status=shipped | release=v1.8.0 -->
 
 Building `examples/angle-of-the-light` end to end surfaced six framework defects.
 Every one was found by *reproducing from scratch* — pushing into an empty Live set,
@@ -300,7 +357,7 @@ Suite 4830 -> 4865 passing across the batch; ruff and mypy clean.
 
 ## 2026-08-06 — The tour's capture tooling, built against probes that kept saying no
 
-<!-- prawduct: type=feature | chunks=A2,A3,A4 | scope=tour | status=shipped -->
+<!-- prawduct: type=feature | chunks=A2,A3,A4 | scope=tour | status=shipped | release=v1.8.0 -->
 
 Three chunks of Phase A tooling, and all three had the mechanism their plan specified
 falsified by the verify-api probe that plan required first. That is the whole story of
@@ -349,7 +406,7 @@ test, not a comment.
 
 ## 2026-08-06 — Session transcripts become publishable, behind a gate that fails closed
 
-<!-- prawduct: type=feature | chunks=A1 | scope=tour | status=shipped -->
+<!-- prawduct: type=feature | chunks=A1 | scope=tour | status=shipped | release=v1.8.0 -->
 
 `tools/tour_transcript.py` renders a real Claude Code session JSONL into a markdown
 excerpt fit to publish, so the tour quotes genuine agent output instead of a hand-written

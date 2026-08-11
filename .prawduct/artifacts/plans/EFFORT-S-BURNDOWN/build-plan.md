@@ -292,7 +292,7 @@ would unblock it**, so the burndown leaves no silent residue.
 - [x] Chunk 9 — dispositions for the 10 non-buildable items
 
 **Context:** branch created from `develop` at `aa682e1`. Baseline 4986 passed /
-2 skipped; final 5047 passed / 2 skipped. **All nine chunks shipped.**
+2 skipped; final 5052 passed / 2 skipped. **All nine chunks shipped.**
 
 Review history: a cumulative after chunks 1-3 (0 blocking), a cumulative after
 chunks 4-9 (2 blocking, 9 warning, 16 note), then four `verify-resolutions`

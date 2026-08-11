@@ -112,8 +112,12 @@ leave it **empty**, never the literal `null` (the pointer reader treats the
 post-colon text as a path, so `null` resolves to `.prawduct/null` and mis-fires the
 missing-build-plan advisory).
 
-Verify with `prawduct-hook check-releasability --release vNEW` — it should report
-`releasable` with no pending scopes.
+Also write the **release-plan artifact** `check-releasability` requires:
+`.prawduct/artifacts/release-plan-vNEW.md`, carrying a `## Release
+classification` table that dispositions every release-pending scope (use the
+previous release's as the template). Then verify with `prawduct-hook
+check-releasability --release vNEW` — it should report `releasable` with no
+pending scopes.
 
 ### 4. Update the engine-pin row
 

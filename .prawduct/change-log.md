@@ -27,7 +27,7 @@
 
 ## 2026-08-11 — The documentation gets scrubbed for release, and the README learns to be read
 
-<!-- prawduct: type=chore | scope=release-readiness -->
+<!-- prawduct: type=chore | scope=release-readiness | status=shipped | release=v1.8.2 -->
 
 A full release-readiness pass over the public documentation surface, driven by a
 critical audit (gaps, staleness, audience mixing, onboarding friction) and a
@@ -73,7 +73,7 @@ as #449). Independent PR review: 0 blocking.
 
 ## 2026-08-10 — The direction this project already had, written down where it binds
 
-<!-- prawduct: type=chore | scope=norm-ratification -->
+<!-- prawduct: type=chore | scope=norm-ratification | status=shipped | release=v1.8.2 -->
 
 Twenty-seven norms were ratified into `## Direction` sections across six strategy
 artifacts, and the Enforcement table in `project-preferences.md` became the norm index it

@@ -8,6 +8,28 @@ per-fix narratives if you want the deep story behind any entry.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.2] — 2026-08-11
+
+The documentation release: the repo gets the public face the code already
+earned. No behavior changes.
+
+### Changed
+
+- **README rebuilt for reading** — what it is, what you can do, how to use it,
+  where to learn more — with a real captured hero image: the README's own
+  example prompt (punk-fate) composed from scratch in a live session, beside
+  the finished arrangement it built.
+- **This changelog is maintained again**, with entries back-filled through
+  1.8.1, and the release process now owns keeping it current at every cut.
+- **Docs got an audience index** (`docs/README.md`), enforced by tests; known
+  issues split to their own page with workarounds; quickstart and FAQ now teach
+  the pull → bake → build loop; every command the docs tell you to run has been
+  verified runnable from a fresh marketplace install.
+- Governance: the project's norm registry was ratified (27 norms) — internal,
+  but it rides this tag.
+
+No re-vendor required — no bridge code changed.
+
 ## [1.8.1] — 2026-08-10
 
 Internal housekeeping; no behavior changes.

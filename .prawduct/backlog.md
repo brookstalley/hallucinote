@@ -1170,6 +1170,27 @@ sections only via explicit `/backlog update` calls.
 
   **Verifiable signal:** with WSP-8Q4M fixed (or a single DB pinned via an explicit path), a rebuild that changes one clip's pitches followed by `push-notes --changed` reports `pushed: 1` for exactly that clip, and a `get_notes` probe of the corresponding Live clip matches the DB — and conversely, a `--changed` run reporting `pushed: 0` leaves every probed Live clip byte-identical to before the run. Until then the item stands as "counts disagreed with Live once, cause unknown." (found 2026-08-10 regenerating `the-argument` demo audio)
 
+- **[VID-6H3N]** Ship the ~2:10 demo video — the approved design artifact has no backlog item and nothing consuming it
+  `effort: M · impact: M · area: docs/marketing · source: user · added: 2026-08-10 · status: open · stage: ready · related: DOC-8V3Q · refs: .prawduct/artifacts/demo-video-design.md, ~/Movies/hallucinote-capture/make_video.py, ~/Movies/hallucinote-capture/stitch_audio.py`
+
+  **Why this item exists.** `.prawduct/artifacts/demo-video-design.md` (289 lines, frontmatter `status: approved`, `approved_on: 2026-08-10`) is an approved design with **no backlog item and no consumer** — `grep -rn demo-video` across the repo returns only the artifact itself. Its own frontmatter `related:` points at `tour-walkthrough-design` (explicitly a *different* deliverable — see the artifact's "Not the tour") and at the `STR-4C8N` plan scope, neither of which tracks this work. So the whole production is untracked: the design ships nothing on its own, and the build plans that could have carried it are deleted when they ship (the DOC-8V3Q precedent). `stage: ready` — the design is approved and production is well advanced.
+
+  **What already exists (do not rebuild it).**
+  - All three audio states rendered and verified, kept at `~/Movies/hallucinote-capture/audio-states/{S0,S1,S2,S2-fresh}/` — deliberately **outside** `captures/` so the retention sweep cannot prune them.
+  - `stitch_audio.py` carries the two measured corrections — a constant **1024-sample per-state offset**, and a **file clock ~280 ms behind song time** — and writes `demo-audio.wav` with a **linear** (not equal-power) crossfade.
+  - The ultrawide **4500×1898** split-frame layout: Live carried at its native 3024×1898 beside a 1476 px terminal column.
+  - The permanent caveat pinned to the terminal.
+  - **libx264** encoding at CRF (VideoToolbox refuses >4096 px).
+
+  **What remains**, per the artifact's own *"Tooling still to build"*:
+  1. A **lens block kind** in `make_video.py`'s `block_for()` — today it knows only `PROMPT` and `CLAUDE`, so a structured lens read wraps as a paragraph wall.
+  2. **Audio-state switching** at the two splice boundaries (**90 s** and **112.3 s**).
+  3. **Terminal styling** plus the caveat.
+
+  **Also open — needs a separate shot, not a code fix.** The device-chain strip is nearly static in REC-A because the push loads devices *without moving Live's selection*. Making it the image the storyboard wanted requires a **pickup shot recorded with Live's detail view focused** — plan for a re-record, not a re-encode.
+
+  **Verifiable signal:** a delivered `demo-video.mp4` whose audio is the stitched real renders (not a stand-in), whose two splices land on the masking transients at 90 s and 112.3 s, and whose caveat is legible for the whole run. (user, 2026-08-10)
+
 ## Promoted
 
 - **[SMP-7K2D]** Sample-instrument + the playback-parameter model — author a Simpler/Sampler with an assigned sample file from build.py/DB (the swell buried-"we" keystone primitive; absorbs the cluster)

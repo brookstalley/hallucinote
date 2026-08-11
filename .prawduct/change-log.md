@@ -25,6 +25,39 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-08-10 — Four scopes were invisible to the release flow, and the convention that hid them
+
+<!-- prawduct: type=bugfix | scope=release-bookkeeping -->
+
+**Whoever cuts the next release should read this before assuming the pending set
+is what it was.** Four entries just became visible that were not before.
+
+The change-log's own header taught a placeholder — tag in-flight work
+`release=unreleased` while it sits on develop, flip it to the real version at the
+cut (the VEW-9QH4 convention). `check-releasability` reads the **absence** of a
+`release=` key as the release-pending state, so it treats *any* value as
+already-released. The placeholder therefore did the exact opposite of what it was
+written to do: it dropped each tagged entry's whole scope out of the pending set,
+silently, where it would never have been picked up at a cut. The checker rejects
+the value outright (`bad-change-log-tag`), so this was visible the moment anything
+looked — nothing had looked.
+
+Four entries carried it: `song-lifecycle` (the `/song-brief` stage-0 work),
+`tour+push+workspace+db-converger`, and two `tour` entries. Tags removed; all four
+are release-pending again. The header now teaches the omission and says why the
+placeholder is not a smaller version of it — omitting the key satisfies the
+original concern just as well (no version is pre-bumped, nothing is mislabelled as
+shipped) without the failure mode.
+
+Also corrected while adjacent: `project-state.yaml`'s comment above
+`active_build_plan` still required a `build-plan-<scope>.md` filename because the
+scope→plan resolver globbed `artifacts/*.md` non-recursively and could not see a
+nested plan. Discovery is recursive now (`plan_index.iter_scoped_plan_candidates`),
+this repo keeps ~48 plans in `artifacts/plans/<ID>/build-plan.md`, and the
+surviving comment was telling the next plan author to do something the repo no
+longer does. Trimmed to the part still true — the per-ID directory is what keeps
+the generic filename uncontended while several plans are live at once.
+
 ## 2026-08-10 — Stereo as a measured lens: correlation, mono-sum, and width that reads as a no-op
 
 <!-- prawduct: type=feature | chunks=A1,A2,A3 | scope=str-4c8n | status=shipped -->

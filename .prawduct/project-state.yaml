@@ -522,6 +522,9 @@ build_state:
 #     cumulative-Critic PR gate + live e2e + ARR-9X4T/ARR-7H2N backlog close remain.
 #   STR-4C8N — all 3 chunks built on feat/str-4c8n-stereo-lens; retained live
 #     until the develop->main release archives it.
+#   TOUR — chunks B1, C1, D1 still unbuilt (the examples/ workspace + demo song,
+#     the evidence capture, and docs/tour.md + the README graft). The pointer
+#     moved off it to STR-4C8N, so this list is the only thing tracking it.
 # Shipped/stale plan history: the git history of this file (pre-2026-07-04,
 # PRC-5W2N trim) has the full narrative; a per-machine copy also sits in the
 # gitignored reflections archive where present.

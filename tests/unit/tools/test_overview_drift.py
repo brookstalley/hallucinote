@@ -10,7 +10,6 @@ generating it would clobber real work to fix a bookkeeping problem.
 """
 from __future__ import annotations
 
-from pathlib import Path
 
 import pytest
 
@@ -387,7 +386,12 @@ def test_main_exits_1_and_names_both_drifted_surfaces(cli_song, capsys):
     err = capsys.readouterr().err
     assert "Chorus" in err
     assert "Structure table" in err, "the markdown surface must be named"
-    assert "build.py" in err, "the docstring surface must be named too"
+    # "build.py" alone would pass on the overview half — OverviewDrift.describe
+    # already emits that string. FormDrift rewrites the docstring half's opener,
+    # so assert on THAT to actually check the second surface was reported.
+    assert "build.py's docstring section layout" in err, (
+        "the docstring surface must be named too"
+    )
 
 
 def test_main_exits_0_when_both_surfaces_match(cli_song, capsys):

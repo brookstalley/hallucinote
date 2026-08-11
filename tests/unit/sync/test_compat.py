@@ -1388,12 +1388,20 @@ def test_classify_preset_query_accepts_an_absent_mode():
     })) is None
 
 
-def test_classify_preset_query_rejects_an_explicit_null_case_sensitive():
-    """Same presence-not-truthiness rule as `mode`: `{"case_sensitive": null}`
-    is a different statement from an absent key, and the two fields must not
-    disagree about how they read their own absence."""
-    status, detail = C.classify_preset_query(json.dumps({
+def test_an_explicit_null_case_sensitive_is_accepted_not_refused():
+    """The mirror of the `mode` rule does NOT apply here, and the asymmetry is
+    the point: `mode: null` reaches `name_matches` and raises, so the gate must
+    reject it; `case_sensitive: null` degrades to False in every consumer, so
+    rejecting it would make the gate stricter than the loader — refusing a song
+    that loads fine, the exact failure SYN-6Q3D removed."""
+    assert C.classify_preset_query(json.dumps({
         "root": "instruments", "pattern": "Pad", "case_sensitive": None,
+    })) is None
+
+
+def test_classify_preset_query_still_rejects_a_non_null_non_bool_case_sensitive():
+    status, detail = C.classify_preset_query(json.dumps({
+        "root": "instruments", "pattern": "Pad", "case_sensitive": "yes",
     }))
     assert status == "preset_query_invalid"
     assert "case_sensitive" in detail

@@ -331,11 +331,17 @@ def classify_preset_query(
             "preset_query_invalid",
             f"preset_query.mode={mode!r} not in {sorted(_VALID_MATCH_MODES)}",
         )
-    # Same presence-not-truthiness rule as `mode` above: an explicit null is a
-    # different statement from an absent key, and the two fields should not
-    # disagree about how they read their own absence.
-    case_sensitive = pq["case_sensitive"] if "case_sensitive" in pq else False
-    if not isinstance(case_sensitive, bool):
+    # NOT the presence rule `mode` uses, deliberately — the justification does
+    # not transfer. An explicit `mode: null` REACHES `name_matches` and raises,
+    # so the gate must reject it to stay in step with the loader. An explicit
+    # `case_sensitive: null` degrades to False in every consumer (`name_matches`
+    # tests `if not case_sensitive`, `_dry_run_key` coerces via `bool(...)`, the
+    # MCP resolver does the same), so rejecting it would make this gate STRICTER
+    # than the loader — refusing a song that loads fine, which is the exact
+    # failure shape SYN-6Q3D existed to remove. Only a non-null non-bool is an
+    # authoring error worth reporting.
+    case_sensitive = pq.get("case_sensitive")
+    if case_sensitive is not None and not isinstance(case_sensitive, bool):
         return (
             "preset_query_invalid",
             "preset_query.case_sensitive must be a boolean, got "

@@ -258,6 +258,16 @@ def test_analyze_handler_writes_nothing_publishable_into_the_tracked_tree(
                 "analysis/ is checked in, so this ships with the repo"
             )
 
+    # WSP-3R7K reversal, pinned. `analysis/` must NOT get a blanket `*`
+    # .gitignore. It was briefly given one, which quietly made the very reports
+    # this test asserts are publishable uncommittable — and nothing asserted its
+    # absence, which is how that could land silently. A future whole-directory
+    # self-ignore sweep would otherwise re-add the call and the suite stay green.
+    assert not (song_dir / "analysis" / ".gitignore").exists(), (
+        "analysis/ is tracked on purpose — a directory-local `*` here beats the "
+        "root .gitignore and drops committed MixReports out of git"
+    )
+
 
 def test_analyze_handler_writes_status_json_error_on_failure(
     synthetic_song: Path, monkeypatch,

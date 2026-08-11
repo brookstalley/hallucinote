@@ -77,7 +77,6 @@ try:
         portable_path,
         portable_text,
         resolve_portable_path,
-        self_ignore_dir,
     )
     from hallucinote.workspace import explain_unresolved_song
     # Reuse the canonical bar→beat converter the push planner uses — it walks
@@ -109,7 +108,6 @@ except ImportError:  # pragma: no cover - exercised in Live's vendored env
     portable_path = None  # type: ignore[assignment]
     portable_text = None  # type: ignore[assignment]
     resolve_portable_path = None  # type: ignore[assignment]
-    self_ignore_dir = None  # type: ignore[assignment]
     _position_bar_to_beats = None  # type: ignore[assignment]
     recency_key = None  # type: ignore[assignment]
     _HAS_HALLUCINOTE = False

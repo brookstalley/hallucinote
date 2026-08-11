@@ -117,8 +117,9 @@ checked.
   real when written (2026-06-15), but DEEP-RACK-ADDR has since made
   `device_chains` a true recursive tree (`parent_rack_device_id` self-referencing
   through `devices`), so the data has been there. No Live probe and no schema
-  change were involved. Nested entries carry `rack_depth` + `chain_id` so they
-  stay distinguishable from top-level siblings, and the depth cap is imported
+  change were involved. Nested entries carry `rack_depth`, which is what keeps
+  them distinguishable from top-level siblings (`chain_id` is NOT NULL on every
+  device row, so it does not), and the depth cap is imported
   from the wire-side resolver rather than restated. The prior lock test — which
   pinned the exclusion and said in its own body "when nested-rack pull lands,
   this test is the one to flip" — was flipped, and the agent-facing action tip

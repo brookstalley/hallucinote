@@ -19,7 +19,7 @@ from hallucinote.paths import (
 )
 
 
-# --- self_ignore_dir: whole-directory output (analysis/, captures/) ----------
+# --- self_ignore_dir: whole-directory output (captures/) --------------------
 
 
 def test_self_ignore_dir_ignores_everything_including_itself(tmp_path: Path):

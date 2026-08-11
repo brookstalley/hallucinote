@@ -192,9 +192,12 @@ def self_ignore_dir(directory: Path) -> None:
     ``.gitignore`` itself too, so nothing here is ever committable and the file
     is invisible in `git status`.
 
-    For directories whose ENTIRE contents are regenerable (``analysis/``,
-    ``captures/``). Never point this at a directory holding authored work; see
-    :func:`self_ignore_files` for the mixed case.
+    For directories whose ENTIRE contents are regenerable — ``captures/`` is
+    the one that qualifies. Never point this at a directory holding authored
+    work (see :func:`self_ignore_files` for the mixed case), and note that
+    ``analysis/`` does NOT qualify despite looking like it does: this module's
+    own docstring and the root ``.gitignore`` both say the MixReports there are
+    committed on purpose.
 
     Idempotent, and best-effort: a read-only or missing parent must never take
     down the render or analysis that was actually the point. Skips the write

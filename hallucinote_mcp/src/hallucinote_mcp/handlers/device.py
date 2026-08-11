@@ -146,10 +146,10 @@ def _validate_device_path(device_path: Any) -> list[dict[str, int]]:
             "device_path must be a list of {chain_index, device_position} "
             f"steps, got {type(device_path).__name__}"
         )
-    if len(device_path) > _DEVICE_PATH_DEPTH_CAP:
+    if len(device_path) > DEVICE_PATH_DEPTH_CAP:
         raise ValueError(
             f"device_path depth {len(device_path)} exceeds the cap of "
-            f"{_DEVICE_PATH_DEPTH_CAP} — Live racks don't nest this deeply; "
+            f"{DEVICE_PATH_DEPTH_CAP} — Live racks don't nest this deeply; "
             "rebuild the path from ableton_device(action='get_device_chains')."
         )
     steps: list[dict[str, int]] = []

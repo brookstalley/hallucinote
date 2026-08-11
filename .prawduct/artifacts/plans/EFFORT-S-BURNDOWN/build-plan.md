@@ -315,3 +315,42 @@ the M4L-bridge probe remains.
 
 **At merge:** close the 20 issues then, not before — they carry "closed by"
 comments but closing them on an unmerged branch would misreport shipped state.
+
+---
+
+## Follow-on work, deliberately not absorbed on this branch
+
+Recorded HERE rather than only in `.prawduct/.handoff-notes.md`, which is
+gitignored and regenerated at `/clear` — a deferral that does not survive the
+merge is a drop. Each was named by a Critic review on this branch and judged the
+wrong thing to take at round 9+.
+
+1. **`/song-snapshot` hard-codes `songs/<slug>/…` in ~16 places, and it is a real
+   seam, not just prose.** Step 1 (`capture execute --song <slug>`) writes to
+   `resolve_song_dir(slug)/captured_session.refresh.json`, while Step 2 diffs
+   `songs/<slug>/captured_session.refresh.json`. Under the shipped `examples/`
+   workspace (`layout="monorepo"`, `songs_root="."`) the diff reads a path the
+   capture never wrote. Step 1 already prints the real path to stdout —
+   consuming it closes this.
+2. **#225 is ticked with no in-plan amendment.** Its coverage is real and was
+   verified (`tests/unit/capture/test_chunk_c_chains.py`,
+   `test_disabled_chain_property_is_tolerated`) — it simply is not recorded
+   where "close the 20 issues at merge" sends a reader. #263 and #256 both got
+   amendments; this one should too.
+3. **The four swallow-with-log diagnostics are unasserted** —
+   `overview_drift.warn_on_form_drift`, both `paths.self_ignore_*`, and
+   `server._record_audio_capture_event`'s inner `except`. They were the entire
+   deliverable of the "never swallow silently" norm fix, and
+   `paths.self_ignore_files`' OSError branch has no test at all. The repo
+   already has the idiom (`caplog.at_level` + substring) in
+   `hallucinote_mcp/tests/unit/test_server.py`.
+
+## An owner decision this branch surfaced but did not make
+
+**Is `songs/<slug>/analysis/` checked in, or ignored?** The root `.gitignore`
+("the small MixReport JSONs in analysis/ ARE checked in") and
+`hallucinote.paths` (whose `portable_path` exists *because* they land in git)
+say committed. `init_workspace.GITIGNORE_BLOCK`'s `**/analysis/` says otherwise,
+and #303 called them noise. This branch briefly resolved it by writing a blanket
+`*` there; that was reverted and the conflict is named in the code instead.
+`captures/` keeps its self-ignore — nothing claims those are tracked.

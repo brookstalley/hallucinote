@@ -33,7 +33,10 @@ Metadata-bar field legend (canonical /backlog v2 format):
   `refs:` (links to governing requirement/design docs) · `related:` (item→item) ·
   `closes:` (this item supersedes another) · `closed-by:` (the chunk/PR/release
   that shipped this item) · `accepted-by:` (@actor soft claim — someone is working
-  it; cleared on ship/drop).
+  it; cleared on ship/drop) · `revisit:` (expiry clock on a norm exception or
+  stopgap — `YYYY-MM-DD` raises an advisory once past while the item is open, or
+  free-text event-trigger prose the janitor's Norm Health sweep walks; so a
+  temporary non-application of a live norm expires visibly, never silently).
 
 Three canonical sections below: ## Open (pickable) · ## Promoted (in an active
 build plan) · ## Archive (shipped/dropped, kept for search). Items move between

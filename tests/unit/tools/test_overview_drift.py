@@ -259,3 +259,85 @@ def test_form_drift_is_falsey_when_both_surfaces_match(song, tmp_path):
     assert not detect_form_drift(
         conn, song_id=song_id, overview_path=md, build_py_path=build_py,
     )
+
+
+# --- warn_on_form_drift: the wiring, where the failure actually lives --------
+
+
+def test_warn_on_form_drift_reports_a_drifted_song(song, tmp_path, capsys):
+    """The build-close hook is the ONLY thing that fires this check for a
+    scaffolded song, so it needs its own coverage — the detector being right
+    doesn't help if the wiring never reports."""
+    conn, song_id = song
+    for name, start, end in [("Intro", 1, 8), ("Verse", 9, 16), ("Chorus", 17, 24)]:
+        _section(conn, song_id, name, start, end)
+    (tmp_path / "a-song.md").write_text(_overview("| `Intro` | 1–8 | x |\n"))
+    (tmp_path / "build.py").write_text(
+        _build_py("    Intro        bars  1-8    (8 bars)\n")
+    )
+
+    from hallucinote.tools.overview_drift import warn_on_form_drift
+
+    reported = warn_on_form_drift(
+        conn, song_id=song_id, slug="a-song", song_dir=tmp_path,
+    )
+    assert reported is True
+    err = capsys.readouterr().err
+    assert "Chorus" in err
+    assert "build.py" in err, "both surfaces drifted; both must be named"
+
+
+def test_warn_on_form_drift_is_silent_when_the_surfaces_match(song, tmp_path, capsys):
+    conn, song_id = song
+    _section(conn, song_id, "Intro", 1, 8)
+    (tmp_path / "a-song.md").write_text(_overview("| `Intro` | 1–8 | x |\n"))
+    (tmp_path / "build.py").write_text(
+        _build_py("    Intro        bars  1-8    (8 bars)\n")
+    )
+
+    from hallucinote.tools.overview_drift import warn_on_form_drift
+
+    assert warn_on_form_drift(
+        conn, song_id=song_id, slug="a-song", song_dir=tmp_path,
+    ) is False
+    assert capsys.readouterr().err == ""
+
+
+def test_warn_on_form_drift_swallows_failures_deliberately(song, tmp_path, monkeypatch):
+    """The swallow is intentional — a bookkeeping check must not be able to fail
+    the build that ran it — so it is pinned rather than left to be read as an
+    accident. The cost is that a dependency drift turns the check into a silent
+    no-op, which is exactly why the two tests above exist to catch that."""
+    conn, song_id = song
+    _section(conn, song_id, "Intro", 1, 8)
+
+    import hallucinote.tools.overview_drift as od
+
+    def _boom(*a, **k):
+        raise RuntimeError("schema moved under us")
+
+    monkeypatch.setattr(od, "detect_form_drift", _boom)
+    assert od.warn_on_form_drift(
+        conn, song_id=song_id, slug="a-song", song_dir=tmp_path,
+    ) is False
+
+
+def test_the_parser_reads_what_the_scaffold_renderer_writes(song, tmp_path):
+    """The parser and `scaffold_song`'s renderers agree by COMMENT today. Pin it:
+    render both surfaces from the same section list the scaffold would use, and
+    assert the parsers read them back as the form. A renderer format change now
+    fails here instead of silently turning the check into a no-op."""
+    from hallucinote.tools.scaffold_song import (
+        ScaffoldRequest, section_layout, section_table,
+    )
+
+    req = ScaffoldRequest(
+        slug="a-song", title="A Song", tempo=120.0, numerator=4, denominator=4,
+        sections=("Intro", "Verse", "Chorus"), section_length_bars=8,
+    )
+    assert parse_structure_table(
+        f"## Structure\n\n{section_table(req)}\n"
+    ) == {"Intro": 1, "Verse": 9, "Chorus": 17}
+    assert parse_docstring_layout(
+        f'"""Doc.\n\nSection bar layout (1-based):\n{section_layout(req)}\n\nRun:\n"""\nimport os\n'
+    ) == {"Intro": 1, "Verse": 9, "Chorus": 17}

@@ -119,6 +119,20 @@ checked.
   (STR-9P4M, gated), and the 2026-08-10 owner ruling — *no new lens that grades
   or coaches* — written where a lens-adder will meet it.
 
+- **Also shipped, smaller but real:** spurious-clip detection after a
+  `duplicate_to_arrangement` now counts occurrences instead of testing a
+  start-time set, so a pre-existing clip sitting exactly where Live's B-24 split
+  emits its copy can no longer mask the surplus one (#264); `events.AUDIO_CAPTURED`
+  + `mutations.record_audio_capture` put capture timestamps into the audit log,
+  emitted server-side off the render status response and deduped on
+  `captures_dir` because the caller is a poll (#263); and tools now ignore their
+  own regenerable output where they write it — `analysis/.gitignore` for
+  whole-directory output, a named list for the song dir, which also holds
+  authored work (#303). A confirmation lock pins that a `device_parameter`
+  envelope covered by its session clip stays on the sample-accurate path rather
+  than regressing to the ~2.5 Hz perform path, together with the note-on
+  ordering convention that makes per-phrase sample windows land right (#236).
+
 - **Waivers, citations, and the pre-split layout** (#447, #445, #320): all 21
   legacy `prawduct:ok-broad-except` pragmas migrated to the current form
   carrying a per-catch reason; the four source citations into the frozen

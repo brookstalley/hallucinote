@@ -257,6 +257,11 @@ def test_scaffolded_build_py_runs_against_synthetic_snapshot(tmp_path, monkeypat
     song_id = mod.build(reset=True)
     assert song_id
 
+    # DOC-4F8M: exercise the report() close too, not just build(). It carries
+    # the form-drift check, and a call site nothing runs is how that check
+    # would become a silent no-op without any test going red.
+    mod.report(song_id)
+
     # Verify the converger discipline: re-run produces zero new state events.
     from hallucinote.db import init_db
     conn = init_db(mod.DB_PATH)

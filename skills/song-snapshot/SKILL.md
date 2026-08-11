@@ -65,7 +65,7 @@ Run the diff CLI. It prints the structured diff as JSON to stdout and a one-scre
   songs/<slug>/captured_session.refresh.json
 ```
 
-**If exit 0 (no changes):** the snapshot content already matches Live. Normally: tell the user it's up to date, delete the `.refresh` file, and stop.
+**If exit 0 (no changes):** the snapshot content already matches Live. Normally: tell the user it's up to date and stop. Delete the `.refresh` file **last**, after the empty-diff question below is settled — the bake path needs it, so deleting on the way past leaves nothing to bake.
 
 *Empty-diff bake (BAK-7D2V).* One corner needs more: if a prior **mix** `/ableton-pull` is still un-baked — e.g. you pulled a knob change, then hand-reverted it in Live, so the content matches again but `build.py` still **refuses** (`StaleSnapshotError`, because the guard is armed by the pull *events*, not by content) — the fresh refresh can be baked over the canonical snapshot so the guard disarms.
 

@@ -531,4 +531,20 @@ def test_macos_without_the_request_api_still_reports_actionably(
     monkeypatch.setattr("tools.capture_live_shot._host_app_hint", lambda: "Some Terminal.app")
     with pytest.raises(ScreenRecordingDenied) as excinfo:
         assert_capture_permission()
-    assert "Screen Recording" in str(excinfo.value)
+    message = str(excinfo.value)
+    assert "Screen Recording" in message
+    assert "restart" in message
+    assert "prompt was requested" not in message, (
+        "no prompt can have appeared on a build with no request API — saying "
+        "one did sends the operator hunting a dialog that is not on screen"
+    )
+
+
+def test_the_message_mentions_the_prompt_only_when_one_was_raised(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_preflight(monkeypatch, False)
+    monkeypatch.setattr("tools.capture_live_shot._host_app_hint", lambda: "Some Terminal.app")
+    with pytest.raises(ScreenRecordingDenied) as excinfo:
+        assert_capture_permission()
+    assert "prompt was requested" in str(excinfo.value)

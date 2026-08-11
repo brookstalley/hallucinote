@@ -333,21 +333,28 @@ def main(argv: list[str] | None = None) -> int:
         if song is None:
             print(f"overview-drift: no song row named {args.slug!r}", file=sys.stderr)
             return 2
-        drift = detect_overview_drift(
-            conn, song_id=song["id"], overview_path=song_dir / f"{args.slug}.md",
+        drift = detect_form_drift(
+            conn,
+            song_id=song["id"],
+            overview_path=song_dir / f"{args.slug}.md",
+            build_py_path=song_dir / "build.py",
         )
     finally:
         conn.close()
 
-    if drift is None:
+    if drift.overview is None and drift.docstring is None:
         print(
             f"overview-drift: nothing to compare for {args.slug} "
-            f"(no overview, or its Structure table has no rows yet).",
+            f"(no overview or build.py, or neither carries a parseable form yet).",
             file=sys.stderr,
         )
         return 0
     if not drift:
-        print(f"overview-drift: {args.slug}.md matches the form.", file=sys.stderr)
+        print(
+            f"overview-drift: {args.slug}'s overview and build.py docstring both "
+            f"match the form.",
+            file=sys.stderr,
+        )
         return 0
     print(drift.describe(slug=args.slug), file=sys.stderr)
     return 1

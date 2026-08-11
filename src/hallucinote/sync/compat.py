@@ -320,8 +320,13 @@ def classify_preset_query(
     # enum is IMPORTED from `preset_query` (the lock-tested mirror of the
     # MCP resolver) rather than restated, so the gate cannot drift from the
     # matcher — the exact class of disagreement this item existed to fix.
-    mode = pq.get("mode")
-    if mode is not None and mode not in _VALID_MATCH_MODES:
+    # `"mode": null` is NOT the same as an absent key: absent means "use the
+    # default", while an explicit null reaches `name_matches` and raises
+    # "unknown search mode None". Keying on presence rather than truthiness
+    # keeps the gate and the loader agreeing — the exact disagreement SYN-6Q3D
+    # existed to fix, which a `pq.get("mode")` check would have reopened.
+    mode = pq["mode"] if "mode" in pq else "substring"
+    if mode not in _VALID_MATCH_MODES:
         return (
             "preset_query_invalid",
             f"preset_query.mode={mode!r} not in {sorted(_VALID_MATCH_MODES)}",

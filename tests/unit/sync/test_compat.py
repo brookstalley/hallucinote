@@ -1366,3 +1366,23 @@ def test_case_sensitive_is_carried_onto_the_wire_too(
     runs = C._probe_browser_dry_runs(conn, send_fn=send)
 
     assert runs == {("instruments", "bass-pluck", (), "substring", True): 1}
+
+
+def test_classify_preset_query_rejects_an_explicit_null_mode():
+    """`{"mode": null}` is not an absent key: absent means "use the default",
+    but an explicit null reaches `name_matches` and raises "unknown search mode
+    None". A truthiness check would let it through — gate and loader must agree.
+    """
+    status, detail = C.classify_preset_query(json.dumps({
+        "root": "instruments", "pattern": "Pad", "mode": None,
+    }))
+    assert status == "preset_query_invalid"
+    assert "mode" in detail
+
+
+def test_classify_preset_query_accepts_an_absent_mode():
+    """The overwhelmingly common shape — no `mode` key at all — still means
+    substring and must stay structurally valid."""
+    assert C.classify_preset_query(json.dumps({
+        "root": "instruments", "pattern": "Pad",
+    })) is None

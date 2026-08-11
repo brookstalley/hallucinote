@@ -284,12 +284,19 @@ def assert_capture_permission() -> None:
     try:
         core_graphics.CGRequestScreenCaptureAccess.restype = ctypes.c_bool
         core_graphics.CGRequestScreenCaptureAccess()
+        prompted = True
     except AttributeError:
-        pass
+        prompted = False  # pre-10.15: preflight exists, request doesn't
+    # Say only what happened. Claiming a prompt appeared when none did sends the
+    # operator looking for a dialog that is not on screen.
+    where = (
+        "A system prompt was requested — grant it there, or in System Settings"
+        if prompted
+        else "Grant it in System Settings"
+    )
     raise ScreenRecordingDenied(
-        f"Screen Recording permission is not granted to {_host_app_hint()}. A "
-        f"system prompt was requested — grant it there, or in System Settings > "
-        f"Privacy & Security > Screen Recording, then restart that "
+        f"Screen Recording permission is not granted to {_host_app_hint()}. "
+        f"{where} > Privacy & Security > Screen Recording, then restart that "
         f"application — the permission is read at launch"
     )
 

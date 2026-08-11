@@ -47,9 +47,9 @@ The whole spec the session started from:
 > 5th into those two minutes. Drums, bass, lead guitar, and vocals on a
 > staccato synth. Call it punk-fate.
 
-Claude's first move (`/hallucinote:song-brief`) is not to start typing notes — it reads
-what the prompt actually pins down, fills what it can own, and comes back
-**once**, proposing rather than asking:
+Claude's first move (`/hallucinote:song-brief`) is not to start typing notes —
+it reads what the prompt actually pins down, fills what it can own, and comes
+back **once**, proposing rather than asking:
 
 > **Settled from your prompt:** slug `punk-fate`, ~2:00, 4/4 punk, four parts
 > — drums, bass, lead guitar, and a staccato mono-synth playing the "vocal"
@@ -315,10 +315,10 @@ produces — a human ear saying it wasn't done — and went through two studio
 sessions: a **performance pass** (the timing, the drums, the dirt) and a
 **sound pass** (the gain staging, the master bus, and finally the lead
 instrument itself). The whole chapter is that ear-verdict being turned into
-measurements, and the measurements into fixes. It is also why the song now
-carries **eleven** [decision records](../examples/punk-fate/decisions/)
-rather than chapter 1's seven: each pass could read what the previous one had
-decided and extend it instead of guessing.
+measurements, and the measurements into fixes. It is also why the song's
+[decision records](../examples/punk-fate/decisions/) outgrew the seven chapter 1
+filed — each pass could read what the previous one had decided and extend it
+instead of guessing.
 
 ### 11 · "Definitely Beethoven, but not especially punk"
 
@@ -463,11 +463,22 @@ mid-forward, pedal drive to **42 %**, the hidden room dialed nearly dry, drums u
 **11 dB** — affordable because the master finally got what three passes of
 pulling faders down had been substituting for: a **Glue Compressor into a
 Limiter**. Punk loudness comes from glue and clipping, not politeness.
-Measured, full song: **−0.34 dBTP delivered, 0 overshoots**, and the guitar
-stem's spectral flatness nearly doubled, **0.083 → 0.156** — noisier *and*
-louder, the trade every earlier pass had gotten backwards. The rule it earns:
-**a preset name is a claim, not a measurement** — after loading a chain, read
-back the parameters that carry the intent.
+Measured, full song: the master bus landed at **−0.34 dBTP** with **0
+overshoots**, and the guitar stem's spectral flatness nearly doubled,
+**0.083 → 0.156** — noisier *and* louder, the trade every earlier pass had
+gotten backwards. The rule it earns: **a preset name is a claim, not a
+measurement** — after loading a chain, read back the parameters that carry the
+intent.
+
+And the rule bites the measurement too. The committed report for this render
+disagrees with that −0.34: its `delivered_true_peak_dbtp` field reads −4.34,
+because it *derives* delivered from a `master_fader_db` the analyzer reported as
+−4.0 when the fader was already at unity. The next render, fader untouched,
+reports the same field correctly — so the bus figure is the honest one here,
+and the derived one is the artifact
+([`decisions/10`](../examples/punk-fate/decisions/10-it-has-to-sound-punk.md)
+records both readings). A number that ships next to its evidence is checkable;
+this is what checking it looks like.
 
 ### 15 · The vocal line is a lead guitar now
 

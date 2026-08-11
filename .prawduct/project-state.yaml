@@ -565,7 +565,7 @@ tests_dirs: tests hallucinote_mcp/tests examples
 backlog_format_version: 2
 
 # Stamped by /prawduct:backlog list/pick/triage — resolves the backlog-overdue-grooming advisory.
-backlog_last_groomed_at: 2026-07-04
+backlog_last_groomed_at: 2026-08-11
 
 # THE LIVE BACKLOG. Set at the MG4 migration-scrub cutover 2026-08-10, after
 # `verify-migration` exited 0 with all five lists empty (225 source items, 225

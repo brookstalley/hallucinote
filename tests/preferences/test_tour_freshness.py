@@ -35,10 +35,12 @@ _ANALYSIS = _REPO / "examples" / "punk-fate" / "analysis"
 # permanent, so media weight is a one-way door.
 _MEDIA_BUDGET_BYTES = 12 * 1024 * 1024
 
-# The evidence budget's ITEM half (tour-walkthrough-design.md §The concision
-# rule), accounted per editing session: chapter 1 (composing) spent
-# 4 screenshots · 1 hero · 3 audio clips; chapter 2 (the listening session)
-# spends 2 screenshots · 1 clip — one artifact per move, and chapter 1's
+# The evidence budget's ITEM half, per tour-walkthrough-design.md §The concision
+# rule *as amended 2026-08-11* ("the item cap is per editing session") — the
+# artifact carries that rule, this manifest only enumerates what it permits.
+# Chapter 1 (composing) spent 4 screenshots · 1 hero · 3 audio clips; chapter 2
+# (the listening session) spends 2 screenshots · 1 clip — one artifact per move,
+# and chapter 1's
 # full-song render doubles as its before/after "before". The hero and each
 # clip ship with the still that stands in for them. This manifest IS the cap:
 # adding media means consciously editing this set, and a stray file under
@@ -194,8 +196,10 @@ def test_quoted_chapter2_numbers_match_the_committed_measurements():
         # beat 14 — the guitar stem's flatness jump, before → after
         f"**{_stem(punk, '03 Guitar')['timbre']['spectral_flatness']:.3f} → "
         f"{_stem(sound, '03 Guitar')['timbre']['spectral_flatness']:.3f}**",
-        # beat 14 — the sound pass's delivered peak (fader at unity, so the
-        # bus true peak IS the delivered figure; decision 10 records why)
+        # beat 14 — the sound pass's master-BUS peak. NOT the report's
+        # `delivered_true_peak_dbtp`, which reads 4 dB lower off a stale fader;
+        # `test_the_delivered_peak_is_derived_not_measured` asserts that premise
+        # rather than asserting it in a comment here.
         dbtp(sound["master"]["loudness"]["true_peak_dbtp"]),
         # beat 15 — the square lead's spectral-centroid tell
         f"**{round(_stem(sound, '04 Voice')['timbre']['spectral_centroid_hz'])} Hz**",
@@ -342,4 +346,57 @@ def test_docs_index_does_not_restate_the_shape_of_what_it_describes():
         "docs/README.md index rows claim a structural count of the doc they "
         "describe:\n" + "\n".join(offenders) + "\n\nDescribe what the doc is "
         "for instead — counts go stale the next time that doc grows."
+    )
+
+
+def test_the_delivered_peak_is_derived_not_measured():
+    """Beat 14 publishes the sound pass's master-BUS peak; the same report's
+    `delivered_true_peak_dbtp` sits 4 dB lower. Which one is honest rested on a
+    COMMENT ("fader at unity, so the bus peak IS delivered") that the loaded
+    file contradicts (`master_fader_db: -4.0`) — and a comment cannot fail, so
+    an analyzer fix + regenerated JSONs would leave the published label silently
+    wrong with the suite still green.
+
+    Assert the shape that makes the call, instead:
+
+    1. `delivered` is ARITHMETIC over a reported fader, not a measurement — so a
+       stale fader corrupts it while the bus figure stays true.
+    2. The sound pass's fader reads NON-unity, which is exactly why its two
+       figures disagree and why beat 14 quotes the bus.
+    3. The lead pass's fader really IS at unity and its two figures agree — which
+       is what makes beat 16's "delivered true peak" label literally true, and
+       makes −0.34 → −0.40 a comparison between like measures.
+    """
+    sound = _measurement("2026-08-11-sound-punk-full-song.json")
+    lead = _measurement("2026-08-11-lead-guitar-full-song.json")
+
+    def bus(report: dict) -> float:
+        return report["master"]["loudness"]["true_peak_dbtp"]
+
+    # 1 — derived, to the floating-point bit
+    assert abs(
+        sound["delivered_true_peak_dbtp"] - (bus(sound) + sound["master_fader_db"])
+    ) < 1e-6, (
+        "delivered_true_peak_dbtp is no longer bus + master_fader_db — the "
+        "premise behind quoting the bus figure in tour.md beat 14 was that "
+        "delivered is derived from a fader the analyzer reported stale. If the "
+        "analyzer now measures delivery directly, re-read beat 14."
+    )
+
+    # 2 — the disagreement beat 14 navigates is still present
+    assert abs(sound["master_fader_db"]) > 0.5, (
+        "the sound pass's master_fader_db now reads ~unity, so bus and "
+        "delivered agree and tour.md beat 14's paragraph about the 4 dB "
+        "discrepancy no longer describes this file — update the beat."
+    )
+
+    # 3 — beat 16's "delivered" label is literally true
+    assert abs(lead["master_fader_db"]) < 0.01, (
+        f"the lead pass's fader reads {lead['master_fader_db']} dB, not unity — "
+        "tour.md beat 16 calls its figure the DELIVERED true peak, which only "
+        "holds at unity."
+    )
+    assert abs(bus(lead) - lead["delivered_true_peak_dbtp"]) < 0.01, (
+        "the lead pass's bus and delivered peaks have diverged; beat 16 quotes "
+        "them as one number."
     )

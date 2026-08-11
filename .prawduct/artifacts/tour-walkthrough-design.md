@@ -21,8 +21,10 @@ document** built from real artifacts captured while that song was authored.
    a reader can clone and replay deterministically. Stock Live devices only.
    60–90 seconds. **Not** a recipe that reproduces the song from the prompt — see
    *A walkthrough, not a recipe* below.
-2. **`docs/tour.md`** — "Making a song, start to finish." Ten beats, one artifact
-   per beat, ~300 lines, a ten-minute read.
+2. **`docs/tour.md`** — "Making a song, start to finish." One artifact per beat,
+   organized as **chapters, one per editing session** (chapter 1: the composing
+   session, beats 0–10; chapter 2: the listening session, beats 11–16). Sized
+   per chapter, not per document — see the amendment under *The concision rule*.
 3. **Capture tooling** — so the artifacts are *generated from real sessions*, not
    hand-staged, and can be regenerated when behavior changes.
 4. **README evidence graft** — real hero, audio near the top, a link to the tour.
@@ -118,6 +120,29 @@ else is text or code. C1's "the cap is met exactly" and D1's asset test are both
 written against those numbers; without this paragraph they have no unambiguous target,
 and the likely outcome is a test relaxed to permit arbitrary extras — exactly what the
 byte cap exists to prevent.
+
+### Amendment 2026-08-11 — the item cap is per editing session
+
+**What changed.** The item cap above (4 screenshots · 1 hero · 3 audio clips, ≤ 12
+files) is hereby **accounted per editing session**, not per document lifetime. Chapter
+2 spends **2 screenshots · 1 audio item**; the tour therefore holds 6 screenshots and
+4 audio items = **16 media files, 7.0 MB** against the unchanged **12 MB byte cap**.
+
+**Why.** A document-lifetime item cap forbids documenting a second session at all,
+which contradicts this design's own purpose — the tour exists to show how a song
+actually gets made, and the honest answer turned out to be "over several sessions."
+The byte cap is the limit that protects the thing worth protecting (public repo,
+permanent history), and it still holds with 5 MB of room. The item cap's real job is
+stated in the paragraph above: prevent "a test relaxed to permit arbitrary extras."
+Per-session accounting keeps that job — every file is still named individually in
+`_EXPECTED_ASSETS`, so a stray asset fails the suite exactly as before.
+
+**Recorded because it was not.** Chapter 2 shipped 16 files and reconciled them by
+rewriting the *test comment* to say "accounted per editing session" while still citing
+this artifact as its authority — a norm changed in code instead of in the norm. This
+amendment is the missing record, written after the fact and **open to veto**: if the
+owner rejects per-session accounting, the fix is to drop two of chapter 2's four media
+items, not to re-relax the test.
 Everything else is text or code. Every screenshot is a maintenance liability, so
 they are spent only where text cannot carry the point: off-grid MIDI, the full
 arrangement, the session filling in, meters during playback.

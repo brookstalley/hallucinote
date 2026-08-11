@@ -255,8 +255,17 @@ def test_snapshot_return_names_carry_no_slot_prefix():
     )
     prefixed = re.compile(r"^[A-Z]-")
 
+    # Read the keys strictly: `snapshot.get("returns", [])` would turn a renamed
+    # or dropped key into a vacuous pass, which is the failure mode this test
+    # exists to catch in the first place.
+    assert snapshot["returns"], "snapshot has no `returns` to check"
+    assert snapshot["tracks"], "snapshot has no `tracks` to check"
+    assert any(t.get("sends") for t in snapshot["tracks"]), (
+        "no track in the snapshot has `sends` — this test would pass vacuously"
+    )
+
     offenders = [
-        r["name"] for r in snapshot.get("returns", [])
+        r["name"] for r in snapshot["returns"]
         if prefixed.match(r.get("name", ""))
     ]
     assert not offenders, (
@@ -264,7 +273,7 @@ def test_snapshot_return_names_carry_no_slot_prefix():
         f"{offenders} — write the stripped form (`Reverb`, not `A-Reverb`)."
     )
 
-    for track in snapshot.get("tracks", []):
+    for track in snapshot["tracks"]:
         bad = [k for k in (track.get("sends") or {}) if prefixed.match(k)]
         assert not bad, (
             f"captured_session.json track {track.get('name')!r} sends to "

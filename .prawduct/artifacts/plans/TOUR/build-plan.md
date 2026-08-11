@@ -78,6 +78,21 @@ graft, and `tests/preferences/test_tour_freshness.py` (manifest item cap + 12 MB
 byte cap + verbatim snippets + mix numbers recomputed from committed reports;
 adversarially verified). Cumulative Critic rev-20260811T144456Z: 0 blocking.
 
+**Chapter 2 extended the deliverable past this plan (`feat/tour-chapter2`).** The
+same song went back into the studio for three re-cuts — feel, dirt/tone, and the
+lead-instrument swap — so `docs/tour.md` gained a second chapter (beats 11–16)
+and the song gained `decisions/08`–`11`, `measurements/`, and two attempt-ledger
+entries. No chunk here covers it: the work matched none of A1–D1, which is why
+the cumulative review could grade no chunk. Two governing changes it required,
+both recorded rather than absorbed: the item cap in `tour-walkthrough-design.md`
+§The concision rule is now **amended to account per editing session** (chapter 2
+spends 2 screenshots · 1 audio item; 16 files, 7.0 MB of the unchanged 12 MB
+byte cap) — owner-vetoable; and the tour's evidence-freshness locks grew to cover
+chapter 2's figures, its heading structure, and the premise behind its published
+true-peak number. A subsequent docs pass corrected five stale claims the chapter
+left in the surrounding docs. Cumulative Critic rev-20260811T215052Z: 3 blocking,
+all resolved on-branch.
+
 **Two recorded deviations, deliberate and owner-rooted:** (1) the demo song is
 115.2 s against B1's "60–90 s" acceptance line — the owner's own prompt asked
 for 2 minutes, and the owner's directive outranks the plan's guideline; (2) the

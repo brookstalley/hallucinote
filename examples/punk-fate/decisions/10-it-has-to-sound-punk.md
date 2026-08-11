@@ -72,10 +72,21 @@ is what [[07-the-bass-carries-the-engine]] and its attempt actually did, and why
 the record ended up polite. All devices remain stock Live.
 
 **Master fader parked at unity (0.85 = 0 dB), on purpose.** With the fader at
-0 dB, *delivered peak == the measured bus peak*, so the delivered figure no
-longer depends on `master_fader_db` — a field this session proved is reported
-stale (`incoming-bugs/2026-08-11-analysis-reads-a-stale-master-fader.md`). The
-ceiling now lives on a device that can be read back honestly.
+0 dB, *delivered peak == the measured bus peak*, so the delivered figure stops
+depending on `master_fader_db` — a field the analyzer reports **stale**, proved
+twice. Here: `measurements/2026-08-11-sound-punk-full-song.json` carries
+`master_fader_db: -4.0` and derives `delivered_true_peak_dbtp: -4.34` from it
+(the bus's −0.34, minus that 4.0) — while the fader was already at unity. The
+next render settles it: `2026-08-11-lead-guitar-full-song.json`, same fader
+position, reports `master_fader_db` ≈ 0 and bus == delivered to six decimals.
+A day earlier the same field misread the other way on the chapter-1 mix — the
+analyzer reported `master_fader_db: 0.0` while Live's own session info returned
+a master volume of 0.775, about 3 dB down.
+
+**So: read the bus peak plus a direct fader readback — never the derived
+`delivered_true_peak_dbtp` alone.** The ceiling now lives on a device (Glue
+Compressor → Limiter) that can be read back honestly, which is the durable half
+of this fix.
 
 ## Measured, full song, all eight sections
 

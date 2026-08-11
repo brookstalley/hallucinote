@@ -22,8 +22,36 @@ Markers are registered in ``pyproject.toml`` ``[tool.pytest.ini_options]``.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
+
+# `pythonpath` in pyproject front-inserts this checkout's source dirs into the
+# PYTEST process — it does not reach a SUBPROCESS. Tests across the suite shell
+# out to `sys.executable -m hallucinote...` (grep `sys.executable`), and those
+# children resolve `hallucinote` through the editable-install `.pth`, which
+# points at the PRIMARY checkout. From a git worktree that is a different tree:
+# the CLI tests then exercise code the tree under test does not contain. It
+# surfaced as six phantom `test_restamp_*` failures whose subject was correct
+# here and simply absent from the primary checkout — a bare `pytest` was red
+# while `PYTHONPATH=$PWD/src pytest` was green, and the red was about the wrong
+# tree either way. Export the same dirs so a child tests what the parent
+# imported. In the primary checkout these are the paths the `.pth` already
+# targets, so it changes nothing there.
+_REPO_ROOT = Path(__file__).resolve().parent
+_SOURCE_DIRS = (_REPO_ROOT / "src", _REPO_ROOT / "hallucinote_mcp" / "src")
+
+
+def _export_source_path_for_subprocesses() -> None:
+    ours = [str(p) for p in _SOURCE_DIRS if p.is_dir()]
+    existing = os.environ.get("PYTHONPATH", "")
+    parts = [p for p in existing.split(os.pathsep) if p]
+    # Front-insert, and don't duplicate on a re-import of this conftest.
+    merged = ours + [p for p in parts if p not in ours]
+    os.environ["PYTHONPATH"] = os.pathsep.join(merged)
+
+
+_export_source_path_for_subprocesses()
 
 # Test locations that load and exercise the native audio/DSP stack.
 _AUDIO_PATH_FRAGMENTS = ("/tests/unit/audio/",)

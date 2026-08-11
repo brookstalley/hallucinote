@@ -72,10 +72,12 @@ complaint.
 first in a Live chain, `ableton_device(action='load')` tail-appends, and Live
 12.4 exposes no reorder API ([[09-the-dirt]]). Swapping an instrument is
 therefore a full teardown — delete all four devices in descending order, reload
-in authored order. Given the delete defect logged this same session
-(`incoming-bugs/2026-08-11-master-device-delete-also-removed-a-track-device.md`),
-every other track's chain was re-listed after the teardown and confirmed
-byte-identical before reloading.
+in authored order. A delete defect hit earlier in this same session — deleting a device from the
+master strip also removed one from a *track* — is why every other track's chain
+was re-listed after the teardown and confirmed byte-identical before reloading.
+That observation was never written up as a defect report, so this paragraph is
+its only provenance; treat the precaution as load-bearing until the delete path
+is re-tested.
 
 **The track is still named `04 Voice`, deliberately.** `build.py` keys on
 `TRACK_VOICE = "04 Voice"`, and the *role* is unchanged — it is still the vocal

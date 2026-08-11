@@ -159,9 +159,67 @@ discriminator is still only in `compat.py`), `SCF-2N6T` (no rename path in
 | Title lengths | min 43, max 67, against the 72 budget |
 | Body sections | Derived from each item's own structure (`**Verifiable signal:**` → Acceptance; `**Boundary/NARROWED/...**` → Scope-out). Nothing paraphrased; `original_title`/`original_body` preserved verbatim by the importer. |
 
-## Cutover
+## Import (Step 4) — what actually happened
 
-Pending — `backlog_service_repo: brookstalley/hallucinote` is set in
-`.prawduct/project-state.yaml` only after `verify-migration` exits 0 with all
-five lists (`missing`, `unaliasable`, `collisions`, `status_mismatch`,
-`duplicate_alias`) empty.
+Ran in **two passes**, both with `--archive-scope all --restructure plan.json`:
+
+1. First pass took a **GitHub 502 on a `repos/…/labels` call after 127/225
+   created** and cut resumably (`resumable: True`, 0 failed, 0 collisions, 0
+   unreconciled).
+2. The resume created the remaining **98**, skipping the 127 already-migrated on
+   their `id:PFX` alias: `98 created, 127 skipped, 0 rejected, 0 collision(s) of
+   225 source item(s) (225 restructured by plan)`.
+
+Pacing: ≥2303 REST points, **no throttling — the budgets never bound**, matching
+VRF-009's finding that serial `gh` latency, not the rate ceiling, governs.
+
+> **Trap worth recording.** The first pass was piped through `tee`, so the shell
+> reported **tee's** exit code — the failed import looked like exit 0. Read the
+> log body, never the exit status. Both WARNING lines the runbook names
+> (`N rejected`, `N imported but NOT reconciled`) were absent on the final pass.
+
+## Step 6 gate — passed
+
+    prawduct-hook backlog verify-migration --repo brookstalley/hallucinote \
+      --from .prawduct/backlog.md --archive-scope all
+
+**Exit 0**, with the same `--archive-scope` used at import:
+
+```json
+{"repo": "brookstalley/hallucinote", "source_items": 225, "aliased": 225,
+ "missing": [], "unaliasable": [], "collisions": [], "status_mismatch": [],
+ "duplicate_alias": []}
+```
+
+## Cutover — recorded 2026-08-10
+
+- `backlog_service_repo: brookstalley/hallucinote` set in
+  `.prawduct/project-state.yaml`.
+- Frozen-history **blockquote** banner written at the head of
+  `.prawduct/backlog.md` (a blockquote, not an HTML comment, which is invisible
+  in GitHub's rendered view), naming the cutover date, the tracker, the read
+  commands, and that divergence from the tracker is expected.
+- `legacy.py` deliberately **not** retired — that is portfolio-wide, not this
+  repo's business.
+
+## Step 7 dispositions — applied after the gate
+
+| id | action | result |
+| --- | --- | --- |
+| `MCP-6B4W` | merge → `MCP-7J2Q` | `#324 --superseded-by--> #322`; #324 CLOSED, survivor #322 OPEN |
+| `VEW-3M8F` | dropped | #249 CLOSED |
+| `INS-6K1T` | dropped | #273 CLOSED |
+| `SYN-7T3M` | dropped | #286 CLOSED |
+| `GEN-2T8M` | dropped | #272 CLOSED |
+| `MIG-3T7K` | dropped | #289 CLOSED |
+
+Every disposed item confirmed **closed, not missing** — the check Step 5 could
+not yet make. Final rollup: **225 items — 105 open, 103 shipped, 17 dropped**
+(111 open − 6 disposed = 105; 11 + 6 = 17). Local cache synced (225 rows, FTS
+on) and the briefing snapshot persisted.
+
+> ⚠️ **Do not re-run `import` or `verify-migration` from here.** The import
+> reconciles status against the *source markdown*, so a re-run reopens all six
+> disposed items; the gate would report each disposal as `status_mismatch` and
+> exit 4 on a migration that is entirely correct. If something is wrong now, fix
+> it on the tracker.

@@ -1,15 +1,127 @@
 # Changelog
 
-> **Superseded as of v1.6.0.** The release record now lives in
-> [`.prawduct/release-notes.md`](.prawduct/release-notes.md) (generated from
-> `.prawduct/change-log.md`, which carries the full per-release bodies). This
-> file is preserved as the hand-written history through v1.5.0 and is no
-> longer maintained.
+This is the public release record: what changed in each version, written for
+people using Hallucinote. It is distilled at release time from the internal
+engineering change-log (`.prawduct/change-log.md`), which carries the full
+per-fix narratives if you want the deep story behind any entry.
 
-The format below follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.6.0] — 2026-06-23 (excerpt — full scope in the release notes)
+## [1.8.0] — 2026-08-10
+
+### Added
+
+- **The mix report can see stereo.** Per-stem and per-section stereo metrics —
+  L/R correlation and mono-sum loss — plus declared-vs-measured width: a width
+  or spread control a song declares is paired with what the rendered audio
+  actually did, on tracks *and* return busses. This catches the two silent
+  failure modes that motivated it: a "stereo" effect rendering bit-exact mono
+  (a flanger with its L/R phase offset at 0°), and an aggressive width setting
+  doing nothing because it multiplied a side signal that wasn't there.
+  `/mix-review` reads both. A/B comparison (`compare_to`) gained a matching
+  stereo family, so a mono-loss improvement shows as a delta instead of nothing.
+- **`/song-brief`, a new stage 0 in front of `/song-new`** — the elicitation
+  pass that resolves what a prompt left open (key, tempo, section budget, what
+  a named gesture means musically) in one consolidated turn of proposals, and
+  writes the song's brief. With it, every authoring stage got an explicit
+  definition of done: a stage may no longer hand an unresolved question
+  downstream dressed as a decision.
+
+### Fixed
+
+- **Seven push/sync correctness fixes — six of which previously reported
+  success while doing the wrong thing.** The most visible: a full push could
+  duplicate every FX chain in the set (and still say OK); a first push into an
+  empty set could silently skip the arrangement phase; a browser load aimed at
+  the master could also append devices to an unrelated track; a song slug could
+  resolve into the wrong workspace, sending renders and analysis to a phantom
+  directory; and a render could start playback from the wrong position when a
+  locate hadn't settled. Pushes now reconcile device links before planning,
+  report blocked phases as failures instead of "skipped", bracket browser loads
+  with a device census, resolve slugs to the workspace that actually holds the
+  song, and settle locates before rolling.
+- **Rebuild reliability:** captured preset names now match exactly (no more
+  refusing to load `Kit-BritishVintage` because an `MPE Kit-BritishVintage`
+  also exists), stale device links are detected when you swap Live sets, and a
+  build that *changed* an automation arc no longer loops create/delete/create
+  without converging.
+- **MixReports no longer embed your home directory.** Capture and baseline
+  paths in tracked analysis files are song-relative now; existing absolute
+  reports still load and still work as comparison baselines.
+
+### Changed
+
+- The in-repo demo song was retired; the walkthrough it anchored is being
+  re-authored from a sparse prompt through the new `/song-brief` flow. Its
+  scouting value — six framework defects found by rebuilding it from scratch —
+  shipped as the fixes above.
+
+### Upgrade note
+
+After updating, rerun `/hallucinote:ableton-mcp-install` and fully quit and
+reopen Live — this release changes bridge handler code, so the version
+handshake requires a re-vendored Remote Script.
+
+## [1.7.2] — 2026-08-06
+
+Preparation for the repo going public. No behavior changes.
+
+- Internal bug-report archives left the tree; provenance now cites backlog ids.
+- Hardcoded local paths and a private sibling project's details were scrubbed
+  from docs and history-facing files.
+- `SECURITY.md` now states the trust model explicitly — including the sharpest
+  edge: a song's `build.py` is executable Python by design, so review a song
+  you cloned before building it.
+- `architecture.md` and `api-contract.md` were written (the four-runtime
+  topology, the fingerprint-not-semver versioning decision, the errors-teach
+  model).
+
+**Upgrade note:** although behavior is unchanged, one repointed docstring sits
+in a fingerprinted bridge path, so the handshake flips — rerun
+`/hallucinote:ableton-mcp-install` and fully quit and reopen Live after
+updating.
+
+## [1.7.1] — 2026-08-03
+
+### Added
+
+- **Render captures get a rolling retention window.** Every render writes
+  ~23 MB per surface-minute of per-stem WAVs, and nothing ever deleted them —
+  real songs had reached ~4 GB per take. A song now settles at 3 takes on disk
+  after each render; pin a reference take with `captures pin` to exempt it.
+  MixReports are never swept — analysis is self-contained JSON, so deleting an
+  old take costs only the ability to re-analyze that specific audio.
+  `HALLUCINOTE_CAPTURE_KEEP` / `HALLUCINOTE_CAPTURE_SWEEP=0` tune or disable
+  the sweep.
+
+### Fixed
+
+- Provenance tests no longer assert ambient git state (first red CI run on a
+  PR branch).
+
+## [1.7.0] — 2026-07-04
+
+### Added
+
+- **CI off-laptop:** lint, types, tests, and lock-consistency run as four
+  gates in GitHub Actions; ruff and mypy debt taken to zero.
+- **Pull-durability guard:** a mix edit you pull from Live but don't bake with
+  `/song-snapshot` is no longer silently reverted by the next build — the
+  build refuses to run (`StaleSnapshotError`) until you bake or explicitly
+  `--force-replay`. The loop is pull → bake → build.
+- **Event-log hardening:** atomic write+emit, stable event IDs, and a replay
+  smoke test — groundwork for the future event-store migration.
+- Sync-boundary contract and phase-ordering DAG, with a controlled halt on
+  unknown link kinds instead of undefined behavior.
+
+## [1.6.1] — 2026-06-24
+
+### Added
+
+- Standing timbre metrics — brightness and noisiness — in the mix report.
+
+## [1.6.0] — 2026-06-23
 
 The entries below were drafted here as "Unreleased" and shipped in v1.6.0's
 catch-up window; v1.6.0 contained substantially more (see release notes).

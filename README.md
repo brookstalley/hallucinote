@@ -18,7 +18,15 @@ Tweak a fader in Live and pull the change back through the same path. The song i
 
 > *"Make a 2-minute punk song that crams the chord progression of Beethoven's 5th into those two minutes. Drums, bass, lead guitar, and vocals on a staccato synth. Call it punk-fate."*
 
-Claude scaffolds `songs/punk-fate/`, picks an instrument chain per track, writes the note-generating code, and pushes the whole thing into Live — tracks, clips, device chains, sends, routing, automation. When it finishes, you press play and hear a finished song.
+Claude scaffolds `songs/punk-fate/`, picks an instrument chain per track, writes the note-generating code, and pushes the whole thing into Live through fourteen ordered phases:
+
+```
+tempo → meter → tracks → returns → scenes → clips →
+mix → devices → routing → device-sidechain → envelopes →
+performed automation → arrangement → cues
+```
+
+When it finishes, you press play and hear a finished song.
 
 Don't like the bridge? *"Lift the lead an octave there, and make the chorus drums drag."* Claude edits the code and re-pushes. Re-runs are idempotent — it changes what you asked for and leaves the rest alone.
 
@@ -33,7 +41,7 @@ Don't like the bridge? *"Lift the lead an octave there, and make the chorus drum
 ## What you can do
 
 - **Compose from a prompt — any genre, any shape.** Conceptual (*"a song about overcoming loss"*), musical (*"a Baroque prelude in G minor from a single broken-chord figuration"*), or purely stylistic (*"Duran Duran if they dropped acid with Black Sabbath"*).
-- **Under-specify on purpose.** Claude works out what your prompt actually leans on — key, tempo, what a named turn means musically — and comes back **once** with informed proposals you can wave through or redirect in a word.
+- **Under-specify on purpose.** Claude works out what your prompt actually leans on (`/hallucinote:song-brief`) — key, tempo, what a named turn means musically — and comes back **once** with informed proposals you can wave through or redirect in a word.
 - **Iterate by talking.** *"Raise the verse ghost snares."* *"Route the drums through a sub-bus and glue-compress it."* Claude edits the code and re-pushes.
 - **Get sound design included.** Device chains, dialed parameters, and sends ship with the song — a finished song arrives with the sound it's supposed to have, not a mix-pass to-do list.
 - **Pull manual edits back.** Move faders, mutes, or notes in Live, then ask Claude to pull them into the song.
@@ -107,7 +115,7 @@ Bugs go to [issues](https://github.com/brookstalley/hallucinote/issues); report 
 
 ```
 src/hallucinote/      # composition engine: db, generators, sync, capture
-hallucinote_mcp/      # the MCP bridge server that drives Ableton Live
+hallucinote_mcp/      # the MCP bridge server (13 unified Ableton tools)
 skills/               # the /hallucinote:* Claude Code skills the plugin ships
 docs/                 # quickstart, song workflow, conventions, FAQ, schemas, …
 ```

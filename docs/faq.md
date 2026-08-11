@@ -21,9 +21,8 @@ Hallucinote itself, yes — see [`CONTRIBUTING.md`](../CONTRIBUTING.md).
 
 ## Does it work on Windows?
 
-Yes — macOS and Windows, with **Ableton Live 12**. On Windows, if `python` opens
-the Microsoft Store, use `py -3` everywhere. See [README → Requirements and
-Install](../README.md#requirements).
+Yes — macOS and Windows, with **Ableton Live 12**. See
+[README → Install](../README.md#install).
 
 ## Can I mix the song inside Hallucinote?
 
@@ -45,6 +44,11 @@ re-pushing, fold your manual edits back into the DB:
   sidechain) → `/hallucinote:song-snapshot`, the single durable mix bake. It writes
   the git-tracked `captured_session.json`, so the next `build.py` reproduces them
   (a DB-only bake would revert on rebuild).
+
+The build holds you to it: a mix edit you pulled but didn't snapshot makes the
+next `build.py` refuse to run (`StaleSnapshotError`) instead of silently
+reverting it. Bake with `/hallucinote:song-snapshot` and build again — pull →
+bake → build.
 
 See the [Quickstart](quickstart.md#4-pull-manual-edits-back-optional).
 
@@ -79,14 +83,26 @@ notes, automation, and arrangement are authored in `build.py`. See
 No. Push is **idempotent**: re-running converges Live to the DB's state instead
 of stacking duplicates. Iterate freely — change something, push again.
 
+## I get "unknown skill: hallucinote:…" — the skills don't exist.
+
+The plugin isn't loaded in this session. Two ways that happens: you installed
+from the marketplace but into a different Claude Code profile/machine, or
+you're on a dev machine where the plugin loads via `--plugin-dir` and this
+launch didn't pass it. Fix: install per [README → Install](../README.md#install),
+or relaunch with `claude --plugin-dir /path/to/hallucinote`. Don't let a
+session improvise song work without the plugin — there's no bridge to Live and
+no engine environment, so it can only produce an unbuildable scaffold.
+
 ## Live won't connect, or I get a "version mismatch."
 
 See [README troubleshooting](../README.md#troubleshooting). The two most common
 fixes: assign **Hallucinote** to a Control Surface slot in Live's Preferences,
 and after a `git pull` that touched `hallucinote_mcp/`, rerun
 `/hallucinote:ableton-mcp-install` then fully **quit and reopen Live** (a `/mcp` reconnect
-isn't enough — Live caches Control Surface modules at startup).
-`python -m hallucinote_mcp.cli preflight` diagnoses install state.
+isn't enough — Live caches Control Surface modules at startup). To diagnose
+install state, ask Claude to **run preflight** — the CLI lives inside the
+plugin's environment, so running `python -m hallucinote_mcp.cli preflight` from
+your own shell will usually just fail to import.
 
 ## How does Hallucinote find my song? It looked in the wrong place.
 

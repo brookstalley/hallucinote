@@ -74,11 +74,12 @@ release-only. Both are protected — no direct commits.
 1. **Branch from `develop`** with a descriptive name: `feature/...`, `fix/...`,
    or `refactor/...`.
 2. **Build with tests**, keep `develop`-baselined, run the full suite green.
-3. **Critic review** — medium-or-larger changes get an independent `/critic`
-   review before merge (it reads `.prawduct/.test-evidence.json`; it does not
-   run tests itself). Fix blocking findings, address warnings.
+3. **Critic review** — medium-or-larger changes get an independent
+   `/prawduct:critic` review before merge (it reads
+   `.prawduct/.test-evidence.json`; it does not run tests itself). Fix blocking
+   findings, address warnings.
 4. **Open a PR targeting `develop`** (not `main`). PRs are created when you ask
-   (`/pr`); an independent reviewer runs automatically.
+   (`/prawduct:pr`); an independent reviewer runs automatically.
 5. `develop → main` happens via periodic **release PRs** only.
 
 This project is developed with [Claude Code](https://claude.ai/code) under the

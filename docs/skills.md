@@ -61,6 +61,7 @@ are the same.)
 | Skill | What it does |
 |---|---|
 | `/hallucinote:compose-review` | Compose-stage guided evaluation — reads the composition (sections, density, energy arc) and the symbolic melody/recurrence lenses *against* declared intent: *"you wanted the chorus to lift — does it?"* Use before the mix stage, or when you ask *"is the chorus landing?"* / *"what's missing?"* |
+| `/hallucinote:render-analyze` | Render the set to per-stem audio and build the **MixReport** (loudness, masking, reverb, per-part timing/feel) in one step — the measurement pass that feeds `/mix-review`. Long-running; the skill keeps the polling out of your context and hands back the summary. **Needs Max for Live** (Live Suite, or the M4L add-on). |
 | `/hallucinote:mix-review` | Holistic, intent-aware mix review — reads the whole MixReport (masking, loudness, reverb, per-part timing/feel, cross-rhythm) per section and interprets it *against* declared intent. Use after an analysis pass or when you ask *"how's the mix?"* **Uses Max for Live (Live Suite, or the M4L add-on); without it, `/compose-review` is the symbolic alternative.** |
 
 ## Understand a song
@@ -73,7 +74,9 @@ are the same.)
 
 ## Contributing & project health
 
-These are for working on Hallucinote itself, not on a song.
+These are for working on Hallucinote itself, not on a song — and they come from
+the separate **prawduct** governance plugin used for development, so they're only
+available if you've installed it (see [`CONTRIBUTING.md`](../CONTRIBUTING.md)).
 
 | Skill | What it does |
 |---|---|

@@ -167,3 +167,56 @@ two worktrees and drop the marketplace install — the rationale is in
   arrives it belongs at the DB/application layer, where the event-store flip is its
   natural foundation — not as per-element locking or version vectors in the protocol.
 - **Linux.** Ableton ships no Linux build.
+
+## Direction
+
+Ratified 2026-08-10. These bind future work; the narrative above describes it.
+
+- **`_FINGERPRINT_PATHS` names exactly the code that is both vendored into Live and
+  executed in Live** — no more, no less.
+  Why: the fingerprint is the only thing standing between a contributor and silent
+  server/Remote-Script drift, the failure that produced this project's worst debugging
+  session. Listing extra paths trains contributors to ignore re-vendor demands until they
+  ignore a real one; omitting a real path reopens the hole the mechanism exists to close.
+  Rulings: [[A Live-side change OUTSIDE `_FINGERPRINT_PATHS` ships silently — the handshake won't tell you to re-vendor]],
+  [[A staleness/version signature must be content-derived, never hand-bumped]]
+
+- **Server-side-only code lives in the top-level `server_side/` package.**
+  Why: exclusion from the fingerprint *by construction* beats exclusion by list
+  maintenance — a path that must be remembered to stay off the list eventually lands on
+  it. This is why analysis handlers don't flip the fingerprint while render's Live-side
+  handlers do.
+
+- **Every MCP tool handler is `async` and dispatches blocking work through
+  `anyio.to_thread`.**
+  Why: FastMCP runs synchronous tool functions inline on the event loop, so one blocking
+  `def` handler freezes the server for every other call. Reverting a handler to plain
+  `def` is a whole-server availability bug, not a style preference.
+
+- **Any operation that can exceed the agent host's tool-call timeout exposes `start` +
+  `status` rather than blocking.**
+  Why: the host's wall-clock timeout is not reset by progress notifications and there is
+  no wake-on-done, so a long synchronous call is *severed*, not merely slow — the
+  synchronous `render` action was retired for exactly this. Socket read timeouts are
+  selected per (tool, action) and must exceed the handler's own long-poll window, or the
+  transport severs a call that was healthy.
+  Rulings: [[A realtime / long-playback MCP action needs a read-timeout policy entry — applied at the layer EVERY recv route shares, not just one]]
+
+- **Push is idempotent and diff-reconciling; the arrangement phase is a projection.**
+  Why: a re-push must change what was asked for and leave the rest alone, or the tool is
+  unsafe to run twice — a phase that reapplies unconditionally is a defect, and was a real
+  one in `devices`. Arrangement is the exception because incremental reconciliation against
+  Live's positional, renumbering clip model produced years of whack-a-mole bugs; settled
+  push-side in brookstalley/hallucinote#350.
+  Retroactivity: contain — projection is the **push**-side regime. Pull still diffs
+  arrangement placements positionally (`sync/pull/clips.py::plan_pull_arrangement_clips`),
+  and the pull planner is the modeled boundary between the two regimes. Convergence is
+  deliberately not intended: the renumbering hazard is a write-path problem and does not
+  transfer to reading. (Owner ruling, 2026-08-10 ratification.)
+
+- **Multi-user concurrency stays out of the wire shape.**
+  Why: this is a single-user, single-machine tool (see the topology above and
+  [`security-model.md`](security-model.md)'s threat model). If concurrency ever arrives it
+  belongs at the DB/application layer where the event log is its natural foundation —
+  per-element locking or version vectors in the protocol would tax every single-user call
+  forever to serve a user who does not exist.

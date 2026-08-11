@@ -25,6 +25,111 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-08-11 — The documentation gets scrubbed for release, and the README learns to be read
+
+<!-- prawduct: type=chore | scope=release-readiness | status=shipped | release=v1.8.2 -->
+
+A full release-readiness pass over the public documentation surface, driven by a
+critical audit (gaps, staleness, audience mixing, onboarding friction) and a
+Critic round whose findings all landed.
+
+- **Landing page:** README overhauled around what-it-is / what-you-can-do /
+  how-to-use / learn-more — short sections, CI/license/platform badges, the
+  previously-orphaned `lifecycle.svg` embedded, the Max-for-Live split stated
+  once, detailed known issues split to `docs/known-issues.md`. The doc-parity
+  suite caught the rewrite dropping three test-pinned claims (the 14-phase
+  list, `/song-brief`, the 13-tool count) — restored, tests untouched. The
+  self-labeled hero placeholder ("replace before release", rendered) is gone:
+  the README ships a real composed two-pane capture from the from-scratch
+  punk-fate session — its own verbatim example prompt and `/song-brief`'s
+  creative fork beside the finished 96-bar arrangement (`docs/assets/hero.png`;
+  raw frames preserved for TOUR C1, locations in that plan's D1 note).
+- **The public CHANGELOG is a maintained surface again:** entries distilled for
+  1.6.1–1.8.1 (it had stranded at a "superseded" tombstone while 1.8.0
+  shipped), and `docs/release-process.md` gained step 6 + a fileset row + a
+  checklist row so the cut itself owns keeping it current.
+- **Commands users can actually run:** the `hallucinote init-workspace`-on-PATH
+  myth removed from README/quickstart (the ask-Claude flow is the path);
+  `collaboration.md` modernized off bare `python`/pre-unification module
+  invocations; a tree-wide stale-command sweep (snapshot-schema ×5,
+  browser-cache-schema, song-new-checklist, SECURITY.md); preflight hedged
+  everywhere it was offered unhedged. Quickstart step 1 stops presenting the
+  automated workspace setup as a manual procedure.
+- **Structure with teeth:** `docs/README.md` audience index (making music /
+  reference / maintainers) enforced by `tests/unit/test_docs_index_parity.py`;
+  `render-analyze` added to the skills reference (the one shipped skill it
+  missed); three broken anchors fixed; internal jargon scrubbed from VISION;
+  the dev-coexistence memo labeled; a new FAQ entry for "unknown skill:
+  hallucinote:*" (hit live during the hero session); the retired demo song's
+  pyproject/testpaths ghosts reconciled and `examples/` given a README. The
+  quickstart and FAQ now teach pull → bake → build (the `StaleSnapshotError`
+  guard — closes #313's docs half), and a style audit against the owner's
+  writing guide returned a clean bill with two touch-ups.
+
+Suite 4983 → 4986 (docs-index parity tests). Two Critic rounds, fully actioned:
+mid-branch 0 blocking / 3 warnings (fixed, verified by a verify-resolutions
+pass) / 5 notes; cumulative 0 blocking / 1 warning (fixed) / 6 notes (one filed
+as #449). Independent PR review: 0 blocking.
+
+## 2026-08-10 — The direction this project already had, written down where it binds
+
+<!-- prawduct: type=chore | scope=norm-ratification | status=shipped | release=v1.8.2 -->
+
+Twenty-seven norms were ratified into `## Direction` sections across six strategy
+artifacts, and the Enforcement table in `project-preferences.md` became the norm index it
+was always described as. Nothing here is a new decision: binding force comes from the
+owner having declared a direction, and every statement ratified was already written in
+this repo's prose. What changed is that a departure from one is now detectable instead of
+being laundered through documentation upkeep — the failure the norm spec exists to
+prevent, where work that diverges from a declared direction gets *documented as the new
+reality* and every reviewer correctly certifies it.
+
+Six candidates could not be ratified as written, and each was a real fork:
+
+- **The `internal` API classification survived the repo going public.** `api-contract.md`
+  had already argued that publishing does not convert these interfaces into public
+  commitments; that argument is now the norm, and `exposes_programmatic_interface` stays
+  `consumers: internal`. The alternative — flipping the characteristic — would have forced
+  an artifact re-derivation and an assumption audit for a trust posture that never changed.
+- **Arrangement projection is contained, not in transition.** Push projects; pull still
+  diffs positionally. The three backlog items that looked like tracking refs are all dead
+  (`#350` shipped, `#286` dropped, `#351` shipped), so an `in-transition` norm here would
+  have been born citing a dead id — the exact decay the registry detects. Recorded as
+  `Retroactivity: contain`, with the pull planner as the modeled boundary, because the
+  renumbering hazard is a write-path problem that does not transfer to reading.
+- **Three preferences statements were false as written** and are now scoped to what was
+  actually decided: `Async: Sync throughout` contradicted the MCP server's hard
+  availability norm (handlers are `async` or one blocking call freezes the server);
+  `stdlib only at runtime` contradicted the engine's own numpy/scipy/librosa stack, when
+  the real rule is stdlib-only *at import time*; and `pip`/`.venv` had drifted from the
+  `uv` toolchain that CI actually gates.
+- **The tool budget is ratified; the count is not.** "Thirteen tools" decays. The norm is
+  the band where tool-selection accuracy holds, with the count left in descriptive prose
+  where it can change without unmaking the decision.
+
+The waiver pragma documented in `project-preferences.md` was also a generation behind —
+21 sites still carry the reasonless legacy `ok-broad-except` spelling against 26 on the
+current `prawduct:allow … -- <reason>` form, filed as brookstalley/hallucinote#447 with
+scope-out language saying a blanket reason on all 21 fails the item rather than completing
+it.
+
+Alongside the ratification, `/prawduct:doctor` cleared three pieces of governance residue:
+the retired `views_enabled` flag had reappeared in `project-state.yaml` (a flag returns by
+someone copying an older state file, not by anyone deciding to reinstate it) along with
+220 lines of the dead `scope_rollups` block it fed; `release-notes.md` gained the archive
+notice that stops it reading as a current record; and `learnings.md` regained the
+`prawduct:descent-obligation` marker, without which `/prawduct:learnings` had been
+pointing all 84 rules' readers at a statement that was not there.
+
+**One correction worth recording because the repo had already learned it once.**
+`plan-backfill --apply` archived `plans/TOUR/build-plan.md` during this pass, and it should
+not have: chunks C1 and D1 are unbuilt, `docs/tour.md` does not exist, and
+`release-plan-v1.8.1.md` says "no plans archived, deliberately." This is the same defect
+the v1.8.0 cut hit, which is why `docs/release-process.md` § 3 already says the command
+"archives by SCOPE, not by completeness" and to check each plan against its own `## Status`.
+The archive was reverted. The lesson generalizes past this command: a documented manual
+check standing behind a mechanical sweep is a check the sweep trains you to skip.
+
 ## 2026-08-10 — The backlog moves to GitHub Issues, and 225 titles learn a budget
 
 <!-- prawduct: type=chore | scope=backlog-migration | release=v1.8.1 -->

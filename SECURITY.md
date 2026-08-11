@@ -9,8 +9,9 @@ Report privately through GitHub's [Security Advisories](https://github.com/brook
 **brooks@tangentry.com** with `[hallucinote security]` in the subject.
 
 Please include what you can: what you observed, how to reproduce it, the Hallucinote
-version (`python -m hallucinote_mcp.cli preflight` prints it), your OS, and your Live
-version. A proof of concept helps a lot.
+version (ask Claude to *run preflight* — it prints the version; the CLI lives inside
+the plugin's environment, so it won't import from a bare shell), your OS, and your
+Live version. A proof of concept helps a lot.
 
 **What to expect.** This is a small project, so response is best-effort rather than
 contractual: an acknowledgement within about a week, an assessment of severity and a
@@ -77,5 +78,6 @@ port, or that the installer writes into your own Live installation.
   supported configuration.
 - Hallucinote sends no telemetry and makes no outbound network calls of its own.
 - A song's SQLite database and its captures are regenerable build artifacts and are
-  gitignored by default; `hallucinote init-workspace` sets that up. If you commit
+  gitignored by default; the workspace setup (ask Claude to *"set up a songs
+  workspace"*) writes that `.gitignore`. If you commit
   them anyway, be aware they carry absolute paths from your machine.

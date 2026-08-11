@@ -38,3 +38,23 @@ changing its shape is a contract change (see [`api-contract.md`](api-contract.md
 carry `valid_actions`, parameter requirements, and recovery hints — the error is the
 next turn's input. A bare error string is a defect here in a way it wouldn't be in a
 human-operated system.
+
+## Direction
+
+Ratified 2026-08-10.
+
+- **No telemetry. Hallucinote emits no metrics, traces or usage data, and makes no
+  outbound network calls of its own.**
+  Why: there is no fleet to observe — every instance runs on one user's machine, and the
+  person who can see a problem is standing in front of it. So telemetry would buy the
+  project nothing it cannot get by asking, while spending the user's trust in a tool that
+  currently makes no network calls at all. Adding it is a **product decision requiring
+  consent**, not an engineering gap to close; a PR that adds a first outbound call is
+  amending this norm whether or not it says so.
+
+- The audit trail (`events`), the install diagnostic (`preflight` + the fingerprint
+  handshake), and the mix-analysis surface (`MixReport`) are the substitutes named above.
+  Their governing norms are ratified in [`data-model.md`](data-model.md) § Direction and
+  [`api-contract.md`](api-contract.md) § Direction — the `MixReport` in particular is a
+  versioned schema with programmatic consumers, so changing its shape is a contract
+  change.

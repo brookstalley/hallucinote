@@ -25,6 +25,26 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-08-11 — The tour ships: punk-fate lands in examples/, and the evidence gets teeth
+
+<!-- prawduct: type=feature | chunks=B1,C1,D1 | scope=tour | status=shipped -->
+
+The TOUR plan's last three pieces, on `feat/tour-evidence`. The demo song
+punk-fate — authored end-to-end from a one-sentence prompt in a live session —
+lands as `examples/punk-fate/` (build.py, mix snapshot, 7 decisions, 2
+annotations, attempt ledger, both mix-analysis reports, shape tests in the
+default suite; headless build verified from a clean checkout). C1's evidence
+budget is spent under `docs/assets/`: full-song audio + waveform, the
+before/after mix A/B pair from the session's own renders, four screenshots
+(arrangement, session-during-render, drum-rack chains, and a fresh off-grid
+MIDI capture showing the snare leading the grid). D1 writes `docs/tour.md`
+(ten beats, one genuine artifact each), grafts the evidence into the README's
+See-it, and locks it all with `tests/preferences/test_tour_freshness.py` —
+doc→source verbatim snippets, asset existence, the 12 MB media byte cap, and
+mix numbers recomputed from the committed reports (adversarially verified
+red/green). Hero video: explicit descope — no screen recording exists and the
+design defers the demo video until the walkthrough is seamless.
+
 ## 2026-08-11 — The documentation gets scrubbed for release, and the README learns to be read
 
 <!-- prawduct: type=chore | scope=release-readiness | status=shipped | release=v1.8.2 -->

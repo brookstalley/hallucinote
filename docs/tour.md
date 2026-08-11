@@ -69,9 +69,11 @@ authorship, not a mix-time to-do list:
 examples/punk-fate/
 ├── build.py                  # every note, as code
 ├── captured_session.json     # instruments, device chains, the dialed mix
+├── REQUIREMENTS.md           # third-party plugins needed (here: none)
 ├── annotations/              # scoped intent (the brief, melody intent)
 ├── decisions/                # why, dated — 7 ADR-shaped records
 ├── attempts/                 # what was tried, including what was reverted
+├── analysis/                 # the measured mix reports (beats 8-9's numbers)
 └── tests/                    # shape tests; run in this repo's CI
 ```
 

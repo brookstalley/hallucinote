@@ -30,10 +30,32 @@ _ASSETS = _REPO / "docs" / "assets"
 _BUILD = _REPO / "examples" / "punk-fate" / "build.py"
 _ANALYSIS = _REPO / "examples" / "punk-fate" / "analysis"
 
-# The committed-media byte cap. The evidence budget caps items (4 screenshots
-# · 1 hero · 3 audio clips); this is the missing byte half — the repo is
-# public and its history permanent, so media weight is a one-way door.
+# The committed-media byte cap — the repo is public and its history
+# permanent, so media weight is a one-way door.
 _MEDIA_BUDGET_BYTES = 12 * 1024 * 1024
+
+# The evidence budget's ITEM half (tour-walkthrough-design.md §The concision
+# rule): 4 screenshots · 1 hero · 3 audio clips, where the hero and each clip
+# ship with the still that stands in for them. This manifest IS the cap:
+# adding media means consciously editing this set, and a stray file under
+# docs/assets/ fails the suite instead of riding along.
+_EXPECTED_ASSETS = {
+    # the one lifecycle diagram (TOUR A4) and the hero still
+    "lifecycle.svg",
+    "hero.png",
+    # 4 screenshots
+    "tour-offgrid-midi.png",
+    "tour-arrangement.png",
+    "tour-session-render.png",
+    "tour-drum-rack.png",
+    # 3 audio items, each an mp3 + its waveform still
+    "tour-full.mp3",
+    "tour-full.png",
+    "tour-chorus-before.mp3",
+    "tour-chorus-before.png",
+    "tour-chorus-after.mp3",
+    "tour-chorus-after.png",
+}
 
 # A fenced block whose first line is this marker claims its remaining lines
 # appear verbatim in the demo song's build.py.
@@ -93,8 +115,21 @@ def test_every_referenced_asset_exists():
     assert not missing, f"referenced media missing from docs/assets/: {missing}"
 
 
+def test_committed_media_matches_the_evidence_manifest():
+    actual = {p.name for p in _ASSETS.rglob("*") if p.is_file()}
+    stray = actual - _EXPECTED_ASSETS
+    missing = _EXPECTED_ASSETS - actual
+    assert not stray and not missing, (
+        f"docs/assets/ diverges from the tour's evidence manifest — "
+        f"stray: {sorted(stray)}, missing: {sorted(missing)}. The manifest "
+        "in this test is the item cap (4 screenshots · 1 hero · 3 clips, "
+        "each clip and the hero with its still); adding media is a conscious "
+        "edit to the manifest, not a drive-by."
+    )
+
+
 def test_committed_media_stays_under_the_byte_budget():
-    total = sum(p.stat().st_size for p in _ASSETS.iterdir() if p.is_file())
+    total = sum(p.stat().st_size for p in _ASSETS.rglob("*") if p.is_file())
     assert total <= _MEDIA_BUDGET_BYTES, (
         f"docs/assets/ holds {total / 1024 / 1024:.1f} MB of committed media; "
         f"the budget is {_MEDIA_BUDGET_BYTES / 1024 / 1024:.0f} MB. Re-encode "

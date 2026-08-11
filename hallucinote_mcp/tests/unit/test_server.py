@@ -1508,3 +1508,64 @@ def test_a_failed_capture_audit_never_fails_the_render(tmp_path, monkeypatch):
         out = handle_tool_call("ableton_render", "status", {"job_id": "job-1"})
 
     assert out["ok"] is True, "the render succeeded; the audit row is incidental"
+
+
+def test_render_status_done_self_ignores_the_captures_root(tmp_path, monkeypatch):
+    """WSP-3R7K: a default-path render marks its captures ROOT ignored, so a
+    workspace created before `init-workspace` stops surfacing gigabytes of WAVs
+    as committable."""
+    from hallucinote_mcp.wire import Response
+
+    _capture_audit_fixture(tmp_path, monkeypatch)
+    captures_root = tmp_path / "songs" / "demo" / "captures"
+    captures_dir = captures_root / "20260811-120000"
+    captures_dir.mkdir(parents=True)
+    # takes.py binds the resolver at import, so patch it where it is USED.
+    monkeypatch.setattr(
+        "hallucinote.takes.resolve_song_dir",
+        lambda slug, **_: tmp_path / "songs" / slug,
+    )
+
+    forwarded = Response(ok=True, result=_done_status(captures_dir))
+    with patch("hallucinote_mcp.server.client.send", return_value=forwarded):
+        handle_tool_call("ableton_render", "status", {"job_id": "job-1"})
+
+    assert (captures_root / ".gitignore").read_text().rstrip().endswith("*")
+
+
+def test_a_foreign_output_dir_never_gets_a_blanket_ignore_written_above_it(
+    tmp_path, monkeypatch,
+):
+    """`output_dir` is caller-controlled — "a caller may render anywhere" — and
+    `self_ignore_dir` writes a blanket `*`. Deriving the target from
+    `captures_dir.parent` would let a render into `songs/<slug>/captures` drop
+    build.py, decisions/ and captured_session.json out of `git status`. The
+    target comes from the SLUG, and a render outside that root is the caller's
+    own directory to manage.
+
+    This mirrors the rule `_sweep_stale_takes` already states for retention.
+    """
+    from hallucinote_mcp.wire import Response
+
+    _capture_audit_fixture(tmp_path, monkeypatch)
+    # takes.py binds the resolver at import, so patch it where it is USED.
+    monkeypatch.setattr(
+        "hallucinote.takes.resolve_song_dir",
+        lambda slug, **_: tmp_path / "songs" / slug,
+    )
+    # The dangerous shape: output_dir IS the song's captures root, so its parent
+    # is the song dir itself.
+    song_dir = tmp_path / "songs" / "demo"
+    elsewhere = tmp_path / "scratch" / "renders"
+    elsewhere.mkdir(parents=True)
+
+    forwarded = Response(ok=True, result=_done_status(elsewhere))
+    with patch("hallucinote_mcp.server.client.send", return_value=forwarded):
+        handle_tool_call("ableton_render", "status", {"job_id": "job-1"})
+
+    assert not (elsewhere.parent / ".gitignore").exists(), (
+        "a blanket ignore must never be written into a tree the caller chose"
+    )
+    assert not (song_dir / ".gitignore").exists(), (
+        "and never into the song dir, which holds build.py and the snapshot"
+    )

@@ -53,6 +53,13 @@ from hallucinote.preset_query import SEARCH_MODES as _VALID_MATCH_MODES
 from hallucinote.workspace import resolve_song_dir
 
 
+# The matcher's own defaults, named once. Importing the ENUM but restating
+# the DEFAULTS would leave the gate half-anchored to the loader — the same
+# split that let SYN-6Q3D happen.
+_MATCH_MODE_DEFAULT = "substring"
+_CASE_SENSITIVE_DEFAULT = False
+
+
 # ---------------------------------------------------------------------------
 # Plugin-class discriminator
 # ---------------------------------------------------------------------------
@@ -325,7 +332,7 @@ def classify_preset_query(
     # "unknown search mode None". Keying on presence rather than truthiness
     # keeps the gate and the loader agreeing — the exact disagreement SYN-6Q3D
     # existed to fix, which a `pq.get("mode")` check would have reopened.
-    mode = pq["mode"] if "mode" in pq else "substring"
+    mode = pq["mode"] if "mode" in pq else _MATCH_MODE_DEFAULT
     if mode not in _VALID_MATCH_MODES:
         return (
             "preset_query_invalid",
@@ -374,8 +381,8 @@ def _dry_run_key(preset_query: dict) -> _DryRunKey:
         str(preset_query.get("root", "")),
         str(preset_query.get("pattern", "")),
         tuple(preset_query.get("path_prefix") or []),
-        str(preset_query.get("mode", "substring")),
-        bool(preset_query.get("case_sensitive", False)),
+        str(preset_query.get("mode", _MATCH_MODE_DEFAULT)),
+        bool(preset_query.get("case_sensitive", _CASE_SENSITIVE_DEFAULT)),
     )
 
 

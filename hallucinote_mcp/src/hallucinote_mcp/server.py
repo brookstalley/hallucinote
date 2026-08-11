@@ -309,15 +309,37 @@ def _record_audio_capture_event(
         from hallucinote.db import mutations as M, queries as Q
         from hallucinote.db.connection import connect, resolve_db_path
         from hallucinote.paths import self_ignore_dir
+        from hallucinote.takes import captures_root_for_slug
 
         # WSP-3R7K: ignore the captures ROOT, not this one take — every take
         # under it is regenerable. Done here rather than in the render worker
         # for the same reason the audit event is: that worker runs inside Live's
-        # vendored env, which has no `hallucinote` to import. Without this, #303's
-        # whole-directory arm reached `analysis/` only, so a pre-bootstrap
-        # workspace still surfaced a directory of WAVs as committable on every
-        # render.
-        self_ignore_dir(pathlib.Path(captures_dir).parent)
+        # vendored env, which has no `hallucinote` to import.
+        #
+        # The root is derived from the SLUG, never from `captures_dir`'s parent,
+        # and this is load-bearing rather than stylistic — it is the same rule
+        # `_sweep_stale_takes` states for the retention sweep, for a sharper
+        # reason here. `output_dir` is fully caller-controlled ("a caller may
+        # render anywhere"), and `self_ignore_dir` writes a blanket `*`. Render
+        # into `songs/<slug>/captures` — the natural literal reading of the
+        # param — and the parent is the SONG DIR, so build.py, decisions/ and
+        # captured_session.json would silently drop out of `git status` under a
+        # header promising it is rewritten if removed. `captures_root_for_slug`
+        # is also the choke point that validates the slug, which arrives here
+        # off the render manifest, i.e. off the wire.
+        try:
+            captures_root = captures_root_for_slug(song_slug)
+            # A render pointed somewhere else is the caller's own directory to
+            # manage; never write a blanket ignore into a tree we did not choose.
+            if pathlib.Path(captures_dir).resolve().is_relative_to(
+                captures_root.resolve()
+            ):
+                self_ignore_dir(captures_root)
+        except (ValueError, OSError):
+            logger.debug(
+                "could not self-ignore the captures root for %r",
+                song_slug, exc_info=True,
+            )
 
         db_path = resolve_db_path(song_slug)
         if not db_path.exists():

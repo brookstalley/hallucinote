@@ -19,8 +19,8 @@ the choice is recorded the same way.
 
 ## Triage — all 30 items
 
-**Buildable on this branch (18, incl. #256 re-triaged in):** 447, 445, 327, 326, 320, 318, 317, 316, 315,
-314, 303, 264, 263, 274, 223, 225, 236
+**Buildable on this branch (18, incl. #256 re-triaged in):** 447, 445, 327, 326,
+320, 318, 317, 316, 315, 314, 303, 264, 263, 274, 223, 225, 236, 256
 
 **Buildable but needs in-branch scoping first (2):** 233, 248
 
@@ -31,7 +31,8 @@ playing all three roles itself — destroys the independence the harness exists
 for. A canonical result recorded that way would be worse than a stale one
 because it would look fresh. Disposition comment posted.
 
-**Blocked on upstream work that has not shipped (2, was 3)** — each verified
+**Blocked on upstream work that has not shipped (2, was 3 — #256 left this
+bucket)** — each verified
 against the CODE, not the issue text, after #256 proved that distinction matters;
 each gets a disposition comment naming its blocker:
 - **#268** envelope: mixer envelopes on audio *session* clips — gated on
@@ -189,8 +190,12 @@ Closes **#303, #263**. Both are additive writes on the tool-output path.
      state/backup files — a pre-bootstrap workspace stops surfacing these as
      committable with no manual root-`.gitignore` edit.
   2. **#263** `events.AUDIO_CAPTURED` exists and is emitted by the capture-success
-     path with a `{captures_dir, manifest_seq, track_count}` payload, queryable
-     through the existing `queries.get_events_for_song`.
+     path with a `{captures_dir, manifest_seq, track_count}` payload, readable
+     through the existing generic `queries.get_events_for_song`.
+     **Scope note (Critic R-20):** the WRITE half is this item. No surface yet
+     ASKS "when was this take captured" — `get_events_for_song` is the generic
+     query the item named, not a dedicated reader. A consumer is follow-on work;
+     recording it here so the Done-when is not read as claiming one exists.
 
 ## Chunk 6 — screen-recording grant + envelope confirmation lock
 
@@ -267,8 +272,9 @@ would unblock it**, so the burndown leaves no silent residue.
 - **Type:** chore
 - **Critic mode:** chunk
 - **Done when:** each of #268, #255, #279, #242, #227, #305, #311, #281, #308
-  carries a dated disposition comment, and this plan's triage section matches
-  what the comments say. **#256 left this roster** — re-examination showed it was
+  carries a dated disposition comment — plus **#252**, re-triaged into this
+  bucket mid-branch — and this plan's triage section matches what the comments
+  say. **#256 left this roster** — re-examination showed it was
   buildable, so it got a "built" comment rather than a "not closed here" one.
 
 ---

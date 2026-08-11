@@ -20,8 +20,9 @@ imports enter this module (lazy, via :func:`_resolve_send_fn`, mirroring the
 same seam ``compat.py`` and ``push_cli.py`` use); ``plan``/``apply`` are
 unaffected and remain MCP-free.
 
-DB resolution is prescriptive: `--song <slug>` resolves to the canonical path
-`songs/<slug>/<slug>.db`. The `--db PATH` escape hatch exists for tests and
+DB resolution is prescriptive: `--song <slug>` resolves through
+`resolve_db_path` — the song's own directory, per-branch filename, with the
+legacy bare `<slug>.db` as the outside-a-repo fallback. The `--db PATH` escape hatch exists for tests and
 non-standard layouts. Exactly one is required. `session_id` may be
 omitted (WFL-7Q2N): the only / most-recent session in the DB is
 auto-selected and echoed on stderr.

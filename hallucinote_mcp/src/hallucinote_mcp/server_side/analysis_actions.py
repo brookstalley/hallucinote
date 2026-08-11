@@ -183,8 +183,9 @@ register(
             "Devices are flattened across nested rack chains to arbitrary "
             "depth: a song using Instrument/Audio-Effect Racks reports the "
             "rack container AND the devices inside it. Nested entries carry "
-            "rack_depth + chain_id, so you can still tell them apart from "
-            "top-level siblings.",
+            "rack_depth, which is what distinguishes them from top-level "
+            "siblings (chain_id is NOT NULL on every device row, so it does "
+            "not).",
             "Built for the musical-work eval judge's --db-extract input: when "
             "a request outran the compose/mix analyzers (a known-gap or novel "
             "result), save this extract to JSON and pass it so the judge can "

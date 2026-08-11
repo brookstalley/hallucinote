@@ -1,18 +1,14 @@
 # Punk Fate
 
-> **Composer intent + dated decisions** for this song live alongside this overview:
-> - `decisions/` — deliberate choices with rationale (ADR-shaped, dated)
-> - `annotations/` — timeless scoped intent (section feel, instrumentation, conventions)
->
-> Query both via `/hallucinote:song-context [topic]` (FTS5-indexed). The convention —
-> what goes in each folder, and how to write one — is
-> [`docs/song-authoring-conventions.md`](../../docs/song-authoring-conventions.md).
-
----
-
 ## Concept
 
 Beethoven's Fifth Symphony crammed into two minutes of basement punk. The whole four-movement harmonic arc — C minor fate riff, the E-flat relative-major lift, the A-flat andante as a half-time breakdown, the C minor scherzo, the great dominant-pedal transition, and the C MAJOR finale with its hammering coda — played by a four-piece: drums, bass, rhythm guitar, and a lead guitar carrying what started life as the vocal line. Raw and blown-out: darkness to triumph in 115 seconds.
+
+> **Where this song's intent lives.** `decisions/` holds deliberate choices with
+> their rationale (ADR-shaped, dated); `annotations/` holds timeless scoped intent
+> (section feel, instrumentation, conventions). Query both with
+> `/hallucinote:song-context [topic]`. How to write one:
+> [`docs/song-authoring-conventions.md`](../../docs/song-authoring-conventions.md).
 
 ## Core specs
 

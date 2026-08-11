@@ -339,7 +339,7 @@ masking/timing.
 
 - **Fits the architecture** — neutral DSP, per-part, fed to one interpreter;
   reuses C7's onset front-end; same dataclass/wiring/corpus pattern as masking.
-- **Leverages the unfair advantage** — the score is known, so a light
+- **Uses the unfair advantage** — the score is known, so a light
   subdivide-the-known-beat method beats blind beat-induction MIR.
 - **Names the relationship** in musician's terms, which is what makes the
   interpreter useful rather than just "low confidence here."

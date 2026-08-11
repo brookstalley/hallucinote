@@ -10,7 +10,7 @@ The LLM has full access via MCP — read every note, write every parameter, gene
 
 Two bets, both unproven, both load-bearing:
 
-1. **Structure unlocks competence.** If the LLM sees the song as semantic objects — tags like `ghost` / `downbeat`, section roles, generator-call provenance, an event log of every change — it can collaborate at the level of musical ideas rather than guessing at MIDI bytes. A diff is not "33 notes changed." It is "raised verse ghost snares +5, swapped the chorus walk for an embellishment, added a fill at bar 12."
+1. **Structure makes the model competent.** If the LLM sees the song as semantic objects — tags like `ghost` / `downbeat`, section roles, generator-call provenance, an event log of every change — it can collaborate at the level of musical ideas rather than guessing at MIDI bytes. A diff is not "33 notes changed." It is "raised verse ghost snares +5, swapped the chorus walk for an embellishment, added a fill at bar 12."
 
 2. **Songs should be forkable.** A song is a git repo. Branch a chorus variant, A/B against main, throw it away. Two collaborators on different continents can each run the song against their own Ableton, push and pull edits like code. No binary DAW project, no email attachments. Impossible in every other tool, because everyone else's source of truth is a closed binary.
 

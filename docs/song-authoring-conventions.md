@@ -572,7 +572,7 @@ What that means when you author one:
 
 - **Push takes real wall-clock.** All changed arcs record in a single playthrough over their union span; the push plan names that union-span estimate (tempo-map-aware) and a loud alert lists every span it will overwrite. A 16-bar master fade at 120 BPM is ~32s of transport playback; adding a second overlapping arc costs no extra time (same pass).
 - **The transport plays during push.** Live audibly plays while arcs record — expected, not a bug.
-- **Fingerprint-gated.** Unchanged arcs are skipped (and listed as skipped) — a data-safety feature, not just a speed one: an arc you didn't change is never re-recorded, so a hand edit to that lane survives. An edited arc re-performs (in the next pass, alongside any other changed arcs), replacing its prior recording over the same span.
+- **Fingerprint-gated.** Unchanged arcs are skipped (and listed as skipped) — a data-safety feature as much as a speed one: an arc you didn't change is never re-recorded, so a hand edit to that lane survives. An edited arc re-performs (in the next pass, alongside any other changed arcs), replacing its prior recording over the same span.
 - **Write-only.** Recorded arrangement automation has no LOM read surface. Push verifies `automation_state == 1` per arc; shape verification is your ears/eyes (or a `.als` dump).
 - **Nested-rack device parameters ARE reachable** on this route (unlike session clips): perform addresses the `Parameter` object directly, so the arc carries the top-level device's link plus a positional `device_path` to the nested param (DEEP-RACK-ADDR / NODE-ADDR). The session-clip route still can't address them — Live 12.4 `Clip.create_automation_envelope` has no nested surface.
 
@@ -617,7 +617,7 @@ Push materializes this in the `routing` phase (after `mix` and `devices` — an 
 
 Whenever you would automate or process the **master** — a master fader ride, a master filter sweep, master bus compression that moves over the song — author it on a **PRE-MAIN bus** instead. The master is a clip-less summing point: its automation — mixer AND device-chain params alike — is authorable but perform-only (lossy ~2.5 Hz, no session-clip host, write-only), never a lossless breakpoint envelope. The bus is an ordinary track, so a ride on it is a first-class, normally-automatable envelope. **Default: nothing rides the master; the master stays flat and the PRE-MAIN bus carries the moves.** (A static master Limiter / Ceiling is fine — it's the *automation* the master can't host losslessly.)
 
-### Other routing patterns the bus unlocks
+### Other things the bus can route
 
 The same primitives (`set_track_routing` + a plain audio bus + `monitoring_state='In'`) are the programmatic **sub-mix / grouping** toolkit. Live **group tracks are not LOM-creatable** (Cmd+G is UI-only — TRK-2H6K deferred), so a routing bus is *the* way to sub-mix from `build.py`:
 

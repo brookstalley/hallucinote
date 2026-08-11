@@ -1,8 +1,8 @@
 # Known issues and limitations
 
-Limitations we know about and have consciously accepted for now — each with its
-workaround where one exists. The [README](../README.md#status) carries the
-one-line versions; this page is the detail. Per-release changes are in
+What doesn't work yet, why we've accepted that for now, and the workaround
+where one exists. The [README](../README.md#status) carries the one-line
+versions; this page is the detail. Per-release changes are in
 [`CHANGELOG.md`](../CHANGELOG.md).
 
 ## Removing a sidechain in Live needs a full rebuild

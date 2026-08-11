@@ -73,7 +73,7 @@ The plugin is **self-contained**: installing it brings the skills, the Ableton b
 
 **3. Connect Ableton** — quit Live, then run **`/hallucinote:ableton-mcp-install`** (it installs the Remote Script and analyzer — the one thing the plugin can't do for you). Reopen Live, and in **Preferences → Link, Tempo & MIDI** assign **Hallucinote** to a free Control Surface slot. Restart Claude Code so the bridge connects.
 
-**4. Verify** — ask Claude: *"please get the current set's info from Ableton."* Tempo, signature, and track counts back means the bridge is working.
+**4. Verify** — ask Claude: *"please get the current set's info from Ableton."* If tempo, signature, and track counts come back, the bridge works.
 
 **Hacking on the framework itself?** Load it from your checkout with `claude --plugin-dir /path/to/hallucinote` — see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 

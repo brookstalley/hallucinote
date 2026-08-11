@@ -1388,3 +1388,63 @@ def test_session_clip_routing_helper_skips_when_clip_unlinked(
     msgs = [n for n in plan.notes if "not linked" in n]
     assert msgs
     assert "mixer_pan" in msgs[0]
+
+
+# ---------- ENV-4S2K: the sample-window confirmation lock ----------
+
+
+def test_sample_instrument_window_envelope_routes_sample_accurate_not_perform(
+    conn, song, session, linked_track, linked_clip, arr_clip, linked_device,
+):
+    """ENV-4S2K: a device_parameter envelope on a sample-instrument MIDI track
+    that IS covered by its session clip must take the sample-accurate
+    `session_clip` route (`Clip.create_automation_envelope`), never the lossy
+    `perform` path.
+
+    Why this is worth a lock rather than trusting the code: `swell` windows a
+    sample per phrase via Simpler `S Start` / `S Length`, so the envelope's
+    breakpoints ARE the phrase-window edges. The perform path gesture-records at
+    roughly 2.5 Hz — enough to smear a window edge into mush, which is precisely
+    where the words appear. A regression from `session_clip` to `perform` would
+    not fail loudly; it would just quietly blur the whole effect. The existing
+    partition test asserts the same route with NO breakpoints (the coarse
+    host-kind fallback); this one carries real per-phrase breakpoints so it
+    exercises the infer-from-span branch that decides coverage.
+
+    **Note-on ordering (the authoring convention this lock protects).**
+    `S Start` / `S Length` are DEVICE-WIDE, not per-note, and a one-shot sampler
+    evaluates them at note-on. So each phrase's breakpoint must sit AT or JUST
+    BEFORE its trigger note — a breakpoint landing after the note-on plays that
+    phrase with the PREVIOUS phrase's window. Author window edges slightly ahead
+    of their notes, never on the following beat.
+    """
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="device_parameter",
+        target_device_id=linked_device, parameter_path="S Start",
+    )
+    # Per-phrase window edges on the fixed eighth-note ruler, each landing just
+    # BEFORE its trigger note-on per the convention above. Inside arr_clip's
+    # [0, 8] beat coverage.
+    for beat, value in ((0.0, 0.0), (1.5, 0.25), (3.5, 0.5), (5.5, 0.75)):
+        M.add_breakpoint(conn, envelope_id=eid, time_beats=beat, value=value)
+
+    row = conn.execute(
+        "SELECT * FROM envelopes WHERE id = ?", (eid,),
+    ).fetchone()
+    assert push.classify_envelope_route(conn, row, song_id=song) == "session_clip", (
+        "a covered device_parameter envelope must stay on the sample-accurate "
+        "clip path; routing it to perform would smear every phrase window at "
+        "the ~2.5 Hz gesture-record rate"
+    )
+
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    calls = _calls_by_target_kind(plan)
+    assert list(calls) == ["device_parameter"]
+    call = calls["device_parameter"][0]
+    assert call.args["location"] == "session", (
+        "location='session' IS the sample-accurate route; an arrangement/perform "
+        "emit here is the regression this test exists to catch"
+    )
+    assert [bp["time_beats"] for bp in call.args["breakpoints"]] == [
+        0.0, 1.5, 3.5, 5.5,
+    ], "every authored window edge must survive the plan at its authored beat"

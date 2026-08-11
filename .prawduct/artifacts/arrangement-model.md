@@ -351,10 +351,36 @@ The energy curve now also has an **audio-realization lens** (ARR-7M3D):
 `MixReport.energy_realization` reports per-correlate Spearman ρ of declared
 `energy_curve` rank vs measured per-section intensity (LUFS-S + onset density)
 and names rank inversions — parallel to the harmonic-conformance lint and the
-performance lens, closing energy's BOTH-SIDES MEASURE half. The
-spectral-intensity correlate is a flagged deferral (loudness + density first).
+performance lens, closing energy's BOTH-SIDES MEASURE half.
 The lens is a ruler: it reports ranked intensity vs intent and never re-authors
 the curve. See `src/hallucinote/audio/energy.py` for the method.
+
+**DECIDED 2026-08-11 (ARR-2S9D): two correlates suffice; the spectral one stays
+unbuilt.** The music-perception literature backs a third intensity correlate —
+spectral density / flux / centroid, since a chorus often "opens up" the spectrum
+at matched loudness, which LUFS alone cannot see (ARR-7M3D `research.md`
+§2/§4) — and `realize_energy` is correlate-agnostic (it ranks whatever
+`measured` supplies, and `correlate_rho` is open-keyed), so the build is small.
+It is deliberately not built, for two reasons that both have to change first:
+
+1. **Discovered-from-friction, and no friction has been recorded.** The
+   governing rule for this correlate was set when it was deferred: ship
+   loudness + density, add the spectral one *when a real case shows the two
+   miss it*. No such case has been logged. Building it now is the speculative
+   pre-build that rule exists to prevent.
+2. **It is not the neutral measurement it looks like.** The 2026-08-10 owner
+   ruling narrowed the analyzer freeze from "no new lenses" to **no new lens
+   that GRADES or COACHES** — a determinate physical number carrying no
+   threshold is outside it. Spearman ρ is determinate, but *which* spectral
+   measure (flux vs centroid vs flatness) and how it is windowed are taste-laden
+   choices, and the ρ lands in `/mix-review`'s coaching read of whether a
+   section lifts. So this sits inside the freeze, and the listening day
+   (QLT-3D8R) is still owed.
+
+**What flips this:** a logged case where a section's declared energy rises, both
+loudness and onset density read flat, and the ear says it lifted. That is the
+friction the rule waits for — and by then the listening day should have
+calibrated the surrounding thresholds anyway.
 
 ---
 

@@ -249,8 +249,8 @@ would unblock it**, so the burndown leaves no silent residue.
 - [x] Chunk 3 — path resolution + compat gate (#327, #326)
 - [x] Chunk 4 — push/capture robustness (#225, #264)
 - [x] Chunk 5 — self-ignoring artifacts + capture event (#303, #263)
-- [ ] Chunk 6 — screen-recording grant + envelope lock (#223, #236)
-- [ ] Chunk 7 — energy spectral correlate (#274)
+- [x] Chunk 6 — screen-recording grant + envelope lock (#223, #236)
+- [x] Chunk 7 — energy spectral correlate (#274)
 - [ ] Chunk 8 — coherence guard, eval refresh, overview derivation (#248, #252, #233)
 - [ ] Chunk 9 — dispositions for the 10 non-buildable items
 

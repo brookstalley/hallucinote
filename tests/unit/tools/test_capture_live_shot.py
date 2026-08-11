@@ -133,9 +133,22 @@ def test_require_macos_rejects_other_platforms(monkeypatch: pytest.MonkeyPatch) 
 
 
 class FakeCoreGraphics:
-    def __init__(self, granted: bool):
+    """CoreGraphics stand-in recording whether the TCC prompt was raised.
+
+    ``has_request`` models a macOS older than 10.15, where preflight exists but
+    ``CGRequestScreenCaptureAccess`` does not — the attribute is simply absent,
+    so the lookup raises AttributeError exactly as ctypes would.
+    """
+
+    def __init__(
+        self, granted: bool, *, grants_on_request: bool = False,
+        has_request: bool = True,
+    ):
         self._granted = granted
         self.CGPreflightScreenCaptureAccess = _Preflight(granted)
+        self.request_calls = 0
+        if has_request:
+            self.CGRequestScreenCaptureAccess = _Request(self, grants_on_request)
 
 
 class _Preflight:
@@ -147,13 +160,28 @@ class _Preflight:
         return self._granted
 
 
-def _patch_preflight(monkeypatch: pytest.MonkeyPatch, granted: bool) -> None:
+class _Request:
+    def __init__(self, owner: "FakeCoreGraphics", grants: bool):
+        self._owner = owner
+        self._grants = grants
+        self.restype = None
+
+    def __call__(self) -> bool:
+        self._owner.request_calls += 1
+        return self._grants
+
+
+def _patch_preflight(
+    monkeypatch: pytest.MonkeyPatch, granted: bool, **kwargs,
+) -> FakeCoreGraphics:
+    fake = FakeCoreGraphics(granted, **kwargs)
     monkeypatch.setattr(
         "tools.capture_live_shot.ctypes.util.find_library", lambda name: f"/fake/{name}"
     )
     monkeypatch.setattr(
-        "tools.capture_live_shot.ctypes.cdll.LoadLibrary", lambda path: FakeCoreGraphics(granted)
+        "tools.capture_live_shot.ctypes.cdll.LoadLibrary", lambda path: fake
     )
+    return fake
 
 
 def test_assert_capture_permission_passes_when_granted(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -438,3 +466,69 @@ def test_an_unexpected_exception_still_clears_the_shot(
     with pytest.raises(ZeroDivisionError):
         capture(out)
     assert not out.exists()
+
+
+# --- DOC-2W9F: a denied grant must RAISE the OS prompt, not just report ------
+
+
+def test_denied_preflight_requests_the_grant(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`CGRequestScreenCaptureAccess` is the only call here that raises a TCC
+    dialog — neither `CGWindowListCopyWindowInfo` nor the `screencapture` CLI
+    does. Without it a denied grant was a dead end that sent the operator
+    hunting System Settings mid-capture."""
+    fake = _patch_preflight(monkeypatch, False)
+    with pytest.raises(ScreenRecordingDenied):
+        assert_capture_permission()
+    assert fake.request_calls == 1
+
+
+def test_a_granted_preflight_does_not_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No dialog on the happy path — the prompt is for the denied case only."""
+    fake = _patch_preflight(monkeypatch, True)
+    assert_capture_permission()
+    assert fake.request_calls == 0
+
+
+def test_still_denied_after_the_request_keeps_the_actionable_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """denied -> request -> still denied: the error must survive the request
+    intact, still naming the host app and the relaunch requirement."""
+    fake = _patch_preflight(monkeypatch, False, grants_on_request=False)
+    monkeypatch.setattr("tools.capture_live_shot._host_app_hint", lambda: "Some Terminal.app")
+    with pytest.raises(ScreenRecordingDenied) as excinfo:
+        assert_capture_permission()
+    message = str(excinfo.value)
+    assert fake.request_calls == 1
+    assert "Some Terminal.app" in message
+    assert "restart" in message
+
+
+def test_newly_granted_still_raises_because_the_grant_needs_a_relaunch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The subtlety that must survive the fix: granting through the prompt does
+    NOT retroactively enable a RUNNING process — the permission is read at
+    launch. (Observed the hard way: preflight returned True while capture still
+    failed, because the grant predated this process.) So even a successful
+    request must still raise, with the relaunch instruction intact; treating
+    'granted' as 'usable now' would send the operator into the misleading
+    'could not create image from window' failure."""
+    fake = _patch_preflight(monkeypatch, False, grants_on_request=True)
+    monkeypatch.setattr("tools.capture_live_shot._host_app_hint", lambda: "Some Terminal.app")
+    with pytest.raises(ScreenRecordingDenied) as excinfo:
+        assert_capture_permission()
+    assert fake.request_calls == 1
+    assert "restart" in str(excinfo.value)
+
+
+def test_macos_without_the_request_api_still_reports_actionably(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pre-10.15 has preflight but no request. Missing the newer API must
+    degrade to the old dead-end error, never to a crash."""
+    _patch_preflight(monkeypatch, False, has_request=False)
+    monkeypatch.setattr("tools.capture_live_shot._host_app_hint", lambda: "Some Terminal.app")
+    with pytest.raises(ScreenRecordingDenied) as excinfo:
+        assert_capture_permission()
+    assert "Screen Recording" in str(excinfo.value)

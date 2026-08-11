@@ -253,6 +253,20 @@ def assert_capture_permission() -> None:
     Checked with the API rather than inferred from a failed capture, because the
     failure mode is genuinely misleading: ``screencapture`` reports "could not
     create image from window", which reads like a bad window id.
+
+    On a denied preflight, ASK — ``CGRequestScreenCaptureAccess`` raises the
+    actual TCC dialog. Nothing else here does: neither
+    ``CGWindowListCopyWindowInfo`` nor the ``screencapture`` CLI triggers one, so
+    before this the operator hit a dead-end error and had to go hunt System
+    Settings mid-capture (it cost a real tour session).
+
+    The error path SURVIVES the request, deliberately, on both branches. Neither
+    call answers "can THIS process capture" — the grant is read at process
+    launch, so a permission granted through the prompt does not retroactively
+    enable a running process. (Observed: preflight returned True while capture
+    still failed, because the grant already existed but predated this process.)
+    So a newly-granted permission still needs the relaunch the message names,
+    which is why that line is load-bearing rather than redundant.
     """
     cg_path = ctypes.util.find_library("CoreGraphics")
     if not cg_path:
@@ -263,12 +277,21 @@ def assert_capture_permission() -> None:
         granted = core_graphics.CGPreflightScreenCaptureAccess()
     except AttributeError as exc:  # very old macOS without the preflight API
         raise CaptureError("this macOS has no screen-capture preflight API") from exc
-    if not granted:
-        raise ScreenRecordingDenied(
-            f"Screen Recording permission is not granted to {_host_app_hint()}. Grant it in "
-            f"System Settings > Privacy & Security > Screen Recording, then restart that "
-            f"application — the permission is read at launch"
-        )
+    if granted:
+        return
+    # Raise the OS prompt. Absent on macOS older than 10.15, where preflight
+    # exists but request doesn't — fall through to the actionable error.
+    try:
+        core_graphics.CGRequestScreenCaptureAccess.restype = ctypes.c_bool
+        core_graphics.CGRequestScreenCaptureAccess()
+    except AttributeError:
+        pass
+    raise ScreenRecordingDenied(
+        f"Screen Recording permission is not granted to {_host_app_hint()}. A "
+        f"system prompt was requested — grant it there, or in System Settings > "
+        f"Privacy & Security > Screen Recording, then restart that "
+        f"application — the permission is read at launch"
+    )
 
 
 def raise_app(app: str) -> None:

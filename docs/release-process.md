@@ -61,7 +61,9 @@ Each cluster in `origin/main..develop` needs a `.prawduct/change-log.md` entry. 
 authored on feature branches are **statusless**, then `prawduct-hook stamp-merged`
 flips them to `status=merged` at merge time. On the feature branch, the entry lands
 inside the single **ship-stamp commit** (change-log entry + backlog close + any
-project-state record, batched — see `.prawduct/backlog.md` header rule 1, PRC-5W2N).
+project-state record, batched — see the **Backlog norms** in
+[`.prawduct/artifacts/project-preferences.md`](../.prawduct/artifacts/project-preferences.md),
+rule 1, PRC-5W2N).
 At release:
 
 - For each `status=merged` entry being released: change `status=merged` →
@@ -199,9 +201,18 @@ git describe --tags --exact-match origin/main     # vNEW
 pytest tests/unit/test_version_parity.py -q        # all four product surfaces == vNEW
 ```
 
-Build plans for shipped clusters are **retained** (not deleted) — gitflow keeps them
-until the next release's `regen-views` re-derives status. Only `active_build_plan`
-pointing at an *unfinished* parked plan stays meaningful between releases.
+Build plans are **archived, never deleted** — step 3 does this, and an archived plan
+stays findable by name while no longer reading as live work. Two things that step
+cannot decide for you, both of which bit at the v1.8.0 cut:
+
+- **`plan-backfill` archives by SCOPE, not by completeness.** A plan whose scope the
+  release tagged is archived even if some of its chunks are unticked. At v1.8.0 it
+  wanted to archive `TOUR` because `scope=tour` shipped, while chunks C1 and D1 were
+  unbuilt — archiving would have declared them done. Check each plan it names against
+  its own `## Status` before accepting, and restore any that still has open chunks.
+- **`active_build_plan` is cleared only when the plan it names just archived.** Leave
+  it EMPTY, never the literal `null`. A pointer at an unfinished parked plan stays
+  meaningful between releases and should survive the cut.
 
 ## Version surfaces
 
@@ -213,11 +224,15 @@ handshake — is on its **own clock**. Full rationale in
 
 | Surface | File | Moves when | Today |
 |---|---|---|---|
-| **Product** (canonical) | `pyproject.toml` `[project].version` | every release (lockstep) | `1.6.0` |
-| **MCP package** (`hallucinote-mcp`) | `hallucinote_mcp/pyproject.toml` | every release (lockstep) | `1.6.0` |
-| **Plugin manifest** | `.claude-plugin/plugin.json` `version` | every release (lockstep) | `1.6.0` |
-| **Engine dunder** (`hallucinote`) | `src/hallucinote/__init__.py` `__version__` | every release (lockstep) | `1.6.0` |
+| **Product** (canonical) | `pyproject.toml` `[project].version` | every release (lockstep) | see `pyproject.toml` |
+| **MCP package** (`hallucinote-mcp`) | `hallucinote_mcp/pyproject.toml` | every release (lockstep) | see `pyproject.toml` |
+| **Plugin manifest** | `.claude-plugin/plugin.json` `version` | every release (lockstep) | see `pyproject.toml` |
+| **Engine dunder** (`hallucinote`) | `src/hallucinote/__init__.py` `__version__` | every release (lockstep) | see `pyproject.toml` |
 | **Handshake** | `BASE_VERSION` + content fingerprint, `hallucinote_mcp/src/hallucinote_mcp/__init__.py` | any wire-shape file changes (`_FINGERPRINT_PATHS`) | `0.1.0+<12-hex>` |
+
+The **Today** column deliberately names the file rather than a number: a literal here
+is a copy of a value that moves every release, and it sat at `1.6.0` through three
+cuts before anyone noticed.
 
 The product version (all four lockstep surfaces) is **marketing/changelog metadata**.
 The **handshake fingerprint** is what actually gates whether Live will talk to the

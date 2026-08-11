@@ -45,6 +45,7 @@ dist/
 .prawduct/.critic-findings.json
 .prawduct/.test-evidence.json
 .prawduct/.pr-reviews/
+.prawduct/.handoff-notes.md
 .prawduct/.session-git-baseline
 .prawduct/.session-handoff.md
 .prawduct/.session-reflected

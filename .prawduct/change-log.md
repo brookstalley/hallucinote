@@ -25,6 +25,131 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-08-10 — The backlog moves to GitHub Issues, and 225 titles learn a budget
+
+<!-- prawduct: type=chore | scope=backlog-migration | release=v1.8.1 -->
+
+The markdown backlog is now frozen history. All **225 items** live in this repo's
+GitHub Issues — 111 live, 114 archived as closed — reached through
+`prawduct-hook backlog <op> --repo brookstalley/hallucinote`. The one key that
+makes it so is `backlog_service_repo` in `project-state.yaml`; setting it is what
+makes `.prawduct/backlog.md` stop being read, which is why it was set only after
+the completeness gate passed.
+
+**The gate is the point, not the count.** `verify-migration --archive-scope all`
+exited 0 with `source_items: 225, aliased: 225` and all five lists empty
+(`missing`, `unaliasable`, `collisions`, `status_mismatch`, `duplicate_alias`).
+A raw issue count would not have been enough: the precedent this gate exists for
+(`samsung-frame-art-loader`) recorded a cutover with 7 of 9 items stranded and
+counts that looked plausible, because natively-filed issues carry a prawduct
+block but no `id:PFX` alias. Coverage of the source set against alias keying is
+the only comparison that holds.
+
+**192 of 225 titles did not conform** to the issue standard's §1 (182 over the
+72-char budget, 127 joining ≥2 claims) and the importer refuses a non-conforming
+corpus before the first write. So the migration carried a reviewed restructure
+plan: every title rewritten atomic and inside budget, `kind` assigned, and the
+111 live items given template body sections derived from their own structure
+(`**Verifiable signal:**` → Acceptance, boundary/NARROWED paragraphs → Scope-out).
+Nothing was paraphrased and every original is preserved verbatim in the issue's
+`original_title:` / `original_body:`.
+
+**Six owner-confirmed dispositions**, applied after the gate because they are
+deliberate divergence from the source and the gate cannot tell that apart from a
+stranded item: `MCP-6B4W` folded into `MCP-7J2Q` (one `run_on_main` timeout
+defect, not two — the `finally` releases the bout lock on the timeout path, which
+falsifies the premise `MCP-7J2Q` built on); `VEW-3M8F`, `INS-6K1T`, `SYN-7T3M`,
+`GEN-2T8M`, `MIG-3T7K` dropped. Two clusters were examined and deliberately NOT
+merged — `ENV-3M7K`/`ENV-4M2T`/`MIX-7K2D` are three mechanisms, and the `ING-*`
+family are intended legs of one design.
+
+**The freeze had to be propagated, not just declared** — the independent reviews
+found the file still carrying load after being called dead. **Eight tracked
+citations pointed into it.** Three were in `docs/` and are fixed here:
+`docs/collaboration.md` sent readers there for "the open items", and both
+`docs/release-process.md` and `docs/song-authoring-conventions.md` cited its
+header **rule 1** (the PRC-5W2N ship-stamp rule) as canonical. A live norm cannot
+live in a dead file, so the three load-bearing backlog rules — ship-stamp,
+verifiable-signal-required, and trust-but-verify-on-scrub — were **copied** to a
+**Backlog norms** section in `project-preferences.md`, which is now canonical, and
+those citations point there. Copied rather than moved because the corpus must stay
+verbatim; the banner names which copy wins so a later amendment cannot land in the
+dead one.
+
+A fourth, `tests/integration/test_live_smoke.md`, cited `backlog.md:11` — a line
+number that was already stale and now resolves to banner prose; repointed at the
+item id. **The remaining three are source citations and are deliberately NOT fixed
+here** — `cost-of-commit` prices those `.py` files `costs-a-round`, so buying a
+full review round for three comment/string edits is the wrong trade. They are
+filed as **#445** (including the sharp one: a *user-facing* MCP error string in
+`handlers/clip.py:358`, and a comment pointing at GEN-2T8M, an item this same
+cutover dropped) to ride the next code chunk. Filed rather than noted, because
+`.handoff-notes.md` is gitignored as of this bundle and would have made it a drop.
+
+The banner also stops overclaiming: the file is not read for any backlog
+operation, but it remains the migration's source corpus for `verify-migration` and
+rollback, so it must be preserved verbatim.
+
+Recorded alongside: `infrastructure_dependencies` no longer claims "No external
+services" (GitHub Issues is one — though not on the product's runtime path: a
+song builds, pushes and renders with GitHub unreachable), the cutover is now a
+`technical_decisions.operational` entry with its alternatives and its rollback
+cost, and its publish-exposure acceptance is linked to **PRC-6N2X**, which is the
+entry whoever flips this repo public will actually read.
+
+Also here: `.prawduct/.handoff-notes.md` is now gitignored alongside its siblings
+(`.session-handoff.md`, `.session-reflected`), which it was missing from — it is
+the same class of ephemeral session channel and should never have been
+committable. And the metadata-bar legend gained a `revisit:` row, documenting a
+field that was specified but undocumented; note it describes the format of a file
+that is now history, so its "raises an advisory once past" clock no longer fires
+from here — and **that expiry currently has no enforcer on the Issues backend
+either**, since the field has no write path there yet (the plugin's
+`probe_revisit_due` stands down post-cutover). Nothing is lost today: no item ever
+carried a clock, so the only `revisit:` in the file is the legend row itself.
+
+Carried across as disclosed debt, not silently fixed: **32 live items have no
+verifiable signal** and migrated with no Acceptance section (criteria were
+deliberately not invented), and **11 are flagged `non_atomic`** awaiting an owner
+split. Full audit record, including which plugin build ran the scrub:
+`.prawduct/artifacts/migration-scrub-decisions.md`.
+
+**Re-vendor: not required** — no `_FINGERPRINT_PATHS` file is touched.
+
+## 2026-08-10 — The release runbook learns two things the v1.8.0 cut taught it
+
+<!-- prawduct: type=docs | scope=release-process-docs | release=v1.8.1 -->
+
+`docs/release-process.md` was wrong in two places, both found by following it.
+
+**Step 9 pointed at a mechanism that no longer runs.** It said plans for shipped
+clusters are retained "until the next release's `regen-views` re-derives status" —
+but `regen-views` is inert and warns it will be removed, and step 3 archives plans
+instead. Rewritten to what the cut actually needs, including the two judgements
+`plan-backfill` cannot make for you:
+
+- **It archives by SCOPE, not by completeness.** At the v1.8.0 cut it wanted to
+  archive `TOUR` because `scope=tour` had shipped, while chunks C1 and D1 were
+  unbuilt — accepting it would have declared them done. Check each plan it names
+  against that plan's own `## Status` and restore any with open chunks.
+- **`active_build_plan` is cleared only when the plan it names just archived**, and
+  is left **empty**, never the literal `null` — the pointer reader treats
+  post-colon text as a path, so `null` resolves to `.prawduct/null` and mis-fires
+  the missing-build-plan advisory.
+
+**The Version-surfaces table carried a stale copy of a moving value.** Its "Today"
+column listed a literal `1.6.0` for the four lockstep product surfaces; it had sat
+through three cuts and read as authoritative. It now names the file to look in,
+which cannot go stale — one rule, one carrier.
+
+Shipped alongside the backlog migration deliberately: these corrections describe
+the procedure that cut this very release, and the release-plan artifact gap they
+did *not* yet cover (`check-releasability` wants a
+`release-plan-vX.Y.Z*.md` that no prior version had) is recorded in
+`.prawduct/artifacts/release-plan-v1.8.1.md` for a follow-up pass.
+
+Doc-only. No behaviour change. **Re-vendor: not required.**
+
 ## 2026-08-08 — Seven push/sync correctness fixes, six of them reported as OK
 
 <!-- prawduct: type=bugfix | scope=push+arrangement+workspace+device-load | release=v1.8.0 -->

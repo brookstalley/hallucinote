@@ -78,6 +78,16 @@ notes, automation, and arrangement are authored in `build.py`. See
 No. Push is **idempotent**: re-running converges Live to the DB's state instead
 of stacking duplicates. Iterate freely — change something, push again.
 
+## I get "unknown skill: hallucinote:…" — the skills don't exist.
+
+The plugin isn't loaded in this session. Two ways that happens: you installed
+from the marketplace but into a different Claude Code profile/machine, or
+you're on a dev machine where the plugin loads via `--plugin-dir` and this
+launch didn't pass it. Fix: install per [README → Install](../README.md#install),
+or relaunch with `claude --plugin-dir /path/to/hallucinote`. Don't let a
+session improvise song work without the plugin — there's no bridge to Live and
+no engine environment, so it can only produce an unbuildable scaffold.
+
 ## Live won't connect, or I get a "version mismatch."
 
 See [README troubleshooting](../README.md#troubleshooting). The two most common

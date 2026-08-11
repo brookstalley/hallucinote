@@ -175,3 +175,87 @@ def test_a_song_with_no_sections_yet_is_not_drifted(song, tmp_path):
     assert detect_overview_drift(
         conn, song_id=song_id, overview_path=path,
     ) is None
+
+
+# --- the build.py docstring layout, the OTHER derived surface ----------------
+
+
+from hallucinote.tools.overview_drift import parse_docstring_layout  # noqa: E402
+
+
+def _build_py(*layout_lines: str) -> str:
+    return (
+        '"""Build A Song into a SQLite DB.\n\n'
+        "Section bar layout (1-based, 4/4 throughout — adjust if non-4/4):\n"
+        + "".join(layout_lines)
+        + "\nRun:\n    python build.py\n"
+        '"""\n'
+        "from hallucinote.db import init_db\n"
+        "\n"
+        "def melody_report():\n"
+        '    """Not the form: bars 99-200 here must not be read as a section."""\n'
+    )
+
+
+def test_parses_the_scaffold_docstring_layout():
+    src = _build_py(
+        "    Intro        bars  1-8    (8 bars)\n",
+        "    Verse 1      bars  9-16   (8 bars)\n",
+    )
+    assert parse_docstring_layout(src) == {"Intro": 1, "Verse 1": 9}
+
+
+def test_only_the_module_docstring_is_read():
+    """A layout-shaped line in a function docstring further down is not form."""
+    src = _build_py("    Intro        bars  1-8    (8 bars)\n")
+    assert parse_docstring_layout(src) == {"Intro": 1}
+
+
+def test_a_build_py_with_no_layout_block_parses_to_nothing():
+    assert parse_docstring_layout('"""Just prose."""\nimport os\n') == {}
+
+
+def test_docstring_layout_drifts_independently_of_the_markdown_table(song, tmp_path):
+    """The two surfaces rot separately — the `alien` case had BOTH stale, but
+    fixing one must not mask the other."""
+    conn, song_id = song
+    for name, start, end in [("Intro", 1, 8), ("Verse 1", 9, 16), ("Chorus", 17, 24)]:
+        _section(conn, song_id, name, start, end)
+
+    # Markdown is current; the docstring still shows the scaffold's two sections.
+    md = tmp_path / "a-song.md"
+    md.write_text(_overview(
+        "| `Intro` | 1–8 | x |\n",
+        "| `Verse 1` | 9–16 | x |\n",
+        "| `Chorus` | 17–24 | x |\n",
+    ))
+    build_py = tmp_path / "build.py"
+    build_py.write_text(_build_py(
+        "    Intro        bars  1-8    (8 bars)\n",
+        "    Verse 1      bars  9-16   (8 bars)\n",
+    ))
+
+    from hallucinote.tools.overview_drift import detect_form_drift
+
+    report = detect_form_drift(
+        conn, song_id=song_id, overview_path=md, build_py_path=build_py,
+    )
+    assert not report.overview, "the markdown table is current"
+    assert report.docstring, "the docstring is missing Chorus"
+    assert report.docstring.missing == ("Chorus",)
+    assert "build.py" in report.describe(slug="a-song")
+
+
+def test_form_drift_is_falsey_when_both_surfaces_match(song, tmp_path):
+    conn, song_id = song
+    _section(conn, song_id, "Intro", 1, 8)
+    md = tmp_path / "a-song.md"
+    md.write_text(_overview("| `Intro` | 1–8 | x |\n"))
+    build_py = tmp_path / "build.py"
+    build_py.write_text(_build_py("    Intro        bars  1-8    (8 bars)\n"))
+
+    from hallucinote.tools.overview_drift import detect_form_drift
+
+    assert not detect_form_drift(
+        conn, song_id=song_id, overview_path=md, build_py_path=build_py,
+    )

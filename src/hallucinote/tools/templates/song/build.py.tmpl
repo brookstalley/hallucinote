@@ -23,6 +23,7 @@ from hallucinote.authoring import run_build
 from hallucinote.capture import replay_capture
 from hallucinote.db import init_db, mutations as M, queries as Q, resolve_db_path
 from hallucinote.melody import MelodyReport
+from hallucinote.tools.overview_drift import warn_on_form_drift
 
 # Per-branch DB filename (W12-A): branch switches pick up the right DB
 # silently; outside a repo / detached HEAD falls back to {{slug}}.db.
@@ -126,6 +127,17 @@ def report(song_id: str) -> None:
         sections = [s["name"] for s in Q.get_sections_for_song(conn, song_id)]
         print(f"total notes: {total_notes}")
         print(f"sections: {sections}")
+        # DOC-4F8M: this song's two DERIVED surfaces — {{slug}}.md's Structure
+        # table and this file's docstring section layout — are hand-maintained
+        # and rot to the scaffold defaults as the form grows. The build close is
+        # where the DB's form is freshly authoritative and you are still here, so
+        # a mismatch is reported now rather than discovered by a reader months
+        # later. It only ever REPORTS: both surfaces carry your prose (the Feel
+        # column, this docstring), so nothing rewrites them for you.
+        warn_on_form_drift(
+            conn, song_id=song_id, slug="{{slug}}",
+            song_dir=Path(__file__).parent,
+        )
     finally:
         conn.close()
 

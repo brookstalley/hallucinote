@@ -41,6 +41,7 @@ To run a song's `build.py` (it imports `hallucinote`), run it with the same inte
 | `melody …` / `recurrence …` | the symbolic lenses (`tools.melody_lens` / `tools.recurrence_lens`) |
 | `reindex …` / `scaffold …` / `inventory …` | `tools.reindex_markdown` / `tools.scaffold_song` / `hallucinote.inventory` |
 | `init-workspace` | scaffold a songs workspace (`hallucinote.toml`, `.gitignore`, `git init`) in the cwd |
+| `overview-drift <slug>` | report a `<slug>.md` Structure table or `build.py` docstring layout that has drifted from the form the DB carries (reports only; never rewrites). Songs scaffolded from 2026-08-11 run this at their build close automatically — this is the on-demand path for older ones. |
 | `verify-arrangement` | audit the DB arrangement against Live (exit 1 on divergence) |
 | `tuning-pull …` | capture Live's loaded alternate tuning onto a song (`/tuning-pull`'s apply step) |
 

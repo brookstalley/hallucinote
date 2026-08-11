@@ -88,6 +88,18 @@ class OverviewDrift:
         return "\n".join(lines)
 
 
+def _db_sections(conn: sqlite3.Connection, song_id: str) -> dict[str, float]:
+    """The canonical form: what build.py actually materialized.
+
+    `sections.start_bar` is REAL — truncating to int would make a section at
+    bar 1.5 falsely agree with a surface saying 1.
+    """
+    return {
+        row["name"]: float(row["start_bar"])
+        for row in Q.get_sections_for_song(conn, song_id)
+    }
+
+
 def parse_structure_table(markdown: str) -> dict[str, int]:
     """Section name -> start bar, read from the overview's Structure table.
 
@@ -113,6 +125,58 @@ def parse_structure_table(markdown: str) -> dict[str, int]:
     return out
 
 
+# `    Intro        bars  1-8    (8 bars)` — the shape
+# `scaffold_song.section_layout` renders into build.py's module docstring. Same
+# hyphen/en-dash tolerance as the markdown table, for the same reason.
+_LAYOUT_LINE = re.compile(
+    r"^(?P<name>\S.*?)\s+bars\s+(?P<start>\d+)\s*[–-]\s*(?P<end>\d+)\b"
+)
+
+
+def parse_docstring_layout(source: str) -> dict[str, int]:
+    """Section name -> start bar, read from build.py's module docstring.
+
+    The scaffold renders this block under a "Section bar layout" heading and
+    then never touches it again, so it rots exactly like the markdown table.
+    Only the module docstring is read (the text before the first import), so a
+    layout-shaped line in a function docstring further down cannot be mistaken
+    for the form. Returns ``{}`` when the block is absent or unparseable —
+    "nothing to compare against" is not drift.
+    """
+    head = re.split(r"^(?:import|from)\s", source, maxsplit=1, flags=re.MULTILINE)[0]
+    marker = "Section bar layout"
+    if marker not in head:
+        return {}
+    block = head.split(marker, 1)[1]
+    out: dict[str, int] = {}
+    for line in block.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            # A blank line ends the block — the docstring continues with "Run:".
+            if out:
+                break
+            continue
+        m = _LAYOUT_LINE.match(stripped)
+        if not m:
+            if out:
+                break
+            continue
+        out[m.group("name").strip()] = int(m.group("start"))
+    return out
+
+
+def _compare(table: dict[str, int], db_sections: dict[str, float]) -> "OverviewDrift":
+    """Set-difference the two, treating a differing start bar as `moved`."""
+    missing = tuple(n for n in db_sections if n not in table)
+    extra = tuple(n for n in table if n not in db_sections)
+    moved = tuple(
+        (n, table[n], db_sections[n])
+        for n in table
+        if n in db_sections and float(table[n]) != db_sections[n]
+    )
+    return OverviewDrift(missing=missing, extra=extra, moved=moved)
+
+
 def detect_overview_drift(
     conn: sqlite3.Connection, *, song_id: str, overview_path: Path,
 ) -> OverviewDrift | None:
@@ -131,23 +195,104 @@ def detect_overview_drift(
     if not table:
         return None
 
-    # `sections.start_bar` is REAL — truncating to int would make a section at
-    # bar 1.5 falsely agree with a table row saying 1.
-    db_sections = {
-        row["name"]: float(row["start_bar"])
-        for row in Q.get_sections_for_song(conn, song_id)
-    }
+    db_sections = _db_sections(conn, song_id)
     if not db_sections:
         return None
 
-    missing = tuple(n for n in db_sections if n not in table)
-    extra = tuple(n for n in table if n not in db_sections)
-    moved = tuple(
-        (n, table[n], db_sections[n])
-        for n in table
-        if n in db_sections and float(table[n]) != db_sections[n]
+    return _compare(table, db_sections)
+
+
+@dataclass(frozen=True)
+class FormDrift:
+    """Both derived surfaces, checked together.
+
+    They rot independently — the `alien` case had both stale — so fixing one
+    must not mask the other. Falsey when neither has drifted.
+    """
+
+    overview: "OverviewDrift | None" = None
+    docstring: "OverviewDrift | None" = None
+
+    def __bool__(self) -> bool:
+        return bool(self.overview) or bool(self.docstring)
+
+    def describe(self, *, slug: str) -> str:
+        parts = []
+        if self.overview:
+            parts.append(self.overview.describe(slug=slug))
+        if self.docstring:
+            parts.append(
+                self.docstring.describe(slug=slug).replace(
+                    f"{slug}.md's Structure table",
+                    "build.py's docstring section layout",
+                    1,
+                )
+            )
+        return "\n".join(parts)
+
+
+def detect_form_drift(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    overview_path: Path,
+    build_py_path: Path,
+) -> FormDrift:
+    """Check BOTH derived surfaces against the DB's sections."""
+    return FormDrift(
+        overview=detect_overview_drift(
+            conn, song_id=song_id, overview_path=overview_path,
+        ),
+        docstring=_detect_docstring_drift(
+            conn, song_id=song_id, build_py_path=build_py_path,
+        ),
     )
-    return OverviewDrift(missing=missing, extra=extra, moved=moved)
+
+
+def _detect_docstring_drift(
+    conn: sqlite3.Connection, *, song_id: str, build_py_path: Path,
+) -> "OverviewDrift | None":
+    try:
+        source = build_py_path.read_text()
+    except OSError:
+        return None
+    layout = parse_docstring_layout(source)
+    if not layout:
+        return None
+    db_sections = _db_sections(conn, song_id)
+    if not db_sections:
+        return None
+    return _compare(layout, db_sections)
+
+
+def warn_on_form_drift(
+    conn: sqlite3.Connection, *, song_id: str, slug: str, song_dir: Path,
+) -> bool:
+    """Print a drift report to stderr if either derived surface has rotted.
+
+    The build-close hook: scaffolded `build.py` calls this at the end of its
+    run, which is the moment the DB's form is freshly authoritative and the
+    author is present. Returns True when something was reported.
+
+    Never raises and never rewrites — a bookkeeping check must not be able to
+    fail a build, and both surfaces carry composer prose (see the module
+    docstring for why generation was rejected).
+    """
+    import sys
+
+    try:
+        drift = detect_form_drift(
+            conn,
+            song_id=song_id,
+            overview_path=song_dir / f"{slug}.md",
+            build_py_path=song_dir / "build.py",
+        )
+    except Exception:  # prawduct:allow prawduct/broad-except -- an overview bookkeeping check must never fail the build that ran it; a rotted map is a smaller problem than a build that won't finish
+        return False
+    if not drift:
+        return False
+    print(drift.describe(slug=slug), file=sys.stderr)
+    return True
 
 
 def main(argv: list[str] | None = None) -> int:

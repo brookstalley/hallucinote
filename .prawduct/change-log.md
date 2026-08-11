@@ -54,10 +54,17 @@ checked.
   set of fingerprints, and a scoped `--changed` push compared one DB's clips
   against the other DB's fingerprints. It is a resolution-semantics change,
   not a pure bugfix: a DB written under the foreign name will not be found
-  under the new one. `resolve_db_path` now prints a stderr line naming any
-  differently-branched sibling when the resolved DB is absent — `build.py`
-  regenerates authored content, but rows pulled from Live (and the pull events
-  arming the replay guard) live only in the DB that recorded them. The legacy
+  under the new one. A runtime warning naming orphaned sibling DBs was tried and
+  **reverted**: under per-branch naming a routine `git switch -c` produces
+  exactly the same shape (a new DB name beside an older sibling), so it could
+  not tell a foreign-cwd orphan from an ordinary new branch without becoming
+  noise — and it sat inside a resolver that `provenance.auto_request` calls on
+  every mutating MCP tool call. `resolve_db_path` stays a pure resolver.
+  **If you have been building a song from another repo's checkout, look for a
+  `<slug>-<other-branch>.db` beside the new one before deleting anything:**
+  `build.py` regenerates authored content, but rows pulled from Live — and the
+  pull events arming the replay guard — live only in the DB that recorded them.
+  The legacy
   `<slug>.db` fallback readers already carry is unchanged. Both root paths now
   probe the same place, so `resolve_db_path(slug)` and `resolve_db_path(slug,
   root=...)` agree by construction.
@@ -95,7 +102,12 @@ checked.
   composer prose (the table's Feel column, and `build.py`'s docstring in the
   composer's own source), so regenerating them would clobber real work to fix a
   bookkeeping problem. The canonical form is the DB — what `build.py` actually
-  materialized, and what every other reader already treats as true.
+  materialized, and what every other reader already treats as true. It checks
+  **both** derived surfaces (the markdown table and `build.py`'s docstring
+  layout) and is wired into the scaffold's build close, so a song scaffolded
+  from now on checks itself on every build. **Songs scaffolded before this do
+  not get it automatically** — retrofitting means rewriting their `build.py`,
+  the clobbering this decision rejected — so they use the subcommand on demand.
 
 - **Two decisions recorded rather than built.** `arrangement-model.md` now
   carries the ARR-2S9D call (#274 — two energy correlates suffice; the spectral

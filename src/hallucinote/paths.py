@@ -165,7 +165,10 @@ def _relative_or_none(path: Path, base: Path) -> str | None:
 # authored work (build.py, captured_session.json, decisions/). Listed by name so
 # the ignore covers exactly these — a blanket `*` here would swallow the song.
 # Any tool that writes one of them ignores the whole family, so whichever runs
-# first covers the rest.
+# first covers the rest. Overlaps `init_workspace.GITIGNORE_BLOCK`, the
+# workspace-ROOT list, on purpose: that one covers a freshly-bootstrapped
+# workspace wholesale, this one travels with the artifact into workspaces that
+# predate it. Keep the song-dir names in sync when either grows.
 SONG_DIR_IGNORED_FILES = (
     ".last-notes-push.json",
     ".last-push-state.json",

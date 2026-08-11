@@ -230,10 +230,21 @@ on the issue rather than half-built.
      against the current two-sided melody rubric and canonicalized via
      `write_result(canonical=True)` with their transcripts — or, if the harness
      cannot be driven here, the blocker is recorded on the issue.
-  3. **#233** the generate-vs-warn question is decided and the chosen direction
-     built: the `<slug>.md` structure table + `build.py` docstring section layout
-     are derived from `FORM`, or a build-time staleness warning fires when they
-     diverge.
+  3. **#233** the generate-vs-warn question is decided (**warn**, rationale in
+     `overview_drift.py`'s module docstring) and built: a build-time staleness
+     warning fires over BOTH derived surfaces — `<slug>.md`'s Structure table
+     and `build.py`'s docstring section layout — when either diverges from the
+     DB's sections.
+     **Explicitly narrowed:** the warning is wired into the scaffold's
+     `build.py` close, so it fires on every build of a song scaffolded from
+     2026-08-11 onward. **Songs scaffolded BEFORE that do not get it
+     automatically** — their `build.py` has no call — and there is no
+     retrofit: rewriting an existing `build.py` is exactly the clobbering this
+     item decided against. Those songs use `hallucinote overview-drift <slug>`,
+     which checks the same two surfaces on demand. What would close the gap: a
+     hook that fires for every song regardless of when it was scaffolded (the
+     natural home is `/compose-review`, the reader-facing surface where a stale
+     map actually costs something).
 
 ## Chunk 9 — dispositions for the 10 non-buildable items
 

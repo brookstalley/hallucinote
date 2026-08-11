@@ -778,6 +778,72 @@ def test_classify_preset_query_rejects_string_path_prefix():
     assert "path_prefix" in detail and "list" in detail
 
 
+def test_classify_preset_query_rejects_an_unknown_mode():
+    """SYN-6Q3D put `mode` on the wire, which makes it structural: an unknown
+    mode reaches the browser, the enum is rejected, and
+    `_probe_browser_dry_runs` raises SystemExit — killing the WHOLE --probe
+    report over one bad device. Catching it here flags that device instead."""
+    status, detail = C.classify_preset_query(json.dumps({
+        "root": "instruments", "pattern": "Pad", "mode": "fuzzy",
+    }))
+    assert status == "preset_query_invalid"
+    assert "mode" in detail and "fuzzy" in detail
+
+
+def test_classify_preset_query_rejects_a_non_boolean_case_sensitive():
+    """`case_sensitive` rides the wire too, and `name_matches` takes a bool.
+    A string here is the same class of authoring error as a string
+    path_prefix."""
+    status, detail = C.classify_preset_query(json.dumps({
+        "root": "instruments", "pattern": "Pad", "case_sensitive": "yes",
+    }))
+    assert status == "preset_query_invalid"
+    assert "case_sensitive" in detail
+
+
+def test_classify_preset_query_accepts_every_supported_mode():
+    """The validator must not become a second, stricter matcher — it imports
+    `preset_query.SEARCH_MODES` precisely so it cannot drift from the loader."""
+    from hallucinote.preset_query import SEARCH_MODES
+
+    for mode in SEARCH_MODES:
+        assert C.classify_preset_query(json.dumps({
+            "root": "instruments", "pattern": "Pad", "mode": mode,
+        })) is None, f"{mode!r} is a supported mode and must pass structurally"
+
+
+def test_a_bad_mode_device_does_not_kill_the_whole_probe_report(
+    conn, song, track_chain, db_path,
+):
+    """The point of validating structurally: one malformed device must not take
+    down the report for every OTHER device. Before this, the bad mode reached
+    `ableton_browser(action='search')`, the enum was rejected, and
+    `_probe_browser_dry_runs` raised SystemExit for the whole song."""
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="Operator", display_name="Bad",
+        preset_query={"root": "instruments", "pattern": "Pad", "mode": "fuzzy"},
+    )
+    M.create_device(
+        conn, chain_id=track_chain, position=2,
+        kind="Operator", display_name="Good",
+        preset_query={"root": "instruments", "pattern": "Bass-Pluck"},
+    )
+    conn.commit()
+    # The fake routes ONLY the good query — so if the bad one reached the wire
+    # it would raise AssertionError rather than pass silently.
+    send = _fake_send_factory({
+        ("instruments", "Bass-Pluck", (), "substring", False): 1,
+    })
+
+    runs = C._probe_browser_dry_runs(conn, send_fn=send)
+    assert runs == {("instruments", "Bass-Pluck", (), "substring", False): 1}
+
+    report = C.check_song(db_path, browser_dry_runs=runs)
+    assert [e.display_name for e in report.preset_query_invalid] == ["Bad"]
+    assert report.has_issues is True
+
+
 def test_classify_preset_query_rejects_garbage_json():
     """Malformed JSON in the preset_query column → still classified as
     invalid (don't let a corrupted snapshot pass through silently)."""

@@ -52,6 +52,13 @@ DEFAULT_SONGS_ROOT = "songs"
 # Layout-agnostic (`**/`) so it covers monorepo and flat `song` layouts alike.
 _GITIGNORE_BEGIN = "# --- Hallucinote: regenerable tool artifacts (managed block) ---"
 _GITIGNORE_END = "# --- end Hallucinote managed block ---"
+# The workspace-ROOT block. Its per-song-dir counterpart is
+# `hallucinote.paths.SONG_DIR_IGNORED_FILES`, which tools write into the song
+# dir they generate into (WSP-3R7K) so the ignore reaches workspaces created
+# before this block existed. The two overlap deliberately — this one covers a
+# freshly-bootstrapped workspace wholesale, that one travels with the artifact
+# — but they are separate lists: keep the song-dir names in sync when either
+# grows, or a pre-bootstrap workspace stops ignoring something this one does.
 GITIGNORE_BLOCK = "\n".join(
     [
         _GITIGNORE_BEGIN,

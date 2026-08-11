@@ -206,8 +206,13 @@ When changing this surface:
 - **Consumers**: `audio/io.py` `load_capture` → `analyze_mix` (stamps `db_seq`
   into the MixReport), `resolve_baseline` (seq → report resolution),
   `hallucinote/takes.py` `recency_key` (retention ordering — see Deleter),
-  and `tools/make_demo_media.py` `master_wav`/`untrustworthy` — the only
-  consumer outside `src/`, and the only one whose output is **published**.
+  `tools/make_demo_media.py` `master_wav`/`untrustworthy` — the only
+  consumer outside `src/`, and the only one whose output is **published** —
+  and `server._record_audio_capture_event` (AUD-5M8H), which reads
+  `song_slug` + `db_seq` + `len(tracks)` off the render STATUS response to
+  append the `AUDIO_CAPTURED` audit event. That one is best-effort by
+  contract: it must never fail a render that succeeded, and it dedupes on
+  `captures_dir` because it fires from a poll the agent repeats.
   It reads `master.filename` (never `absolute_path`, which records the
   authoring machine's layout), plus the three trust flags below.
 - **The trust flags bind every consumer, and hardest on the published one.**

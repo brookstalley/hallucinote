@@ -26,6 +26,7 @@ from pathlib import Path
 _REPO = Path(__file__).resolve().parents[2]
 _TOUR = _REPO / "docs" / "tour.md"
 _README = _REPO / "README.md"
+_QUICKSTART = _REPO / "docs" / "quickstart.md"
 _ASSETS = _REPO / "docs" / "assets"
 _BUILD = _REPO / "examples" / "punk-fate" / "build.py"
 _ANALYSIS = _REPO / "examples" / "punk-fate" / "analysis"
@@ -108,7 +109,7 @@ def _referenced_assets(doc: Path) -> set[Path]:
 def test_every_referenced_asset_exists():
     missing = [
         str(p.relative_to(_REPO))
-        for doc in (_TOUR, _README)
+        for doc in (_TOUR, _README, _QUICKSTART)
         for p in sorted(_referenced_assets(doc))
         if not p.is_file()
     ]

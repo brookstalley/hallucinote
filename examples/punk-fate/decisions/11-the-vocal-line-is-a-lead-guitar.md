@@ -101,7 +101,7 @@ moves from pure tone toward noise, and a square wave is about as tonal as a
 synthesised sound gets. The Voice stem's went up a third, and it dragged the
 whole master up 29 % with it — **the single biggest jump in noisiness of any
 pass on this song**, larger than the entire dirt pass in [[09-the-dirt]]. The
-drums, bass and rhythm-guitar stems' flatness moved by at most 0.001 (the
+drums, bass and rhythm-guitar stems' flatness moved by at most 0.0013 (the
 guitar's third decimal shifts, 0.1557 → 0.1545), which confirms nothing else
 was disturbed by the teardown. Evidence:
 `measurements/2026-08-11-lead-guitar-full-song.json`.

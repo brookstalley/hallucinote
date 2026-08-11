@@ -110,7 +110,7 @@ wave in the first place was right about frequency range and wrong about genre.
 Voice-stem spectral flatness **0.110 → 0.147**, master **0.192 → 0.247** — the
 biggest single jump in noisiness of any pass on this song, at
 **−0.40 dBTP, 0 overshoots, 0 findings**, with the other three stems' flatness
-moved by at most 0.001.
+moved by at most 0.0013.
 
 The concept line above still says "a staccato mono-synth singing the vocal line."
 That was true of the song for two days and is kept here as history; the band is

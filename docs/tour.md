@@ -489,7 +489,7 @@ The preset lied *again* — "Heavy" loaded as mid-gain `Rock` — and was caught
 in one `get_parameters` call this time, because beat 14's rule was already
 filed. The swap moved master spectral flatness **0.192 → 0.247**, the single
 biggest jump in noisiness of any pass on this song, while the other three
-stems' flatness moved by at most 0.001 — confirming the teardown disturbed
+stems' flatness moved by at most 0.0013 — confirming the teardown disturbed
 nothing else. The track is still named `04 Voice`: the
 *role* is unchanged, and the name records the part's function while the
 decision records its instrument.

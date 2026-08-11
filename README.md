@@ -82,7 +82,7 @@ The plugin is **self-contained**: installing it brings the skills, the Ableton b
 Day to day, it's three things:
 
 1. **Open Live** with an empty set.
-2. **Start Claude Code in your songs workspace** — a git repo where your songs live. Don't have one? In an empty folder, ask Claude to *"set up a songs workspace here"* — it creates the marker file, the `.gitignore`, and the git repo.
+2. **Start Claude Code where your songs live** — your songs repo, or any empty folder. No workspace yet? When you ask for a song, Claude notices and offers to set one up — say yes, and it creates the marker file, the `.gitignore`, and the git repo for you.
 3. **Describe a song.** Or run **`/hallucinote:getting-started`** first — it checks your setup and points you at the next step.
 
 The [**Quickstart**](docs/quickstart.md) walks the first song end to end in about ten minutes.

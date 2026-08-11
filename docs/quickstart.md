@@ -25,32 +25,24 @@ Surface in Live's Preferences. This quickstart assumes that's done.
 
 ---
 
-## 1. Open Live and Claude Code in your songs workspace
+## 1. Open Live, open Claude Code
 
 1. Open **Ableton Live** with an **empty set**. (Hallucinote should already be
    selected as a Control Surface from setup — Preferences → Link, Tempo & MIDI.)
-2. In a terminal, `cd` into your **song workspace** — a repo with a
-   `hallucinote.toml` marker at its root. Don't have one yet? Make an empty
-   folder, `cd` into it, start `claude`, and ask it to *"set up a songs
-   workspace here"* — it writes the marker, a `.gitignore` for the regenerable
-   build artifacts (DB, captures, analysis), and `git init`s for you. (Or clone
-   your existing songs repo.) The marker is just:
+2. In a terminal, `cd` to wherever you want your songs to live — your existing
+   songs repo if you have one, any empty folder if you don't — and start
+   `claude`.
 
-   ```toml
-   # hallucinote.toml
-   [workspace]
-   layout     = "monorepo"
-   songs_root = "songs"
-   ```
+That's it. Songs live in a **songs workspace** (a git repo with a
+`hallucinote.toml` marker), but you don't set that up by hand: the first time
+you ask for a song outside one, Claude notices and offers to create it — say
+yes, and it writes the marker, a `.gitignore` for the regenerable build
+artifacts, and `git init`s the folder before scaffolding your song there.
 
-   Then start Claude Code from the workspace:
-
-   ```bash
-   claude
-   ```
-
-   > New to all this? Run `/hallucinote:getting-started` instead — it detects a
-   > missing workspace and offers to create one before you make your first song.
+> Curious what got created? The marker is a three-line
+> `hallucinote.toml` telling the tools where songs live — nothing you need to
+> edit. Unsure about anything else? `/hallucinote:getting-started` checks your
+> whole setup and points you at the next step.
 
 ## 2. Compose a song from a prompt
 

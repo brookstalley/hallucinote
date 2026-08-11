@@ -458,6 +458,18 @@ itself and the invocation change becomes the cheaper option.
 
 ### Chunk D1: `docs/tour.md`, the README graft, and the freshness tests
 
+- **Coordination note (2026-08-11, docs/release-readiness session):** the README this
+  chunk grafts into was fully overhauled on `docs/release-readiness` (restructured
+  sections, badges, `docs/assets/lifecycle.svg` embedded, known issues split out to
+  `docs/known-issues.md`, new `docs/README.md` audience index) — base the graft on that
+  branch's README, not the pre-overhaul one. Two parity tests will meet this chunk:
+  `tests/unit/test_docs_index_parity.py` fails unless `docs/tour.md` gets a row in
+  `docs/README.md`, and the lifecycle/pipeline doc-parity suite applies if the tour
+  enumerates the push phases or the song lifecycle. Candidate raw evidence: the
+  2026-08-11 punk-fate hero-session captures (two-pane prompt+Live frames, mid-push
+  session-view frame) — whether the tour uses them or a fresh capture is the owner's
+  scope call.
+
 - **Description:** Write the ten beats against the real artifacts, graft the evidence
   into the README (shorter in prose, richer in artifacts — it links to the tour, it does
   not restate it), and lock the whole thing with tests so it cannot rot quietly.

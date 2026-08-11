@@ -315,16 +315,31 @@ def classify_preset_query(
     return None
 
 
-def _dry_run_key(preset_query: dict) -> tuple[str, str, tuple[str, ...]]:
+# The browser dry-run cache key: every field `preset_query.name_matches` reads.
+# Named rather than spelled out at each use so widening it (as SYN-6Q3D did,
+# adding mode + case_sensitive) is a one-line change, not an eight-site sweep.
+_DryRunKey = tuple[str, str, tuple[str, ...], str, bool]
+
+def _dry_run_key(preset_query: dict) -> _DryRunKey:
     """Canonical key for a precomputed browser-search dry-run cache.
 
-    Includes ``root``, ``pattern``, and a tuple-encoded ``path_prefix``
-    so the cache hash is stable across re-runs of the same query.
+    Carries every field ``preset_query.name_matches`` reads — ``root``,
+    ``pattern``, tuple-encoded ``path_prefix``, ``mode`` and
+    ``case_sensitive`` — so the cache hash is stable across re-runs AND two
+    queries that differ only in how they match cannot collide on one entry.
+
+    ``mode``/``case_sensitive`` were originally absent, which caused both
+    halves of SYN-6Q3D: the probe searched with the browser's default
+    substring matcher regardless of what the query declared, and two devices
+    differing only in ``mode`` shared a single match count. The defaults here
+    mirror :func:`hallucinote.preset_query.name_matches`.
     """
     return (
         str(preset_query.get("root", "")),
         str(preset_query.get("pattern", "")),
         tuple(preset_query.get("path_prefix") or []),
+        str(preset_query.get("mode", "substring")),
+        bool(preset_query.get("case_sensitive", False)),
     )
 
 
@@ -379,7 +394,7 @@ def check_song(
     db_path: Path | str,
     *,
     installed_plugins: list[dict] | None = None,
-    browser_dry_runs: dict[tuple[str, str, tuple[str, ...]], int] | None = None,
+    browser_dry_runs: dict[_DryRunKey, int] | None = None,
 ) -> CompatReport:
     """Walk the song's DB and classify every device.
 
@@ -471,7 +486,7 @@ def _walk_chain(
     track_name: str,
     report: CompatReport,
     installed_names: frozenset[str] | None,
-    browser_dry_runs: dict[tuple[str, str, tuple[str, ...]], int] | None,
+    browser_dry_runs: dict[_DryRunKey, int] | None,
 ) -> None:
     """Recursively walk a device chain, classifying each device.
 
@@ -510,7 +525,7 @@ def _classify_device_full(
     device_row: sqlite3.Row,
     *,
     installed_names: frozenset[str] | None,
-    browser_dry_runs: dict[tuple[str, str, tuple[str, ...]], int] | None,
+    browser_dry_runs: dict[_DryRunKey, int] | None,
 ) -> tuple[DeviceStatus, str | None, str | None]:
     """Combined classifier — preset_query validation takes precedence
     over plugin-check, because a structurally-broken preset_query will
@@ -776,7 +791,7 @@ def _resolve_send_fn():
 
 def _collect_preset_query_specs(
     conn: sqlite3.Connection,
-) -> list[tuple[tuple[str, str, tuple[str, ...]], dict]]:
+) -> list[tuple[_DryRunKey, dict]]:
     """Walk every device in the (single-song) DB and return unique
     structurally-valid preset_queries as ``(dry_run_key, query_dict)``
     pairs.
@@ -792,7 +807,7 @@ def _collect_preset_query_specs(
     rows = conn.execute(
         "SELECT preset_query FROM devices WHERE preset_query IS NOT NULL"
     ).fetchall()
-    seen: dict[tuple[str, str, tuple[str, ...]], dict] = {}
+    seen: dict[_DryRunKey, dict] = {}
     for row in rows:
         raw = row["preset_query"]
         if classify_preset_query(raw) is not None:
@@ -814,7 +829,7 @@ def _probe_browser_dry_runs(
     conn: sqlite3.Connection,
     *,
     send_fn=None,
-) -> dict[tuple[str, str, tuple[str, ...]], int]:
+) -> dict[_DryRunKey, int]:
     """Issue ``ableton_browser(action='search')`` for every unique
     structurally-valid preset_query in the song's DB and return a map
     suitable for :func:`check_song`'s ``browser_dry_runs=`` parameter.
@@ -835,7 +850,7 @@ def _probe_browser_dry_runs(
         send_fn = _resolve_send_fn()
     from hallucinote_mcp.wire import Request  # type: ignore[import-not-found]
 
-    out: dict[tuple[str, str, tuple[str, ...]], int] = {}
+    out: dict[_DryRunKey, int] = {}
     for key, pq in specs:
         params: dict = {
             "pattern": pq.get("pattern", ""),
@@ -845,6 +860,17 @@ def _probe_browser_dry_runs(
         path_prefix = pq.get("path_prefix") or []
         if path_prefix:
             params["path_prefix"] = list(path_prefix)
+        # Probe with the matcher the LOADER will use. Omitting these made the
+        # gate disagree with the thing it gates: an `exact` query was probed
+        # with the browser's default substring matcher, so a pattern matching
+        # one preset exactly but two by substring was refused as
+        # `kind_ambiguous` on a device that loads perfectly. Sent only when
+        # non-default so the wire stays byte-identical for ordinary queries.
+        mode = pq.get("mode")
+        if mode:
+            params["mode"] = str(mode)
+        if pq.get("case_sensitive"):
+            params["case_sensitive"] = True
         resp = send_fn(Request(
             tool="ableton_browser", action="search", params=params,
         ))

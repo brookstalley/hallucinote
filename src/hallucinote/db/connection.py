@@ -481,14 +481,17 @@ def resolve_db_path(
 
     - **explicit `root`** — `<root>/<slug>/…`. `build.py` passes
       `root=Path(__file__).parent.parent`, so a song resolves its own DB
-      relative to its file regardless of cwd. Byte-identical to the historical
-      behavior; the git branch is probed in the process cwd.
+      relative to its file regardless of cwd.
     - **resolved `root`** (the default) — the song dir is resolved via the
       project-root contract (`HALLUCINOTE_SONGS_ROOT` → a `hallucinote.toml`
       marker → legacy `songs/<slug>`; see `hallucinote.workspace`). This is
       what lets a long-running MCP server, launched with cwd ≠ the song's repo,
-      still find a song that lives in its own repo. The branch is probed in the
-      *resolved song dir* (the song's repo), not the server's cwd.
+      still find a song that lives in its own repo.
+
+    **Either way the branch is probed in the resolved song dir** — the song's
+    own repo — falling back to the process cwd only when that dir does not
+    exist yet. So the two forms return the same filename for the same song, and
+    neither depends on where the process was launched from.
 
     The branch name is sanitized by replacing `/` with `--` so `feature/foo`
     becomes `feature--foo` — mirrors `.prawduct/.pr-reviews/` naming so
@@ -500,13 +503,24 @@ def resolve_db_path(
     """
     if root is _ROOT_RESOLVE:
         song_dir = resolve_song_dir(slug)
-        # Probe the song's OWN repo (it may differ from the process cwd), but
-        # only if it already exists — a not-yet-built song dir falls back to
-        # the process cwd so a fresh `build.py --reset` still gets the branch.
-        probe_cwd = song_dir if song_dir.is_dir() else None
     else:
         song_dir = Path(root) / slug
-        probe_cwd = None  # explicit root: probe the process cwd (unchanged)
+    # Probe the song's OWN repo (it may differ from the process cwd), but only
+    # if it already exists — a not-yet-built song dir falls back to the process
+    # cwd so a fresh `build.py --reset` still gets the branch.
+    #
+    # BOTH root paths probe the same place, deliberately: the explicit-root
+    # branch used to probe the process cwd instead, which broke the very
+    # guarantee `root=` exists to provide. `build.py` passes
+    # `root=Path(__file__).parent.parent` so a song resolves its DB relative to
+    # its own file regardless of cwd — but with a cwd probe the *filename* was
+    # still cwd-dependent, so running a song's build.py from a checkout of
+    # another repo minted `<slug>-<that-repo's-branch>.db` while every reader
+    # looked for `<slug>-<songs-repo-branch>.db`. Two DBs for one song, plus
+    # duplicated sibling push-state files, split by which shell you happened to
+    # be in. Keeping the two paths identical is what makes
+    # `resolve_db_path(slug)` and `resolve_db_path(slug, root=...)` agree.
+    probe_cwd = song_dir if song_dir.is_dir() else None
     if branch is _BRANCH_PROBE_GIT:
         resolved_branch = _git_current_branch(cwd=probe_cwd)
     else:

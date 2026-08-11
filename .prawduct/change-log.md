@@ -25,6 +25,53 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-08-11 — The effort:S backlog burns down: a guard override deleted, a gate that agreed with itself, and a DB that stops depending on your shell
+
+<!-- prawduct: type=fix | scope=effort-s-burndown | status=in-progress -->
+
+One branch working through every `effort:S` item open on the tracker. Chunks 1-2
+covered the PR #213 deferred-warning cluster and a sweep of prose the tree had
+outgrown; chunk 3 is two real bugs where a check disagreed with the thing it
+checked.
+
+- **`capture restamp` is gone** (#318). It moved a snapshot's `captured_at`
+  forward with no re-capture, durably disarming the replay staleness guard on
+  evidence nothing had checked. The two sanctioned exits already cover the
+  ground — a fresh capture (durable) and `--force-replay` (conscious revert,
+  which re-warns every build rather than switching the guard off). Deleting it
+  makes `migrate_snapshot`'s "only a real capture stamps" invariant exactly
+  true instead of approximately true.
+
+- **BREAKING (resolution semantics), `resolve_db_path`** (#327): with an
+  explicit `root=`, the git branch is now probed in the **song's own
+  directory** instead of the process cwd. This **remaps DB filenames for anyone
+  who has been running a song's `build.py` from a foreign cwd** — that shell
+  was minting `<slug>-<the-other-repo's-branch>.db` while every reader looked
+  for `<slug>-<songs-repo-branch>.db`, so one song silently owned two DBs (and
+  two sets of `.last-push-state.json` / `.last-notes-push.json` siblings,
+  which is how a scoped `--changed` push could compare against the wrong
+  fingerprints). It is a resolution-semantics change, not a pure bugfix: a DB
+  that was being written under the foreign name will not be found under the
+  new one. The legacy `<slug>.db` fallback readers already carry is unchanged.
+  Both root paths now probe the same place, so `resolve_db_path(slug)` and
+  `resolve_db_path(slug, root=...)` agree by construction.
+
+- **`compat check --probe` stopped lying about ambiguity** (#326). The dry-run
+  cache key omitted `mode` and `case_sensitive`, and the probe never sent them,
+  so a query authored `mode='exact'` was searched with the browser's default
+  substring matcher and classified on a count the real loader would never
+  produce — refusing `kind_ambiguous` at the push gate on devices that load
+  perfectly. Both fields now ride the key and the wire. The second, quieter
+  half is closed too: two devices differing only in `mode` no longer collide on
+  one cache entry and share a match count.
+
+- **Waivers, citations, and the pre-split layout** (#447, #445, #320): all 21
+  legacy `prawduct:ok-broad-except` pragmas migrated to the current form
+  carrying a per-catch reason; the four source citations into the frozen
+  `.prawduct/backlog.md` repointed at stable `id:PFX` handles (and dropped
+  entirely from the one user-facing error string); `project-preferences.md`
+  stopped describing the monorepo the framework/songs split retired.
+
 ## 2026-08-11 — The documentation gets scrubbed for release, and the README learns to be read
 
 <!-- prawduct: type=chore | scope=release-readiness | status=shipped | release=v1.8.2 -->

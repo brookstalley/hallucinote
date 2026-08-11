@@ -193,3 +193,89 @@ def test_git_probe_returns_none_on_detached_head(tmp_path):
     )
     branch = _git_current_branch(cwd=repo)
     assert branch is None
+
+
+# ---------------------------------------------------------------------------
+# WSP-8Q4M — the branch is probed in the SONG's repo, never the process cwd
+#
+# Both root paths (explicit and resolved) must probe the same directory. The
+# explicit-root path used to probe the process cwd, so running a song's
+# `build.py` from a checkout of a different repo minted a DB named for THAT
+# repo's branch while every reader looked for the songs-repo branch — two DBs
+# for one song, plus duplicated `.last-push-state.json` / `.last-notes-push.json`
+# siblings, split by whichever shell the build happened to run in.
+# ---------------------------------------------------------------------------
+
+
+def _make_repo(path: Path, branch: str) -> Path:
+    """A real git repo on `branch` with one commit (hermetic: no ambient
+    signing config, no inherited init.defaultBranch)."""
+    path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q", "-b", branch], cwd=path, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t",
+         "-c", "commit.gpgsign=false", "commit",
+         "--allow-empty", "-q", "-m", "initial"],
+        cwd=path, check=True,
+    )
+    return path
+
+
+def test_explicit_root_probes_the_song_repo_not_the_process_cwd(
+    tmp_path, monkeypatch, _no_root_env,
+):
+    """Song dir in repo A on `main`; process cwd in repo B on `feat/x`.
+
+    `resolve_db_path(slug, root=<songs-root>)` must name the SONG's branch.
+    Before the fix it returned `<slug>-feat--x.db` — the cwd repo's branch.
+    """
+    songs_repo = _make_repo(tmp_path / "songs-repo", "main")
+    framework_repo = _make_repo(tmp_path / "framework-repo", "feat/x")
+    song_dir = songs_repo / "the-argument"
+    song_dir.mkdir()
+
+    monkeypatch.chdir(framework_repo)
+    path = resolve_db_path("the-argument", root=songs_repo)
+
+    assert path == song_dir / "the-argument-main.db", (
+        "the DB filename must come from the song's own repo; probing the "
+        "process cwd splits one song across two DBs depending on which "
+        "directory the build was launched from"
+    )
+
+
+def test_explicit_and_resolved_root_agree_on_the_filename(
+    tmp_path, monkeypatch, _no_root_env,
+):
+    """The two forms are two ways of naming the same song, so they must
+    produce the same path — that agreement is what makes a song's DB
+    addressable by both `build.py` (explicit root) and every reader
+    (resolved root)."""
+    songs_repo = _make_repo(tmp_path / "songs-repo", "main")
+    framework_repo = _make_repo(tmp_path / "framework-repo", "feat/x")
+    (songs_repo / "the-argument").mkdir()
+
+    monkeypatch.chdir(framework_repo)
+    monkeypatch.setenv("HALLUCINOTE_SONGS_ROOT", str(songs_repo))
+
+    explicit = resolve_db_path("the-argument", root=songs_repo)
+    resolved = resolve_db_path("the-argument")
+
+    assert explicit == resolved
+
+
+def test_explicit_root_falls_back_to_cwd_when_the_song_dir_is_new(
+    tmp_path, monkeypatch, _no_root_env,
+):
+    """A not-yet-created song dir has no repo to probe, so the process cwd is
+    the only branch signal available — a fresh `build.py --reset` must still
+    get a branch-suffixed name rather than silently dropping to the legacy
+    `<slug>.db`."""
+    songs_root = tmp_path / "songs-root"
+    songs_root.mkdir()
+    framework_repo = _make_repo(tmp_path / "framework-repo", "feat/x")
+
+    monkeypatch.chdir(framework_repo)
+    path = resolve_db_path("brand-new", root=songs_root)
+
+    assert path == songs_root / "brand-new" / "brand-new-feat--x.db"

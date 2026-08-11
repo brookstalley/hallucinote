@@ -425,10 +425,12 @@ sit *after* the compressor, not before it as authored — defensible for a
 wall-of-sound genre, and written down as a deliberate departure. And
 appending devices had pushed them *past the analyzer*, which would have
 captured every stem pre-distortion while reporting `ok` — caught because the
-manifest's `terminal` flag was re-checked, not assumed. Headroom held,
-measured across all eight sections: delivered ≈ **−2.1 to −2.6 dBTP** across
-three renders (a realtime capture has run-to-run spread, and the decision
-says so rather than quoting one run as exact).
+manifest's `terminal` flag was re-checked, not assumed. Headroom held at the
+output, measured across all eight sections: delivered ≈ **−2.1 to −2.6 dBTP**
+across three renders (a realtime capture has run-to-run spread, and the decision
+says so rather than quoting one run as exact). The *bus* did not: it sat at
+**+1.93 dBTP with 2–4 overshoots** depending on the capture, which is the number
+beat 14 fixes by putting a limiter where the fader had been standing in for one.
 
 ### 14 · It has to *sound* punk — the preset names were lying
 

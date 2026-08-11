@@ -75,11 +75,36 @@ flagship example no longer prints a UserWarning. Three new locks — heading
 structure, index-row shape claims, and stripped return names — each verified
 to fail on the regression it names.
 
+**The one non-tour change, and why it matters to everything above:** a bare
+`pytest` in this repo could not be trusted from a git worktree. `pyproject`'s
+`pythonpath` front-inserts this checkout's `src/` into the pytest process, but
+tests that shell out to `sys.executable -m hallucinote...` got a child resolving
+`hallucinote` through the editable-install `.pth` — the PRIMARY checkout, an
+older tree. Six `test_restamp_*` failures had been carried across sessions as
+"install skew, reinstall when Live is idle"; the real fix is three lines in the
+root `conftest.py` exporting the source dirs, and no reinstall. Every green
+number quoted in this entry is from a bare run that is now honest, and
+`test_subprocesses_resolve_this_checkout_not_the_installed_one` fails naming the
+wrong tree if the export is ever dropped.
+
+[DECISION: the tour's media **item** cap is now accounted per editing session
+rather than per document lifetime — 6 screenshots · 4 audio items = 16 files,
+against the unchanged 12 MB byte cap (currently 7.0 MB). Recorded as a dated
+amendment to `tour-walkthrough-design.md` §The concision rule, because chapter 2
+had shipped 16 files and reconciled them by editing the enforcing test's comment
+while still citing the artifact as its authority — a norm changed in code instead
+of in the norm. | user can veto/override: rejecting per-session accounting means
+dropping two of chapter 2's four media items, NOT re-relaxing the test.]
+
 Found and *not* fixed here, filed instead: `format_requirements_md` handles
 every `DeviceStatus` except `preset_query_unverified`, so 8 of punk-fate's 87
-devices appear in no section of the generated file. Pre-existing, and the
-load-bearing "no third-party plugins" line is unaffected — an engine fix
-doesn't belong in a docs branch cut for release.
+devices appear in no section of the generated file (#454 — and since
+`regen_requirements` never passes `browser_dry_runs`, that drop is the default
+path, not an edge case). Pre-existing, and the load-bearing "no third-party
+plugins" line is unaffected — an engine fix doesn't belong in a docs branch cut
+for release. Also filed: #451 (the freshness lock still misses beat 12's
+build-derived counts and the two lens files) and #455 (the song evidence tree has
+no retention lifecycle while `docs/assets/` has two).
 
 ## 2026-08-11 — The tour ships: punk-fate lands in examples/, and the evidence gets teeth
 

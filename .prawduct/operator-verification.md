@@ -1727,5 +1727,27 @@ red/green recorded in the D1 close); what needs eyes:
 3. **Every media link plays/downloads from the rendered page** (GitHub serves
    committed mp3s as download links — the poster/waveform images must render
    inline, the links must resolve).
-4. **The tour reads in ~10 minutes and the story holds** — beats 0→10 with no
-   step that requires insider knowledge.
+4. **The tour reads in ~15 minutes and the story holds** — beats 0→16, both
+   chapters, with no step that requires insider knowledge. Chapter 2's arc has
+   to land specifically: the ear-verdict ("not especially punk") → the measured
+   cause → the fix, four times over, ending on something deliberately NOT done.
+
+### Chapter 2 additions (v1.8.3 — first public release of the tour)
+
+The items above were written for chapter 1 and were only patched for the asset
+rename. These cover what chapter 2 added, none of which any operator has yet
+confirmed:
+
+5. **`tour-chapter2.mp3` is the hero render.** README and quickstart both play
+   it as *the* song, and it is the one audio item nobody has been asked to
+   confirm. It must be the post-tone-pass master: audibly dirtier and louder
+   than `tour-chapter1.mp3`, with the lead line reading as a *guitar*, not a
+   synth. If it sounds like chapter 1, the wrong capture was encoded.
+6. **Chapter 2's two screenshots read at tour width** (both GitHub themes):
+   `tour-garage-drums.png` must visibly show the ghost-note scatter along the
+   bottom of the velocity lane, and `tour-drum-saturation.png` must show the
+   Saturator's drive value legibly enough to read as ~11 dB — it is cited in
+   prose as evidence of a specific dialed parameter.
+7. **The A/B pair at beat 16 differs audibly**, chapter 1 vs chapter 2. This is
+   the release's central claim; if the two renders sound the same to an operator,
+   the chapter is not proven no matter what the flatness numbers say.

@@ -61,3 +61,49 @@ legacy databases. This is the open-side sibling of mutator discipline.
 Schema changes are a contract surface with a documented consumer list —
 [`boundary-patterns.md`](boundary-patterns.md) has it, along with the "update mutators
 and queries together" rule.
+
+## Direction
+
+Ratified 2026-08-10. These bind future work; the narrative above describes it.
+
+- **The SQLite database is materialized state, never the source of truth.** Source is
+  `build.py` + `captured_session.json` in git; the DB is gitignored, per-song, per-branch,
+  and rebuildable with `build.py --reset`.
+  Why: a disposable database can be deleted, rebuilt and diffed against its source. An
+  authoritative one becomes a data-loss trap the moment it diverges from the code that
+  made it, and a binary blob you must back up rather than version. Every recoverable
+  failure in [`architecture.md`](architecture.md)'s runtime table descends from this
+  choice, and so does everything valuable about "a song is a git repo".
+
+- **All writes go through mutators (`db/mutations/`); no raw SQL in callers, ever.**
+  Why: a caller that reaches around the mutators does not merely skip an audit row — it
+  makes the event log a *lie*, and a log that is wrong in unknown places is worse than no
+  log, because every future reader trusts it. This is the one failure this design cannot
+  absorb.
+
+- **Every mutator emits exactly one event, in the same transaction as its state change.**
+  `_emit` is the only path.
+  Why: same-transaction emission is what makes the log complete by construction rather
+  than by discipline — a crash between the write and the event cannot produce a gap. Paired
+  with the mutator rule above, it is what keeps the eventual event-store flip a
+  reinterpretation rather than a rewrite.
+
+- **Identity is a Python-generated UUID from the mutators (`_uuid()`), never a database
+  autoincrement.**
+  Why: identity must survive a rebuild and stay stable across machines and branches. An
+  autoincrement counter promises none of that — it renumbers on every rebuild, which in a
+  product whose database is disposable means identity that dissolves exactly when it is
+  needed.
+
+- **Live's own identifiers are never used as identity; bindings live in the
+  `ableton_sessions` / `ableton_links` tables.**
+  Why: Live's identifiers are positional and Live renumbers them, so anything keyed on them
+  silently retargets when a user drags a track. Isolating the bindings from core rows keeps
+  the volatile part in one place where its churn is expected rather than surprising.
+
+- **An existing song DB is opened through `init_db`, never a bare `connect`.**
+  Why: additive migration lives only in `init_db`, so a bare connect reads a stale schema
+  and crashes legacy databases — the open-side sibling of mutator discipline, and a failure
+  that surfaces far from its cause.
+  Rulings: [[Open an existing song DB through `init_db` (migrate-on-open) — bare `connect()` reads a stale schema and crashes]],
+  [[The schema canary checks column PRESENCE, not column DEFINITION]]

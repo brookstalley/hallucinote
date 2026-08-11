@@ -124,7 +124,7 @@
         }
       ],
       "index": 1,
-      "name": "A-Reverb",
+      "name": "Reverb",
       "panning": 0.0,
       "volume": 0.8500000238418579
     },
@@ -263,7 +263,7 @@
         }
       ],
       "index": 2,
-      "name": "B-Delay",
+      "name": "Delay",
       "panning": 0.0,
       "volume": 0.8500000238418579
     }
@@ -4822,8 +4822,8 @@
       "name": "01 Drums",
       "panning": 0.0,
       "sends": {
-        "A-Reverb": 0.30000001192092896,
-        "B-Delay": 0.0
+        "Reverb": 0.30000001192092896,
+        "Delay": 0.0
       },
       "solo": false,
       "type": "midi",
@@ -5346,8 +5346,8 @@
       "name": "02 Bass",
       "panning": 0.0,
       "sends": {
-        "A-Reverb": 0.0,
-        "B-Delay": 0.0
+        "Reverb": 0.0,
+        "Delay": 0.0
       },
       "solo": false,
       "type": "midi",
@@ -7678,8 +7678,8 @@
       "name": "03 Guitar",
       "panning": -0.11999999731779099,
       "sends": {
-        "A-Reverb": 0.10000000149011612,
-        "B-Delay": 0.05999999865889549
+        "Reverb": 0.10000000149011612,
+        "Delay": 0.05999999865889549
       },
       "solo": false,
       "type": "midi",
@@ -10077,8 +10077,8 @@
       "name": "04 Voice",
       "panning": 0.0,
       "sends": {
-        "A-Reverb": 0.1599999964237213,
-        "B-Delay": 0.11999999731779099
+        "Reverb": 0.1599999964237213,
+        "Delay": 0.11999999731779099
       },
       "solo": false,
       "type": "midi",

@@ -35,11 +35,11 @@ Everything below is how it got made.
 
 ---
 
-# Chapter 1 — the composing session
+## Chapter 1 — the composing session
 
 *One prompt to a mixed four-track song, in ten beats.*
 
-## 1 · Ideation → intent
+### 1 · Ideation → intent
 
 The whole spec the session started from:
 
@@ -47,7 +47,7 @@ The whole spec the session started from:
 > 5th into those two minutes. Drums, bass, lead guitar, and vocals on a
 > staccato synth. Call it punk-fate.
 
-Claude's first move (`/song-brief`) is not to start typing notes — it reads
+Claude's first move (`/hallucinote:song-brief`) is not to start typing notes — it reads
 what the prompt actually pins down, fills what it can own, and comes back
 **once**, proposing rather than asking:
 
@@ -70,7 +70,7 @@ was filed as
 the fork's reasoning became the first of seven
 [decision records](../examples/punk-fate/decisions/).
 
-## 2 · Scaffold + chains
+### 2 · Scaffold + chains
 
 A song is a directory, and the sound ships with it — device chains are
 authorship, not a mix-time to-do list:
@@ -98,7 +98,7 @@ Operator as the shouted "vocal." The full table — and why the guitar
 
 ![The Garage Kit drum rack open in Live, bus saturation and glue macros dialed](assets/tour-drum-rack.png)
 
-## 3 · Harmony & form
+### 3 · Harmony & form
 
 Harmony is a modeled substrate the parts compose *against*, not a comment.
 The verse churns in C minor; the chorus is the relative-major lift:
@@ -127,7 +127,7 @@ These progressions are rulers: the melody lens in beat 5 reads every vocal
 note against them for harmony-fit. How `build.py` is organized —
 [`song-authoring-conventions.md`](song-authoring-conventions.md).
 
-## 4 · Rhythm & feel
+### 4 · Rhythm & feel
 
 Microtiming is written into the parts at generation time, never bolted on as
 a "humanize" pass. Each part is a *player* who both carries an authored feel
@@ -162,7 +162,7 @@ while the kick sits on it:
 
 ![Off-grid MIDI in Live's clip editor — the snare backbeat lands ahead of the grid](assets/tour-offgrid-midi.png)
 
-## 5 · Melody
+### 5 · Melody
 
 `hallucinote melody` reads every line against its *declared* profile — there
 is no universal "good melody" score, only measurements against stated intent.
@@ -192,7 +192,7 @@ declared contour was wrong for a line built on Beethoven's leaping cell, and
 fixing the declaration (not the notes) took the lens from twelve questions to
 six.
 
-## 6 · Arrangement
+### 6 · Arrangement
 
 The whole form at a glance — eight sections in 96 bars, every one in a
 different harmonic place, because at 1.2 seconds a bar there is room for a
@@ -204,7 +204,7 @@ The section budget — and why the finale had to be at least as long as the
 verse — is
 [`decisions/02-tempo-and-the-section-budget.md`](../examples/punk-fate/decisions/02-tempo-and-the-section-budget.md).
 
-## 7 · Materialize
+### 7 · Materialize
 
 The push is fourteen ordered phases driven against a running Live set. From
 the session, verbatim:
@@ -224,7 +224,7 @@ Re-pushes are idempotent: change one part and re-push, and the phases that
 have nothing to do report `ok` with zero calls dispatched. The phase list and
 what each one owns — [`skills.md`](skills.md).
 
-## 8 · Production & mix
+### 8 · Production & mix
 
 The agent rendered its own work and measured it. First render:
 
@@ -245,7 +245,7 @@ the agent did with it, in its own words:
 The mix contradicted the song's own composition decision — so the fix was a
 rebalance *around the bass*, not "turn things down until the meter is happy."
 
-## 9 · Iterate
+### 9 · Iterate
 
 One change, its diff, and the before/after. The rebalance
 ([`decisions/07-the-bass-carries-the-engine.md`](../examples/punk-fate/decisions/07-the-bass-carries-the-engine.md)):
@@ -276,7 +276,7 @@ decision record and the
 [attempt ledger](../examples/punk-fate/attempts/2026-08-10-master-clipping-and-buried-bass.md)
 rather than glossed.
 
-## 10 · Bake, commit, fork
+### 10 · Bake, commit, fork
 
 The dialed mix was captured back into `captured_session.json`, the song
 rebuilt from scratch, and re-pushed — proving the whole thing survives
@@ -307,7 +307,7 @@ a final stab hits it together. The tightening *is* the ending.
 
 ---
 
-# Chapter 2 — back into the studio
+## Chapter 2 — back into the studio
 
 *The composing session ended with every meter green. Then somebody listened
 to it.* Later the same day the song came back with the one review no analyzer
@@ -320,7 +320,7 @@ carries **eleven** [decision records](../examples/punk-fate/decisions/)
 rather than chapter 1's seven: each pass could read what the previous one had
 decided and extend it instead of guessing.
 
-## 11 · "Definitely Beethoven, but not especially punk"
+### 11 · "Definitely Beethoven, but not especially punk"
 
 That was the brief for the whole chapter, in the user's words — *"Where are
 the garage drums? Where's the sloppy but enthusiastic timing?"* The first
@@ -369,7 +369,7 @@ the dead ends ship too, in the
 so no later session re-walks them
 ([`decisions/08-sloppy-but-enthusiastic.md`](../examples/punk-fate/decisions/08-sloppy-but-enthusiastic.md)).
 
-## 12 · Garage drums are vocabulary, not deviation
+### 12 · Garage drums are vocabulary, not deviation
 
 Breathing alone doesn't make a kit sound like a room. The other half of the
 fix is *what the drummer plays*: ghost snares between the backbeats, hats
@@ -405,7 +405,7 @@ and trim 63 note durations Live would otherwise silently truncate — and both
 now have tests
 ([`tests/test_punk_fate_build.py`](../examples/punk-fate/tests/test_punk_fate_build.py)).
 
-## 13 · The dirt
+### 13 · The dirt
 
 *"Where's the distortion?"* Two of the four tracks carried none — and
 chapter 1's own
@@ -430,7 +430,7 @@ measured across all eight sections: delivered ≈ **−2.1 to −2.6 dBTP** acro
 three renders (a realtime capture has run-to-run spread, and the decision
 says so rather than quoting one run as exact).
 
-## 14 · It has to *sound* punk — the preset names were lying
+### 14 · It has to *sound* punk — the preset names were lying
 
 The next listen came back harsher: *"The lead instrument sounds like an
 electronic trumpet, not a guitar. The drums are small. The whole thing is
@@ -469,7 +469,7 @@ louder, the trade every earlier pass had gotten backwards. The rule it earns:
 **a preset name is a claim, not a measurement** — after loading a chain, read
 back the parameters that carry the intent.
 
-## 15 · The vocal line is a lead guitar now
+### 15 · The vocal line is a lead guitar now
 
 One synthetic thing remained. *"The voice patch is still very main street
 electrical parade … it's the timbre that's very beep beep beep bloop."* The
@@ -494,7 +494,7 @@ nothing else. The track is still named `04 Voice`: the
 *role* is unchanged, and the name records the part's function while the
 decision records its instrument.
 
-## 16 · Hear the difference
+### 16 · Hear the difference
 
 The whole chapter, A/B. Where chapter 1's render ended — mixed, measured,
 and polite:

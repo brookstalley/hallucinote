@@ -25,6 +25,62 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-08-11 — Chapter 2: the song goes back into the studio until it sounds punk
+
+<!-- prawduct: type=feature | scope=tour | status=shipped -->
+
+punk-fate passed every meter at the end of chapter 1 and still didn't sound
+like punk. Three re-cuts the same day, each measured, each with its rationale
+on disk as `decisions/08`–`11`:
+
+- **Feel.** The per-part feel of chapter 1 measured *mechanical* — all 623 bass
+  notes the identical distance off the grid. A `PerformanceProfile` per player
+  now realizes 1/f-correlated timing and velocity breathing over the finished
+  part; all four parts read `human`. Two dead ends are in the attempt ledger,
+  including a limb-split kit that measured *worse* than one stream — a drummer
+  is one performer, not two.
+- **Garage drums.** Ghost snares, hats that open under a leaning hand, and the
+  hat that simply isn't there — deterministic from each note's identity, so a
+  rebuild misses the same hats. The scatter surfaced a latent defect: two
+  generators writing one snare on one tick, silently deduplicated until
+  per-note deviation made it a 5 ms overlap Live can't hold. `_one_hit_at_a_time`
+  and `_no_same_pitch_overlap` fix it, with tests.
+- **Dirt and tone.** Two gain stages added, then the chapter's real lesson:
+  every chain had been chosen by preset *name* and never verified by
+  *parameter* — *Dual Amped Crunch* was two amps on `Blues`, *Guitar Dirt* was
+  1.6 % drive, and a 24 %-wet reverb was hiding inside the guitar rack,
+  declared nowhere. With real gain and a Glue Compressor → Limiter on the
+  master: −0.34 dBTP, 0 overshoots, guitar-stem spectral flatness 0.083 →
+  0.156. **A preset name is a claim, not a measurement.**
+- **The lead.** Track 4's Operator square read as *"beep beep beep bloop"* —
+  its spectral centroid sat at 2125 Hz while the band sat at 77–604 Hz. It's a
+  second guitar now; master flatness 0.192 → 0.247, the biggest jump of any
+  pass, with the other three stems moving by at most 0.0013.
+
+`docs/tour.md` grows a chapter 2 to tell it, and a freshness test recomputes
+every number the chapter quotes from the committed measurement JSONs — added
+because the chapter's "before" figures first shipped from a superseded
+analysis run.
+
+**Docs tidy, same shipment.** The chapter-2 work left the surrounding docs
+describing an older song, so: the docs-index row for the tour no longer counts
+the tour's parts (it said "one session, ten beats" throughout chapter 2's
+development, and the parity test next door only checks a row *exists*);
+`REQUIREMENTS.md` regenerated, since its built-in-device list predated three
+device passes; punk-fate.md's Concept describes the band that's actually
+playing, and its Provenance is a pass table instead of a chronological
+append-log; the tour is one document with one `#` heading instead of three;
+and the demo snapshot's return names lost Live's slot prefix, so building the
+flagship example no longer prints a UserWarning. Three new locks — heading
+structure, index-row shape claims, and stripped return names — each verified
+to fail on the regression it names.
+
+Found and *not* fixed here, filed instead: `format_requirements_md` handles
+every `DeviceStatus` except `preset_query_unverified`, so 8 of punk-fate's 87
+devices appear in no section of the generated file. Pre-existing, and the
+load-bearing "no third-party plugins" line is unaffected — an engine fix
+doesn't belong in a docs branch cut for release.
+
 ## 2026-08-11 — The tour ships: punk-fate lands in examples/, and the evidence gets teeth
 
 <!-- prawduct: type=feature | chunks=B1,C1,D1 | scope=tour | status=shipped -->

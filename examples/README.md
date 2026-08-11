@@ -15,7 +15,7 @@ the demo is CI-built documentation, not a snapshot that can rot.
 An earlier demo song was retired after serving its real purpose — rebuilding
 it from scratch surfaced six framework defects, all fixed in v1.8.0 (see
 [`CHANGELOG.md`](../CHANGELOG.md)). Its successor here was re-authored from a
-sparse prompt through the full `/song-brief` elicitation flow, so it
+sparse prompt through the full `/hallucinote:song-brief` elicitation flow, so it
 demonstrates the real workflow rather than a rehearsed one.
 
 To make your own songs, don't use this directory — create your own workspace

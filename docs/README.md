@@ -9,7 +9,7 @@ complete — a doc added without a row here fails the suite.)
 | Doc | What it covers |
 |---|---|
 | [`quickstart.md`](quickstart.md) | Your first song, end to end, in ~10 minutes |
-| [`tour.md`](tour.md) | Watch a real song get made — one session, ten beats, with the evidence |
+| [`tour.md`](tour.md) | Watch a real song get made — from one prompt to a song that sounds punk, with the evidence |
 | [`skills.md`](skills.md) | The full menu of things you can ask for |
 | [`song-workflow.md`](song-workflow.md) | The song-making lifecycle — stages, checkpoints, and the research behind the tools |
 | [`song-authoring-conventions.md`](song-authoring-conventions.md) | How a song's `build.py` works — read this to inspect or hand-edit a song |

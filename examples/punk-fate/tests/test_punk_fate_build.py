@@ -236,3 +236,37 @@ def test_build_is_idempotent_state_converger(build_module):
         )
     finally:
         conn.close()
+
+
+def test_snapshot_return_names_carry_no_slot_prefix():
+    """Live prefixes return names with its slot letter (`A-Reverb`); the DB
+    stores them stripped. A hand-authored snapshot that writes the prefixed
+    form still *works* — `replay_capture` strips it — but every build of this
+    song then prints a UserWarning, and `Q.get_return_by_name(..., "A-Reverb")`
+    finds nothing because the row is `Reverb`. This song shipped that way, so
+    the trap is real and cheap to lock. Convention:
+    docs/snapshot-schema.md "Return names: stored stripped".
+    """
+    import json
+    import re
+
+    snapshot = json.loads(
+        (SONG_ROOT / "captured_session.json").read_text(encoding="utf-8")
+    )
+    prefixed = re.compile(r"^[A-Z]-")
+
+    offenders = [
+        r["name"] for r in snapshot.get("returns", [])
+        if prefixed.match(r.get("name", ""))
+    ]
+    assert not offenders, (
+        f"captured_session.json returns[].name carries Live's slot prefix: "
+        f"{offenders} — write the stripped form (`Reverb`, not `A-Reverb`)."
+    )
+
+    for track in snapshot.get("tracks", []):
+        bad = [k for k in (track.get("sends") or {}) if prefixed.match(k)]
+        assert not bad, (
+            f"captured_session.json track {track.get('name')!r} sends to "
+            f"{bad} — send keys must match the stripped return names."
+        )

@@ -12,7 +12,7 @@ None. This song uses only Live's built-in devices — no additional installs nee
 
 Listed here for completeness — these ship with Live and don't need separate installation:
 
-`Delay`, `Reverb`.
+`Amp`, `Audio Effect Rack`, `Auto Pan Legacy`, `Cabinet`, `Chorus`, `Delay`, `Drum Rack`, `EQ Eight`, `Instrument Rack`, `Limiter`, `Note Length`, `Pitch`, `Reverb`, `Sampler`, `Simpler`, `Utility`.
 
 ---
 

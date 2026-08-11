@@ -239,3 +239,107 @@ def test_quoted_mix_numbers_match_the_committed_reports():
             "from the committed analysis reports — the quoted mix numbers "
             "and the committed evidence have drifted apart."
         )
+
+
+# --------------------------------------------------------------------------
+# Structure locks — the tour grows by chapters, so its shape is a drift
+# surface of its own.
+# --------------------------------------------------------------------------
+
+_DOCS_INDEX = _REPO / "docs" / "README.md"
+
+_HEADING = re.compile(r"^(#{1,6}) (.+)$")
+_BEAT_HEADING = re.compile(r"^#{2,3} (\d+) · ")
+
+# Structural counts decay the moment a chapter lands: "one session, ten
+# beats" was true of the tour for exactly one editing session. Per
+# project-preferences ("numbers that drift are not restated in prose; point
+# at the canonical source"), an index row describes what a doc is FOR, not
+# how many parts it currently has.
+_COUNT_WORDS = (
+    "one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|"
+    r"thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|\d+"
+)
+_SHAPE_NOUNS = (
+    "beats?|chapters?|sessions?|sections?|stages?|phases?|steps?|parts?"
+)
+_SHAPE_CLAIM = re.compile(
+    rf"\b({_COUNT_WORDS})\s+({_SHAPE_NOUNS})\b", re.IGNORECASE
+)
+
+
+def _headings(text: str) -> list[tuple[int, str, int]]:
+    """(level, title, line-number) for every heading OUTSIDE a code fence.
+
+    Fenced Python carries `# examples/punk-fate/build.py` comment lines that
+    a naive scan reads as H1s — which is exactly how a heading-structure
+    assertion goes quietly green on the wrong thing.
+    """
+    out, in_fence = [], False
+    for lineno, line in enumerate(text.split("\n"), 1):
+        if line.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        m = _HEADING.match(line)
+        if m:
+            out.append((len(m.group(1)), m.group(2).strip(), lineno))
+    return out
+
+
+def test_tour_is_one_document_with_contiguous_beats():
+    """Two locks on the tour's shape, both regressions that already happened
+    once: chapter 2 arrived as a second `#` heading (a page with three H1s
+    reads as three documents to a screen reader and to GitHub's outline), and
+    its beats continue chapter 1's numbering, so a gap or a repeat means a
+    beat was dropped or double-numbered in an edit."""
+    headings = _headings(_TOUR.read_text(encoding="utf-8"))
+
+    h1s = [(t, ln) for lvl, t, ln in headings if lvl == 1]
+    assert len(h1s) == 1, (
+        f"docs/tour.md has {len(h1s)} top-level (`#`) headings, expected 1 — "
+        f"{[t for t, _ in h1s]}. Chapters are `##`, beats are `###`; one H1 "
+        "is the document's title."
+    )
+
+    prev = 1
+    for lvl, title, lineno in headings:
+        assert lvl <= prev + 1, (
+            f"docs/tour.md line {lineno} jumps from h{prev} to h{lvl} "
+            f"({title!r}) — skipped levels break the document outline."
+        )
+        prev = lvl
+
+    beats = [
+        int(m.group(1))
+        for m in (_BEAT_HEADING.match(line) for line in
+                  _TOUR.read_text(encoding="utf-8").split("\n"))
+        if m
+    ]
+    assert beats == list(range(len(beats))), (
+        f"docs/tour.md beat numbers are {beats} — expected a contiguous run "
+        "from 0. A gap or repeat means an edit dropped or double-numbered a "
+        "beat."
+    )
+
+
+def test_docs_index_does_not_restate_the_shape_of_what_it_describes():
+    """`docs/README.md`'s tour row read "one session, ten beats" for the whole
+    of chapter 2's development — the parity test next door checks a row
+    EXISTS, not that it is true, so the stale shape shipped. An index row that
+    counts a doc's parts has to be re-edited every time that doc grows; one
+    that says what the doc is for does not."""
+    offenders = []
+    for lineno, line in enumerate(
+        _DOCS_INDEX.read_text(encoding="utf-8").split("\n"), 1
+    ):
+        if not line.startswith("|") or "](" not in line:
+            continue
+        for m in _SHAPE_CLAIM.finditer(line):
+            offenders.append(f"  docs/README.md:{lineno} — {m.group(0)!r}")
+    assert not offenders, (
+        "docs/README.md index rows claim a structural count of the doc they "
+        "describe:\n" + "\n".join(offenders) + "\n\nDescribe what the doc is "
+        "for instead — counts go stale the next time that doc grows."
+    )

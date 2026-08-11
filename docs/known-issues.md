@@ -20,12 +20,13 @@ Claude authors MIDI and the mix; a recorded vocal take or a hand-ridden
 fader-automation lane lives only in the `.als` — the bridge can't pull it into a
 song's source. Audio recording is a boundary, not a feature, today.
 
-## Measured mix review needs Max for Live (Suite)
+## Measured mix review needs Max for Live (Live Suite, or the M4L add-on)
 
 The authoring loop — compose, push, pull, play, and the *symbolic*
 `/hallucinote:compose-review` — runs on any Live 12 edition. Only the render →
-analysis → `/hallucinote:mix-review` path needs Max for Live, so on Standard you
-review by ear with `/compose-review`. This split is by design — see
+analysis → `/hallucinote:mix-review` path needs Max for Live, which comes with
+Live Suite or as the separate M4L add-on for Standard. Without it, review by
+ear with `/compose-review`. This split is by design — see
 [`capability-truth.md`](capability-truth.md).
 
 ## Mid-song tempo / time-signature changes aren't supported

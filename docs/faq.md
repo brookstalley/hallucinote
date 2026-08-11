@@ -45,6 +45,11 @@ re-pushing, fold your manual edits back into the DB:
   the git-tracked `captured_session.json`, so the next `build.py` reproduces them
   (a DB-only bake would revert on rebuild).
 
+The build holds you to it: a mix edit you pulled but didn't snapshot makes the
+next `build.py` refuse to run (`StaleSnapshotError`) instead of silently
+reverting it. Bake with `/hallucinote:song-snapshot` and build again — pull →
+bake → build.
+
 See the [Quickstart](quickstart.md#4-pull-manual-edits-back-optional).
 
 ## Can I share a song if my collaborator doesn't have the same plugins?

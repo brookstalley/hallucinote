@@ -104,7 +104,11 @@ If you tweak faders, mutes, or sends directly in Live and want to keep them:
 > **"Pull my Ableton edits back into the DB."**
 
 `/hallucinote:ableton-pull` diffs Live against the DB and folds the changes in
-through the standard mutator path.
+through the standard mutator path. Mix-layer pulls then want one more step —
+*"snapshot the mix"* (`/hallucinote:song-snapshot`) — which bakes them into the
+git-tracked snapshot so the next build reproduces them. The build enforces
+this: pulled mix edits left unbaked make `build.py` refuse to run rather than
+silently revert your tweaks. The loop is **pull → bake → build**.
 
 ---
 

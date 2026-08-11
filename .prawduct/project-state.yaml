@@ -789,6 +789,20 @@ backlog_format_version: 2
 # Stamped by /prawduct:backlog list/pick/triage — resolves the backlog-overdue-grooming advisory.
 backlog_last_groomed_at: 2026-07-04
 
+# THE LIVE BACKLOG. Set at the MG4 migration-scrub cutover 2026-08-10, after
+# `verify-migration` exited 0 with all five lists empty (225 source items, 225
+# aliased). From this point `.prawduct/backlog.md` is FROZEN HISTORY and is no
+# longer read: the backlog lives in this repo's GitHub Issues, reached through
+# `prawduct-hook backlog <op> --repo …`. Decisions + audit record:
+# `.prawduct/artifacts/migration-scrub-decisions.md`.
+#
+# Unsetting this key restores markdown as live, but that is only one of three
+# halves — the migrated issues must also be closed (filter on the `id:` alias
+# namespace; never delete, GitHub does not reuse numbers) and backlog.md's
+# frozen-history banner reverted. Skip the third and the restored backlog
+# announces that it is frozen and redirects to a tracker that is closed.
+backlog_service_repo: brookstalley/hallucinote
+
 # Distribution mode — set by /prawduct:migrate (v2.0.0 plugin cutover).
 # `plugin` tells the legacy file-sync hook to stand down (Chunk 8).
 distribution: plugin

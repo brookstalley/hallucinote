@@ -1,5 +1,40 @@
 # Backlog — Hallucinote
 
+> ## ⚠️ FROZEN HISTORY — this file is no longer the backlog
+>
+> **Cut over 2026-08-10** to GitHub Issues:
+> **<https://github.com/brookstalley/hallucinote/issues>**
+>
+> All 225 items below were migrated (111 live, 114 archived as closed issues) and
+> the completeness gate passed with every source item alias-keyed on the target.
+> `backlog_service_repo` in `.prawduct/project-state.yaml` now points the tooling
+> at Issues, and **nothing reads this file any more.** Do not add items here, and
+> do not edit a status here expecting it to matter.
+>
+> **Read the live backlog with:**
+>
+> ```sh
+> prawduct-hook backlog list  --repo brookstalley/hallucinote
+> prawduct-hook backlog pick  --repo brookstalley/hallucinote
+> prawduct-hook backlog get <PFX> --repo brookstalley/hallucinote
+> ```
+>
+> Each issue carries an `id:<PFX>` label, so the ids used throughout this file
+> (`ARR-PROJ`, `MCP-7J2Q`, …) still resolve — `get`/`link` accept them directly.
+> Archived items are closed issues: reaching them needs `--state closed` or
+> `--state all`, since `list` defaults to open.
+>
+> **Divergence from the tracker is expected, not a bug.** The owner-confirmed
+> scrub dispositions were applied on the tracker *after* this snapshot froze and
+> were deliberately not backported here. So this file still shows as open several
+> items the tracker has closed — `VEW-3M8F`, `INS-6K1T`, `SYN-7T3M`, `GEN-2T8M`,
+> `MIG-3T7K` (dropped) and `MCP-6B4W` (folded into `MCP-7J2Q`). Titles also differ
+> by design: the migration rewrote them to the ≤72-char issue standard, preserving
+> each original verbatim in the issue's `original_title:` field.
+>
+> Why the migration ran, what was decided, and which plugin build performed it:
+> **`.prawduct/artifacts/migration-scrub-decisions.md`**.
+
 <!--
 Migrated 2026-05-29 from the legacy priority-band format (P0–P6) to the
 structured `/backlog` v2 format (id + metadata bar + body). Migration was

@@ -131,7 +131,8 @@ longer true", spread across source comments, pragmas and a governing artifact.
 ## Chunk 3 — path resolution + compat-gate correctness
 
 Closes **#327, #326**. Two real bugs where a check disagrees with the thing it
-checks. Both are `src/hallucinote/sync|db` and both need regression tests.
+checks. They live in `src/hallucinote/sync/compat.py` and
+`src/hallucinote/db/connection.py`, and both need regression tests.
 
 - **Type:** bugfix
 - **Critic mode:** chunk
@@ -273,12 +274,25 @@ would unblock it**, so the burndown leaves no silent residue.
 - [x] Chunk 9 — dispositions for the 10 non-buildable items
 
 **Context:** branch created from `develop` at `aa682e1`. Baseline 4986 passed /
-2 skipped. Chunks 1-5 shipped; cumulative Critic `rev-20260811T130031Z-327d4a5c`
-returned 0 blocking / 12 warning / 11 note, and its actionable findings were
-fixed in one batch (tree-wide waiver sweep, the change-log's inverted
-sibling-file mechanism, a stale re-stamp self-reference, `mode`/
-`case_sensitive` structural validation, and a stderr signal for the DB-filename
-remap). **#225 needed no code** — both halves had already shipped (capture-side
-`is_enabled` decline at `capture.py:1435`, executor-side tolerance via
-`_is_tolerated_failure`); it was verified and closed, not rebuilt.
-Next: chunks 6-9.
+2 skipped; final 5047 passed / 2 skipped. **All nine chunks shipped.**
+
+Review history: a cumulative after chunks 1-3 (0 blocking), a cumulative after
+chunks 4-9 (2 blocking, 9 warning, 16 note), then four `verify-resolutions`
+rounds, the last two returning zero findings. Every blocking finding was fixed
+and every warning/note dispositioned. Three of the fixes were themselves wrong
+and were reverted on review evidence — the orphaned-sibling-DB warning (it
+misfired on a routine `git switch -c`, and sat in a resolver called per MCP tool
+call) and the `case_sensitive: null` tightening (it made the gate stricter than
+the loader, reintroducing a variant of the bug #326 fixed). Both reverts are
+better outcomes than the original fixes.
+
+**Item-level outcome: 19 closed, 11 not closable here.** The 11 each carry a
+dated disposition comment naming the blocker and what would unblock it.
+**#281's disposition improved mid-branch**: its blocker was recorded as "needs
+Live 12.5+", and checking rather than assuming showed **there is no Live 12.5** —
+the newest release is 12.4 (2026-05-05). The version half of that item is now
+answered and dated in `.prawduct/artifacts/research-envelope-lom-gaps.md`; only
+the M4L-bridge probe remains.
+
+**At merge:** close the 19 issues then, not before — they carry "closed by"
+comments but closing them on an unmerged branch would misreport shipped state.

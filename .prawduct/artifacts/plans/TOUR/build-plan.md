@@ -466,9 +466,12 @@ itself and the invocation change becomes the cheaper option.
   `tests/unit/test_docs_index_parity.py` fails unless `docs/tour.md` gets a row in
   `docs/README.md`, and the lifecycle/pipeline doc-parity suite applies if the tour
   enumerates the push phases or the song lifecycle. Candidate raw evidence: the
-  2026-08-11 punk-fate hero-session captures (two-pane prompt+Live frames, mid-push
-  session-view frame) — whether the tour uses them or a fresh capture is the owner's
-  scope call.
+  2026-08-11 punk-fate hero-session captures (prompt/brief and mix-review terminal
+  frames, session + arrangement Live frames, a mid-push "filling in" frame — the state
+  C1's amendment says is unrecoverable after the fact). The composed hero shipped as
+  `docs/assets/hero.png`; the raw frames are preserved outside the repo on the owner's
+  machine (`Desktop/hallucinote-hero-captures-20260811/`). Whether the tour uses them
+  or a fresh capture is the owner's scope call.
 
 - **Description:** Write the ten beats against the real artifacts, graft the evidence
   into the README (shorter in prose, richer in artifacts — it links to the tour, it does

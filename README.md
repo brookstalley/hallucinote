@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/Ableton%20Live%2012-macOS%20%7C%20Windows-black)
 
-![A plain-language prompt, and the Ableton Live set it builds](docs/assets/hero.svg)
+![The punk-fate prompt and creative brief in Claude Code, beside the finished four-track arrangement it built in Ableton Live](docs/assets/hero.png)
 
 You describe a song in plain language. Claude writes it — the composition, the sound design, the mix — as code: a Python `build.py` plus a captured mix snapshot, built into a working database and pushed into a running Ableton Live set.
 

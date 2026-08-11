@@ -8,7 +8,7 @@ name = "hallucinote"
 # Keep .claude-plugin/plugin.json and src/hallucinote/__init__.py in lockstep;
 # tests/unit/test_version_parity.py FAILS if any drifts. (The MCP server's
 # hallucinote_mcp.BASE_VERSION is a SEPARATE wire-protocol axis — see that file.)
-version = "1.8.2"
+version = "1.8.3"
 description = "DB-backed MIDI authoring with Ableton sync via MCP"
 requires-python = ">=3.10"
 dependencies = [
@@ -196,12 +196,11 @@ disable_error_code = ["arg-type", "assignment", "union-attr"]
 [tool.pytest.ini_options]
 # Songs now live in their own repo (hallucinote-songs) with their own pytest
 # config — the framework tests the ENGINE + MCP server only. The one exception
-# is `examples/`, the in-repo demo workspace. Its first song was retired (its
-# real output was the framework defects found by rebuilding it from scratch);
-# the workspace stays in testpaths so the next demo song's tests join the
-# default run the moment it lands — a demo song is documentation that has to
-# keep working, and "builds headless with no Live present" is only backed by a
-# suite that actually executes it.
+# is `examples/`, the in-repo demo workspace, currently carrying the demo song
+# `punk-fate` (its predecessor was retired — its real output was the framework
+# defects found by rebuilding it from scratch). A demo song is documentation
+# that has to keep working, and "builds headless with no Live present" is only
+# backed by a suite that actually executes it.
 # Front-insert THIS checkout's source dirs (relative to rootdir) so a bare
 # `pytest` always tests the local tree — critical in a git worktree, where the
 # editable-install `.pth` files resolve `hallucinote`/`hallucinote_mcp` to the

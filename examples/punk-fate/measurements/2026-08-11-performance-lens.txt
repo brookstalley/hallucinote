@@ -1,0 +1,5 @@
+part        classification   stdev  lag1-acf    dfa  onsets
+01 Drums    human           0.0185     0.623   0.99     183
+02 Bass     human           0.0162     0.543   1.02     128
+03 Guitar   human           0.0309     0.385   0.89     287
+04 Voice    human           0.0324     0.716   1.38      67

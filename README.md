@@ -18,7 +18,14 @@ Tweak a fader in Live and pull the change back through the same path. The song i
 
 > *"Make a 2-minute punk song that crams the chord progression of Beethoven's 5th into those two minutes. Drums, bass, lead guitar, and vocals on a staccato synth. Call it punk-fate."*
 
-Claude scaffolds `songs/punk-fate/`, picks an instrument chain per track, writes the note-generating code, and pushes the whole thing into Live through fourteen ordered phases:
+That one sentence produced a mixed four-track song in one forty-minute
+session — and a listening session the same day made it *sound* like the brief:
+
+[![Punk Fate — full song waveform](docs/assets/tour-chapter2.png)](docs/assets/tour-chapter2.mp3)
+
+**[▶ Listen — punk-fate, 1:58](docs/assets/tour-chapter2.mp3)** · The finished song ships in this repo as source: [`examples/punk-fate/`](examples/punk-fate/).
+
+Claude scaffolds the song directory, picks an instrument chain per track, writes the note-generating code, and pushes the whole thing into Live through fourteen ordered phases:
 
 ```
 tempo → meter → tracks → returns → scenes → clips →
@@ -29,6 +36,8 @@ performed automation → arrangement → cues
 When it finishes, you press play and hear a finished song.
 
 Don't like the bridge? *"Lift the lead an octave there, and make the chorus drums drag."* Claude edits the code and re-pushes. Re-runs are idempotent — it changes what you asked for and leaves the rest alone.
+
+**The whole session, beat by beat — with the transcript, the screenshots, and the mix numbers: [the tour](docs/tour.md).**
 
 ## How it works
 

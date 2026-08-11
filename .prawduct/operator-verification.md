@@ -1700,3 +1700,54 @@ snapshot-loaded FX chain):
    render first (so every chain ends with the analyzer), then repeat check 1.
    Still zero loads, still ok — the analyzer must neither be matched against an
    authored slot nor counted as an extra device.
+
+## 2026-08-11 — TOUR C1+D1: the tour's evidence set and the rendered pages (feat/tour-evidence)
+
+Visual change: yes — committed screenshots, waveform stills, and two rendered
+markdown pages (README "See it" graft + the new `docs/tour.md`).
+
+What shipped: the C1 evidence set under `docs/assets/` (4 screenshots, 3 audio
+clips each with a waveform still, all produced by the A2/A3 tools or curated
+from the 2026-08-11 punk-fate session's tool-captured frames) and `docs/tour.md`
+grafted into the README. The freshness tests are machine-verified (adversarial
+red/green recorded in the D1 close); what needs eyes:
+
+1. **The audio is the right audio.** Play `docs/assets/tour-chapter1.mp3`
+   (the final render; renamed from `tour-full.mp3` when the chapter-2
+   listening session was planned), then the A/B pair `tour-chorus-before.mp3` /
+   `tour-chorus-after.mp3` (same verse→chorus passage, bars 21–36). Before
+   should audibly clip with a buried bass; after should hold together with the
+   bass carrying. If the pair sounds identical, the wrong capture round was
+   encoded.
+2. **The screenshots read at README/tour width.** On the pushed branch's
+   rendered pages (both GitHub themes): the off-grid MIDI shot must visibly
+   show notes ahead of gridlines; the arrangement shot must be legible as
+   eight sections; the drum-rack and session-render shots must not be
+   squinting material.
+3. **Every media link plays/downloads from the rendered page** (GitHub serves
+   committed mp3s as download links — the poster/waveform images must render
+   inline, the links must resolve).
+4. **The tour reads in ~15 minutes and the story holds** — beats 0→16, both
+   chapters, with no step that requires insider knowledge. Chapter 2's arc has
+   to land specifically: the ear-verdict ("not especially punk") → the measured
+   cause → the fix, four times over, ending on something deliberately NOT done.
+
+### Chapter 2 additions (v1.8.3 — first public release of the tour)
+
+The items above were written for chapter 1 and were only patched for the asset
+rename. These cover what chapter 2 added, none of which any operator has yet
+confirmed:
+
+5. **`tour-chapter2.mp3` is the hero render.** README and quickstart both play
+   it as *the* song, and it is the one audio item nobody has been asked to
+   confirm. It must be the post-tone-pass master: audibly dirtier and louder
+   than `tour-chapter1.mp3`, with the lead line reading as a *guitar*, not a
+   synth. If it sounds like chapter 1, the wrong capture was encoded.
+6. **Chapter 2's two screenshots read at tour width** (both GitHub themes):
+   `tour-garage-drums.png` must visibly show the ghost-note scatter along the
+   bottom of the velocity lane, and `tour-drum-saturation.png` must show the
+   Saturator's drive value legibly enough to read as ~11 dB — it is cited in
+   prose as evidence of a specific dialed parameter.
+7. **The A/B pair at beat 16 differs audibly**, chapter 1 vs chapter 2. This is
+   the release's central claim; if the two renders sound the same to an operator,
+   the chapter is not proven no matter what the flatness numbers say.

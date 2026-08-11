@@ -196,13 +196,12 @@ disable_error_code = ["arg-type", "assignment", "union-attr"]
 [tool.pytest.ini_options]
 # Songs now live in their own repo (hallucinote-songs) with their own pytest
 # config — the framework tests the ENGINE + MCP server only. The one exception
-# is `examples/`, the in-repo demo workspace: its song is documentation that has
-# to keep working, and its tests assert the composition's own thesis (the intro
-# and chorus chords are the same pitch-class set, their roots a tritone apart,
-# the outro REUSES the chorus voicing rather than restating it). Those are
-# contracts on a public artifact, so they belong in the default run — and the
-# demo's whole claim is that it builds headless with no Live present, which only
-# a suite that actually executes it can back.
+# is `examples/`, the in-repo demo workspace. Its first song was retired (its
+# real output was the framework defects found by rebuilding it from scratch);
+# the workspace stays in testpaths so the next demo song's tests join the
+# default run the moment it lands — a demo song is documentation that has to
+# keep working, and "builds headless with no Live present" is only backed by a
+# suite that actually executes it.
 # Front-insert THIS checkout's source dirs (relative to rootdir) so a bare
 # `pytest` always tests the local tree — critical in a git worktree, where the
 # editable-install `.pth` files resolve `hallucinote`/`hallucinote_mcp` to the

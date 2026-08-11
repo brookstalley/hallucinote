@@ -26,7 +26,7 @@ content. There is nothing to `.gitignore`; share-safety is structural.
 
 - It **goes stale** — you install a pack, a preset moves, you upgrade Live.
 - It is **refreshed deliberately**, with Live open:
-  `python -m hallucinote.inventory refresh`.
+  `"$PY" -m hallucinote.cli inventory refresh` (see [`running-the-engine.md`](running-the-engine.md)).
 - Staleness is **advisory, never blocking**. Offline picks warn with the
   cache's age; **push-time resolution stays the source of truth**. If the cache
   is wrong (content uninstalled since the last refresh), the `preset_query`

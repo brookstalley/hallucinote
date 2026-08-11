@@ -116,6 +116,21 @@ When changing this surface:
   - `pull_cli.py` is the JSON-over-stdio bridge the skill calls: `plan`
     emits the PullPlan, `apply` consumes plan + results and returns an
     `ApplyResult` summary.
+  - **`pull_cli` has TWO output channels, and both are contract.** *stdout* is
+    the machine-parseable JSON report. *stderr* carries human/contract text
+    that the consumer **MUST relay to the user**, not merely log or discard:
+    `_warn_durability_if_mix_layer` prints the BAK-7D2V durability contract
+    there whenever the apply staged mix-layer state the next `build.py` replay
+    would revert, and the WFL-7Q2N session auto-select echo goes there too.
+    A wrapper that consumes stdout and drops stderr silently swallows the
+    message telling the user their pull must be baked or the next build
+    refuses — which reintroduces exactly the surprise BAK-7D2V exists to
+    remove. The split is deliberate (stderr keeps the contract text out of the
+    JSON wrappers parse), not an accident of logging.
+  - **House pattern, not a `pull_cli` quirk:** `capture_cli diff` has the same
+    two-channel shape (structured JSON to stdout, human summary to stderr).
+    Treat "stdout = machine, stderr = a message for the human that the
+    consumer relays" as the convention for every CLI seam here.
   - `pull_cli execute <domain> <session_id>` (Arc 3 / C3) is the
     in-process one-shot that collapses plan + probe + apply into one
     pass — does NOT touch the JSON bridge. Uses the same MCP TCP seam
@@ -128,6 +143,10 @@ When changing this surface:
   docstring; the skill is responsible for normalizing raw MCP responses to it.
 - Three-way merge is deferred. If you re-open conflict policy, update both
   this doc and the pull.py module docstring together.
+- **Adding, moving, or silencing anything on stderr changes the contract.**
+  A new consumer must relay it; moving contract text to stdout breaks JSON
+  parsers; dropping it re-opens the silent-revert surprise. If you add a new
+  stderr message, say here whether it is contract (relay) or diagnostic (log).
 
 ### Event Kinds + Payloads (`src/hallucinote/db/events.py`)
 

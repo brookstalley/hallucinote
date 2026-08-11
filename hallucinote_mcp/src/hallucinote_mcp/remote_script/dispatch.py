@@ -179,7 +179,7 @@ class LiveLiveContext:
             def runner() -> None:
                 try:
                     box["result"] = fn()
-                except BaseException as exc:  # prawduct:ok-broad-except — capture any exception and re-raise on the worker thread; otherwise it goes uncaught in Live's main loop
+                except BaseException as exc:  # prawduct:allow prawduct/broad-except -- capture any exception and re-raise on the worker thread; otherwise it goes uncaught in Live's main loop.
                     box["error"] = exc
                 finally:
                     done.set()

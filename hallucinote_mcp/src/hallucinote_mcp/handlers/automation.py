@@ -202,7 +202,7 @@ def _params_equal(p1: Any, p2: Any) -> bool:
     try:
         if p1 == p2:
             return True
-    except Exception:  # prawduct:ok-broad-except — Live wrappers can raise arbitrary types on __eq__
+    except Exception:  # prawduct:allow prawduct/broad-except -- Live wrappers can raise arbitrary types on __eq__.
         pass
     n1 = getattr(p1, "name", None)
     n2 = getattr(p2, "name", None)
@@ -214,7 +214,7 @@ def _params_equal(p1: Any, p2: Any) -> bool:
         return False
     try:
         return cp1 == cp2
-    except Exception:  # prawduct:ok-broad-except — same wrapper-equality risk
+    except Exception:  # prawduct:allow prawduct/broad-except -- same wrapper-equality risk.
         return False
 
 

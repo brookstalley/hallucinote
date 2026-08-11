@@ -354,8 +354,7 @@ def create_handler(
                 "(audio-file ingest is deferred work, see "
                 "`audio_path_deferred` in the result); (c) wire a "
                 "browser-load action that targets the highlighted clip "
-                "slot — also deferred (see W6-D investigation in "
-                ".prawduct/backlog.md)."
+                "slot — also deferred."
             )
         slot.create_clip(float(length))
         clip = slot.clip
@@ -938,7 +937,9 @@ def replace_notes_handler(
 #     songs, version-controlled with the rest of the project, and immune to
 #     Live's per-set Groove Pool isolation.
 #
-# The Hallucinote-side quantize/groove module is tracked in `.prawduct/backlog.md`.
+# No tracker item currently carries the Hallucinote-side quantize/groove module —
+# the rationale above is the whole record, which is why it is written out here
+# rather than deferred to a link.
 
 
 __all__ = [

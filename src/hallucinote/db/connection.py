@@ -565,7 +565,7 @@ def transaction(conn: sqlite3.Connection) -> Iterator[None]:
         try:
             try:
                 yield
-            except BaseException:  # prawduct:ok-broad-except
+            except BaseException:  # prawduct:allow prawduct/broad-except -- ROLLBACK must run for KeyboardInterrupt/SystemExit/CancelledError too — a Ctrl-C mid-batch must not leave a half-written DB. Re-raises.
                 # Roll back on ANY exception — including KeyboardInterrupt /
                 # SystemExit / asyncio.CancelledError — then re-raise. The DB
                 # must not be left in a half-written state because the user
@@ -574,7 +574,7 @@ def transaction(conn: sqlite3.Connection) -> Iterator[None]:
                 raise
             try:
                 conn.execute("COMMIT")
-            except BaseException:  # prawduct:ok-broad-except
+            except BaseException:  # prawduct:allow prawduct/broad-except -- a failed COMMIT (e.g. disk I/O) leaves the transaction open; roll back so the connection stays usable, then surface the COMMIT failure. Re-raises.
                 # A failed COMMIT (e.g. disk I/O error) leaves the
                 # transaction open — roll it back so the connection stays
                 # usable, then surface the COMMIT failure.
@@ -593,7 +593,7 @@ def transaction(conn: sqlite3.Connection) -> Iterator[None]:
         try:
             try:
                 yield
-            except BaseException:  # prawduct:ok-broad-except
+            except BaseException:  # prawduct:allow prawduct/broad-except -- the nested-SAVEPOINT unwind must run for BaseException too, or an inner failure poisons the outer transaction. Re-raises.
                 conn.execute(f"ROLLBACK TO SAVEPOINT {sp}")
                 conn.execute(f"RELEASE SAVEPOINT {sp}")
                 raise

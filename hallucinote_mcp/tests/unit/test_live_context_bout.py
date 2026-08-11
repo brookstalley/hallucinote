@@ -143,7 +143,7 @@ class _Occupier:
 
         try:
             self.result = self._ctx.run_on_main(_hold, label=self._label)
-        except BaseException as exc:  # prawduct:ok-broad-except — test harness must carry any thread-side error back to the assertion
+        except BaseException as exc:  # prawduct:allow prawduct/broad-except -- test harness must carry any thread-side error back to the assertion.
             self.error = exc
 
     def __enter__(self) -> "_Occupier":

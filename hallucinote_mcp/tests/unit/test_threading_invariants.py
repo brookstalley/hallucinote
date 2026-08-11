@@ -219,7 +219,7 @@ class _SimulatedLiveCtx:
             fn, done, box = item
             try:
                 box["result"] = fn()
-            except BaseException as exc:  # prawduct:ok-broad-except — pump must capture any exception to deliver back to worker
+            except BaseException as exc:  # prawduct:allow prawduct/broad-except -- pump must capture any exception to deliver back to worker.
                 box["error"] = exc
             finally:
                 done.set()
@@ -296,7 +296,7 @@ def test_concurrent_cue_create_and_seek_do_not_deadlock(loaded_actions):
                 ),
                 context=ctx,
             )
-        except BaseException as exc:  # prawduct:ok-broad-except — test harness must capture any thread-side error to fail the assertion cleanly
+        except BaseException as exc:  # prawduct:allow prawduct/broad-except -- test harness must capture any thread-side error to fail the assertion cleanly.
             errors["cue"] = exc
 
     def worker_seek() -> None:
@@ -311,7 +311,7 @@ def test_concurrent_cue_create_and_seek_do_not_deadlock(loaded_actions):
                     ),
                     context=ctx,
                 )
-        except BaseException as exc:  # prawduct:ok-broad-except — test harness; see worker_cue
+        except BaseException as exc:  # prawduct:allow prawduct/broad-except -- concurrency harness: a thread-side raise must be carried back to the main thread as a value, or the deadlock assertion sees a hung worker instead of the real error.
             errors["seek"] = exc
 
     t_cue = threading.Thread(target=worker_cue, name="test-worker-cue")
@@ -366,7 +366,7 @@ def test_concurrent_cue_create_and_cue_jump_do_not_deadlock(loaded_actions):
                 ),
                 context=ctx,
             )
-        except BaseException as exc:  # prawduct:ok-broad-except — test harness
+        except BaseException as exc:  # prawduct:allow prawduct/broad-except -- concurrency harness: cue_create runs on a worker thread, so its exception must reach the assertion as a value rather than dying silently in the thread.
             errors["create"] = exc
 
     def worker_jump() -> None:
@@ -379,7 +379,7 @@ def test_concurrent_cue_create_and_cue_jump_do_not_deadlock(loaded_actions):
                 ),
                 context=ctx,
             )
-        except BaseException as exc:  # prawduct:ok-broad-except — test harness
+        except BaseException as exc:  # prawduct:allow prawduct/broad-except -- concurrency harness: same as worker_create — cue_jump's thread-side failure has to survive as a value for the live_state_lock deadlock check to report it.
             errors["jump"] = exc
 
     # cue_jump uses jump_to_X_cue / target.jump(); our simulated song

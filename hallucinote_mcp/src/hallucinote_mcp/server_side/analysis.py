@@ -599,7 +599,8 @@ def _collect_tempo_map(
 
     Caveat: this feeds the analyzer the *declared* tempo_map. It assumes the
     render honored it. Today the push layer materializes only the bar-1 tempo
-    (the non-bar-1-tempo gap in ``.prawduct/backlog.md``), so a song that
+    (the non-bar-1-tempo gap — tracker ids ``TMP-7B3X`` / ``TMP-4J6Q`` /
+    ``TMP-5K1R``), so a song that
     declares variable tempo currently renders at one tempo — for that song the
     declared changes aren't in the audio and ``BeatSampleMap`` documents how
     that can be less accurate than the linear fallback. Harmless for the

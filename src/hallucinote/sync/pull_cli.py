@@ -263,7 +263,7 @@ def _cmd_apply(args: argparse.Namespace) -> int:
             request_id=request_id,
             reason=args.reason or f"pull from session {args.session_id}",
         )
-    except Exception:  # prawduct:ok-broad-except — audit-log finalizer: close the request with outcome='failed' for any exception, then re-raise.
+    except Exception:  # prawduct:allow prawduct/broad-except -- audit-log finalizer: close the request with outcome='failed' for any exception, then re-raise.
         M.close_request(conn, request_id=request_id, outcome="failed", actor="sync")
         raise
     M.close_request(conn, request_id=request_id, outcome="ok", actor="sync")
@@ -398,7 +398,7 @@ def _cmd_execute(args: argparse.Namespace) -> int:
                 actor="sync", request_id=request_id,
                 reason=args.reason or f"pull from session {args.session_id}",
             )
-        except Exception:  # prawduct:ok-broad-except — audit-log finalizer: close the request with outcome='failed' for any exception, then re-raise.
+        except Exception:  # prawduct:allow prawduct/broad-except -- audit-log finalizer: close the request with outcome='failed' for any exception, then re-raise.
             M.close_request(conn, request_id=request_id, outcome="failed", actor="sync")
             raise
         M.close_request(conn, request_id=request_id, outcome="ok", actor="sync")

@@ -185,8 +185,10 @@ the song's snapshot predates BAK-7D2V — Ableton open, linked session):**
    chain authored prop), leave it in place, and re-capture — `capture diff` exits
    0 even though the on-disk snapshot is stale. Accept the same offer → confirm
    `captured_session.json` now carries the PULLED value (not the old one) and the
-   next `build.py` preserves it. A bare `capture restamp` here would disarm the
-   guard over the stale value; confirm it prints its override warning.
+   next `build.py` preserves it. This case is exactly why there is no re-stamp
+   override to reach for: moving the stamp without re-capturing would disarm the
+   guard over the stale value, so the subcommand that did it was deleted
+   (2026-08-11) and the only exits are this bake and `--force-replay`.
 
 ## MCP-1V8K — device load focuses Session view before browser.load_item (2026-06-23) — PASSED (agent-run live, 2026-06-23)
 

@@ -78,7 +78,7 @@ def auto_request(
         return
     try:
         db_path = _resolve_song_db_path(slug)
-    except Exception:  # prawduct:ok-broad-except — resolver failure is degraded provenance, not a user-facing error
+    except Exception:  # prawduct:allow prawduct/broad-except -- resolver failure is degraded provenance, not a user-facing error.
         logger.debug(
             "auto_request: resolve_db_path(%r) failed; skipping provenance", slug,
         )

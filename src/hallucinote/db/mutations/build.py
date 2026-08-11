@@ -263,7 +263,7 @@ def build_session(
     bs._token = _current_build_session.set(bs)
     try:
         yield bs
-    except BaseException:  # prawduct:ok-broad-except
+    except BaseException:  # prawduct:allow prawduct/broad-except -- close the build request as failed and skip tombstoning on any exception, KeyboardInterrupt included, or a crashed build leaves an open request row. Re-raises.
         # On any failure (including KeyboardInterrupt), close the request as
         # failed and skip tombstoning. The DB stays in whatever partial state
         # the build left it (transaction discipline is the caller's; we do

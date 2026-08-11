@@ -34,66 +34,47 @@ def _make_snap() -> dict:
     }
 
 
-def test_restamp_refreshes_captured_at_without_content_change(tmp_path: Path) -> None:
-    """BAK-7D2V Chunk 3: `restamp` moves captured_at forward (events.ts shape)
-    and leaves every other field byte-identical — the empty-diff guard disarm."""
+def test_docstring_subcommand_list_matches_the_registered_parser() -> None:
+    """The module docstring IS the argparse `description`, i.e. the `--help`
+    text. It drifted once (it enumerated `execute`/`--plan`/`diff`/`migrate`
+    while the parser also registered `merge`), so an operator reading `--help`
+    could not discover the subcommand `/song-snapshot` drives on both of its
+    write paths. Pin the two together: every registered subcommand is bulleted,
+    and every bulleted name is registered.
+    """
     import re
 
-    snap = _make_snap()
-    snap["captured_at"] = "2020-01-01T00:00:00.000Z"
-    path = tmp_path / "captured_session.json"
-    _write_snapshot(path, snap)
+    from hallucinote.tools import capture_cli
 
-    proc = _run("restamp", str(path))
-    assert proc.returncode == 0
-    after = json.loads(path.read_text())
-    assert re.fullmatch(
-        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z", after["captured_at"]
+    block = capture_cli.__doc__.split("CLI subcommands:", 1)[1]
+    # Each entry opens a bullet as ``  * ``<name> ...`` — take the first token
+    # inside the leading double-backtick run, so `execute --song <slug>` and
+    # `diff <old.json> <new.json>` both reduce to their subcommand name.
+    documented = set(re.findall(r"^\s*\*\s+``([a-z_]+)", block, re.MULTILINE))
+
+    parser = capture_cli._build_parser()
+    registered = set()
+    for action in parser._subparsers._group_actions:  # noqa: SLF001 — argparse exposes no public accessor
+        registered.update(action.choices)
+
+    assert documented == registered, (
+        "capture_cli's docstring subcommand list has drifted from the parser: "
+        f"documented-but-unregistered={documented - registered}, "
+        f"registered-but-undocumented={registered - documented}. The docstring "
+        "is the --help text, so an undocumented subcommand is an undiscoverable one."
     )
-    assert after["captured_at"] > "2020-01-01T00:00:00.000Z"
-    before = {k: v for k, v in snap.items() if k != "captured_at"}
-    after_content = {k: v for k, v in after.items() if k != "captured_at"}
-    assert after_content == before
 
 
-@pytest.mark.parametrize(
-    "stamp",
-    [None, "", "not-a-timestamp", "2020-01-01T00:00:00Z", "2020-01-01 00:00:00.000Z"],
-    ids=["absent", "empty", "garbage", "no-millis", "space-separator"],
-)
-def test_restamp_refuses_an_unstamped_or_malformed_snapshot(
-    tmp_path: Path, stamp,
-) -> None:
-    """Back-stamping a snapshot the guard cannot order is strictly worse than
-    doing nothing. Replay treats an unusable `captured_at` as "no ordering
-    evidence" and takes its warn-and-proceed branch, so the user at least SEES
-    that pulled edits are being overwritten; stamping it moves replay to the
-    silent-pass branch and destroys that last signal. Refuse instead, and leave
-    the file untouched."""
-    snap = _make_snap()
-    if stamp is not None:
-        snap["captured_at"] = stamp
-    path = tmp_path / "captured_session.json"
-    _write_snapshot(path, snap)
-    original = path.read_text()
-
-    proc = _run("restamp", str(path))
-    assert proc.returncode == 2, (
-        f"restamp must refuse a {stamp!r} stamp — back-stamping it silences the "
-        "replay guard with no evidence the content is current"
-    )
-    assert path.read_text() == original, "refused restamp must not write"
-    assert "captured_at" in proc.stderr
-
-
-def test_restamp_missing_file_returns_two(tmp_path: Path) -> None:
-    proc = _run("restamp", str(tmp_path / "absent.json"))
-    assert proc.returncode == 2
-
-
-def test_restamp_no_target_returns_two() -> None:
+def test_restamp_subcommand_is_gone() -> None:
+    """`capture restamp` moved `captured_at` forward with no re-capture, which
+    durably disarmed the replay staleness guard on evidence nothing had checked.
+    The two sanctioned exits already cover the ground: a fresh capture (durable)
+    and `--force-replay` (conscious revert, re-warns every build). Deleted so
+    the guard cannot be silently switched off; this pins that it stays deleted.
+    """
     proc = _run("restamp")
-    assert proc.returncode == 2
+    assert proc.returncode != 0
+    assert "invalid choice" in proc.stderr
 
 
 def test_diff_exits_zero_on_identical(tmp_path: Path) -> None:

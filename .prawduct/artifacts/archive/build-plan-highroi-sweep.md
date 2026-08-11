@@ -10,7 +10,13 @@ depends_on:
   - artifact: design
     path: .prawduct/artifacts/plans/BAK-7D2V/design.md
 last_validated: null
+lifecycle: completed
+archived: 2026-08-11
+released_in: v1.7.1
+maintained: false
 ---
+
+> **Archived — no longer maintained.** This plan records what was built, not what will be. Do not edit it to reflect later changes; write those where they are true.
 
 # Build Plan — High-ROI sweep 2026-07 (VEW-7T2C + VEW-9QH4 + BAK-7D2V remainder)
 

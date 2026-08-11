@@ -1,6 +1,6 @@
 ---
 name: mix-review
-description: Holistic, intent-aware mix review for a song. Recalls the song's declared composer intent, reads the whole MixReport (masking + bed buildup + loudness + attribution + reverb + per-part timing/feel + cross-rhythm) per section, and interprets the measurements AGAINST intent — surfacing only the collisions that hurt the element meant to win each section, framed as a producer's question, never a verdict. The single read-side surface over all audio analyses; masking is its richest input. Learns revealed intent back as a markdown annotation so it never re-flags. Use after an analysis pass, or when the user asks "how's the mix?", "is anything masking the vocal?", "is the groove tight?", "review the chorus", etc. Uses Max for Live (Live Suite, or the M4L add-on) — it reads rendered audio; without Max for Live use /compose-review (symbolic) instead.
+description: Holistic, intent-aware mix review for a song. Recalls the song's declared composer intent, reads the whole MixReport (masking + bed buildup + loudness + attribution + reverb + stereo image / mono compatibility + per-part timing/feel + cross-rhythm) per section, and interprets the measurements AGAINST intent — surfacing only the collisions that hurt the element meant to win each section, framed as a producer's question, never a verdict. The single read-side surface over all audio analyses; masking is its richest input. Learns revealed intent back as a markdown annotation so it never re-flags. Use after an analysis pass, or when the user asks "how's the mix?", "is anything masking the vocal?", "is the groove tight?", "will this survive mono?", "is that width control doing anything?", "review the chorus", etc. Uses Max for Live (Live Suite, or the M4L add-on) — it reads rendered audio; without Max for Live use /compose-review (symbolic) instead.
 argument-hint: <song-slug> [section] [--focus masking|loudness|reverb|all]
 user-invocable: true
 disable-model-invocation: false
@@ -41,9 +41,11 @@ declared `review_workflow` archetype (RECALL step 1; model:
 
 - The axes `/mix-review` owns: **sound / production** (timbre, chains),
   **performance / feel** (timing, dynamics, groove), **mix-balance** (masking,
-  loudness, attribution, reverb). `/compose-review` owns the compositional axes
-  (arrangement, harmony, melody) — if the real fix is there, NOTE it and defer;
-  don't re-arrange from a mix turn.
+  loudness, attribution, reverb, stereo image / width — a width no-op is a
+  balance edit, not a sound-design one: it changes where a part sits against the
+  others, and it is fixed on the same turn as a masking or level move).
+  `/compose-review` owns the compositional axes (arrangement, harmony, melody)
+  — if the real fix is there, NOTE it and defer; don't re-arrange from a mix turn.
 - **Read holistically, EDIT one axis.** Reasoning across the whole MixReport is the
   point — but the EDITS a turn proposes stay on the declared axis; a finding on
   another axis is a deferred review note (LEARN-BACK), not a fix this turn.
@@ -178,10 +180,22 @@ first — see "Refreshing the analysis"). For each section, you have:
   `conflicting_declarations` (non-empty) means sends into one return declared
   different RT60s — one device can't have two decay times; surface the conflict.
 - `automation_verifications` — was authored time-varying automation realized in
-  audio? Per value-changing breakpoint: a `device_parameter` flip (e.g. Amp
-  Type Clean→Heavy) is a **directional** timbre verdict (`spectral_centroid_hz`
-  before/after — "a shift occurred", not a scalar target); a `send_level` step
-  is a level move in the declared direction; the post-fader mixer kinds are
+  audio? Per value-changing breakpoint: a `device_parameter` flip is verified on
+  **TWO probes — timbre OR image** (STR-4C8N), because spectral centroid alone
+  cannot see a comb/width effect (a flanger notches roughly symmetrically, so it
+  barely moves the centroid however wet it gets, and centroid-only verification
+  reported "not realized" against automation that provably landed). **The
+  `metric`/`before`/`after` fields are ALWAYS the centroid pair, whichever probe
+  fired — so never read them as the evidence.** A realized verdict carried by the
+  image probe sits beside a nearly-unchanged centroid, and reporting that as a
+  brightness change is a claim the audio does not support. **Read the `probe`
+  field: it names the basis** — `"timbre"`, `"image"`, or `null` (every non-
+  `device_parameter` kind, and any unmeasurable window). The `note` narrates the
+  same thing in prose, but `probe` is the one to branch on; don't string-match
+  the note. A `send_level` step
+  is a level move in the declared direction, measured as the return's STEREO
+  RMS (so a wide return is judged on what it actually plays, not on a mono sum
+  that half-cancels); the post-fader mixer kinds are
   verified on the MASTER (AUD-3F8M) — `mixer_volume` as a `master_rms_db`
   level step, `mixer_pan` as a `master_balance_db` L−R shift, each judged
   against a prediction from the declared values + the stem's contribution.
@@ -204,6 +218,39 @@ first — see "Refreshing the analysis"). For each section, you have:
   authorship, not a defect. The whole `energy_realization` is `null` when fewer
   than 2 sections declare energy. It is a RULER — it never re-authors the curve
   or names a target loudness.
+- `stereo` per surface + `width_realizations` — the image lens (STR-4C8N).
+  Per stem, `correlation` (Pearson L/R; `+1` is bit-exact mono OR any
+  perfectly correlated pair — a level-imbalanced but correlated stem also reads
+  `+1.0` while still losing mono level, so never narrate `+1` as "bit-exact
+  mono" on its own) and
+  **`mono_sum_loss_db`** — the level the surface LOSES summed to mono.
+  **Quote the dB, never the correlation.** "-3.8 dB in mono" says what a listener
+  on a phone speaker loses, in units a composer already thinks in; "-0.174" needs
+  a decoder ring. `width_realizations` pairs each DECLARED width control with what
+  the audio actually did — the one reading no other tool can produce, because it
+  needs the declaration and the render together.
+  Two failure shapes, both otherwise SILENT:
+  **the no-op** — an above-unity declared width with a mono loss near zero, i.e.
+  a control multiplying a side signal that isn't there (measured on
+  `the-argument`: Drone declared 165 %, the most aggressive setting in the song,
+  measuring −0.23 dB, while Brass at 125 % measured −2.86 dB); and
+  **over-widening** — a large mono loss on an element that has to survive mono.
+  Gate exactly like masking: **surface only when it CONTRADICTS a declared
+  intent.** Element-aware, never a global threshold — a pad at +0.2 correlation is
+  fine, a kick at +0.2 is a problem, and a threshold that fires on both turns this
+  into a linter. The canonical case is a contradiction, not a number: a flanger
+  added expressly to give a mono guitar chain stereo, with the guitars measuring
+  bit-exact mono. Two caveats to carry. Both metrics are BROADBAND, so a part wide
+  in the highs and mono in the lows averages to something unremarkable and neither
+  localises where the image lives. And **`width_realizations` is what was
+  RECOGNISED, not what was authored** — recognition is a closed set of exact
+  parameter names (currently `Stereo Width`) at a non-default value, on top-level
+  track and return devices, so a control under another name, inside a rack's
+  nested chain, or left at unity is simply absent from the list. The report says so
+  on EVERY analysis, in a `width_realization_scope` entry under `skipped_analyses`.
+  Never reassure a composer that a width control is fine because it isn't listed —
+  an absence means "not recognised", and reading it as "not authored" reproduces
+  the silent-no-op failure this lens exists to end, one layer up.
 
 Timing caveats to carry (don't over-claim): drift is measured against a
 constant-tempo grid and a swung part reads as small drift on the fine grid
@@ -263,9 +310,11 @@ When you do recommend, rank musically (the order working engineers prefer):
    don't boost the hero) — for steady tonal clashes (mud, box).
 3. **Sidechain / dynamic duck** (`/mix-sidechain`) — for intermittent collisions
    where both must coexist; section-conditional.
-4. **Pan / depth** — weakest, mono-fragile; and note: the analyzer is mono-sum,
-   so it can't *see* pan separation (it may over-report a part that's already
-   panned clear — see caveats).
+4. **Pan / depth** — weakest, mono-fragile; and note: the MASKING pass is
+   mono-sum, so it can't *see* pan separation (it may over-report a part that's
+   already panned clear — see caveats). The per-surface `stereo` block is a
+   separate lens and DOES measure the image; it just says nothing about where
+   two parts sit relative to each other.
 
 Propose ranked options with rationale. Let the user choose. The industry
 consensus is unanimous that auto-applying produces generic, formulaic mixes.
@@ -333,14 +382,19 @@ asserts, not verifies, that Live matched the DB — a mutate→render without th
 push mislabels the report's own audio), then re-render + re-analyze with
 `compare_to=<db_seq of the before-report>` — each report carries its `db_seq`
 (the audit-log state its capture reflects). The new report's
-`compare_to` field lists per-surface loudness deltas with significance flags:
-read it to confirm the change did what it predicted instead of re-arguing from
-the absolute numbers. Deltas are neutral evidence — grade them against the
-declared intent, and remember the same caveats below apply to both sides of
-the diff. Significance floors are calibrated for master/stem surfaces;
-near-silent surfaces (quiet reverb returns) can flag large dB deltas that are
-capture-tail variance, not mix moves — weigh the before/after absolutes in
-each row.
+`compare_to` field lists per-surface deltas with significance flags, in THREE
+families — **loudness**, **timbre** (centroid / flatness / rolloff) and
+**stereo** (`correlation`, `mono_sum_loss_db`). Read it to confirm the change
+did what it predicted instead of re-arguing from the absolute numbers; a width
+fix in particular shows up ONLY in the stereo rows, so an A/B run to confirm one
+goes unread if you look at loudness alone. Deltas are neutral evidence — grade
+them against the declared intent, and remember the same caveats below apply to
+both sides of the diff. Two floors caveats: the timbre and stereo rows carry
+`provisional: true` (no render-jitter calibration set exists for them yet, so
+treat a "significant" flag there as a hint, not a measured noise threshold);
+and the loudness floors are calibrated for master/stem surfaces, so near-silent
+surfaces (quiet reverb returns) can flag large dB deltas that are capture-tail
+variance, not mix moves — weigh the before/after absolutes in each row.
 
 ## Honest confidence — caveats you MUST carry
 
@@ -350,8 +404,10 @@ State these when they bear on a finding; never present masking as ground truth:
   the analyzer applies the (Live-calibrated) fader gain to approximate mix
   level. Volume *automation* isn't applied yet, so a part that ducks under one
   section may read slightly hot. (build-plan F1/C3.)
-- **Mono-sum is pan-blind.** Two parts separated by panning may read as masking
-  when the ear separates them fine. Don't push the "pan" fix on a finding the
+- **Mono-sum is pan-blind — in the MASKING pass.** Two parts separated by
+  panning may read as masking when the ear separates them fine. (Per-surface
+  `stereo` is measured from the stereo file and is not subject to this; the two
+  answer different questions.) Don't push the "pan" fix on a finding the
   pan itself would resolve.
 - **Spectral ≠ perceptual.** Same-timbre / same-register parts (doubled guitars,
   a choir, unison strings) over-report — the ear separates them by pitch and

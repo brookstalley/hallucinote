@@ -45,7 +45,18 @@ def _timbre(
     }
 
 
+def _stereo(
+    correlation: float | None = 0.5,
+    mono_sum_loss_db: float | None = -1.0,
+) -> dict:
+    return {
+        "correlation": correlation,
+        "mono_sum_loss_db": mono_sum_loss_db,
+    }
+
+
 _DEFAULT_TIMBRE = object()
+_DEFAULT_STEREO = object()
 
 
 def _surface(
@@ -54,6 +65,7 @@ def _surface(
     name: str = "x",
     *,
     timbre: object = _DEFAULT_TIMBRE,
+    stereo: object = _DEFAULT_STEREO,
     **loudness,
 ) -> dict:
     return {
@@ -63,6 +75,9 @@ def _surface(
         "loudness": _loudness(**loudness),
         # ``timbre=None`` models a silent stem (null) or a pre-timbre baseline.
         "timbre": _timbre() if timbre is _DEFAULT_TIMBRE else timbre,
+        # ``stereo=None`` likewise models an unmeasurable stem or a pre-stereo
+        # baseline — the diff must yield a null delta there, never a fabricated 0.
+        "stereo": _stereo() if stereo is _DEFAULT_STEREO else stereo,
     }
 
 
@@ -95,14 +110,15 @@ def test_identical_reports_diff_to_zero_and_insignificant():
     assert out["overshoot_count"] == {
         "before": 0, "after": 0, "delta": 0, "significant": False,
     }
-    # master + track:1, each with 4 loudness + 3 timbre metrics
-    assert len(out["deltas"]) == 14
+    # master + track:1, each with 4 loudness + 3 timbre + 2 stereo metrics
+    assert len(out["deltas"]) == 18
     for row in out["deltas"]:
         assert row["delta"] == 0.0
         assert row["significant"] is False
-    # Loudness deltas are calibrated; timbre deltas are flagged provisional.
+    # Loudness deltas are calibrated; timbre and stereo deltas are provisional.
     by_metric = {r["metric"]: r for r in out["deltas"]}
     assert by_metric["lufs_i"]["provisional"] is False
+    assert by_metric["mono_sum_loss_db"]["provisional"] is True
     assert by_metric["spectral_centroid_hz"]["provisional"] is True
 
 
@@ -192,6 +208,29 @@ def test_timbre_null_on_either_side_yields_null_delta():
     assert row["before"] is None
     assert row["delta"] is None
     assert row["significant"] is False
+
+
+def test_stereo_null_on_either_side_yields_null_delta():
+    # An unmeasurable stem (stereo null) or a PRE-STEREO baseline diffs to an
+    # honest null — never a fabricated 0.0, which would read as "the image did
+    # not change" when the truth is "one side never measured it".
+    baseline = _report(stems=[_surface("track:1", stereo=None)])
+    current = _report(stems=[_surface("track:1")])
+    row = _find(diff_reports(current, baseline), "track:1", "mono_sum_loss_db")
+    assert row["before"] is None
+    assert row["delta"] is None
+    assert row["significant"] is False
+
+
+def test_stereo_move_is_flagged_provisional():
+    # Reducing an over-wide element moved a real stem ~1 dB in mono-sum loss;
+    # the diff must see it, and must mark it provisional (no jitter calibration).
+    baseline = _report(stems=[_surface("track:1", stereo=_stereo(mono_sum_loss_db=-3.84))])
+    current = _report(stems=[_surface("track:1", stereo=_stereo(mono_sum_loss_db=-2.86))])
+    row = _find(diff_reports(current, baseline), "track:1", "mono_sum_loss_db")
+    assert row["delta"] == pytest.approx(0.98)
+    assert row["significant"] is True
+    assert row["provisional"] is True
 
 
 def test_overshoot_count_change_is_significant():

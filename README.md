@@ -50,6 +50,8 @@ When it finishes you have a finished session — named tracks, clips, device cha
 
 ## What you can do
 
+The `/hallucinote:*` names below are the skills Claude runs for you. You can type them, but you don't have to — describing what you want in plain language reaches the same place.
+
 - **Compose from a prompt — any genre, any shape.** `/hallucinote:song-new <slug>` scaffolds the song; Claude writes the `build.py` and pushes it into Live. Pitch the brief however you think about music — it can be:
   - **conceptual** — *"a song about overcoming loss"*
   - **musical** — *"a Bach-style Baroque prelude in G minor built from a single broken-chord figuration"*
@@ -66,9 +68,11 @@ When it finishes you have a finished session — named tracks, clips, device cha
 
 Actively developed, shipping releases, and honest about the rough edges:
 
-- Works today on **Ableton Live 12**, **macOS and Windows**.
+- **Platforms:** Ableton Live 12 on macOS and Windows. Linux is unsupported — Ableton ships no Linux build.
 - **Live edition:** the authoring loop — compose, push, pull, play, and the symbolic `compose-review` — runs on **any Live 12 edition, Standard included**. The audio-analysis features (render → `mix-review` by measurement) need **Max for Live**, so they're **Suite-only**; `/hallucinote:ableton-mcp-install` asks whether you have Suite and lets Standard users skip the analyzer.
-- Audio recording is a boundary, not a feature yet: Claude authors MIDI and the mix; a human vocal take or a hand-ridden fader automation lane can't be read back through the bridge today. See **[Known issues](#known-issues)** for the full list of accepted limitations.
+- **Audio recording is a boundary, not a feature yet.** Claude authors MIDI and the mix; a human vocal take or a hand-ridden automation lane can't be read back through the bridge.
+
+**[Known issues](#known-issues)** lists everything else we've consciously accepted, with workarounds.
 
 ## Known issues
 
@@ -86,12 +90,12 @@ Limitations we know about and have consciously accepted for now — each with it
 
 The plugin is **self-contained.** Installing it brings the `/hallucinote:*` skills, the `hallucinote-mcp` bridge server, **and** the composing engine your songs' `build.py` runs against — all in one uv-managed environment Claude Code builds on first launch. There's **no separate engine to clone or pip-install**, and nothing on PyPI to track.
 
-#### 1. Install prerequisites
+### 1. Install prerequisites
 
 - **[Claude Code](https://claude.ai/code)**, **Ableton Live 12**, **Python 3.10+**.
 - **[uv](https://docs.astral.sh/uv/)** — `brew install uv` (macOS) or `winget install astral-sh.uv` (Windows). The plugin uses it to build its locked, isolated environment; no PATH or venv juggling.
 
-#### 2. Install the plugin
+### 2. Install the plugin
 
 In Claude Code:
 
@@ -102,11 +106,11 @@ In Claude Code:
 
 This installs the skills, the bridge server, and the engine. uv builds the locked environment on first launch (a SessionStart hook pre-warms it, so later starts are instant). That's the whole install — no clone, no `pip install`.
 
-#### 3. Connect Ableton
+### 3. Connect Ableton
 
 Quit Live, then in Claude Code run **`/hallucinote:ableton-mcp-install`** (it copies the Remote Script into Live's User Library and installs the analyzer — the one thing the plugin can't do for you). Reopen Live, and in **Preferences → Link, Tempo & MIDI** assign **Hallucinote** to a free Control Surface slot (leave Input/Output as None). Restart Claude Code so the bridge connects.
 
-#### 4. Verify
+### 4. Verify
 
 > *"please get the current set's info from Ableton"*
 
@@ -123,7 +127,7 @@ Setup is one-time. Day to day: open Live, start Claude Code in your **songs work
 - **"Version mismatch" / "handshake missing"** — the bridge server and Live's Remote Script have diverged (usually after an update). Rerun `/hallucinote:ableton-mcp-install`, then **fully quit and reopen Live** — `/mcp` alone won't do it, because Live caches Control Surface modules at startup.
 - **`ableton_session(action='info')` hangs or says "no connection"** — Live isn't running, the Control Surface slot isn't assigned, or Claude Code wasn't restarted after assigning it.
 
-`python -m hallucinote_mcp.cli preflight` diagnoses install state. More in the [FAQ](docs/faq.md).
+Still stuck? Ask Claude to **run preflight** — it prints a JSON report of exactly what the installer can and can't find. (The command is `python -m hallucinote_mcp.cli preflight`, but it has to run in the plugin's environment, so asking Claude is the reliable way; run from your own shell it will usually just fail to import.) More in the [FAQ](docs/faq.md). Bugs go to [issues](https://github.com/brookstalley/hallucinote/issues); please report vulnerabilities privately instead — see [`SECURITY.md`](SECURITY.md).
 
 ## Learn more
 
@@ -137,6 +141,8 @@ Setup is one-time. Day to day: open Live, start Claude Code in your **songs work
 | Know where a song's authorship lives, and why | [`.prawduct/artifacts/authorship-model.md`](.prawduct/artifacts/authorship-model.md) |
 | Share a song with a collaborator | [`docs/collaboration.md`](docs/collaboration.md) |
 | Look something up / fix a problem | [`docs/faq.md`](docs/faq.md) |
+| Know what needs Max for Live, and why | [`docs/capability-truth.md`](docs/capability-truth.md) |
+| See what changed in a release | [`CHANGELOG.md`](CHANGELOG.md) |
 | Contribute code | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 | Get precise about an overloaded term | [`docs/terminology.md`](docs/terminology.md) |
 

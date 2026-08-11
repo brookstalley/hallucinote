@@ -112,14 +112,48 @@ def spectral_centroid_hz(mono: np.ndarray, sample_rate: int) -> float:
     before/after timbre delta (lifted here from ``automation.py`` so the centroid
     math lives in one place — AUD-8T3K). Distinct from :func:`measure_timbre`'s
     framed median, which is the standing per-surface descriptor.
+
+    :func:`spectral_centroid_stereo_hz` is the phase-robust sibling; both share
+    :func:`_centroid_from_spectrum`, so a change to the centroid definition
+    (windowing, DC handling, normalisation) cannot land on one and miss the other.
     """
     if mono.size == 0:
         return 0.0
-    spec = np.abs(np.fft.rfft(mono))
+    return _centroid_from_spectrum(
+        np.abs(np.fft.rfft(mono)), mono.size, sample_rate
+    )
+
+
+def spectral_centroid_stereo_hz(stereo: np.ndarray, sample_rate: int) -> float:
+    """Spectral centroid that phase cancellation cannot fake (STR-4C8N).
+
+    Averaging L and R in the TIME domain cancels an anti-phase pair to silence,
+    whose centroid reads 0 Hz — so a purely spatial change reports as a total
+    timbre collapse ("440→0 Hz, +100%"). Averaging the two channels' MAGNITUDE
+    spectra instead measures the brightness each channel actually carries, which
+    is what "did the timbre change" means.
+
+    ``0.0`` for an empty window. Lives beside :func:`spectral_centroid_hz` rather
+    than in the automation verifier that needs it, so the one-place rule this
+    module records (AUD-8T3K) holds for the stereo form too.
+    """
+    if stereo.size == 0:
+        return 0.0
+    spec = 0.5 * (
+        np.abs(np.fft.rfft(stereo[:, 0])) + np.abs(np.fft.rfft(stereo[:, 1]))
+    )
+    return _centroid_from_spectrum(spec, stereo.shape[0], sample_rate)
+
+
+def _centroid_from_spectrum(
+    spec: np.ndarray, n_samples: int, sample_rate: int
+) -> float:
+    """Frequency-weighted mean of one magnitude spectrum — the shared definition
+    both public centroid functions are thin wrappers over."""
     total = float(spec.sum())
     if total <= 0.0:
         return 0.0
-    freqs = np.fft.rfftfreq(mono.size, d=1.0 / sample_rate)
+    freqs = np.fft.rfftfreq(n_samples, d=1.0 / sample_rate)
     return float((freqs * spec).sum() / total)
 
 

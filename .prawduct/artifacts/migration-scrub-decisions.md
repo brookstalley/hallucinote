@@ -10,7 +10,7 @@ session transcript is a choice nobody can later audit.
 | Fact | Value |
 | --- | --- |
 | `prawduct-hook version` | **3.3.0** |
-| Plugin source | directory source `/Users/brookstalley/source/prawduct` (marketplace entry `prawduct`, `autoUpdate: true`) |
+| Plugin source | local directory source `~/source/prawduct` (marketplace entry `prawduct`, `autoUpdate: true`) |
 | Plugin ref at run time | `develop@2e1c1fc` (session banner) |
 | `--plugin-dir` used? | No — the session loaded the directory-source marketplace plugin |
 | `backlog` op present? | Yes — full op set incl. `import`, `restructure-preview`, `verify-migration`, `export` |

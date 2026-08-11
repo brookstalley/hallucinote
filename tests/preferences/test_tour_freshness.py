@@ -49,9 +49,11 @@ _EXPECTED_ASSETS = {
     "tour-arrangement.png",
     "tour-session-render.png",
     "tour-drum-rack.png",
-    # 3 audio items, each an mp3 + its waveform still
-    "tour-full.mp3",
-    "tour-full.png",
+    # 3 audio items, each an mp3 + its waveform still. The full-song render
+    # is numbered per editing session — chapter 1 is the composing session;
+    # a chapter-2 render joins this set when the listening session lands.
+    "tour-chapter1.mp3",
+    "tour-chapter1.png",
     "tour-chorus-before.mp3",
     "tour-chorus-before.png",
     "tour-chorus-after.mp3",

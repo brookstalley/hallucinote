@@ -1712,8 +1712,9 @@ from the 2026-08-11 punk-fate session's tool-captured frames) and `docs/tour.md`
 grafted into the README. The freshness tests are machine-verified (adversarial
 red/green recorded in the D1 close); what needs eyes:
 
-1. **The audio is the right audio.** Play `docs/assets/tour-full.mp3` (the
-   final render), then the A/B pair `tour-chorus-before.mp3` /
+1. **The audio is the right audio.** Play `docs/assets/tour-chapter1.mp3`
+   (the final render; renamed from `tour-full.mp3` when the chapter-2
+   listening session was planned), then the A/B pair `tour-chorus-before.mp3` /
    `tour-chorus-after.mp3` (same verse→chorus passage, bars 21–36). Before
    should audibly clip with a buried bass; after should hold together with the
    bass carrying. If the pair sounds identical, the wrong capture round was

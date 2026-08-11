@@ -53,7 +53,7 @@ name). For example:
 > of Beethoven's 5th into those 2 minutes. Four parts: drums, bass, lead guitar,
 > and vocals on a staccato synth. Call it punk-fate."**
 
-That prompt has been run for real — **[hear what it produced](assets/tour-full.mp3)**
+That prompt has been run for real — **[hear what it produced](assets/tour-chapter1.mp3)**
 (1:55, four tracks). The session that made it, beat by beat with the evidence,
 is [the tour](tour.md); the finished source ships in this repo as
 [`examples/punk-fate/`](../examples/punk-fate/).

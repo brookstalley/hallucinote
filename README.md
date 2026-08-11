@@ -20,9 +20,9 @@ Tweak a fader in Live and pull the change back through the same path. The song i
 
 That one sentence produced this, in one forty-minute session:
 
-[![Punk Fate — full song waveform](docs/assets/tour-full.png)](docs/assets/tour-full.mp3)
+[![Punk Fate — full song waveform](docs/assets/tour-chapter1.png)](docs/assets/tour-chapter1.mp3)
 
-**[▶ Listen — punk-fate, 1:55](docs/assets/tour-full.mp3)** · The finished song ships in this repo as source: [`examples/punk-fate/`](examples/punk-fate/).
+**[▶ Listen — punk-fate, 1:55](docs/assets/tour-chapter1.mp3)** · The finished song ships in this repo as source: [`examples/punk-fate/`](examples/punk-fate/).
 
 Claude scaffolds the song directory, picks an instrument chain per track, writes the note-generating code, and pushes the whole thing into Live through fourteen ordered phases:
 

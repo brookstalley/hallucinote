@@ -22,9 +22,9 @@ how a song gets made, not a recipe for this one.
 
 ## 0 · The result, first
 
-[![Punk Fate — full song waveform](assets/tour-full.png)](assets/tour-full.mp3)
+[![Punk Fate — full song waveform](assets/tour-chapter1.png)](assets/tour-chapter1.mp3)
 
-**[▶ punk-fate — 1:55, four tracks](assets/tour-full.mp3)** — Beethoven's
+**[▶ punk-fate — 1:55, four tracks](assets/tour-chapter1.mp3)** — Beethoven's
 Fifth crammed into 115 seconds of basement punk: C minor fate riff → E♭ chorus
 → A♭ half-time break → hardcore scherzo → dominant-pedal transition → C MAJOR
 finale. Everything below is how it got made.

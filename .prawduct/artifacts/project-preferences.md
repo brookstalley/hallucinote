@@ -6,7 +6,7 @@ Developer preferences for how code is written in this project. Captured during d
 
 - **Language**: Python
 - **Version**: 3.10+ (declared in `pyproject.toml`); local venv uses 3.12
-- **Package manager**: `pip` against the editable install (`pip install -e .[dev]` into `.venv/`)
+- **Package manager**: **`uv`**, against the locked environment. `uv.lock` is authoritative and CI gates `uv lock --check`; the plugin builds its environment with `uv run --frozen`, and skills invoke the CLI as `uv run --project <plugin-root> --frozen hallucinote <cmd>`. (Ratified 2026-08-10: `uv` is the norm because it is the one with CI enforcement behind it. A local `pip install -e .[dev]` venv still works for editing and is not forbidden, but it is a personal convenience — nothing verifies it, and a "green" claim must come from the locked environment.)
 
 ## Code Style
 
@@ -35,8 +35,8 @@ Developer preferences for how code is written in this project. Captured during d
 ## Architecture Patterns
 
 - **Data modeling**: SQLite with raw schema in `db/schema.sql`. Rows surface as `sqlite3.Row` for reads; mutators take/return primitive dicts and ints. Dataclasses (`@dataclass`) for in-process value objects like `ToolCall` / `PushPlan`.
-- **Error handling**: Plain exceptions (`ValueError`, `KeyError`). No custom exception hierarchy. Never swallow exceptions silently — per CLAUDE.md Critical Rule, mark intentional broad catches with `# prawduct:ok-broad-except`.
-- **Async**: Sync throughout. SQLite WAL + `timeout=10.0`. No async planned — this is a single-user authoring tool.
+- **Error handling**: Plain exceptions (`ValueError`, `KeyError`). No custom exception hierarchy. Never swallow exceptions silently — waive a genuinely necessary broad catch with `# prawduct:allow prawduct/broad-except -- <reason>`, stating the reason. (The older `# prawduct:ok-broad-except` spelling is legacy; ~21 sites still carry it and are tracked for cleanup. Don't write new ones.)
+- **Async**: **The `hallucinote` engine and CLI are sync throughout** — SQLite WAL + `timeout=10.0`, no async planned, because this is a single-user authoring tool with no concurrency to serve. **This does not extend to the MCP server**, where every tool handler is `async` and dispatches through `anyio.to_thread`: FastMCP runs sync tool functions inline on the event loop, so a blocking handler freezes the whole server. That is an availability norm and it wins at its layer — see `architecture.md` § Direction.
 - **File organization**: Layer folders inside `src/hallucinote/`: `db/` (state + events + mutators + queries), `generators/` (pure musical building blocks), `sync/` (DB↔Ableton bridge). Song-specific builders live under `songs/<name>/build.py` and consume the library.
 - **DB discipline (load-bearing)**: All writes go through `db.mutations`. Every mutator emits an `events` row in the same transaction. This is the seed for an eventual event-store flip — see `MEMORY.md`. **Never use raw SQL in callers** outside `db/`.
 - **Generators are pure**: `generators/*` functions take parameters and return `list[NoteDict]`. They never touch the DB or MCP. Persistence happens at the caller.
@@ -44,10 +44,10 @@ Developer preferences for how code is written in this project. Captured during d
 
 ## Tooling
 
-- **Key libraries**: stdlib only at runtime (`sqlite3`, `json`, `dataclasses`, `pathlib`). `pytest` for tests. AbletonMCP is an external dependency invoked by the agent, not imported.
+- **Key libraries**: **the MCP server is stdlib-only *at import time*** (`sqlite3`, `json`, `dataclasses`, `pathlib`) because the Remote Script imports it inside Live — engine imports are lazy, at call time. The **engine itself depends on numpy/scipy/librosa/soundfile at runtime**, deliberately, and that stack must not be trimmed to shrink the build (`nonfunctional-requirements.md` § Direction). `pytest` for tests. The MCP bridge (`hallucinote_mcp/`) is in-repo and ships with the plugin — not an external dependency.
 - **Dev commands**:
-  - `source .venv/bin/activate` — required; package is installed editable into `.venv`
-  - `pytest` — full suite (serial by default; under ~10s on the J-2 baseline)
+  - `uv run --frozen pytest` — the locked environment; this is what a "green" claim must come from
+  - `pytest` — full suite in a local editable venv (serial by default; under ~10s on the J-2 baseline)
   - `pytest -n auto --dist loadgroup` — parallel via pytest-xdist (auto-grouped by test subdirectory per `tests/conftest.py`; roughly 1.6× faster)
   - Current test count + timings: see `.prawduct/.test-evidence.json` (canonical; this prose intentionally avoids restating numbers that drift)
   - `python songs/falling-walking/build.py [--reset]` — build the example song into its SQLite DB
@@ -88,16 +88,61 @@ Each preference above should be enforced by one of three mechanisms — assign t
 | **Test** | `tests/preferences/test_*.py` (or equivalent) | Structural rules with named exceptions (AST checks, config-presence checks) | Bakes the rule into CI; refuses to be silent. Cost: re-validate when the rule's shape changes. |
 | **Critic** | `/critic` review (Goal 4: Project Preferences) | Judgment-required rules (semantic naming, "appropriate" anything, what counts as a "boundary") | No false-confidence test. Cost: requires reviewer per chunk; misses violations between reviews. |
 
-| Preference | Mechanism | Enforcement artifact |
-|---|---|---|
-| `from __future__ import annotations` on every module | Critic | ruff is configured and gates CI (INF-2C4X), but no enabled rule covers this — Critic still owns it; promote to a `ruff` rule to mechanize |
-| All writes go through `db.mutations` (no raw SQL in callers outside `db/`) | Critic | Goal 4 (project preferences) — high-priority rule; consider an AST-based `tests/preferences/test_no_raw_sql_outside_db.py` if violations recur |
-| Every mutator emits a paired `events` row in the same transaction | Critic | Goal 4 — paired-write discipline; covered behaviorally by `test_mutations.py` event assertions |
-| Generators stay pure (no DB / MCP imports under `generators/`) | Critic | Goal 4 — easy candidate for an import-graph test if drift starts |
-| `sync.*` produces plans, never invokes MCP tools directly | Critic | Goal 4 |
-| Snake/Pascal/UPPER naming, PEP 604 unions, grouped imports | Critic | ruff is configured and gates CI (INF-2C4X); enable the `E`, `I` and `UP` rule sets in `[tool.ruff]` to mechanize this row |
-| Test file lives next to the module it tests (mirror layout) | Critic | Goal 4 |
-| One DB per song at `songs/<slug>/<slug>.db`; slug = `[a-z0-9_-]+`; display name in `songs.title` | Test + Critic | Schema `CHECK` on `songs.name` + Python regex in `create_song` enforce the slug; Critic Goal 4 catches setup violations (rogue paths, sidecar config files) |
+**Audit home** says which time-domain organ walks the norm for erosion and decay: `janitor`
+(the deep Norm Health sweep — the default, and the only honest answer for a norm whose
+violations leave no machine-readable trace) or `advisory` (a session-sync probe, which must
+name the mechanical hook it fires on). Reviews catch violations in a diff; audit homes catch
+the norm dying slowly.
+
+### Code-level norms
+
+| Preference | Mechanism | Enforcement artifact | Audit home | Why |
+|---|---|---|---|---|
+| `from __future__ import annotations` on every module | Critic | ruff is configured and gates CI (INF-2C4X), but no enabled rule covers this — Critic still owns it; promote to a `ruff` rule to mechanize | janitor | Deferred annotation evaluation keeps forward references and PEP 604 unions working uniformly across the 3.10+ floor, instead of per-module surprises |
+| All writes go through `db.mutations` (no raw SQL in callers outside `db/`) | Critic | Goal 4 (project preferences) — high-priority rule; consider an AST-based `tests/preferences/test_no_raw_sql_outside_db.py` if violations recur | janitor | A caller reaching around the mutators makes the event log a lie — the one failure the data model cannot absorb (`data-model.md` § Direction) |
+| Every mutator emits a paired `events` row in the same transaction | Critic | Goal 4 — paired-write discipline; covered behaviorally by `test_mutations.py` event assertions | janitor | Same-transaction emission makes the log complete by construction, which is what keeps the event-store flip a reinterpretation rather than a rewrite |
+| Generators stay pure (no DB / MCP imports under `generators/`) | Critic | Goal 4 — easy candidate for an import-graph test if drift starts | janitor | Purity is what makes musical primitives testable without a DB or Live, and reusable across songs that share no state |
+| `sync.*` produces plans, never invokes MCP tools directly | Critic | Goal 4 | janitor | A plan is inspectable and testable without Live running; a side effect is neither |
+| Snake/Pascal/UPPER naming, PEP 604 unions, grouped imports | Critic | ruff is configured and gates CI (INF-2C4X); enable the `E`, `I` and `UP` rule sets in `[tool.ruff]` to mechanize this row | janitor | Mechanical consistency that should cost no review attention — the row exists to be promoted into ruff, not to be argued per-PR |
+| Test file lives next to the module it tests (mirror layout) | Critic | Goal 4 | janitor | Mirror layout is what makes "is this covered?" answerable by looking, and keeps the three test trees from blurring |
+| One DB per song at `songs/<slug>/<slug>.db`; slug = `[a-z0-9_-]+`; display name in `songs.title` | Test + Critic | Schema `CHECK` on `songs.name` + Python regex in `create_song` enforce the slug; Critic Goal 4 catches setup violations (rogue paths, sidecar config files) | janitor | A song is forkable only if its directory is self-contained and its name is filesystem-safe on every platform |
+| Never swallow exceptions silently; waive a necessary broad catch with `# prawduct:allow prawduct/broad-except -- <reason>` | Critic | Goal 4 + the framework's waiver rail (`docs/waivers.md`) | janitor | A swallowed exception converts a loud failure into a silent wrong answer, which in an authoring tool means corrupted work the user cannot know to re-check |
+| Close-in-the-same-PR, as ONE ship-stamp commit (PRC-5W2N) | Critic + PR reviewer | Both flag a PR shipping work that matches an open backlog item without closing it | janitor | The git log is the audit trail; three bookkeeping commits scatter one decision across a history nobody can then read back |
+| Every backlog item names a verifiable signal a future scrub can run | Critic | `/prawduct:backlog` add/update review | janitor | An item with no probe is unscrubbable, so it can only ever be re-read rather than re-verified — 32 items migrated at cutover carry this debt |
+| Trust-but-verify on scrub; items older than 30 days are suspect | janitor | Scrub re-reads code against each item, not the item's text | janitor | Tightened from 60d by the 2026-07-02 audit — this repo's velocity made 60d too slow (BLG-7K2Q found 4 of 8 `ready` items already shipped; the 2026-08-10 migration scrub found 2 more) |
+
+### Architectural norms — homed in their artifacts
+
+Pointer rows. The statement, why, status and rulings live in the named `## Direction`
+section; this index exists so the norm is findable and its enforcement is assigned.
+
+| Norm | Home | Mechanism | Audit home |
+|---|---|---|---|
+| `_FINGERPRINT_PATHS` = exactly the vendored∩executed set | `architecture.md` § Direction | Test (fingerprint parity) + Critic | janitor |
+| Server-side-only code lives in `server_side/` | `architecture.md` § Direction | Critic | janitor |
+| MCP handlers are `async` via `anyio.to_thread` | `architecture.md` § Direction | Test (`test_threading_invariants.py`) + Critic | janitor |
+| Long operations are `start` + `status`, never blocking | `architecture.md` § Direction | Critic | janitor |
+| Push is idempotent and diff-reconciling; arrangement is a projection (pull contained) | `architecture.md` § Direction | Test + Critic | janitor |
+| Multi-user concurrency stays out of the wire shape | `architecture.md` § Direction | Critic | janitor |
+| Parsing must never be executing | `security-model.md` § Direction | Critic | janitor |
+| Executable composition accepted; mitigation is disclosure in `SECURITY.md` | `security-model.md` § Direction | Critic | janitor |
+| Loopback-only; beyond-loopback is unsupported | `security-model.md` § Direction | Critic | janitor |
+| Dependencies locked; CI gates `uv lock --check` | `security-model.md` § Direction | Linter/CI (`uv lock --check`, INF-2C4X) | janitor |
+| Content-fingerprint versioning, not semver | `api-contract.md` § Direction | Test (handshake) + Critic | janitor |
+| Errors teach — structured recovery info, never a bare string | `api-contract.md` § Direction | Test + Critic | janitor |
+| Refuse-and-teach over silent wrong behavior | `api-contract.md` § Direction | Critic | janitor |
+| No shims to unshipped consumers; one-major aliases on the authoring API | `api-contract.md` § Direction | Critic | janitor — the support-window deferral is **event-bound** (first external song repo, or a break report), so the Norm Health sweep walks it; no dated probe applies |
+| Mutator signature triple (kw-only after `conn`; `actor`/`request_id`/`reason`) | `api-contract.md` § Direction | Test + Critic | janitor |
+| Timing transforms stay in the engine, off the MCP surface | `api-contract.md` § Direction | Critic | janitor |
+| Tool-surface budget — adding a tool is a decision | `api-contract.md` § Direction | Critic | janitor |
+| Interfaces stay internally scoped despite the public repo | `api-contract.md` § Direction | Critic | janitor |
+| DB is materialized state, never source of truth | `data-model.md` § Direction | Critic | janitor |
+| Identity is a Python UUID, never autoincrement | `data-model.md` § Direction | Test + Critic | janitor |
+| Live's positional ids are never identity | `data-model.md` § Direction | Critic | janitor |
+| Open song DBs via `init_db`, never bare `connect` | `data-model.md` § Direction | Test (schema canary) + Critic | janitor |
+| MCP server is stdlib-only at import time | `nonfunctional-requirements.md` § Direction | Test (import guard) + Critic | janitor |
+| Full suite runs with no path argument | `nonfunctional-requirements.md` § Direction | Linter/CI | janitor |
+| No telemetry; no outbound network calls of our own | `observability-strategy.md` § Direction | Critic | janitor |
 
 **Rule for adding a new preference:** assign a mechanism. If the preference can be expressed as "every file/function/config matches pattern X with named exceptions" → write a test. If a linter rule already exists for it → configure the linter. If it requires understanding intent → assign to Critic. Never leave a preference unassigned.
 

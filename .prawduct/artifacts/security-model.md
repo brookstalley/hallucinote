@@ -63,3 +63,35 @@ publishing their directory layout.
 Dependencies are locked (`uv.lock`) and CI gates `uv lock --check`, so a stale lockfile
 cannot ship silently. The plugin builds its environment from that lockfile with
 `uv run --frozen`.
+
+## Direction
+
+Ratified 2026-08-10. These bind future work; the narrative above describes it.
+
+- **Parsing must never be executing.** A song's data files — `captured_session.json`,
+  WAVs, analysis JSON — must not achieve code execution without someone running
+  `build.py`.
+  Why: executing `build.py` is the *one* trust boundary this product accepts, and it is
+  accepted only because the user opts into it knowingly (see the disclosure norm below).
+  A path from data to execution collects that trust without the opt-in, which makes it a
+  genuine vulnerability rather than a design tradeoff — it is the single line whose breach
+  turns an accepted risk into an unaccepted one.
+
+- **The executable composition is accepted, not mitigated; the mitigation is disclosure.**
+  Why: a song being a Python program is what makes it forkable, diffable and
+  reproducible — sandboxing it away would remove the product's reason to exist. So the
+  rail is `SECURITY.md` stating it plainly and telling users to review a `build.py` as
+  they would any program. Proposals to sandbox composition are a product-identity change,
+  not a hardening task.
+
+- **The loopback socket is unauthenticated by decision; binding beyond loopback is outside
+  the supported configuration.**
+  Why: an attacker with local code execution has already won, and Live offers no
+  authentication primitive to build on — so authentication here would buy nothing and cost
+  every call. The norm is the *scope*: the moment the socket leaves `127.0.0.1` the threat
+  model above stops holding, and that is a new security model, not a config flag.
+
+- **Dependencies are locked and CI gates `uv lock --check`.**
+  Why: a stale lockfile is the one supply-chain failure this project can actually suffer,
+  and it fails silently — the gate is what converts it into a red build. The plugin builds
+  from that lockfile with `uv run --frozen` so the shipped environment is the reviewed one.

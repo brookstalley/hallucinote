@@ -39,9 +39,11 @@ Critic round whose findings all landed.
   once, detailed known issues split to `docs/known-issues.md`. The doc-parity
   suite caught the rewrite dropping three test-pinned claims (the 14-phase
   list, `/song-brief`, the 13-tool count) — restored, tests untouched. The
-  self-labeled hero placeholder ("replace before release", rendered) became an
-  intentional illustration; real two-pane captures were produced from the
-  from-scratch punk-fate session (the README's verbatim example prompt).
+  self-labeled hero placeholder ("replace before release", rendered) is gone:
+  the README ships a real composed two-pane capture from the from-scratch
+  punk-fate session — its own verbatim example prompt and `/song-brief`'s
+  creative fork beside the finished 96-bar arrangement (`docs/assets/hero.png`;
+  raw frames preserved for TOUR C1, locations in that plan's D1 note).
 - **The public CHANGELOG is a maintained surface again:** entries distilled for
   1.6.1–1.8.1 (it had stranded at a "superseded" tombstone while 1.8.0
   shipped), and `docs/release-process.md` gained step 6 + a fileset row + a
@@ -59,10 +61,15 @@ Critic round whose findings all landed.
   missed); three broken anchors fixed; internal jargon scrubbed from VISION;
   the dev-coexistence memo labeled; a new FAQ entry for "unknown skill:
   hallucinote:*" (hit live during the hero session); the retired demo song's
-  pyproject/testpaths ghosts reconciled and `examples/` given a README.
+  pyproject/testpaths ghosts reconciled and `examples/` given a README. The
+  quickstart and FAQ now teach pull → bake → build (the `StaleSnapshotError`
+  guard — closes #313's docs half), and a style audit against the owner's
+  writing guide returned a clean bill with two touch-ups.
 
-Suite 4983 → 4986 (docs-index parity tests). Critic: 0 blocking, 3 warnings all
-fixed and verified by a verify-resolutions pass, 5 notes dispositioned.
+Suite 4983 → 4986 (docs-index parity tests). Two Critic rounds, fully actioned:
+mid-branch 0 blocking / 3 warnings (fixed, verified by a verify-resolutions
+pass) / 5 notes; cumulative 0 blocking / 1 warning (fixed) / 6 notes (one filed
+as #449). Independent PR review: 0 blocking.
 
 ## 2026-08-10 — The direction this project already had, written down where it binds
 

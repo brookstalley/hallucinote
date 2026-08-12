@@ -35,27 +35,22 @@ under `docs/`, agent-read `skills/`, `.prawduct/artifacts/` and the frozen
 
 ## The test this plan applies
 
-The banned form is a **contrast-definition**: a sentence that characterizes the
-product, a component, or the process by naming a thing it isn't.
+**The rule, its test, its carve-outs and its scope live in ONE place:**
+`.prawduct/artifacts/project-preferences.md` § Documentation & prose. Read it
+there.
 
-- Banned — "a long agentic workflow, not a chat"; "Ableton is the speaker, not
-  the score"; "Verified, not assumed".
-- Not the banned form — plain negation, which names no foil: "Live isn't
-  running", "verify consumers aren't broken". They deny a predicate and offer
-  nothing to measure the subject against.
+This plan deliberately no longer restates them, because restating them is how
+the worst defect of this cycle survived: the discriminating test was written
+out in four carriers, the Critic found it self-invalidating, and repairing it
+took four hand-synced edits that could each have drifted. A completed plan is
+archived rather than deleted, so a copy left here would outlive its source and
+go stale exactly where someone still reads it.
 
-The operative test is **does the sentence name a foil** — an alternative the
-subject is set against. (An earlier wording asked whether removing the negated
-half left the subject undefined; that was self-invalidating, since "Ableton is
-the speaker" survives the deletion and the test therefore cleared a sentence
-this plan bans. Caught by the Critic, replaced everywhere.)
-- Permitted by ratified carve-out — prior-art lineage (VISION's TidalCycles /
-  Sonic Pi / Lilypond / DAWproject paragraph) and a limitations register
-  (`known-issues.md`, VISION's `## Non-goals`), which state plain facts.
-
-This distinction is the literal reading of "define it by what it isn't"; it is
-not a third carve-out. Recorded here so the Critic can test it rather than
-having to reconstruct it.
+What this plan contributes, which the norm did not carry: the sweep's judgment
+that **verbatim quotation is untouchable** — `docs/tour.md` quotes session
+transcript, the user's own words, and `build.py` source, and rewriting captured
+evidence to satisfy a prose norm would falsify the thing the page exists to
+show. That is now recorded in the norm itself, as pending owner ratification.
 
 ## Chunks
 

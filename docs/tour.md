@@ -411,10 +411,10 @@ now have tests
 chapter 1's own
 [`05-signal-chains.md`](../examples/punk-fate/decisions/05-signal-chains.md)
 had already named the exact knob to reach for when this moment came: Pedal
-*Guitar Dirt* on the guitar. It got that, the voice got a Saturator *Rough
-Tone* (a shouted voice through a cheap PA clips; fuzz on a square wave is
-mush), and the drum saturator's drive went from 6.9 to **11 dB** with its
-output trimmed down to match — grit as timbre, not level:
+*Guitar Dirt* on the guitar. It got that. The voice got a Saturator *Rough
+Tone* — a shouted voice through a cheap PA clips, and fuzz on a square wave is
+mush — and the drum saturator's drive went from 6.9 to **11 dB**, output
+trimmed down to match. Grit as timbre, not level:
 
 ![The Garage Kit's Saturator dialed to 11 dB drive, output pulled down to −14](assets/tour-drum-saturation.png)
 

@@ -8,6 +8,47 @@ per-fix narratives if you want the deep story behind any entry.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.4] — 2026-08-11
+
+A documentation release: the README is a quarter shorter, the docs got read
+against the writing guide, and the template that generates every new song's
+overview was fixed at the source. No behavior changes.
+
+### Changed
+
+- **The README says more with less** — 1334 → 1008 words, cut by merging two
+  sections that were describing the same three capabilities rather than by
+  squeezing sentences. The install steps, troubleshooting causes and example
+  prompts are untouched.
+- **The lifecycle diagram names what the agent measures** — the analysis step's
+  caption now reads "composition, mix, and audio measurements".
+- **`docs/quickstart.md` and the demo song's overview lead with the point** —
+  both used to open on housekeeping (a cross-reference, a note about where
+  intent files live) before saying what you actually get. That content moved
+  below the thing it was burying.
+
+### Fixed
+
+- **New songs no longer scaffold with a broken pointer or an unresolvable
+  command.** The song-overview template sent authors to
+  `.prawduct/artifacts/song-conventions.md` — a file that exists only in this
+  repo, never in a user's workspace — and told them to run a bare
+  `/song-context`, which doesn't resolve when Hallucinote is installed as a
+  plugin. Those are now `docs/song-authoring-conventions.md` and
+  `/hallucinote:song-context`, and the overview leads with the concept instead
+  of the housekeeping. Every song scaffolded from now on gets the corrected
+  template; existing songs are unaffected.
+- Screen-reader users get the current description of the lifecycle diagram — the
+  SVG's `<desc>` still carried wording that had been retired from the visible
+  caption, so the stale framing was reaching exactly the readers who couldn't
+  see the correction.
+
+### Upgrade note
+
+Nothing to do. This release does not change the Remote Script handshake
+fingerprint, so your vendored copy in Live still matches the server — no
+`/ableton-mcp-install`, no Live restart.
+
 ## [1.8.3] — 2026-08-11
 
 The worked-example release: a real song ships in the repo, and a two-chapter

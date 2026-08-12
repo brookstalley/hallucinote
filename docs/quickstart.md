@@ -1,8 +1,8 @@
 # Quickstart — your first song in ~10 minutes
 
-This is the guided version of the README's install section: one path, one
-result. By the end you'll have composed a song from a single prompt and heard
-it play in Ableton Live.
+By the end of this you'll have composed a song from a single prompt and heard
+it play in Ableton Live. One path, one result — the guided version of the
+README's install section.
 
 **Before you start**, finish the one-time setup in the
 [README](../README.md#install): install **uv** (the plugin launches its bundled
@@ -33,11 +33,11 @@ Surface in Live's Preferences. This quickstart assumes that's done.
    songs repo if you have one, any empty folder if you don't — and start
    `claude`.
 
-That's it. Songs live in a **songs workspace** (a git repo with a
-`hallucinote.toml` marker), but you don't set that up by hand: the first time
-you ask for a song outside one, Claude notices and offers to create it — say
-yes, and it writes the marker, a `.gitignore` for the regenerable build
-artifacts, and `git init`s the folder before scaffolding your song there.
+That's it. Songs live in a **songs workspace** — a git repo with a
+`hallucinote.toml` marker — but you don't set that up by hand. Ask for a song
+outside one and Claude offers to create it: say yes, and it writes the marker, a
+`.gitignore` for the regenerable build artifacts, and `git init`s the folder
+before scaffolding your song there.
 
 > Curious what got created? The marker is a three-line
 > `hallucinote.toml` telling the tools where songs live — nothing you need to

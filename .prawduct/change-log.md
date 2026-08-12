@@ -25,6 +25,54 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-08-11 — The prose pass: README rewritten, corpus scrubbed, generator fixed
+
+<!-- prawduct: type=docs | scope=docs-writing-quality | status=shipped | release=v1.8.4 -->
+
+Two docs clusters landed after v1.8.3 was cut, both about how the user-facing
+corpus reads. No product behavior changes.
+
+**README, owner-requested (three edits).** The "See it" line let the *prompt*
+read as the thing that took forty minutes; it now says the sentence kicked off a
+forty-minute *session*. The lifecycle diagram's analysis caption becomes
+"composition, mix, and audio measurements" — and because the `<desc>` element
+still carried the old "a question, not a verdict" framing verbatim, the stale
+wording would have survived precisely for screen-reader users who cannot see the
+caption. Both now agree, and the caption pill grew 280 → 320px to fit 40
+characters at 12.5px without crowding its edges. The prose went 1334 → 1008
+words (24%) by structural cuts rather than sentence-squeezing: "How it works"
+and "What you can do" were describing the same three capabilities, so they
+merged. Short of the requested 30% deliberately — the remaining candidates were
+install steps, troubleshooting causes and the example prompts, where further
+cuts would have removed information rather than repetition.
+
+**Corpus scrub against `brooks-writing-style.md`** — 15 user-facing docs, 24,646
+words. Most came back clean; the useful finding was structural, and it came from
+the guide's positive checklist rather than its anti-patterns. Two real
+point-first failures: `punk-fate.md` opened with paperwork about where
+`decisions/` and `annotations/` live before saying what the song *is*, and
+`docs/quickstart.md` defined itself by cross-reference before saying what you
+get. Three banned hype words (`unlocks` in `VISION.md` and
+`song-authoring-conventions.md`, `Leverages` in `polyrhythms.md`), one "not just
+X" reframe, and two run-ons split.
+
+**The generator was the root cause, so it was fixed at source.**
+`src/hallucinote/tools/templates/song/song.md.tmpl` carried the same
+paperwork-first ordering as punk-fate.md, plus a bare `/song-context` and a
+pointer at `.prawduct/artifacts/song-conventions.md` — an internal artifact no
+user workspace contains. Every future scaffolded song would have inherited all
+three defects. This is the one change outside `docs/` and `examples/`, and it is
+why the release touches `src/` at all.
+
+**What the scan cleared, with evidence:** no throat-clearing openers, no
+exclamations in prose, no triadic crescendos, no staccato-fragment drama, no doc
+ending in a summary-of-the-summary, and exactly one sentence appearing in two
+docs — a deliberately shared norm phrase, left alone. A words-per-example proxy
+flagged `song-workflow.md` and `faq.md` as show-don't-tell offenders; reading
+them says otherwise, and neither was rewritten.
+
+Suite: 5004 passed, 2 skipped (no count change — docs and one template).
+
 ## 2026-08-11 — Chapter 2: the song goes back into the studio until it sounds punk
 
 <!-- prawduct: type=feature | scope=tour | status=shipped | release=v1.8.3 -->

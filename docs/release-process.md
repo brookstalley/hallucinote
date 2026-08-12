@@ -355,7 +355,8 @@ env, one source. See [`docs/engine-pin.md`](engine-pin.md).
 - [ ] `origin/main..develop` scope reviewed; every cluster has a change-log entry
 - [ ] change-log entries flipped to `status=shipped | release=vNEW`
 - [ ] all four product-version surfaces bumped to `vNEW` (`test_version_parity.py` green)
-- [ ] `prawduct-hook regen-views` run; `release-notes.md` `## vNEW` lists all clusters
+- [ ] `plan-backfill --apply` run and its named plans checked against their own `## Status`
+- [ ] `release-plan-vNEW.md` written; `check-releasability --release vNEW` reports `releasable`
 - [ ] `engine-pin.md` Engine + Plugin rows bumped
 - [ ] **Re-vendor verdict computed (step 5) and recorded in the release commit + notes**
 - [ ] `CHANGELOG.md` `## [vNEW]` entry distilled (step 6), upgrade note if re-vendor required

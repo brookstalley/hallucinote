@@ -29,6 +29,26 @@ Live Suite or as the separate M4L add-on for Standard. Without it, review by
 ear with `/compose-review`. This split is by design — see
 [`capability-truth.md`](capability-truth.md).
 
+## Live Intro and Lite are untested
+
+Standard and Suite are the editions Hallucinote is exercised on. Intro (16
+tracks) and Lite (8) are Live 12 too, and nothing deliberately excludes them —
+but nobody has run the loop there, and two things look likely to bite: the
+track ceiling (a four-part song plus return busses and a submaster climbs
+faster than you'd think) and the much thinner device palette that
+`/hallucinote:song-pick-instruments` picks chains from. If you try it, the
+report is genuinely useful.
+
+## No melody generator — by design, not pending
+
+Hallucinote won't write your lead line, and this one isn't on a roadmap: there
+is no melody generator and there won't be one. It arranges underneath a topline
+you sketch, and *reads* that line back against your intent, but the hook is
+yours. Listed here because users reasonably look for it as a limitation — the
+reasoning is in [`capability-truth.md`](capability-truth.md) and the
+[FAQ](faq.md#will-it-write-me-a-melody). Synthesized *vocals* are a separate
+gap, and that one is simply not built yet.
+
 ## Mid-song tempo / time-signature changes aren't supported
 
 Changes before bar 1 round-trip cleanly; a mid-song change surfaces a

@@ -48,6 +48,7 @@ Then press play. Don't like the bridge? *"Lift the lead an octave there, and mak
 ## What to ask for
 
 - **Any genre, any shape.** Conceptual (*"a song about overcoming loss"*), musical (*"a Baroque prelude in G minor from a single broken-chord figuration"*), or stylistic (*"Duran Duran if they dropped acid with Black Sabbath"*).
+- **Bring the hook; it builds the world.** The lead melody is the one thing Claude won't write for you ([by design](docs/capability-truth.md)). Sketch a topline in Live and it arranges, sound-designs and mixes the whole track underneath — then reads the line back and tells you whether it lands.
 - **Under-specify on purpose.** Claude works out what your prompt leans on (`/hallucinote:song-brief`) — key, tempo, what a named turn means musically — and comes back **once** with proposals you can wave through or redirect in a word.
 - **Share and fork.** A collaborator clones the directory; Hallucinote checks their plugins first and names anything missing.
 
@@ -56,8 +57,10 @@ Then press play. Don't like the bridge? *"Lift the lead an octave there, and mak
 Actively developed, and honest about the rough edges:
 
 - **Platforms:** Ableton Live 12 on macOS and Windows (Ableton ships no Linux build).
-- **Editions:** the full authoring loop runs on **any Live 12 edition, Standard included**. Only the measured mix review needs **Max for Live** (Suite or the add-on); without it, review is by ear against the symbolic analysis.
+- **Editions:** the full authoring loop is exercised on **Live 12 Standard and Suite**. Only the measured mix review needs **Max for Live** (Suite, or the add-on for Standard); without it, review is symbolic — against the score, not the audio. Intro and Lite are untested, and their track limits will bite.
+- **Your hook stays yours.** Claude writes the groove, harmony, bass, arrangement, sound design and mix. It won't write your lead melody — there is no melody generator, by design. Sketch a topline in Live and it builds the whole track underneath, then reads back whether the line lands its intent. [Why](docs/capability-truth.md).
 - **Boundaries:** Claude authors MIDI and the mix; a recorded vocal take can't yet be read back through the bridge.
+- **What it costs to run:** Hallucinote is free; the Claude usage behind it isn't. A song is a long agentic session — the worked example above ran about forty minutes of continuous agent work, and each measured mix pass hands back a sizeable analysis payload. Expect a full compose-and-mix session to eat a real share of a Claude plan's budget. `/cost` reports what a session actually used. Live 12 (and Max for Live for the measured review) is the other bill.
 
 The rest, each with its workaround: [**Known issues**](docs/known-issues.md).
 

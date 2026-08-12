@@ -6,15 +6,20 @@ on it, start with the [README](README.md) and [Quickstart](docs/quickstart.md).
 
 ## Development setup
 
-Requires **Python 3.10+**. Clone and install both packages editable, with the
-`[dev]` extras (pytest, pytest-xdist, hypothesis):
+**Use [uv](https://docs.astral.sh/uv/), not pip.** The repo is a uv workspace,
+the shipped plugin runs `uv run --frozen`, and CI gates on `uv lock --check` —
+so a hand-rolled venv drifts from what actually ships and from what CI
+verifies. uv provisions the interpreter too; Python 3.10 is the floor.
 
 ```bash
 git clone https://github.com/brookstalley/hallucinote.git
 cd hallucinote
-python -m venv .venv && source .venv/bin/activate     # Windows: py -3 -m venv .venv; .\.venv\Scripts\Activate.ps1
-pip install -e '.[dev]' -e './hallucinote_mcp[dev]'
+uv sync --all-packages --all-extras    # both packages + dev extras, one env
 ```
+
+Run everything through `uv run` (`uv run mypy`, `uv run ruff check .`). If you
+change dependencies, commit the regenerated `uv.lock` — a stale lockfile fails
+CI's first gate and ships stale deps to users.
 
 The repo is two packages: `src/hallucinote/` (composition library — DB,
 generators, sync, capture) and `hallucinote_mcp/` (the in-repo MCP server that
@@ -23,11 +28,33 @@ drives Ableton Live). See [README → Project layout](README.md#project-layout).
 ## Running tests
 
 ```bash
-pytest -n auto --dist loadgroup        # full suite, parallel
-pytest hallucinote_mcp/tests/unit/test_actions_device.py   # one file
+uv run python -m pytest -n auto --dist loadgroup                  # full suite, parallel
+uv run python -m pytest hallucinote_mcp/tests/unit/test_actions_device.py   # one file, while iterating
 ```
 
+**The pre-PR run takes no path argument.** `testpaths` covers `tests/` *and*
+`hallucinote_mcp/tests/`, so a path-scoped run silently skips the other half
+and reports green. Scope to a file while you iterate; run it bare before you
+push.
+
 `tests/conftest.py` auto-groups tests by directory for `--dist loadgroup`.
+Tests marked `ableton` need a running Live and are **default-skip** — see
+`conftest.py` to opt in.
+
+### What CI does and doesn't cover
+
+CI is one job: `uv lock --check`, ruff, mypy, then the full suite on
+**ubuntu-latest, Python 3.12 only**. Know the three gaps so you don't mistake a
+green check for more than it is:
+
+- **No Ableton.** The `ableton`-marked tests default-skip and the MCP-server
+  tests run against fakes. Nothing in CI proves the bridge talks to Live —
+  that's on you and the [operator verification](README.md#troubleshooting) step.
+- **No macOS or Windows leg.** Both are supported platforms; neither is
+  automated. Platform-shaped changes (install paths, process lookup) need
+  hand-verification, ideally on both.
+- **One interpreter.** `requires-python` floors at 3.10; only 3.12 runs.
+  mypy's `python_version = 3.10` covers the floor statically, not at runtime.
 **Write tests alongside the code, never after** — if you can't write the test,
 you don't yet understand the requirement. Never weaken a test to make it pass;
 fix the code. Run the full suite green before opening a PR.
@@ -62,9 +89,10 @@ Only changes to **non-fingerprinted** files (e.g. `cli/`, `resources/`,
 `install_paths.py`, `client.py`) skip the handshake — but the running server
 still holds them in memory, so step 3 (`/mcp` reconnect) still applies.
 
-`python -m hallucinote_mcp.cli preflight` shows the install state and whether
-the Live-side Remote Script's fingerprint matches the server
-(`remote_script.candidates[*].matches_mcp_server`).
+`uv run python -m hallucinote_mcp.cli preflight` shows the install state and
+whether the Live-side Remote Script's fingerprint matches the server
+(`remote_script.candidates[*].matches_mcp_server`). From a bare shell without
+the env it won't import — that's expected.
 
 ## Branch & review workflow
 
@@ -93,8 +121,10 @@ check before bundling unrelated edits to them into a feature PR.
 
 - Match the style of the surrounding code (naming, comment density, idioms).
 - **Never swallow exceptions** — catch specific ones and log with context. A
-  genuinely necessary broad catch is marked `# prawduct:ok-broad-except` with a
-  reason.
+  genuinely necessary broad catch is waived inline, with the reason spelled out:
+  `except Exception as e:  # prawduct:allow prawduct/broad-except -- <why>`.
+  (You'll see an older reasonless `# prawduct:ok-broad-except` spelling in
+  places; it's legacy and tracked for cleanup — don't write new ones.)
 - **Update artifacts when code changes what they describe** — stale docs are
   worse than none. If you change a contract surface (API, DB, IPC,
   frontend/backend), verify consumers aren't broken.
@@ -103,8 +133,9 @@ check before bundling unrelated edits to them into a feature PR.
 ## Reporting issues
 
 Open a GitHub issue with what you did, what you expected, and what happened.
-For install/bridge problems, include the output of
-`python -m hallucinote_mcp.cli preflight`.
+For install/bridge problems, include your preflight output — from a checkout,
+`uv run python -m hallucinote_mcp.cli preflight`; as a plugin user, just ask
+Claude to **run preflight**.
 
 **Security problems are the exception — don't open an issue.** Report them
 privately through GitHub Security Advisories or the email in

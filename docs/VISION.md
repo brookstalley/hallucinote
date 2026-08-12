@@ -2,7 +2,9 @@
 
 Hallucinote is an LLM-native music composition and production environment. Ableton Live is the rendering engine.
 
-The song is structured data, not a binary `.als` — and that data is the source of truth: notes, durations, chords, automation values, effect timings, arrangement. The git-tracked `build.py` and captured-session snapshot are what you commit and fork; they build into a SQLite database (with an append-only event log) that is the working state Ableton renders from. Ableton is the speaker, not the score. Every change is bidirectional: edits in Ableton (live MIDI capture, automation drawn by hand, audio recorded against a click) flow back through the same path. The DB and Ableton agree, always.
+The song is structured data, not a binary `.als` — and that data is the source of truth: notes, durations, chords, automation values, effect timings, arrangement. The git-tracked `build.py` and captured-session snapshot are what you commit and fork; they build into a SQLite database (with an append-only event log) that is the working state Ableton renders from. Ableton is the speaker, not the score.
+
+Change flows both ways. Today that means the *symbolic* layer: MIDI edits, hand-drawn automation, mixer and device state all come back through `/hallucinote:ableton-pull` into the DB. **Audio does not** — a recorded vocal take lives only in the `.als`, and closing that loop is a goal, not a shipped feature ([known issues](known-issues.md)). Where the round-trip exists, the DB and Ableton agree.
 
 The LLM has full access via MCP — read every note, write every parameter, generate new sections, restructure arrangements, run bulk operations. That is what makes this different from AI features bolted onto a DAW: the model sees structure, not pixels.
 
@@ -12,7 +14,9 @@ Two bets, both unproven, both load-bearing:
 
 1. **Structure makes the model competent.** If the LLM sees the song as semantic objects — tags like `ghost` / `downbeat`, section roles, generator-call provenance, an event log of every change — it can collaborate at the level of musical ideas rather than guessing at MIDI bytes. A diff is not "33 notes changed." It is "raised verse ghost snares +5, swapped the chorus walk for an embellishment, added a fill at bar 12."
 
-2. **Songs should be forkable.** A song is a git repo. Branch a chorus variant, A/B against main, throw it away. Two collaborators on different continents can each run the song against their own Ableton, push and pull edits like code. No binary DAW project, no email attachments. Impossible in every other tool, because everyone else's source of truth is a closed binary.
+2. **Songs should be forkable.** A song is a git repo. Branch a chorus variant, A/B against main, throw it away. Two collaborators on different continents can each run the song against their own Ableton, push and pull edits like code. No binary DAW project, no email attachments.
+
+   Plain-text music is not new — TidalCycles, Sonic Pi, SuperCollider, ChucK and Lilypond all have it, and [DAWproject](https://github.com/bitwig/dawproject) is an open interchange format several DAWs now read. What is rare is the combination: text that is *diffable at the level of musical intent* (`raised verse ghost snares +5`, not a changed XML node), that drives a **mainstream DAW you already mix in**, and that an agent has complete read/write access to. Each of those exists somewhere. Together, in one tool, they don't.
 
 ## Why
 
@@ -56,11 +60,13 @@ Two bets, both unproven, both load-bearing:
 
 - **A live performance system.** This is a composition and production tool; live-stage performance happens downstream, in Ableton, with a rendered song. *(Distinct from the **performance realization layer** — [`performance-model.md`](../.prawduct/artifacts/performance-model.md) — which authors a song's rendition **feel** (microtiming, dynamics, articulation) at compose time. Authoring how a part is played is in scope; performing it live on a stage is not.)*
 
-- **A walled garden.** No proprietary formats. SQLite, Python, git, standard MCP. If Hallucinote dies, your songs are still composable from the repo.
+- **A walled garden *of ours*.** Nothing we invent is proprietary: SQLite, Python, git, standard MCP. If Hallucinote dies, your songs are still readable and composable from the repo. Be clear-eyed about the other half, though — we are strapped to Ableton Live, which is closed and commercial, and the measured half of the loop needs Max for Live on top. Your *source* outlives us; *hearing* it means owning Live. That's a real dependency, priced below.
 
 ## What this costs
 
 Naming the hard parts so they do not surprise us:
+
+- **The price of entry is Ableton's, and it isn't small.** A Live 12 licence, plus Max for Live (bundled with Suite, a paid add-on for Standard) if you want the *measured* mix review rather than the symbolic one. We chose a mainstream DAW deliberately — the point is to author into the tool producers already finish records in, not a parallel universe they'd have to move to — but the bill is real, and it is not ours to discount.
 
 - **Microtonal and polytempic music is real work.** The DB models it cleanly; getting Ableton to render it requires Max for Live, per-voice pitch routing, or 1/64-grid event positioning. Doable. Not free.
 

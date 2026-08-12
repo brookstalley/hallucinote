@@ -12,6 +12,62 @@ truth, then pushes it into Ableton Live through an in-repo MCP server. It's for
 technically-comfortable musicians and producers who are happy running a CLI.
 See [`docs/VISION.md`](VISION.md) for the why.
 
+## Why is it called "Hallucinote"?
+
+Because the failure mode is the whole problem. An LLM asked about a DAW will
+happily invent a device, a parameter, or a capability it doesn't have, and in
+music production that wastes an afternoon before you notice. The name keeps the
+risk in view rather than pretending it away.
+
+The countermeasure is structural: [`capability-truth.md`](capability-truth.md)
+is a maintained table of what actually works, read by the agent at first
+contact and before song creation, with a standing rule that anything not in the
+table as supported must not be promised. The bridge refuses-and-teaches at the
+call site instead of silently doing the wrong thing, and the mix review reports
+*measured* DSP numbers, not impressions. Confabulation is the thing we design
+against; naming it seemed more honest than a name that implied we'd solved it.
+
+## Will it write me a melody?
+
+**No — and that's a design decision, not a gap we're closing.** There is no
+melody generator and there won't be one. Claude writes the groove, the harmony,
+the bass, the arrangement, the sound design and the mix; the lead line — the
+hook, the thing people hum — is yours.
+
+What you get instead is an arranger and a mirror. Sketch a topline in Live (or
+hum it in and quantize), pull it in, and Hallucinote builds the entire track
+underneath it. Then `/hallucinote:compose-review` *reads* the line back —
+contour, intervals, how it sits against the chords — and coaches it against the
+intent you declared. It measures; it never invents. There is no universal
+"good melody" verdict on offer.
+
+So *"write me an 80s synth-pop song like Madonna"* gets you the Madonna-ness
+that lives in the dimensions we own — the chord moves, the groove, the
+arrangement, the production — with two honest caveats: no synthesized vocal,
+and the hook is your job. The full capability table is
+[`capability-truth.md`](capability-truth.md).
+
+## What does this cost to run?
+
+Hallucinote itself is free and MIT-licensed. Three real costs sit behind it:
+
+- **Ableton Live 12** — a commercial licence. **Max for Live** on top (bundled
+  with Suite, a paid add-on for Standard) if you want the *measured* mix
+  review; the authoring loop and the symbolic review don't need it.
+- **Claude usage.** This is a long-running agentic workflow, not a chat. A song
+  is composed, pushed, rendered, measured and revised over a session that can
+  run tens of minutes of continuous agent work, and each measured mix pass
+  hands back a sizeable analysis payload. Expect a full compose-and-mix session
+  to consume a real share of a Claude plan's budget — `/cost` in Claude Code
+  reports what a given session actually used.
+- **Disk.** Every measured mix pass renders audio, and the per-render WAVs are
+  the heavy part. They land in the song's `captures/`, which is gitignored —
+  regenerable, and not something to commit. (The small MixReport JSONs in
+  `analysis/` *are* checked in; they're the measurements, not the audio.)
+
+No telemetry, no service fees, no account with us — there is no us to have an
+account with. See [`SECURITY.md`](../SECURITY.md).
+
 ## Do I need to know Python?
 
 No — for using it. You talk to Claude Code in plain language; the agent writes
@@ -21,8 +77,14 @@ Hallucinote itself, yes — see [`CONTRIBUTING.md`](../CONTRIBUTING.md).
 
 ## Does it work on Windows?
 
-Yes — macOS and Windows, with **Ableton Live 12**. See
-[README → Install](../README.md#install).
+Yes — macOS and Windows, with **Ableton Live 12** (Ableton ships no Linux
+build). Being straight with you about the mileage, though: macOS is where
+Hallucinote is developed day to day, and the Windows paths — User Library
+locations, the Live process lookup, the Remote Script install — are implemented
+and hand-checked but see less traffic. The automated suite runs on neither
+platform's Live, because CI has no Ableton to talk to. If something Windows-shaped
+breaks, that's a real bug and we want [the issue](https://github.com/brookstalley/hallucinote/issues) —
+include your `preflight` output. See [README → Install](../README.md#install).
 
 ## Can I mix the song inside Hallucinote?
 
@@ -33,6 +95,37 @@ there; pull your tweaks back with `/hallucinote:ableton-pull` to keep them. Deta
 *review* (masking, loudness, reverb, timing) is available via `/hallucinote:mix-review`,
 which uses Max for Live (Live Suite, or the M4L add-on); `/hallucinote:compose-review`
 reviews the composition against intent on any edition.
+
+## When I'm done, do I have a normal Live set I can finish and release?
+
+**Yes.** Push materializes an ordinary Ableton project — real tracks, real
+clips, real devices, real return busses. From there it's plain Live: keep
+arranging, comp a vocal over it, run it through your mastering chain, export
+the WAV, release it. Nothing about the set is special or locked, and nothing
+phones home.
+
+When the README says a song is "a git directory, not a binary `.als`," it means
+the *source of truth* is text you can diff and fork — not that you're denied
+the `.als`. You get both: source you can version, and a session you can finish
+by hand. If you want hand-made changes to survive the next build, fold them
+back with `/hallucinote:ableton-pull` and `/hallucinote:song-snapshot`
+(see below). If you don't — if the song is finished and Live is where it now
+lives — just stop pushing. Nothing rewrites your set behind you.
+
+## If I build the same song twice, do I get the same result?
+
+Yes, given the same `build.py`. The build is a deterministic state-converger:
+same source, same database, same notes. Humanization is seeded — the
+1/f-correlated timing and velocity "breathing" that keeps parts from sounding
+mechanical comes from `apply_profile(..., seed=N)`, so it re-runs identically
+rather than drifting every build. Vary the seed per part on purpose (so two
+instruments don't breathe in lockstep); the value is committed with the song.
+
+What is *not* reproducible is the **prompt**. Hand the same sentence to a fresh
+session and you'll get a different song — different key, different structural
+choices — because an agent is making creative decisions, not executing a
+recipe. The song is reproducible; the act of composing it isn't. See
+[`song-authoring-conventions.md`](song-authoring-conventions.md).
 
 ## A push overwrote my manual Live tweaks. How do I keep them?
 
@@ -60,6 +153,29 @@ third-party plugin is missing, generating a `REQUIREMENTS.md` of what to install
 Native Live devices and catalog-ID drift are handled automatically; bundling
 sample packs is out of scope. The three portability cases are spelled out in
 [`docs/collaboration.md`](collaboration.md).
+
+## Who owns the music? And is it going to plagiarize someone?
+
+**We claim nothing.** The MIT licence covers Hallucinote's *code*, not the
+songs you make with it. Nothing you author is transmitted to us — the tool runs
+locally, sends no telemetry, and makes no outbound calls of its own
+([`SECURITY.md`](../SECURITY.md)). Your song directory is yours.
+
+On plagiarism, the architecture matters more than any promise: **there is no
+generative audio model in Hallucinote.** No trained music model, no sample
+regurgitation, nothing lifted from a corpus. The notes come from hand-written
+parametric generators (`src/hallucinote/generators/` — plain Python producing
+note arrays), and Claude's job is to *call* them with musical parameters. The
+one component with the highest plagiarism risk in machine-made music — the
+lead melody — is the one this tool deliberately [won't write](#will-it-write-me-a-melody).
+
+Two honest caveats. Ask for a specific existing song's material and you may
+well get it — that's what "cram Beethoven's Fifth into two minutes" is *for*,
+and the responsibility for what you ask is yours (that example is public
+domain; a 2019 pop single isn't). And the copyright status of AI-assisted work
+is unsettled and varies by jurisdiction, with human authorship generally the
+hinge. Nothing here is legal advice; if you're releasing commercially, get
+your own.
 
 ## Can I compose in a non-12 tuning (microtonal / 19-EDO / Bohlen-Pierce)?
 

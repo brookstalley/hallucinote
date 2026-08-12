@@ -17,7 +17,7 @@ Live version. A proof of concept helps a lot.
 contractual: an acknowledgement within about a week, an assessment of severity and a
 fix plan after that. We'll credit you in the advisory and the changelog unless you'd
 rather stay anonymous. If we conclude a report isn't a vulnerability, we'll explain
-why, in writing, on the report.
+why.
 
 ## Supported versions
 

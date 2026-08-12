@@ -1,7 +1,5 @@
 # Build Plan — Absolute positive-framing norm + positioning sweep
 
-**Critic mode:** cumulative-final
-
 ## Why this exists
 
 The prose norm *Write what a thing IS; never define it by what it isn't* was
@@ -68,6 +66,9 @@ having to reconstruct it.
 - **C3 — Record and verify.** Change-log entry under a `docs-positive-framing`
   scope; full suite green (`tests/preferences/test_tour_freshness.py` asserts
   tour prose against committed sources, so tour edits are load-bearing).
+  **Critic mode:** cumulative — the review's value here is judgment about prose,
+  and the agent authored the very test being applied, so the coverage gate
+  passing this interval as a docs-only free edge is not a reason to skip it.
 
 ## Done when
 
@@ -80,9 +81,9 @@ having to reconstruct it.
 
 ## Status
 
-- [ ] C1 — Amend the norm
-- [ ] C2 — Sweep the positioning corpus
-- [ ] C3 — Record and verify
+- [x] C1 — Amend the norm
+- [x] C2 — Sweep the positioning corpus
+- [x] C3 — Record and verify
 
 ## Context
 

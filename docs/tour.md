@@ -14,10 +14,10 @@ while they ran, and the audio is the renders the sessions themselves measured.
 The song ships in this repo. [`examples/punk-fate/`](../examples/punk-fate/)
 is the finished source, and `python examples/punk-fate/build.py` rebuilds its
 database from a clean checkout with no Live installed — that exact replay is
-what this repo's CI runs. Re-running the *prompt* reproduces the *process*: an
-agent handed the same sentence will make different choices, and that's the
-point — this is a walkthrough of how a song gets made, and the recipe for this
-one lives in its source.
+what this repo's CI runs. The *prompt* works differently: hand the same
+sentence to another agent and it will make different choices, and that's the
+point — this page walks through how a song gets made, and the audio above is
+what one run of it produced.
 
 *A fifteen-minute read. One artifact per beat.*
 
@@ -334,8 +334,8 @@ Getting from there to human took three moves, and the first two were dead
 ends worth recording. A per-note random nudge fixed the tightness and landed
 on the opposite failure — **`sloppy`, lag-1 autocorrelation 0.135** — because
 what reads as human is the *correlation* of a deviation: real players drift in
-1/f. The independent Critic review caught that one, against the project's own
-performance model. Then splitting the kit into two breathing streams (a hand
+1/f. That one surfaced in the independent Critic review, against the project's
+own performance model, after the ear had passed it. Then splitting the kit into two breathing streams (a hand
 wobbles more than a foot) measured *worse* than one — the agent reading its
 own result:
 

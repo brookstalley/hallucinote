@@ -1,7 +1,7 @@
 {
   "name": "hallucinote",
   "displayName": "Hallucinote \u2014 Music Authoring",
-  "version": "1.8.4",
+  "version": "1.8.5",
   "description": "DB-backed MIDI authoring with Ableton Live sync via MCP. Compose, arrange, sound-design, and mix songs with Claude \u2014 it works on the song as structured objects (notes, sections, tags, an event log) and measures the result against the intent you declared.",
   "author": {
     "name": "Brooks Talley",

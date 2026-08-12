@@ -27,7 +27,7 @@
 
 ## 2026-08-11 — Release process: the back-merge is a fast-forward, and `main` may be elsewhere
 
-<!-- prawduct: type=docs | scope=release-process-docs -->
+<!-- prawduct: type=docs | scope=release-process-docs | release=v1.8.5 -->
 
 Reconstructed at the v1.8.5 cut from commit `f4f9ad2`, which landed on
 `develop` with no entry of its own — exactly the gap step 1 of
@@ -53,7 +53,7 @@ without the checkout.
 
 ## 2026-08-11 — Launch-readiness docs pass: contradictions closed, framing recentred
 
-<!-- prawduct: type=docs | scope=docs-launch-readiness -->
+<!-- prawduct: type=docs | scope=docs-launch-readiness | release=v1.8.5 -->
 
 A critical review of the user-facing docs from the README outward, then the
 fixes, across four review rounds. No product behavior change. Five non-`.md`

@@ -25,6 +25,43 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-08-12 — README: the demo video embeds, and the owner's copy edits merge
+
+<!-- prawduct: type=docs | scope=docs-launch-readiness -->
+
+**The demo video plays inline.** `#329`'s conversion gap is closed: the README's
+only demo was an `.mp3` link, which GitHub will not play inline, so a reader had
+to download a file to hear anything. The 2:13 cut now leads *See it* as a player,
+hosted on GitHub's user-attachments CDN at zero repo weight. Committing the
+`.mp4` would not have worked — GitHub strips `<video>` pointing at repository
+files and blocks `raw.githubusercontent.com` from serving video — and would have
+spent a one-way-door slice of the 12 MB `docs/assets` budget for a download link.
+Acceptance was verified rather than asserted: envelope correlation **+0.993**
+against the stitched renders with matching RMS, the ±1024-sample per-state offset
+correction measured at 0.80–0.95, and the caveat legible at three timestamps.
+
+**The owner's copy edits merged from `main`.** `f10c92d` landed directly on
+`main` against the pre-sweep, pre-rewrap README, so it collided with all three
+passes on the branch. The copy was taken as authored; only mechanics were
+reconciled (semantic line breaks, one trailing-whitespace line, the video block
+kept above the punk-fate example their intro now leads into).
+
+**Two owner decisions recorded so neither is re-litigated as a defect:**
+
+1. **The README and the tour quote the punk-fate prompt differently, and both
+   stay.** The README says "rhythm guitar, and vocals emulated by a lead
+   guitar"; `docs/tour.md` quotes the session log verbatim as "lead guitar, and
+   vocals on a staccato synth". The README's version describes what the song
+   became — chapter 15 turns track 4 into a lead guitar — rather than what was
+   typed. Flagged as a contradiction of the kind the launch-readiness pass
+   existed to close; the owner ruled to keep both as they are. A future docs
+   review should treat this as decided, not as drift.
+2. **"What you end up with is an ordinary Ableton set you finish yourself" is
+   deliberately gone**, though the launch-readiness pass added it to answer a
+   question the FAQ devotes a section to. The FAQ still answers it in full.
+
+Docs-only. Suite green at 5005 passed / 2 skipped.
+
 ## 2026-08-12 — The release process gains a GitHub Release step
 
 <!-- prawduct: type=docs | scope=release-process-docs -->

@@ -258,6 +258,35 @@ cannot decide for you, both of which bit at the v1.8.0 cut:
   it EMPTY, never the literal `null`. A pointer at an unfinished parked plan stays
   meaningful between releases and should survive the cut.
 
+### 11. Publish the GitHub Release
+
+The tag is the record; the **Release** is what a person lands on. Steps 1–10 leave
+six annotated tags and, until 2026-08-12, zero Release objects — so anyone arriving
+at the repo saw no release at all.
+
+```sh
+gh release create vNEW --draft --verify-tag \
+  --title "vNEW — <the tag's own subject line>" \
+  --notes-file <notes>            # notes come from the change-log entries carrying release=vNEW
+```
+
+- **Draft first, always.** A published Release notifies watchers and is the most
+  outward-facing artifact the process produces. A draft is invisible and deletable,
+  so it is reviewed before it exists publicly.
+- **`--verify-tag`** refuses to invent a tag, so a typo fails instead of creating a
+  release pointing at nothing.
+- A draft's URL reads `releases/tag/untagged-<hash>` until it is published. That is
+  normal — the tag binds on publish, and `gh release view vNEW --json tagName`
+  already shows the right tag.
+- **Release notes are reader-facing positioning prose**, so the norm in
+  `project-preferences.md` § Documentation & prose governs them: write what the
+  release IS, and never define it by what it isn't.
+- Attach any media the release is the canonical home for (`gh release upload`). Note
+  that a release asset serves from `github.com/.../releases/download/...`, which
+  **will not** render as an inline player in markdown — only a
+  `user-attachments` URL does that, and obtaining one is a web-UI upload with no
+  `gh` equivalent.
+
 ## Version surfaces
 
 There are **five** version strings. Four are the **product version** and move in

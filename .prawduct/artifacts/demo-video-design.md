@@ -240,7 +240,22 @@ takes, and it is the one a viewer is least able to infer.
 
 ## Tooling still to build
 
-`~/Movies/hallucinote-capture/make_video.py` needs three things:
+> **Status 2026-08-12 — all three shipped; this section is kept for the record.**
+> Verified in the code rather than assumed: `block_for()` now carries a `LENS`
+> kind that renders the read as a table (newlines preserved, over-long rows
+> clipped rather than wrapped, its own font and colour); `stitch_audio.py`
+> performs the state switching, anchoring each splice to the loudest onset near
+> the nominal boundary so the cut hides under a transient; and the caveat is
+> implemented as a permanent reserved band inside the terminal panel. The cut
+> itself exists — `~/Movies/hallucinote-capture/demo-cut.mp4`, 4500×1898,
+> 132.9 s, 22 MB, rendered after the last tooling change — and was spot-checked
+> at four timestamps: caveat card, split-frame layout, the built arrangement,
+> and the lens table all render correctly.
+>
+> **The remaining work is delivery, not tooling** — see the "Dependency" note
+> below and `brookstalley/hallucinote#329`.
+
+The three items as originally written:
 
 1. **A lens block kind.** `block_for()` has only `PROMPT` and `CLAUDE`, so a
    structured lens read wraps as a paragraph wall. Needs a compact mono stat block.

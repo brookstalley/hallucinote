@@ -131,7 +131,7 @@ Two artifacts were resynced while the corpus was open: `api-contract.md` and
 `project-preferences.md` § Package manager both described skills invoking
 `uv run --project <plugin-root> --frozen hallucinote <cmd>`, which is no longer
 what ships — every skill uses `"$PY" -m hallucinote.cli`, with `$PY` resolved
-from `ableton://server/info`. Both carry mechanism and audit home in the Enforcement index,
+from `ableton://server/info`. Both prose norms carry mechanism and audit home in the Enforcement index,
 because a norm outside that index is one the janitor's Norm Health sweep never
 walks.
 

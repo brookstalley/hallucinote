@@ -240,7 +240,7 @@ lets the right element win. A flat chorus is usually a composition problem
 (nothing was held back) long before it's a mix problem — fix it here first.
 
 `/compose-review` is symbolic (it reads `build.py` + the arrangement), so it runs
-on **any Live edition**. `/mix-review` reads rendered audio and **needs Max for
+on **Standard as well as Suite**. `/mix-review` reads rendered audio and **needs Max for
 Live** (Suite, or the M4L add-on) — so without Max for Live, this is the intent
 read you have.
 

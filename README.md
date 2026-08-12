@@ -66,7 +66,7 @@ Actively developed, and honest about the rough edges:
 - **Platforms:** Ableton Live 12 on macOS and Windows (Ableton ships no Linux build).
 - **Editions:** the full authoring loop is exercised on **Live 12 Standard and Suite**. Only the measured mix review needs **Max for Live** (Suite, or the add-on for Standard); without it, review is symbolic — against the score, not the audio. Intro and Lite are untested, and their track limits will bite.
 - **The melody is yours.** Sketch a topline in Live and it arranges, sound-designs and mixes the whole track underneath, then reads the line back against your intent — contour, intervals, how it sits on the chords. [How that works](docs/faq.md#what-about-the-melody). Sung vocals are on the list; today the synth sings.
-- **Boundaries:** Claude authors MIDI and the mix; a recorded vocal take can't yet be read back through the bridge.
+- **Boundaries:** MIDI and the mix are what it builds; a recorded vocal take can't yet be read back through the bridge.
 - **What it costs to run:** Hallucinote is free; the Claude usage behind it isn't. A song is a long agentic session — the worked example above ran about forty minutes of continuous agent work, and each measured mix pass hands back a sizeable analysis payload. Expect a full compose-and-mix session to eat a real share of a Claude plan's budget. `/cost` reports what a session actually used. Live 12 (and Max for Live for the measured review) is the other bill.
 
 The rest, each with its workaround: [**Known issues**](docs/known-issues.md).

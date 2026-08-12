@@ -56,8 +56,13 @@ without the checkout.
 <!-- prawduct: type=docs | scope=docs-launch-readiness -->
 
 A critical review of the user-facing docs from the README outward, then the
-fixes. Three commits, no product behavior change; the one non-`.md` file is the
-plugin marketplace manifest, whose description string was stale prose.
+fixes, across three review rounds. No product behavior change. Three non-`.md`
+files: the two plugin manifests, whose description strings were stale prose,
+and one new test — `test_marketplace_manifest_tool_count_matches_actual_registry`,
+which pins the tool count shown in the `/plugin install` dialog. That count was
+the only one of four such claims no guard read, because the sibling README
+guards match "N unified tools" and the manifest says "N Ableton Live tools";
+verified by mutating the manifest to 99 and watching the test fail.
 
 **Four contradictions.** `.claude-plugin/marketplace.json` told every installing
 user the plugin "Requires the `hallucinote` Python engine installed" — stale

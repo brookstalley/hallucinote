@@ -111,8 +111,8 @@ You do not hand-author the copy, the excludes, or a sanity check; they live in
 ## Step 3d — Install the HallucinoteAnalyzer device
 
 `HallucinoteAnalyzer.amxd` is a Max for Live device that lands in
-`Presets/Audio Effects/Max Audio Effect/`. It requires **Max for Live, which
-ships only with Live Suite.** Probe, then ask:
+`Presets/Audio Effects/Max Audio Effect/`. It requires **Max for Live — bundled with Live Suite, and available as a paid
+add-on for Standard.** Probe, then ask:
 
 ```bash
 python -c "from hallucinote_mcp.install_paths import max_for_live_available; print(max_for_live_available())"

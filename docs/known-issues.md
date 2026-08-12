@@ -16,7 +16,7 @@ null source into the snapshot.
 
 ## Human audio can't be read back through the bridge
 
-Claude authors MIDI and the mix; a recorded vocal take or a hand-ridden
+MIDI and the mix are what Hallucinote builds; a recorded vocal take or a hand-ridden
 fader-automation lane lives only in the `.als` — the bridge can't pull it into a
 song's source. Audio recording is a boundary, not a feature, today.
 

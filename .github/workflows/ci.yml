@@ -5,8 +5,9 @@
 #   2. ruff check .      — lint (config: [tool.ruff] in pyproject.toml)
 #   3. mypy              — types (config: [tool.mypy] in pyproject.toml)
 #   4. python -m pytest  — the FULL no-path suite. Never pass a path argument:
-#                          testpaths covers tests/ AND hallucinote_mcp/tests/,
-#                          and a path-scoped run silently skips the other half.
+#                          testpaths covers three roots — tests/, 
+#                          hallucinote_mcp/tests/ AND examples/ — so a path-scoped
+#                          run silently skips the others.
 #
 # No Ableton/Live is needed: `ableton`-marked tests are opt-in (default-skip,
 # see conftest.py) and the MCP-server tests use fakes. The audio/DSP stack

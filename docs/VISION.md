@@ -6,7 +6,7 @@ The song is structured data, not a binary `.als` — and that data is the source
 
 Change flows both ways. Today that means the *symbolic* layer: MIDI edits, hand-drawn automation, mixer and device state all come back through `/hallucinote:ableton-pull` into the DB. **Audio does not** — a recorded vocal take lives only in the `.als`, and closing that loop is a goal, not a shipped feature ([known issues](known-issues.md)). Where the round-trip exists, the DB and Ableton agree.
 
-The LLM has full access via MCP — read every note, write every parameter, generate new sections, restructure arrangements, run bulk operations. That is what makes this different from AI features bolted onto a DAW: the model sees structure, not pixels.
+The LLM has full access via MCP — read every note, write every parameter, generate new sections, restructure arrangements, run bulk operations. It works on the song as structured objects: notes with semantic tags, sections with roles, generator-call provenance, an event log of every change. That access is the foundation everything else here rests on.
 
 ## The bet
 

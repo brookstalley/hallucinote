@@ -24,7 +24,7 @@ song's source. Audio recording is a boundary, not a feature, today.
 
 The authoring loop — compose, push, pull, play, and the *symbolic*
 `/hallucinote:compose-review` — runs on Live 12 Standard and Suite (see the
-Intro/Lite note above). Only the render → analysis → `/hallucinote:mix-review`
+Intro/Lite note below). Only the render → analysis → `/hallucinote:mix-review`
 path needs Max for Live, which comes with Live Suite or as the separate M4L
 add-on for Standard. Without it, review by ear with `/compose-review`. This
 split is by design — see [`capability-truth.md`](capability-truth.md).

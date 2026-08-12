@@ -96,15 +96,30 @@ user now holds the creative verbs; the tool builds, measures and reports. A
 without describing anyone by their deficits, and the cheap-experiment loop that
 makes the tool fun is stated where it was previously missing.
 
-**A norm came out of it** (`project-preferences.md` → Documentation & prose,
-ratified 2026-08-11, retroactive): **write what a thing IS, never what it
-isn't.** An intermediate draft of this very pass added a "What it isn't"
-section and Suno/is-this-cheating FAQ entries; they argued with a critic the
-reader had not met and planted the doubt they answered. They were removed
+**Two norms came out of it, and the first one had to be narrowed the same day**
+(`project-preferences.md` → Documentation & prose + two Enforcement rows;
+`norm_registry_ratified` 27 → 29). As first written, **write what a thing IS,
+never what it isn't** was absolute — and the cumulative Critic caught it being
+violated inside its own ratifying bundle, twice in `VISION.md`. Both sites were
+rewritten. But the verify pass then made the sharper point: read absolutely,
+the row also outlaws ordinary factual distinctions the corpus legitimately
+needs — "a long agentic workflow, not a chat", "the song is reproducible; the
+act of composing it isn't" — and a norm the corpus violates on the day it
+ships is aspirational, not binding. So the row now names the two moves it
+actually targets (positioning against alternatives; rebutting an unraised
+objection) and states the test explicitly: a sentence about a competitor or a
+critic is banned, a sentence about how the thing works is fine. The second
+norm — the user holds the subject position on the creative verbs — was
+uncontested. Both carry mechanism and audit home in the Enforcement index,
+because a norm outside that index is one the janitor's Norm Health sweep never
+walks.
+
+What prompted it: an intermediate draft of this very pass added a "What it
+isn't" section and Suno/is-this-cheating FAQ entries. They argued with a critic
+the reader had not met and planted the doubt they answered. They were removed
 rather than softened, and the fact underneath them — the notes come from
-parametric generators you can read — now states itself positively as mechanism.
-The narrow exception is a limitations register (`known-issues.md`, a
-`## Non-goals` section), where what-doesn't-work IS the content.
+parametric generators you can read — now states itself positively, as
+mechanism.
 
 Backlog filed from the review: #457 (a second worked example in an exposed
 genre), #458 (measure per-song usage), #459 (CI platform matrix), #460

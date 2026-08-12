@@ -17,12 +17,11 @@ Round-trip to Ableton, recording MIDI events in Ableton to pull back and work on
 
 ## See it
 
-Two minutes: a prompt goes in, and a finished arrangement comes out playing in Live.
+Accelerated video: from prompt to finished finished arrangement.
 
 <video src="https://github.com/user-attachments/assets/6032b568-a103-439b-8397-a6ca7cdec0eb" controls muted></video>
 
-*The chat is staged so the build runs under the conversation and there is something to watch; the caveat stays on screen throughout.
-Real sessions are more iterative and take longer.*
+*The chat is staged so the build runs under the conversation and there is something to watch; real sessions are more iterative and take longer.*
 
 A different song, made the same way, ships in this repo as source:
 

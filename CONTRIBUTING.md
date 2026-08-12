@@ -10,7 +10,7 @@ on it, start with the [README](README.md) and [Quickstart](docs/quickstart.md).
 with CI enforcement behind it: the repo is a uv workspace, the shipped plugin
 runs `uv run --frozen`, and CI gates on `uv lock --check`. uv provisions the
 interpreter too; Python 3.10 is the floor. A local `pip install -e '.[dev]'`
-venv still works for editing and isn't forbidden — it's a personal
+venv still works for editing — it's a personal
 convenience, and **a "green" claim has to come from the locked environment.**
 
 ```bash
@@ -56,7 +56,7 @@ green check for more than it is:
   automated. Platform-shaped changes (install paths, process lookup) need
   hand-verification, ideally on both.
 - **One interpreter.** `requires-python` floors at 3.10; only 3.12 runs.
-  mypy's `python_version = 3.10` covers the floor statically, not at runtime.
+  mypy's `python_version = 3.10` covers the floor at type-check time.
 
 ### Test discipline
 

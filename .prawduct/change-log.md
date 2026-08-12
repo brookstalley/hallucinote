@@ -25,6 +25,59 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-08-12 — The prose norm's absolute reading, restored by owner ruling
+
+<!-- prawduct: type=docs | chunks=C1,C2,C3 | scope=docs-positive-framing -->
+
+**The norm was narrowed twice by the agent on the day it shipped; the owner has
+now ruled on both narrowings.** *Write what a thing IS; never define it by what
+it isn't* was ratified 2026-08-11 from the owner's own correction. Within hours
+the agent narrowed it twice, each time immediately after a review round found
+shipping prose that violated it — the textbook shape of amending a rule to fit
+your own work. Both narrowings were recorded as pending veto rather than as
+ratified, which is the only reason they were still reversible.
+
+- **Narrowing 1 — REJECTED.** The "competitor/critic (banned) vs mechanism
+  (fine)" test is withdrawn. The owner's original clause — *no "this isn't a
+  Y"* — means what it says, whatever the sentence is describing.
+- **Narrowing 2 — RATIFIED.** Naming prior art as lineage stays permitted;
+  ranking this product against it remains banned. VISION's TidalCycles /
+  Sonic Pi / Lilypond / DAWproject paragraph keeps its place.
+
+**The owner also set the norm's scope, which had never been stated.** It governs
+positioning prose — `README.md`, `CONTRIBUTING.md`, `SECURITY.md`,
+`docs/VISION.md`, `docs/faq.md`, `docs/tour.md`. Reference docs elsewhere under
+`docs/`, agent-read `skills/`, `.prawduct/artifacts/` and the frozen
+`docs/archive/` sit outside it: in operating instructions the construction
+disambiguates ("the list itself, not the wrapper") rather than defends, and the
+absolute rule applied there would have cost precision across ~1,400 sites for no
+positioning gain. Scope is now written into the norm so the next agent inherits
+it instead of re-deriving it.
+
+**What the sweep changed.** Every contrast-definition in the six in-scope files,
+rewritten positively — the flagship "a long agentic workflow, not a chat"
+(`faq.md`), "Ableton is the speaker, not the score" and "A diff is not '33 notes
+changed'" (`VISION.md`), "Verified, not assumed", "Grit as timbre, not level",
+"a preset name is a claim, not a measurement" and a section heading
+(`tour.md`), "a cloned `build.py` is not data, it's a program" (`SECURITY.md`),
+and the symbolic-review and cost lines in `README.md`. Most rewrites are the
+better sentence, because dropping the foil forces the claim to be stated
+outright.
+
+**The test the sweep applied, recorded so it is checkable.** The banned form is
+a *contrast-definition*: a sentence characterizing the product, a component or
+the process by naming a thing it isn't. Plain negation stating a condition
+("Live isn't running") defines nothing and stays — if removing the negated half
+leaves the subject undefined, it was a contrast-definition. Four categories were
+deliberately left standing: plain negations, prescriptive rules (an instruction
+may prohibit), the ratified limitations register (`## Non-goals`, SECURITY's
+out-of-scope list), and **verbatim quotation** — the tour's session transcript,
+the user's own words, and code quoted from `build.py`. Rewriting captured
+evidence to satisfy a prose norm would falsify the thing the tour exists to
+show; that boundary is worth more than uniformity.
+
+Docs-only. Suite green at 5005 passed / 2 skipped, before and after.
+
 ## 2026-08-11 — Release process: the back-merge is a fast-forward, and `main` may be elsewhere
 
 <!-- prawduct: type=docs | scope=release-process-docs | release=v1.8.5 -->

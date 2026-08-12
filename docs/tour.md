@@ -6,7 +6,7 @@ minutes later a finished, mixed, four-track song was playing in Ableton Live —
 that's **chapter 1**. Later the same day the song went back into the studio,
 because a finished song and a *good* one are different things: **chapter 2**
 is the listening session that made it actually sound punk. Every artifact on
-this page was captured from those sessions, not staged for them: the
+this page was captured live from those sessions: the
 transcript excerpts are rendered from the session log, the screenshots
 were shot by [`tools/capture_live_shot.py`](../tools/capture_live_shot.py)
 while they ran, and the audio is the renders the sessions themselves measured.
@@ -14,10 +14,10 @@ while they ran, and the audio is the renders the sessions themselves measured.
 The song ships in this repo. [`examples/punk-fate/`](../examples/punk-fate/)
 is the finished source, and `python examples/punk-fate/build.py` rebuilds its
 database from a clean checkout with no Live installed — that exact replay is
-what this repo's CI runs. What is **not** promised: re-running the *prompt*
-reproduces the *process*, not this song. An agent handed the same sentence
-will make different choices, and that's the point — this is a walkthrough of
-how a song gets made, not a recipe for this one.
+what this repo's CI runs. Re-running the *prompt* reproduces the *process*: an
+agent handed the same sentence will make different choices, and that's the
+point — this is a walkthrough of how a song gets made, and the recipe for this
+one lives in its source.
 
 *A fifteen-minute read. One artifact per beat.*
 
@@ -47,9 +47,8 @@ The whole spec the session started from:
 > 5th into those two minutes. Drums, bass, lead guitar, and vocals on a
 > staccato synth. Call it punk-fate.
 
-Claude's first move (`/hallucinote:song-brief`) is not to start typing notes —
-it reads what the prompt actually pins down, fills what it can own, and comes
-back **once**, proposing rather than asking:
+Claude's first move (`/hallucinote:song-brief`) reads what the prompt actually
+pins down, fills what it can own, and comes back **once**, with proposals:
 
 > **Settled from your prompt:** slug `punk-fate`, ~2:00, 4/4 punk, four parts
 > — drums, bass, lead guitar, and a staccato mono-synth playing the "vocal"
@@ -73,7 +72,7 @@ the fork's reasoning became the first of seven
 ### 2 · Scaffold + chains
 
 A song is a directory, and the sound ships with it — device chains are
-authorship, not a mix-time to-do list:
+authorship:
 
 ```
 examples/punk-fate/
@@ -100,7 +99,7 @@ Operator as the shouted "vocal." The full table — and why the guitar
 
 ### 3 · Harmony & form
 
-Harmony is a modeled substrate the parts compose *against*, not a comment.
+Harmony is a modeled substrate the parts compose *against*.
 The verse churns in C minor; the chorus is the relative-major lift:
 
 ```python
@@ -129,8 +128,8 @@ note against them for harmony-fit. How `build.py` is organized —
 
 ### 4 · Rhythm & feel
 
-Microtiming is written into the parts at generation time, never bolted on as
-a "humanize" pass. Each part is a *player* who both carries an authored feel
+Microtiming is written into the parts at generation time. Each part is a
+*player* who both carries an authored feel
 and declares how they breathe:
 
 ```python
@@ -148,12 +147,12 @@ bass refuses to be pulled, and the groove lives in the ~16-tick gap *between*
 them
 ([`decisions/04-per-part-feel.md`](../examples/punk-fate/decisions/04-per-part-feel.md)).
 `rush` creeps a player forward across a bar and resets at the downbeat, because
-an excited drummer doesn't *start* early — they *get* early. (The
+an excited drummer *gets* early as the bar goes on. (The
 `PerformanceProfile` — how a player *breathes* on top of what's authored — is
 chapter 2's story: this session shipped the constant feel, and finding out why
 that wasn't enough took a listener.)
 
-None of it is random. Every deviation is seeded from the part's identity, so a
+Every deviation is seeded from the part's identity, so a
 rebuild reproduces the same performance — which is what lets `build.py` stay a
 state-converger whose re-run is a no-op.
 
@@ -164,9 +163,9 @@ while the kick sits on it:
 
 ### 5 · Melody
 
-`hallucinote melody` reads every line against its *declared* profile — there
-is no universal "good melody" score, only measurements against stated intent.
-Real output from this song:
+`hallucinote melody` reads every line against its *declared* profile — every
+figure it reports is a measurement against stated intent. Real output from this
+song:
 
 ```
 [break-ab]
@@ -180,23 +179,23 @@ Real output from this song:
 
 (Recomputable: the figures above are committed at
 [`measurements/2026-08-11-melody-lens.json`](../examples/punk-fate/measurements/2026-08-11-melody-lens.json),
-so this block can be checked against the build rather than trusted.)
+so this block can be checked against the build.)
 
-Those `?` lines are coaching questions, not verdicts — and this one's answer
+Those `?` lines are coaching questions — and this one's answer
 is *intended*: the A♭ break is the one section where the synth genuinely
-*sings* instead of chanting, so its step-heavy motion is the point. That
+*sings*, so its step-heavy motion is the point. That
 answer lives in
 [`annotations/02-the-vocal-line-leaps-on-purpose.md`](../examples/punk-fate/annotations/02-the-vocal-line-leaps-on-purpose.md),
 which also records the first lens run *correcting the profile itself* — the
 declared contour was wrong for a line built on Beethoven's leaping cell, and
-fixing the declaration (not the notes) took the lens from twelve questions to
-six.
+fixing the declaration — the notes stood — took the lens from twelve questions
+to six.
 
 ### 6 · Arrangement
 
 The whole form at a glance — eight sections in 96 bars, every one in a
-different harmonic place, because at 1.2 seconds a bar there is room for a
-narrative *or* a repeat, not both:
+different harmonic place, because at 1.2 seconds a bar there is room for
+exactly one of the two — a narrative *or* a repeat:
 
 ![The arrangement in Live: scherzo, bridge-pedal, finale-cmaj, coda across four tracks](assets/tour-arrangement.png)
 
@@ -234,8 +233,8 @@ The agent rendered its own work and measured it. First render:
 
 The measured numbers ship with the song —
 [`analysis/`](../examples/punk-fate/analysis/) holds the before and after
-reports. What makes this a *mix review* rather than a meter readout is what
-the agent did with it, in its own words:
+reports. What makes this a *mix review* is what the agent did with the
+numbers, in its own words:
 
 > The report is unanimous: **the bass is the maskee in every one of the eight
 > sections** [...] That directly contradicts the arrangement decision I filed
@@ -243,7 +242,7 @@ the agent did with it, in its own words:
 > carries the engine, and right now the bass is inaudible.
 
 The mix contradicted the song's own composition decision — so the fix was a
-rebalance *around the bass*, not "turn things down until the meter is happy."
+rebalance *around the bass*.
 
 ### 9 · Iterate
 
@@ -268,13 +267,12 @@ passage, first render against the fix:
 [![after — the bass carries, the master holds](assets/tour-chorus-after.png)](assets/tour-chorus-after.mp3)
 **[▶ after](assets/tour-chorus-after.mp3)**
 
-Verified, not assumed: the A/B render measured **+5.51 → +1.29 dBTP** on the
+Measured on the render: the A/B went **+5.51 → +1.29 dBTP** on the
 bus and **257 → 1** overshoots. And one thing stayed honestly *unverified* —
 the analyzer reads stems pre-fader, so the masking improvement couldn't be
 confirmed by measurement in the same pass. That limit is written into the
 decision record and the
-[attempt ledger](../examples/punk-fate/attempts/2026-08-10-master-clipping-and-buried-bass.md)
-rather than glossed.
+[attempt ledger](../examples/punk-fate/attempts/2026-08-10-master-clipping-and-buried-bass.md).
 
 ### 10 · Bake, commit, fork
 
@@ -317,8 +315,7 @@ sessions: a **performance pass** (the timing, the drums, the dirt) and a
 instrument itself). The whole chapter is that ear-verdict being turned into
 measurements, and the measurements into fixes. It is also why the song's
 [decision records](../examples/punk-fate/decisions/) outgrew the seven chapter 1
-filed — each pass could read what the previous one had decided and extend it
-instead of guessing.
+filed — each pass could read what the previous one had decided and extend it.
 
 ### 11 · "Definitely Beethoven, but not especially punk"
 
@@ -336,9 +333,8 @@ lens grades exactly that shape **mechanical**.
 Getting from there to human took three moves, and the first two were dead
 ends worth recording. A per-note random nudge fixed the tightness and landed
 on the opposite failure — **`sloppy`, lag-1 autocorrelation 0.135** — because
-what reads as human is not the *size* of a deviation but its *correlation*:
-real players drift in 1/f, not white noise. That one wasn't caught by ear; it
-was caught by the independent Critic review, against the project's own
+what reads as human is the *correlation* of a deviation: real players drift in
+1/f. The independent Critic review caught that one, against the project's own
 performance model. Then splitting the kit into two breathing streams (a hand
 wobbles more than a foot) measured *worse* than one — the agent reading its
 own result:
@@ -369,7 +365,7 @@ the dead ends ship too, in the
 so no later session re-walks them
 ([`decisions/08-sloppy-but-enthusiastic.md`](../examples/punk-fate/decisions/08-sloppy-but-enthusiastic.md)).
 
-### 12 · Garage drums are vocabulary, not deviation
+### 12 · Garage drums are vocabulary
 
 Breathing alone doesn't make a kit sound like a room. The other half of the
 fix is *what the drummer plays*: ghost snares between the backbeats, hats
@@ -414,21 +410,21 @@ had already named the exact knob to reach for when this moment came: Pedal
 *Guitar Dirt* on the guitar. It got that. The voice got a Saturator *Rough
 Tone* — a shouted voice through a cheap PA clips, and fuzz on a square wave is
 mush — and the drum saturator's drive went from 6.9 to **11 dB**, output
-trimmed down to match. Grit as timbre, not level:
+trimmed down to match. Grit as timbre:
 
 ![The Garage Kit's Saturator dialed to 11 dB drive, output pulled down to −14](assets/tour-drum-saturation.png)
 
-Two constraints Live imposed are recorded rather than glossed
+Two constraints Live imposed are recorded
 ([`decisions/09-the-dirt.md`](../examples/punk-fate/decisions/09-the-dirt.md)):
 device loads tail-append and Live 12.4 has no reorder API, so the new stages
-sit *after* the compressor, not before it as authored — defensible for a
+sit *after* the compressor, departing from the authored order — defensible for a
 wall-of-sound genre, and written down as a deliberate departure. And
 appending devices had pushed them *past the analyzer*, which would have
 captured every stem pre-distortion while reporting `ok` — caught because the
-manifest's `terminal` flag was re-checked, not assumed. Headroom held at the
+manifest's `terminal` flag was re-checked. Headroom held at the
 output, measured across all eight sections: delivered ≈ **−2.1 to −2.6 dBTP**
 across three renders (a realtime capture has run-to-run spread, and the decision
-says so rather than quoting one run as exact). The *bus* did not: it sat at
+records the range). The *bus* did not: it sat at
 **+1.93 dBTP with 2–4 overshoots** depending on the capture, which is the number
 beat 14 fixes by putting a limiter where the fader had been standing in for one.
 
@@ -464,12 +460,12 @@ touched the complaint. The fix: `Rock` amps
 mid-forward, pedal drive to **42 %**, the hidden room dialed nearly dry, drums up
 **11 dB** — affordable because the master finally got what three passes of
 pulling faders down had been substituting for: a **Glue Compressor into a
-Limiter**. Punk loudness comes from glue and clipping, not politeness.
+Limiter**. Punk loudness comes from glue and clipping.
 Measured, full song: the master bus landed at **−0.34 dBTP** with **0
 overshoots**, and the guitar stem's spectral flatness nearly doubled,
 **0.083 → 0.156** — noisier *and* louder, the trade every earlier pass had
-gotten backwards. The rule it earns: **a preset name is a claim, not a
-measurement** — after loading a chain, read back the parameters that carry the
+gotten backwards. The rule it earns: **a preset name is a claim; the parameters
+are the measurement** — after loading a chain, read back the ones that carry the
 intent.
 
 And the rule bites the measurement too. The committed report for this render
@@ -494,7 +490,7 @@ centroid sat at **2125 Hz** while every other part in the band sat at
 
 Chapter 1's formant argument for a square wave (it sits where a shouted
 vocal sits) was *correct about frequency range and still wrong about genre* —
-right enough to make the line legible as a vocal, not enough to make it punk.
+it made the line legible as a vocal, and the genre needed more.
 The user retired it — *"yeah punk was mostly just bass and one guitar, but
 here we are"* — and track 4 became a second guitarist:
 `Dual Amped Heavy` on `Lead` amps, dry, close-mic'd, the vocal-style
@@ -539,9 +535,8 @@ And the chapter ends the honest way: with something *not* done. Both guitar
 racks' `Articulate` macro is parked at 0 — the rhythm guitar never switches
 between palm-mute and ring, the lead never engages its glide — and
 [`decisions/10-it-has-to-sound-punk.md`](../examples/punk-fate/decisions/10-it-has-to-sound-punk.md)
-names that **UNDECIDED, owner: next compose pass**, rather than silently
-dropping it. That is what makes a song a *live* project instead of a demo: a
-recorded frontier, waiting for chapter 3.
+names that **UNDECIDED, owner: next compose pass**. That is what makes a song a
+*live* project: a recorded frontier, waiting for chapter 3.
 
 ---
 

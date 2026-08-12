@@ -2,7 +2,7 @@
 
 Short answers with links to the canonical docs. For install/connection
 problems, the [README troubleshooting section](../README.md#troubleshooting) is
-the authority — this FAQ points there rather than duplicating it.
+the authority — this FAQ points there.
 
 ## What is Hallucinote, and who is it for?
 
@@ -51,7 +51,7 @@ Hallucinote itself is free and MIT-licensed. Three real costs sit behind it:
 - **Ableton Live 12** — a commercial licence. **Max for Live** on top (bundled
   with Suite, a paid add-on for Standard) if you want the *measured* mix
   review; the authoring loop and the symbolic review don't need it.
-- **Claude usage.** This is a long-running agentic workflow, not a chat. A song
+- **Claude usage.** This is a long-running agentic workflow. A song
   is composed, pushed, rendered, measured and revised over a session that can
   run tens of minutes of continuous agent work, and each measured mix pass
   hands back a sizeable analysis payload. Expect a full compose-and-mix session
@@ -88,9 +88,9 @@ Windows-shaped breaks, that's a real bug and we want
 
 ## Can I mix the song inside Hallucinote?
 
-The mix is composed rather than bolted on afterwards — instrument **chains**,
-device settings, sends, and per-part feel ship with the song, because sound
-design is part of the authorship rather than a post-hoc to-do. You then push to
+The mix is composed with the song — instrument **chains**, device settings,
+sends, and per-part feel all ship in the snapshot, because sound design is part
+of the authorship. You then push to
 Live and do hands-on mixing there; pull your tweaks back with
 `/hallucinote:ableton-pull` to keep them. Detailed mix
 *review* (masking, loudness, reverb, timing) is available via `/hallucinote:mix-review`,
@@ -120,10 +120,10 @@ mechanical comes from `apply_profile(..., seed=N)`, so it re-runs identically
 rather than drifting every build. Vary the seed per part on purpose (so two
 instruments don't breathe in lockstep); the value is committed with the song.
 
-What is *not* reproducible is the **prompt**. Hand the same sentence to a fresh
+The **prompt** is where reproducibility stops. Hand the same sentence to a fresh
 session and you'll get a different song — different key, different structural
-choices — because an agent is making creative decisions, not executing a
-recipe. The song is reproducible; the act of composing it isn't. See
+choices — because an agent is making creative decisions. The song reproduces;
+the act of composing it happens once. See
 [`song-authoring-conventions.md`](song-authoring-conventions.md).
 
 ## A push overwrote my manual Live tweaks. How do I keep them?
@@ -138,8 +138,8 @@ re-pushing, fold your manual edits back into the DB:
   (a DB-only bake would revert on rebuild).
 
 The build holds you to it: a mix edit you pulled but didn't snapshot makes the
-next `build.py` refuse to run (`StaleSnapshotError`) instead of silently
-reverting it. Bake with `/hallucinote:song-snapshot` and build again — pull →
+next `build.py` halt with `StaleSnapshotError` until you bake it. Bake with
+`/hallucinote:song-snapshot` and build again — pull →
 bake → build.
 
 See the [Quickstart](quickstart.md#4-pull-manual-edits-back-optional).
@@ -167,8 +167,7 @@ Two things worth knowing. What you ask for is yours to be responsible for —
 *"cram Beethoven's Fifth into two minutes"* works partly because that material
 is public domain, and a 2019 pop single isn't. And the copyright status of
 AI-assisted work is unsettled and varies by jurisdiction, with human authorship
-generally the hinge; if you're releasing commercially, get advice that isn't a
-FAQ entry.
+generally the hinge; if you're releasing commercially, get professional advice.
 
 ## Can I compose in a non-12 tuning (microtonal / 19-EDO / Bohlen-Pierce)?
 
@@ -223,7 +222,7 @@ songs-repo pair). Only if nothing holds the song does a lone nested workspace
 win, so a new song still scaffolds where you'd expect.
 
 It never guesses between two real candidates: if two workspaces both hold the
-slug, it says so and names them instead of picking one.
+slug, it says so and names them, leaving the choice to you.
 
 If your songs live somewhere that search can't see — a songs repo more than one
 directory sideways, or several candidates — say so once:

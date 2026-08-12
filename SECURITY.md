@@ -17,7 +17,7 @@ Live version. A proof of concept helps a lot.
 contractual: an acknowledgement within about a week, an assessment of severity and a
 fix plan after that. We'll credit you in the advisory and the changelog unless you'd
 rather stay anonymous. If we conclude a report isn't a vulnerability, we'll explain
-why rather than closing silently.
+why, in writing, on the report.
 
 ## Supported versions
 
@@ -42,7 +42,7 @@ engine imports and executes to produce the song's database. That is the core des
 > **Building someone else's song runs their code, with your user's privileges.**
 
 Treat a song repository exactly as you'd treat any other repository you're about to
-run — a cloned `build.py` is not data, it's a program. Review before building songs
+run — a cloned `build.py` is a program. Review before building songs
 from people you don't know. We are not going to sandbox this away; the executable
 composition *is* the feature. Reports that amount to "`build.py` can run arbitrary
 code" are working-as-designed and will be closed as such.

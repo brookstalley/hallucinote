@@ -50,7 +50,8 @@ What this plan contributes, which the norm did not carry: the sweep's judgment
 that **verbatim quotation is untouchable** — `docs/tour.md` quotes session
 transcript, the user's own words, and `build.py` source, and rewriting captured
 evidence to satisfy a prose norm would falsify the thing the page exists to
-show. That is now recorded in the norm itself, as pending owner ratification.
+show. That is recorded in the norm itself, and the owner ratified it on
+2026-08-12 along with the prescriptive-rule carve-out.
 
 ## Chunks
 

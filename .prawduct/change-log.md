@@ -117,9 +117,11 @@ whether removing the negated half left the subject undefined, and "Ableton is
 the speaker" survives that deletion — so the test cleared the very sentence the
 row bans. Replaced in all four carriers with the foil test. **The carve-out
 count was dishonest**: the norm advertised two while the sweep applied four, so
-prescriptive rules and verbatim quotation are now recorded explicitly as
-*pending owner ratification* rather than folded in silently — the same
-leave-the-veto-real pattern that made this session's ruling possible. (One
+prescriptive rules and verbatim quotation were recorded explicitly as *pending
+owner ratification* rather than folded in silently — the same leave-the-veto-real
+pattern that made this session's ruling possible. **The owner ratified both the
+same day**, so the row now carries four owner-ratified carve-outs and nothing
+pending; a fifth is a ruling, not a judgment call. (One
 reviewer claim was wrong and is worth recording as such: the limitations
 register did **not** arrive with the rejected narrowing — it is in the owner's
 original 2026-08-11 wording as "Narrow exception".) And **four survivors** the

@@ -8,7 +8,7 @@ Every artifact on this page was captured live from those sessions: the transcrip
 
 The song ships in this repo.
 [`examples/punk-fate/`](../examples/punk-fate/) is the finished source, and `python examples/punk-fate/build.py` rebuilds its database from a clean checkout with no Live installed — that exact replay is what this repo's CI runs.
-The *prompt* works differently: hand the same sentence to another agent and it will make different choices, and that's the point — this page walks through how a song gets made, and the audio above is what one run of it produced.
+The *prompt* works differently: hand the same sentence to another agent and it will make different choices, and that's the point — this page walks through how a song gets made, and the audio below is what one run of it produced.
 
 *A fifteen-minute read. One artifact per beat.*
 

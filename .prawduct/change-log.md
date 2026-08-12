@@ -98,15 +98,34 @@ outright.
 
 **The test the sweep applied, recorded so it is checkable.** The banned form is
 a *contrast-definition*: a sentence characterizing the product, a component or
-the process by naming a thing it isn't. Plain negation stating a condition
-("Live isn't running") defines nothing and stays — if removing the negated half
-leaves the subject undefined, it was a contrast-definition. Four categories were
+the process by naming a **foil** — an alternative the subject is set against.
+Plain negation names no foil ("Live isn't running") and stays. (The row first
+carried a different test — whether removing the negated half left the subject
+undefined — which the Critic showed to be self-invalidating: "Ableton is the
+speaker" survives that deletion, so the test cleared the sentence the norm
+bans. Replaced in every carrier the same day.) Four categories were
 deliberately left standing: plain negations, prescriptive rules (an instruction
 may prohibit), the ratified limitations register (`## Non-goals`, SECURITY's
 out-of-scope list), and **verbatim quotation** — the tour's session transcript,
 the user's own words, and code quoted from `build.py`. Rewriting captured
 evidence to satisfy a prose norm would falsify the thing the tour exists to
 show; that boundary is worth more than uniformity.
+
+**What the Critic caught (0 blocking, 9 warnings, 11 notes).** Three fixes
+worth naming. The row's discriminating test was **self-invalidating**: it asked
+whether removing the negated half left the subject undefined, and "Ableton is
+the speaker" survives that deletion — so the test cleared the very sentence the
+row bans. Replaced in all four carriers with the foil test. **The carve-out
+count was dishonest**: the norm advertised two while the sweep applied four, so
+prescriptive rules and verbatim quotation are now recorded explicitly as
+*pending owner ratification* rather than folded in silently — the same
+leave-the-veto-real pattern that made this session's ruling possible. (One
+reviewer claim was wrong and is worth recording as such: the limitations
+register did **not** arrive with the rejected narrowing — it is in the owner's
+original 2026-08-11 wording as "Narrow exception".) And **four survivors** the
+Done-when had called clean, the worst being VISION's "Reach music Ableton was
+not built for … the DAW alone makes it actively hostile", which ranks against a
+named tool under `## Why` with no carve-out covering it.
 
 Docs-only. Suite green at 5005 passed / 2 skipped, before and after.
 

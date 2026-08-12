@@ -21,7 +21,7 @@ What you end up with is an ordinary Ableton set you finish yourself.
 
 One sentence started it.
 What made it a song was the next forty minutes: a brief that pinned down what *"Beethoven's Fifth as punk"* actually meant, four parts composed and revised, sound design, a render, and one mix correction that was measured before it was applied.
-A listening session the same day pushed it further, until it *sounded* like the brief and not just like the plan:
+A listening session the same day pushed it further, until it *sounded* like the brief:
 
 [![Punk Fate — full song waveform](docs/assets/tour-chapter2.png)](docs/assets/tour-chapter2.mp3)
 

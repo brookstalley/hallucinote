@@ -34,7 +34,7 @@ Scope to a file while you iterate; run it bare before you push.
 `tests/conftest.py` auto-groups tests by directory for `--dist loadgroup`.
 Tests marked `ableton` need a running Live and are **default-skip** — see `conftest.py` to opt in.
 
-### What CI does and doesn't cover
+### What CI covers, and the three gaps
 
 CI is one job: `uv lock --check`, ruff, mypy, then the full suite on **ubuntu-latest, Python 3.12 only**.
 Know the three gaps so you don't mistake a green check for more than it is:

@@ -53,10 +53,10 @@ Two bets, both unproven, both load-bearing:
   "Master has a limiter."
   Quality checks that today take a producer's ear and patient listening become assertions the song carries with it — to verify a change worked, to catch a regression after a fork, to keep the song coherent as it evolves.
 
-- **Reach music Ableton was not built for.** Polytempic pieces encoded by positioning events on a 1/64 grid against one nominal tempo.
+- **Reach music that needs this representation.** Polytempic pieces encoded by positioning events on a 1/64 grid against one nominal tempo.
   Microtonal music via Max for Live or per-voice pitch bend.
   None of this is easy.
-  But the DB representation makes it possible, where the DAW alone makes it actively hostile.
+  The DB representation is what makes it reachable at all.
 
 - **Composers anywhere on the spectrum.** Hobbyist with no theory, working producer, thirty-year veteran.
   Same as an LLM coding agent serving a middle-schooler and a senior engineer: the interface is conversation, and the depth of collaboration scales with the user.

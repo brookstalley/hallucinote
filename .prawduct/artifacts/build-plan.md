@@ -40,9 +40,15 @@ product, a component, or the process by naming a thing it isn't.
 
 - Banned — "a long agentic workflow, not a chat"; "Ableton is the speaker, not
   the score"; "Verified, not assumed".
-- Not the banned form — plain negation stating a condition rather than defining
-  anything: "Live isn't running", "verify consumers aren't broken". These do not
-  define their subject.
+- Not the banned form — plain negation, which names no foil: "Live isn't
+  running", "verify consumers aren't broken". They deny a predicate and offer
+  nothing to measure the subject against.
+
+The operative test is **does the sentence name a foil** — an alternative the
+subject is set against. (An earlier wording asked whether removing the negated
+half left the subject undefined; that was self-invalidating, since "Ableton is
+the speaker" survives the deletion and the test therefore cleared a sentence
+this plan bans. Caught by the Critic, replaced everywhere.)
 - Permitted by ratified carve-out — prior-art lineage (VISION's TidalCycles /
   Sonic Pi / Lilypond / DAWproject paragraph) and a limitations register
   (`known-issues.md`, VISION's `## Non-goals`), which state plain facts.

@@ -1,6 +1,6 @@
 # Hallucinote
 
-**Composition and production for Ableton Live. You make the calls; Claude does the building — notes, sound design and mix, as code you can read, version and fork.**
+**Composition and production for Ableton Live. Describe what you're after, hear it, argue with it — the song is code you can read, fork and rewrite.**
 
 [![CI](https://github.com/brookstalley/hallucinote/actions/workflows/ci.yml/badge.svg)](https://github.com/brookstalley/hallucinote/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -8,7 +8,7 @@
 
 ![The punk-fate prompt and creative brief in Claude Code, beside the finished four-track arrangement it built in Ableton Live](docs/assets/hero.png)
 
-Say what you're going for and it gets built into a running Live set — `build.py` for the notes, a snapshot for the instruments and mix. Then you listen, change your mind, and it rebuilds. Deciding what's right is the part that doesn't get automated, and shouldn't. What you're left with is an ordinary Ableton set you finish yourself, and a song that lives in a git directory instead of a binary `.als` you hope to find again.
+Say what you're going for and it gets built into a running Live set — `build.py` for the notes, a snapshot for the instruments and mix. Then you listen, change your mind, and it rebuilds. Because the song is code in a git directory, trying the half-time bridge or the key change costs a branch and a minute: keep it, or throw it away and try the next one. What you end up with is an ordinary Ableton set you finish yourself.
 
 ---
 
@@ -34,7 +34,7 @@ mix → devices → routing → device-sidechain → envelopes →
 performed automation → arrangement → cues
 ```
 
-Then press play. Don't like the bridge? *"Lift the lead an octave there, and make the chorus drums drag."* Claude edits the code and re-pushes, changing what you asked for and leaving the rest alone.
+Then press play. Want the bridge to hit harder? *"Lift the lead an octave there, and make the chorus drums drag."* Claude edits the code and re-pushes, changing what you asked for and leaving the rest alone.
 
 **Beat by beat, with the transcript, the screenshots and the mix numbers: [the tour](docs/tour.md).**
 
@@ -43,22 +43,15 @@ Then press play. Don't like the bridge? *"Lift the lead an octave there, and mak
 ![The lifecycle: a prompt becomes authored code, lands in Live, and the agent listens back](docs/assets/lifecycle.svg)
 
 - **You decide; it writes the decision down.** Notes, arrangement and automation in `build.py`; instruments, chains and the dialed mix in a snapshot. Every choice is legible afterwards — you can read what was done, and why, and change it.
+- **The notes come from generators you can read.** Parametric Python — `tresillo`, `walking_bass`, kit abstractions, per-part feel. Claude's craft is choosing which to call and with what musical parameters, then writing that down. What lands in Live is MIDI and mixer state in a session you own outright.
 - **Push materializes; pull ingests.** Push drives the song into a fresh or existing set; pull folds your manual Live edits back in. Re-runs are idempotent.
-- **It listens back — and it will tell you no.** Ask *"is the chorus landing?"* and Claude reads the composition, or renders the set and measures masking, loudness and groove, against the intent *you* declared. It reports what it actually found, including when the answer is that it isn't working.
-
-## What it isn't
-
-**There's no music model in here.** Nothing was trained on anyone's recordings, and nothing generates audio. The notes come from hand-written generators — plain Python you can open and read — and what lands in Live is MIDI and mixer state. You aren't handed a finished track that came from somewhere else. You're handed a session you own, and you finish it.
-
-**It won't write your hook.** No melody generator, and there won't be one. Sketch a topline and it builds the arrangement, the sound design and the mix underneath, then reads the line back and tells you whether it's landing. The part that makes a song recognizably yours stays yours.
-
-**It doesn't take the work away — it moves where the work goes.** Laying out 32 bars of hats with a feel that isn't robotic, dialing in a sidechain, working out whether the bass is masking the kick: that comes off your plate. Knowing what the song should be, and hearing when it isn't there yet, is still the whole job.
+- **It listens back, and tells you straight.** Ask *"is the chorus landing?"* and Claude reads the composition, or renders the set and measures masking, loudness and groove, against the intent *you* declared — then reports what it found and what it would change. Real numbers, and an opinion you can overrule.
 
 ## Who it's for
 
-- **Learning.** It proposes with the reasoning showing — *"E minor, so the chorus can lift into the relative major"* — and names the mechanism behind whatever you asked for. You can follow the argument, push back on it, and hear what changes. That's a different thing from a button that returns a song and teaches you nothing.
-- **Competent, and stuck on something.** Everyone has a part they're weakest at: drums that never quite swing, a mix that stays muddy, an arrangement that won't go anywhere. Get past it without abandoning the track or losing three days inside someone else's tutorial.
-- **Expert.** Leverage, and an argument. Bulk edits you'd otherwise script by hand, a chorus variant on a branch you can A/B and throw away, and a review pass that measures masking, loudness and timing against the intent you declared — then says where it disagrees. A second opinion with numbers behind it is rarer than it should be.
+- **Curious how songs get put together.** Ask for something, then ask why it works that way. It proposes with the reasoning showing — *"E minor, so the chorus can lift into the relative major"* — and you can overrule it and hear the difference straight away. You learn the craft by watching choices get made, then making better ones.
+- **Playing already, and reaching further.** The arrangement you can hear in your head but would spend a week programming: a bassline weaving between two different kick patterns, thirty-two bars of hats that breathe, a polyrhythmic bridge. Ask for it and listen to it.
+- **Deep in it.** Leverage. Bulk edits you'd otherwise script by hand, chorus variants on branches you A/B and discard, and a review pass that measures masking, loudness and timing against the intent you declared — then tells you where it disagrees. A second opinion with numbers behind it is rarer than it should be.
 
 ## What to ask for
 
@@ -72,7 +65,7 @@ Actively developed, and honest about the rough edges:
 
 - **Platforms:** Ableton Live 12 on macOS and Windows (Ableton ships no Linux build).
 - **Editions:** the full authoring loop is exercised on **Live 12 Standard and Suite**. Only the measured mix review needs **Max for Live** (Suite, or the add-on for Standard); without it, review is symbolic — against the score, not the audio. Intro and Lite are untested, and their track limits will bite.
-- **No melody generator** — [by design](docs/capability-truth.md), as above. Vocal *synthesis* is a separate gap, and that one simply isn't built.
+- **The melody is yours.** Sketch a topline in Live and it arranges, sound-designs and mixes the whole track underneath, then reads the line back against your intent — contour, intervals, how it sits on the chords. [Why it works this way](docs/capability-truth.md). Sung vocals are on the list; today the synth sings.
 - **Boundaries:** Claude authors MIDI and the mix; a recorded vocal take can't yet be read back through the bridge.
 - **What it costs to run:** Hallucinote is free; the Claude usage behind it isn't. A song is a long agentic session — the worked example above ran about forty minutes of continuous agent work, and each measured mix pass hands back a sizeable analysis payload. Expect a full compose-and-mix session to eat a real share of a Claude plan's budget. `/cost` reports what a session actually used. Live 12 (and Max for Live for the measured review) is the other bill.
 

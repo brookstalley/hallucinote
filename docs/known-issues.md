@@ -39,15 +39,13 @@ faster than you'd think) and the much thinner device palette that
 `/hallucinote:song-pick-instruments` picks chains from. If you try it, the
 report is genuinely useful.
 
-## No melody generator — by design, not pending
+## Sung vocals aren't synthesized yet
 
-Hallucinote won't write your lead line, and this one isn't on a roadmap: there
-is no melody generator and there won't be one. It arranges underneath a topline
-you sketch, and *reads* that line back against your intent, but the hook is
-yours. Listed here because users reasonably look for it as a limitation — the
-reasoning is in [`capability-truth.md`](capability-truth.md) and the
-[FAQ](faq.md#will-it-write-me-a-melody). Synthesized *vocals* are a separate
-gap, and that one is simply not built yet.
+A vocal *melody* sketched as MIDI round-trips in and gets arranged around, and
+the symbolic melody lens reads it back. Turning that line into a sung
+performance is future work; today a synth carries it. (Writing the topline
+itself is yours by design — [`capability-truth.md`](capability-truth.md) has
+the reasoning, and the [FAQ](faq.md#what-about-the-melody) the workflow.)
 
 ## Mid-song tempo / time-signature changes aren't supported
 

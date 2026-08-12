@@ -53,6 +53,11 @@ Developer preferences for how code is written in this project. Captured during d
   - `python examples/punk-fate/build.py [--reset]` — build the demo song into its SQLite DB
 - **DB files (prescriptive)**: **one SQLite DB per song**, in the song's own directory (`<songs_root>/<slug>/`), named `<slug>-<branch>.db` inside a git repo (branch sanitized `/` → `--`) and plain `<slug>.db` outside one or on detached HEAD — `db.connection.resolve_db_path` owns the rule. The directory name and `songs.name` (the slug) must match. The slug is filesystem-safe: `[a-z0-9_-]+` (lowercase, digits, hyphens, underscores). Human-facing names with spaces / capitals / punctuation go in `songs.title`. No sidecar config files; the DB schema is the source of truth for song metadata. `*.db` is gitignored.
 
+## Documentation & prose
+
+- **Write what a thing IS, never what it isn't.** (Ratified 2026-08-11; retroactive — apply when touching existing prose.) No "unlike X", no "this isn't a Y", no "we don't do Z", no rebuttal sections answering an objection the reader hasn't raised. State the capability, the mechanism, the fact — the negative space is implicit and the reader draws it themselves. *Why:* defining by contrast argues with a critic the reader hasn't met, which reads as defensive and plants the doubt it set out to answer; it also dates the doc to whatever it was reacting to. **Narrow exception:** an honest limitations register (`docs/known-issues.md`, a `## Non-goals` scope section written for contributors) where what-doesn't-work IS the content. State those as plain facts, never as defence.
+- **Positioning centres the person, not the tool.** The user holds the subject position on the creative verbs; the tool builds, measures and reports. Concrete and modest, and allowed to convey that the thing is enjoyable — powerful and fun are compatible with understated. Steer clear of grandiosity ("a revolutionary way to write music") and of condescension ("now you don't have to do the hard stuff") alike; both cost credibility with the people this is actually for.
+
 ## Workflow
 
 - **Branching model**: **gitflow** — `develop` is the primary integration branch; `main` is release-only.

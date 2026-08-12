@@ -60,13 +60,13 @@ Two bets, both unproven, both load-bearing:
 
 - **A live performance system.** This is a composition and production tool; live-stage performance happens downstream, in Ableton, with a rendered song. *(Distinct from the **performance realization layer** — [`performance-model.md`](../.prawduct/artifacts/performance-model.md) — which authors a song's rendition **feel** (microtiming, dynamics, articulation) at compose time. Authoring how a part is played is in scope; performing it live on a stage is not.)*
 
-- **A walled garden *of ours*.** Nothing we invent is proprietary: SQLite, Python, git, standard MCP. If Hallucinote dies, your songs are still readable and composable from the repo. Be clear-eyed about the other half, though — we are strapped to Ableton Live, which is closed and commercial, and the measured half of the loop needs Max for Live on top. Your *source* outlives us; *hearing* it means owning Live. That's a real dependency, priced below.
+- **A walled garden *of ours*.** Open formats throughout: SQLite, Python, git, standard MCP. Your songs stay readable and composable from the repo whatever becomes of us. The dependency that is real: Ableton Live is where they get heard, and the measured mix review wants Max for Live — priced below.
 
 ## What this costs
 
 Naming the hard parts so they do not surprise us:
 
-- **The price of entry is Ableton's, and it isn't small.** A Live 12 licence, plus Max for Live (bundled with Suite, a paid add-on for Standard) if you want the *measured* mix review rather than the symbolic one. We chose a mainstream DAW deliberately — the point is to author into the tool producers already finish records in, not a parallel universe they'd have to move to — but the bill is real, and it is not ours to discount.
+- **The price of entry is Ableton's.** A Live 12 licence, plus Max for Live (bundled with Suite, an add-on for Standard) for the measured mix review. We chose a mainstream DAW on purpose — the point is to author into the tool producers already finish records in — and that choice carries Ableton's price tag.
 
 - **Microtonal and polytempic music is real work.** The DB models it cleanly; getting Ableton to render it requires Max for Live, per-voice pitch routing, or 1/64-grid event positioning. Doable. Not free.
 

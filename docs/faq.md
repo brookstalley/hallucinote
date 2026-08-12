@@ -19,72 +19,29 @@ without derailing the track. Expert: it's leverage — bulk edits, branchable
 experiments, and a measured review that will tell you when something isn't
 working. See [`docs/VISION.md`](VISION.md) for the why.
 
-## How is this different from Suno, Udio, or "AI music" in general?
+**How it makes the music.** The notes come from hand-written parametric
+generators — `src/hallucinote/generators/`, plain Python: tresillo figures,
+walking bass, kit abstractions, per-part microtiming. Claude's craft is
+choosing which to call with which musical parameters, the way an arranger
+works, and writing that choice down as code you can read and edit. What lands
+in Live is MIDI and mixer state, in a session you own outright and finish
+yourself.
 
-Different category, different mechanism. Those are generative audio models: a
-prompt goes in, a finished recording comes out, produced by a model trained on
-a large corpus of other people's recordings. You can't open the result, you
-made none of the decisions inside it, and the provenance of what it learned
-from is contested.
+## What about the melody?
 
-**Hallucinote contains no music model of any kind.** The notes come from
-hand-written parametric generators — `src/hallucinote/generators/`, plain
-Python, and there is no `melody.py` in there. Claude's job is to decide *which
-generators to call with which musical parameters*, the way an arranger decides,
-and to write that decision down as code you can read and change. What lands is
-MIDI and mixer state in your own Live set. Nothing is rendered for you.
+The topline is yours to write, and the tool is built around that. Sketch it in
+Live — play it in, hum-and-quantize it, however you work — and Hallucinote
+builds the entire track underneath: harmony that supports the line, a groove
+that sits with it, the arrangement, the sound design, the mix.
 
-The honest comparison isn't Suno. It's a fast, patient arranger and mix
-engineer who works inside your DAW, writes down everything they did and why,
-argues with you when the chorus isn't landing, and never touches your melody.
-
-## Is using this cheating?
-
-The same question got asked about the drum machine, the sequencer, quantize,
-presets, and hiring a session player — and the answer has been the same every
-time: it depends on whether the result is what you meant, and whether you can
-tell. Hallucinote doesn't make the decisions that make a song yours. It won't
-choose your hook and it can't tell you what the song is about; ask it to and
-you'll get an honest refusal rather than a plausible imitation.
-
-What it removes is the distance between having an idea and hearing it. In
-practice that mostly means you get to *reject* more ideas per hour, which is
-what taste is made of. If you finish something you're proud of, nobody is
-grading the route you took.
-
-## Why is it called "Hallucinote"?
-
-Because the failure mode is the whole problem. An LLM asked about a DAW will
-happily invent a device, a parameter, or a capability it doesn't have, and in
-music production that wastes an afternoon before you notice. The name keeps the
-risk in view rather than pretending it away.
-
-The countermeasure is structural: [`capability-truth.md`](capability-truth.md)
-is a maintained table of what actually works, read by the agent at first
-contact and before song creation, with a standing rule that anything not in the
-table as supported must not be promised. The bridge refuses-and-teaches at the
-call site instead of silently doing the wrong thing, and the mix review reports
-*measured* DSP numbers, not impressions. Confabulation is the thing we design
-against; naming it seemed more honest than a name that implied we'd solved it.
-
-## Will it write me a melody?
-
-**No — and that's a design decision, not a gap we're closing.** There is no
-melody generator and there won't be one. Claude writes the groove, the harmony,
-the bass, the arrangement, the sound design and the mix; the lead line — the
-hook, the thing people hum — is yours.
-
-What you get instead is an arranger and a mirror. Sketch a topline in Live (or
-hum it in and quantize), pull it in, and Hallucinote builds the entire track
-underneath it. Then `/hallucinote:compose-review` *reads* the line back —
+Then it holds up a mirror. `/hallucinote:compose-review` reads the line back —
 contour, intervals, how it sits against the chords — and coaches it against the
-intent you declared. It measures; it never invents. There is no universal
-"good melody" verdict on offer.
+intent you declared, so *"does this chorus actually lift?"* gets an answer with
+reasoning attached. It measures the line; the line stays yours.
 
-So *"write me an 80s synth-pop song like Madonna"* gets you the Madonna-ness
-that lives in the dimensions we own — the chord moves, the groove, the
-arrangement, the production — with two honest caveats: no synthesized vocal,
-and the hook is your job. The full capability table is
+So *"an 80s synth-pop song like Madonna"* gets you the Madonna-ness that lives
+in the chord moves, the groove, the arrangement and the production, built under
+whatever topline you bring. The full capability table is
 [`capability-truth.md`](capability-truth.md).
 
 ## What does this cost to run?
@@ -105,8 +62,8 @@ Hallucinote itself is free and MIT-licensed. Three real costs sit behind it:
   regenerable, and not something to commit. (The small MixReport JSONs in
   `analysis/` *are* checked in; they're the measurements, not the audio.)
 
-No telemetry, no service fees, no account with us — there is no us to have an
-account with. See [`SECURITY.md`](../SECURITY.md).
+Everything runs on your own machine, so that's the whole list — there's nothing
+to sign up for. See [`SECURITY.md`](../SECURITY.md).
 
 ## Do I need to know Python?
 
@@ -141,16 +98,14 @@ reviews the composition against intent on any edition.
 **Yes.** Push materializes an ordinary Ableton project — real tracks, real
 clips, real devices, real return busses. From there it's plain Live: keep
 arranging, comp a vocal over it, run it through your mastering chain, export
-the WAV, release it. Nothing about the set is special or locked, and nothing
-phones home.
+the WAV, release it.
 
-When the README says a song is "a git directory, not a binary `.als`," it means
-the *source of truth* is text you can diff and fork — not that you're denied
-the `.als`. You get both: source you can version, and a session you can finish
-by hand. If you want hand-made changes to survive the next build, fold them
-back with `/hallucinote:ableton-pull` and `/hallucinote:song-snapshot`
-(see below). If you don't — if the song is finished and Live is where it now
-lives — just stop pushing. Nothing rewrites your set behind you.
+You get both halves. The git directory is the source you can version, diff and
+fork; the `.als` is a session you can finish by hand like any other. When
+you're mixing in Live and want those moves to survive the next build, fold them
+back with `/hallucinote:ableton-pull` and `/hallucinote:song-snapshot` (see
+below). When the song is done and Live is simply where it lives now, stop
+pushing and it's yours to finish.
 
 ## If I build the same song twice, do I get the same result?
 
@@ -194,28 +149,22 @@ Native Live devices and catalog-ID drift are handled automatically; bundling
 sample packs is out of scope. The three portability cases are spelled out in
 [`docs/collaboration.md`](collaboration.md).
 
-## Who owns the music? And is it going to plagiarize someone?
+## Who owns the music?
 
-**We claim nothing.** The MIT licence covers Hallucinote's *code*, not the
-songs you make with it. Nothing you author is transmitted to us — the tool runs
-locally, sends no telemetry, and makes no outbound calls of its own
-([`SECURITY.md`](../SECURITY.md)). Your song directory is yours.
+You do. The MIT licence covers Hallucinote's code; the songs you make with it
+are yours, and they stay on your machine ([`SECURITY.md`](../SECURITY.md)).
 
-On plagiarism, the architecture matters more than any promise: **there is no
-generative audio model in Hallucinote.** No trained music model, no sample
-regurgitation, nothing lifted from a corpus. The notes come from hand-written
-parametric generators (`src/hallucinote/generators/` — plain Python producing
-note arrays), and Claude's job is to *call* them with musical parameters. The
-one component with the highest plagiarism risk in machine-made music — the
-lead melody — is the one this tool deliberately [won't write](#will-it-write-me-a-melody).
+The provenance is unusually legible, which helps if you ever need it: the
+material comes from the generators described above plus the decisions you
+made, and both are written down in `build.py`. For any bar of the song you can
+see which generator produced it and which parameters were chosen.
 
-Two honest caveats. Ask for a specific existing song's material and you may
-well get it — that's what "cram Beethoven's Fifth into two minutes" is *for*,
-and the responsibility for what you ask is yours (that example is public
-domain; a 2019 pop single isn't). And the copyright status of AI-assisted work
-is unsettled and varies by jurisdiction, with human authorship generally the
-hinge. Nothing here is legal advice; if you're releasing commercially, get
-your own.
+Two things worth knowing. What you ask for is yours to be responsible for —
+*"cram Beethoven's Fifth into two minutes"* works partly because that material
+is public domain, and a 2019 pop single isn't. And the copyright status of
+AI-assisted work is unsettled and varies by jurisdiction, with human authorship
+generally the hinge; if you're releasing commercially, get advice that isn't a
+FAQ entry.
 
 ## Can I compose in a non-12 tuning (microtonal / 19-EDO / Bohlen-Pierce)?
 

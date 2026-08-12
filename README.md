@@ -17,6 +17,15 @@ What you end up with is an ordinary Ableton set you finish yourself.
 
 ## See it
 
+Two minutes: a prompt goes in, and a finished arrangement comes out playing in Live.
+
+<video src="https://github.com/user-attachments/assets/6032b568-a103-439b-8397-a6ca7cdec0eb" controls muted></video>
+
+*The chat is staged so the build runs under the conversation and there is something to watch; the caveat stays on screen throughout.
+Real sessions are more iterative and take longer.*
+
+A different song, made the same way, ships in this repo as source:
+
 > *"Make a 2-minute punk song that crams the chord progression of Beethoven's 5th into those two minutes. Drums, bass, lead guitar, and vocals on a staccato synth. Call it punk-fate."*
 
 One sentence started it.

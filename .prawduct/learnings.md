@@ -387,3 +387,15 @@ rather than silently matching either. (2026-08-07, TOUR B1)
 ## A criterion built from a symptom COUNT can fail by being satisfied
 
 **When an acceptance criterion is derived from a COUNT of symptoms, re-derive it per-symptom before treating a partial pass as failure. Some of the symptoms may be the tool being right, in which case the count was never the thing to hold.**
+
+## Narrowing a norm right after review finds you violating it is the tell
+
+**When review finds prose or code violating a norm and your first instinct is to narrow the NORM, stop — that is amending the rule to fit your own work, and "the corpus violates it" is evidence about the corpus. Record who actually decided each clause, ship the narrowing as PENDING OWNER VETO rather than as ratified, and let the owner rule. This norm was narrowed twice in one day; only the pending-veto record made the owner's later rejection possible at all.**
+
+## A discriminating test must be run against the examples it is meant to separate
+
+**When you write an operational test for a judgment call, apply it to your own banned AND permitted examples before shipping it. A test that sounds discriminating can invert: "would removing the negated half leave the subject undefined?" cleared "Ableton is the speaker, not the score" — the exact sentence its own row banned — because the remainder is perfectly well defined.**
+
+## A rule restated in N carriers is a rule that will drift in N-1 of them
+
+**When a rule needs recording in a plan, a change-log and its home artifact, restate it ONLY in the home and have the others point at it. Fixing one defective test wording here meant four hand-synced edits; a completed build plan is archived rather than deleted, so its stale copy outlives the source where someone still reads it.**

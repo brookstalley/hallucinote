@@ -25,6 +25,181 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-08-12 — README: the demo video embeds, and the owner's copy edits merge
+
+<!-- prawduct: type=docs | scope=docs-launch-readiness | release=v1.8.6 -->
+
+**The demo video plays inline.** `#329`'s conversion gap is closed: the README's
+only demo was an `.mp3` link, which GitHub will not play inline, so a reader had
+to download a file to hear anything. The 2:13 cut now leads *See it* as a player,
+hosted on GitHub's user-attachments CDN at zero repo weight. Committing the
+`.mp4` would not have worked — GitHub strips `<video>` pointing at repository
+files and blocks `raw.githubusercontent.com` from serving video — and would have
+spent a one-way-door slice of the 12 MB `docs/assets` budget for a download link.
+Acceptance was verified rather than asserted: envelope correlation **+0.993**
+against the stitched renders with matching RMS, the ±1024-sample per-state offset
+correction measured at 0.80–0.95, and the caveat legible at three timestamps.
+
+**The owner's copy edits merged from `main`.** `f10c92d` landed directly on
+`main` against the pre-sweep, pre-rewrap README, so it collided with all three
+passes on the branch. The copy was taken as authored; only mechanics were
+reconciled (semantic line breaks, one trailing-whitespace line, the video block
+kept above the punk-fate example their intro now leads into).
+
+**Two owner decisions recorded so neither is re-litigated as a defect:**
+
+1. **The README and the tour quote the punk-fate prompt differently, and both
+   stay.** The README says "rhythm guitar, and vocals emulated by a lead
+   guitar"; `docs/tour.md` quotes the session log verbatim as "lead guitar, and
+   vocals on a staccato synth". The README's version describes what the song
+   became — chapter 15 turns track 4 into a lead guitar — rather than what was
+   typed. Flagged as a contradiction of the kind the launch-readiness pass
+   existed to close; the owner ruled to keep both as they are. A future docs
+   review should treat this as decided, not as drift.
+2. **"What you end up with is an ordinary Ableton set you finish yourself" is
+   deliberately gone**, though the launch-readiness pass added it to answer a
+   question the FAQ devotes a section to. The FAQ still answers it in full.
+
+Docs-only. Suite green at 5005 passed / 2 skipped.
+
+## 2026-08-12 — The release process gains a GitHub Release step
+
+<!-- prawduct: type=docs | scope=release-process-docs | release=v1.8.6 -->
+
+**Six annotated tags, zero Release objects.** The ten-step release procedure
+ended at *Verify*, so every cut since v1.8.0 produced a tag and nothing a person
+landing on the repo would see. Found while checking whether `gh` could upload
+the demo video; the repo had no releases at all.
+
+Step 11 now covers it, and encodes four things learned doing it:
+
+- **Draft first, always.** A published Release notifies watchers and is the most
+  outward-facing artifact the process produces. A draft is invisible and
+  deletable, so it gets reviewed before it exists publicly.
+- **`--verify-tag`**, so a typo fails rather than inventing a tag pointing at
+  nothing.
+- A draft's URL reads `releases/tag/untagged-<hash>` until published — normal,
+  and worth writing down before someone reports it as a bug.
+- **Release notes are reader-facing positioning prose**, so the § Documentation
+  & prose norm governs them. The v1.8.5 notes were written to it and checked
+  against it.
+
+Also recorded: a release asset serves from `github.com/.../releases/download/`,
+which will **not** render as an inline player in markdown. Only a
+`user-attachments` URL does, and obtaining one is a web-UI upload with no `gh`
+equivalent — verified against the API, which 404s on the uploader endpoint.
+
+v1.8.5 is drafted from the two change-log entries carrying `release=v1.8.5`,
+with the 6.1 MB demo cut attached as an asset.
+
+Docs-only. Suite green at 5005 passed / 2 skipped.
+
+## 2026-08-12 — Semantic line breaks for markdown prose
+
+<!-- prawduct: type=docs | scope=docs-positive-framing | release=v1.8.6 -->
+
+**Owner decision, prompted by a fair question about the sweep.** The positioning
+sweep produced a whitespace-only reflow commit — sentences got shorter, so
+hard-wrapped paragraphs had to re-flow. Asked why the files were hand-wrapped
+at all, the honest answer was that two conventions were in play and neither was
+written down: `CONTRIBUTING`, `SECURITY`, `faq` and `tour` wrapped at ~70
+columns, while `README` and `VISION` put each paragraph on one long line.
+
+All six now use **semantic line breaks — one sentence per line**. A hard wrap
+makes a one-word edit reflow its paragraph, so the diff reports a paragraph
+where a word changed; one-sentence-per-line keeps the short lines an editor
+wants and makes diffs word-accurate. Rendered output is identical, since
+markdown folds single newlines inside a paragraph.
+
+Applied mechanically, with two guards worth keeping: the transform **refused to
+write any file whose word stream changed**, and it caught a real bug doing so —
+an optional closing-quote class sat inside the split pattern, so `re.split`
+silently ate the quote in `B."`. Each file was then verified token-identical
+against its committed version. Code fences, tables, blockquotes, headings and
+link-only lines passed through untouched, so the tour's quoted session
+transcript and `build.py` excerpts are byte-identical.
+
+The norm is recorded in `project-preferences.md` § Documentation & prose,
+including the honest scope: the rest of `docs/` and `skills/` are still
+hard-wrapped, and convert when next touched substantially — in their own
+whitespace-only commit, never mixed with a wording change.
+
+Docs-only. Suite green at 5005 passed / 2 skipped.
+
+## 2026-08-12 — The prose norm's absolute reading, restored by owner ruling
+
+<!-- prawduct: type=docs | chunks=C1,C2,C3 | scope=docs-positive-framing | release=v1.8.6 -->
+
+**The norm was narrowed twice by the agent on the day it shipped; the owner has
+now ruled on both narrowings.** *Write what a thing IS; never define it by what
+it isn't* was ratified 2026-08-11 from the owner's own correction. Within hours
+the agent narrowed it twice, each time immediately after a review round found
+shipping prose that violated it — the textbook shape of amending a rule to fit
+your own work. Both narrowings were recorded as pending veto rather than as
+ratified, which is the only reason they were still reversible.
+
+- **Narrowing 1 — REJECTED.** The "competitor/critic (banned) vs mechanism
+  (fine)" test is withdrawn. The owner's original clause — *no "this isn't a
+  Y"* — means what it says, whatever the sentence is describing.
+- **Narrowing 2 — RATIFIED.** Naming prior art as lineage stays permitted;
+  ranking this product against it remains banned. VISION's TidalCycles /
+  Sonic Pi / Lilypond / DAWproject paragraph keeps its place.
+
+**The owner also set the norm's scope, which had never been stated.** It governs
+positioning prose — `README.md`, `CONTRIBUTING.md`, `SECURITY.md`,
+`docs/VISION.md`, `docs/faq.md`, `docs/tour.md`. Reference docs elsewhere under
+`docs/`, agent-read `skills/`, `.prawduct/artifacts/` and the frozen
+`docs/archive/` sit outside it: in operating instructions the construction
+disambiguates ("the list itself, not the wrapper") rather than defends, and the
+absolute rule applied there would have cost precision across ~1,400 sites for no
+positioning gain. Scope is now written into the norm so the next agent inherits
+it instead of re-deriving it.
+
+**What the sweep changed.** Every contrast-definition in the six in-scope files,
+rewritten positively — the flagship "a long agentic workflow, not a chat"
+(`faq.md`), "Ableton is the speaker, not the score" and "A diff is not '33 notes
+changed'" (`VISION.md`), "Verified, not assumed", "Grit as timbre, not level",
+"a preset name is a claim, not a measurement" and a section heading
+(`tour.md`), "a cloned `build.py` is not data, it's a program" (`SECURITY.md`),
+and the symbolic-review and cost lines in `README.md`. Most rewrites are the
+better sentence, because dropping the foil forces the claim to be stated
+outright.
+
+**The test the sweep applied, recorded so it is checkable.** The banned form is
+a *contrast-definition*: a sentence characterizing the product, a component or
+the process by naming a **foil** — an alternative the subject is set against.
+Plain negation names no foil ("Live isn't running") and stays. (The row first
+carried a different test — whether removing the negated half left the subject
+undefined — which the Critic showed to be self-invalidating: "Ableton is the
+speaker" survives that deletion, so the test cleared the sentence the norm
+bans. Replaced in every carrier the same day.) Four categories were
+deliberately left standing: plain negations, prescriptive rules (an instruction
+may prohibit), the ratified limitations register (`## Non-goals`, SECURITY's
+out-of-scope list), and **verbatim quotation** — the tour's session transcript,
+the user's own words, and code quoted from `build.py`. Rewriting captured
+evidence to satisfy a prose norm would falsify the thing the tour exists to
+show; that boundary is worth more than uniformity.
+
+**What the Critic caught (0 blocking, 9 warnings, 11 notes).** Three fixes
+worth naming. The row's discriminating test was **self-invalidating**: it asked
+whether removing the negated half left the subject undefined, and "Ableton is
+the speaker" survives that deletion — so the test cleared the very sentence the
+row bans. Replaced in all four carriers with the foil test. **The carve-out
+count was dishonest**: the norm advertised two while the sweep applied four, so
+prescriptive rules and verbatim quotation were recorded explicitly as *pending
+owner ratification* rather than folded in silently — the same leave-the-veto-real
+pattern that made this session's ruling possible. **The owner ratified both the
+same day**, so the row now carries four owner-ratified carve-outs and nothing
+pending; a fifth is a ruling, not a judgment call. (One
+reviewer claim was wrong and is worth recording as such: the limitations
+register did **not** arrive with the rejected narrowing — it is in the owner's
+original 2026-08-11 wording as "Narrow exception".) And **four survivors** the
+Done-when had called clean, the worst being VISION's "Reach music Ableton was
+not built for … the DAW alone makes it actively hostile", which ranks against a
+named tool under `## Why` with no carve-out covering it.
+
+Docs-only. Suite green at 5005 passed / 2 skipped, before and after.
+
 ## 2026-08-11 — Release process: the back-merge is a fast-forward, and `main` may be elsewhere
 
 <!-- prawduct: type=docs | scope=release-process-docs | release=v1.8.5 -->

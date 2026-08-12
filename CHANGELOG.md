@@ -8,6 +8,43 @@ per-fix narratives if you want the deep story behind any entry.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.6] — 2026-08-12
+
+The demo release. The README now opens with a two-minute video of a prompt
+becoming a finished arrangement playing in Live, so you can hear what this does
+before installing anything.
+
+**Upgrade note:** none. **Re-vendor: not required** — no handshake-fingerprint
+paths changed, so the Remote Script in your Live User Library keeps working as
+is. Documentation only; no behavior changes.
+
+### Added
+
+- **A demo video in the README**, playing inline. Previously the only demo was
+  an audio link you had to download to hear.
+- **A GitHub Release for each version.** The project had been tagging releases
+  without publishing them, so there was nothing to land on; v1.8.5 was published
+  retroactively and every release from here carries notes and assets.
+
+### Changed
+
+- **The README says what the tool is, in the user's own terms.** The opening,
+  the worked-example intro and the bridge example were rewritten by the project
+  owner; the round-trip through Ableton is now stated up front, including that
+  audio does not come back yet.
+- **The docs stopped defining things by what they are not.** Roughly forty-five
+  constructions across the README, VISION, FAQ, tour, CONTRIBUTING and SECURITY
+  now state the capability, the mechanism or the fact outright. The honest
+  limits are unchanged and still stated plainly — `docs/known-issues.md`,
+  VISION's non-goals and SECURITY's scope list all read as before.
+
+### Fixed
+
+- **A stale claim in the demo-video design** that listed work as outstanding
+  when it had already shipped.
+- **A contributor-facing inaccuracy**: the CI section described its own coverage
+  gaps under a heading that undersold what CI does check.
+
 ## [1.8.5] — 2026-08-11
 
 A documentation release, from a critical read of everything a new user sees.

@@ -27,7 +27,7 @@
 
 ## 2026-08-12 — README: the demo video embeds, and the owner's copy edits merge
 
-<!-- prawduct: type=docs | scope=docs-launch-readiness -->
+<!-- prawduct: type=docs | scope=docs-launch-readiness | release=v1.8.6 -->
 
 **The demo video plays inline.** `#329`'s conversion gap is closed: the README's
 only demo was an `.mp3` link, which GitHub will not play inline, so a reader had
@@ -64,7 +64,7 @@ Docs-only. Suite green at 5005 passed / 2 skipped.
 
 ## 2026-08-12 — The release process gains a GitHub Release step
 
-<!-- prawduct: type=docs | scope=release-process-docs -->
+<!-- prawduct: type=docs | scope=release-process-docs | release=v1.8.6 -->
 
 **Six annotated tags, zero Release objects.** The ten-step release procedure
 ended at *Verify*, so every cut since v1.8.0 produced a tag and nothing a person
@@ -96,7 +96,7 @@ Docs-only. Suite green at 5005 passed / 2 skipped.
 
 ## 2026-08-12 — Semantic line breaks for markdown prose
 
-<!-- prawduct: type=docs | scope=docs-positive-framing -->
+<!-- prawduct: type=docs | scope=docs-positive-framing | release=v1.8.6 -->
 
 **Owner decision, prompted by a fair question about the sweep.** The positioning
 sweep produced a whitespace-only reflow commit — sentences got shorter, so
@@ -128,7 +128,7 @@ Docs-only. Suite green at 5005 passed / 2 skipped.
 
 ## 2026-08-12 — The prose norm's absolute reading, restored by owner ruling
 
-<!-- prawduct: type=docs | chunks=C1,C2,C3 | scope=docs-positive-framing -->
+<!-- prawduct: type=docs | chunks=C1,C2,C3 | scope=docs-positive-framing | release=v1.8.6 -->
 
 **The norm was narrowed twice by the agent on the day it shipped; the owner has
 now ruled on both narrowings.** *Write what a thing IS; never define it by what

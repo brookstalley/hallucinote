@@ -58,12 +58,14 @@ Hallucinote itself is free and MIT-licensed. Three real costs sit behind it:
   to consume a real share of a Claude plan's budget — `/cost` in Claude Code
   reports what a given session actually used.
 - **Disk.** Every measured mix pass renders audio, and the per-render WAVs are
-  the heavy part. They land in the song's `captures/`, which is gitignored —
-  regenerable, and not something to commit. (The small MixReport JSONs in
-  `analysis/` *are* checked in; they're the measurements, not the audio.)
+  the heavy part. They land in the song's `captures/`, alongside the MixReport
+  JSONs in `analysis/`. A workspace created by Hallucinote gitignores both, so
+  they stay local, regenerable build artifacts.
 
-Everything runs on your own machine, so that's the whole list — there's nothing
-to sign up for. See [`SECURITY.md`](../SECURITY.md).
+Those three are the whole list. Hallucinote itself runs entirely on your own
+machine, so there's no account with us and no service fee on top — the Claude
+plan and the Ableton licence are billed by Anthropic and Ableton, as you'd
+expect. See [`SECURITY.md`](../SECURITY.md).
 
 ## Do I need to know Python?
 
@@ -75,13 +77,14 @@ Hallucinote itself, yes — see [`CONTRIBUTING.md`](../CONTRIBUTING.md).
 ## Does it work on Windows?
 
 Yes — macOS and Windows, with **Ableton Live 12** (Ableton ships no Linux
-build). Being straight with you about the mileage, though: macOS is where
-Hallucinote is developed day to day, and the Windows paths — User Library
-locations, the Live process lookup, the Remote Script install — are implemented
-and hand-checked but see less traffic. The automated suite runs on neither
-platform's Live, because CI has no Ableton to talk to. If something Windows-shaped
-breaks, that's a real bug and we want [the issue](https://github.com/brookstalley/hallucinote/issues) —
-include your `preflight` output. See [README → Install](../README.md#install).
+build). Worth knowing where the mileage is, though: macOS is where Hallucinote
+is developed day to day. The Windows-specific paths — User Library locations,
+the Live process lookup, the Remote Script install — are implemented and
+unit-tested, and CI runs on Linux with no Ableton at all, so the Windows
+install has far fewer real sessions behind it than the macOS one. If something
+Windows-shaped breaks, that's a real bug and we want
+[the issue](https://github.com/brookstalley/hallucinote/issues) — include your
+`preflight` output. See [README → Install](../README.md#install).
 
 ## Can I mix the song inside Hallucinote?
 
@@ -91,7 +94,7 @@ authorship, not a post-hoc to-do). You then push to Live and do hands-on mixing
 there; pull your tweaks back with `/hallucinote:ableton-pull` to keep them. Detailed mix
 *review* (masking, loudness, reverb, timing) is available via `/hallucinote:mix-review`,
 which uses Max for Live (Live Suite, or the M4L add-on); `/hallucinote:compose-review`
-reviews the composition against intent on any edition.
+reviews the composition against intent on Standard as well as Suite.
 
 ## When I'm done, do I have a normal Live set I can finish and release?
 

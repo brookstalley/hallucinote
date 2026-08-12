@@ -14,9 +14,9 @@ Two bets, both unproven, both load-bearing:
 
 1. **Structure makes the model competent.** If the LLM sees the song as semantic objects — tags like `ghost` / `downbeat`, section roles, generator-call provenance, an event log of every change — it can collaborate at the level of musical ideas rather than guessing at MIDI bytes. A diff is not "33 notes changed." It is "raised verse ghost snares +5, swapped the chorus walk for an embellishment, added a fill at bar 12."
 
-2. **Songs should be forkable.** A song is a git repo. Branch a chorus variant, A/B against main, throw it away. Two collaborators on different continents can each run the song against their own Ableton, push and pull edits like code. No binary DAW project, no email attachments.
+2. **Songs should be forkable.** A song is a git repo. Branch a chorus variant, A/B against main, throw it away. Two collaborators on different continents can each run the song against their own Ableton, push and pull edits like code.
 
-   Plain-text music is not new — TidalCycles, Sonic Pi, SuperCollider, ChucK and Lilypond all have it, and [DAWproject](https://github.com/bitwig/dawproject) is an open interchange format several DAWs now read. What is rare is the combination: text that is *diffable at the level of musical intent* (`raised verse ghost snares +5`, not a changed XML node), that drives a **mainstream DAW you already mix in**, and that an agent has complete read/write access to. Each of those exists somewhere. Together, in one tool, they don't.
+   The combination worth building is a specific one: text that is *diffable at the level of musical intent* (`raised verse ghost snares +5`, rather than a changed XML node), driving a **mainstream DAW people already finish records in**, with an agent holding complete read/write access to the structure. Plain-text music has a long line behind it — TidalCycles, Sonic Pi, SuperCollider, ChucK, Lilypond, and [DAWproject](https://github.com/bitwig/dawproject) as an open interchange format — and this sits in that line, aimed at those three properties at once.
 
 ## Why
 
@@ -32,7 +32,7 @@ Two bets, both unproven, both load-bearing:
 
 - **Reach music Ableton was not built for.** Polytempic pieces encoded by positioning events on a 1/64 grid against one nominal tempo. Microtonal music via Max for Live or per-voice pitch bend. None of this is easy. But the DB representation makes it possible, where the DAW alone makes it actively hostile.
 
-- **Composers anywhere on the spectrum.** Hobbyist with no theory, working producer, thirty-year veteran. Same as an LLM coding agent serving a middle-schooler and a senior engineer: the interface is conversation, and the depth of collaboration scales with the user. The beginner gets a collaborator that explains its choices well enough to argue with; the veteran gets leverage, and a second opinion that can be checked against numbers. Neither gets a tool that decides for them — the thing we are most careful not to build is one that quietly substitutes its taste for yours.
+- **Composers anywhere on the spectrum.** Hobbyist with no theory, working producer, thirty-year veteran. Same as an LLM coding agent serving a middle-schooler and a senior engineer: the interface is conversation, and the depth of collaboration scales with the user. The beginner gets a collaborator that explains its choices well enough to argue with; the veteran gets leverage, and a second opinion that can be checked against numbers. Both keep the deciding vote: the tool surfaces its taste explicitly, with reasoning attached, so you can see it and overrule it.
 
 ## What
 

@@ -6,10 +6,12 @@ on it, start with the [README](README.md) and [Quickstart](docs/quickstart.md).
 
 ## Development setup
 
-**Use [uv](https://docs.astral.sh/uv/), not pip.** The repo is a uv workspace,
-the shipped plugin runs `uv run --frozen`, and CI gates on `uv lock --check` —
-so a hand-rolled venv drifts from what actually ships and from what CI
-verifies. uv provisions the interpreter too; Python 3.10 is the floor.
+**[uv](https://docs.astral.sh/uv/) is the norm here**, because it's the one
+with CI enforcement behind it: the repo is a uv workspace, the shipped plugin
+runs `uv run --frozen`, and CI gates on `uv lock --check`. uv provisions the
+interpreter too; Python 3.10 is the floor. A local `pip install -e '.[dev]'`
+venv still works for editing and isn't forbidden — it's a personal
+convenience, and **a "green" claim has to come from the locked environment.**
 
 ```bash
 git clone https://github.com/brookstalley/hallucinote.git
@@ -32,10 +34,10 @@ uv run python -m pytest -n auto --dist loadgroup                  # full suite, 
 uv run python -m pytest hallucinote_mcp/tests/unit/test_actions_device.py   # one file, while iterating
 ```
 
-**The pre-PR run takes no path argument.** `testpaths` covers `tests/` *and*
-`hallucinote_mcp/tests/`, so a path-scoped run silently skips the other half
-and reports green. Scope to a file while you iterate; run it bare before you
-push.
+**The pre-PR run takes no path argument.** `testpaths` is
+`["tests", "hallucinote_mcp/tests", "examples"]` — three roots — so a
+path-scoped run silently skips the others and still reports green. Scope to a
+file while you iterate; run it bare before you push.
 
 `tests/conftest.py` auto-groups tests by directory for `--dist loadgroup`.
 Tests marked `ableton` need a running Live and are **default-skip** — see
@@ -55,13 +57,20 @@ green check for more than it is:
   hand-verification, ideally on both.
 - **One interpreter.** `requires-python` floors at 3.10; only 3.12 runs.
   mypy's `python_version = 3.10` covers the floor statically, not at runtime.
+
+### Test discipline
+
 **Write tests alongside the code, never after** — if you can't write the test,
 you don't yet understand the requirement. Never weaken a test to make it pass;
 fix the code. Run the full suite green before opening a PR.
 
-Per-song tests live under `songs/<slug>/tests/` and are discovered
-automatically. Test filenames must be unique across songs
-(`test_<slug>_build.py`, not bare `test_build.py`).
+Per-song tests live beside the song, in `<slug>/tests/`, and are discovered
+automatically. Authored songs live in their own workspace repo (the
+framework⇄songs split), so the case you'll meet in *this* repo is the
+`examples/` demo workspace — `examples/punk-fate/tests/` runs in the default
+suite, which is why `examples` is one of the three `testpaths` roots. Test
+filenames must be unique across songs (`test_<slug>_build.py`, never a bare
+`test_build.py`).
 
 ## MCP changes need a full refresh — all three steps
 
@@ -123,8 +132,10 @@ check before bundling unrelated edits to them into a feature PR.
 - **Never swallow exceptions** — catch specific ones and log with context. A
   genuinely necessary broad catch is waived inline, with the reason spelled out:
   `except Exception as e:  # prawduct:allow prawduct/broad-except -- <why>`.
-  (You'll see an older reasonless `# prawduct:ok-broad-except` spelling in
-  places; it's legacy and tracked for cleanup — don't write new ones.)
+  (You'll see an older `# prawduct:ok-broad-except` spelling around the
+  codebase, mostly carrying a reason after an em-dash. It's legacy — the
+  current pragma names the rule it waives, which is what makes waivers
+  greppable per rule. Don't write new ones.)
 - **Update artifacts when code changes what they describe** — stale docs are
   worse than none. If you change a contract surface (API, DB, IPC,
   frontend/backend), verify consumers aren't broken.

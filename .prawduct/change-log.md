@@ -25,6 +25,67 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-08-11 — Launch-readiness docs pass: contradictions closed, framing recentred
+
+<!-- prawduct: type=docs | scope=docs-launch-readiness -->
+
+A critical review of the user-facing docs from the README outward, then the
+fixes. Three commits, no product behavior change; the one non-`.md` file is the
+plugin marketplace manifest, whose description string was stale prose.
+
+**Four contradictions.** `.claude-plugin/marketplace.json` told every installing
+user the plugin "Requires the `hallucinote` Python engine installed" — stale
+since the plugin absorbed the engine, and against the README's "self-contained".
+It is the first sentence a user reads, in the install dialog. `VISION.md`
+claimed audio recorded against a click flows back into the DB in the present
+tense, which `known-issues.md` contradicts; it now separates the symbolic
+round-trip (real today) from audio (a goal). VISION's "impossible in every other
+tool" invited an argument it would lose — TidalCycles, Sonic Pi, Lilypond and
+DAWproject all exist — and now claims the defensible combination instead.
+`CONTRIBUTING.md` taught a pip/venv setup while CI runs `uv --locked` and the
+plugin ships `uv --frozen`, and taught the deprecated `ok-broad-except` spelling
+that `project-preferences.md` marks legacy.
+
+**Omissions a prospective user hits before installing.** What it costs to run
+(Claude usage and the Ableton bill) appeared nowhere; both are now in README
+Status and the FAQ. No token figure is published because none is measured
+anywhere in the repo — the shape of the cost is stated instead, and #458 tracks
+measuring it. "The melody is yours" was the single most load-bearing product
+fact and lived only in `capability-truth.md`, an internal doc, while the README
+advertised "any genre, any shape". Also added: whether you end up with a normal
+Live set you can finish and release (yes — it was buried in `collaboration.md`),
+build determinism, and output ownership.
+
+**Editions and CI honesty.** "Any Live 12 edition" narrowed to the editions
+actually exercised (Standard, Suite); Intro and Lite are named as untested in
+`known-issues.md` with the two failure modes that will bite. `CONTRIBUTING.md`
+gained a section stating what CI covers: no Ableton, no macOS or Windows leg,
+one interpreter. #459 and #460 track the underlying decisions.
+
+**Framing.** The README had put Claude in the subject position of every creative
+verb — "You describe a song; Claude writes it", "You talk; Claude authors code"
+— which reads backwards to the audience most primed to distrust AI tooling. The
+user now holds the creative verbs; the tool builds, measures and reports. A
+"Who it's for" section covers the three registers (curiosity, reach, leverage)
+without describing anyone by their deficits, and the cheap-experiment loop that
+makes the tool fun is stated where it was previously missing.
+
+**A norm came out of it** (`project-preferences.md` → Documentation & prose,
+ratified 2026-08-11, retroactive): **write what a thing IS, never what it
+isn't.** An intermediate draft of this very pass added a "What it isn't"
+section and Suno/is-this-cheating FAQ entries; they argued with a critic the
+reader had not met and planted the doubt they answered. They were removed
+rather than softened, and the fact underneath them — the notes come from
+parametric generators you can read — now states itself positively as mechanism.
+The narrow exception is a limitations register (`known-issues.md`, a
+`## Non-goals` section), where what-doesn't-work IS the content.
+
+Backlog filed from the review: #457 (a second worked example in an exposed
+genre), #458 (measure per-song usage), #459 (CI platform matrix), #460
+(Intro/Lite). The demo-video finding folded into existing #329 rather than
+duplicating it, with a comment recording the part its acceptance was missing:
+the delivered `.mp4` has to be embedded in the README to play inline.
+
 ## 2026-08-11 — The prose pass: README rewritten, corpus scrubbed, generator fixed
 
 <!-- prawduct: type=docs | scope=docs-writing-quality | status=shipped | release=v1.8.4 -->

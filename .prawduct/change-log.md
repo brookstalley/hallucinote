@@ -25,6 +25,32 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-08-11 — Release process: the back-merge is a fast-forward, and `main` may be elsewhere
+
+<!-- prawduct: type=docs | scope=release-process-docs -->
+
+Reconstructed at the v1.8.5 cut from commit `f4f9ad2`, which landed on
+`develop` with no entry of its own — exactly the gap step 1 of
+`docs/release-process.md` warns about, found by running the audit it
+prescribes (`git log --oneline --no-merges origin/main..develop`).
+
+Two traps hit during the v1.8.4 cut, both fixed at the source that allowed
+them. **Step 9's back-merge is the one merge in the process that is
+deliberately not a merge commit**, and nothing said so — it sits two
+paragraphs under step 8, which *does* require `--no-ff`, against a repo-wide
+`--no-ff` habit, so the bare `git merge` read as an omission rather than a
+specification. Passing `--no-ff` there leaves `develop` permanently one commit
+ahead of `main` and makes step 10's `rev-list` count read 1 instead of 0 — a
+check that appears to fail while the trees are identical. Now stated outright,
+with the false alarm named so the next reader recognizes it.
+
+**Step 8 assumed `git checkout main` works.** Where `main` is checked out in
+another worktree it refuses outright, and that worktree must not be disturbed
+to satisfy a release. The plumbing path is now written down: verify the merged
+tree equals `develop`'s, build the two-parent commit with `commit-tree`, push
+it straight to the remote ref — the same merge commit step 8 describes,
+without the checkout.
+
 ## 2026-08-11 — Launch-readiness docs pass: contradictions closed, framing recentred
 
 <!-- prawduct: type=docs | scope=docs-launch-readiness -->

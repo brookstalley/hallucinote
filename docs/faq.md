@@ -6,11 +6,51 @@ the authority — this FAQ points there rather than duplicating it.
 
 ## What is Hallucinote, and who is it for?
 
-An LLM-native music composition and production environment: you describe musical
-intent in plain language and Claude composes a song against a SQLite source of
-truth, then pushes it into Ableton Live through an in-repo MCP server. It's for
-technically-comfortable musicians and producers who are happy running a CLI.
-See [`docs/VISION.md`](VISION.md) for the why.
+A composition and production environment for Ableton Live where the building
+happens in conversation. You say what you're going for; the song gets written
+as readable code — notes, arrangement, sound design, mix — against a SQLite
+source of truth, and pushed into Live through an MCP bridge. You listen, you
+redirect, it rebuilds.
+
+It suits musicians and producers who are comfortable at a command line, at any
+level of musical experience. Learning: it explains its choices, and you can
+argue with them. Competent but stuck on drums or mixes: it gets you past that
+without derailing the track. Expert: it's leverage — bulk edits, branchable
+experiments, and a measured review that will tell you when something isn't
+working. See [`docs/VISION.md`](VISION.md) for the why.
+
+## How is this different from Suno, Udio, or "AI music" in general?
+
+Different category, different mechanism. Those are generative audio models: a
+prompt goes in, a finished recording comes out, produced by a model trained on
+a large corpus of other people's recordings. You can't open the result, you
+made none of the decisions inside it, and the provenance of what it learned
+from is contested.
+
+**Hallucinote contains no music model of any kind.** The notes come from
+hand-written parametric generators — `src/hallucinote/generators/`, plain
+Python, and there is no `melody.py` in there. Claude's job is to decide *which
+generators to call with which musical parameters*, the way an arranger decides,
+and to write that decision down as code you can read and change. What lands is
+MIDI and mixer state in your own Live set. Nothing is rendered for you.
+
+The honest comparison isn't Suno. It's a fast, patient arranger and mix
+engineer who works inside your DAW, writes down everything they did and why,
+argues with you when the chorus isn't landing, and never touches your melody.
+
+## Is using this cheating?
+
+The same question got asked about the drum machine, the sequencer, quantize,
+presets, and hiring a session player — and the answer has been the same every
+time: it depends on whether the result is what you meant, and whether you can
+tell. Hallucinote doesn't make the decisions that make a song yours. It won't
+choose your hook and it can't tell you what the song is about; ask it to and
+you'll get an honest refusal rather than a plausible imitation.
+
+What it removes is the distance between having an idea and hearing it. In
+practice that mostly means you get to *reject* more ideas per hour, which is
+what taste is made of. If you finish something you're proud of, nobody is
+grading the route you took.
 
 ## Why is it called "Hallucinote"?
 

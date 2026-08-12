@@ -24,7 +24,7 @@ Two bets, both unproven, both load-bearing:
 
 - **A collaborator that is more than competent.** The target is not "AI fills in a chord progression." The target is: ask for two drum parts at 95 and 100 BPM with a bassline weaving between the kicks of both, and get back something musical. Polyrhythmic, polytempic, sectionally aware — the kind of arrangement that takes a skilled producer hours to lay out by hand.
 
-- **Production tools without the production career.** Bulk operations a normal user cannot reach without scripting: humanize every backbeat by ±2%, sidechain every sustained pad note to the nearest kick, transpose only the notes tagged `bell`. The DB plus MCP makes these one-liners.
+- **Production moves without the scripting detour.** Bulk operations you would otherwise have to write a script to reach: humanize every backbeat by ±2%, sidechain every sustained pad note to the nearest kick, transpose only the notes tagged `bell`. The DB plus MCP makes these one-liners. The musical judgment about *whether* to do it is untouched; what drops is the mechanical cost of finding out.
 
 - **Big experiments cost almost nothing.** Branching a song is `git checkout -b`. Trying a half-time bridge, a key change, a different drummer feel — reversible, diff-able, reviewable. The fear of breaking something you spent two weeks on goes away.
 
@@ -32,7 +32,7 @@ Two bets, both unproven, both load-bearing:
 
 - **Reach music Ableton was not built for.** Polytempic pieces encoded by positioning events on a 1/64 grid against one nominal tempo. Microtonal music via Max for Live or per-voice pitch bend. None of this is easy. But the DB representation makes it possible, where the DAW alone makes it actively hostile.
 
-- **Composers anywhere on the spectrum.** Hobbyist with no theory, working producer, thirty-year veteran. Same as an LLM coding agent serving a middle-schooler and a senior engineer: the interface is conversation, the depth of collaboration scales with the user.
+- **Composers anywhere on the spectrum.** Hobbyist with no theory, working producer, thirty-year veteran. Same as an LLM coding agent serving a middle-schooler and a senior engineer: the interface is conversation, and the depth of collaboration scales with the user. The beginner gets a collaborator that explains its choices well enough to argue with; the veteran gets leverage, and a second opinion that can be checked against numbers. Neither gets a tool that decides for them — the thing we are most careful not to build is one that quietly substitutes its taste for yours.
 
 ## What
 

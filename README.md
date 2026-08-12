@@ -1,6 +1,6 @@
 # Hallucinote
 
-**Make music in Ableton Live by describing it to Claude — composition, sound design, and mix, authored as code you can version and fork.**
+**Composition and production for Ableton Live. You make the calls; Claude does the building — notes, sound design and mix, as code you can read, version and fork.**
 
 [![CI](https://github.com/brookstalley/hallucinote/actions/workflows/ci.yml/badge.svg)](https://github.com/brookstalley/hallucinote/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -8,7 +8,7 @@
 
 ![The punk-fate prompt and creative brief in Claude Code, beside the finished four-track arrangement it built in Ableton Live](docs/assets/hero.png)
 
-You describe a song; Claude writes it as code — `build.py` for the notes, a snapshot for the instruments and mix — and pushes it into a running Live set. A song is a git directory, not a binary `.als` you hope to find again.
+Say what you're going for and it gets built into a running Live set — `build.py` for the notes, a snapshot for the instruments and mix. Then you listen, change your mind, and it rebuilds. Deciding what's right is the part that doesn't get automated, and shouldn't. What you're left with is an ordinary Ableton set you finish yourself, and a song that lives in a git directory instead of a binary `.als` you hope to find again.
 
 ---
 
@@ -16,10 +16,11 @@ You describe a song; Claude writes it as code — `build.py` for the notes, a sn
 
 > *"Make a 2-minute punk song that crams the chord progression of Beethoven's 5th into those two minutes. Drums, bass, lead guitar, and vocals on a staccato synth. Call it punk-fate."*
 
-That one sentence kicked off a forty-minute session — brief, composition, sound
-design, push, render, one measured mix correction — that ended with a finished
-four-track song playing in Live. A listening session the same day made it
-*sound* like the brief:
+One sentence started it. What made it a song was the next forty minutes: a
+brief that pinned down what *"Beethoven's Fifth as punk"* actually meant, four
+parts composed and revised, sound design, a render, and one mix correction that
+was measured before it was applied. A listening session the same day pushed it
+further, until it *sounded* like the brief and not just like the plan:
 
 [![Punk Fate — full song waveform](docs/assets/tour-chapter2.png)](docs/assets/tour-chapter2.mp3)
 
@@ -41,14 +42,27 @@ Then press play. Don't like the bridge? *"Lift the lead an octave there, and mak
 
 ![The lifecycle: a prompt becomes authored code, lands in Live, and the agent listens back](docs/assets/lifecycle.svg)
 
-- **You talk; Claude authors code.** Notes, arrangement and automation in `build.py`; instruments, chains and the dialed mix in a snapshot. Sound design ships with the song, so it arrives sounding the way it should.
+- **You decide; it writes the decision down.** Notes, arrangement and automation in `build.py`; instruments, chains and the dialed mix in a snapshot. Every choice is legible afterwards — you can read what was done, and why, and change it.
 - **Push materializes; pull ingests.** Push drives the song into a fresh or existing set; pull folds your manual Live edits back in. Re-runs are idempotent.
-- **The agent listens.** Ask *"is the chorus landing?"* and Claude reads the composition — or renders the set and measures masking, loudness and groove — against the intent you stated.
+- **It listens back — and it will tell you no.** Ask *"is the chorus landing?"* and Claude reads the composition, or renders the set and measures masking, loudness and groove, against the intent *you* declared. It reports what it actually found, including when the answer is that it isn't working.
+
+## What it isn't
+
+**There's no music model in here.** Nothing was trained on anyone's recordings, and nothing generates audio. The notes come from hand-written generators — plain Python you can open and read — and what lands in Live is MIDI and mixer state. You aren't handed a finished track that came from somewhere else. You're handed a session you own, and you finish it.
+
+**It won't write your hook.** No melody generator, and there won't be one. Sketch a topline and it builds the arrangement, the sound design and the mix underneath, then reads the line back and tells you whether it's landing. The part that makes a song recognizably yours stays yours.
+
+**It doesn't take the work away — it moves where the work goes.** Laying out 32 bars of hats with a feel that isn't robotic, dialing in a sidechain, working out whether the bass is masking the kick: that comes off your plate. Knowing what the song should be, and hearing when it isn't there yet, is still the whole job.
+
+## Who it's for
+
+- **Learning.** It proposes with the reasoning showing — *"E minor, so the chorus can lift into the relative major"* — and names the mechanism behind whatever you asked for. You can follow the argument, push back on it, and hear what changes. That's a different thing from a button that returns a song and teaches you nothing.
+- **Competent, and stuck on something.** Everyone has a part they're weakest at: drums that never quite swing, a mix that stays muddy, an arrangement that won't go anywhere. Get past it without abandoning the track or losing three days inside someone else's tutorial.
+- **Expert.** Leverage, and an argument. Bulk edits you'd otherwise script by hand, a chorus variant on a branch you can A/B and throw away, and a review pass that measures masking, loudness and timing against the intent you declared — then says where it disagrees. A second opinion with numbers behind it is rarer than it should be.
 
 ## What to ask for
 
 - **Any genre, any shape.** Conceptual (*"a song about overcoming loss"*), musical (*"a Baroque prelude in G minor from a single broken-chord figuration"*), or stylistic (*"Duran Duran if they dropped acid with Black Sabbath"*).
-- **Bring the hook; it builds the world.** The lead melody is the one thing Claude won't write for you ([by design](docs/capability-truth.md)). Sketch a topline in Live and it arranges, sound-designs and mixes the whole track underneath — then reads the line back and tells you whether it lands.
 - **Under-specify on purpose.** Claude works out what your prompt leans on (`/hallucinote:song-brief`) — key, tempo, what a named turn means musically — and comes back **once** with proposals you can wave through or redirect in a word.
 - **Share and fork.** A collaborator clones the directory; Hallucinote checks their plugins first and names anything missing.
 
@@ -58,7 +72,7 @@ Actively developed, and honest about the rough edges:
 
 - **Platforms:** Ableton Live 12 on macOS and Windows (Ableton ships no Linux build).
 - **Editions:** the full authoring loop is exercised on **Live 12 Standard and Suite**. Only the measured mix review needs **Max for Live** (Suite, or the add-on for Standard); without it, review is symbolic — against the score, not the audio. Intro and Lite are untested, and their track limits will bite.
-- **Your hook stays yours.** Claude writes the groove, harmony, bass, arrangement, sound design and mix. It won't write your lead melody — there is no melody generator, by design. Sketch a topline in Live and it builds the whole track underneath, then reads back whether the line lands its intent. [Why](docs/capability-truth.md).
+- **No melody generator** — [by design](docs/capability-truth.md), as above. Vocal *synthesis* is a separate gap, and that one simply isn't built.
 - **Boundaries:** Claude authors MIDI and the mix; a recorded vocal take can't yet be read back through the bridge.
 - **What it costs to run:** Hallucinote is free; the Claude usage behind it isn't. A song is a long agentic session — the worked example above ran about forty minutes of continuous agent work, and each measured mix pass hands back a sizeable analysis payload. Expect a full compose-and-mix session to eat a real share of a Claude plan's budget. `/cost` reports what a session actually used. Live 12 (and Max for Live for the measured review) is the other bill.
 

@@ -1,17 +1,17 @@
 # Hallucinote
 
-**Composition and production for Ableton Live.
-Describe what you're after, hear it, argue with it — the song is code you can read, fork and rewrite.**
+**Describe what you're after, hear it, argue with it — music as code you can read, fork and rewrite.**
 
 [![CI](https://github.com/brookstalley/hallucinote/actions/workflows/ci.yml/badge.svg)](https://github.com/brookstalley/hallucinote/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/Ableton%20Live%2012-macOS%20%7C%20Windows-black)
 
 ![The punk-fate prompt and creative brief in Claude Code, beside the finished four-track arrangement it built in Ableton Live](docs/assets/hero.png)
 
-Say what you're going for and it gets built into a running Live set — `build.py` for the notes, a snapshot for the instruments and mix.
-Then you listen, change your mind, and it rebuilds.
-Because the song is code in a git directory, trying the half-time bridge or the key change costs a branch and a minute: keep it, or throw it away and try the next one.
-What you end up with is an ordinary Ableton set you finish yourself.
+Say what you're going for, and it gets built into a running Live set — `build.py` for the notes, a snapshot for the instruments and mix.
+Then listen, change your mind, explore new ideas.
+Because the song is code in a git directory, trying the half-time bridge or a key change costs a branch and a minute: keep it, or throw it away and try the next one.
+
+Round-trip to Ableton, recording MIDI events in Ableton to pull back and work on in Hallucinote (no audio round trip... yet).
 
 ---
 
@@ -26,11 +26,12 @@ Real sessions are more iterative and take longer.*
 
 A different song, made the same way, ships in this repo as source:
 
-> *"Make a 2-minute punk song that crams the chord progression of Beethoven's 5th into those two minutes. Drums, bass, lead guitar, and vocals on a staccato synth. Call it punk-fate."*
+> *"Make a 2-minute punk song that crams the chord progression of Beethoven's 5th into those two minutes. Drums, bass, rhythm guitar, and vocals emulated by a lead guitar. Call it punk-fate."*
 
-One sentence started it.
-What made it a song was the next forty minutes: a brief that pinned down what *"Beethoven's Fifth as punk"* actually meant, four parts composed and revised, sound design, a render, and one mix correction that was measured before it was applied.
-A listening session the same day pushed it further, until it *sounded* like the brief:
+This prompt is cheating a bit, because it implicitly specifies arrangement and harmony.
+But it allowed a ~45 minute build, iterating on micro timing (punk's not dead!), instrumentation, and mixing and production.
+It took a couple of sessions to get right, always with the user in charge.
+The result:
 
 [![Punk Fate — full song waveform](docs/assets/tour-chapter2.png)](docs/assets/tour-chapter2.mp3)
 
@@ -44,9 +45,8 @@ mix → devices → routing → device-sidechain → envelopes →
 performed automation → arrangement → cues
 ```
 
-Then press play.
 Want the bridge to hit harder?
-*"Lift the lead an octave there, and make the chorus drums drag."* Claude edits the code and re-pushes, changing what you asked for and leaving the rest alone.
+*"Lift the lead an octave in the bridge, and make the chorus drums drag."* Claude edits the code and re-pushes, changing what you asked for and leaving the rest alone.
 
 **Beat by beat, with the transcript, the screenshots and the mix numbers: [the tour](docs/tour.md).**
 

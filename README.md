@@ -1,6 +1,6 @@
 # Hallucinote
 
-**Make music in Ableton Live by describing it to Claude — composition, sound design, and mix, authored as code you can version and fork.**
+**Composition and production for Ableton Live. Describe what you're after, hear it, argue with it — the song is code you can read, fork and rewrite.**
 
 [![CI](https://github.com/brookstalley/hallucinote/actions/workflows/ci.yml/badge.svg)](https://github.com/brookstalley/hallucinote/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -8,7 +8,7 @@
 
 ![The punk-fate prompt and creative brief in Claude Code, beside the finished four-track arrangement it built in Ableton Live](docs/assets/hero.png)
 
-You describe a song; Claude writes it as code — `build.py` for the notes, a snapshot for the instruments and mix — and pushes it into a running Live set. A song is a git directory, not a binary `.als` you hope to find again.
+Say what you're going for and it gets built into a running Live set — `build.py` for the notes, a snapshot for the instruments and mix. Then you listen, change your mind, and it rebuilds. Because the song is code in a git directory, trying the half-time bridge or the key change costs a branch and a minute: keep it, or throw it away and try the next one. What you end up with is an ordinary Ableton set you finish yourself.
 
 ---
 
@@ -16,10 +16,11 @@ You describe a song; Claude writes it as code — `build.py` for the notes, a sn
 
 > *"Make a 2-minute punk song that crams the chord progression of Beethoven's 5th into those two minutes. Drums, bass, lead guitar, and vocals on a staccato synth. Call it punk-fate."*
 
-That one sentence kicked off a forty-minute session — brief, composition, sound
-design, push, render, one measured mix correction — that ended with a finished
-four-track song playing in Live. A listening session the same day made it
-*sound* like the brief:
+One sentence started it. What made it a song was the next forty minutes: a
+brief that pinned down what *"Beethoven's Fifth as punk"* actually meant, four
+parts composed and revised, sound design, a render, and one mix correction that
+was measured before it was applied. A listening session the same day pushed it
+further, until it *sounded* like the brief and not just like the plan:
 
 [![Punk Fate — full song waveform](docs/assets/tour-chapter2.png)](docs/assets/tour-chapter2.mp3)
 
@@ -33,7 +34,7 @@ mix → devices → routing → device-sidechain → envelopes →
 performed automation → arrangement → cues
 ```
 
-Then press play. Don't like the bridge? *"Lift the lead an octave there, and make the chorus drums drag."* Claude edits the code and re-pushes, changing what you asked for and leaving the rest alone.
+Then press play. Want the bridge to hit harder? *"Lift the lead an octave there, and make the chorus drums drag."* Claude edits the code and re-pushes, changing what you asked for and leaving the rest alone.
 
 **Beat by beat, with the transcript, the screenshots and the mix numbers: [the tour](docs/tour.md).**
 
@@ -41,9 +42,16 @@ Then press play. Don't like the bridge? *"Lift the lead an octave there, and mak
 
 ![The lifecycle: a prompt becomes authored code, lands in Live, and the agent listens back](docs/assets/lifecycle.svg)
 
-- **You talk; Claude authors code.** Notes, arrangement and automation in `build.py`; instruments, chains and the dialed mix in a snapshot. Sound design ships with the song, so it arrives sounding the way it should.
+- **You decide; it writes the decision down.** Notes, arrangement and automation in `build.py`; instruments, chains and the dialed mix in a snapshot. Every choice is legible afterwards — you can read what was done, and why, and change it.
+- **The notes come from generators you can read.** Parametric Python — `tresillo`, `walking_bass`, kit abstractions, per-part feel. Claude's craft is choosing which to call and with what musical parameters, then writing that down. What lands in Live is MIDI and mixer state in a session you own outright.
 - **Push materializes; pull ingests.** Push drives the song into a fresh or existing set; pull folds your manual Live edits back in. Re-runs are idempotent.
-- **The agent listens.** Ask *"is the chorus landing?"* and Claude reads the composition — or renders the set and measures masking, loudness and groove — against the intent you stated.
+- **It listens back, and tells you straight.** Ask *"is the chorus landing?"* and Claude reads the composition, or renders the set and measures masking, loudness and groove, against the intent *you* declared — then reports what it found and what it would change. Real numbers, and an opinion you can overrule.
+
+## Who it's for
+
+- **Curious how songs get put together.** Ask for something, then ask why it works that way. It proposes with the reasoning showing — *"E minor, so the chorus can lift into the relative major"* — and you can overrule it and hear the difference straight away. You learn the craft by watching choices get made, then making better ones.
+- **Playing already, and reaching further.** The arrangement you can hear in your head but would spend a week programming: a bassline weaving between two different kick patterns, thirty-two bars of hats that breathe, a polyrhythmic bridge. Ask for it and listen to it.
+- **Deep in it.** Leverage. Bulk edits you'd otherwise script by hand, chorus variants on branches you A/B and discard, and a review pass that measures masking, loudness and timing against the intent you declared — then tells you where it disagrees. A second opinion with numbers behind it is rarer than it should be.
 
 ## What to ask for
 
@@ -55,9 +63,11 @@ Then press play. Don't like the bridge? *"Lift the lead an octave there, and mak
 
 Actively developed, and honest about the rough edges:
 
-- **Platforms:** Ableton Live 12 on macOS and Windows (Ableton ships no Linux build).
-- **Editions:** the full authoring loop runs on **any Live 12 edition, Standard included**. Only the measured mix review needs **Max for Live** (Suite or the add-on); without it, review is by ear against the symbolic analysis.
-- **Boundaries:** Claude authors MIDI and the mix; a recorded vocal take can't yet be read back through the bridge.
+- **Platforms:** Ableton Live 12 on macOS and Windows (Ableton ships no Linux build). macOS is where it's developed day to day; the Windows paths are implemented and unit-tested, with fewer real sessions behind them.
+- **Editions:** the full authoring loop is exercised on **Live 12 Standard and Suite**. Only the measured mix review needs **Max for Live** (Suite, or the add-on for Standard); without it, review is symbolic — against the score, not the audio. Intro and Lite are untested, and their track limits will bite.
+- **The melody is yours.** Sketch a topline in Live and it arranges, sound-designs and mixes the whole track underneath, then reads the line back against your intent — contour, intervals, how it sits on the chords. [How that works](docs/faq.md#what-about-the-melody). Sung vocals are on the list; today the synth sings.
+- **Boundaries:** MIDI and the mix are what it builds; a recorded vocal take can't yet be read back through the bridge.
+- **What it costs to run:** Hallucinote is free; the Claude usage behind it isn't. A song is a long agentic session — the worked example above ran about forty minutes of continuous agent work, and each measured mix pass hands back a sizeable analysis payload. Expect a full compose-and-mix session to eat a real share of a Claude plan's budget. `/cost` reports what a session actually used. Live 12 (and Max for Live for the measured review) is the other bill.
 
 The rest, each with its workaround: [**Known issues**](docs/known-issues.md).
 
@@ -65,7 +75,7 @@ The rest, each with its workaround: [**Known issues**](docs/known-issues.md).
 
 The plugin is **self-contained** — skills, Ableton bridge and composing engine in one managed environment. Nothing else to clone or track.
 
-**1. Prerequisites** — [Claude Code](https://claude.ai/code), Ableton Live 12, Python 3.10+, and [uv](https://docs.astral.sh/uv/) (`brew install uv` on macOS, `winget install astral-sh.uv` on Windows).
+**1. Prerequisites** — [Claude Code](https://claude.ai/code), Ableton Live 12, and [uv](https://docs.astral.sh/uv/) (`brew install uv` on macOS, `winget install astral-sh.uv` on Windows). uv provisions the Python the plugin needs, so you don't install one.
 
 **2. Install the plugin** — in Claude Code:
 

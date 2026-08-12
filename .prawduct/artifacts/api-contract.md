@@ -148,7 +148,9 @@ regex, anything outside rejected before evaluation). Probe in scratch sets.
 ## The CLI
 
 Single entry point `hallucinote` (`hallucinote.cli:main`), invoked by skills as
-`uv run --project <plugin-root> --frozen hallucinote <cmd>`.
+`"$PY" -m hallucinote.cli <cmd>`, where `$PY` is resolved once from
+`ableton://server/info`'s `python` — the interpreter of the environment the
+plugin already built (`docs/running-the-engine.md`).
 
 **Flags, exit codes, and output format are a contract** — skills parse this output, and
 so does the MCP layer for analysis reports. A schema change to a report JSON can break

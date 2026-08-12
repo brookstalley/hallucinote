@@ -17,7 +17,11 @@ a limit).
 > **Living doc.** Keep this current with the code — it must never lag. When a
 > dimension's depth changes (e.g. melody matures, vocals arrive), edit the table
 > here and the handoff/elicitation surfaces inherit it automatically. Last
-> reviewed: **2026-06-17** (split the Mix row into *authoring* (any edition) vs
+> reviewed: **2026-08-11** (the Mix — authoring row's "any Live edition" narrowed
+> to Standard and Suite, matching the README: those are the editions actually
+> exercised, and an Intro user asking "what can you do?" was getting the
+> overclaim the rest of the corpus had already retired. Prior: 2026-06-17, split
+> the Mix row into *authoring* (any edition) vs
 > *measured review* (Max for Live only) so the edition gap is stated up front for
 > Standard-edition users — the non-M4L analysis path is out of scope by design,
 > AUD-8K2N; the only obligation is naming the gap honestly. Prior: 2026-06-12,
@@ -34,8 +38,8 @@ a limit).
 | **Bass** | ✓ full | tresillo, walking bass, sub/Reese-style lines. |
 | **Arrangement / structure** | ✓ full | sections, energy arc, contrast, build/drop, subtraction. |
 | **Sound design** | ✓ full | instrument *chains* (instrument + saturation + bus FX) as authorship, not a mix-time todo. |
-| **Mix — authoring** | ✓ full | the mix moves themselves, on **any Live edition**: device chains, dialed params, sidechain, reverb sends, track input/output **routing** + submaster (PRE-MAIN) busses for master-like automation and sub-mixing (Live groups aren't LOM-creatable — a routing bus is the way). |
-| **Mix — measured review** | ✓ with Max for Live | the *measured listen-back* — masking analysis, loudness, master attribution, reverb verification, per-part timing (`/hallucinote:mix-review`) — renders audio through the HallucinoteAnalyzer, which needs **Max for Live (Live Suite, or the M4L add-on)**. On **Live Standard this half is unavailable** — there is no non-M4L analysis path (by design). Use the **symbolic** `/hallucinote:compose-review` (composition-level, reads the score not the audio) instead, and say plainly that a measured mix-review isn't available on their edition — never imply one ran when it didn't. |
+| **Mix — authoring** | ✓ full | the mix moves themselves, on **Live 12 Standard and Suite** (the editions this is exercised on; Intro and Lite are untested — their track ceilings and thinner device palette are the likely limits, so say so rather than promising): device chains, dialed params, sidechain, reverb sends, track input/output **routing** + submaster (PRE-MAIN) busses for master-like automation and sub-mixing (Live groups aren't LOM-creatable — a routing bus is the way). |
+| **Mix — measured review** | ✓ with Max for Live | the *measured listen-back* — masking analysis, loudness, master attribution, reverb verification, per-part timing (`/hallucinote:mix-review`) — renders audio through the HallucinoteAnalyzer, which needs **Max for Live (Live Suite, or the M4L add-on)**. **Without Max for Live this half is unavailable** — there is no non-M4L analysis path (by design), and that turns on **M4L, not the edition**: a Standard owner with the add-on gets the measured review; a Suite owner always has it. Use the **symbolic** `/hallucinote:compose-review` (composition-level, reads the score not the audio) instead, and say plainly that a measured mix-review isn't available to them without M4L — never imply one ran when it didn't. |
 | **Melody — line analysis** | ✓ read-side | the symbolic **melody lens** reads any monophonic line's contour, intervals, and harmony-fit and coaches it *against your declared intent* (`/hallucinote:compose-review`, `hallucinote.tools.melody_lens`) — including a topline you sketched in. It measures, it never invents the hook (that's yours). No universal "good melody" verdict. |
 | **Melody — lead-line *authoring*** | ◐ thinner | I won't write your finished hook — that's your art, by design (no melody generator, ever). A generated topline is a starting point, not the finished hook. *Sketch your line in Ableton and I'll arrange under it (round-trip) — and read whether it lands its intent (line analysis above).* |
 | **Vocal topline (synthesis)** | ✗ not yet | we don't synthesize a sung vocal. A sketched vocal *melody* (MIDI) round-trips in — and the line analysis above reads it. |

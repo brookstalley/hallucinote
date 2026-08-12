@@ -8,7 +8,7 @@ disable-model-invocation: false
 
 # /mix-review — the producer who remembers this song
 
-> **Requires Max for Live** (Live Suite, or the M4L add-on). `/mix-review` reads a rendered `MixReport`, and rendering uses the HallucinoteAnalyzer — a Max for Live device. Without Max for Live this skill can't run; use **`/compose-review`** (symbolic, any Live edition) for an intent read instead. See `ableton://guides/getting-started`.
+> **Requires Max for Live** (Live Suite, or the M4L add-on). `/mix-review` reads a rendered `MixReport`, and rendering uses the HallucinoteAnalyzer — a Max for Live device. Without Max for Live this skill can't run; use **`/compose-review`** (symbolic; runs on Standard as well as Suite) for an intent read instead. See `ableton://guides/getting-started`.
 
 You are acting as the best producer the user has ever had: one who **remembers
 this song's artistic intent**, reads the measurements, and amplifies what the

@@ -56,8 +56,9 @@ without the checkout.
 <!-- prawduct: type=docs | scope=docs-launch-readiness -->
 
 A critical review of the user-facing docs from the README outward, then the
-fixes, across three review rounds. No product behavior change. Three non-`.md`
-files: the two plugin manifests, whose description strings were stale prose,
+fixes, across four review rounds. No product behavior change. Five non-`.md`
+files: the two plugin manifests and `ci.yml`, all carrying stale or retired
+prose in strings and comments; `project-state.yaml` for the norm registry;
 and one new test — `test_marketplace_manifest_tool_count_matches_actual_registry`,
 which pins the tool count shown in the `/plugin install` dialog. That count was
 the only one of four such claims no guard read, because the sibling README
@@ -113,9 +114,24 @@ act of composing it isn't" — and a norm the corpus violates on the day it
 ships is aspirational, not binding. So the row now names the two moves it
 actually targets (positioning against alternatives; rebutting an unraised
 objection) and states the test explicitly: a sentence about a competitor or a
-critic is banned, a sentence about how the thing works is fine. The second
-norm — the user holds the subject position on the creative verbs — was
-uncontested. Both carry mechanism and audit home in the Enforcement index,
+critic is banned, a sentence about how the thing works is fine. It was then
+narrowed a **second** time, in the same pass, when the next round pointed out
+that the test as worded condemned the VISION prior-art paragraph the first
+narrowing existed to permit: naming other tools as lineage is now explicitly
+allowed, and ranking yourself against them is the banned move. Worth recording
+plainly, because twice-narrowing a norm the day it ships is the shape of
+*amending a norm to match your own prose* — the reviewer weighed exactly that
+and let it stand only because each narrowing states a general discriminating
+test rather than exempting a specific paragraph. It remains vetoable. The
+second norm — the user holds the subject position on the creative verbs — was
+uncontested, and gained the ratification date and retroactivity clause it
+shipped without.
+
+Two artifacts were resynced while the corpus was open: `api-contract.md` and
+`project-preferences.md` § Package manager both described skills invoking
+`uv run --project <plugin-root> --frozen hallucinote <cmd>`, which is no longer
+what ships — every skill uses `"$PY" -m hallucinote.cli`, with `$PY` resolved
+from `ableton://server/info`. Both carry mechanism and audit home in the Enforcement index,
 because a norm outside that index is one the janitor's Norm Health sweep never
 walks.
 

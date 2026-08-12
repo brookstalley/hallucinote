@@ -90,8 +90,8 @@ Windows-shaped breaks, that's a real bug and we want
 
 The mix is composed with the song — instrument **chains**, device settings,
 sends, and per-part feel all ship in the snapshot, because sound design is part
-of the authorship. You then push to
-Live and do hands-on mixing there; pull your tweaks back with
+of the authorship. You then push to Live and do hands-on mixing there; pull
+your tweaks back with
 `/hallucinote:ableton-pull` to keep them. Detailed mix
 *review* (masking, loudness, reverb, timing) is available via `/hallucinote:mix-review`,
 which uses Max for Live (Live Suite, or the M4L add-on); `/hallucinote:compose-review`

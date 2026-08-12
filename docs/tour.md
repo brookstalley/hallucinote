@@ -6,8 +6,8 @@ minutes later a finished, mixed, four-track song was playing in Ableton Live —
 that's **chapter 1**. Later the same day the song went back into the studio,
 because a finished song and a *good* one are different things: **chapter 2**
 is the listening session that made it actually sound punk. Every artifact on
-this page was captured live from those sessions: the
-transcript excerpts are rendered from the session log, the screenshots
+this page was captured live from those sessions: the transcript excerpts are
+rendered from the session log, the screenshots
 were shot by [`tools/capture_live_shot.py`](../tools/capture_live_shot.py)
 while they ran, and the audio is the renders the sessions themselves measured.
 
@@ -129,8 +129,7 @@ note against them for harmony-fit. How `build.py` is organized —
 ### 4 · Rhythm & feel
 
 Microtiming is written into the parts at generation time. Each part is a
-*player* who both carries an authored feel
-and declares how they breathe:
+*player* who both carries an authored feel and declares how they breathe:
 
 ```python
 # examples/punk-fate/build.py
@@ -181,10 +180,9 @@ song:
 [`measurements/2026-08-11-melody-lens.json`](../examples/punk-fate/measurements/2026-08-11-melody-lens.json),
 so this block can be checked against the build.)
 
-Those `?` lines are coaching questions — and this one's answer
-is *intended*: the A♭ break is the one section where the synth genuinely
-*sings*, so its step-heavy motion is the point. That
-answer lives in
+Those `?` lines are coaching questions — and this one's answer is *intended*:
+the A♭ break is the one section where the synth genuinely *sings*, so its
+step-heavy motion is the point. That answer lives in
 [`annotations/02-the-vocal-line-leaps-on-purpose.md`](../examples/punk-fate/annotations/02-the-vocal-line-leaps-on-purpose.md),
 which also records the first lens run *correcting the profile itself* — the
 declared contour was wrong for a line built on Beethoven's leaping cell, and
@@ -416,15 +414,15 @@ trimmed down to match. Grit as timbre:
 
 Two constraints Live imposed are recorded
 ([`decisions/09-the-dirt.md`](../examples/punk-fate/decisions/09-the-dirt.md)):
-device loads tail-append and Live 12.4 has no reorder API, so the new stages
-sit *after* the compressor, departing from the authored order — defensible for a
+device loads tail-append and Live 12.4 has no reorder API, so the new stages sit
+*after* the compressor, departing from the authored order — defensible for a
 wall-of-sound genre, and written down as a deliberate departure. And
 appending devices had pushed them *past the analyzer*, which would have
 captured every stem pre-distortion while reporting `ok` — caught because the
-manifest's `terminal` flag was re-checked. Headroom held at the
-output, measured across all eight sections: delivered ≈ **−2.1 to −2.6 dBTP**
-across three renders (a realtime capture has run-to-run spread, and the decision
-records the range). The *bus* did not: it sat at
+manifest's `terminal` flag was re-checked. Headroom held at the output, measured
+across all eight sections: delivered ≈ **−2.1 to −2.6 dBTP** across three
+renders (a realtime capture has run-to-run spread, and the decision records the
+range). The *bus* did not: it sat at
 **+1.93 dBTP with 2–4 overshoots** depending on the capture, which is the number
 beat 14 fixes by putting a limiter where the fader had been standing in for one.
 

@@ -10,8 +10,8 @@ on it, start with the [README](README.md) and [Quickstart](docs/quickstart.md).
 with CI enforcement behind it: the repo is a uv workspace, the shipped plugin
 runs `uv run --frozen`, and CI gates on `uv lock --check`. uv provisions the
 interpreter too; Python 3.10 is the floor. A local `pip install -e '.[dev]'`
-venv still works for editing — it's a personal
-convenience, and **a "green" claim has to come from the locked environment.**
+venv still works for editing — it's a personal convenience, and
+**a "green" claim has to come from the locked environment.**
 
 ```bash
 git clone https://github.com/brookstalley/hallucinote.git

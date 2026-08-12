@@ -17,7 +17,7 @@ Round-trip to Ableton, recording MIDI events in Ableton to pull back and work on
 
 ## See it
 
-Accelerated video: from prompt to finished finished arrangement.
+Accelerated video: from prompt to finished arrangement.
 
 <video src="https://github.com/user-attachments/assets/6032b568-a103-439b-8397-a6ca7cdec0eb" controls muted></video>
 

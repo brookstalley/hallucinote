@@ -25,6 +25,38 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-08-12 — Semantic line breaks for markdown prose
+
+<!-- prawduct: type=docs | scope=docs-positive-framing -->
+
+**Owner decision, prompted by a fair question about the sweep.** The positioning
+sweep produced a whitespace-only reflow commit — sentences got shorter, so
+hard-wrapped paragraphs had to re-flow. Asked why the files were hand-wrapped
+at all, the honest answer was that two conventions were in play and neither was
+written down: `CONTRIBUTING`, `SECURITY`, `faq` and `tour` wrapped at ~70
+columns, while `README` and `VISION` put each paragraph on one long line.
+
+All six now use **semantic line breaks — one sentence per line**. A hard wrap
+makes a one-word edit reflow its paragraph, so the diff reports a paragraph
+where a word changed; one-sentence-per-line keeps the short lines an editor
+wants and makes diffs word-accurate. Rendered output is identical, since
+markdown folds single newlines inside a paragraph.
+
+Applied mechanically, with two guards worth keeping: the transform **refused to
+write any file whose word stream changed**, and it caught a real bug doing so —
+an optional closing-quote class sat inside the split pattern, so `re.split`
+silently ate the quote in `B."`. Each file was then verified token-identical
+against its committed version. Code fences, tables, blockquotes, headings and
+link-only lines passed through untouched, so the tour's quoted session
+transcript and `build.py` excerpts are byte-identical.
+
+The norm is recorded in `project-preferences.md` § Documentation & prose,
+including the honest scope: the rest of `docs/` and `skills/` are still
+hard-wrapped, and convert when next touched substantially — in their own
+whitespace-only commit, never mixed with a wording change.
+
+Docs-only. Suite green at 5005 passed / 2 skipped.
+
 ## 2026-08-12 — The prose norm's absolute reading, restored by owner ruling
 
 <!-- prawduct: type=docs | chunks=C1,C2,C3 | scope=docs-positive-framing -->

@@ -25,6 +25,38 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-08-12 — The release process gains a GitHub Release step
+
+<!-- prawduct: type=docs | scope=release-process-docs -->
+
+**Six annotated tags, zero Release objects.** The ten-step release procedure
+ended at *Verify*, so every cut since v1.8.0 produced a tag and nothing a person
+landing on the repo would see. Found while checking whether `gh` could upload
+the demo video; the repo had no releases at all.
+
+Step 11 now covers it, and encodes four things learned doing it:
+
+- **Draft first, always.** A published Release notifies watchers and is the most
+  outward-facing artifact the process produces. A draft is invisible and
+  deletable, so it gets reviewed before it exists publicly.
+- **`--verify-tag`**, so a typo fails rather than inventing a tag pointing at
+  nothing.
+- A draft's URL reads `releases/tag/untagged-<hash>` until published — normal,
+  and worth writing down before someone reports it as a bug.
+- **Release notes are reader-facing positioning prose**, so the § Documentation
+  & prose norm governs them. The v1.8.5 notes were written to it and checked
+  against it.
+
+Also recorded: a release asset serves from `github.com/.../releases/download/`,
+which will **not** render as an inline player in markdown. Only a
+`user-attachments` URL does, and obtaining one is a web-UI upload with no `gh`
+equivalent — verified against the API, which 404s on the uploader endpoint.
+
+v1.8.5 is drafted from the two change-log entries carrying `release=v1.8.5`,
+with the 6.1 MB demo cut attached as an asset.
+
+Docs-only. Suite green at 5005 passed / 2 skipped.
+
 ## 2026-08-12 — Semantic line breaks for markdown prose
 
 <!-- prawduct: type=docs | scope=docs-positive-framing -->

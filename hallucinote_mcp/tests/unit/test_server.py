@@ -116,6 +116,35 @@ def test_mcp_readme_tool_count_matches_actual_registry():
     )
 
 
+def test_marketplace_manifest_tool_count_matches_actual_registry():
+    """The plugin marketplace description is the tool count a user reads
+    BEFORE installing — in the `/plugin install` dialog — and it was the
+    one count no guard pinned. Its phrasing is 'N Ableton Live tools',
+    which the sibling README regexes ('N unified tools') never matched,
+    so the number could drift silently on the most public surface of all.
+    """
+    import json
+    import re
+    from pathlib import Path
+
+    manifest = (
+        Path(__file__).resolve().parents[3]
+        / ".claude-plugin"
+        / "marketplace.json"
+    )
+    description = json.loads(manifest.read_text())["plugins"][0]["description"]
+    match = re.search(r"(\d+) Ableton Live tools", description)
+    assert match is not None, (
+        "marketplace.json's plugin description must advertise the tool "
+        "count (substring 'N Ableton Live tools')"
+    )
+    assert int(match.group(1)) == len(schema.TOOLS), (
+        f"marketplace.json claims {match.group(1)} Ableton Live tools but "
+        f"schema.TOOLS has {len(schema.TOOLS)}. Update "
+        f".claude-plugin/marketplace.json — it is what the install dialog shows."
+    )
+
+
 def test_handle_tool_call_help_works_without_remote():
     # After create_server, help actions are registered for every tool, so
     # action='help' should return ok without contacting the Remote Script.

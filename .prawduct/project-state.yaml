@@ -587,7 +587,7 @@ backlog_service_repo: brookstalley/hallucinote
 # data-model, nonfunctional-requirements and observability-strategy; the Enforcement
 # table in artifacts/project-preferences.md is the index (pointer rows for the
 # artifact-homed norms, plus the code-level rows with Audit home / Why columns).
-norm_registry_ratified: 2026-08-10 — 27 norms across six strategy artifacts; six forks ruled by the owner (API scope stays internal; arrangement projection contained push-side)
+norm_registry_ratified: 2026-08-11 — 29 norms: 27 across six strategy artifacts, plus two prose norms homed in project-preferences.md itself (write what a thing IS; user holds the creative verbs). The rule came from the owner; the two narrowings of its scope were the agent's, weighed by the Critic and NOT yet owner-ratified — treat both as pending veto until the owner says otherwise. Prior 2026-08-10 — 27 norms; six forks ruled by the owner (API scope stays internal; arrangement projection contained push-side)
 
 # API versioning — the decision is authored in artifacts/api-contract.md
 # ("Recorded decision: versioning" + "Recorded decision: deprecation and

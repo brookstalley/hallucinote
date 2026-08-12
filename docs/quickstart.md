@@ -4,6 +4,12 @@ By the end of this you'll have composed a song from a single prompt and heard
 it play in Ableton Live. One path, one result — the guided version of the
 README's install section.
 
+**What ten minutes buys:** a real, arranged, sound-designed song playing in
+Live. Not a *finished* one. The worked example in [the tour](tour.md) took a
+forty-minute session to reach "finished," and most of that was the part this
+page skips — listening back, measuring the mix, and correcting it. Ten minutes
+to hear your song; the rest of the session is where it gets good.
+
 **Before you start**, finish the one-time setup in the
 [README](../README.md#install): install **uv** (the plugin launches its bundled
 environment with it) and the **plugin** (from GitHub: `/plugin marketplace add

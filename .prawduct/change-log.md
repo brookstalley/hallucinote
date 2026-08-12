@@ -25,6 +25,129 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-08-11 — Release process: the back-merge is a fast-forward, and `main` may be elsewhere
+
+<!-- prawduct: type=docs | scope=release-process-docs | release=v1.8.5 -->
+
+Reconstructed at the v1.8.5 cut from commit `f4f9ad2`, which landed on
+`develop` with no entry of its own — exactly the gap step 1 of
+`docs/release-process.md` warns about, found by running the audit it
+prescribes (`git log --oneline --no-merges origin/main..develop`).
+
+Two traps hit during the v1.8.4 cut, both fixed at the source that allowed
+them. **Step 9's back-merge is the one merge in the process that is
+deliberately not a merge commit**, and nothing said so — it sits two
+paragraphs under step 8, which *does* require `--no-ff`, against a repo-wide
+`--no-ff` habit, so the bare `git merge` read as an omission rather than a
+specification. Passing `--no-ff` there leaves `develop` permanently one commit
+ahead of `main` and makes step 10's `rev-list` count read 1 instead of 0 — a
+check that appears to fail while the trees are identical. Now stated outright,
+with the false alarm named so the next reader recognizes it.
+
+**Step 8 assumed `git checkout main` works.** Where `main` is checked out in
+another worktree it refuses outright, and that worktree must not be disturbed
+to satisfy a release. The plumbing path is now written down: verify the merged
+tree equals `develop`'s, build the two-parent commit with `commit-tree`, push
+it straight to the remote ref — the same merge commit step 8 describes,
+without the checkout.
+
+## 2026-08-11 — Launch-readiness docs pass: contradictions closed, framing recentred
+
+<!-- prawduct: type=docs | scope=docs-launch-readiness | release=v1.8.5 -->
+
+A critical review of the user-facing docs from the README outward, then the
+fixes, across four review rounds. No product behavior change. Five non-`.md`
+files: the two plugin manifests and `ci.yml`, all carrying stale or retired
+prose in strings and comments; `project-state.yaml` for the norm registry;
+and one new test — `test_marketplace_manifest_tool_count_matches_actual_registry`,
+which pins the tool count shown in the `/plugin install` dialog. That count was
+the only one of four such claims no guard read, because the sibling README
+guards match "N unified tools" and the manifest says "N Ableton Live tools";
+verified by mutating the manifest to 99 and watching the test fail.
+
+**Four contradictions.** `.claude-plugin/marketplace.json` told every installing
+user the plugin "Requires the `hallucinote` Python engine installed" — stale
+since the plugin absorbed the engine, and against the README's "self-contained".
+It is the first sentence a user reads, in the install dialog. `VISION.md`
+claimed audio recorded against a click flows back into the DB in the present
+tense, which `known-issues.md` contradicts; it now separates the symbolic
+round-trip (real today) from audio (a goal). VISION's "impossible in every other
+tool" invited an argument it would lose — TidalCycles, Sonic Pi, Lilypond and
+DAWproject all exist — and now claims the defensible combination instead.
+`CONTRIBUTING.md` taught a pip/venv setup while CI runs `uv --locked` and the
+plugin ships `uv --frozen`, and taught the deprecated `ok-broad-except` spelling
+that `project-preferences.md` marks legacy.
+
+**Omissions a prospective user hits before installing.** What it costs to run
+(Claude usage and the Ableton bill) appeared nowhere; both are now in README
+Status and the FAQ. No token figure is published because none is measured
+anywhere in the repo — the shape of the cost is stated instead, and #458 tracks
+measuring it. "The melody is yours" was the single most load-bearing product
+fact and lived only in `capability-truth.md`, an internal doc, while the README
+advertised "any genre, any shape". Also added: whether you end up with a normal
+Live set you can finish and release (yes — it was buried in `collaboration.md`),
+build determinism, and output ownership.
+
+**Editions and CI honesty.** "Any Live 12 edition" narrowed to the editions
+actually exercised (Standard, Suite); Intro and Lite are named as untested in
+`known-issues.md` with the two failure modes that will bite. `CONTRIBUTING.md`
+gained a section stating what CI covers: no Ableton, no macOS or Windows leg,
+one interpreter. #459 and #460 track the underlying decisions.
+
+**Framing.** The README had put Claude in the subject position of every creative
+verb — "You describe a song; Claude writes it", "You talk; Claude authors code"
+— which reads backwards to the audience most primed to distrust AI tooling. The
+user now holds the creative verbs; the tool builds, measures and reports. A
+"Who it's for" section covers the three registers (curiosity, reach, leverage)
+without describing anyone by their deficits, and the cheap-experiment loop that
+makes the tool fun is stated where it was previously missing.
+
+**Two norms came out of it, and the first one had to be narrowed the same day**
+(`project-preferences.md` → Documentation & prose + two Enforcement rows;
+`norm_registry_ratified` 27 → 29). As first written, **write what a thing IS,
+never what it isn't** was absolute — and the cumulative Critic caught it being
+violated inside its own ratifying bundle, twice in `VISION.md`. Both sites were
+rewritten. But the verify pass then made the sharper point: read absolutely,
+the row also outlaws ordinary factual distinctions the corpus legitimately
+needs — "a long agentic workflow, not a chat", "the song is reproducible; the
+act of composing it isn't" — and a norm the corpus violates on the day it
+ships is aspirational, not binding. So the row now names the two moves it
+actually targets (positioning against alternatives; rebutting an unraised
+objection) and states the test explicitly: a sentence about a competitor or a
+critic is banned, a sentence about how the thing works is fine. It was then
+narrowed a **second** time, in the same pass, when the next round pointed out
+that the test as worded condemned the VISION prior-art paragraph the first
+narrowing existed to permit: naming other tools as lineage is now explicitly
+allowed, and ranking yourself against them is the banned move. Worth recording
+plainly, because twice-narrowing a norm the day it ships is the shape of
+*amending a norm to match your own prose* — the reviewer weighed exactly that
+and let it stand only because each narrowing states a general discriminating
+test rather than exempting a specific paragraph. It remains vetoable. The
+second norm — the user holds the subject position on the creative verbs — was
+uncontested, and gained the ratification date and retroactivity clause it
+shipped without.
+
+Two artifacts were resynced while the corpus was open: `api-contract.md` and
+`project-preferences.md` § Package manager both described skills invoking
+`uv run --project <plugin-root> --frozen hallucinote <cmd>`, which is no longer
+what ships — every skill uses `"$PY" -m hallucinote.cli`, with `$PY` resolved
+from `ableton://server/info`. Both prose norms carry mechanism and audit home in the Enforcement index,
+because a norm outside that index is one the janitor's Norm Health sweep never
+walks.
+
+What prompted it: an intermediate draft of this very pass added a "What it
+isn't" section and Suno/is-this-cheating FAQ entries. They argued with a critic
+the reader had not met and planted the doubt they answered. They were removed
+rather than softened, and the fact underneath them — the notes come from
+parametric generators you can read — now states itself positively, as
+mechanism.
+
+Backlog filed from the review: #457 (a second worked example in an exposed
+genre), #458 (measure per-song usage), #459 (CI platform matrix), #460
+(Intro/Lite). The demo-video finding folded into existing #329 rather than
+duplicating it, with a comment recording the part its acceptance was missing:
+the delivered `.mp4` has to be embedded in the README to play inline.
+
 ## 2026-08-11 — The prose pass: README rewritten, corpus scrubbed, generator fixed
 
 <!-- prawduct: type=docs | scope=docs-writing-quality | status=shipped | release=v1.8.4 -->

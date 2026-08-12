@@ -39,7 +39,7 @@ and [`api-contract.md`](api-contract.md); where a song's authorship lives is
 ┌─ Ableton Live ──────────────────────────────────────────────────────┐
 │  Remote Script (Control Surface) — runs INSIDE Live's Python, with  │
 │  Live's privileges and lifecycle. Plus the HallucinoteAnalyzer      │
-│  Max for Live device on audio tracks/returns/master (Suite only).   │
+│  Max for Live device on audio tracks/returns/master (needs M4L — Suite, or the Standard add-on).   │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 

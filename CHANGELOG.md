@@ -8,6 +8,61 @@ per-fix narratives if you want the deep story behind any entry.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.5] — 2026-08-11
+
+A documentation release, from a critical read of everything a new user sees.
+The docs now answer what the tool costs to run, what it does with your melody,
+and whether you end up with an Ableton set you can finish and release — and
+several claims that disagreed with each other now agree. No behavior changes.
+
+**Upgrade note:** none. **Re-vendor: not required** — no handshake-fingerprint
+file changed, so the plugin auto-updates and Ableton Live needs nothing:
+no `/hallucinote:ableton-mcp-install`, no Live restart.
+
+### Added
+
+- **What it costs to run** — README Status and a new FAQ entry name all three
+  costs: the Ableton licence (plus Max for Live for the measured mix review),
+  the Claude usage behind a long agentic session, and disk for renders. No
+  token figure is published yet because none has been measured; that's tracked.
+- **"Who it's for"** in the README — what the tool gives you if you're learning
+  the craft, if you're playing already and reaching for an arrangement you'd
+  otherwise spend a week programming, or if you want leverage and a measured
+  second opinion.
+- **New FAQ answers** — what happens with the melody, whether you end up with a
+  normal Live set you can finish and release (yes), whether two builds of the
+  same song match (yes, humanization is seeded), and who owns the music (you).
+- **A guard on the tool count in the plugin marketplace description** — the
+  number shown in the `/plugin install` dialog was the one such count no test
+  pinned.
+
+### Changed
+
+- **The README speaks to the musician, not about the agent.** You make the
+  calls; the tool builds what you decided, measures it, and reports back.
+- **"Any Live 12 edition" is now "Standard and Suite"** — the editions this is
+  actually exercised on. Intro and Lite are untested; `docs/known-issues.md`
+  names the two limits likely to bite (the track ceiling, the thinner device
+  palette). This corrected five surfaces, including the capability table the
+  agent answers "what can you do?" from.
+- **`CONTRIBUTING.md` matches the toolchain that ships** — uv against the
+  locked environment, the current waiver pragma, the real `testpaths`, and a
+  new section stating plainly what CI covers (no Ableton, no macOS or Windows
+  leg, one interpreter).
+
+### Fixed
+
+- **The plugin marketplace description no longer claims you need a separate
+  engine install.** It was stale from before the plugin absorbed the engine —
+  and it was the first sentence anyone read, in the install dialog.
+- **`docs/VISION.md` no longer claims recorded audio round-trips into the
+  database.** It doesn't yet; `docs/known-issues.md` always said so. The
+  symbolic round-trip that does work is described as what it is.
+- **The FAQ's disk-usage note matches what a real workspace does** — a
+  workspace created by Hallucinote gitignores both `captures/` and `analysis/`.
+- **Documented Windows support says what's actually behind it** — implemented
+  and unit-tested, with fewer real sessions than macOS.
+
 ## [1.8.4] — 2026-08-11
 
 A documentation release: the README is a quarter shorter, the docs got read

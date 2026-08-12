@@ -57,7 +57,7 @@ hand-authored notes if that's what the art needs.
    their poll loops to a subagent — keeping the plumbing out of your context).
    The MixReport it builds is what step 7 reads.
 7. ⭐ **Read the mix** — **`/mix-review`** (needs Max for Live — Suite or the
-   M4L add-on; `/compose-review` is the any-edition alternative). Interpret the
+   M4L add-on; `/compose-review` is the symbolic alternative, on Standard too). Interpret the
    MixReport against intent — masking, loudness, feel, energy per section.
 8. **Snapshot + iterate** — `/song-snapshot` (the single durable mix bake) and
    `/ableton-pull` (build.py-staging). Then loop back to compose or mix. As you iterate, log what you

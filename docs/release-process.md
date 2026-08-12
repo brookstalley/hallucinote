@@ -210,6 +210,33 @@ back-merge introduces no file content — `develop` is strictly ahead in content
 it only reconciles history so `git rev-list --left-right --count main...develop`
 reads `0 <N>` instead of `<releases> <N>`.
 
+**The back-merge must fast-forward — do NOT pass `--no-ff` here.** This is the one
+merge in the process that is deliberately *not* a merge commit, so it is an
+explicit exception to the repo-wide "always `--no-ff`" habit (and to step 8, two
+paragraphs up, which *does* require it). The release merge already has the
+`chore(release)` commit as a parent, so `origin/main` fast-forwards cleanly onto
+`develop` and the two branches land on the identical commit. Forcing a merge
+commit instead leaves `develop` one commit ahead of `main` forever, and step 10's
+`git rev-list --count origin/main..develop` then reads `1` rather than `0` — the
+check appears to fail while nothing is actually wrong. Harmless in content (the
+next release absorbs it with an empty diff) but not worth the false alarm; it
+happened at the v1.8.4 cut.
+
+**If `main` is checked out in another worktree**, `git checkout main` in step 8
+refuses outright. Do not disturb that worktree. Promote with plumbing from
+`develop` instead — verify the merged tree first, then build the merge commit and
+push it straight to the remote ref:
+
+```sh
+git merge-tree --write-tree origin/main develop   # must equal `git rev-parse develop^{tree}`
+MERGE=$(git commit-tree <tree> -p origin/main -p develop \
+        -m "Release: merge develop into main — vNEW")
+git push origin $MERGE:main
+```
+
+That produces the same two-parent merge commit step 8 describes. The local `main`
+ref stays where the other worktree has it and is that session's to update.
+
 ### 10. Verify
 
 ```sh

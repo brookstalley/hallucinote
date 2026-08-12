@@ -119,9 +119,11 @@ python -c "from hallucinote_mcp.install_paths import max_for_live_available; pri
 ```
 
 Today this returns `None` (Live's edition isn't reliably detectable) — ask:
-*"Is your Live edition Suite? The HallucinoteAnalyzer requires Max for Live, which
-ships only with Suite."* If it isn't Suite, you may still install it — non-render
-workflows work without it; let the user decide.
+*"Do you have Max for Live? The HallucinoteAnalyzer needs it — it's bundled with
+Live Suite, and sold as an add-on for Standard."* Ask about **Max for Live**, not
+about the edition: a Standard owner who bought the add-on has it, and asking
+"is it Suite?" gets a no from someone who is actually equipped. Without M4L you
+may still install — non-render workflows work without it; let the user decide.
 
 **First, check `preflight`'s `analyzer` block for the chosen User Library** (it
 mirrors `remote_script`: `analyzer.source_fingerprint` + one

@@ -67,6 +67,15 @@ snapshot-refresh *preview*, which itemizes one level and summarizes deeper
 subtrees rather than listing them (a display simplification — the underlying
 data round-trips in full).
 
+## Windows has less mileage than macOS
+
+Both are supported and the Windows-specific paths — User Library locations, the
+Live process lookup, the Remote Script install — are implemented and
+unit-tested. macOS is simply where Hallucinote is developed day to day, and CI
+runs on Linux with no Ableton at all, so Windows has far fewer real sessions
+behind it. Windows-shaped breakage is a bug worth reporting, with your
+`preflight` output attached.
+
 ## Linux is unsupported
 
 Ableton Live ships no Linux build; Wine/CrossOver gets a best-effort install

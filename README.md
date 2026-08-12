@@ -63,7 +63,7 @@ Then press play. Want the bridge to hit harder? *"Lift the lead an octave there,
 
 Actively developed, and honest about the rough edges:
 
-- **Platforms:** Ableton Live 12 on macOS and Windows (Ableton ships no Linux build).
+- **Platforms:** Ableton Live 12 on macOS and Windows (Ableton ships no Linux build). macOS is where it's developed day to day; the Windows paths are implemented and unit-tested, with fewer real sessions behind them.
 - **Editions:** the full authoring loop is exercised on **Live 12 Standard and Suite**. Only the measured mix review needs **Max for Live** (Suite, or the add-on for Standard); without it, review is symbolic — against the score, not the audio. Intro and Lite are untested, and their track limits will bite.
 - **The melody is yours.** Sketch a topline in Live and it arranges, sound-designs and mixes the whole track underneath, then reads the line back against your intent — contour, intervals, how it sits on the chords. [How that works](docs/faq.md#what-about-the-melody). Sung vocals are on the list; today the synth sings.
 - **Boundaries:** MIDI and the mix are what it builds; a recorded vocal take can't yet be read back through the bridge.
@@ -75,7 +75,7 @@ The rest, each with its workaround: [**Known issues**](docs/known-issues.md).
 
 The plugin is **self-contained** — skills, Ableton bridge and composing engine in one managed environment. Nothing else to clone or track.
 
-**1. Prerequisites** — [Claude Code](https://claude.ai/code), Ableton Live 12, Python 3.10+, and [uv](https://docs.astral.sh/uv/) (`brew install uv` on macOS, `winget install astral-sh.uv` on Windows).
+**1. Prerequisites** — [Claude Code](https://claude.ai/code), Ableton Live 12, and [uv](https://docs.astral.sh/uv/) (`brew install uv` on macOS, `winget install astral-sh.uv` on Windows). uv provisions the Python the plugin needs, so you don't install one.
 
 **2. Install the plugin** — in Claude Code:
 

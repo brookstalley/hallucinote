@@ -25,6 +25,38 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-08-20 — Three post-sync advisories cleared: a merge driver, a triaged bug report, and a norm re-affirmed
+
+<!-- prawduct: type=chore | scope=advisory-clearing | status=complete -->
+
+Housekeeping against the three advisories the session briefing had been carrying.
+
+- **`.gitattributes` now marks `.prawduct/change-log.md` `merge=union`.** Every
+  branch prepends its entry at the same offset, so a three-way merge conflicted on
+  content that never actually disagreed and always resolved to "take both". Union
+  does that automatically. The tradeoff worth knowing: union also silently keeps
+  both sides when two branches *edit the same existing entry* — that case no longer
+  conflicts, and this file's append-only discipline is what makes the trade safe.
+
+- **The `incoming-bugs/` drop-box is empty again.** The 2026-08-10 MixReport report
+  is filed as #465 — a fader-only level move is invisible in the mix report, via two
+  mechanisms (a stale `master_fader_db` making `delivered_true_peak_dbtp` equal the
+  bus number, and per-stem loudness / per-section masking being computed pre-fader
+  without saying so in the report). Cross-linked to #253 and #397; the source report
+  moved to `incoming-bugs/archives/` (the drop-box is gitignored, so that move is
+  local only).
+
+- **The arrangement-projection norm was re-affirmed, not retired** (`architecture.md`
+  → Direction). Its `Why` cited ARR-PROJ (#350), which has since shipped, so the
+  decay probe correctly asked for a decision — but the citation was *evidence for*
+  the norm rather than work it was waiting on. The `Why` now carries the rationale
+  with no tracked-work dependency, the provenance (#350 shipped 2026-06-22, #349
+  closed) moved to `Retroactivity` where it belongs, and a new `Status: steady-state`
+  line records the re-affirmation plus the one genuinely residual item: the flagship
+  projection path has still never run full-scale against real Live, scheduled under
+  #306.
+
+
 ## 2026-08-12 — README: the demo video embeds, and the owner's copy edits merge
 
 <!-- prawduct: type=docs | scope=docs-launch-readiness | release=v1.8.6 -->

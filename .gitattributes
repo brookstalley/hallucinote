@@ -1,0 +1,5 @@
+# Append/prepend-only bookkeeping files: every branch adds its own entry at the
+# same offset, so a three-way merge conflicts on content that never actually
+# disagreed. Union-merge keeps both sides' entries instead of demanding a
+# hand-resolution that always resolves to "take both".
+.prawduct/change-log.md merge=union

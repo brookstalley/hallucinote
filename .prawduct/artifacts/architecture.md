@@ -206,11 +206,20 @@ Ratified 2026-08-10. These bind future work; the narrative above describes it.
   Why: a re-push must change what was asked for and leave the rest alone, or the tool is
   unsafe to run twice — a phase that reapplies unconditionally is a defect, and was a real
   one in `devices`. Arrangement is the exception because incremental reconciliation against
-  Live's positional, renumbering clip model produced years of whack-a-mole bugs; settled
-  push-side in brookstalley/hallucinote#350.
-  Retroactivity: contain — projection is the **push**-side regime. Pull still diffs
-  arrangement placements positionally (`sync/pull/clips.py::plan_pull_arrangement_clips`),
-  and the pull planner is the modeled boundary between the two regimes. Convergence is
+  Live's positional, renumbering clip model produced years of whack-a-mole bugs.
+  Status: steady-state — re-affirmed 2026-08-20 on the decay fork (the why cited work that has
+  since shipped). The rationale no longer *rests on* tracked work: the projection rewrite
+  landed, `duplicate_to_arrangement` survives only inside the narrow envelope-bearing exception
+  the statement already carves out, and the positional reconcile subsystem is gone — so this is
+  settled experience, not a pending migration. Residual cleanup is verification, not
+  compliance: the flagship projection path has still never run full-scale against real Live,
+  scheduled under brookstalley/hallucinote#306, which names ARR-PROJ Chunk 2 E2E as its first
+  burn-down target.
+  Retroactivity: contain — projection is the **push**-side regime, settled push-side by ARR-PROJ
+  (brookstalley/hallucinote#350, shipped 2026-06-22) and its follow-on ARR-ORPHAN (#349, closed).
+  Pull still diffs arrangement placements positionally
+  (`sync/pull/clips.py::plan_pull_arrangement_clips`), and the pull planner is the modeled
+  boundary between the two regimes. Convergence is
   deliberately not intended: the renumbering hazard is a write-path problem and does not
   transfer to reading. (Owner ruling, 2026-08-10 ratification.)
 

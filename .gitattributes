@@ -12,8 +12,8 @@
 
 # DELIBERATELY NOT union-merged:
 #
-#   .prawduct/learnings.md + .prawduct/learnings-detail.md — these were added
-#     here and then removed, because the visibility half of the test fails.
+#   .prawduct/learnings.md + .prawduct/learnings-detail.md — excluded because
+#     the visibility half of the test fails.
 #     A union-duplicated `## ` heading is not merely cosmetic: `audit-learnings`
 #     pairs the two files by EXACT title and `_take_active_narrative` breaks on
 #     the FIRST match, so a retirement run cuts one block and silently orphans

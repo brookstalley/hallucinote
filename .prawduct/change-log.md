@@ -9,10 +9,17 @@
      exactly this payload (NOTE: delimiters written as words, because a literal
      closing delimiter here would end THIS comment early — HTML comments do not
      nest, and that bug hid the paragraph below as visible body text):
-         open-comment prawduct: type=<t> | chunks=<a,b,c> | scope=<tag> | status=<s> | release=<r> close-comment
-     Pipe ` | ` separates keys; `chunks` is a COMMA list (never pipe — pipe is the
-     key delimiter); keys are freeform (unknown keys are preserved). A tag line
-     placed after prose is treated as body text, not metadata.
+         open-comment prawduct: type=<t> | scope=<tag> | release=<r> close-comment
+     Pipe ` | ` separates keys; keys are freeform (unknown keys are preserved).
+     A tag line placed after prose is treated as body text, not metadata.
+
+     RETIRED KEYS — do not write these on a NEW entry. `chunks=<a,b,c>` (a COMMA
+     list, never pipe) and `status=<s>` are both documented RETIRED in the
+     plugin's lib/change_log.py: the derived-view regenerator that read them is
+     gone and no gate, view or lint consumes either value. They are listed here
+     only because older entries carry them and are preserved verbatim — this
+     paragraph exists because the form above USED to advertise both, which is
+     how a new entry came to be written with an invented `status=complete`.
 
      RELEASE VOCAB for in-flight work: an entry sitting on develop with no release
      cut carries NO `release=` key at all — that ABSENCE is the release-pending
@@ -27,7 +34,7 @@
 
 ## 2026-08-20 — Three post-sync advisories cleared: a merge driver, a triaged bug report, and a norm re-affirmed
 
-<!-- prawduct: type=chore | scope=advisory-clearing | status=complete -->
+<!-- prawduct: type=chore | scope=advisory-clearing -->
 
 Housekeeping against the three advisories the session briefing had been carrying.
 
@@ -68,7 +75,6 @@ Housekeeping against the three advisories the session briefing had been carrying
   #306. The Status line is marked **agent-proposed, pending owner veto** — the
   2026-08-10 batch above it was owner-ratified and this one was not, and the
   Statement is byte-identical to the ratified text, so a veto costs only that line.
-
 
 ## 2026-08-12 — README: the demo video embeds, and the owner's copy edits merge
 

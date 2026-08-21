@@ -208,7 +208,10 @@ Ratified 2026-08-10. These bind future work; the narrative above describes it.
   one in `devices`. Arrangement is the exception because incremental reconciliation against
   Live's positional, renumbering clip model produced years of whack-a-mole bugs.
   Status: steady-state — re-affirmed 2026-08-20 on the decay fork (the why cited work that has
-  since shipped). The rationale no longer *rests on* tracked work: the projection rewrite
+  since shipped). **AGENT-PROPOSED, PENDING OWNER VETO** — unlike the 2026-08-10 batch above,
+  no owner ruled on this one; it was decided during a chore session clearing the decay
+  advisory, and the Statement is byte-identical to the ratified text, so a veto costs only
+  this Status line. The rationale no longer *rests on* tracked work: the projection rewrite
   landed, `duplicate_to_arrangement` survives only inside the narrow envelope-bearing exception
   the statement already carves out, and the positional reconcile subsystem is gone — so this is
   settled experience, not a pending migration. Residual cleanup is verification, not

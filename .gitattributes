@@ -6,23 +6,31 @@
 # Union only engages where git would otherwise CONFLICT, so the question for
 # each file is not "does it ever get edited in place" but "when two branches
 # collide on the SAME lines, is keeping both the right answer, and is a wrong
-# answer VISIBLE?" That is what the list below is selected on.
+# answer VISIBLE?" That is what the list below is selected on, and the second
+# half of the test is the one that does the work — see the exclusions.
 .prawduct/change-log.md merge=union
 
-# Both, or neither: learnings.md is an index whose headings must mirror
-# learnings-detail.md's in the same order. Union resolves deterministically
-# (ours, then theirs), so giving both files the same driver keeps the two
-# sides in step; giving it to only one could desynchronize the pairing. Two
-# branches rewording the same rule leaves a duplicated heading, which is
-# visible on the next read and caught by the doctor's index/detail check.
-.prawduct/learnings.md merge=union
-.prawduct/learnings-detail.md merge=union
-
 # DELIBERATELY NOT union-merged:
+#
+#   .prawduct/learnings.md + .prawduct/learnings-detail.md — these were added
+#     here and then removed, because the visibility half of the test fails.
+#     A union-duplicated `## ` heading is not merely cosmetic: `audit-learnings`
+#     pairs the two files by EXACT title and `_take_active_narrative` breaks on
+#     the FIRST match, so a retirement run cuts one block and silently orphans
+#     the other — the failure its own docstring names ("cutting the wrong block
+#     silently destroys an unrelated narrative"), against a file whose stated
+#     invariant is never delete an entry. No doctor or janitor check pairs the
+#     two files, so nothing would report the divergence. If such a check is
+#     ever built, these two become safe to add — together, since union resolves
+#     deterministically and giving it to only one could desynchronize the
+#     ordering the index/detail pairing depends on.
+#
 #   .prawduct/operator-verification.md — entries flip PENDING -> PASSED in
 #     place. A union resolution would leave one entry asserting both, silently,
 #     in the file `/prawduct:pr` reads to decide whether live checks still
 #     block a release. A conflict here should stop a human, not auto-resolve.
+#
 #   .prawduct/reflections.md — gitignored; it never merges at all.
+#
 #   .prawduct/project-state.yaml, .prawduct/backlog.md — structured records
 #     edited in place, not append-only logs.

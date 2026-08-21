@@ -31,20 +31,22 @@
 
 Housekeeping against the three advisories the session briefing had been carrying.
 
-- **`.gitattributes` now marks the append-only bookkeeping files `merge=union`** —
-  `change-log.md` (the advisory's target) plus `learnings.md` and
-  `learnings-detail.md`. Every branch adds its entry at the same offset, so a
-  three-way merge conflicted on content that never actually disagreed and always
-  resolved to "take both". The selection criterion is written into the file: union
-  engages only where git would otherwise conflict, so what matters per file is
-  whether "keep both" is right *at a collision* and whether a wrong answer is
-  visible. The two learnings files take it together because the index's headings
-  must mirror the detail file's in the same order, and union resolves
-  deterministically — giving it to only one could desynchronize the pairing.
-  `operator-verification.md` is deliberately excluded and the reason is recorded
-  there: its entries flip PENDING to PASSED in place, so a union resolution would
-  leave one entry asserting both, silently, in the file `/prawduct:pr` reads to
-  decide whether live checks still block a release. `reflections.md` is gitignored
+- **`.gitattributes` now marks `.prawduct/change-log.md` `merge=union`.** Every
+  branch prepends its entry at the same offset, so a three-way merge conflicted on
+  content that never actually disagreed and always resolved to "take both". The
+  selection criterion is written into the file: union engages only where git would
+  otherwise conflict, so what matters per file is whether "keep both" is right *at a
+  collision* and whether a wrong answer is **visible**. The exclusions are recorded
+  there too, because that second half is what does the work. `learnings.md` +
+  `learnings-detail.md` were added and then **reverted** when the Critic found the
+  visibility claim false: `audit-learnings` pairs the two by exact title and
+  `_take_active_narrative` breaks on the FIRST match, so a union-duplicated heading
+  makes a retirement run cut one block and silently orphan the other — against a file
+  whose stated invariant is *never delete an entry* — and no doctor or janitor check
+  pairs them, so nothing would report it. `operator-verification.md` is excluded for
+  the same reason in a sharper form: its entries flip PENDING to PASSED in place, so
+  union would leave one entry asserting both, silently, in the file `/prawduct:pr`
+  reads to decide whether live checks block a release. `reflections.md` is gitignored
   and never merges at all.
 
 - **The `incoming-bugs/` drop-box is empty again.** The 2026-08-10 MixReport report
@@ -63,7 +65,9 @@ Housekeeping against the three advisories the session briefing had been carrying
   closed) moved to `Retroactivity` where it belongs, and a new `Status: steady-state`
   line records the re-affirmation plus the one genuinely residual item: the flagship
   projection path has still never run full-scale against real Live, scheduled under
-  #306.
+  #306. The Status line is marked **agent-proposed, pending owner veto** — the
+  2026-08-10 batch above it was owner-ratified and this one was not, and the
+  Statement is byte-identical to the ratified text, so a veto costs only that line.
 
 
 ## 2026-08-12 — README: the demo video embeds, and the owner's copy edits merge

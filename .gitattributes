@@ -2,4 +2,27 @@
 # same offset, so a three-way merge conflicts on content that never actually
 # disagreed. Union-merge keeps both sides' entries instead of demanding a
 # hand-resolution that always resolves to "take both".
+#
+# Union only engages where git would otherwise CONFLICT, so the question for
+# each file is not "does it ever get edited in place" but "when two branches
+# collide on the SAME lines, is keeping both the right answer, and is a wrong
+# answer VISIBLE?" That is what the list below is selected on.
 .prawduct/change-log.md merge=union
+
+# Both, or neither: learnings.md is an index whose headings must mirror
+# learnings-detail.md's in the same order. Union resolves deterministically
+# (ours, then theirs), so giving both files the same driver keeps the two
+# sides in step; giving it to only one could desynchronize the pairing. Two
+# branches rewording the same rule leaves a duplicated heading, which is
+# visible on the next read and caught by the doctor's index/detail check.
+.prawduct/learnings.md merge=union
+.prawduct/learnings-detail.md merge=union
+
+# DELIBERATELY NOT union-merged:
+#   .prawduct/operator-verification.md — entries flip PENDING -> PASSED in
+#     place. A union resolution would leave one entry asserting both, silently,
+#     in the file `/prawduct:pr` reads to decide whether live checks still
+#     block a release. A conflict here should stop a human, not auto-resolve.
+#   .prawduct/reflections.md — gitignored; it never merges at all.
+#   .prawduct/project-state.yaml, .prawduct/backlog.md — structured records
+#     edited in place, not append-only logs.

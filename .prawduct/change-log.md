@@ -31,12 +31,21 @@
 
 Housekeeping against the three advisories the session briefing had been carrying.
 
-- **`.gitattributes` now marks `.prawduct/change-log.md` `merge=union`.** Every
-  branch prepends its entry at the same offset, so a three-way merge conflicted on
-  content that never actually disagreed and always resolved to "take both". Union
-  does that automatically. The tradeoff worth knowing: union also silently keeps
-  both sides when two branches *edit the same existing entry* — that case no longer
-  conflicts, and this file's append-only discipline is what makes the trade safe.
+- **`.gitattributes` now marks the append-only bookkeeping files `merge=union`** —
+  `change-log.md` (the advisory's target) plus `learnings.md` and
+  `learnings-detail.md`. Every branch adds its entry at the same offset, so a
+  three-way merge conflicted on content that never actually disagreed and always
+  resolved to "take both". The selection criterion is written into the file: union
+  engages only where git would otherwise conflict, so what matters per file is
+  whether "keep both" is right *at a collision* and whether a wrong answer is
+  visible. The two learnings files take it together because the index's headings
+  must mirror the detail file's in the same order, and union resolves
+  deterministically — giving it to only one could desynchronize the pairing.
+  `operator-verification.md` is deliberately excluded and the reason is recorded
+  there: its entries flip PENDING to PASSED in place, so a union resolution would
+  leave one entry asserting both, silently, in the file `/prawduct:pr` reads to
+  decide whether live checks still block a release. `reflections.md` is gitignored
+  and never merges at all.
 
 - **The `incoming-bugs/` drop-box is empty again.** The 2026-08-10 MixReport report
   is filed as #465 — a fader-only level move is invisible in the mix report, via two

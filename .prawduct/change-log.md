@@ -9,10 +9,17 @@
      exactly this payload (NOTE: delimiters written as words, because a literal
      closing delimiter here would end THIS comment early — HTML comments do not
      nest, and that bug hid the paragraph below as visible body text):
-         open-comment prawduct: type=<t> | chunks=<a,b,c> | scope=<tag> | status=<s> | release=<r> close-comment
-     Pipe ` | ` separates keys; `chunks` is a COMMA list (never pipe — pipe is the
-     key delimiter); keys are freeform (unknown keys are preserved). A tag line
-     placed after prose is treated as body text, not metadata.
+         open-comment prawduct: type=<t> | scope=<tag> | release=<r> close-comment
+     Pipe ` | ` separates keys; keys are freeform (unknown keys are preserved).
+     A tag line placed after prose is treated as body text, not metadata.
+
+     RETIRED KEYS — do not write these on a NEW entry. `chunks=<a,b,c>` (a COMMA
+     list, never pipe) and `status=<s>` are both documented RETIRED in the
+     plugin's lib/change_log.py: the derived-view regenerator that read them is
+     gone and no gate, view or lint consumes either value. They are listed here
+     only because older entries carry them and are preserved verbatim — this
+     paragraph exists because the form above USED to advertise both, which is
+     how a new entry came to be written with an invented `status=complete`.
 
      RELEASE VOCAB for in-flight work: an entry sitting on develop with no release
      cut carries NO `release=` key at all — that ABSENCE is the release-pending
@@ -24,6 +31,50 @@
      — the checker rejects it outright. Omitting the key satisfies the same
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
+
+## 2026-08-20 — Three post-sync advisories cleared: a merge driver, a triaged bug report, and a norm re-affirmed
+
+<!-- prawduct: type=chore | scope=advisory-clearing -->
+
+Housekeeping against the three advisories the session briefing had been carrying.
+
+- **`.gitattributes` now marks `.prawduct/change-log.md` `merge=union`.** Every
+  branch prepends its entry at the same offset, so a three-way merge conflicted on
+  content that never actually disagreed and always resolved to "take both". The
+  selection criterion is written into the file: union engages only where git would
+  otherwise conflict, so what matters per file is whether "keep both" is right *at a
+  collision* and whether a wrong answer is **visible**. The exclusions are recorded
+  there too, because that second half is what does the work. `learnings.md` +
+  `learnings-detail.md` were added and then **reverted** when the Critic found the
+  visibility claim false: `audit-learnings` pairs the two by exact title and
+  `_take_active_narrative` breaks on the FIRST match, so a union-duplicated heading
+  makes a retirement run cut one block and silently orphan the other — against a file
+  whose stated invariant is *never delete an entry* — and no doctor or janitor check
+  pairs them, so nothing would report it. `operator-verification.md` is excluded for
+  the same reason in a sharper form: its entries flip PENDING to PASSED in place, so
+  union would leave one entry asserting both, silently, in the file `/prawduct:pr`
+  reads to decide whether live checks block a release. `reflections.md` is gitignored
+  and never merges at all.
+
+- **The `incoming-bugs/` drop-box is empty again.** The 2026-08-10 MixReport report
+  is filed as #465 — a fader-only level move is invisible in the mix report, via two
+  mechanisms (a stale `master_fader_db` making `delivered_true_peak_dbtp` equal the
+  bus number, and per-stem loudness / per-section masking being computed pre-fader
+  without saying so in the report). Cross-linked to #253 and #397; the source report
+  moved to `incoming-bugs/archives/` (the drop-box is gitignored, so that move is
+  local only).
+
+- **The arrangement-projection norm was re-affirmed, not retired** (`architecture.md`
+  → Direction). Its `Why` cited ARR-PROJ (#350), which has since shipped, so the
+  decay probe correctly asked for a decision — but the citation was *evidence for*
+  the norm rather than work it was waiting on. The `Why` now carries the rationale
+  with no tracked-work dependency, the provenance (#350 shipped 2026-06-22, #349
+  closed) moved to `Retroactivity` where it belongs, and a new `Status: steady-state`
+  line records the re-affirmation plus the one genuinely residual item: the flagship
+  projection path has still never run full-scale against real Live, scheduled under
+  #306. The Status line is marked **agent-proposed, pending owner veto** — the
+  2026-08-10 batch above it was owner-ratified and this one was not, and the
+  Statement is byte-identical to the ratified text, so a veto costs only that line.
 
 ## 2026-08-12 — README: the demo video embeds, and the owner's copy edits merge
 

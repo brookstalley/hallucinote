@@ -660,12 +660,14 @@ checked.
   than regressing to the ~2.5 Hz perform path, together with the note-on
   ordering convention that makes per-phrase sample windows land right (#236).
 
-- **Waivers, citations, and the pre-split layout** (#447, #445, #320): all 21
-  legacy `prawduct:ok-broad-except` pragmas migrated to the current form
-  carrying a per-catch reason; the four source citations into the frozen
+- **Waivers and citations** (#447, #445): all 21 legacy
+  `prawduct:ok-broad-except` pragmas migrated to the current form carrying a
+  per-catch reason; the four source citations into the frozen
   `.prawduct/backlog.md` repointed at stable `id:PFX` handles (and dropped
-  entirely from the one user-facing error string); `project-preferences.md`
-  stopped describing the monorepo the framework/songs split retired.
+  entirely from the one user-facing error string). **#320** — the pre-split
+  layout in `project-preferences.md` — was fixed on this branch too, but
+  `develop` landed the same correction first, so this release ships nothing
+  for it and does not claim it.
 
 ## 2026-08-11 — The documentation gets scrubbed for release, and the README learns to be read
 

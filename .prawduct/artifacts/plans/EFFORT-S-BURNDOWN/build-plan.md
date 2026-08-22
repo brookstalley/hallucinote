@@ -324,8 +324,10 @@ would unblock it**, so the burndown leaves no silent residue.
 - [x] Chunk 8 — coherence guard, eval refresh, overview derivation (#248, #252, #233)
 - [x] Chunk 9 — dispositions for the 10 non-buildable items
 
-**Context:** branch created from `develop` at `aa682e1`. Baseline 4986 passed /
-2 skipped; final 5052 passed / 2 skipped. **All nine chunks shipped.**
+**Context:** branch created from `develop` at `aa682e1`. Suite counts are not
+restated here — `.prawduct/.test-evidence.json` records pass/fail per tree, and
+a prose copy has now drifted twice (once at the develop merge, once at the
+post-merge fixes). **All nine chunks shipped.**
 
 Review history: a cumulative after chunks 1-3 (0 blocking), a cumulative after
 chunks 4-9 (2 blocking, 9 warning, 16 note), then four `verify-resolutions`
@@ -337,7 +339,8 @@ call) and the `case_sensitive: null` tightening (it made the gate stricter than
 the loader, reintroducing a variant of the bug #326 fixed). Both reverts are
 better outcomes than the original fixes.
 
-**Item-level outcome: 20 closed, 10 not closable here.** (#256 was re-triaged
+**Item-level outcome: 19 closed here, 10 not closable here, and #320 closed by
+`develop` independently.** (#256 was re-triaged
 into the built set mid-branch — see the triage section.) The 10 each carry a
 dated disposition comment naming the blocker and what would unblock it.
 **#281's disposition improved mid-branch**: its blocker was recorded as "needs
@@ -346,7 +349,9 @@ the newest release is 12.4 (2026-05-05). The version half of that item is now
 answered and dated in `.prawduct/artifacts/research-envelope-lom-gaps.md`; only
 the M4L-bridge probe remains.
 
-**At merge:** close the 20 issues then, not before — they carry "closed by"
+**At merge:** close the 19 issues then, not before (#320 is already shipped —
+`develop` landed the same `project-preferences.md` correction first, so this
+branch ships nothing for it) — they carry "closed by"
 comments but closing them on an unmerged branch would misreport shipped state.
 
 ---

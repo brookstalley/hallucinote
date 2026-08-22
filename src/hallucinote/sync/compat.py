@@ -49,7 +49,15 @@ from typing import Literal
 
 from hallucinote.db import init_db, queries as Q, resolve_db_path
 from hallucinote.preset_query import BROWSER_ROOTS as _VALID_BROWSER_ROOTS
+from hallucinote.preset_query import SEARCH_MODES as _VALID_MATCH_MODES
 from hallucinote.workspace import resolve_song_dir
+
+
+# The matcher's own defaults, named once. Importing the ENUM but restating
+# the DEFAULTS would leave the gate half-anchored to the loader — the same
+# split that let SYN-6Q3D happen.
+_MATCH_MODE_DEFAULT = "substring"
+_CASE_SENSITIVE_DEFAULT = False
 
 
 # ---------------------------------------------------------------------------
@@ -311,20 +319,71 @@ def classify_preset_query(
             "preset_query_invalid",
             f"preset_query.pattern must be a string, got {type(pattern).__name__}",
         )
+    # SYN-6Q3D: `mode` and `case_sensitive` now ride the wire into
+    # `ableton_browser(action='search')`, so they are structural too. Without
+    # this check an unknown mode reaches the probe, the browser rejects the
+    # enum, and `_probe_browser_dry_runs` raises SystemExit — killing the WHOLE
+    # `--probe` report over one bad device instead of flagging that device. The
+    # enum is IMPORTED from `preset_query` (the lock-tested mirror of the
+    # MCP resolver) rather than restated, so the gate cannot drift from the
+    # matcher — the exact class of disagreement this item existed to fix.
+    # `"mode": null` is NOT the same as an absent key: absent means "use the
+    # default", while an explicit null reaches `name_matches` and raises
+    # "unknown search mode None". Keying on presence rather than truthiness
+    # keeps the gate and the loader agreeing — the exact disagreement SYN-6Q3D
+    # existed to fix, which a `pq.get("mode")` check would have reopened.
+    mode = pq["mode"] if "mode" in pq else _MATCH_MODE_DEFAULT
+    if mode not in _VALID_MATCH_MODES:
+        return (
+            "preset_query_invalid",
+            f"preset_query.mode={mode!r} not in {sorted(_VALID_MATCH_MODES)}",
+        )
+    # NOT the presence rule `mode` uses, deliberately — the justification does
+    # not transfer. An explicit `mode: null` REACHES `name_matches` and raises,
+    # so the gate must reject it to stay in step with the loader. An explicit
+    # `case_sensitive: null` degrades to False in every consumer (`name_matches`
+    # tests `if not case_sensitive`, `_dry_run_key` coerces via `bool(...)`, the
+    # MCP resolver does the same), so rejecting it would make this gate STRICTER
+    # than the loader — refusing a song that loads fine, which is the exact
+    # failure shape SYN-6Q3D existed to remove. Only a non-null non-bool is an
+    # authoring error worth reporting.
+    case_sensitive = pq.get("case_sensitive")
+    if case_sensitive is not None and not isinstance(case_sensitive, bool):
+        return (
+            "preset_query_invalid",
+            "preset_query.case_sensitive must be a boolean, got "
+            f"{type(case_sensitive).__name__}",
+        )
     # Structure is fine — caller will dispatch the dry-run.
     return None
 
 
-def _dry_run_key(preset_query: dict) -> tuple[str, str, tuple[str, ...]]:
+# The browser dry-run cache key: every field `preset_query.name_matches` reads.
+# Named rather than spelled out at each use so widening it (as SYN-6Q3D did,
+# adding mode + case_sensitive) is a one-line change, not an eight-site sweep.
+_DryRunKey = tuple[str, str, tuple[str, ...], str, bool]
+
+
+def _dry_run_key(preset_query: dict) -> _DryRunKey:
     """Canonical key for a precomputed browser-search dry-run cache.
 
-    Includes ``root``, ``pattern``, and a tuple-encoded ``path_prefix``
-    so the cache hash is stable across re-runs of the same query.
+    Carries every field ``preset_query.name_matches`` reads — ``root``,
+    ``pattern``, tuple-encoded ``path_prefix``, ``mode`` and
+    ``case_sensitive`` — so the cache hash is stable across re-runs AND two
+    queries that differ only in how they match cannot collide on one entry.
+
+    ``mode``/``case_sensitive`` were originally absent, which caused both
+    halves of SYN-6Q3D: the probe searched with the browser's default
+    substring matcher regardless of what the query declared, and two devices
+    differing only in ``mode`` shared a single match count. The defaults here
+    mirror :func:`hallucinote.preset_query.name_matches`.
     """
     return (
         str(preset_query.get("root", "")),
         str(preset_query.get("pattern", "")),
         tuple(preset_query.get("path_prefix") or []),
+        str(preset_query.get("mode", _MATCH_MODE_DEFAULT)),
+        bool(preset_query.get("case_sensitive", _CASE_SENSITIVE_DEFAULT)),
     )
 
 
@@ -379,7 +438,7 @@ def check_song(
     db_path: Path | str,
     *,
     installed_plugins: list[dict] | None = None,
-    browser_dry_runs: dict[tuple[str, str, tuple[str, ...]], int] | None = None,
+    browser_dry_runs: dict[_DryRunKey, int] | None = None,
 ) -> CompatReport:
     """Walk the song's DB and classify every device.
 
@@ -471,7 +530,7 @@ def _walk_chain(
     track_name: str,
     report: CompatReport,
     installed_names: frozenset[str] | None,
-    browser_dry_runs: dict[tuple[str, str, tuple[str, ...]], int] | None,
+    browser_dry_runs: dict[_DryRunKey, int] | None,
 ) -> None:
     """Recursively walk a device chain, classifying each device.
 
@@ -510,7 +569,7 @@ def _classify_device_full(
     device_row: sqlite3.Row,
     *,
     installed_names: frozenset[str] | None,
-    browser_dry_runs: dict[tuple[str, str, tuple[str, ...]], int] | None,
+    browser_dry_runs: dict[_DryRunKey, int] | None,
 ) -> tuple[DeviceStatus, str | None, str | None]:
     """Combined classifier — preset_query validation takes precedence
     over plugin-check, because a structurally-broken preset_query will
@@ -776,7 +835,7 @@ def _resolve_send_fn():
 
 def _collect_preset_query_specs(
     conn: sqlite3.Connection,
-) -> list[tuple[tuple[str, str, tuple[str, ...]], dict]]:
+) -> list[tuple[_DryRunKey, dict]]:
     """Walk every device in the (single-song) DB and return unique
     structurally-valid preset_queries as ``(dry_run_key, query_dict)``
     pairs.
@@ -792,7 +851,7 @@ def _collect_preset_query_specs(
     rows = conn.execute(
         "SELECT preset_query FROM devices WHERE preset_query IS NOT NULL"
     ).fetchall()
-    seen: dict[tuple[str, str, tuple[str, ...]], dict] = {}
+    seen: dict[_DryRunKey, dict] = {}
     for row in rows:
         raw = row["preset_query"]
         if classify_preset_query(raw) is not None:
@@ -814,7 +873,7 @@ def _probe_browser_dry_runs(
     conn: sqlite3.Connection,
     *,
     send_fn=None,
-) -> dict[tuple[str, str, tuple[str, ...]], int]:
+) -> dict[_DryRunKey, int]:
     """Issue ``ableton_browser(action='search')`` for every unique
     structurally-valid preset_query in the song's DB and return a map
     suitable for :func:`check_song`'s ``browser_dry_runs=`` parameter.
@@ -835,7 +894,7 @@ def _probe_browser_dry_runs(
         send_fn = _resolve_send_fn()
     from hallucinote_mcp.wire import Request  # type: ignore[import-not-found]
 
-    out: dict[tuple[str, str, tuple[str, ...]], int] = {}
+    out: dict[_DryRunKey, int] = {}
     for key, pq in specs:
         params: dict = {
             "pattern": pq.get("pattern", ""),
@@ -845,6 +904,19 @@ def _probe_browser_dry_runs(
         path_prefix = pq.get("path_prefix") or []
         if path_prefix:
             params["path_prefix"] = list(path_prefix)
+        # Probe with the matcher the LOADER will use. Omitting these made the
+        # gate disagree with the thing it gates: an `exact` query was probed
+        # with the browser's default substring matcher, so a pattern matching
+        # one preset exactly but two by substring was refused as
+        # `kind_ambiguous` on a device that loads perfectly. Sent when the
+        # query declares one; `_dry_run_key` normalises both spellings to
+        # `"substring"`, so declaring the default explicitly changes nothing
+        # but the bytes.
+        mode = pq.get("mode")
+        if mode:
+            params["mode"] = str(mode)
+        if pq.get("case_sensitive"):
+            params["case_sensitive"] = True
         resp = send_fn(Request(
             tool="ableton_browser", action="search", params=params,
         ))

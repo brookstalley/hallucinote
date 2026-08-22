@@ -180,9 +180,12 @@ register(
             "tempo_map, time_signature_map, sections, cue_points, tracks, "
             "returns. Each track nests clips (with notes), arrangement_clips, "
             "devices (with parameters), and sends; each return nests devices.",
-            "Devices are top-level-chain only — nested rack chains aren't "
-            "flattened in (a song using Instrument/Audio-Effect Racks reports "
-            "the rack container, not the devices inside it).",
+            "Devices are flattened across nested rack chains to arbitrary "
+            "depth: a song using Instrument/Audio-Effect Racks reports the "
+            "rack container AND the devices inside it. Nested entries carry "
+            "rack_depth, which is what distinguishes them from top-level "
+            "siblings (chain_id is NOT NULL on every device row, so it does "
+            "not).",
             "Built for the musical-work eval judge's --db-extract input: when "
             "a request outran the compose/mix analyzers (a known-gap or novel "
             "result), save this extract to JSON and pass it so the judge can "

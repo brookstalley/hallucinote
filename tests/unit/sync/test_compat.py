@@ -778,6 +778,72 @@ def test_classify_preset_query_rejects_string_path_prefix():
     assert "path_prefix" in detail and "list" in detail
 
 
+def test_classify_preset_query_rejects_an_unknown_mode():
+    """SYN-6Q3D put `mode` on the wire, which makes it structural: an unknown
+    mode reaches the browser, the enum is rejected, and
+    `_probe_browser_dry_runs` raises SystemExit — killing the WHOLE --probe
+    report over one bad device. Catching it here flags that device instead."""
+    status, detail = C.classify_preset_query(json.dumps({
+        "root": "instruments", "pattern": "Pad", "mode": "fuzzy",
+    }))
+    assert status == "preset_query_invalid"
+    assert "mode" in detail and "fuzzy" in detail
+
+
+def test_classify_preset_query_rejects_a_non_boolean_case_sensitive():
+    """`case_sensitive` rides the wire too, and `name_matches` takes a bool.
+    A string here is the same class of authoring error as a string
+    path_prefix."""
+    status, detail = C.classify_preset_query(json.dumps({
+        "root": "instruments", "pattern": "Pad", "case_sensitive": "yes",
+    }))
+    assert status == "preset_query_invalid"
+    assert "case_sensitive" in detail
+
+
+def test_classify_preset_query_accepts_every_supported_mode():
+    """The validator must not become a second, stricter matcher — it imports
+    `preset_query.SEARCH_MODES` precisely so it cannot drift from the loader."""
+    from hallucinote.preset_query import SEARCH_MODES
+
+    for mode in SEARCH_MODES:
+        assert C.classify_preset_query(json.dumps({
+            "root": "instruments", "pattern": "Pad", "mode": mode,
+        })) is None, f"{mode!r} is a supported mode and must pass structurally"
+
+
+def test_a_bad_mode_device_does_not_kill_the_whole_probe_report(
+    conn, song, track_chain, db_path,
+):
+    """The point of validating structurally: one malformed device must not take
+    down the report for every OTHER device. Before this, the bad mode reached
+    `ableton_browser(action='search')`, the enum was rejected, and
+    `_probe_browser_dry_runs` raised SystemExit for the whole song."""
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="Operator", display_name="Bad",
+        preset_query={"root": "instruments", "pattern": "Pad", "mode": "fuzzy"},
+    )
+    M.create_device(
+        conn, chain_id=track_chain, position=2,
+        kind="Operator", display_name="Good",
+        preset_query={"root": "instruments", "pattern": "Bass-Pluck"},
+    )
+    conn.commit()
+    # The fake routes ONLY the good query — so if the bad one reached the wire
+    # it would raise AssertionError rather than pass silently.
+    send = _fake_send_factory({
+        ("instruments", "Bass-Pluck", (), "substring", False): 1,
+    })
+
+    runs = C._probe_browser_dry_runs(conn, send_fn=send)
+    assert runs == {("instruments", "Bass-Pluck", (), "substring", False): 1}
+
+    report = C.check_song(db_path, browser_dry_runs=runs)
+    assert [e.display_name for e in report.preset_query_invalid] == ["Bad"]
+    assert report.has_issues is True
+
+
 def test_classify_preset_query_rejects_garbage_json():
     """Malformed JSON in the preset_query column → still classified as
     invalid (don't let a corrupted snapshot pass through silently)."""
@@ -829,7 +895,7 @@ def test_check_song_classifies_kind_ambiguous_with_dry_runs(conn, song, track_ch
     )
     conn.commit()
     dry_runs = {
-        ("audio_effects", "Hall", ("Hybrid Reverb",)): 12,
+        ("audio_effects", "Hall", ("Hybrid Reverb",), "substring", False): 12,
     }
     report = C.check_song(db_path, browser_dry_runs=dry_runs)
     assert len(report.kind_ambiguous) == 1
@@ -848,7 +914,7 @@ def test_check_song_classifies_kind_unresolvable_on_zero_matches(conn, song, tra
         preset_query={"root": "instruments", "pattern": "Nonexistent Preset"},
     )
     conn.commit()
-    dry_runs = {("instruments", "Nonexistent Preset", ()): 0}
+    dry_runs = {("instruments", "Nonexistent Preset", (), "substring", False): 0}
     report = C.check_song(db_path, browser_dry_runs=dry_runs)
     assert len(report.kind_unresolvable) == 1
     assert report.has_issues is True
@@ -864,7 +930,7 @@ def test_check_song_classifies_single_match_as_native(conn, song, track_chain, d
         preset_query={"root": "instruments", "pattern": "Bass-Pluck"},
     )
     conn.commit()
-    dry_runs = {("instruments", "Bass-Pluck", ()): 1}
+    dry_runs = {("instruments", "Bass-Pluck", (), "substring", False): 1}
     report = C.check_song(db_path, browser_dry_runs=dry_runs)
     assert len(report.native) == 1
     assert report.has_issues is False
@@ -946,6 +1012,8 @@ def _fake_send_factory(routes):
             str(params.get("root", "")),
             str(params.get("pattern", "")),
             tuple(params.get("path_prefix") or []),
+            str(params.get("mode", "substring")),
+            bool(params.get("case_sensitive", False)),
         )
         if key not in routes:
             raise AssertionError(
@@ -983,13 +1051,13 @@ def test_probe_browser_dry_runs_builds_map_from_devices(
     )
     conn.commit()
     send = _fake_send_factory({
-        ("instruments", "Bass-Pluck", ()): 1,
-        ("audio_effects", "Hall", ("Hybrid Reverb",)): 3,
+        ("instruments", "Bass-Pluck", (), "substring", False): 1,
+        ("audio_effects", "Hall", ("Hybrid Reverb",), "substring", False): 3,
     })
     runs = C._probe_browser_dry_runs(conn, send_fn=send)
     assert runs == {
-        ("instruments", "Bass-Pluck", ()): 1,
-        ("audio_effects", "Hall", ("Hybrid Reverb",)): 3,
+        ("instruments", "Bass-Pluck", (), "substring", False): 1,
+        ("audio_effects", "Hall", ("Hybrid Reverb",), "substring", False): 3,
     }
 
 
@@ -1011,7 +1079,7 @@ def test_probe_browser_dry_runs_deduplicates_identical_queries(
     )
     conn.commit()
     call_count = 0
-    base_send = _fake_send_factory({("instruments", "Pad", ()): 7})
+    base_send = _fake_send_factory({("instruments", "Pad", (), "substring", False): 7})
 
     def _counting_send(req):
         nonlocal call_count
@@ -1020,7 +1088,7 @@ def test_probe_browser_dry_runs_deduplicates_identical_queries(
 
     runs = C._probe_browser_dry_runs(conn, send_fn=_counting_send)
     assert call_count == 1
-    assert runs == {("instruments", "Pad", ()): 7}
+    assert runs == {("instruments", "Pad", (), "substring", False): 7}
 
 
 def test_probe_browser_dry_runs_skips_structurally_invalid_queries(
@@ -1042,10 +1110,10 @@ def test_probe_browser_dry_runs_skips_structurally_invalid_queries(
     )
     conn.commit()
     send = _fake_send_factory({
-        ("instruments", "Bass", ()): 1,
+        ("instruments", "Bass", (), "substring", False): 1,
     })
     runs = C._probe_browser_dry_runs(conn, send_fn=send)
-    assert runs == {("instruments", "Bass", ()): 1}
+    assert runs == {("instruments", "Bass", (), "substring", False): 1}
 
 
 def test_probe_browser_dry_runs_handles_no_preset_queries(
@@ -1081,7 +1149,7 @@ def test_probe_browser_dry_runs_raises_on_search_failure(
     )
     conn.commit()
     send = _fake_send_factory({
-        ("instruments", "Mystery", ()): {"ok": False, "error": "live not running"},
+        ("instruments", "Mystery", (), "substring", False): {"ok": False, "error": "live not running"},
     })
     with pytest.raises(SystemExit, match="ableton_browser.*live not running"):
         C._probe_browser_dry_runs(conn, send_fn=send)
@@ -1101,7 +1169,7 @@ def test_cli_check_with_probe_flags_ambiguous_preset_query(
     conn.commit()
     db_path = Path(conn.execute("PRAGMA database_list").fetchall()[0]["file"])
     monkeypatch.setattr(C, "resolve_db_path", lambda slug, **kw: db_path)
-    send = _fake_send_factory({("audio_effects", "Hall", ()): 2})
+    send = _fake_send_factory({("audio_effects", "Hall", (), "substring", False): 2})
     monkeypatch.setattr(C, "_resolve_send_fn", lambda: send)
 
     rc = C.main(["check", "test-song", "--probe"])
@@ -1125,7 +1193,7 @@ def test_cli_check_with_probe_resolves_single_match(
     conn.commit()
     db_path = Path(conn.execute("PRAGMA database_list").fetchall()[0]["file"])
     monkeypatch.setattr(C, "resolve_db_path", lambda slug, **kw: db_path)
-    send = _fake_send_factory({("instruments", "Bass-Pluck", ()): 1})
+    send = _fake_send_factory({("instruments", "Bass-Pluck", (), "substring", False): 1})
     monkeypatch.setattr(C, "_resolve_send_fn", lambda: send)
 
     rc = C.main(["check", "test-song", "--probe"])
@@ -1156,7 +1224,7 @@ def test_cli_check_probe_combines_with_installed_plugins(
     plugins_file.write_text(json.dumps(
         {"plugins": [{"name": "Serum", "uri": "query:1"}], "count": 1}
     ))
-    send = _fake_send_factory({("plugins", "Serum", ()): 1})
+    send = _fake_send_factory({("plugins", "Serum", (), "substring", False): 1})
     monkeypatch.setattr(C, "_resolve_send_fn", lambda: send)
 
     rc = C.main([
@@ -1168,3 +1236,172 @@ def test_cli_check_probe_combines_with_installed_plugins(
     assert data["installed_provided"] is True
     assert data["browser_dry_runs_provided"] is True
     assert data["summary"]["third_party_ok"] == 1
+
+
+# ---------------------------------------------------------------------------
+# SYN-6Q3D — the gate must probe with the matcher the LOADER will use
+#
+# `_dry_run_key` omitted `mode`/`case_sensitive` and `_probe_browser_dry_runs`
+# never sent them, so an `exact` query was probed with the browser's DEFAULT
+# substring matcher. `the-argument`'s Rock Drums declares
+# {root: drums, pattern: 'Kit-BigPunchy.adg', mode: 'exact'} — exact returns 1,
+# substring returns 2 ('Kit-BigPunchy.adg' and 'MPE Kit-BigPunchy.adg') — so the
+# gate refused `kind_ambiguous` and exited 1 on a device that loads perfectly.
+# A gate disagreeing with the thing it gates is the worst kind.
+# ---------------------------------------------------------------------------
+
+
+def test_probe_sends_the_declared_mode_so_exact_is_not_probed_as_substring(
+    conn, song, track_chain, db_path,
+):
+    """An `exact` preset_query must reach the browser AS exact.
+
+    The fake routes on the wire params, so it only answers if `mode='exact'`
+    was actually sent; the substring key carries the 2-match count that
+    produced the false `kind_ambiguous`, and routing to it would fail the
+    count assertion rather than pass silently.
+    """
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="DrumGroupDevice", display_name="Rock Drums",
+        preset_query={"root": "drums", "pattern": "Kit-BigPunchy.adg",
+                      "mode": "exact"},
+    )
+    conn.commit()
+    send = _fake_send_factory({
+        ("drums", "Kit-BigPunchy.adg", (), "exact", False): 1,
+        ("drums", "Kit-BigPunchy.adg", (), "substring", False): 2,
+    })
+    runs = C._probe_browser_dry_runs(conn, send_fn=send)
+
+    assert runs == {("drums", "Kit-BigPunchy.adg", (), "exact", False): 1}
+
+
+def test_exact_query_that_is_ambiguous_only_by_substring_is_not_refused(
+    conn, song, track_chain, db_path,
+):
+    """End-to-end: the device that produced the false refusal now passes.
+
+    This is the item's headline signal — `kind_ambiguous: 0` on a song that
+    pushes and loads fine.
+    """
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="DrumGroupDevice", display_name="Rock Drums",
+        preset_query={"root": "drums", "pattern": "Kit-BigPunchy.adg",
+                      "mode": "exact"},
+    )
+    conn.commit()
+    dry_runs = {("drums", "Kit-BigPunchy.adg", (), "exact", False): 1}
+    report = C.check_song(db_path, browser_dry_runs=dry_runs)
+
+    assert len(report.kind_ambiguous) == 0
+    assert report.has_issues is False
+
+
+def test_a_genuinely_ambiguous_substring_query_is_still_refused(
+    conn, song, track_chain, db_path,
+):
+    """The fix must not become a rubber stamp: a query that really does
+    resolve to 2+ matches under its OWN declared matcher still refuses."""
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="DrumGroupDevice", display_name="Rock Drums",
+        preset_query={"root": "drums", "pattern": "Kit-BigPunchy"},
+    )
+    conn.commit()
+    dry_runs = {("drums", "Kit-BigPunchy", (), "substring", False): 2}
+    report = C.check_song(db_path, browser_dry_runs=dry_runs)
+
+    assert len(report.kind_ambiguous) == 1
+    assert report.has_issues is True
+
+
+def test_two_queries_differing_only_in_mode_do_not_share_a_match_count(
+    conn, song, track_chain, db_path,
+):
+    """The quieter half of the defect: with `mode` outside the key, two
+    devices whose preset_query differs ONLY in `mode` deduped onto one cache
+    entry and shared a single match count — so one of them was classified on
+    the other's answer."""
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="Operator", display_name="Exact",
+        preset_query={"root": "instruments", "pattern": "Pad", "mode": "exact"},
+    )
+    M.create_device(
+        conn, chain_id=track_chain, position=2,
+        kind="Operator", display_name="Substring",
+        preset_query={"root": "instruments", "pattern": "Pad",
+                      "mode": "substring"},
+    )
+    conn.commit()
+    send = _fake_send_factory({
+        ("instruments", "Pad", (), "exact", False): 1,
+        ("instruments", "Pad", (), "substring", False): 9,
+    })
+    runs = C._probe_browser_dry_runs(conn, send_fn=send)
+
+    assert runs == {
+        ("instruments", "Pad", (), "exact", False): 1,
+        ("instruments", "Pad", (), "substring", False): 9,
+    }, "two matchers, two probes, two counts — never one shared entry"
+
+
+def test_case_sensitive_is_carried_onto_the_wire_too(
+    conn, song, track_chain, db_path,
+):
+    """`name_matches` takes `case_sensitive`, so the probe must send it or the
+    gate classifies on a case-insensitive count the loader won't reproduce."""
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="Operator", display_name="Bass",
+        preset_query={"root": "instruments", "pattern": "bass-pluck",
+                      "case_sensitive": True},
+    )
+    conn.commit()
+    send = _fake_send_factory({
+        ("instruments", "bass-pluck", (), "substring", True): 1,
+    })
+    runs = C._probe_browser_dry_runs(conn, send_fn=send)
+
+    assert runs == {("instruments", "bass-pluck", (), "substring", True): 1}
+
+
+def test_classify_preset_query_rejects_an_explicit_null_mode():
+    """`{"mode": null}` is not an absent key: absent means "use the default",
+    but an explicit null reaches `name_matches` and raises "unknown search mode
+    None". A truthiness check would let it through — gate and loader must agree.
+    """
+    status, detail = C.classify_preset_query(json.dumps({
+        "root": "instruments", "pattern": "Pad", "mode": None,
+    }))
+    assert status == "preset_query_invalid"
+    assert "mode" in detail
+
+
+def test_classify_preset_query_accepts_an_absent_mode():
+    """The overwhelmingly common shape — no `mode` key at all — still means
+    substring and must stay structurally valid."""
+    assert C.classify_preset_query(json.dumps({
+        "root": "instruments", "pattern": "Pad",
+    })) is None
+
+
+def test_an_explicit_null_case_sensitive_is_accepted_not_refused():
+    """The mirror of the `mode` rule does NOT apply here, and the asymmetry is
+    the point: `mode: null` reaches `name_matches` and raises, so the gate must
+    reject it; `case_sensitive: null` degrades to False in every consumer, so
+    rejecting it would make the gate stricter than the loader — refusing a song
+    that loads fine, the exact failure SYN-6Q3D removed."""
+    assert C.classify_preset_query(json.dumps({
+        "root": "instruments", "pattern": "Pad", "case_sensitive": None,
+    })) is None
+
+
+def test_classify_preset_query_still_rejects_a_non_null_non_bool_case_sensitive():
+    status, detail = C.classify_preset_query(json.dumps({
+        "root": "instruments", "pattern": "Pad", "case_sensitive": "yes",
+    }))
+    assert status == "preset_query_invalid"
+    assert "case_sensitive" in detail

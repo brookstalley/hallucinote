@@ -361,7 +361,7 @@ design_decisions:
         judgements never fail a build.
       artifact: .prawduct/artifacts/gate-verdict-policy.md
   accessibility_approach: null
-  error_handling_approach: "Plain exceptions (ValueError, KeyError); no custom hierarchy. Broad catches require `# prawduct:ok-broad-except` annotation with rationale; every catch logs context. Narrow carve-out (ONBOARD-M4L): two leaf classes callers catch by identity — `PresetQueryNoMatchError` (device.py) and `AnalyzerNotInstalledError` (analyzer/setup.py); new code still defaults to plain exceptions."
+  error_handling_approach: "Plain exceptions (ValueError, KeyError); no custom hierarchy. Broad catches require a `# prawduct:allow prawduct/broad-except -- <reason>` waiver stating what is absorbed and why; every catch logs context. Narrow carve-out (ONBOARD-M4L): two leaf classes callers catch by identity — `PresetQueryNoMatchError` (device.py) and `AnalyzerNotInstalledError` (analyzer/setup.py); new code still defaults to plain exceptions."
   observability_approach: "The event log IS the audit trail. Every mutator emits an event with actor (in events.ACTORS), reason, request_id, and monotonic seq. No logging frameworks beyond stdlib `logging`. The `requests` table groups events under higher-level intent for cross-mutator correlation."
   infrastructure_dependencies: "SQLite (embedded, WAL mode) for state. Ableton Live + hallucinote-mcp Remote Script for the rendering engine. GitHub Issues on brookstalley/hallucinote is the backlog of record since the 2026-08-10 cutover — a real external service dependency, reached via the `gh` CLI (needs `repo` scope + network). It is NOT on the product's runtime path: no shipped code calls it, so a song builds, pushes and renders with GitHub unreachable; what degrades is development workflow (backlog read/write), and `prawduct-hook backlog cache-query` serves the last synced state offline. Live-Ableton tests are manual; CI runs against mocked dispatcher tests in hallucinote_mcp/tests/."
   visual_direction: null
@@ -548,7 +548,7 @@ build_state:
 # because the scope->plan resolver globbed `artifacts/*.md` non-recursively and
 # could not see a nested plan; discovery is recursive now, so that reason is
 # gone.)
-active_build_plan:
+active_build_plan: .prawduct/artifacts/plans/EFFORT-S-BURNDOWN/build-plan.md
 
 # Test roots for the evidence recorder, which otherwise discovers repo-root
 # `tests/` only. This repo is a two-package layout: the engine's suite is under

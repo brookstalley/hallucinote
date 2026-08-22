@@ -117,7 +117,7 @@ def _wait_for_song_time_on_worker(
             if on_timeout is not None:
                 try:
                     context.run_on_main(on_timeout)
-                except Exception as cleanup_exc:  # prawduct:ok-broad-except — cleanup; primary timeout must propagate
+                except Exception as cleanup_exc:  # prawduct:allow prawduct/broad-except -- cleanup; primary timeout must propagate.
                     logger.warning(
                         "on_timeout cleanup failed (%s: %s); transport may "
                         "be parked at the in-flight target. Primary timeout "
@@ -889,7 +889,7 @@ def cue_delete_handler(
                 context.song.current_song_time = prior
             try:
                 context.run_on_main(_restore)
-            except Exception as restore_exc:  # prawduct:ok-broad-except — cleanup; primary exception takes precedence
+            except Exception as restore_exc:  # prawduct:allow prawduct/broad-except -- cleanup; primary exception takes precedence.
                 logger.warning(
                     "cue_delete: playhead restore failed (%s: %s); "
                     "transport may be parked at the cue's position. "

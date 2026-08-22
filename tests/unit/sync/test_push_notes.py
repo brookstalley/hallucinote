@@ -494,3 +494,35 @@ def test_scoped_changed_only_unchanged_clip_skips_arrangement_too(
     )
     assert res.pushed == []
     assert send2.call_log == []
+
+
+def test_push_writes_a_self_ignore_beside_its_state_file(
+    conn, session, linked_song, state_dir,
+):
+    """WSP-3R7K: the push's own bookkeeping ignores itself where it lands.
+
+    `.last-notes-push.json` sits in the song dir next to authored work, so a
+    workspace created before `init-workspace` shipped its managed root block
+    (or by a bare `git init`) surfaced it — and the MixReports and snapshot
+    backups beside it — as committable on every push. The ignore is written by
+    the tool that generates the file, so it needs no root-.gitignore edit and
+    travels with the artifact.
+    """
+    from hallucinote.paths import SONG_DIR_IGNORED_FILES
+
+    push_notes.push_notes(
+        conn, song_id=linked_song["song_id"], session_id=session,
+        state_dir=state_dir, send_fn=_make_send_fn(),
+    )
+
+    gitignore = state_dir / ".gitignore"
+    assert gitignore.exists(), (
+        "the push wrote .last-notes-push.json but left it committable"
+    )
+    lines = gitignore.read_text().splitlines()
+    assert "*" not in lines, (
+        "the song dir holds build.py and captured_session.json — a blanket "
+        "ignore here would swallow the song itself"
+    )
+    for name in SONG_DIR_IGNORED_FILES:
+        assert name in lines

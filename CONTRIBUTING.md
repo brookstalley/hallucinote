@@ -97,9 +97,7 @@ Note that some framework files (`skills/`, `.prawduct/`, `tools/product-hook`) m
 - Match the style of the surrounding code (naming, comment density, idioms).
 - **Never swallow exceptions** — catch specific ones and log with context.
   A genuinely necessary broad catch is waived inline, with the reason spelled out: `except Exception as e:  # prawduct:allow prawduct/broad-except -- <why>`.
-  (You'll see an older `# prawduct:ok-broad-except` spelling around the codebase, mostly carrying a reason after an em-dash.
-  It's legacy — the current pragma names the rule it waives, which is what makes waivers greppable per rule.
-  Don't write new ones.)
+  The reason says what is being absorbed and why absorbing it there is correct; a catch whose reason cannot be written honestly is one to narrow rather than annotate.
 - **Update artifacts when code changes what they describe** — stale docs are worse than none.
   If you change a contract surface (API, DB, IPC, frontend/backend), verify consumers aren't broken.
 - Prefer structural fixes over patches; this codebase is expected to grow.

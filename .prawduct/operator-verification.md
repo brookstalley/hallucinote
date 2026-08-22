@@ -15,6 +15,33 @@ pending entries when `operator_verification_required: true`.
 
 ---
 
+## EFFORT-S-BURNDOWN — the fingerprint flip re-vendors, and the #264 fix works in real Live (2026-08-22) — PENDING
+
+This branch changed seven files inside `_FINGERPRINT_PATHS` (`dispatcher.py`,
+`actions/clip.py`, `handlers/arrangement.py`, `handlers/automation.py`,
+`handlers/clip.py`, `handlers/device.py`, `remote_script/dispatch.py`).
+`_compute_content_fingerprint`
+hashes file BYTES, so the comment-only pragma rewrites flip `__version__` just
+as the behavioral edits do.
+
+**Fingerprint flips → re-vendor the Remote Script + full Live quit/reopen
+required** before any of this reaches Live. Until that happens the vendored
+Remote Script fails the version handshake, and #264 — the branch's only
+Live-executed behavior change — is inert with nothing telling the operator why.
+
+**Check (Ableton open, one MIDI track with clips):**
+1. `/ableton-mcp-install`, then quit Live fully and reopen. `ableton://server/info`
+   → the handshake passes and reports the new fingerprint.
+2. Put a clip at 0..32 ("Scaffold") and a short clip starting at 20.0
+   ("Marker"). Duplicate a 4-beat session clip to arrangement at beat 16, so
+   Live's B-24 split emits its copy at 20.0 — the tied start.
+3. Expect: the **Marker survives**, the split copy is gone, and the response
+   carries `spurious_clips_removed` naming the copy. Marker disappearing is the
+   data-loss regression the identity resolution exists to prevent — report it
+   rather than working around it.
+4. Repeat with the two clips at 20.0 made identical in length and name. Expect
+   `spurious_clips_remaining` with a `reason`, and NOTHING deleted.
+
 ## MST-LEAK — a master device load no longer leaks into the focused track (2026-08-07) — PENDING
 
 Field report (Live 12.4 Suite, 2026-08-07): with the view on `Detail/Clip` and
@@ -185,8 +212,10 @@ the song's snapshot predates BAK-7D2V — Ableton open, linked session):**
    chain authored prop), leave it in place, and re-capture — `capture diff` exits
    0 even though the on-disk snapshot is stale. Accept the same offer → confirm
    `captured_session.json` now carries the PULLED value (not the old one) and the
-   next `build.py` preserves it. A bare `capture restamp` here would disarm the
-   guard over the stale value; confirm it prints its override warning.
+   next `build.py` preserves it. This case is exactly why there is no re-stamp
+   override to reach for: moving the stamp without re-capturing would disarm the
+   guard over the stale value, so the subcommand that did it was deleted
+   (2026-08-11) and the only exits are this bake and `--force-replay`.
 
 ## MCP-1V8K — device load focuses Session view before browser.load_item (2026-06-23) — PASSED (agent-run live, 2026-06-23)
 

@@ -249,7 +249,7 @@ def request(
     outcome = "ok"
     try:
         yield rid
-    except BaseException:  # prawduct:ok-broad-except
+    except BaseException:  # prawduct:allow prawduct/broad-except -- the audit trail must record outcome='failed' for ANY exception, KeyboardInterrupt/CancelledError included. Re-raises.
         # Mark failure for ANY exception including KeyboardInterrupt /
         # CancelledError — the audit trail must record that the cycle
         # didn't complete. Then re-raise so the caller still sees it.

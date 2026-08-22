@@ -244,9 +244,10 @@ pull ever gains those deletes, this audit's method flags the addition.
   **What shipped instead:** `/song-snapshot`'s empty-diff path *bakes* the
   refresh — it writes the freshly captured content over the canonical file via
   `capture merge`, so the stamp is backed by bytes that were actually captured.
-  `capture restamp` survives only as a deliberate override and REFUSES an
-  unstamped file rather than back-stamping one. `--force-replay` remains the
-  discard-the-pulled-edits path, not the re-stamp path.
+  `--force-replay` remains the discard-the-pulled-edits path, not the re-stamp
+  path — and is now the only override: `capture restamp` was DELETED by #318
+  (2026-08), because it moved `captured_at` forward with no re-capture and so
+  durably disarmed this guard on evidence nothing had checked.
 
   This artifact outlives the build plan (the plan is scope-named and deleted at
   the develop→main release), so the reversal is recorded here rather than only

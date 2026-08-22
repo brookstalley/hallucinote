@@ -1404,3 +1404,197 @@ def test_render_refuses_and_names_both_workspaces_when_two_hold_the_song(
     for root in roots:
         assert str(root.resolve()) in response["error"], response["error"]
     assert not (proj / "songs").exists()
+
+
+# ---------------------------------------------------------------------------
+# AUD-5M8H — AUDIO_CAPTURED audit event on render completion
+#
+# The render worker runs inside Live's vendored env with no `hallucinote`
+# engine and no DB, so the event is appended HERE, in the server process, off
+# the status response — the first moment this side learns a capture finished.
+# ---------------------------------------------------------------------------
+
+
+def _capture_audit_fixture(tmp_path, monkeypatch):
+    """A song DB the server can resolve, plus the status response shape
+    `job.status_result()` actually returns for a finished render."""
+    from hallucinote.db.connection import init_db
+
+    db_path = tmp_path / "songs" / "demo" / "demo.db"
+    db_path.parent.mkdir(parents=True)
+    conn = init_db(db_path)
+    conn.execute(
+        "INSERT INTO songs (id, name) VALUES (?, ?)", ("song-demo", "demo"),
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(
+        "hallucinote.db.connection.resolve_db_path",
+        lambda slug, **_: tmp_path / "songs" / slug / f"{slug}.db",
+    )
+    return db_path
+
+
+def _done_status(captures_dir, *, db_seq=41, tracks=3):
+    return {
+        "job_id": "job-1",
+        "kind": "render",
+        "state": "done",
+        "progress": {},
+        "captures_dir": str(captures_dir),
+        "manifest": {
+            "song_slug": "demo",
+            "db_seq": db_seq,
+            "tracks": [{"track_id": i} for i in range(tracks)],
+        },
+        "render_status": "ok",
+    }
+
+
+def _audio_events(db_path):
+    import json
+
+    from hallucinote.db import events as E
+    from hallucinote.db.connection import connect
+
+    conn = connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT payload_json FROM events WHERE kind = ?", (E.AUDIO_CAPTURED,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [json.loads(r["payload_json"]) for r in rows]
+
+
+def test_render_status_done_records_the_capture_audit_event(tmp_path, monkeypatch):
+    from hallucinote_mcp.wire import Response
+
+    db_path = _capture_audit_fixture(tmp_path, monkeypatch)
+    captures_dir = tmp_path / "songs" / "demo" / "captures" / "20260811-120000"
+
+    forwarded = Response(ok=True, result=_done_status(captures_dir))
+    with patch("hallucinote_mcp.server.client.send", return_value=forwarded):
+        handle_tool_call("ableton_render", "status", {"job_id": "job-1"})
+
+    assert _audio_events(db_path) == [{
+        "captures_dir": str(captures_dir),
+        "manifest_seq": 41,
+        "track_count": 3,
+    }]
+
+
+def test_repeated_status_polls_record_the_capture_once(tmp_path, monkeypatch):
+    """The agent polls until it reads `done` and every later poll reads `done`
+    too — one take must not become one event per poll."""
+    from hallucinote_mcp.wire import Response
+
+    db_path = _capture_audit_fixture(tmp_path, monkeypatch)
+    captures_dir = tmp_path / "songs" / "demo" / "captures" / "20260811-120000"
+
+    forwarded = Response(ok=True, result=_done_status(captures_dir))
+    with patch("hallucinote_mcp.server.client.send", return_value=forwarded):
+        for _ in range(4):
+            handle_tool_call("ableton_render", "status", {"job_id": "job-1"})
+
+    assert len(_audio_events(db_path)) == 1
+
+
+def test_render_still_running_records_nothing(tmp_path, monkeypatch):
+    from hallucinote_mcp.wire import Response
+
+    db_path = _capture_audit_fixture(tmp_path, monkeypatch)
+    running = {
+        "job_id": "job-1", "kind": "render", "state": "running",
+        "progress": {"beat": 12}, "captures_dir": str(tmp_path / "c"),
+    }
+    forwarded = Response(ok=True, result=running)
+    with patch("hallucinote_mcp.server.client.send", return_value=forwarded):
+        handle_tool_call("ableton_render", "status", {"job_id": "job-1"})
+
+    assert _audio_events(db_path) == []
+
+
+def test_a_failed_capture_audit_never_fails_the_render(tmp_path, monkeypatch):
+    """Best-effort, exactly like `_attach_render_db_seq`: a capture that
+    actually succeeded must not be reported as failed because an audit row
+    could not be written."""
+    from hallucinote_mcp.wire import Response
+
+    _capture_audit_fixture(tmp_path, monkeypatch)
+    captures_dir = tmp_path / "songs" / "demo" / "captures" / "20260811-120000"
+
+    import sqlite3
+
+    def _boom(*a, **k):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(
+        "hallucinote.db.mutations.record_audio_capture", _boom,
+    )
+    forwarded = Response(ok=True, result=_done_status(captures_dir))
+    with patch("hallucinote_mcp.server.client.send", return_value=forwarded):
+        out = handle_tool_call("ableton_render", "status", {"job_id": "job-1"})
+
+    assert out["ok"] is True, "the render succeeded; the audit row is incidental"
+
+
+def test_render_status_done_self_ignores_the_captures_root(tmp_path, monkeypatch):
+    """WSP-3R7K: a default-path render marks its captures ROOT ignored, so a
+    workspace created before `init-workspace` stops surfacing gigabytes of WAVs
+    as committable."""
+    from hallucinote_mcp.wire import Response
+
+    _capture_audit_fixture(tmp_path, monkeypatch)
+    captures_root = tmp_path / "songs" / "demo" / "captures"
+    captures_dir = captures_root / "20260811-120000"
+    captures_dir.mkdir(parents=True)
+    # takes.py binds the resolver at import, so patch it where it is USED.
+    monkeypatch.setattr(
+        "hallucinote.takes.resolve_song_dir",
+        lambda slug, **_: tmp_path / "songs" / slug,
+    )
+
+    forwarded = Response(ok=True, result=_done_status(captures_dir))
+    with patch("hallucinote_mcp.server.client.send", return_value=forwarded):
+        handle_tool_call("ableton_render", "status", {"job_id": "job-1"})
+
+    assert (captures_root / ".gitignore").read_text().rstrip().endswith("*")
+
+
+def test_a_foreign_output_dir_never_gets_a_blanket_ignore_written_above_it(
+    tmp_path, monkeypatch,
+):
+    """`output_dir` is caller-controlled — "a caller may render anywhere" — and
+    `self_ignore_dir` writes a blanket `*`. Deriving the target from
+    `captures_dir.parent` would let a render into `songs/<slug>/captures` drop
+    build.py, decisions/ and captured_session.json out of `git status`. The
+    target comes from the SLUG, and a render outside that root is the caller's
+    own directory to manage.
+
+    This mirrors the rule `_sweep_stale_takes` already states for retention.
+    """
+    from hallucinote_mcp.wire import Response
+
+    _capture_audit_fixture(tmp_path, monkeypatch)
+    # takes.py binds the resolver at import, so patch it where it is USED.
+    monkeypatch.setattr(
+        "hallucinote.takes.resolve_song_dir",
+        lambda slug, **_: tmp_path / "songs" / slug,
+    )
+    # The dangerous shape: output_dir IS the song's captures root, so its parent
+    # is the song dir itself.
+    song_dir = tmp_path / "songs" / "demo"
+    elsewhere = tmp_path / "scratch" / "renders"
+    elsewhere.mkdir(parents=True)
+
+    forwarded = Response(ok=True, result=_done_status(elsewhere))
+    with patch("hallucinote_mcp.server.client.send", return_value=forwarded):
+        handle_tool_call("ableton_render", "status", {"job_id": "job-1"})
+
+    assert not (elsewhere.parent / ".gitignore").exists(), (
+        "a blanket ignore must never be written into a tree the caller chose"
+    )
+    assert not (song_dir / ".gitignore").exists(), (
+        "and never into the song dir, which holds build.py and the snapshot"
+    )

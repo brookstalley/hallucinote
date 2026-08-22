@@ -1601,3 +1601,191 @@ def test_inline_notes_warning_parity_between_create_and_replace(loaded_actions):
     create_warning = _create_result(FakeCtx(), notes).result["warning"]
     replace_warning = _replace_result(FakeCtx(), notes).result["warning"]
     assert create_warning == replace_warning
+
+
+def test_duplicate_to_arrangement_detects_spurious_clip_colliding_with_an_existing_start(
+    loaded_actions,
+):
+    """ARR-6T8N: spurious-clip detection used a SET of before-start_times, so a
+    pre-existing clip sitting at exactly ``dest_beats + source.length`` — the
+    very position Live's B-24 split emits its copy at — masked the new one:
+    the start_time was already in the set, so the surplus clip was waved
+    through and left in the arrangement.
+
+    Layout: Scaffold 0..32 (the clip that gets split) plus a Marker clip that
+    already starts at 20.0 = dest(16) + source length(4). After the duplicate
+    there are TWO clips at 20.0 and only one of them existed before.
+    """
+    ctx = FakeCtx()
+    track = ctx.song.tracks[0]
+    track.arrangement_clips.append(
+        FakeArrangementClip(name="Scaffold", length=32.0, start_time=0.0)
+    )
+    # Sits exactly where the B-24 side effect will land.
+    track.arrangement_clips.append(
+        FakeArrangementClip(name="Marker", length=2.0, start_time=20.0)
+    )
+    track.clip_slots[1].clip = FakeClip(name="DupSource", length=4.0)
+
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="duplicate_to_arrangement",
+            params={"track_index": 1, "clip_index": 2, "start_beats": 16.0},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+
+    names_and_starts = sorted(
+        (c.start_time, c.name) for c in track.arrangement_clips
+    )
+    assert names_and_starts == [
+        (0.0, "Scaffold"),
+        (16.0, "DupSource"),
+        (20.0, "Marker"),
+    ], (
+        "the spurious split copy at 20.0 must be removed while the "
+        f"pre-existing Marker at 20.0 survives; got {names_and_starts}"
+    )
+    removed = resp.result.get("spurious_clips_removed") or []
+    assert len(removed) == 1, (
+        "exactly one surplus clip should be detected — a start-time SET sees "
+        "20.0 as 'already present' and detects nothing"
+    )
+    assert removed[0]["name"] == "Scaffold"
+
+
+def test_duplicate_to_arrangement_survives_reversed_enumeration_at_a_tied_start(
+    loaded_actions,
+):
+    """The same collision as the test above, with Live enumerating the split
+    copy BEFORE the operator's pre-existing clip.
+
+    The original walk paired after-clips to before-counts positionally, so the
+    first clip encountered at a tied start was treated as pre-existing and the
+    second was deleted. Under this ordering that deletes the operator's
+    authored Marker and keeps the artifact — reported as a successful cleanup,
+    which is the shape of a silent data-loss bug. Resolution is by identity
+    now, so the ordering does not decide who dies.
+    """
+    ctx = FakeCtx()
+    track = ctx.song.tracks[0]
+    track.arrangement_clips.append(
+        FakeArrangementClip(name="Scaffold", length=32.0, start_time=0.0)
+    )
+    track.arrangement_clips.append(
+        FakeArrangementClip(name="Marker", length=2.0, start_time=20.0)
+    )
+    track.clip_slots[1].clip = FakeClip(name="DupSource", length=4.0)
+
+    real_duplicate = track.duplicate_clip_to_arrangement
+
+    def duplicate_then_reverse_the_tie(source, destination_beats):
+        real_duplicate(source, destination_beats)
+        # Live's enumeration order for two clips at one start is not ours to
+        # control; model the adversarial one.
+        tied = [c for c in track.arrangement_clips if c.start_time == 20.0]
+        assert len(tied) == 2, "the B-24 side effect should have collided here"
+        for c in tied:
+            track.arrangement_clips.remove(c)
+        # Split copy first, operator's clip second.
+        for c in sorted(tied, key=lambda c: c.name != "Scaffold"):
+            track.arrangement_clips.append(c)
+
+    track.duplicate_clip_to_arrangement = duplicate_then_reverse_the_tie
+
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="duplicate_to_arrangement",
+            params={"track_index": 1, "clip_index": 2, "start_beats": 16.0},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+
+    survivors = sorted((c.start_time, c.name) for c in track.arrangement_clips)
+    assert (20.0, "Marker") in survivors, (
+        "the operator's pre-existing Marker must survive regardless of the "
+        f"order Live enumerated the tied clips in; got {survivors}"
+    )
+    assert (20.0, "Scaffold") not in survivors, (
+        f"the split copy at 20.0 is the one to remove; got {survivors}"
+    )
+    removed = resp.result.get("spurious_clips_removed") or []
+    assert [r["name"] for r in removed] == ["Scaffold"]
+
+
+def test_duplicate_to_arrangement_deletes_nothing_when_the_tied_clips_are_identical(
+    loaded_actions,
+):
+    """When the split copy and the operator's clip share (start, length, name)
+    there is no evidence for which one to delete, so nothing may be deleted.
+
+    Identity resolution answers the ordering question only while the clips are
+    distinguishable. Where the same identity occurs twice, drawing one of the
+    pair down against the before-state and calling the other the newcomer is
+    the enumeration-order coin-flip again, one level down — and in Live the
+    split copy carries the OVERLAPPED clip's content, so the two are not
+    interchangeable. The non-destructive channel is the answer.
+    """
+    ctx = FakeCtx()
+    track = ctx.song.tracks[0]
+    track.arrangement_clips.append(
+        FakeArrangementClip(name="Scaffold", length=32.0, start_time=0.0)
+    )
+    # Identical to the copy Live's B-24 split will emit at 20.0: the split
+    # copy is a copy OF Scaffold, so name and length match exactly.
+    track.arrangement_clips.append(
+        FakeArrangementClip(name="Scaffold", length=32.0, start_time=20.0)
+    )
+    track.clip_slots[1].clip = FakeClip(name="DupSource", length=4.0)
+
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="duplicate_to_arrangement",
+            params={"track_index": 1, "clip_index": 2, "start_beats": 16.0},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+
+    at_20 = [c for c in track.arrangement_clips if c.start_time == 20.0]
+    assert len(at_20) == 2, (
+        "neither tied clip may be deleted — there is no evidence for which "
+        f"is the artifact; got {[(c.start_time, c.name) for c in at_20]}"
+    )
+    assert not resp.result.get("spurious_clips_removed"), (
+        "nothing was identified, so nothing may be reported as removed"
+    )
+    remaining = resp.result.get("spurious_clips_remaining") or []
+    assert len(remaining) == 2, remaining
+    assert all("reason" in r for r in remaining), (
+        "the operator needs to know why cleanup stopped, not just that it did"
+    )
+
+
+def test_duplicate_to_arrangement_leaves_a_pre_existing_clip_at_the_destination_alone(
+    loaded_actions,
+):
+    """The counting walk must not mistake a pre-existing clip for the new one
+    (or vice versa) when both sit at the destination beat. Nothing is spurious
+    here — no overlap split fires — so nothing may be deleted."""
+    ctx = FakeCtx()
+    track = ctx.song.tracks[0]
+    track.arrangement_clips.append(
+        FakeArrangementClip(name="Pre", length=2.0, start_time=16.0)
+    )
+    track.clip_slots[1].clip = FakeClip(name="DupSource", length=4.0)
+
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="duplicate_to_arrangement",
+            params={"track_index": 1, "clip_index": 2, "start_beats": 16.0},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    names = sorted(c.name for c in track.arrangement_clips)
+    assert names == ["DupSource", "Pre"], (
+        f"neither clip at the destination may be deleted; got {names}"
+    )

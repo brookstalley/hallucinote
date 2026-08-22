@@ -117,6 +117,9 @@ except ImportError:  # pragma: no cover - exercised in Live's vendored env
 # keeps the convention sweep-safe — if the surface-ID format ever
 # changes, the analyzer module is the single point of update.
 from ..analyzer.setup import track_id_for_surface  # noqa: E402
+# The nested-rack descent cap, shared with the wire-side resolver so the
+# extract and `device_path` cannot disagree about how deep a rack may go.
+from ..handlers.device import DEVICE_PATH_DEPTH_CAP  # noqa: E402
 
 
 class _AnalysisError(ValueError):
@@ -599,7 +602,8 @@ def _collect_tempo_map(
 
     Caveat: this feeds the analyzer the *declared* tempo_map. It assumes the
     render honored it. Today the push layer materializes only the bar-1 tempo
-    (the non-bar-1-tempo gap in ``.prawduct/backlog.md``), so a song that
+    (the non-bar-1-tempo gap — tracker ids ``TMP-7B3X`` / ``TMP-4J6Q`` /
+    ``TMP-5K1R``), so a song that
     declares variable tempo currently renders at one tempo — for that song the
     declared changes aren't in the audio and ``BeatSampleMap`` documents how
     that can be less accurate than the linear fallback. Harmless for the
@@ -689,6 +693,17 @@ def analyze_handler(
     # (potentially long) analyze_mix call (BUG3). The report write below
     # reuses it.
     analysis_dir.mkdir(parents=True, exist_ok=True)
+    # WSP-3R7K deliberately does NOT self-ignore this directory, unlike
+    # `captures/`. Two records say MixReports here are meant to be COMMITTED —
+    # the root `.gitignore` ("the small MixReport JSONs in analysis/ ARE checked
+    # in") and `hallucinote.paths`, whose `portable_path` exists precisely
+    # because they land in git and must not carry an author's home directory.
+    # A directory-local `*` would beat the root file's silence and quietly make
+    # a tracked artifact class uncommittable.
+    #
+    # `init_workspace.GITIGNORE_BLOCK` carries `**/analysis/`, which contradicts
+    # both. That conflict predates this branch and is the owner's to settle; it
+    # is named here rather than resolved by whichever writer ran last.
 
     # Heartbeat=running before analyze_mix — analyze_mix has no progress
     # callback (and the spec is not to plumb one in), so the pre/post writes
@@ -1017,6 +1032,63 @@ def get_latest_report_handler(
     }
 
 
+def _devices_with_nested(
+    conn: "sqlite3.Connection", devices, *, _depth: int = 0,
+) -> list[dict[str, Any]]:
+    """Flatten a device list, descending into nested rack chains (DEV-4X2N).
+
+    `get_devices_for_track` / `get_devices_for_return` walk only the top-level
+    chain, so a song built on Instrument or Audio Effect Racks reported its rack
+    CONTAINERS and nothing inside them — an extract that looks complete while
+    omitting most of the signal path.
+
+    The DB has carried the full tree since DEEP-RACK-ADDR: `device_chains`
+    self-references through `devices` via `parent_rack_device_id`, and
+    `get_device_chains_for_rack_device` reads one level of it. Recursing that
+    query IS the flatten; no Live probe and no new schema are involved. (The old
+    caveat cited "recursive racks not modeled" — that was true when written and
+    stopped being true when the deep-addressing work landed.)
+
+    Nested devices carry `rack_depth` so a consumer can still tell a rack's
+    contents from its top-level siblings — flattening is for reachability, not
+    for pretending the tree was flat. (`chain_id` is NOT the discriminator: it is
+    `NOT NULL` on every device row, so a top-level device has one too. Depth is
+    what distinguishes them.)
+
+    Depth reuses `handlers/device.py`'s cap rather than declaring a second one —
+    Live racks cannot nest cyclically, so a runaway depth means malformed data,
+    and an extract is not the place to hang on it. One cap, one definition.
+    """
+    out: list[dict[str, Any]] = []
+    if _depth > DEVICE_PATH_DEPTH_CAP:
+        # Reachable only on malformed data (a `parent_rack_device_id` cycle),
+        # but a silent return hands the eval judge a truncated extract that
+        # reads as complete — the same "looks whole while omitting the signal
+        # path" failure the nested-rack walk exists to fix, one level up.
+        logger.warning(
+            "device extract truncated at depth %d (cap %d) — a malformed "
+            "parent_rack_device_id cycle is the only way to reach this",
+            _depth, DEVICE_PATH_DEPTH_CAP,
+        )
+        return out
+    for device in devices:
+        device_d = dict(device)
+        device_d["parameters"] = [
+            dict(p) for p in Q.get_device_parameters(conn, device["id"])
+        ]
+        if _depth:
+            device_d["rack_depth"] = _depth
+        out.append(device_d)
+        for chain in Q.get_device_chains_for_rack_device(conn, device["id"]):
+            nested = _devices_with_nested(
+                conn,
+                Q.get_devices_for_chain(conn, chain["id"]),
+                _depth=_depth + 1,
+            )
+            out.extend(nested)
+    return out
+
+
 def _extract_song_structure(conn: "sqlite3.Connection", song_id: str) -> dict[str, Any]:
     """Assemble a raw structural dump of a song from the DB.
 
@@ -1033,13 +1105,12 @@ def _extract_song_structure(conn: "sqlite3.Connection", song_id: str) -> dict[st
     Every ``sqlite3.Row`` is materialized to a plain dict so the result is
     JSON-serializable; ``get_notes_for_clip`` already returns dicts.
 
-    Device caveat: ``get_devices_for_track`` / ``get_devices_for_return``
-    walk only the top-level chain — nested rack chains (one level deep via
-    ``get_device_chains_for_rack_device``, recursive racks not modeled at
-    all) are not flattened in. A song using Instrument/Audio-Effect Racks
-    therefore reports its rack containers but not the devices inside them.
-    Acceptable for the eval-judge tier (which reasons about structure /
-    phase, not exhaustive device trees) until nested-rack pull lands.
+    Devices are flattened across nested rack chains to arbitrary depth
+    (DEV-4X2N, via :func:`_devices_with_nested`), so a song built on Instrument
+    or Audio Effect Racks reports the devices INSIDE its racks and not just the
+    rack containers. Nested entries carry ``rack_depth``, which is what
+    distinguishes them from top-level siblings (``chain_id`` is NOT NULL on
+    every device row, so it does not).
     """
     song_row = Q.get_song(conn, song_id)
     song = dict(song_row) if song_row is not None else {"id": song_id}
@@ -1053,13 +1124,9 @@ def _extract_song_structure(conn: "sqlite3.Connection", song_id: str) -> dict[st
             # get_notes_for_clip already returns dicts (tags deserialized).
             clip_d["notes"] = Q.get_notes_for_clip(conn, clip["id"])
             clips.append(clip_d)
-        devices: list[dict[str, Any]] = []
-        for device in Q.get_devices_for_track(conn, track_id):
-            device_d = dict(device)
-            device_d["parameters"] = [
-                dict(p) for p in Q.get_device_parameters(conn, device["id"])
-            ]
-            devices.append(device_d)
+        devices = _devices_with_nested(
+            conn, Q.get_devices_for_track(conn, track_id),
+        )
         track_d = dict(track)
         track_d["clips"] = clips
         track_d["arrangement_clips"] = [
@@ -1072,14 +1139,9 @@ def _extract_song_structure(conn: "sqlite3.Connection", song_id: str) -> dict[st
     returns: list[dict[str, Any]] = []
     for ret in Q.get_returns_for_song(conn, song_id):
         ret_d = dict(ret)
-        ret_devices: list[dict[str, Any]] = []
-        for device in Q.get_devices_for_return(conn, ret["id"]):
-            device_d = dict(device)
-            device_d["parameters"] = [
-                dict(p) for p in Q.get_device_parameters(conn, device["id"])
-            ]
-            ret_devices.append(device_d)
-        ret_d["devices"] = ret_devices
+        ret_d["devices"] = _devices_with_nested(
+            conn, Q.get_devices_for_return(conn, ret["id"]),
+        )
         returns.append(ret_d)
 
     return {

@@ -19,7 +19,7 @@ $ARGUMENTS
 
 ## Required argument
 
-The **song slug** (its DB name; the DB lives at `songs/<slug>/<slug>.db`). If it's missing from `$ARGUMENTS`, ask — never invent.
+The **song slug** (its DB name; the DB lives in the song's own directory, named per-branch by `resolve_db_path` — `<slug>-<branch>.db`, falling back to `<slug>.db` outside a repo or on detached HEAD). If it's missing from `$ARGUMENTS`, ask — never invent.
 
 ## Workflow
 

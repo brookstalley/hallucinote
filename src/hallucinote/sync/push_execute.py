@@ -34,6 +34,7 @@ from typing import Any, Callable
 
 from hallucinote.db import mutations as M
 from hallucinote.db import queries as Q
+from hallucinote.paths import SONG_DIR_IGNORED_FILES, self_ignore_files
 from hallucinote.sync import push
 from hallucinote.sync.push.empty_rack_guard import (
     _parent_key,
@@ -753,6 +754,11 @@ def execute_push(
         _CONNECTION_EXCS = (OSError,)
 
     state_dir.mkdir(parents=True, exist_ok=True)
+    # WSP-3R7K: the push's own bookkeeping self-ignores where it is written, so
+    # a workspace that predates `init-workspace`'s managed root block doesn't
+    # keep offering these as committable. By NAME, not a blanket ignore — this
+    # dir is the song dir, which also holds build.py and the snapshot.
+    self_ignore_files(state_dir, SONG_DIR_IGNORED_FILES)
     state_file = state_dir / ".last-push-state.json"
     errors_file = state_dir / ".last-push-errors.json"
 

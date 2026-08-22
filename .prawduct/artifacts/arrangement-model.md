@@ -88,6 +88,34 @@ conformance lint) and **performance** (the perf lens) the shipped precedents. Ea
 *lens* — it reports declared-vs-realized divergence as info/coaching, never a stamp or a
 verdict the composer didn't ask for. (Links to the siblings' designs; not restated here.)
 
+**Coherence pass 2026-08-11 (ARR-8P5K, the recurring guard).** Re-run against
+the siblings that landed since the 2026-06-03 pass. Two findings, both recorded
+rather than built — the umbrella still owes no code:
+
+- **Spatial image is a shipped lens for a dimension this taxonomy never names.**
+  STR-4C8N (v1.8.0) added per-stem/per-section L/R correlation + mono-sum loss
+  and a stereo reading in `/mix-review`. "Stereo" appears nowhere above. Placed
+  now: it is **not** a structure intent (nobody authors a spatial curve) but part
+  of the **sound-design subsystem** — width and placement are dialled in the
+  device chain, which is where `feedback_sound_is_composition` already puts them.
+  Its read side belongs to the mix lenses, beside masking.
+- **And it is in the half-built state this doc warns about.** The MEASURE half
+  shipped with no authoring intent: `DeclaredWidthControl` is a *readback of a
+  dialled device parameter*, not a declared spatial intent, so there is nothing
+  for the lens to grade the song against — only "here is what the audio did".
+  By this doc's own both-sides rule (*"a dimension measured but un-authorable is
+  half-built"*) spatial image is currently half-built. The authoring/graded half
+  is **STR-9P4M**, deliberately gated: it grades taste, so the analyzer freeze
+  binds it until the listening day (QLT-3D8R). This is a known, dated gap, not
+  an oversight — naming it is the guard's whole job.
+
+**The rule for adding any new lens (2026-08-10 owner ruling).** The analyzer
+freeze is no longer a blanket "no new lenses": it is **no new lens that GRADES
+or COACHES**. A determinate physical measurement that emits no findings and no
+grades — correlation, mono-sum loss in dB — is outside it; a lens whose
+thresholds encode taste is inside it and waits for the listening day. Read that
+before adding a read side to any dimension here.
+
 A fourth relationship exists: a **composite line that reads the other dimensions**.
 **Melody** is the case (decided 2026-05-31) — not an orthogonal structure intent
 with universal rules, and not a derived realization, but a *line* whose PITCH reads
@@ -351,10 +379,36 @@ The energy curve now also has an **audio-realization lens** (ARR-7M3D):
 `MixReport.energy_realization` reports per-correlate Spearman ρ of declared
 `energy_curve` rank vs measured per-section intensity (LUFS-S + onset density)
 and names rank inversions — parallel to the harmonic-conformance lint and the
-performance lens, closing energy's BOTH-SIDES MEASURE half. The
-spectral-intensity correlate is a flagged deferral (loudness + density first).
+performance lens, closing energy's BOTH-SIDES MEASURE half.
 The lens is a ruler: it reports ranked intensity vs intent and never re-authors
 the curve. See `src/hallucinote/audio/energy.py` for the method.
+
+**DECIDED 2026-08-11 (ARR-2S9D): two correlates suffice; the spectral one stays
+unbuilt.** The music-perception literature backs a third intensity correlate —
+spectral density / flux / centroid, since a chorus often "opens up" the spectrum
+at matched loudness, which LUFS alone cannot see (ARR-7M3D `research.md`
+§2/§4) — and `realize_energy` is correlate-agnostic (it ranks whatever
+`measured` supplies, and `correlate_rho` is open-keyed), so the build is small.
+It is deliberately not built, for two reasons that both have to change first:
+
+1. **Discovered-from-friction, and no friction has been recorded.** The
+   governing rule for this correlate was set when it was deferred: ship
+   loudness + density, add the spectral one *when a real case shows the two
+   miss it*. No such case has been logged. Building it now is the speculative
+   pre-build that rule exists to prevent.
+2. **It is not the neutral measurement it looks like.** The 2026-08-10 owner
+   ruling narrowed the analyzer freeze from "no new lenses" to **no new lens
+   that GRADES or COACHES** — a determinate physical number carrying no
+   threshold is outside it. Spearman ρ is determinate, but *which* spectral
+   measure (flux vs centroid vs flatness) and how it is windowed are taste-laden
+   choices, and the ρ lands in `/mix-review`'s coaching read of whether a
+   section lifts. So this sits inside the freeze, and the listening day
+   (QLT-3D8R) is still owed.
+
+**What flips this:** a logged case where a section's declared energy rises, both
+loudness and onset density read flat, and the ear says it lifted. That is the
+friction the rule waits for — and by then the listening day should have
+calibrated the surrounding thresholds anyway.
 
 ---
 

@@ -523,6 +523,152 @@ mix numbers recomputed from the committed reports (adversarially verified
 red/green). Hero video: explicit descope — no screen recording exists and the
 design defers the demo video until the walkthrough is seamless.
 
+## 2026-08-11 — The effort:S backlog burns down: a guard override deleted, a gate that agreed with itself, and a DB that stops depending on your shell
+
+<!-- prawduct: type=fix | scope=effort-s-burndown -->
+
+**Operators: this release flips the MCP wire fingerprint.** Seven files inside
+`_FINGERPRINT_PATHS` changed, and `_compute_content_fingerprint` hashes bytes,
+so the comment-only pragma rewrites flip `__version__` alongside the behavioral
+ones. Re-vendor the Remote Script (`/ableton-mcp-install`) and quit/reopen Live
+before expecting the `duplicate_to_arrangement` fix below to do anything —
+until then the vendored script fails the version handshake.
+
+One branch working through every `effort:S` item open on the tracker. Chunks 1-2
+covered the PR #213 deferred-warning cluster and a sweep of prose the tree had
+outgrown; chunk 3 is two real bugs where a check disagreed with the thing it
+checked.
+
+- **`capture restamp` is gone** (#318). It moved a snapshot's `captured_at`
+  forward with no re-capture, durably disarming the replay staleness guard on
+  evidence nothing had checked. The two sanctioned exits already cover the
+  ground — a fresh capture (durable) and `--force-replay` (conscious revert,
+  which re-warns every build rather than switching the guard off). Deleting it
+  makes `migrate_snapshot`'s "only a real capture stamps" invariant exactly
+  true instead of approximately true.
+
+- **BREAKING (resolution semantics), `resolve_db_path`** (#327): with an
+  explicit `root=`, the git branch is now probed in the **song's own
+  directory** instead of the process cwd. This **remaps DB filenames for anyone
+  who has been running a song's `build.py` from a foreign cwd** — that shell
+  was minting `<slug>-<the-other-repo's-branch>.db` while every reader looked
+  for `<slug>-<songs-repo-branch>.db`, so one song silently owned two DBs. The
+  sibling push-state files are the sharp end, and by SHARING rather than
+  duplicating: `.last-push-state.json` / `.last-notes-push.json` have fixed
+  names and live in the song dir, which both DBs share — so two DBs wrote one
+  set of fingerprints, and a scoped `--changed` push compared one DB's clips
+  against the other DB's fingerprints. It is a resolution-semantics change,
+  not a pure bugfix: a DB written under the foreign name will not be found
+  under the new one. A runtime warning naming orphaned sibling DBs was tried and
+  **reverted**: under per-branch naming a routine `git switch -c` produces
+  exactly the same shape (a new DB name beside an older sibling), so it could
+  not tell a foreign-cwd orphan from an ordinary new branch without becoming
+  noise — and it sat inside a resolver that `provenance.auto_request` calls on
+  every mutating MCP tool call. `resolve_db_path` stays a pure resolver.
+  **If you have been building a song from another repo's checkout, look for a
+  `<slug>-<other-branch>.db` beside the new one before deleting anything:**
+  `build.py` regenerates authored content, but rows pulled from Live — and the
+  pull events arming the replay guard — live only in the DB that recorded them.
+  The legacy
+  `<slug>.db` fallback readers already carry is unchanged. Both root paths now
+  probe the same place, so `resolve_db_path(slug)` and `resolve_db_path(slug,
+  root=...)` agree by construction.
+
+- **`compat check --probe` stopped lying about ambiguity** (#326). The dry-run
+  cache key omitted `mode` and `case_sensitive`, and the probe never sent them,
+  so a query authored `mode='exact'` was searched with the browser's default
+  substring matcher and classified on a count the real loader would never
+  produce — refusing `kind_ambiguous` at the push gate on devices that load
+  perfectly. Both fields now ride the key and the wire. The second, quieter
+  half is closed too: two devices differing only in `mode` no longer collide on
+  one cache entry and share a match count.
+
+- **The BAK-7D2V closure note** (#317) was stale on two counts — it advertised
+  the superseded empty-diff re-stamp, and said "checks 7-8" where
+  `operator-verification.md` carries 7-9. Fixed on **closed issue #337**, not in
+  `.prawduct/backlog.md`. That file was frozen on 2026-08-10 as the migration's
+  source corpus with an explicit "preserve it verbatim" — it is what
+  `verify-migration` and any rollback read, so editing it would corrupt them.
+  The note migrated verbatim into #337, which is the record a future scrub
+  actually reads; the frozen copy stays wrong on purpose, as history.
+
+- **The screen-recording grant is now REQUESTED, not just reported** (#223).
+  `assert_capture_permission` preflighted but never called
+  `CGRequestScreenCaptureAccess`, and nothing else in the tool raises a TCC
+  dialog — so a denied grant was a dead end that sent the operator hunting
+  System Settings mid-capture. The actionable error survives the request on both
+  branches, deliberately: the grant is read at process launch, so granting
+  through the prompt does not enable a *running* process, and the relaunch
+  instruction stays load-bearing.
+
+- **New: `hallucinote overview-drift <slug>`** (#233) reports a `<slug>.md`
+  Structure table that has drifted from the form `build.py` materialized. The
+  generate-vs-warn question is **decided as warn**: both derived surfaces carry
+  composer prose (the table's Feel column, and `build.py`'s docstring in the
+  composer's own source), so regenerating them would clobber real work to fix a
+  bookkeeping problem. The canonical form is the DB — what `build.py` actually
+  materialized, and what every other reader already treats as true. It checks
+  **both** derived surfaces (the markdown table and `build.py`'s docstring
+  layout) and is wired into the scaffold's build close, so a song scaffolded
+  from now on checks itself on every build. **Songs scaffolded before this do
+  not get it automatically** — retrofitting means rewriting their `build.py`,
+  the clobbering this decision rejected — so they use the subcommand on demand.
+
+- **The analysis extract reaches inside racks** (#256). `_extract_song_structure`
+  walked only the top-level device chain, so a song built on Instrument or Audio
+  Effect Racks reported its rack *containers* and none of the signal path inside
+  them — while looking complete. It now descends `device_chains` recursively.
+  **This item was filed as blocked on upstream work and wasn't:** the gate was
+  real when written (2026-06-15), but DEEP-RACK-ADDR has since made
+  `device_chains` a true recursive tree (`parent_rack_device_id` self-referencing
+  through `devices`), so the data has been there. No Live probe and no schema
+  change were involved. Nested entries carry `rack_depth`, which is what keeps
+  them distinguishable from top-level siblings (`chain_id` is NOT NULL on every
+  device row, so it does not), and the depth cap is imported
+  from the wire-side resolver rather than restated. The prior lock test — which
+  pinned the exclusion and said in its own body "when nested-rack pull lands,
+  this test is the one to flip" — was flipped, and the agent-facing action tip
+  that taught the old limitation was corrected with it.
+
+- **Two decisions recorded rather than built.** `arrangement-model.md` now
+  carries the ARR-2S9D call (#274 — two energy correlates suffice; the spectral
+  one waits for logged friction and for the listening day) and a re-run of the
+  ARR-8P5K taxonomy coherence guard (#248), which found that STR-4C8N shipped a
+  **stereo lens for a dimension the taxonomy never named**, in the
+  measured-but-un-authorable half-built state the doc itself warns about. Spatial
+  image is now placed in the sound-design subsystem, its authoring half named
+  (STR-9P4M, gated), and the 2026-08-10 owner ruling — *no new lens that grades
+  or coaches* — written where a lens-adder will meet it.
+
+- **Also shipped, smaller but real:** spurious-clip detection after a
+  `duplicate_to_arrangement` now counts occurrences instead of testing a
+  start-time set, so a pre-existing clip sitting exactly where Live's B-24 split
+  emits its copy can no longer mask the surplus one (#264); `events.AUDIO_CAPTURED`
+  + `mutations.record_audio_capture` put capture timestamps into the audit log,
+  emitted server-side off the render status response and deduped on
+  `captures_dir` because the caller is a poll (#263); and tools now ignore their
+  own regenerable output where they write it — a blanket ignore for
+  whole-directory output (`captures/` — every take under it is regenerable),
+  a named list for the song dir, which also holds authored work (#303).
+  **`analysis/` is deliberately NOT self-ignored:** the root `.gitignore`
+  and `hallucinote.paths` both say MixReports there are meant to be
+  committed (`portable_path` exists precisely because they land in git),
+  while `init_workspace`'s root block carries `**/analysis/`. That
+  contradiction predates this branch and is the owner's to settle — it is
+  named in the code rather than resolved by whichever writer ran last. A confirmation lock pins that a `device_parameter`
+  envelope covered by its session clip stays on the sample-accurate path rather
+  than regressing to the ~2.5 Hz perform path, together with the note-on
+  ordering convention that makes per-phrase sample windows land right (#236).
+
+- **Waivers and citations** (#447, #445): all 21 legacy
+  `prawduct:ok-broad-except` pragmas migrated to the current form carrying a
+  per-catch reason; the four source citations into the frozen
+  `.prawduct/backlog.md` repointed at stable `id:PFX` handles (and dropped
+  entirely from the one user-facing error string). **#320** — the pre-split
+  layout in `project-preferences.md` — was fixed on this branch too, but
+  `develop` landed the same correction first, so this release ships nothing
+  for it and does not claim it.
+
 ## 2026-08-11 — The documentation gets scrubbed for release, and the README learns to be read
 
 <!-- prawduct: type=chore | scope=release-readiness | status=shipped | release=v1.8.2 -->

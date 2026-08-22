@@ -144,7 +144,8 @@ class BeatSampleMap:
     * **The render honored the supplied tempo.** The map shifts boundaries by
       the tempo *it is given*; if a song declares variable tempo but was
       rendered at a single tempo (e.g. the push layer only materializes the
-      bar-1 tempo — see ``.prawduct/backlog.md`` non-bar-1-tempo gap), the
+      bar-1 tempo — the non-bar-1-tempo gap, tracker ids ``TMP-7B3X`` /
+      ``TMP-4J6Q`` / ``TMP-5K1R``), the
       declared changes never appear in the audio and the map can be *less*
       accurate than the constant-tempo linear fallback. The rescale cancels a
       global tempo offset but not this declared-vs-rendered divergence. Pass an

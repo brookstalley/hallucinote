@@ -447,7 +447,7 @@ def dispatch(request: Request, context: LiveContext | None = None) -> Response:
                 f"unknown param {exc.args[0]!r}; this is a schema bug",
                 hint="Report this — the action schema and handler are out of sync.",
             )
-        except Exception as exc:  # prawduct:ok-broad-except — dispatcher boundary; structured response > raw traceback
+        except Exception as exc:  # prawduct:allow prawduct/broad-except -- dispatcher boundary; structured response > raw traceback.
             logger.exception(
                 "server-side handler failed: %s(%r) with params=%r",
                 action.tool, action.name, validated,
@@ -533,7 +533,7 @@ def dispatch(request: Request, context: LiveContext | None = None) -> Response:
                 "unresponsive Live."
             ),
         )
-    except Exception as exc:  # prawduct:ok-broad-except — dispatcher is a system boundary; we MUST translate any executor exception into a structured wire response or the agent gets a raw traceback
+    except Exception as exc:  # prawduct:allow prawduct/broad-except -- dispatcher is a system boundary; we MUST translate any executor exception into a structured wire response or the agent gets a raw traceback.
         logger.exception(
             "executor failed: %s(%r) with params=%r",
             action.tool, action.name, validated,

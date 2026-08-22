@@ -41,6 +41,30 @@ songs/<slug>/
   attempts/                      # attempt ledger: tried move + outcome (incl. dead ends)
 ```
 
+Two more directories appear once a song has been rendered and analyzed. They both
+hold `MixReport` JSON and the split is *why the file is there*, not what shape it
+has — so it is worth stating plainly:
+
+```
+  analysis/                      # every mix-review run, as it happened (a log)
+  measurements/                  # the specific runs a decision CITES (evidence)
+```
+
+`analysis/` accumulates: it is the record of what was measured, whether or not
+anything referenced it. A file in `measurements/` exists because a
+`decisions/NN-*.md` quotes a number out of it, which is what lets a reader check
+a published figure against the run it came from — and what lets a test recompute
+it. Copy a run into `measurements/` when you cite it; leave it in `analysis/`
+when you don't.
+
+**The split is also tracked-vs-untracked, and that is the operational reason it
+exists.** `init-workspace` gitignores `**/analysis/` in every scaffolded
+workspace (renders are large and regenerable), while `measurements/` is tracked.
+So a decision that cites a path under `analysis/` dangles for everyone but the
+machine that ran it — copying the run into `measurements/` is what makes the
+citation survive a clone. (This repo's `examples/punk-fate/` tracks its
+`analysis/` too, as shipped documentation; a normal song workspace does not.)
+
 The `attempts/` ledger (`kind: attempt`) records what you *tried* and how it turned out — query it via `/song-attempts` before re-touching a part you've worked before, so you don't re-try a known dead end. Schema + worked example: [`.prawduct/artifacts/song-conventions.md`](../.prawduct/artifacts/song-conventions.md) "The attempt ledger".
 
 The DB lives at `songs/<slug>/<slug>-<branch>.db` (per-branch convention; outside a repo or on detached HEAD, falls back to `<slug>.db`). Both forms are gitignored.
@@ -548,7 +572,7 @@ What that means when you author one:
 
 - **Push takes real wall-clock.** All changed arcs record in a single playthrough over their union span; the push plan names that union-span estimate (tempo-map-aware) and a loud alert lists every span it will overwrite. A 16-bar master fade at 120 BPM is ~32s of transport playback; adding a second overlapping arc costs no extra time (same pass).
 - **The transport plays during push.** Live audibly plays while arcs record — expected, not a bug.
-- **Fingerprint-gated.** Unchanged arcs are skipped (and listed as skipped) — a data-safety feature, not just a speed one: an arc you didn't change is never re-recorded, so a hand edit to that lane survives. An edited arc re-performs (in the next pass, alongside any other changed arcs), replacing its prior recording over the same span.
+- **Fingerprint-gated.** Unchanged arcs are skipped (and listed as skipped) — a data-safety feature as much as a speed one: an arc you didn't change is never re-recorded, so a hand edit to that lane survives. An edited arc re-performs (in the next pass, alongside any other changed arcs), replacing its prior recording over the same span.
 - **Write-only.** Recorded arrangement automation has no LOM read surface. Push verifies `automation_state == 1` per arc; shape verification is your ears/eyes (or a `.als` dump).
 - **Nested-rack device parameters ARE reachable** on this route (unlike session clips): perform addresses the `Parameter` object directly, so the arc carries the top-level device's link plus a positional `device_path` to the nested param (DEEP-RACK-ADDR / NODE-ADDR). The session-clip route still can't address them — Live 12.4 `Clip.create_automation_envelope` has no nested surface.
 
@@ -593,7 +617,7 @@ Push materializes this in the `routing` phase (after `mix` and `devices` — an 
 
 Whenever you would automate or process the **master** — a master fader ride, a master filter sweep, master bus compression that moves over the song — author it on a **PRE-MAIN bus** instead. The master is a clip-less summing point: its automation — mixer AND device-chain params alike — is authorable but perform-only (lossy ~2.5 Hz, no session-clip host, write-only), never a lossless breakpoint envelope. The bus is an ordinary track, so a ride on it is a first-class, normally-automatable envelope. **Default: nothing rides the master; the master stays flat and the PRE-MAIN bus carries the moves.** (A static master Limiter / Ceiling is fine — it's the *automation* the master can't host losslessly.)
 
-### Other routing patterns the bus unlocks
+### Other things the bus can route
 
 The same primitives (`set_track_routing` + a plain audio bus + `monitoring_state='In'`) are the programmatic **sub-mix / grouping** toolkit. Live **group tracks are not LOM-creatable** (Cmd+G is UI-only — TRK-2H6K deferred), so a routing bus is *the* way to sub-mix from `build.py`:
 

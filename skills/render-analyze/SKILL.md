@@ -19,8 +19,8 @@ back only the MixReport summary — so your context stays on the music, not the
 plumbing.
 
 > **Requires Max for Live** — the render uses the HallucinoteAnalyzer (a M4L
-> device). Without it you can't render; use `/compose-review` (symbolic, any Live
-> edition) for an intent read instead. See `ableton://guides/getting-started`.
+> device). Without it you can't render; use `/compose-review` (symbolic; runs on
+> Standard as well as Suite) for an intent read instead. See `ableton://guides/getting-started`.
 
 ## Arguments
 

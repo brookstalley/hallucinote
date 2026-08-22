@@ -11,7 +11,7 @@
       "name": "hallucinote",
       "source": "./",
       "displayName": "Hallucinote — Music Authoring",
-      "description": "Composition + production skills (/hallucinote:song-new, compose-part, mix-review, ableton-push, …) plus the hallucinote-mcp server (13 Ableton Live tools). Requires the `hallucinote` Python engine installed (see the repo README).",
+      "description": "Composition + production skills (/hallucinote:song-new, compose-part, mix-review, ableton-push, …), the hallucinote-mcp server (13 Ableton Live tools), and the composing engine — self-contained, nothing else to clone. Needs Ableton Live 12 and uv; run /hallucinote:ableton-mcp-install once to connect Live.",
       "keywords": [
         "music",
         "composition",

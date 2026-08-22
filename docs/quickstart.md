@@ -1,8 +1,14 @@
 # Quickstart — your first song in ~10 minutes
 
-This is the guided version of the README's install section: one path, one
-result. By the end you'll have composed a song from a single prompt and heard
-it play in Ableton Live.
+By the end of this you'll have composed a song from a single prompt and heard
+it play in Ableton Live. One path, one result — the guided version of the
+README's install section.
+
+**What ten minutes buys:** a real, arranged, sound-designed song playing in
+Live. Not a *finished* one. The worked example in [the tour](tour.md) took a
+forty-minute session to reach "finished," and most of that was the part this
+page skips — listening back, measuring the mix, and correcting it. Ten minutes
+to hear your song; the rest of the session is where it gets good.
 
 **Before you start**, finish the one-time setup in the
 [README](../README.md#install): install **uv** (the plugin launches its bundled
@@ -33,11 +39,11 @@ Surface in Live's Preferences. This quickstart assumes that's done.
    songs repo if you have one, any empty folder if you don't — and start
    `claude`.
 
-That's it. Songs live in a **songs workspace** (a git repo with a
-`hallucinote.toml` marker), but you don't set that up by hand: the first time
-you ask for a song outside one, Claude notices and offers to create it — say
-yes, and it writes the marker, a `.gitignore` for the regenerable build
-artifacts, and `git init`s the folder before scaffolding your song there.
+That's it. Songs live in a **songs workspace** — a git repo with a
+`hallucinote.toml` marker — but you don't set that up by hand. Ask for a song
+outside one and Claude offers to create it: say yes, and it writes the marker, a
+`.gitignore` for the regenerable build artifacts, and `git init`s the folder
+before scaffolding your song there.
 
 > Curious what got created? The marker is a three-line
 > `hallucinote.toml` telling the tools where songs live — nothing you need to
@@ -52,6 +58,12 @@ name). For example:
 > **"Let's make a 2-minute punk rock song that condenses the chord progressions
 > of Beethoven's 5th into those 2 minutes. Four parts: drums, bass, lead guitar,
 > and vocals on a staccato synth. Call it punk-fate."**
+
+That prompt has been run for real — **[hear what it produced](assets/tour-chapter2.mp3)**
+(1:58, four tracks). The sessions that made it — composing it, then taking it
+back into the studio until it sounded punk — are documented beat by beat with
+the evidence in [the tour](tour.md); the finished source ships in this repo as
+[`examples/punk-fate/`](../examples/punk-fate/).
 
 Claude will:
 

@@ -210,6 +210,33 @@ back-merge introduces no file content — `develop` is strictly ahead in content
 it only reconciles history so `git rev-list --left-right --count main...develop`
 reads `0 <N>` instead of `<releases> <N>`.
 
+**The back-merge must fast-forward — do NOT pass `--no-ff` here.** This is the one
+merge in the process that is deliberately *not* a merge commit, so it is an
+explicit exception to the repo-wide "always `--no-ff`" habit (and to step 8, two
+paragraphs up, which *does* require it). The release merge already has the
+`chore(release)` commit as a parent, so `origin/main` fast-forwards cleanly onto
+`develop` and the two branches land on the identical commit. Forcing a merge
+commit instead leaves `develop` one commit ahead of `main` forever, and step 10's
+`git rev-list --count origin/main..develop` then reads `1` rather than `0` — the
+check appears to fail while nothing is actually wrong. Harmless in content (the
+next release absorbs it with an empty diff) but not worth the false alarm; it
+happened at the v1.8.4 cut.
+
+**If `main` is checked out in another worktree**, `git checkout main` in step 8
+refuses outright. Do not disturb that worktree. Promote with plumbing from
+`develop` instead — verify the merged tree first, then build the merge commit and
+push it straight to the remote ref:
+
+```sh
+git merge-tree --write-tree origin/main develop   # must equal `git rev-parse develop^{tree}`
+MERGE=$(git commit-tree <tree> -p origin/main -p develop \
+        -m "Release: merge develop into main — vNEW")
+git push origin $MERGE:main
+```
+
+That produces the same two-parent merge commit step 8 describes. The local `main`
+ref stays where the other worktree has it and is that session's to update.
+
 ### 10. Verify
 
 ```sh
@@ -230,6 +257,35 @@ cannot decide for you, both of which bit at the v1.8.0 cut:
 - **`active_build_plan` is cleared only when the plan it names just archived.** Leave
   it EMPTY, never the literal `null`. A pointer at an unfinished parked plan stays
   meaningful between releases and should survive the cut.
+
+### 11. Publish the GitHub Release
+
+The tag is the record; the **Release** is what a person lands on. Steps 1–10 leave
+six annotated tags and, until 2026-08-12, zero Release objects — so anyone arriving
+at the repo saw no release at all.
+
+```sh
+gh release create vNEW --draft --verify-tag \
+  --title "vNEW — <the tag's own subject line>" \
+  --notes-file <notes>            # notes come from the change-log entries carrying release=vNEW
+```
+
+- **Draft first, always.** A published Release notifies watchers and is the most
+  outward-facing artifact the process produces. A draft is invisible and deletable,
+  so it is reviewed before it exists publicly.
+- **`--verify-tag`** refuses to invent a tag, so a typo fails instead of creating a
+  release pointing at nothing.
+- A draft's URL reads `releases/tag/untagged-<hash>` until it is published. That is
+  normal — the tag binds on publish, and `gh release view vNEW --json tagName`
+  already shows the right tag.
+- **Release notes are reader-facing positioning prose**, so the norm in
+  `project-preferences.md` § Documentation & prose governs them: write what the
+  release IS, and never define it by what it isn't.
+- Attach any media the release is the canonical home for (`gh release upload`). Note
+  that a release asset serves from `github.com/.../releases/download/...`, which
+  **will not** render as an inline player in markdown — only a
+  `user-attachments` URL does that, and obtaining one is a web-UI upload with no
+  `gh` equivalent.
 
 ## Version surfaces
 
@@ -355,7 +411,8 @@ env, one source. See [`docs/engine-pin.md`](engine-pin.md).
 - [ ] `origin/main..develop` scope reviewed; every cluster has a change-log entry
 - [ ] change-log entries flipped to `status=shipped | release=vNEW`
 - [ ] all four product-version surfaces bumped to `vNEW` (`test_version_parity.py` green)
-- [ ] `prawduct-hook regen-views` run; `release-notes.md` `## vNEW` lists all clusters
+- [ ] `plan-backfill --apply` run and its named plans checked against their own `## Status`
+- [ ] `release-plan-vNEW.md` written; `check-releasability --release vNEW` reports `releasable`
 - [ ] `engine-pin.md` Engine + Plugin rows bumped
 - [ ] **Re-vendor verdict computed (step 5) and recorded in the release commit + notes**
 - [ ] `CHANGELOG.md` `## [vNEW]` entry distilled (step 6), upgrade note if re-vendor required

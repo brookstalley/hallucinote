@@ -153,7 +153,7 @@ the server process — are in
 ### 7 — Read the mix ⭐ `/mix-review`
 The single read-side surface over all audio analyses. It reads rendered audio, so
 it **needs Max for Live** (Live Suite, or the M4L add-on); `/compose-review` is the
-any-edition symbolic read. `/mix-review` recalls the
+symbolic read, available on Standard too. `/mix-review` recalls the
 song's intent, reads the whole MixReport per section, and interprets the
 measurements *against* intent — surfacing only the collisions that hurt the
 element meant to *win* each section, framed as a producer's question. Masking is

@@ -9,10 +9,17 @@
      exactly this payload (NOTE: delimiters written as words, because a literal
      closing delimiter here would end THIS comment early — HTML comments do not
      nest, and that bug hid the paragraph below as visible body text):
-         open-comment prawduct: type=<t> | chunks=<a,b,c> | scope=<tag> | status=<s> | release=<r> close-comment
-     Pipe ` | ` separates keys; `chunks` is a COMMA list (never pipe — pipe is the
-     key delimiter); keys are freeform (unknown keys are preserved). A tag line
-     placed after prose is treated as body text, not metadata.
+         open-comment prawduct: type=<t> | scope=<tag> | release=<r> close-comment
+     Pipe ` | ` separates keys; keys are freeform (unknown keys are preserved).
+     A tag line placed after prose is treated as body text, not metadata.
+
+     RETIRED KEYS — do not write these on a NEW entry. `chunks=<a,b,c>` (a COMMA
+     list, never pipe) and `status=<s>` are both documented RETIRED in the
+     plugin's lib/change_log.py: the derived-view regenerator that read them is
+     gone and no gate, view or lint consumes either value. They are listed here
+     only because older entries carry them and are preserved verbatim — this
+     paragraph exists because the form above USED to advertise both, which is
+     how a new entry came to be written with an invented `status=complete`.
 
      RELEASE VOCAB for in-flight work: an entry sitting on develop with no release
      cut carries NO `release=` key at all — that ABSENCE is the release-pending
@@ -25,9 +32,500 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-08-20 — Three post-sync advisories cleared: a merge driver, a triaged bug report, and a norm re-affirmed
+
+<!-- prawduct: type=chore | scope=advisory-clearing -->
+
+Housekeeping against the three advisories the session briefing had been carrying.
+
+- **`.gitattributes` now marks `.prawduct/change-log.md` `merge=union`.** Every
+  branch prepends its entry at the same offset, so a three-way merge conflicted on
+  content that never actually disagreed and always resolved to "take both". The
+  selection criterion is written into the file: union engages only where git would
+  otherwise conflict, so what matters per file is whether "keep both" is right *at a
+  collision* and whether a wrong answer is **visible**. The exclusions are recorded
+  there too, because that second half is what does the work. `learnings.md` +
+  `learnings-detail.md` were added and then **reverted** when the Critic found the
+  visibility claim false: `audit-learnings` pairs the two by exact title and
+  `_take_active_narrative` breaks on the FIRST match, so a union-duplicated heading
+  makes a retirement run cut one block and silently orphan the other — against a file
+  whose stated invariant is *never delete an entry* — and no doctor or janitor check
+  pairs them, so nothing would report it. `operator-verification.md` is excluded for
+  the same reason in a sharper form: its entries flip PENDING to PASSED in place, so
+  union would leave one entry asserting both, silently, in the file `/prawduct:pr`
+  reads to decide whether live checks block a release. `reflections.md` is gitignored
+  and never merges at all.
+
+- **The `incoming-bugs/` drop-box is empty again.** The 2026-08-10 MixReport report
+  is filed as #465 — a fader-only level move is invisible in the mix report, via two
+  mechanisms (a stale `master_fader_db` making `delivered_true_peak_dbtp` equal the
+  bus number, and per-stem loudness / per-section masking being computed pre-fader
+  without saying so in the report). Cross-linked to #253 and #397; the source report
+  moved to `incoming-bugs/archives/` (the drop-box is gitignored, so that move is
+  local only).
+
+- **The arrangement-projection norm was re-affirmed, not retired** (`architecture.md`
+  → Direction). Its `Why` cited ARR-PROJ (#350), which has since shipped, so the
+  decay probe correctly asked for a decision — but the citation was *evidence for*
+  the norm rather than work it was waiting on. The `Why` now carries the rationale
+  with no tracked-work dependency, the provenance (#350 shipped 2026-06-22, #349
+  closed) moved to `Retroactivity` where it belongs, and a new `Status: steady-state`
+  line records the re-affirmation plus the one genuinely residual item: the flagship
+  projection path has still never run full-scale against real Live, scheduled under
+  #306. The Status line is marked **agent-proposed, pending owner veto** — the
+  2026-08-10 batch above it was owner-ratified and this one was not, and the
+  Statement is byte-identical to the ratified text, so a veto costs only that line.
+
+## 2026-08-12 — README: the demo video embeds, and the owner's copy edits merge
+
+<!-- prawduct: type=docs | scope=docs-launch-readiness | release=v1.8.6 -->
+
+**The demo video plays inline.** `#329`'s conversion gap is closed: the README's
+only demo was an `.mp3` link, which GitHub will not play inline, so a reader had
+to download a file to hear anything. The 2:13 cut now leads *See it* as a player,
+hosted on GitHub's user-attachments CDN at zero repo weight. Committing the
+`.mp4` would not have worked — GitHub strips `<video>` pointing at repository
+files and blocks `raw.githubusercontent.com` from serving video — and would have
+spent a one-way-door slice of the 12 MB `docs/assets` budget for a download link.
+Acceptance was verified rather than asserted: envelope correlation **+0.993**
+against the stitched renders with matching RMS, the ±1024-sample per-state offset
+correction measured at 0.80–0.95, and the caveat legible at three timestamps.
+
+**The owner's copy edits merged from `main`.** `f10c92d` landed directly on
+`main` against the pre-sweep, pre-rewrap README, so it collided with all three
+passes on the branch. The copy was taken as authored; only mechanics were
+reconciled (semantic line breaks, one trailing-whitespace line, the video block
+kept above the punk-fate example their intro now leads into).
+
+**Two owner decisions recorded so neither is re-litigated as a defect:**
+
+1. **The README and the tour quote the punk-fate prompt differently, and both
+   stay.** The README says "rhythm guitar, and vocals emulated by a lead
+   guitar"; `docs/tour.md` quotes the session log verbatim as "lead guitar, and
+   vocals on a staccato synth". The README's version describes what the song
+   became — chapter 15 turns track 4 into a lead guitar — rather than what was
+   typed. Flagged as a contradiction of the kind the launch-readiness pass
+   existed to close; the owner ruled to keep both as they are. A future docs
+   review should treat this as decided, not as drift.
+2. **"What you end up with is an ordinary Ableton set you finish yourself" is
+   deliberately gone**, though the launch-readiness pass added it to answer a
+   question the FAQ devotes a section to. The FAQ still answers it in full.
+
+Docs-only. Suite green at 5005 passed / 2 skipped.
+
+## 2026-08-12 — The release process gains a GitHub Release step
+
+<!-- prawduct: type=docs | scope=release-process-docs | release=v1.8.6 -->
+
+**Six annotated tags, zero Release objects.** The ten-step release procedure
+ended at *Verify*, so every cut since v1.8.0 produced a tag and nothing a person
+landing on the repo would see. Found while checking whether `gh` could upload
+the demo video; the repo had no releases at all.
+
+Step 11 now covers it, and encodes four things learned doing it:
+
+- **Draft first, always.** A published Release notifies watchers and is the most
+  outward-facing artifact the process produces. A draft is invisible and
+  deletable, so it gets reviewed before it exists publicly.
+- **`--verify-tag`**, so a typo fails rather than inventing a tag pointing at
+  nothing.
+- A draft's URL reads `releases/tag/untagged-<hash>` until published — normal,
+  and worth writing down before someone reports it as a bug.
+- **Release notes are reader-facing positioning prose**, so the § Documentation
+  & prose norm governs them. The v1.8.5 notes were written to it and checked
+  against it.
+
+Also recorded: a release asset serves from `github.com/.../releases/download/`,
+which will **not** render as an inline player in markdown. Only a
+`user-attachments` URL does, and obtaining one is a web-UI upload with no `gh`
+equivalent — verified against the API, which 404s on the uploader endpoint.
+
+v1.8.5 is drafted from the two change-log entries carrying `release=v1.8.5`,
+with the 6.1 MB demo cut attached as an asset.
+
+Docs-only. Suite green at 5005 passed / 2 skipped.
+
+## 2026-08-12 — Semantic line breaks for markdown prose
+
+<!-- prawduct: type=docs | scope=docs-positive-framing | release=v1.8.6 -->
+
+**Owner decision, prompted by a fair question about the sweep.** The positioning
+sweep produced a whitespace-only reflow commit — sentences got shorter, so
+hard-wrapped paragraphs had to re-flow. Asked why the files were hand-wrapped
+at all, the honest answer was that two conventions were in play and neither was
+written down: `CONTRIBUTING`, `SECURITY`, `faq` and `tour` wrapped at ~70
+columns, while `README` and `VISION` put each paragraph on one long line.
+
+All six now use **semantic line breaks — one sentence per line**. A hard wrap
+makes a one-word edit reflow its paragraph, so the diff reports a paragraph
+where a word changed; one-sentence-per-line keeps the short lines an editor
+wants and makes diffs word-accurate. Rendered output is identical, since
+markdown folds single newlines inside a paragraph.
+
+Applied mechanically, with two guards worth keeping: the transform **refused to
+write any file whose word stream changed**, and it caught a real bug doing so —
+an optional closing-quote class sat inside the split pattern, so `re.split`
+silently ate the quote in `B."`. Each file was then verified token-identical
+against its committed version. Code fences, tables, blockquotes, headings and
+link-only lines passed through untouched, so the tour's quoted session
+transcript and `build.py` excerpts are byte-identical.
+
+The norm is recorded in `project-preferences.md` § Documentation & prose,
+including the honest scope: the rest of `docs/` and `skills/` are still
+hard-wrapped, and convert when next touched substantially — in their own
+whitespace-only commit, never mixed with a wording change.
+
+Docs-only. Suite green at 5005 passed / 2 skipped.
+
+## 2026-08-12 — The prose norm's absolute reading, restored by owner ruling
+
+<!-- prawduct: type=docs | chunks=C1,C2,C3 | scope=docs-positive-framing | release=v1.8.6 -->
+
+**The norm was narrowed twice by the agent on the day it shipped; the owner has
+now ruled on both narrowings.** *Write what a thing IS; never define it by what
+it isn't* was ratified 2026-08-11 from the owner's own correction. Within hours
+the agent narrowed it twice, each time immediately after a review round found
+shipping prose that violated it — the textbook shape of amending a rule to fit
+your own work. Both narrowings were recorded as pending veto rather than as
+ratified, which is the only reason they were still reversible.
+
+- **Narrowing 1 — REJECTED.** The "competitor/critic (banned) vs mechanism
+  (fine)" test is withdrawn. The owner's original clause — *no "this isn't a
+  Y"* — means what it says, whatever the sentence is describing.
+- **Narrowing 2 — RATIFIED.** Naming prior art as lineage stays permitted;
+  ranking this product against it remains banned. VISION's TidalCycles /
+  Sonic Pi / Lilypond / DAWproject paragraph keeps its place.
+
+**The owner also set the norm's scope, which had never been stated.** It governs
+positioning prose — `README.md`, `CONTRIBUTING.md`, `SECURITY.md`,
+`docs/VISION.md`, `docs/faq.md`, `docs/tour.md`. Reference docs elsewhere under
+`docs/`, agent-read `skills/`, `.prawduct/artifacts/` and the frozen
+`docs/archive/` sit outside it: in operating instructions the construction
+disambiguates ("the list itself, not the wrapper") rather than defends, and the
+absolute rule applied there would have cost precision across ~1,400 sites for no
+positioning gain. Scope is now written into the norm so the next agent inherits
+it instead of re-deriving it.
+
+**What the sweep changed.** Every contrast-definition in the six in-scope files,
+rewritten positively — the flagship "a long agentic workflow, not a chat"
+(`faq.md`), "Ableton is the speaker, not the score" and "A diff is not '33 notes
+changed'" (`VISION.md`), "Verified, not assumed", "Grit as timbre, not level",
+"a preset name is a claim, not a measurement" and a section heading
+(`tour.md`), "a cloned `build.py` is not data, it's a program" (`SECURITY.md`),
+and the symbolic-review and cost lines in `README.md`. Most rewrites are the
+better sentence, because dropping the foil forces the claim to be stated
+outright.
+
+**The test the sweep applied, recorded so it is checkable.** The banned form is
+a *contrast-definition*: a sentence characterizing the product, a component or
+the process by naming a **foil** — an alternative the subject is set against.
+Plain negation names no foil ("Live isn't running") and stays. (The row first
+carried a different test — whether removing the negated half left the subject
+undefined — which the Critic showed to be self-invalidating: "Ableton is the
+speaker" survives that deletion, so the test cleared the sentence the norm
+bans. Replaced in every carrier the same day.) Four categories were
+deliberately left standing: plain negations, prescriptive rules (an instruction
+may prohibit), the ratified limitations register (`## Non-goals`, SECURITY's
+out-of-scope list), and **verbatim quotation** — the tour's session transcript,
+the user's own words, and code quoted from `build.py`. Rewriting captured
+evidence to satisfy a prose norm would falsify the thing the tour exists to
+show; that boundary is worth more than uniformity.
+
+**What the Critic caught (0 blocking, 9 warnings, 11 notes).** Three fixes
+worth naming. The row's discriminating test was **self-invalidating**: it asked
+whether removing the negated half left the subject undefined, and "Ableton is
+the speaker" survives that deletion — so the test cleared the very sentence the
+row bans. Replaced in all four carriers with the foil test. **The carve-out
+count was dishonest**: the norm advertised two while the sweep applied four, so
+prescriptive rules and verbatim quotation were recorded explicitly as *pending
+owner ratification* rather than folded in silently — the same leave-the-veto-real
+pattern that made this session's ruling possible. **The owner ratified both the
+same day**, so the row now carries four owner-ratified carve-outs and nothing
+pending; a fifth is a ruling, not a judgment call. (One
+reviewer claim was wrong and is worth recording as such: the limitations
+register did **not** arrive with the rejected narrowing — it is in the owner's
+original 2026-08-11 wording as "Narrow exception".) And **four survivors** the
+Done-when had called clean, the worst being VISION's "Reach music Ableton was
+not built for … the DAW alone makes it actively hostile", which ranks against a
+named tool under `## Why` with no carve-out covering it.
+
+Docs-only. Suite green at 5005 passed / 2 skipped, before and after.
+
+## 2026-08-11 — Release process: the back-merge is a fast-forward, and `main` may be elsewhere
+
+<!-- prawduct: type=docs | scope=release-process-docs | release=v1.8.5 -->
+
+Reconstructed at the v1.8.5 cut from commit `f4f9ad2`, which landed on
+`develop` with no entry of its own — exactly the gap step 1 of
+`docs/release-process.md` warns about, found by running the audit it
+prescribes (`git log --oneline --no-merges origin/main..develop`).
+
+Two traps hit during the v1.8.4 cut, both fixed at the source that allowed
+them. **Step 9's back-merge is the one merge in the process that is
+deliberately not a merge commit**, and nothing said so — it sits two
+paragraphs under step 8, which *does* require `--no-ff`, against a repo-wide
+`--no-ff` habit, so the bare `git merge` read as an omission rather than a
+specification. Passing `--no-ff` there leaves `develop` permanently one commit
+ahead of `main` and makes step 10's `rev-list` count read 1 instead of 0 — a
+check that appears to fail while the trees are identical. Now stated outright,
+with the false alarm named so the next reader recognizes it.
+
+**Step 8 assumed `git checkout main` works.** Where `main` is checked out in
+another worktree it refuses outright, and that worktree must not be disturbed
+to satisfy a release. The plumbing path is now written down: verify the merged
+tree equals `develop`'s, build the two-parent commit with `commit-tree`, push
+it straight to the remote ref — the same merge commit step 8 describes,
+without the checkout.
+
+## 2026-08-11 — Launch-readiness docs pass: contradictions closed, framing recentred
+
+<!-- prawduct: type=docs | scope=docs-launch-readiness | release=v1.8.5 -->
+
+A critical review of the user-facing docs from the README outward, then the
+fixes, across four review rounds. No product behavior change. Five non-`.md`
+files: the two plugin manifests and `ci.yml`, all carrying stale or retired
+prose in strings and comments; `project-state.yaml` for the norm registry;
+and one new test — `test_marketplace_manifest_tool_count_matches_actual_registry`,
+which pins the tool count shown in the `/plugin install` dialog. That count was
+the only one of four such claims no guard read, because the sibling README
+guards match "N unified tools" and the manifest says "N Ableton Live tools";
+verified by mutating the manifest to 99 and watching the test fail.
+
+**Four contradictions.** `.claude-plugin/marketplace.json` told every installing
+user the plugin "Requires the `hallucinote` Python engine installed" — stale
+since the plugin absorbed the engine, and against the README's "self-contained".
+It is the first sentence a user reads, in the install dialog. `VISION.md`
+claimed audio recorded against a click flows back into the DB in the present
+tense, which `known-issues.md` contradicts; it now separates the symbolic
+round-trip (real today) from audio (a goal). VISION's "impossible in every other
+tool" invited an argument it would lose — TidalCycles, Sonic Pi, Lilypond and
+DAWproject all exist — and now claims the defensible combination instead.
+`CONTRIBUTING.md` taught a pip/venv setup while CI runs `uv --locked` and the
+plugin ships `uv --frozen`, and taught the deprecated `ok-broad-except` spelling
+that `project-preferences.md` marks legacy.
+
+**Omissions a prospective user hits before installing.** What it costs to run
+(Claude usage and the Ableton bill) appeared nowhere; both are now in README
+Status and the FAQ. No token figure is published because none is measured
+anywhere in the repo — the shape of the cost is stated instead, and #458 tracks
+measuring it. "The melody is yours" was the single most load-bearing product
+fact and lived only in `capability-truth.md`, an internal doc, while the README
+advertised "any genre, any shape". Also added: whether you end up with a normal
+Live set you can finish and release (yes — it was buried in `collaboration.md`),
+build determinism, and output ownership.
+
+**Editions and CI honesty.** "Any Live 12 edition" narrowed to the editions
+actually exercised (Standard, Suite); Intro and Lite are named as untested in
+`known-issues.md` with the two failure modes that will bite. `CONTRIBUTING.md`
+gained a section stating what CI covers: no Ableton, no macOS or Windows leg,
+one interpreter. #459 and #460 track the underlying decisions.
+
+**Framing.** The README had put Claude in the subject position of every creative
+verb — "You describe a song; Claude writes it", "You talk; Claude authors code"
+— which reads backwards to the audience most primed to distrust AI tooling. The
+user now holds the creative verbs; the tool builds, measures and reports. A
+"Who it's for" section covers the three registers (curiosity, reach, leverage)
+without describing anyone by their deficits, and the cheap-experiment loop that
+makes the tool fun is stated where it was previously missing.
+
+**Two norms came out of it, and the first one had to be narrowed the same day**
+(`project-preferences.md` → Documentation & prose + two Enforcement rows;
+`norm_registry_ratified` 27 → 29). As first written, **write what a thing IS,
+never what it isn't** was absolute — and the cumulative Critic caught it being
+violated inside its own ratifying bundle, twice in `VISION.md`. Both sites were
+rewritten. But the verify pass then made the sharper point: read absolutely,
+the row also outlaws ordinary factual distinctions the corpus legitimately
+needs — "a long agentic workflow, not a chat", "the song is reproducible; the
+act of composing it isn't" — and a norm the corpus violates on the day it
+ships is aspirational, not binding. So the row now names the two moves it
+actually targets (positioning against alternatives; rebutting an unraised
+objection) and states the test explicitly: a sentence about a competitor or a
+critic is banned, a sentence about how the thing works is fine. It was then
+narrowed a **second** time, in the same pass, when the next round pointed out
+that the test as worded condemned the VISION prior-art paragraph the first
+narrowing existed to permit: naming other tools as lineage is now explicitly
+allowed, and ranking yourself against them is the banned move. Worth recording
+plainly, because twice-narrowing a norm the day it ships is the shape of
+*amending a norm to match your own prose* — the reviewer weighed exactly that
+and let it stand only because each narrowing states a general discriminating
+test rather than exempting a specific paragraph. It remains vetoable. The
+second norm — the user holds the subject position on the creative verbs — was
+uncontested, and gained the ratification date and retroactivity clause it
+shipped without.
+
+Two artifacts were resynced while the corpus was open: `api-contract.md` and
+`project-preferences.md` § Package manager both described skills invoking
+`uv run --project <plugin-root> --frozen hallucinote <cmd>`, which is no longer
+what ships — every skill uses `"$PY" -m hallucinote.cli`, with `$PY` resolved
+from `ableton://server/info`. Both prose norms carry mechanism and audit home in the Enforcement index,
+because a norm outside that index is one the janitor's Norm Health sweep never
+walks.
+
+What prompted it: an intermediate draft of this very pass added a "What it
+isn't" section and Suno/is-this-cheating FAQ entries. They argued with a critic
+the reader had not met and planted the doubt they answered. They were removed
+rather than softened, and the fact underneath them — the notes come from
+parametric generators you can read — now states itself positively, as
+mechanism.
+
+Backlog filed from the review: #457 (a second worked example in an exposed
+genre), #458 (measure per-song usage), #459 (CI platform matrix), #460
+(Intro/Lite). The demo-video finding folded into existing #329 rather than
+duplicating it, with a comment recording the part its acceptance was missing:
+the delivered `.mp4` has to be embedded in the README to play inline.
+
+## 2026-08-11 — The prose pass: README rewritten, corpus scrubbed, generator fixed
+
+<!-- prawduct: type=docs | scope=docs-writing-quality | status=shipped | release=v1.8.4 -->
+
+Two docs clusters landed after v1.8.3 was cut, both about how the user-facing
+corpus reads. No product behavior changes.
+
+**README, owner-requested (three edits).** The "See it" line let the *prompt*
+read as the thing that took forty minutes; it now says the sentence kicked off a
+forty-minute *session*. The lifecycle diagram's analysis caption becomes
+"composition, mix, and audio measurements" — and because the `<desc>` element
+still carried the old "a question, not a verdict" framing verbatim, the stale
+wording would have survived precisely for screen-reader users who cannot see the
+caption. Both now agree, and the caption pill grew 280 → 320px to fit 40
+characters at 12.5px without crowding its edges. The prose went 1334 → 1008
+words (24%) by structural cuts rather than sentence-squeezing: "How it works"
+and "What you can do" were describing the same three capabilities, so they
+merged. Short of the requested 30% deliberately — the remaining candidates were
+install steps, troubleshooting causes and the example prompts, where further
+cuts would have removed information rather than repetition.
+
+**Corpus scrub against `brooks-writing-style.md`** — 15 user-facing docs, 24,646
+words. Most came back clean; the useful finding was structural, and it came from
+the guide's positive checklist rather than its anti-patterns. Two real
+point-first failures: `punk-fate.md` opened with paperwork about where
+`decisions/` and `annotations/` live before saying what the song *is*, and
+`docs/quickstart.md` defined itself by cross-reference before saying what you
+get. Three banned hype words (`unlocks` in `VISION.md` and
+`song-authoring-conventions.md`, `Leverages` in `polyrhythms.md`), one "not just
+X" reframe, and two run-ons split.
+
+**The generator was the root cause, so it was fixed at source.**
+`src/hallucinote/tools/templates/song/song.md.tmpl` carried the same
+paperwork-first ordering as punk-fate.md, plus a bare `/song-context` and a
+pointer at `.prawduct/artifacts/song-conventions.md` — an internal artifact no
+user workspace contains. Every future scaffolded song would have inherited all
+three defects. This is the one change outside `docs/` and `examples/`, and it is
+why the release touches `src/` at all.
+
+**What the scan cleared, with evidence:** no throat-clearing openers, no
+exclamations in prose, no triadic crescendos, no staccato-fragment drama, no doc
+ending in a summary-of-the-summary, and exactly one sentence appearing in two
+docs — a deliberately shared norm phrase, left alone. A words-per-example proxy
+flagged `song-workflow.md` and `faq.md` as show-don't-tell offenders; reading
+them says otherwise, and neither was rewritten.
+
+Suite: 5004 passed, 2 skipped (no count change — docs and one template).
+
+## 2026-08-11 — Chapter 2: the song goes back into the studio until it sounds punk
+
+<!-- prawduct: type=feature | scope=tour | status=shipped | release=v1.8.3 -->
+
+punk-fate passed every meter at the end of chapter 1 and still didn't sound
+like punk. Three re-cuts the same day, each measured, each with its rationale
+on disk as `decisions/08`–`11`:
+
+- **Feel.** The per-part feel of chapter 1 measured *mechanical* — all 623 bass
+  notes the identical distance off the grid. A `PerformanceProfile` per player
+  now realizes 1/f-correlated timing and velocity breathing over the finished
+  part; all four parts read `human`. Two dead ends are in the attempt ledger,
+  including a limb-split kit that measured *worse* than one stream — a drummer
+  is one performer, not two.
+- **Garage drums.** Ghost snares, hats that open under a leaning hand, and the
+  hat that simply isn't there — deterministic from each note's identity, so a
+  rebuild misses the same hats. The scatter surfaced a latent defect: two
+  generators writing one snare on one tick, silently deduplicated until
+  per-note deviation made it a 5 ms overlap Live can't hold. `_one_hit_at_a_time`
+  and `_no_same_pitch_overlap` fix it, with tests.
+- **Dirt and tone.** Two gain stages added, then the chapter's real lesson:
+  every chain had been chosen by preset *name* and never verified by
+  *parameter* — *Dual Amped Crunch* was two amps on `Blues`, *Guitar Dirt* was
+  1.6 % drive, and a 24 %-wet reverb was hiding inside the guitar rack,
+  declared nowhere. With real gain and a Glue Compressor → Limiter on the
+  master: −0.34 dBTP, 0 overshoots, guitar-stem spectral flatness 0.083 →
+  0.156. **A preset name is a claim, not a measurement.**
+- **The lead.** Track 4's Operator square read as *"beep beep beep bloop"* —
+  its spectral centroid sat at 2125 Hz while the band sat at 77–604 Hz. It's a
+  second guitar now; master flatness 0.192 → 0.247, the biggest jump of any
+  pass, with the other three stems moving by at most 0.0013.
+
+`docs/tour.md` grows a chapter 2 to tell it, and a freshness test recomputes
+every number the chapter quotes from the committed measurement JSONs — added
+because the chapter's "before" figures first shipped from a superseded
+analysis run.
+
+**Docs tidy, same shipment.** The chapter-2 work left the surrounding docs
+describing an older song, so: the docs-index row for the tour no longer counts
+the tour's parts (it said "one session, ten beats" throughout chapter 2's
+development, and the parity test next door only checks a row *exists*);
+`REQUIREMENTS.md` regenerated, since its built-in-device list predated three
+device passes; punk-fate.md's Concept describes the band that's actually
+playing, and its Provenance is a pass table instead of a chronological
+append-log; the tour is one document with one `#` heading instead of three;
+and the demo snapshot's return names lost Live's slot prefix, so building the
+flagship example no longer prints a UserWarning. Three new locks — heading
+structure, index-row shape claims, and stripped return names — each verified
+to fail on the regression it names.
+
+**The one non-tour change, and why it matters to everything above:** a bare
+`pytest` in this repo could not be trusted from a git worktree. `pyproject`'s
+`pythonpath` front-inserts this checkout's `src/` into the pytest process, but
+tests that shell out to `sys.executable -m hallucinote...` got a child resolving
+`hallucinote` through the editable-install `.pth` — the PRIMARY checkout, an
+older tree. Six `test_restamp_*` failures had been carried across sessions as
+"install skew, reinstall when Live is idle"; the real fix is three lines in the
+root `conftest.py` exporting the source dirs, and no reinstall. Every green
+number quoted in this entry is from a bare run that is now honest, and
+`test_subprocesses_resolve_this_checkout_not_the_installed_one` fails naming the
+wrong tree if the export is ever dropped.
+
+[DECISION: the tour's media **item** cap is now accounted per editing session
+rather than per document lifetime — 6 screenshots · 4 audio items = 16 files,
+against the unchanged 12 MB byte cap (currently 7.0 MB). Recorded as a dated
+amendment to `tour-walkthrough-design.md` §The concision rule, because chapter 2
+had shipped 16 files and reconciled them by editing the enforcing test's comment
+while still citing the artifact as its authority — a norm changed in code instead
+of in the norm. | user can veto/override: rejecting per-session accounting means
+dropping two of chapter 2's four media items, NOT re-relaxing the test.]
+
+Found and *not* fixed here, filed instead: `format_requirements_md` handles
+every `DeviceStatus` except `preset_query_unverified`, so 8 of punk-fate's 87
+devices appear in no section of the generated file (#454 — and since
+`regen_requirements` never passes `browser_dry_runs`, that drop is the default
+path, not an edge case). Pre-existing, and the load-bearing "no third-party
+plugins" line is unaffected — an engine fix doesn't belong in a docs branch cut
+for release. Also filed: #451 (the freshness lock still misses beat 12's
+build-derived counts and the two lens files) and #455 (the song evidence tree has
+no retention lifecycle while `docs/assets/` has two).
+
+## 2026-08-11 — The tour ships: punk-fate lands in examples/, and the evidence gets teeth
+
+<!-- prawduct: type=feature | chunks=B1,C1,D1 | scope=tour | status=shipped | release=v1.8.3 -->
+
+The TOUR plan's last three pieces, on `feat/tour-evidence`. The demo song
+punk-fate — authored end-to-end from a one-sentence prompt in a live session —
+lands as `examples/punk-fate/` (build.py, mix snapshot, 7 decisions, 2
+annotations, attempt ledger, both mix-analysis reports, shape tests in the
+default suite; headless build verified from a clean checkout). C1's evidence
+budget is spent under `docs/assets/`: full-song audio + waveform, the
+before/after mix A/B pair from the session's own renders, four screenshots
+(arrangement, session-during-render, drum-rack chains, and a fresh off-grid
+MIDI capture showing the snare leading the grid). D1 writes `docs/tour.md`
+(ten beats, one genuine artifact each), grafts the evidence into the README's
+See-it, and locks it all with `tests/preferences/test_tour_freshness.py` —
+doc→source verbatim snippets, asset existence, the 12 MB media byte cap, and
+mix numbers recomputed from the committed reports (adversarially verified
+red/green). Hero video: explicit descope — no screen recording exists and the
+design defers the demo video until the walkthrough is seamless.
+
 ## 2026-08-11 — The effort:S backlog burns down: a guard override deleted, a gate that agreed with itself, and a DB that stops depending on your shell
 
-<!-- prawduct: type=fix | scope=effort-s-burndown | status=in-progress -->
+<!-- prawduct: type=fix | scope=effort-s-burndown -->
 
 One branch working through every `effort:S` item open on the tracker. Chunks 1-2
 covered the PR #213 deferred-warning cluster and a sweep of prose the tree had

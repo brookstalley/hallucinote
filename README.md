@@ -1,24 +1,42 @@
 # Hallucinote
 
-**Make music in Ableton Live by describing it to Claude — composition, sound design, and mix, authored as code you can version and fork.**
+**Describe what you're after, hear it, argue with it — music as code you can read, fork and rewrite.**
 
-[![CI](https://github.com/brookstalley/hallucinote/actions/workflows/ci.yml/badge.svg)](https://github.com/brookstalley/hallucinote/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![CI](https://github.com/brookstalley/hallucinote/actions/workflows/ci.yml/badge.svg)](https://github.com/brookstalley/hallucinote/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/Ableton%20Live%2012-macOS%20%7C%20Windows-black)
 
 ![The punk-fate prompt and creative brief in Claude Code, beside the finished four-track arrangement it built in Ableton Live](docs/assets/hero.png)
 
-You describe a song in plain language. Claude writes it — the composition, the sound design, the mix — as code: a Python `build.py` plus a captured mix snapshot, built into a working database and pushed into a running Ableton Live set.
+Say what you're going for, and it gets built into a running Live set — `build.py` for the notes, a snapshot for the instruments and mix.
+Then listen, change your mind, explore new ideas.
+Because the song is code in a git directory, trying the half-time bridge or a key change costs a branch and a minute: keep it, or throw it away and try the next one.
 
-Tweak a fader in Live and pull the change back through the same path. The song is a directory you commit to git — reproducible and forkable, not a binary `.als` you hope to find again.
+Round-trip to Ableton, recording MIDI events in Ableton to pull back and work on in Hallucinote (no audio round trip... yet).
 
 ---
 
 ## See it
 
-> *"Make a 2-minute punk song that crams the chord progression of Beethoven's 5th into those two minutes. Drums, bass, lead guitar, and vocals on a staccato synth. Call it punk-fate."*
+Accelerated video: from prompt to finished arrangement.
 
-Claude scaffolds `songs/punk-fate/`, picks an instrument chain per track, writes the note-generating code, and pushes the whole thing into Live through fourteen ordered phases:
+<video src="https://github.com/user-attachments/assets/6032b568-a103-439b-8397-a6ca7cdec0eb" controls muted></video>
+
+*The chat is staged so the build runs under the conversation and there is something to watch; real sessions are more iterative and take longer.*
+
+A different song, made the same way, ships in this repo as source:
+
+> *"Make a 2-minute punk song that crams the chord progression of Beethoven's 5th into those two minutes. Drums, bass, rhythm guitar, and vocals emulated by a lead guitar. Call it punk-fate."*
+
+This prompt is cheating a bit, because it implicitly specifies arrangement and harmony.
+But it allowed a ~45 minute build, iterating on micro timing (punk's not dead!), instrumentation, and mixing and production.
+It took a couple of sessions to get right, always with the user in charge.
+The result:
+
+[![Punk Fate — full song waveform](docs/assets/tour-chapter2.png)](docs/assets/tour-chapter2.mp3)
+
+**[▶ Listen — punk-fate, 1:58](docs/assets/tour-chapter2.mp3)** · The finished song ships here as source: [`examples/punk-fate/`](examples/punk-fate/).
+
+Getting there runs fourteen ordered phases:
 
 ```
 tempo → meter → tracks → returns → scenes → clips →
@@ -26,43 +44,68 @@ mix → devices → routing → device-sidechain → envelopes →
 performed automation → arrangement → cues
 ```
 
-When it finishes, you press play and hear a finished song.
+Want the bridge to hit harder?
+*"Lift the lead an octave in the bridge, and make the chorus drums drag."* Claude edits the code and re-pushes, changing what you asked for and leaving the rest alone.
 
-Don't like the bridge? *"Lift the lead an octave there, and make the chorus drums drag."* Claude edits the code and re-pushes. Re-runs are idempotent — it changes what you asked for and leaves the rest alone.
+**Beat by beat, with the transcript, the screenshots and the mix numbers: [the tour](docs/tour.md).**
 
 ## How it works
 
 ![The lifecycle: a prompt becomes authored code, lands in Live, and the agent listens back](docs/assets/lifecycle.svg)
 
-- **You talk; Claude authors code.** Notes, arrangement, and automation are Python in `build.py`. Instruments, device chains, and the dialed mix live in a declarative snapshot. Both are git-tracked source.
-- **Push materializes; pull ingests.** Push drives the song into a fresh or existing Live set. Pull diffs Live against the song and folds your manual edits back in.
-- **The agent listens.** Claude can render the set to audio and review the mix against your stated intent — masking, loudness, groove — and tell you the one thing holding the chorus back, as a producer's question, not a score.
+- **You decide; it writes the decision down.** Notes, arrangement and automation in `build.py`; instruments, chains and the dialed mix in a snapshot.
+  Every choice is legible afterwards — you can read what was done, and why, and change it.
+- **The notes come from generators you can read.** Parametric Python — `tresillo`, `walking_bass`, kit abstractions, per-part feel.
+  Claude's craft is choosing which to call and with what musical parameters, then writing that down.
+  What lands in Live is MIDI and mixer state in a session you own outright.
+- **Push materializes; pull ingests.** Push drives the song into a fresh or existing set; pull folds your manual Live edits back in.
+  Re-runs are idempotent.
+- **It listens back, and tells you straight.** Ask *"is the chorus landing?"* and Claude reads the composition, or renders the set and measures masking, loudness and groove, against the intent *you* declared — then reports what it found and what it would change.
+  Real numbers, and an opinion you can overrule.
 
-## What you can do
+## Who it's for
 
-- **Compose from a prompt — any genre, any shape.** Conceptual (*"a song about overcoming loss"*), musical (*"a Baroque prelude in G minor from a single broken-chord figuration"*), or purely stylistic (*"Duran Duran if they dropped acid with Black Sabbath"*).
-- **Under-specify on purpose.** Claude works out what your prompt actually leans on (`/hallucinote:song-brief`) — key, tempo, what a named turn means musically — and comes back **once** with informed proposals you can wave through or redirect in a word.
-- **Iterate by talking.** *"Raise the verse ghost snares."* *"Route the drums through a sub-bus and glue-compress it."* Claude edits the code and re-pushes.
-- **Get sound design included.** Device chains, dialed parameters, and sends ship with the song — a finished song arrives with the sound it's supposed to have, not a mix-pass to-do list.
-- **Pull manual edits back.** Move faders, mutes, or notes in Live, then ask Claude to pull them into the song.
-- **Get an honest review.** Ask *"is the chorus landing?"* and Claude reads the composition — or the rendered audio — against what you said you wanted.
-- **Share and fork.** A song is a directory in a git repo. A collaborator clones it, and Hallucinote checks their plugins before pushing — telling them exactly what to install if something's missing.
+- **Curious how songs get put together.** Ask for something, then ask why it works that way.
+  It proposes with the reasoning showing — *"E minor, so the chorus can lift into the relative major"* — and you can overrule it and hear the difference straight away.
+  You learn the craft by watching choices get made, then making better ones.
+- **Playing already, and reaching further.** The arrangement you can hear in your head but would spend a week programming: a bassline weaving between two different kick patterns, thirty-two bars of hats that breathe, a polyrhythmic bridge.
+  Ask for it and listen to it.
+- **Deep in it.** Leverage.
+  Bulk edits you'd otherwise script by hand, chorus variants on branches you A/B and discard, and a review pass that measures masking, loudness and timing against the intent you declared — then tells you where it disagrees.
+  A second opinion with numbers behind it is rarer than it should be.
+
+## What to ask for
+
+- **Any genre, any shape.** Conceptual (*"a song about overcoming loss"*), musical (*"a Baroque prelude in G minor from a single broken-chord figuration"*), or stylistic (*"Duran Duran if they dropped acid with Black Sabbath"*).
+- **Under-specify on purpose.** Claude works out what your prompt leans on (`/hallucinote:song-brief`) — key, tempo, what a named turn means musically — and comes back **once** with proposals you can wave through or redirect in a word.
+- **Share and fork.** A collaborator clones the directory; Hallucinote checks their plugins first and names anything missing.
 
 ## Status
 
-Actively developed, shipping releases, and honest about the rough edges:
+Actively developed, and honest about the rough edges:
 
-- **Platforms:** Ableton Live 12 on macOS and Windows (no Linux — Ableton ships no Linux build).
-- **Editions:** the full authoring loop runs on **any Live 12 edition, Standard included**. One feature — the measured mix review — needs **Max for Live** (Suite, or the M4L add-on); Standard users review by ear with the symbolic review instead.
-- **Boundaries:** Claude authors MIDI and the mix; a recorded vocal take can't yet be read back through the bridge.
+- **Platforms:** Ableton Live 12 on macOS and Windows (Ableton ships no Linux build). macOS is where it's developed day to day; the Windows paths are implemented and unit-tested, with fewer real sessions behind them.
+- **Editions:** the full authoring loop is exercised on **Live 12 Standard and Suite**.
+  Only the measured mix review needs **Max for Live** (Suite, or the add-on for Standard); without it, review is symbolic: it reads the score.
+  Intro and Lite are untested, and their track limits will bite.
+- **The melody is yours.** Sketch a topline in Live and it arranges, sound-designs and mixes the whole track underneath, then reads the line back against your intent — contour, intervals, how it sits on the chords.
+  [How that works](docs/faq.md#what-about-the-melody).
+  Sung vocals are on the list; today the synth sings.
+- **Boundaries:** MIDI and the mix are what it builds; a recorded vocal take can't yet be read back through the bridge.
+- **What it costs to run:** Hallucinote is free; the Claude usage behind it bills to your plan.
+  A song is a long agentic session — the worked example above ran about forty minutes of continuous agent work, and each measured mix pass hands back a sizeable analysis payload.
+  Expect a full compose-and-mix session to eat a real share of a Claude plan's budget.
+  `/cost` reports what a session actually used.
+  Live 12 (and Max for Live for the measured review) is the other bill.
 
-Everything else we've consciously accepted — each with its workaround — is in [**Known issues**](docs/known-issues.md).
+The rest, each with its workaround: [**Known issues**](docs/known-issues.md).
 
 ## Install
 
-The plugin is **self-contained**: installing it brings the skills, the Ableton bridge, and the composing engine, all in one managed environment. No separate engine to clone, nothing on PyPI to track.
+The plugin is **self-contained** — skills, Ableton bridge and composing engine in one managed environment.
+Nothing else to clone or track.
 
-**1. Prerequisites** — [Claude Code](https://claude.ai/code), Ableton Live 12, Python 3.10+, and [uv](https://docs.astral.sh/uv/) (`brew install uv` on macOS, `winget install astral-sh.uv` on Windows).
+**1. Prerequisites** — [Claude Code](https://claude.ai/code), Ableton Live 12, and [uv](https://docs.astral.sh/uv/) (`brew install uv` on macOS, `winget install astral-sh.uv` on Windows). uv provisions the Python the plugin needs, so you don't install one.
 
 **2. Install the plugin** — in Claude Code:
 
@@ -71,27 +114,29 @@ The plugin is **self-contained**: installing it brings the skills, the Ableton b
 /plugin install hallucinote@hallucinote
 ```
 
-**3. Connect Ableton** — quit Live, then run **`/hallucinote:ableton-mcp-install`** (it installs the Remote Script and analyzer — the one thing the plugin can't do for you). Reopen Live, and in **Preferences → Link, Tempo & MIDI** assign **Hallucinote** to a free Control Surface slot. Restart Claude Code so the bridge connects.
+**3. Connect Ableton** — quit Live, run **`/hallucinote:ableton-mcp-install`** (it installs the Remote Script and analyzer, the one thing the plugin can't do for you).
+Reopen Live and assign **Hallucinote** to a free Control Surface slot in **Preferences → Link, Tempo & MIDI**.
+Restart Claude Code.
 
-**4. Verify** — ask Claude: *"please get the current set's info from Ableton."* If tempo, signature, and track counts come back, the bridge works.
+**4. Verify** — ask Claude *"get the current set's info from Ableton."* Tempo, signature and track counts coming back means the bridge works.
 
 **Hacking on the framework itself?** Load it from your checkout with `claude --plugin-dir /path/to/hallucinote` — see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Your first song
 
-Day to day, it's three things:
+Open Live with an empty set, start Claude Code wherever your songs live (any folder — Claude offers to create the workspace), and describe a song.
+Unsure about your setup?
+Run **`/hallucinote:getting-started`** first.
 
-1. **Open Live** with an empty set.
-2. **Start Claude Code where your songs live** — your songs repo, or any empty folder. No workspace yet? When you ask for a song, Claude notices and offers to set one up — say yes, and it creates the marker file, the `.gitignore`, and the git repo for you.
-3. **Describe a song.** Or run **`/hallucinote:getting-started`** first — it checks your setup and points you at the next step.
-
-The [**Quickstart**](docs/quickstart.md) walks the first song end to end in about ten minutes.
+The [**Quickstart**](docs/quickstart.md) walks the first song end to end in ten minutes.
 
 ## Troubleshooting
 
-- **"Version mismatch" / "handshake missing"** — the bridge and Live's Remote Script have diverged (usually after an update). Rerun `/hallucinote:ableton-mcp-install`, then **fully quit and reopen Live** — Live caches Control Surface modules at startup.
-- **Session info hangs or says "no connection"** — Live isn't running, the Control Surface slot isn't assigned, or Claude Code wasn't restarted after assigning it.
-- **Anything else** — ask Claude to **run preflight**; it prints a report of exactly what the installer can and can't find. More in the [FAQ](docs/faq.md).
+- **"Version mismatch" / "handshake missing"** — bridge and Remote Script have diverged, usually after an update.
+  Rerun `/hallucinote:ableton-mcp-install`, then **fully quit and reopen Live** (it caches Control Surface modules at startup).
+- **Session info hangs or "no connection"** — Live isn't running, the Control Surface slot isn't assigned, or Claude Code wasn't restarted after assigning it.
+- **Anything else** — ask Claude to **run preflight**; it reports what the installer can and can't find.
+  More in the [FAQ](docs/faq.md).
 
 Bugs go to [issues](https://github.com/brookstalley/hallucinote/issues); report vulnerabilities privately instead — see [`SECURITY.md`](SECURITY.md).
 
@@ -99,12 +144,9 @@ Bugs go to [issues](https://github.com/brookstalley/hallucinote/issues); report 
 
 | If you want to… | Read |
 |---|---|
-| Build your first song, step by step | [`docs/quickstart.md`](docs/quickstart.md) |
 | See everything you can ask for | [`docs/skills.md`](docs/skills.md) |
 | Understand the whole song-making lifecycle | [`docs/song-workflow.md`](docs/song-workflow.md) |
 | Share a song with a collaborator | [`docs/collaboration.md`](docs/collaboration.md) |
-| Look something up / fix a problem | [`docs/faq.md`](docs/faq.md) |
-| Know what's not supported yet | [`docs/known-issues.md`](docs/known-issues.md) |
 | Understand the design philosophy | [`docs/VISION.md`](docs/VISION.md) |
 | Read or edit a song's `build.py` | [`docs/song-authoring-conventions.md`](docs/song-authoring-conventions.md) |
 | See what changed in a release | [`CHANGELOG.md`](CHANGELOG.md) |
@@ -117,11 +159,13 @@ Bugs go to [issues](https://github.com/brookstalley/hallucinote/issues); report 
 src/hallucinote/      # composition engine: db, generators, sync, capture
 hallucinote_mcp/      # the MCP bridge server (13 unified Ableton tools)
 skills/               # the /hallucinote:* Claude Code skills the plugin ships
-docs/                 # quickstart, song workflow, conventions, FAQ, schemas, …
+docs/                 # quickstart, tour, conventions, FAQ, schemas, …
 ```
 
-This is the **framework** repo. Your **songs live in a separate workspace repo**, each song a self-contained directory: the build code, the mix snapshot, its decision history, and its tests.
+This is the framework.
+Your songs live in their own repo, one directory each: build code, mix snapshot, decisions, tests.
 
 ## License
 
-MIT. See [`LICENSE`](LICENSE).
+MIT.
+See [`LICENSE`](LICENSE).

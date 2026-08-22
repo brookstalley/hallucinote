@@ -24,7 +24,13 @@ governed_by:
       - "every new preference gets an enforcement mechanism (Linter | Test | Critic) → conforms (the media budget and snippet-freshness rules each get a test; see D1)"
       - "numbers that drift are not restated in prose; point at the canonical source → conforms (the tour quotes no test counts)"
 last_validated: 2026-08-06
+lifecycle: completed
+archived: 2026-08-11
+released_in: v1.8.3
+maintained: false
 ---
+
+> **Archived — no longer maintained.** This plan records what was built, not what will be. Do not edit it to reflect later changes; write those where they are true.
 
 ## Requirements Confidence
 
@@ -65,12 +71,48 @@ decision before A1 starts — Phase A is fully specified.
 - [x] Chunk A3: Media encode — audio clips, waveform stills, hero post, and the GitHub-video probe
 - [x] Chunk A4: One lifecycle diagram, light/dark aware
 - [x] Chunk B1: The `examples/` workspace and the demo song
-- [ ] Chunk C1: Capture the evidence from the finished set
-- [ ] Chunk D1: `docs/tour.md`, the README graft, and the freshness tests
-Context: Plan authored 2026-08-06 against `tour-walkthrough-design.md`, on
-`feat/tour-walkthrough` off v1.7.2. **Phase A is complete** — all four tools built and
-verified against real input. Next is **B1, which is the owner's**: it needs Live, real
-creative work, and opens with a musical proposal rather than a decision.
+- [x] Chunk C1: Capture the evidence from the finished set
+- [x] Chunk D1: `docs/tour.md`, the README graft, and the freshness tests
+Context: **COMPLETE (2026-08-11, `feat/tour-evidence` off v1.8.2).** All chunks
+shipped. B1's second take is `examples/punk-fate/` — authored end-to-end from a
+sparse prompt in one live session (2026-08-11, the same session the hero was shot
+from), landed with its decisions, annotations, attempt ledger, analysis reports
+and shape tests (commit 4fabff3). C1+D1 (commit abe99d7): the evidence set under
+`docs/assets/` (all tool-produced from that session's real renders and frames,
+plus one fresh off-grid MIDI capture), `docs/tour.md` (ten beats), the README
+graft, and `tests/preferences/test_tour_freshness.py` (manifest item cap + 12 MB
+byte cap + verbatim snippets + mix numbers recomputed from committed reports;
+adversarially verified). Cumulative Critic rev-20260811T144456Z: 0 blocking.
+
+**Chapter 2 extended the deliverable past this plan (`feat/tour-chapter2`).** The
+same song went back into the studio for three re-cuts — feel, dirt/tone, and the
+lead-instrument swap — so `docs/tour.md` gained a second chapter (beats 11–16)
+and the song gained `decisions/08`–`11`, `measurements/`, and two attempt-ledger
+entries. No chunk here covers it: the work matched none of A1–D1, which is why
+the cumulative review could grade no chunk. Two governing changes it required,
+both recorded rather than absorbed: the item cap in `tour-walkthrough-design.md`
+§The concision rule is now **amended to account per editing session** (chapter 2
+spends 2 screenshots · 1 audio item; 16 files, 7.0 MB of the unchanged 12 MB
+byte cap) — owner-vetoable; and the tour's evidence-freshness locks grew to cover
+chapter 2's figures, its heading structure, and the premise behind its published
+true-peak number. A subsequent docs pass corrected five stale claims the chapter
+left in the surrounding docs. Cumulative Critic rev-20260811T215052Z: 3 blocking,
+all resolved on-branch.
+
+**Two recorded deviations, deliberate and owner-rooted:** (1) the demo song is
+115.2 s against B1's "60–90 s" acceptance line — the owner's own prompt asked
+for 2 minutes, and the owner's directive outranks the plan's guideline; (2) the
+hero *video* does not exist — no screen recording was taken, and the design
+itself defers the demo video until the walkthrough is seamless
+(`demo-video-design.md`), so the hero item ships as the committed still. Both
+also recorded in the change-log entry and the C1/D1 commit message.
+
+DOC-8V3Q was already closed by the v1.8.2 hero (#319, shipped); D1's close step
+was a no-op. The B1 stale-fact list resolved as: pyproject comment (already
+fixed pre-session, then refreshed), `project-root-contract.md` (generic wording
+already true once punk-fate landed), #321/TMP-4J6Q (staleness comment filed
+2026-08-11). The pre-split `project-preferences.md` layout rot (#320/DOC-4Q2X,
+deferred until after B1) was rewritten at the Critic-disposition pass.
 
 Every Phase-A chunk had its stated mechanism falsified by its own verify-api probe,
 which is worth knowing before trusting a later chunk's stated mechanism:

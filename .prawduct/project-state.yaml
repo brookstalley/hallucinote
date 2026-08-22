@@ -528,12 +528,12 @@ build_state:
 #   SMP-7K2D — chunks 1-2 + no-Live 5 done; probe chunk 0 + push chunks 3-4 pending.
 #   ARR-PROJ — all 5 headless chunks built on plan/arr-proj-arrangement-materialization;
 #     cumulative-Critic PR gate + live e2e + ARR-9X4T/ARR-7H2N backlog close remain.
-#   TOUR — chunks C1 and D1 still unbuilt (capture the evidence from the
-#     finished set; docs/tour.md + the README graft + freshness tests). A1-A4
-#     and B1 shipped in v1.8.0. plan-backfill WANTED to archive this at the
-#     v1.8.0 cut because scope=tour was tagged — archiving it would have
-#     declared two unbuilt chunks done, so it was restored deliberately. Nothing
-#     else tracks it: this list is it.
+#   TOUR — ALL CHUNKS COMPLETE and MERGED to develop (2026-08-11, PR #452,
+#     merge 258200f): punk-fate in examples/, C1 evidence + docs/tour.md +
+#     freshness tests, cumulative Critic 0 blocking, PR review 0 blocking.
+#     Gitflow: the plan stays LIVE until the develop→main release — the
+#     release checklist's plan-backfill archives it (change-log entry
+#     scope=tour is untagged, i.e. release-pending).
 # Shipped/stale plan history: the git history of this file (pre-2026-07-04,
 # PRC-5W2N trim) has the full narrative; a per-machine copy also sits in the
 # gitignored reflections archive where present.
@@ -565,7 +565,7 @@ tests_dirs: tests hallucinote_mcp/tests examples
 backlog_format_version: 2
 
 # Stamped by /prawduct:backlog list/pick/triage — resolves the backlog-overdue-grooming advisory.
-backlog_last_groomed_at: 2026-07-04
+backlog_last_groomed_at: 2026-08-11
 
 # THE LIVE BACKLOG. Set at the MG4 migration-scrub cutover 2026-08-10, after
 # `verify-migration` exited 0 with all five lists empty (225 source items, 225
@@ -587,7 +587,7 @@ backlog_service_repo: brookstalley/hallucinote
 # data-model, nonfunctional-requirements and observability-strategy; the Enforcement
 # table in artifacts/project-preferences.md is the index (pointer rows for the
 # artifact-homed norms, plus the code-level rows with Audit home / Why columns).
-norm_registry_ratified: 2026-08-10 — 27 norms across six strategy artifacts; six forks ruled by the owner (API scope stays internal; arrangement projection contained push-side)
+norm_registry_ratified: 2026-08-12 — 29 norms: 27 across six strategy artifacts, plus two prose norms homed in project-preferences.md itself (write what a thing IS; user holds the creative verbs). The pending veto on the two agent-authored narrowings is RESOLVED by owner ruling: narrowing 1 (the "competitor/critic vs mechanism" test) REJECTED — the absolute reading stands and a contrast-definition is banned whatever it is describing; narrowing 2 (prior-art lineage may be named, never ranked against) RATIFIED. The owner also set the norm's scope for the first time: positioning prose only (README, CONTRIBUTING, SECURITY, VISION, faq, tour), and later the same day ratified the two carve-outs the sweep had applied and recorded as pending — a prescriptive rule may prohibit, and verbatim quotation is untouchable. The row now carries FOUR owner-ratified carve-outs and nothing pending; adding a fifth is a ruling, not a judgment call. Prior 2026-08-11 — same 29, both narrowings pending veto. Prior 2026-08-10 — 27 norms; six forks ruled by the owner (API scope stays internal; arrangement projection contained push-side)
 
 # API versioning — the decision is authored in artifacts/api-contract.md
 # ("Recorded decision: versioning" + "Recorded decision: deprecation and

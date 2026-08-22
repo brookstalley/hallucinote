@@ -111,17 +111,19 @@ You do not hand-author the copy, the excludes, or a sanity check; they live in
 ## Step 3d — Install the HallucinoteAnalyzer device
 
 `HallucinoteAnalyzer.amxd` is a Max for Live device that lands in
-`Presets/Audio Effects/Max Audio Effect/`. It requires **Max for Live, which
-ships only with Live Suite.** Probe, then ask:
+`Presets/Audio Effects/Max Audio Effect/`. It requires **Max for Live — bundled with Live Suite, and available as a paid
+add-on for Standard.** Probe, then ask:
 
 ```bash
 python -c "from hallucinote_mcp.install_paths import max_for_live_available; print(max_for_live_available())"
 ```
 
 Today this returns `None` (Live's edition isn't reliably detectable) — ask:
-*"Is your Live edition Suite? The HallucinoteAnalyzer requires Max for Live, which
-ships only with Suite."* If it isn't Suite, you may still install it — non-render
-workflows work without it; let the user decide.
+*"Do you have Max for Live? The HallucinoteAnalyzer needs it — it's bundled with
+Live Suite, and sold as an add-on for Standard."* Ask about **Max for Live**, not
+about the edition: a Standard owner who bought the add-on has it, and asking
+"is it Suite?" gets a no from someone who is actually equipped. Without M4L you
+may still install — non-render workflows work without it; let the user decide.
 
 **First, check `preflight`'s `analyzer` block for the chosen User Library** (it
 mirrors `remote_script`: `analyzer.source_fingerprint` + one

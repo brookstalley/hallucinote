@@ -838,8 +838,22 @@ def duplicate_to_arrangement_handler(
             # nothing to identify.
             spurious_clips.extend(group)
             continue
-        # Contested. Draw each survivor down against the identities present
-        # before the call; whatever is left over is what the duplicate added.
+        # Contested. Two clips here look alike enough that only one of them
+        # should go, so the first question is whether identity can tell them
+        # apart at all. Where the SAME identity occurs twice in the group,
+        # it cannot: drawing one of the pair down against the before-state
+        # and calling the other the newcomer just re-runs the enumeration-order
+        # coin-flip one level down, and in real Live the split copy carries the
+        # OVERLAPPED clip's content — so the two are not interchangeable and
+        # deleting the wrong one is still a destroyed authored clip.
+        group_identities = Counter(_clip_identity(c) for c in group)
+        tied = [c for c in group if group_identities[_clip_identity(c)] > 1]
+        if tied:
+            ambiguous_clips.extend(tied)
+            continue
+        # Every clip here is distinguishable. Draw each survivor down against
+        # the identities present before the call; whatever is left over is
+        # what the duplicate added.
         unmatched = Counter(before_identities)
         newcomers: list[Any] = []
         for c in group:
@@ -851,10 +865,9 @@ def duplicate_to_arrangement_handler(
         if len(newcomers) == surplus:
             spurious_clips.extend(newcomers)
         else:
-            # The survivors cannot be told apart from what was here before —
-            # the split may have altered the pre-existing clip's own length,
-            # or the copy may be identical to it. There is no evidence for
-            # which to delete, and a wrong guess destroys authored work.
+            # Distinguishable from each other, but the group does not reconcile
+            # with what was here before — so which one the duplicate added is
+            # not established, and a wrong guess destroys authored work.
             ambiguous_clips.extend(group)
 
     spurious_removed: list[dict[str, Any]] = []

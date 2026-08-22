@@ -1715,6 +1715,55 @@ def test_duplicate_to_arrangement_survives_reversed_enumeration_at_a_tied_start(
     assert [r["name"] for r in removed] == ["Scaffold"]
 
 
+def test_duplicate_to_arrangement_deletes_nothing_when_the_tied_clips_are_identical(
+    loaded_actions,
+):
+    """When the split copy and the operator's clip share (start, length, name)
+    there is no evidence for which one to delete, so nothing may be deleted.
+
+    Identity resolution answers the ordering question only while the clips are
+    distinguishable. Where the same identity occurs twice, drawing one of the
+    pair down against the before-state and calling the other the newcomer is
+    the enumeration-order coin-flip again, one level down — and in Live the
+    split copy carries the OVERLAPPED clip's content, so the two are not
+    interchangeable. The non-destructive channel is the answer.
+    """
+    ctx = FakeCtx()
+    track = ctx.song.tracks[0]
+    track.arrangement_clips.append(
+        FakeArrangementClip(name="Scaffold", length=32.0, start_time=0.0)
+    )
+    # Identical to the copy Live's B-24 split will emit at 20.0: the split
+    # copy is a copy OF Scaffold, so name and length match exactly.
+    track.arrangement_clips.append(
+        FakeArrangementClip(name="Scaffold", length=32.0, start_time=20.0)
+    )
+    track.clip_slots[1].clip = FakeClip(name="DupSource", length=4.0)
+
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="duplicate_to_arrangement",
+            params={"track_index": 1, "clip_index": 2, "start_beats": 16.0},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+
+    at_20 = [c for c in track.arrangement_clips if c.start_time == 20.0]
+    assert len(at_20) == 2, (
+        "neither tied clip may be deleted — there is no evidence for which "
+        f"is the artifact; got {[(c.start_time, c.name) for c in at_20]}"
+    )
+    assert not resp.result.get("spurious_clips_removed"), (
+        "nothing was identified, so nothing may be reported as removed"
+    )
+    remaining = resp.result.get("spurious_clips_remaining") or []
+    assert len(remaining) == 2, remaining
+    assert all("reason" in r for r in remaining), (
+        "the operator needs to know why cleanup stopped, not just that it did"
+    )
+
+
 def test_duplicate_to_arrangement_leaves_a_pre_existing_clip_at_the_destination_alone(
     loaded_actions,
 ):

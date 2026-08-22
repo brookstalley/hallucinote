@@ -451,3 +451,43 @@ def test_main_names_only_the_surface_it_actually_compared(cli_song, capsys):
     err = capsys.readouterr().err
     assert "a-song.md matches the form" in err
     assert "build.py" not in err
+
+
+def test_main_opens_the_song_db_through_init_db(cli_song, monkeypatch, capsys):
+    """`main()` opens the song DB through `init_db`, never a bare `connect`.
+
+    The ratified Direction (`data-model.md`): the additive-column migration
+    runs ONLY inside `init_db`, so a bare open reads whatever schema the DB was
+    last written with and the first lookup of a later-added column raises
+    `sqlite3.Row`'s `IndexError: No item with that key`. This CLI is the only
+    drift check a song scaffolded before 2026-08-11 has, i.e. exactly the
+    population with the oldest DBs.
+
+    Pinned as a routing contract rather than a reproduced crash, deliberately:
+    today's `_ADDED_COLUMNS` touches `requests` and `devices`, not `songs` or
+    `sections`, so no current column lift makes this path raise. The next one
+    that touches either table would — and by then nothing would be watching.
+    The assertion is what the rule actually says.
+    """
+    from hallucinote.db import connection as _conn
+    from hallucinote.tools.overview_drift import main
+
+    calls: list[str] = []
+    real_init = _conn.init_db
+    monkeypatch.setattr(
+        _conn, "init_db",
+        lambda path, *a, **k: (calls.append("init_db"), real_init(path, *a, **k))[1],
+    )
+
+    rows = "".join(
+        f"| `{n}` | {s}–{e} | x |\n"
+        for n, s, e in [("Intro", 1, 8), ("Verse", 9, 16), ("Chorus", 17, 24)]
+    )
+    (cli_song / "a-song.md").write_text(_overview(rows))
+
+    assert main(["a-song"]) == 0
+    assert calls == ["init_db"], (
+        "the song DB must be opened exactly once, through init_db — an empty "
+        "list means the CLI went back to a bare connect()"
+    )
+    assert "a-song.md matches the form" in capsys.readouterr().err

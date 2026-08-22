@@ -17,9 +17,10 @@ pending entries when `operator_verification_required: true`.
 
 ## EFFORT-S-BURNDOWN — the fingerprint flip re-vendors, and the #264 fix works in real Live (2026-08-22) — PENDING
 
-This branch changed six files inside `_FINGERPRINT_PATHS` (`dispatcher.py`,
-`handlers/arrangement.py`, `handlers/automation.py`, `handlers/clip.py`,
-`handlers/device.py`, `remote_script/dispatch.py`). `_compute_content_fingerprint`
+This branch changed seven files inside `_FINGERPRINT_PATHS` (`dispatcher.py`,
+`actions/clip.py`, `handlers/arrangement.py`, `handlers/automation.py`,
+`handlers/clip.py`, `handlers/device.py`, `remote_script/dispatch.py`).
+`_compute_content_fingerprint`
 hashes file BYTES, so the comment-only pragma rewrites flip `__version__` just
 as the behavioral edits do.
 

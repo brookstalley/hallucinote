@@ -527,7 +527,7 @@ design defers the demo video until the walkthrough is seamless.
 
 <!-- prawduct: type=fix | scope=effort-s-burndown -->
 
-**Operators: this release flips the MCP wire fingerprint.** Six files inside
+**Operators: this release flips the MCP wire fingerprint.** Seven files inside
 `_FINGERPRINT_PATHS` changed, and `_compute_content_fingerprint` hashes bytes,
 so the comment-only pragma rewrites flip `__version__` alongside the behavioral
 ones. Re-vendor the Remote Script (`/ableton-mcp-install`) and quit/reopen Live

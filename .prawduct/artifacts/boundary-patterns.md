@@ -212,7 +212,11 @@ When changing this surface:
   `song_slug` + `db_seq` + `len(tracks)` off the render STATUS response to
   append the `AUDIO_CAPTURED` audit event. That one is best-effort by
   contract: it must never fail a render that succeeded, and it dedupes on
-  `captures_dir` because it fires from a poll the agent repeats.
+  `captures_dir` because it fires from a poll the agent repeats. **It also
+  performs WSP-3R7K's captures self-ignore** — a second, unrelated deliverable
+  riding the same `state == done` trigger, named here because the function
+  name does not: relocating or dropping the audit event takes the self-ignore
+  with it unless someone reads for it.
   It reads `master.filename` (never `absolute_path`, which records the
   authoring machine's layout), plus the three trust flags below.
 - **The trust flags bind every consumer, and hardest on the published one.**

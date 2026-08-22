@@ -318,7 +318,7 @@ def main(argv: list[str] | None = None) -> int:
     import sys
 
     from hallucinote.db import queries as _Q
-    from hallucinote.db.connection import connect, resolve_db_path
+    from hallucinote.db.connection import init_db, resolve_db_path
     from hallucinote.workspace import resolve_song_dir
 
     p = argparse.ArgumentParser(
@@ -339,7 +339,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     song_dir = resolve_song_dir(args.slug)
-    conn = connect(db_path)
+    # init_db, never a bare connect: the additive migration lives only here,
+    # so a song DB written by an earlier release reads a stale schema and the
+    # first post-bump column raises IndexError instead of reporting drift.
+    conn = init_db(db_path)
     try:
         song = _Q.get_song_by_name(conn, args.slug)
         if song is None:

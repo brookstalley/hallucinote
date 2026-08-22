@@ -85,6 +85,8 @@ On **yes**:
 rm songs/<slug>/captured_session.refresh.json
 ```
 
+On **no**: delete the `.refresh` file and stop.
+
 **If exit 1 (changes present):** show the user the stderr summary (the human one-screen format). Don't dump the full JSON unless they ask — it can be thousands of lines for a complex song.
 
 Then ask explicitly: *"overwrite `captured_session.json` with this refresh? (yes / no / show full diff)"*

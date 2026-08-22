@@ -271,6 +271,13 @@ def _record_audio_capture_event(
 ) -> None:
     """AUD-5M8H: append an ``AUDIO_CAPTURED`` audit event when a render lands.
 
+    **Also performs WSP-3R7K's captures self-ignore**, which is a second,
+    unrelated deliverable riding the same ``state == done`` trigger. Naming it
+    here because the function name does not: relocating or dropping the audit
+    event without reading this line would silently take the self-ignore with
+    it, and the tracked tree would start surfacing every render take as
+    committable with nothing explaining why.
+
     Fires HERE, in the MCP server process, because the render worker runs
     inside Live's vendored env with no `hallucinote` engine and no DB access —
     the same constraint that makes `_attach_render_db_seq` a server-side
@@ -307,7 +314,7 @@ def _record_audio_capture_event(
         return
     try:
         from hallucinote.db import mutations as M, queries as Q
-        from hallucinote.db.connection import connect, resolve_db_path
+        from hallucinote.db.connection import init_db, resolve_db_path
         from hallucinote.paths import self_ignore_dir
         from hallucinote.takes import captures_root_for_slug
 
@@ -344,7 +351,13 @@ def _record_audio_capture_event(
         db_path = resolve_db_path(song_slug)
         if not db_path.exists():
             return
-        conn = connect(db_path)
+        # init_db, never a bare connect: this WRITES, so it needs the current
+        # schema. The additive migration lives only in `init_db`, so against a
+        # song DB written by an earlier release the row would be lost to a stale
+        # schema — a hole in the audit trail exactly where the DB is oldest.
+        # (`_attach_render_db_seq` keeps its bare connect deliberately: it is a
+        # side-effect-free read that must not alter a schema mid-render.)
+        conn = init_db(db_path)
         try:
             song = Q.get_song_by_name(conn, song_slug)
             if song is None:

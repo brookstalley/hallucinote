@@ -1655,6 +1655,66 @@ def test_duplicate_to_arrangement_detects_spurious_clip_colliding_with_an_existi
     assert removed[0]["name"] == "Scaffold"
 
 
+def test_duplicate_to_arrangement_survives_reversed_enumeration_at_a_tied_start(
+    loaded_actions,
+):
+    """The same collision as the test above, with Live enumerating the split
+    copy BEFORE the operator's pre-existing clip.
+
+    The original walk paired after-clips to before-counts positionally, so the
+    first clip encountered at a tied start was treated as pre-existing and the
+    second was deleted. Under this ordering that deletes the operator's
+    authored Marker and keeps the artifact — reported as a successful cleanup,
+    which is the shape of a silent data-loss bug. Resolution is by identity
+    now, so the ordering does not decide who dies.
+    """
+    ctx = FakeCtx()
+    track = ctx.song.tracks[0]
+    track.arrangement_clips.append(
+        FakeArrangementClip(name="Scaffold", length=32.0, start_time=0.0)
+    )
+    track.arrangement_clips.append(
+        FakeArrangementClip(name="Marker", length=2.0, start_time=20.0)
+    )
+    track.clip_slots[1].clip = FakeClip(name="DupSource", length=4.0)
+
+    real_duplicate = track.duplicate_clip_to_arrangement
+
+    def duplicate_then_reverse_the_tie(source, destination_beats):
+        real_duplicate(source, destination_beats)
+        # Live's enumeration order for two clips at one start is not ours to
+        # control; model the adversarial one.
+        tied = [c for c in track.arrangement_clips if c.start_time == 20.0]
+        assert len(tied) == 2, "the B-24 side effect should have collided here"
+        for c in tied:
+            track.arrangement_clips.remove(c)
+        # Split copy first, operator's clip second.
+        for c in sorted(tied, key=lambda c: c.name != "Scaffold"):
+            track.arrangement_clips.append(c)
+
+    track.duplicate_clip_to_arrangement = duplicate_then_reverse_the_tie
+
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="duplicate_to_arrangement",
+            params={"track_index": 1, "clip_index": 2, "start_beats": 16.0},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+
+    survivors = sorted((c.start_time, c.name) for c in track.arrangement_clips)
+    assert (20.0, "Marker") in survivors, (
+        "the operator's pre-existing Marker must survive regardless of the "
+        f"order Live enumerated the tied clips in; got {survivors}"
+    )
+    assert (20.0, "Scaffold") not in survivors, (
+        f"the split copy at 20.0 is the one to remove; got {survivors}"
+    )
+    removed = resp.result.get("spurious_clips_removed") or []
+    assert [r["name"] for r in removed] == ["Scaffold"]
+
+
 def test_duplicate_to_arrangement_leaves_a_pre_existing_clip_at_the_destination_alone(
     loaded_actions,
 ):

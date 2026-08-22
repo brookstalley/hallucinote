@@ -699,6 +699,16 @@ def set_property_handler(
 # ---------------------------------------------------------------------------
 
 
+def _clip_identity(clip: Any) -> tuple[float, float, str]:
+    """A clip's (start, length, name), rounded — enough to tell two clips at
+    the same start apart when one of them is about to be deleted."""
+    return (
+        round(float(clip.start_time), 6),
+        round(float(clip.length), 6),
+        str(getattr(clip, "name", "")),
+    )
+
+
 def duplicate_to_arrangement_handler(
     context: LiveContext,
     *,
@@ -767,6 +777,15 @@ def duplicate_to_arrangement_handler(
     before_starts: Counter[float] = Counter(
         round(float(c.start_time), 6) for c in track.arrangement_clips
     )
+    # The IDENTITY multiset, alongside the position one. Counting starts says
+    # how MANY clips are surplus at a position; it cannot say WHICH of the
+    # clips now sitting there is the surplus one — and the loser of that
+    # question gets deleted. Keying on (start, length, name) lets a contested
+    # position be settled by matching each survivor against what was there
+    # before, rather than by the order Live happens to enumerate in.
+    before_identities: Counter[tuple[float, float, str]] = Counter(
+        _clip_identity(c) for c in track.arrangement_clips
+    )
     duplicate_fn(source_clip, dest_beats)
 
     # The new arrangement clip is whichever one starts at dest_beats.
@@ -792,21 +811,66 @@ def duplicate_to_arrangement_handler(
     # and anything still unaccounted after that is spurious. Pairing by count
     # rather than by "start_time seen before" is what makes a collision at
     # `dest_beats + source_length` detectable.
-    unaccounted = Counter(before_starts)
-    destination_seen = False
-    spurious_clips: list[Any] = []
+    # Resolved a POSITION AT A TIME, never clip-by-clip in enumeration order.
+    # Counting answers how many clips are surplus at a start; identity answers
+    # which one. Answering the second by iteration order means that when Live
+    # enumerates the split copy before the operator's pre-existing clip, this
+    # handler deletes the operator's authored clip, keeps the artifact, and
+    # reports it as a successful cleanup. Live's ordering for two clips
+    # sharing a start is not something this code controls, so it is not
+    # something this code may bet a deletion on. A start that will not resolve
+    # deletes NOTHING and goes out through `spurious_clips_remaining`.
+    after_by_start: dict[float, list[Any]] = {}
     for c in track.arrangement_clips:
-        start_key = round(float(c.start_time), 6)
-        if unaccounted.get(start_key, 0) > 0:
-            unaccounted[start_key] -= 1
+        after_by_start.setdefault(round(float(c.start_time), 6), []).append(c)
+
+    spurious_clips: list[Any] = []
+    ambiguous_clips: list[Any] = []
+    for start_key, group in after_by_start.items():
+        surplus = len(group) - before_starts.get(start_key, 0)
+        if start_key == expected_start_key:
+            # One surplus clip at the destination is the one we asked for.
+            surplus -= 1
+        if surplus <= 0:
             continue
-        if start_key == expected_start_key and not destination_seen:
-            destination_seen = True
+        if len(group) == surplus:
+            # Nothing survives here from before, so there is no contest and
+            # nothing to identify.
+            spurious_clips.extend(group)
             continue
-        spurious_clips.append(c)
+        # Contested. Draw each survivor down against the identities present
+        # before the call; whatever is left over is what the duplicate added.
+        unmatched = Counter(before_identities)
+        newcomers: list[Any] = []
+        for c in group:
+            identity = _clip_identity(c)
+            if unmatched.get(identity, 0) > 0:
+                unmatched[identity] -= 1
+            else:
+                newcomers.append(c)
+        if len(newcomers) == surplus:
+            spurious_clips.extend(newcomers)
+        else:
+            # The survivors cannot be told apart from what was here before —
+            # the split may have altered the pre-existing clip's own length,
+            # or the copy may be identical to it. There is no evidence for
+            # which to delete, and a wrong guess destroys authored work.
+            ambiguous_clips.extend(group)
 
     spurious_removed: list[dict[str, Any]] = []
-    spurious_remaining: list[dict[str, Any]] = []
+    spurious_remaining: list[dict[str, Any]] = [
+        {
+            "start_beats": float(c.start_time),
+            "length": float(c.length),
+            "name": str(getattr(c, "name", "")),
+            "reason": (
+                "more clips at this start than before, but the survivors "
+                "cannot be told apart from what was already here — delete "
+                "the surplus one by hand"
+            ),
+        }
+        for c in ambiguous_clips
+    ]
     for c in spurious_clips:
         info = {
             "start_beats": float(c.start_time),

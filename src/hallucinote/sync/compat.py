@@ -363,6 +363,7 @@ def classify_preset_query(
 # adding mode + case_sensitive) is a one-line change, not an eight-site sweep.
 _DryRunKey = tuple[str, str, tuple[str, ...], str, bool]
 
+
 def _dry_run_key(preset_query: dict) -> _DryRunKey:
     """Canonical key for a precomputed browser-search dry-run cache.
 
@@ -907,8 +908,10 @@ def _probe_browser_dry_runs(
         # gate disagree with the thing it gates: an `exact` query was probed
         # with the browser's default substring matcher, so a pattern matching
         # one preset exactly but two by substring was refused as
-        # `kind_ambiguous` on a device that loads perfectly. Sent only when
-        # non-default so the wire stays byte-identical for ordinary queries.
+        # `kind_ambiguous` on a device that loads perfectly. Sent when the
+        # query declares one; `_dry_run_key` normalises both spellings to
+        # `"substring"`, so declaring the default explicitly changes nothing
+        # but the bytes.
         mode = pq.get("mode")
         if mode:
             params["mode"] = str(mode)

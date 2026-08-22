@@ -48,13 +48,17 @@ each gets a disposition comment naming its blocker:
   racks to arbitrary depth. **Lesson worth keeping: a "blocked" label ages, and
   re-confirming it from the item's own body reproduces the original assumption
   rather than testing it.**
-- **#255** device: extract the shared plugin-discriminator — gated on **W11-A**.
+- **#255** device: extract the shared plugin-discriminator — gated on a
+  **vendored-package capability that does not exist yet** (an id, `W11-A`, was
+  cited here and resolves to nothing a future session can look up, so the
+  blocker is stated in its own words instead — Critic R-23).
   Verified, and the reason is sharper than "the package hasn't landed": the
   duplication is **cross-process**. `handlers/device.py` runs inside Live's
   Remote Script, whose vendored env has no `hallucinote` at all, so it cannot
   import a shared module from `src/` under any arrangement — not even a
-  stdlib-only leaf. Sharing needs a package vendored beside the Remote Script,
-  i.e. W11-A. The lock-test pins the copies in sync meanwhile, so there is
+  stdlib-only leaf. Sharing needs a package vendored beside the Remote Script
+  and imported by it — that mechanism is what has to be built first. The
+  lock-test pins the copies in sync meanwhile, so there is
   duplication but no drift risk.
 
 **Needs the user's ears, a second human, or a live Ableton probe (6)** — not
@@ -127,9 +131,12 @@ longer true", spread across source comments, pragmas and a governing artifact.
      `.prawduct/`; the user-facing MCP error string at `clip.py:358` no longer
      names any tracker; the quantize/groove comment no longer cites dropped
      GEN-2T8M.
-  2. **#447** `grep -rn 'ok-broad-except'` returns 0 **tree-wide, not just in
-     `*.py`** — the code sites AND every place that instructs the spelling
-     (`CONTRIBUTING.md`, `project-state.yaml`, `project-preferences.md`). A
+  2. **#447** `git grep -n 'ok-broad-except' -- '*.py'` returns 0, and no
+     place that INSTRUCTS the spelling still teaches it (`CONTRIBUTING.md`,
+     `project-state.yaml`, `project-preferences.md`). Stated relationally
+     rather than as a tree-wide grep: `.prawduct/` records legitimately carry
+     the retired form as append-only history, so a literal tree-wide grep can
+     never return 0 and an agent chasing it would edit the change-log. A
      sweep that stops at one file extension leaves the retired form being taught
      to the next contributor. Each of the 21 rewritten code sites carries a
      reason **specific to that catch**. A blanket reason string is a failure of
@@ -174,9 +181,21 @@ Closes **#225, #264**. Both are push-path defects found in dogfood.
      planner-side pre-probe, or executor-side warning); a regression test pins
      the round-trip (capture → replay → push of an unchanged set is a clean
      no-op run).
+     **Amended mid-branch (Critic R-19):** the option shipped is the
+     **capture-side** one, pinned by `tests/unit/capture/test_chunk_c_chains.py
+     ::test_disabled_chain_property_is_tolerated`. Recorded here because this
+     is where "close the 20 issues at merge" sends a reader.
   2. **#264** spurious-clip detection no longer relies on start-time alone, so a
      pre-existing clip sitting at exactly `dest_beats + source.length` cannot
      mask a new spurious clip. A test seeds that collision.
+     **Extended mid-branch (Critic R-2):** counting surplus at a start was only
+     half of it — WHICH of the tied clips is surplus was still decided by Live's
+     enumeration order, so the reverse ordering DELETED the operator's authored
+     clip and kept the artifact, reported as a successful cleanup. Contested
+     starts are now resolved by clip identity (start, length, name) and a start
+     that will not resolve deletes nothing and reports through
+     `spurious_clips_remaining`. A second test seeds the reversed ordering
+     (verified red against the old walk).
 
 ## Chunk 5 — self-ignoring artifacts + capture audit event
 
@@ -185,10 +204,24 @@ Closes **#303, #263**. Both are additive writes on the tool-output path.
 - **Type:** feature
 - **Critic mode:** chunk
 - **Done when:**
-  1. **#303** the render/analyze path writes `analysis/.gitignore` (`*`) when it
-     creates `analysis/`, and the notes-push + snapshot paths self-ignore their
-     state/backup files — a pre-bootstrap workspace stops surfacing these as
-     committable with no manual root-`.gitignore` edit.
+  1. **#303** the tool-output path self-ignores its own regenerable output — a
+     pre-bootstrap workspace stops surfacing it as committable with no manual
+     root-`.gitignore` edit.
+     **Amended mid-branch (Critic R-7/R-19), on the same terms as #263 and
+     #256 below.** As first written this read "the render/analyze path writes
+     `analysis/.gitignore` (`*`) when it creates `analysis/`, and the
+     notes-push + snapshot paths self-ignore their state/backup files".
+     Neither half survived, and both reversals are deliberate:
+     - **`analysis/` is NOT self-ignored.** Two records say analysis output is
+       checked in, so a blanket `*` there would have hidden tracked work. The
+       self-ignore went to `captures/` instead, scoped to the song's own root
+       (see the owner-decision section below, and `server_side/analysis.py`'s
+       comment).
+     - **No snapshot path calls `self_ignore_files`.** `captured_session.json.bak`
+       is covered incidentally, when a push happens to have run first
+       (`paths.py`: "whichever runs first covers the rest").
+     Amended here rather than left to the tick, because the plan sends a
+     merge-time reader to this line to grade #303.
   2. **#263** `events.AUDIO_CAPTURED` exists and is emitted by the capture-success
      path with a `{captures_dir, manifest_seq, track_count}` payload, readable
      through the existing generic `queries.get_events_for_song`.
@@ -332,12 +365,18 @@ wrong thing to take at round 9+.
    workspace (`layout="monorepo"`, `songs_root="."`) the diff reads a path the
    capture never wrote. Step 1 already prints the real path to stdout —
    consuming it closes this.
-2. **#225 is ticked with no in-plan amendment.** Its coverage is real and was
-   verified (`tests/unit/capture/test_chunk_c_chains.py`,
-   `test_disabled_chain_property_is_tolerated`) — it simply is not recorded
-   where "close the 20 issues at merge" sends a reader. #263 and #256 both got
-   amendments; this one should too.
-3. **The four swallow-with-log diagnostics are unasserted** —
+2. ~~**#225 is ticked with no in-plan amendment.**~~ **Discharged** at the
+   develop-merge review round: Chunk 4's Done-when 1 now records the shipped
+   capture-side option and its test, as #263 and #256 already did.
+3. **#454 is NOT addressed here, despite sitting in a file this branch
+   reworked.** Chunk 3 rewrote `compat.py`'s preset matcher for #326; #454 is a
+   separate defect in `format_requirements_md`, which renders eight of the nine
+   `DeviceStatus` buckets and omits `preset_query_unverified` entirely — so on
+   the sole write path every structurally-valid `preset_query` device is named
+   nowhere, under a heading asserting the song needs no installs. Re-verified
+   at the develop-merge round (Critic R-24): still live, still unrelated to
+   #326. Recorded so work shipping beside it does not read as having fixed it.
+4. **The four swallow-with-log diagnostics are unasserted** —
    `overview_drift.warn_on_form_drift`, both `paths.self_ignore_*`, and
    `server._record_audio_capture_event`'s inner `except`. They were the entire
    deliverable of the "never swallow silently" norm fix, and

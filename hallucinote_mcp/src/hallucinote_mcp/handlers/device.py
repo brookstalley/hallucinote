@@ -114,10 +114,8 @@ def _resolve_device(parent: Any, device_index: int) -> Any:
 #
 # PUBLIC (no underscore) because it is shared: the analysis extract's nested-rack
 # walk imports it so the extract and `device_path` cannot disagree about how deep
-# a rack may go. `_DEVICE_PATH_DEPTH_CAP` remains as a deprecated alias so any
-# in-flight branch keeps importing cleanly.
+# a rack may go.
 DEVICE_PATH_DEPTH_CAP = 16
-_DEVICE_PATH_DEPTH_CAP = DEVICE_PATH_DEPTH_CAP
 
 
 def _nth_device(chain: Any, device_position: int) -> Any:

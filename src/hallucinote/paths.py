@@ -214,7 +214,7 @@ def self_ignore_dir(directory: Path) -> None:
         # Absorbed, not hidden: disk hygiene is never worth failing a capture
         # over, but a silently-unwritten ignore leaves artifacts surfacing as
         # committable with no clue why.
-        logger.debug("could not write %s", target, exc_info=True)
+        logger.warning("could not write %s", target, exc_info=True)
 
 
 def self_ignore_files(directory: Path, filenames: Iterable[str]) -> None:
@@ -250,4 +250,4 @@ def self_ignore_files(directory: Path, filenames: Iterable[str]) -> None:
         directory.mkdir(parents=True, exist_ok=True)
         target.write_text("\n".join(entries).rstrip("\n") + "\n")
     except OSError:
-        logger.debug("could not update %s", target, exc_info=True)
+        logger.warning("could not update %s", target, exc_info=True)

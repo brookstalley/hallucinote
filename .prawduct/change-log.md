@@ -527,6 +527,13 @@ design defers the demo video until the walkthrough is seamless.
 
 <!-- prawduct: type=fix | scope=effort-s-burndown -->
 
+**Operators: this release flips the MCP wire fingerprint.** Six files inside
+`_FINGERPRINT_PATHS` changed, and `_compute_content_fingerprint` hashes bytes,
+so the comment-only pragma rewrites flip `__version__` alongside the behavioral
+ones. Re-vendor the Remote Script (`/ableton-mcp-install`) and quit/reopen Live
+before expecting the `duplicate_to_arrangement` fix below to do anything —
+until then the vendored script fails the version handshake.
+
 One branch working through every `effort:S` item open on the tracker. Chunks 1-2
 covered the PR #213 deferred-warning cluster and a sweep of prose the tree had
 outgrown; chunk 3 is two real bugs where a check disagreed with the thing it
@@ -640,7 +647,7 @@ checked.
   + `mutations.record_audio_capture` put capture timestamps into the audit log,
   emitted server-side off the render status response and deduped on
   `captures_dir` because the caller is a poll (#263); and tools now ignore their
-  own regenerable output where they write it — `analysis/.gitignore` for
+  own regenerable output where they write it — a blanket ignore for
   whole-directory output (`captures/` — every take under it is regenerable),
   a named list for the song dir, which also holds authored work (#303).
   **`analysis/` is deliberately NOT self-ignored:** the root `.gitignore`

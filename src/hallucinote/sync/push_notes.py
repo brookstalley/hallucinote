@@ -45,6 +45,7 @@ logger = logging.getLogger(__name__)
 # but with a distinct name so the full-push and notes-push schemas never collide.
 NOTES_PUSH_STATE = ".last-notes-push.json"
 
+
 def clip_fingerprint(notes: list[dict[str, Any]]) -> str:
     """Content hash of what this clip would materialize to Live.
 

@@ -1061,6 +1061,15 @@ def _devices_with_nested(
     """
     out: list[dict[str, Any]] = []
     if _depth > DEVICE_PATH_DEPTH_CAP:
+        # Reachable only on malformed data (a `parent_rack_device_id` cycle),
+        # but a silent return hands the eval judge a truncated extract that
+        # reads as complete — the same "looks whole while omitting the signal
+        # path" failure the nested-rack walk exists to fix, one level up.
+        logger.warning(
+            "device extract truncated at depth %d (cap %d) — a malformed "
+            "parent_rack_device_id cycle is the only way to reach this",
+            _depth, DEVICE_PATH_DEPTH_CAP,
+        )
         return out
     for device in devices:
         device_d = dict(device)

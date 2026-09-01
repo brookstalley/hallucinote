@@ -1,6 +1,11 @@
 # Collaboration turn model — reading the turn, building to the hearable unit
 
-**Status:** discovery complete, 2026-09-01 — all owner questions resolved
+**Status:** **built — awaiting the operator session** (2026-09-01). All six
+chunks of the build plan are shipped; what no prose plan can prove is whether a
+*cold* agent actually holds the conversation to the user's hand-off, and the
+operator session queued in
+[`operator-verification.md`](../operator-verification.md) is the acceptance test
+for that. Owner questions were resolved at discovery
 (see *Resolved by the owner*). Direction: re-weight the behavioral norms so the
 user leads the creative project; no "modes"; the hearable-unit bound is a hard
 rule on *offering* a hearing, never on requiring one; evals deferred to the

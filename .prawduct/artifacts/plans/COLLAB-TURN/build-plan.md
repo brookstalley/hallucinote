@@ -62,11 +62,11 @@ while the user is adding, a hearing offered at the first unit and not required.
 
 ## Status
 
-- [ ] Chunk 01: `CLAUDE.md` — the norms, re-weighted
-- [ ] Chunk 02: `/song-brief` — from one turn to a conversation that ends at hand-off
-- [ ] Chunk 03: `/song-new` + `/getting-started` + governed-repo detection
-- [ ] Chunk 04: `/song-workflow` skill + `docs/song-workflow.md` — the hearing loop
-- [ ] Chunk 05: docs sweep — every remaining surface that promised "once"
+- [x] Chunk 01: `CLAUDE.md` — the norms, re-weighted
+- [x] Chunk 02: `/song-brief` — from one turn to a conversation that ends at hand-off
+- [x] Chunk 03: `/song-new` + `/getting-started` + governed-repo detection
+- [x] Chunk 04: `/song-workflow` skill + `docs/song-workflow.md` — the hearing loop
+- [x] Chunk 05: docs sweep — every remaining surface that promised "once"
 - [ ] Chunk 06: drift lock, bookkeeping, operator session, cumulative Critic
 
 ## Goal

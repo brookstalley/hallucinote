@@ -1,9 +1,11 @@
 # Collaboration turn model — reading the turn, building to the hearable unit
 
-**Status:** discovery, 2026-09-01. Owner-agreed direction: re-weight the
-behavioral norms so the user leads the creative project; no "modes"; evals
-deferred to the external eval framework, with the evidence corpus seeded now.
-Open questions at the end await ratification before this becomes a build plan.
+**Status:** discovery complete, 2026-09-01 — all owner questions resolved
+(see *Resolved by the owner*). Direction: re-weight the behavioral norms so the
+user leads the creative project; no "modes"; the hearable-unit bound is a hard
+rule on *offering* a hearing, never on requiring one; evals deferred to the
+external eval framework, with the evidence corpus seeded now. Next step is a
+build plan.
 
 **Read with:** `onboarding-and-teaching-model.md` (the stance this makes
 operational — third register, read the request not the requester, collaborate
@@ -164,6 +166,17 @@ the agent proposes one concrete thing toward it. The status offer is not a
 stage; it is what the agent says when it has nothing to follow and something to
 play.
 
+**The bound is on the offer, not on the listening.** The hard rule is: *never
+author past one hearable unit without having offered a hearing.* It is never:
+*the user must listen to continue.* Insisting that someone listen (or pretend
+to) in order to proceed is bad UX and is the inquisition in another costume.
+"Keep going" is a complete answer and authorizes the next unit, after which the
+offer is made again — **unless the decline carried a scope**. *"Build the whole
+thing, I'll listen at the end"* delegates the hearing rhythm; the agent records
+it in the brief's owner column and stops offering until that scope is reached.
+An offer repeated after it was declined with scope is nagging, and nagging is
+how a good rule gets routed around.
+
 ### 4. The brief becomes a ledger with an owner column
 
 Today a dimension is DECIDED, UNDECIDED or NOT-APPLICABLE. Add **who owns it**:
@@ -175,20 +188,41 @@ also resolves the "never ask the user to pick a mode" tension: the agent never
 offers to take the work away, but it may — humanely — ask where the user wants
 their hands on it, and it records what it learns.
 
-### 5. References open the domain
+### 5. Loaded prompts open the domain
 
-*"Sounds like Taylor Swift"* is the third register, always. The target shape,
-not a form:
+A **loaded prompt** is a few words that carry many implications: a genre, a
+form, an era, an artist, a term of art. *"Write a symphony"* implies movements,
+a duration in the tens of minutes, orchestration, key relationships, thematic
+development. *"Make a rap song"* implies a beat and a tempo range, a flow the
+agent cannot voice (a gap to invert, not to hide), lyrical content, sampled
+versus synthesized production, an era and a region. *"An atmospheric ambient
+piece"* implies texture over pulse, drift, timbre as the subject, a long
+duration, harmonic stasis or slow motion. *"Sounds like Taylor Swift"* implies
+an era, a writing stance, a production world. The words are short; the song
+they imply is not.
 
-> Swift covers a lot of ground — the lyric-first confessional storytelling of
-> *Folklore*, the maximal synth-pop of *1989*, the country-pop of the early
-> records. Which is in your ear? And are you bringing the words and melody, or
-> is this about production and arrangement?
+This is the third register in its general form, and the reference artist is
+one rare instance of it — not a special case to over-index on. The move is the
+same for all of them:
 
-Then read the answer, propose one concrete thing, get it into Live, and ask
-what they hear. The delegation ask, phrased so nobody feels dumb: *"Tell me
-where you want your hands on this and I'll bring you options there. The rest
-I'll just make, and you can redirect anything."*
+1. **Unpack the word.** Name, briefly, what it implies for this song.
+2. **State which implications you are taking as read**, so they are
+   correctable in a word.
+3. **Ask about the two or three where the user's answer would change the song
+   most.** Not the whole list. Not a form.
+
+For the symphony: *"I'm hearing four movements, twenty-five to forty minutes,
+a full orchestra. The two things that shape everything else: is there a
+programme — a story it tells — or is it absolute music? And is the harmonic
+language Romantic, or later?"* For the ambient piece: *"Texture over pulse,
+long, slow harmonic drift — say if any of that is wrong. The one thing I can't
+guess: is it a place, or a state of mind? That decides whether it's field
+recordings and space, or pads and breath."*
+
+Then read the answer, propose one concrete thing, get it into Live, and offer a
+hearing. The delegation ask, phrased so nobody feels dumb: *"Tell me where you
+want your hands on this and I'll bring you options there. The rest I'll just
+make, and you can redirect anything."*
 
 ---
 
@@ -232,11 +266,18 @@ the stop-less rule keeps its text with its scope narrowed to procedural stops.
 > *handing off* authorize building. Musing is not a request — when the user is
 > thinking out loud, think with them and touch nothing.
 >
-> **Build to the hearable unit and no further.** The hearable unit is the
-> smallest thing that, once heard, tells the user whether the idea works — one
-> idea in a study, a few bars of one section in a sketch. Get it into Live, hand
-> over audio, ask what they hear. A hand-off authorizes the next unit, not the
-> record.
+> **Build to the hearable unit, then offer a hearing before building further.**
+> The hearable unit is the smallest thing that, once heard, tells the user
+> whether the idea works — one idea in a study, a few bars of one section in a
+> sketch. Never author past one unit without having offered to play it. Never
+> require the user to listen in order to continue: "keep going" authorizes the
+> next unit; a decline with a scope ("build it all, I'll listen at the end") is
+> recorded and not re-asked.
+>
+> **A loaded prompt opens its domain.** When a few words carry many
+> implications — a genre, a form, an era, an artist — unpack them, state which
+> you are taking as read, and ask about the two or three that would change the
+> song most.
 >
 > **Identity closes when the user hands off, never by inference.** An answer
 > that adds a new dimension means they have more. Silence on something you
@@ -254,11 +295,15 @@ the stop-less rule keeps its text with its scope narrowed to procedural stops.
 - `CLAUDE.md` — the norm text above; stop-less rescoped; the "one consolidated
   turn" bullet retired.
 - `skills/song-brief/SKILL.md` — from one turn to a conversation that ends at
-  the user's hand-off; the owner column; the reference-artist rule; the status
-  offer as the standard closing move. The three-state model and the
+  the user's hand-off; the owner column; the loaded-prompt rule; the status
+  offer as the standard closing move, with the decline-with-scope memory. The three-state model and the
   no-unresolved-gap rule stay — they were right.
-- `docs/song-new-checklist.md` §11 — references *open* the domain; delete the
-  "collapses 5 answers" framing.
+- `docs/song-new-checklist.md` §2 (genre/style anchor) and §11 (references) —
+  a loaded word *opens* its domain; delete the "collapses 5 answers" framing.
+- `skills/song-new/SKILL.md` and `skills/getting-started/SKILL.md` workspace
+  check — song work belongs in a songs workspace; when the working directory is
+  a governed repo (a `.prawduct/` is present), say so and warn that governance
+  framing may intrude on the creative conversation, before scaffolding.
 - `docs/song-workflow.md` + `skills/song-workflow/SKILL.md` — a hearing step
   after the first hearable unit, before the rest is composed.
 - `skills/song-new/SKILL.md` — the deliverable-shape read stays; "drive
@@ -266,24 +311,24 @@ the stop-less rule keeps its text with its scope narrowed to procedural stops.
 - Pickers — `AskUserQuestion` is for enumerable engineering decisions only;
   creative character is elicited in prose.
 - Governance framing — advisories and the standing block are for engineering
-  turns; a song conversation opens with the music (see open question 2).
+  turns; a song conversation opens with the music.
 
-## Open questions (owner)
+## Resolved by the owner (2026-09-01)
 
-1. **Hard rule or strong guidance for the hearable-unit bound?** Recommendation:
-   hard rule — *never author past one hearable unit before a hearing* — because
-   guidance is what decayed.
-2. **Song work inside governed repos.** The demo sessions ran in the framework
-   repo, which is why advisories and status footers landed inside creative
-   turns; the songs-repo session had none. Options: keep song work in songs
-   workspaces by rule, or tell the agent plainly that the standing block is for
-   engineering turns. Recommendation: both.
-3. **Hearing rhythm.** Per part, or per section? Recommendation: per hearable
-   unit as the agent reads it, with the status offer as the correction if it
-   reads too small.
-4. **The reference-artist case.** Always open the domain, or only when the
-   reference is doing most of the work? Recommendation: always; the cost is one
-   short question and the failure mode is the whole complaint.
+1. **The hearable-unit bound is a hard rule — on the offer.** Never author past
+   one unit without having *offered* a hearing. Never require the user to
+   listen to continue: insisting on a listen (or a pretend one) is bad UX. A
+   decline with scope is remembered.
+2. **Song work stays in songs workspaces.** When song work starts inside a
+   governed repo, warn: governance framing may conflict with the creative
+   conversation.
+3. **Hearing rhythm is per hearable unit, offered not required.** Same rule as
+   (1); the status offer is the vehicle.
+4. **Do not over-index on the reference artist.** It is one rare instance of
+   the general case — an underspecified prompt that nevertheless carries many
+   implications (*"write a symphony"*, *"make a rap song"*, *"an atmospheric
+   ambient piece"*). The rule is written for the general case; see *Loaded
+   prompts open the domain*.
 
 ## Deliberately not built
 

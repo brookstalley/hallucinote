@@ -73,6 +73,11 @@ _RETIRED_PHRASES = (
 #: promise. Each is exempt for a stated reason, because an unexplained exempt
 #: list is how a lock quietly stops covering the thing it was written for.
 _EXEMPT_FILES = {
+    # This file. It holds the phrase table and the definitional cue, so it
+    # matches itself the moment it is tracked — self-reference, not drift. It
+    # passed while untracked and failed on the commit that added it, which is a
+    # fair description of how this class of bug always arrives.
+    "tests/unit/test_collaboration_norm_parity.py": "carries the phrase list it scans for",
     # Records of what happened or shipped. Rewriting them falsifies the record.
     "docs/tour.md": "a transcript of a real session, locked by test_tour_freshness",
     "CHANGELOG.md": "the history of shipped releases",

@@ -1,7 +1,8 @@
 # Song creation in Hallucinote — the full picture
 
 This is the map for making a song here: the **lifecycle** (which skill runs each
-phase, and the checkpoints agents most often miss), each stage's
+phase, where in the loop the user first hears something, and the checkpoints
+agents most often miss), each stage's
 [**definition of done**](#stage-exit-criteria), and the **expertise** behind
 every tool — grounded in the framework's research corpus,
 linked so it never rots out of sync. Read it when you start song work, or when
@@ -24,9 +25,24 @@ as a *producer's question* ("is the chorus landing?"), never a verdict. A
 near-silent part, a drone, a dissonance, a 3/4 bar in a 4/4 song — these are
 valid art, and nothing in the build blocks them.
 
+A producer also knows when to hand over the headphones. The pacing rule is
+**two-sided**, and each half exists because the other, alone, produced a real
+failure: **never stop to summarize-and-ask** at a procedural seam — a finished
+phase is not a decision point — and **never build past a hearable unit without
+offering to play it** — the hearable unit is the bound on what gets authored
+unheard. Drop the first half and every skill boundary becomes a checkpoint;
+drop the second and the user asks "shouldn't I be hearing something?" forty-five
+minutes in, with zero notes taken. The offer is for what the user left open: a
+choice they directed, or a hearing rhythm they set, is theirs and is not
+re-opened.
+
 - The producer stance, the propose-and-react discipline, and the three intent
   registers (directed / volunteered / directed-but-underarticulated):
   [intent-collaboration-model.md](../.prawduct/artifacts/intent-collaboration-model.md).
+- The vocabulary the pacing rule is written in — *turn kind*, *hearable unit*,
+  *the status offer*, *decline with scope*, *owner column*, *loaded prompt* —
+  is defined once and linked from here, never restated:
+  [collaboration-turn-model.md](../.prawduct/artifacts/collaboration-turn-model.md).
 - Why nothing aesthetic can fail a build (BLOCKING is reserved for *likely
   errors* — pitch out of range, zero duration — never choices):
   [gate-verdict-policy.md](../.prawduct/artifacts/gate-verdict-policy.md).
@@ -45,12 +61,19 @@ below). Tools are conveniences, not limits.
 ## The lifecycle
 
 Song-making here is a **loop, not a line** — you'll circle back through compose
-and mix many times. But the arc has a natural order, and two of its phases are
-*review checkpoints* that are easy to skip and shouldn't be:
+and mix many times, and the **first pass is short on purpose**: compose the
+first hearable unit → push it → **offer** a hearing (the status offer) →
+continue to the next unit. The user hears something after one unit of
+authoring, not after the song; "keep going" is a complete answer to the offer,
+and a decline with scope is remembered rather than re-asked. The hearing is a
+property of the loop, not a stage in the table below — every pass through
+compose ends at something the user could hear. But the arc has a natural order,
+and two of its phases are *review checkpoints* that are easy to skip and
+shouldn't be:
 
 | # | Phase | Skill(s) | The expertise behind it |
 |---|-------|----------|-------------------------|
-| 0 | **Elicit the brief** ⭐ | **`/song-brief`** | [elicitation-and-stage-exit-criteria.md](../.prawduct/artifacts/elicitation-and-stage-exit-criteria.md), [onboarding-and-teaching-model.md](../.prawduct/artifacts/onboarding-and-teaching-model.md) |
+| 0 | **Elicit the brief** ⭐ | **`/song-brief`** | [collaboration-turn-model.md](../.prawduct/artifacts/collaboration-turn-model.md), [elicitation-and-stage-exit-criteria.md](../.prawduct/artifacts/elicitation-and-stage-exit-criteria.md), [onboarding-and-teaching-model.md](../.prawduct/artifacts/onboarding-and-teaching-model.md) |
 | 1 | Frame the intent | `/song-new`, `/song-context` | [onboarding-and-teaching-model.md](../.prawduct/artifacts/onboarding-and-teaching-model.md), [intent-architecture.md](../.prawduct/artifacts/intent-architecture.md) |
 | 2 | Pick instrument **chains** | `/song-pick-instruments` | sound design is composition (below) |
 | 3 | Compose the parts | `/compose-part` | [melody-model.md](../.prawduct/artifacts/melody-model.md), [performance-model.md](../.prawduct/artifacts/performance-model.md), [arrangement-model.md](../.prawduct/artifacts/arrangement-model.md) |
@@ -68,16 +91,29 @@ the framework's ear gets applied to it.
 A starting prompt is not a brief. `/song-brief` sweeps the load-bearing
 dimensions the prompt left open — harmony, tempo, production stance, what a
 named narrative turn means musically, meter, the section time budget, and the
-**mechanism behind every named gesture** — and closes them in **one consolidated
-turn of informed proposals**, each carrying its reasoning and a recommendation
-so a one-word reaction settles it. Never a questionnaire, never sequential Q&A.
+**mechanism behind every named gesture** — and closes them in a **conversation
+that ends at the user's hand-off**: it opens with the two or three identity
+questions it cannot guess, proposes the rest as informed, redirectable reads
+(each carrying its reasoning so a one-word reaction settles it), and keeps
+reading each reply for whether the user is done. An answer that adds a noun is
+not a closure; silence on an asked item is still thinking; identity closes when
+the user hands off, never by inference. Never a questionnaire, never sequential
+Q&A — and never a form on a creative question. A loaded prompt ("make a rap
+song", "write a symphony") opens its domain rather than being run with.
 
 Its output is `annotations/01-the-brief.md`: the prompt verbatim, plus the
-resolution table every later stage reads. It also produces the tempo, meter and
-section values `/song-new` requires as command arguments — which is why it runs
-first. Skipped silently when a directed prompt leaves nothing applicable open.
+resolution table every later stage reads — a ledger the stage updates every
+turn, carrying for each dimension not only its state but **who owns it**
+(*yours* / *offer me options* / *mine*), learned from the conversation rather
+than asked for. It also produces the tempo, meter and section values `/song-new`
+requires as command arguments — which is why it runs first. What the user
+directed is taken as read, not re-asked; when a directed prompt leaves nothing
+applicable open, there is nothing to ask and the stage executes.
 
-→ [elicitation-and-stage-exit-criteria.md](../.prawduct/artifacts/elicitation-and-stage-exit-criteria.md)
+→ [collaboration-turn-model.md](../.prawduct/artifacts/collaboration-turn-model.md)
+(the conversation, the turn kinds, the owner column) ·
+[elicitation-and-stage-exit-criteria.md](../.prawduct/artifacts/elicitation-and-stage-exit-criteria.md)
+(the three states and the no-unresolved-gap rule)
 
 ### 1 — Frame the intent
 `/song-new` scaffolds `songs/<slug>/` (build.py, captured_session.json, tests,
@@ -101,7 +137,24 @@ have as part of being finished.
 `/compose-part` writes note-generating code in the song's `build.py` using
 `hallucinote.generators`, runs the build (DB through mutators; events fall out),
 and scoped-pushes the changed clips. Notes are authored as code and never enter
-the agent's context. This is where the line-level craft lives:
+the agent's context.
+
+**Compose the first hearable unit first, and offer it before the next.** The
+hearable unit is the smallest thing that, once heard, tells the user whether the
+idea works — one idea in a study, a few bars of one section with the parts that
+carry it in a sketch; it is read fresh every turn, never fixed per song. Because
+`/compose-part` scoped-pushes what it wrote, the unit is audible in Live the
+moment it exists, and that is when the **status offer** is made: what is
+settled, hear it or keep going, what has not come up — named, not asked. "Keep
+going" authorizes the next unit, after which the offer is made again; a decline
+with scope ("build it all, I'll listen at the end") is recorded in the brief's
+owner column and not re-asked inside that scope. A decision you expect the user
+to overturn is played to them, not filed past. What this rules out is the
+whole-song pass: twelve chains and every section authored, rendered last, with
+the first audio at the end. The bound is on the *offer*, never on the listening
+— the user is never required to hear a unit in order to continue.
+
+This is where the line-level craft lives:
 
 - **Melody** is a structural dimension — contour, intervals, harmonic fit,
   motivic economy. There is *no universal "good melody"*: a line is graded
@@ -191,7 +244,10 @@ master volume/pan ingest, so a "tempo-only" pull arms the guard whenever the
 master fader or pan drifted. Arming follows the event kinds a pull actually
 emitted, not the domain you asked for — so trust the durability notice.
 
-Then loop back to compose or mix.
+Then loop back to compose or mix. The hearing offer rides every pass, not just
+the first: each loop through compose ends at a unit the user could hear, and the
+offer is made again — unless they declined with a scope that has not yet been
+reached.
 
 As you loop, keep the **attempt ledger** (`songs/<slug>/attempts/`, `kind: attempt`)
 current — log each move you *tried* and how it turned out (`outcome` worked/partial/failed,
@@ -247,7 +303,7 @@ depends on."*
 
 | Stage | Done when |
 |---|---|
-| **0 · `/song-brief`** | `annotations/01-the-brief.md` exists with the prompt verbatim and a resolution table in which every applicable dimension is DECIDED or UNDECIDED-with-an-owner. NOT-APPLICABLE rows are recorded, not asked about. The time budget is costed if a duration was stated. |
+| **0 · `/song-brief`** | `annotations/01-the-brief.md` exists with the prompt verbatim and a resolution table in which every applicable dimension is DECIDED or UNDECIDED-with-an-owner, **and carries the owner column** (*yours* / *offer me options* / *mine*) for each, as the conversation revealed it. NOT-APPLICABLE rows are recorded, not asked about. The time budget is costed if a duration was stated. The user has handed off — the stage does not close identity by inference. |
 | **1 · `/song-new`** | Tempo, meter and the section/bar list are **values from the brief**, not invented at the command line. Scaffold builds; shape tests pass. Each brief decision is filed in `decisions/`. If the CLI needs a value the brief lacks, that is an UNDECIDED row — close it before scaffolding, never default it silently. |
 | **2 · `/song-pick-instruments`** | Every part the brief names has a resolved **chain** in the snapshot. Where the brief says the sonic worlds differ, that difference exists **as chain differences**. No chain is "TBD at mix time" — sound design is composition. |
 | **3 · `/compose-part`** | Every gesture the section needs **exists in `build.py`** — notes, envelope, or device. **The docstring test:** if prose in the song names a device, an envelope or a mechanism, grep the song for it; absent ⇒ the stage is not done. Per-part `feel` is set explicitly, not defaulted by omission. |
@@ -263,6 +319,12 @@ the one that survives every stage.
 the loop-back, not a stage handing work downstream. It cannot emit a gap dressed
 as a decision because it emits no decisions; the next pass through stages 3–7
 re-applies theirs.
+
+**The hearing is not a ninth stage either, and has no row.** It is a property of
+the loop — the bound on how much of stages 3–7 is built between moments the user
+can hear — not a stage that hands work downstream. Its rule lives with stage 3
+above and in the design: never author past one hearable unit without having
+offered to play it; never require the listen.
 
 ### Meter is a projection concern
 
@@ -282,6 +344,9 @@ as **TMP-7B3X** (lift the refusal out of the source of truth) and **TMP-4J6Q**
 
 → Full design, including the worked examples and what is deliberately not built:
 [elicitation-and-stage-exit-criteria.md](../.prawduct/artifacts/elicitation-and-stage-exit-criteria.md)
+(the three states and stage exit) ·
+[collaboration-turn-model.md](../.prawduct/artifacts/collaboration-turn-model.md)
+(the conversation, the hearable unit, the status offer)
 
 ---
 

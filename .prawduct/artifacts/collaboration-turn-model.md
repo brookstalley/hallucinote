@@ -4,8 +4,8 @@
 (see *Resolved by the owner*). Direction: re-weight the behavioral norms so the
 user leads the creative project; no "modes"; the hearable-unit bound is a hard
 rule on *offering* a hearing, never on requiring one; evals deferred to the
-external eval framework, with the evidence corpus seeded now. Next step is a
-build plan.
+external eval framework, with the evidence corpus seeded now. **Build plan:**
+[`plans/COLLAB-TURN/build-plan.md`](plans/COLLAB-TURN/build-plan.md).
 
 **Read with:** `onboarding-and-teaching-model.md` (the stance this makes
 operational — third register, read the request not the requester, collaborate

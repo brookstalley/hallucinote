@@ -129,3 +129,6 @@ examples/*/captures/
 # Tour capture working directory — shoot liberally here, commit selectively.
 # The committed evidence lives in docs/assets/ under a hard byte budget.
 examples/*/_capture/
+
+# Prawduct session files
+.prawduct/.delegate-brief.md

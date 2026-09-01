@@ -20,9 +20,9 @@ failures over-corrects; the corpus has to show the shape that worked, too.
 
 ## Provenance
 
-Sources are the local Claude Code session logs under
-`~/.claude/projects/-Users-brookstalley-source-hallucinote*/`. They are **not**
-committed. Each case names its source by session id prefix and UTC timestamp so
+Sources are the local Claude Code session logs under `~/.claude/projects/`, in
+the per-project directory Claude Code derives from a checkout's absolute path by
+replacing each path separator with a dash. They are **not** committed. Each case names its source by session id prefix and UTC timestamp so
 the excerpt can be re-read in place. User quotes are the repository owner's own
 words, reproduced verbatim including typos, because provenance is the point.
 

@@ -1,7 +1,7 @@
 ---
 name: song-brief
 description: >-
-  Turn a starting prompt into the song's brief through a conversation that ends at the user's hand-off — the elicitation stage that runs BEFORE /song-new. Sweeps the load-bearing dimensions (harmony, tempo, production stance, named narrative turns, meter, the section time budget, and the mechanism behind every named gesture), marks each DECIDED / UNDECIDED / NOT-APPLICABLE, and opens with the two or three identity questions it cannot guess while showing the craft it decided — proposals in prose, never a questionnaire, never a picker. Reads each reply before acting (an answer that adds a noun is not a closure), records who owns each choice (yours / options / mine), and closes with the status offer. Writes `annotations/01-the-brief.md` as a ledger updated every turn — the song's origin record and the input to /song-new. Use whenever a song starts from a prompt rather than from explicit scaffold arguments, or when asked "what do you need to know?" / "what's underspecified here?".
+  Turn a starting prompt into the song's brief through a conversation that ends at the user's hand-off — the elicitation stage that runs BEFORE /song-new. Sweeps the load-bearing dimensions (harmony, tempo, production stance, named narrative turns, meter, the section time budget, and the mechanism behind every named gesture), marks each DECIDED / UNDECIDED / NOT-APPLICABLE, and opens with the two or three identity questions it cannot guess while showing the craft it decided — proposals in prose, never a questionnaire, never a picker. Reads each reply before acting (an answer that adds a noun is not a closure), records who owns each choice (yours / offer me options / mine), and closes with the status offer. Writes `annotations/01-the-brief.md` as a ledger updated every turn — the song's origin record and the input to /song-new. Use whenever a song starts from a prompt rather than from explicit scaffold arguments, or when asked "what do you need to know?" / "what's underspecified here?".
 argument-hint: "<the user's starting prompt, or a slug for an existing song>"
 user-invocable: true
 disable-model-invocation: false
@@ -28,8 +28,8 @@ no-unresolved-gap rule are
 the conversation — turn kinds, the hearable unit, the status offer, decline with
 scope, the owner column, loaded prompts — is
 [`.prawduct/artifacts/collaboration-turn-model.md`](../../.prawduct/artifacts/collaboration-turn-model.md).
-**Those words are defined there and short-defined in [`CLAUDE.md`](../../CLAUDE.md);
-this file uses them and does not redefine them.** The evidence behind every
+**Those words are defined there and short-defined in [`CLAUDE.md`](../../CLAUDE.md).**
+What this file adds is where each one fires in this stage. The evidence behind every
 rule below is the corpus at
 [`.prawduct/artifacts/collaboration-corpus/`](../../.prawduct/artifacts/collaboration-corpus/README.md),
 cited by case id.
@@ -140,10 +140,16 @@ but two things from the model:
   compose another round to chase rows they didn't address. The user's *"keep
   going"* or *"let's hear it"* is what ends the stage; your row count never is.
 
-Ping-pong is still wrong — but so is a wall (CTM-07: 822 words, eight argued
-items, no open question, closing with *"anything you don't address, I'll take
-as agreed"*, and the user's first words were *"let's pause"*). The shape that
-worked (CTM-19) asks two or three things, shows the rest, and fits in a breath.
+**The shape of every turn, not just the first.** One message per exchange,
+carrying everything the current hearable unit depends on — the questions it
+turns on, the craft you decided toward it, the reads you want redirected. Not
+one question per message: the hearable unit narrows *which* rows you raise, it
+never licenses raising them one at a time. And every turn passes the same test
+as the opening one: it fits in a breath. A wall is the other failure (CTM-07:
+822 words, eight argued items, no open question, closing with *"anything you
+don't address, I'll take as agreed"*, and the user's first words were *"let's
+pause"*). The shape that worked (CTM-19) asks two or three things, shows the
+rest, and is short enough to answer at once.
 
 ### The opening turn
 
@@ -189,7 +195,8 @@ Advisories and standing blocks belong to engineering turns (CTM-13).
 **The exemplar** — the prompt is the 45-second rock-versus-brass song: 4/4
 against 3/4 in the verses, a 5/8 industrial bridge, a 7/4 chorus where they
 integrate, an outro that bends everything down an octave. The turn that worked
-(CTM-19), with its one wording flaw fixed:
+(CTM-19), with its opener reworded and the tempo and budget set to the
+elicitation artifact's worked numbers so they match the template below:
 
 > Read formed: the 4-against-3 argument is a structural idea, not decoration,
 > and 45 seconds is enough if the chorus gets the room.
@@ -236,8 +243,8 @@ and what each authorizes are in the artifact; the reads that matter most here:
 - **A reply that opens a dimension you did not ask about means keep listening.**
 - **Silence on an item you asked is "still thinking", not "agreed"** — unless
   the user has handed off. You do not close it by inference, and you do not
-  nag: it stays open in the ledger as *yours*, and it is named — not asked — in
-  the status offer.
+  nag: it stays open in the ledger as *yours* (the user's to decide), and it is
+  named — not asked — in the status offer.
 - **Hedges downgrade the turn to exploring.** *"May sound like crap"*, *"I
   honestly don't know"*, *"just thinking"* — think with them and touch nothing.
   CTM-01 had three hedges in one prompt and was answered with a finished
@@ -247,10 +254,9 @@ and what each authorizes are in the artifact; the reads that matter most here:
 - **"A different idea" means they have one.** Ask what it is before offering
   yours (CTM-05).
 
-Then answer what kind of turn it was. **Directing** executes; **reacting**
-adjusts; **exploring** and **asking** touch nothing; **delegating** writes
-*mine* in the ledger and decides that item silently; **handing off** ends the
-stage. Only the first and the last authorize building anything.
+Then answer what kind of turn it was, against the artifact's table. What is
+specific to this stage: a **handing-off** turn ends it, and only directing and
+handing-off authorize building anything.
 
 **If you hold prior context on this prompt** — a version of the song from an
 earlier session, decisions already in `decisions/` — say so and ask which way to
@@ -274,11 +280,14 @@ option had room for. Prose in, prose out.
 
 As the conversation runs you learn where the user wants their hands on the song
 and where they want you to just make it. Record it in the ledger's **owner
-column** as you learn it, never by asking for a delegation map: *"you pick"*
-writes *mine*; an opinionated correction writes *yours*; *"what would you do?"*
-writes *options*. You never offer to take the work away — but you may, humanely,
-ask where they want their hands on it, and the artifact's phrasing is the one
-that does not make anyone feel dumb.
+column** as you learn it, never by asking for a delegation map. The three
+values are in the *user's* voice — read them as the user saying them to you:
+**`mine`** = you decide it; **`yours`** = the user decides it; **`offer me
+options`** = the user's own phrasing for "bring me choices and a read". So
+*"you pick"* writes *mine*; an opinionated correction writes *yours*; *"what
+would you do?"* writes *offer me options*. You never offer to take the work
+away — but you may, humanely, ask where they want their hands on it, and the
+artifact's phrasing is the one that does not make anyone feel dumb.
 
 A **decline with scope** is remembered here too. *"Build the whole thing, I'll
 listen at the end"* writes the hearing rhythm as *mine* with that scope, and no
@@ -290,7 +299,11 @@ dimension is a directing turn: show your reads in a clause each, hand back the
 brief, and let the lifecycle advance to `/song-new` without waiting for
 anything. ("Advance to" is not "invoke": see Step 3.) This stage is not obliged
 to find something to ask — and asking on a directed prompt is the precedence
-failure in its politest form.
+failure in its politest form. **The hedge test gates this pass.** A hedged or
+thinking-out-loud opening prompt — *"may sound like crap"*, *"a study to see
+how things work"*, *"not a full song"* — is exploring, not directed, and never
+qualifies, however complete its spec looks (CTM-01: three hedges, read as a
+hand-off, answered with a finished study).
 
 ## Step 3 — the brief is a ledger
 
@@ -340,7 +353,7 @@ tags: [intent, origin, brief]
 |---|---|---|---|---|
 | Vocals | DECIDED | instrumental; lead guitar carries the vocal role | yours | user |
 | Tempo | DECIDED | 132 BPM | mine | inferred |
-| Harmony | DECIDED | D aeolian → D major at the chorus | options | agreed-after-confirm |
+| Harmony | DECIDED | D aeolian → D major at the chorus | offer me options | agreed-after-confirm |
 | Drum style | DECIDED | expressive rock kit; timpani across the brass | yours | user |
 | Alternate tuning | NOT-APPLICABLE | — | — | inferred |
 | Outro octave drop | DECIDED | master Shifter, `Pitch Coarse` 0 → −12, pre-limiter | mine | inferred |
@@ -351,7 +364,7 @@ tags: [intent, origin, brief]
 | Dimension | Owner | Closes at |
 |---|---|---|
 | What "integrated" means in the chorus | yours | /compose-part, in front of the verse argument |
-| Brass voice — section patch or layered horns | options | /song-pick-instruments |
+| Brass voice — section patch or layered horns | offer me options | /song-pick-instruments |
 
 ## Section time budget
 
@@ -362,11 +375,10 @@ Rules for the file:
 
 - **Verbatim prompt, unedited.** A cleaned-up version misrepresents what
   happened, and provenance is the point.
-- **The owner column takes one of three values** — `yours` (the user's call;
-  execute what they say and re-ask nothing), `options` (bring them concrete
-  options and a read; they choose), `mine` (delegated; decide it silently and
-  show it). A row learned from the conversation, never from a form. A
-  NOT-APPLICABLE row has no owner.
+- **The owner column is in the user's voice** — `mine` = you decide it,
+  `yours` = the user decides it, `offer me options` = bring them choices. A
+  row learned from the conversation, never from a form. A NOT-APPLICABLE row
+  has no owner.
 - **`Decided by` is provenance** — `user`, `inferred`, or
   `agreed-after-confirm`. **`agreed-after-confirm` requires a user turn between
   the proposal and the label** (CTM-01 labelled two rows that way with zero user
@@ -381,9 +393,10 @@ Rules for the file:
 - **No row may be DESCRIBED-BUT-UNBUILT** — never write a mechanism as settled
   prose unless it exists (or is listed under *Still open*).
 - **`date` is the day the brief was first written**, ISO. The frontmatter is
-  the schema in `docs/song-authoring-conventions.md` (four keys used here, all
-  allowed; unknown keys raise at index time), and the file is written through
-  `write_markdown_ref` so `/song-context` can find it.
+  the schema owned by
+  [`.prawduct/artifacts/song-conventions.md`](../../.prawduct/artifacts/song-conventions.md)
+  (four keys used here, all allowed; unknown keys raise at index time), and the
+  file is written through `write_markdown_ref` so `/song-context` can find it.
 
 Then file the substantive resolutions as `decisions/NN-*.md` per
 `docs/song-authoring-conventions.md` → *Rationale is authorship*. The brief
@@ -426,8 +439,9 @@ as *yours* with the stage that will raise them in front of something audible.
 The song's meter is a property of the authored work. Live's ability to represent
 it is a **projection** concern and is not the user's problem.
 
-- **Do** ask the real musical question: *"full 7-rhythm, or 4-then-3?"* — it
-  changes the groove and it has a real answer.
+- **Do** ask the real musical question — *"full 7-rhythm, or 4-then-3?"* — when
+  the user has not already answered it. It changes the groove and it has a real
+  answer; a meter the user stated is executed, not re-asked.
 - **Do not** ask the user to accommodate a downstream constraint, and **never**
   offer *"we'll represent it as a global 1/4"* as though it were a creative
   option. It isn't; it's a rendering detail.
@@ -456,7 +470,7 @@ which way to use it.
 - `annotations/01-the-brief.md` exists, carrying the prompt verbatim.
 - Every **applicable** dimension is DECIDED, or UNDECIDED with a named owner and
   a closing stage. NOT-APPLICABLE rows are recorded and were never asked about.
-- Every applicable row carries an owner — `yours`, `options` or `mine`.
+- Every applicable row carries an owner — `yours`, `offer me options` or `mine`.
 - No identity row is DECIDED by inference; no row is `agreed-after-confirm`
   without a user turn behind it.
 - The section time budget is costed, **if** a duration was stated.

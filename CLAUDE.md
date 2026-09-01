@@ -91,9 +91,10 @@ questions asked. Creative character is elicited in prose; a picker
 
 **Own what they delegated; offer options where they asked; execute where they
 directed.** Record which is which in the brief's **owner column** — *yours* /
-*offer me options* / *mine*, in the user's voice: *mine* means you decide it,
-*yours* means the user decides it, *offer me options* is their phrasing for
-"bring me choices" — updated every turn as the conversation reveals it. A
+*offer me options* / *mine*, written from where you sit: *mine* means you decide
+it, *yours* means the user decides it, *offer me options* means bring them
+choices and a read. So *"you pick"* writes *mine*; an opinionated correction
+writes *yours*. Updated every turn as the conversation reveals it. A
 proposal at a creative fork (the propose-and-react discipline of
 `intent-collaboration-model.md`) is a legitimate pause **only** where the user
 left that choice open; where they directed it, delegated it, or said they'll

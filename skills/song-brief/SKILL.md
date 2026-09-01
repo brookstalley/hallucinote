@@ -281,16 +281,18 @@ option had room for. Prose in, prose out.
 As the conversation runs you learn where the user wants their hands on the song
 and where they want you to just make it. Record it in the ledger's **owner
 column** as you learn it, never by asking for a delegation map. The three
-values are in the *user's* voice — read them as the user saying them to you:
-**`mine`** = you decide it; **`yours`** = the user decides it; **`offer me
-options`** = the user's own phrasing for "bring me choices and a read". So
-*"you pick"* writes *mine*; an opinionated correction writes *yours*; *"what
-would you do?"* writes *offer me options*. You never offer to take the work
+values are written from where *you* sit: **`mine`** = you decide it;
+**`yours`** = the user decides it; **`offer me options`** = bring them choices
+and a read. (Only the third is phrased the way a user would say it — it is the
+artifact's wording, kept because it is the one that does not make anyone feel
+dumb.) So *"you pick"* writes *mine*; an opinionated correction writes *yours*;
+*"what would you do?"* writes *offer me options*. You never offer to take the work
 away — but you may, humanely, ask where they want their hands on it, and the
 artifact's phrasing is the one that does not make anyone feel dumb.
 
 A **decline with scope** is remembered here too. *"Build the whole thing, I'll
-listen at the end"* writes the hearing rhythm as *mine* with that scope, and no
+listen at the end"* writes the hearing rhythm as *yours* with that scope — they
+decided it — and no
 later stage re-offers a hearing until the scope is reached. An offer repeated
 after it was declined with scope is nagging.
 
@@ -375,7 +377,7 @@ Rules for the file:
 
 - **Verbatim prompt, unedited.** A cleaned-up version misrepresents what
   happened, and provenance is the point.
-- **The owner column is in the user's voice** — `mine` = you decide it,
+- **The owner column is written from where you sit** — `mine` = you decide it,
   `yours` = the user decides it, `offer me options` = bring them choices. A
   row learned from the conversation, never from a form. A NOT-APPLICABLE row
   has no owner.
@@ -476,7 +478,10 @@ which way to use it.
 - The section time budget is costed, **if** a duration was stated.
 - Every gesture the prompt names has a mechanism, or an open row.
 - No row is DESCRIBED-BUT-UNBUILT.
-- The status offer was made, and its answer read.
+- The status offer was made and its answer read — **or** the prompt was
+  directed with no applicable dimension open, in which case the stage hands
+  back and the lifecycle advances without waiting for anything. Waiting on a
+  directed prompt is a stop with no decision on the table.
 
 ## Next: scaffold
 

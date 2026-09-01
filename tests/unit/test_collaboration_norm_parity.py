@@ -107,8 +107,10 @@ _TURN_KINDS = (
     "handing-off",
 )
 
-#: The owner column's ratified values, in the user's own voice. `options` alone
-#: was the build plan's abbreviation and breaks that voice.
+#: The owner column's ratified values. Written from where the agent sits —
+#: `mine` = the agent decides, `yours` = the user decides — with only the middle
+#: value phrased the way a user would say it. `options` alone was the build
+#: plan's abbreviation of the artifact's ratified wording.
 _OWNER_VALUES = ("yours", "offer me options", "mine")
 
 #: The definitional sentence for "hearable unit". Its homes are enumerated
@@ -285,8 +287,15 @@ def test_both_mcp_text_surfaces_describe_the_brief_as_a_conversation():
     drifting back to the one-turn framing.
     """
     for surface in (_MCP_SERVER, _MCP_GUIDE):
-        flat = _flatten(surface.read_text(encoding="utf-8"))
-        assert "conversation" in flat, (
+        text = surface.read_text(encoding="utf-8")
+        # Bound to the /song-brief passage, not the file. `conversation` appearing
+        # anywhere in a thousand-line module says nothing about how the brief is
+        # described, and would let the one-turn framing back in beside it.
+        passage = " ".join(
+            line for line in text.splitlines() if "song-brief" in line
+        )
+        assert passage, f"{surface.relative_to(_REPO)} no longer mentions /song-brief"
+        assert "conversation" in _flatten(passage), (
             f"{surface.relative_to(_REPO)} no longer describes /song-brief as a "
             "conversation that runs until the user hands off"
         )
@@ -300,7 +309,10 @@ def test_the_workflow_doc_scopes_its_one_gloss_honestly():
     exists to stop a maintainer trusting.
     """
     flat = _flatten(_WORKFLOW_DOC.read_text(encoding="utf-8"))
-    assert "never restated" not in flat, (
-        "docs/song-workflow.md claims it never restates the vocabulary while "
-        "carrying the sanctioned one-line gloss; scope the claim to what is true"
-    )
+    for claim in ("defined once", "never restated", "does not redefine"):
+        assert claim not in flat, (
+            f"docs/song-workflow.md claims {claim!r} while carrying the sanctioned "
+            "one-line gloss, and the vocabulary has two homes besides (the design "
+            "artifact and CLAUDE.md). Scope the claim to what is true — an "
+            "unqualified promise is what stops a maintainer looking for the copy."
+        )

@@ -1,7 +1,7 @@
 # Collaboration turn model — reading the turn, building to the hearable unit
 
 **Status:** **built — awaiting the operator session** (2026-09-01). All six
-chunks of the build plan are shipped; what no prose plan can prove is whether a
+chunks are built and committed (chunk 06 ticks on its cumulative review); what no prose plan can prove is whether a
 *cold* agent actually holds the conversation to the user's hand-off, and the
 operator session queued in
 [`operator-verification.md`](../operator-verification.md) is the acceptance test
@@ -261,62 +261,28 @@ make, and you can redirect anything."*
 - **Evals live elsewhere.** No eval harness is built here. The corpus under
   `collaboration-corpus/` is the evidence base it will consume.
 
-## Proposed norm text (draft — not applied)
+## The norms — APPLIED 2026-09-01. The live text is `CLAUDE.md`.
 
-Replaces the one-turn bound in `CLAUDE.md` → *Hallucinote Behavioral Norms*;
-the stop-less rule keeps its text with its scope narrowed to procedural stops.
+Both this section and *What changes* were drafts, and both are now built. The
+draft norm text that stood here has been **deleted rather than kept**: the
+shipped version in `CLAUDE.md` gained the precedence guards, the picker rule and
+the no-decision-record-while-their-messages-are-arriving clause, so a copy left
+here would be a second, weaker set of norms in the file every skill points at as
+the place the vocabulary is defined — and this artifact is exempt from the drift
+lock, so nothing would catch it diverging further.
 
-> **Read the turn before acting.** Every user turn is one of: directing,
-> reacting, exploring, asking, delegating, handing off. Only *directing* and
-> *handing off* authorize building. Musing is not a request — when the user is
-> thinking out loud, think with them and touch nothing.
->
-> **Build to the hearable unit, then offer a hearing before building further.**
-> The hearable unit is the smallest thing that, once heard, tells the user
-> whether the idea works — one idea in a study, a few bars of one section in a
-> sketch. Never author past one unit without having offered to play it. Never
-> require the user to listen in order to continue: "keep going" authorizes the
-> next unit; a decline with a scope ("build it all, I'll listen at the end") is
-> recorded and not re-asked.
->
-> **A loaded prompt opens its domain.** When a few words carry many
-> implications — a genre, a form, an era, an artist — unpack them, state which
-> you are taking as read, and ask about the two or three that would change the
-> song most.
->
-> **Identity closes when the user hands off, never by inference.** An answer
-> that adds a new dimension means they have more. Silence on something you
-> asked means still thinking.
->
-> **When you have nothing to follow and something to play, make the status
-> offer:** what is settled, hear it or keep going, and what has not come up —
-> named, not asked.
->
-> **Own what they delegated; offer options where they asked; execute where they
-> directed.** Record which is which in the brief as you learn it.
+**To read the norms, read [`CLAUDE.md`](../../CLAUDE.md) → *Hallucinote
+Behavioral Norms*. To amend them, amend them there.** What this artifact still
+owns, and what the norms cite it for, is everything above: the diagnosis, the
+five structural causes, the model, and the evidence corpus behind each rule.
 
-## What changes (proposed)
+The surfaces that changed, all shipped: `CLAUDE.md`, `skills/song-brief`,
+`skills/song-new`, `skills/getting-started`, `skills/song-workflow`,
+`docs/song-workflow.md`, `docs/song-new-checklist.md`, `README.md`,
+`docs/quickstart.md`, `docs/skills.md`, and both MCP text surfaces. The build
+plan is [`plans/COLLAB-TURN/build-plan.md`](plans/COLLAB-TURN/build-plan.md);
+the change-log entry carries `scope=collab-turn`.
 
-- `CLAUDE.md` — the norm text above; stop-less rescoped; the "one consolidated
-  turn" bullet retired.
-- `skills/song-brief/SKILL.md` — from one turn to a conversation that ends at
-  the user's hand-off; the owner column; the loaded-prompt rule; the status
-  offer as the standard closing move, with the decline-with-scope memory. The three-state model and the
-  no-unresolved-gap rule stay — they were right.
-- `docs/song-new-checklist.md` §2 (genre/style anchor) and §11 (references) —
-  a loaded word *opens* its domain; delete the "collapses 5 answers" framing.
-- `skills/song-new/SKILL.md` and `skills/getting-started/SKILL.md` workspace
-  check — song work belongs in a songs workspace; when the working directory is
-  a governed repo (a `.prawduct/` is present), say so and warn that governance
-  framing may intrude on the creative conversation, before scaffolding.
-- `docs/song-workflow.md` + `skills/song-workflow/SKILL.md` — a hearing step
-  after the first hearable unit, before the rest is composed.
-- `skills/song-new/SKILL.md` — the deliverable-shape read stays; "drive
-  end-to-end" is rewritten as "drive to the next hearable unit".
-- Pickers — `AskUserQuestion` is for enumerable engineering decisions only;
-  creative character is elicited in prose.
-- Governance framing — advisories and the standing block are for engineering
-  turns; a song conversation opens with the music.
 
 ## Resolved by the owner (2026-09-01)
 

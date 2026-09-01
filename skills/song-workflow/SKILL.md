@@ -20,8 +20,9 @@ the three checkpoints that are easy to skip and shouldn't be. The depth (the
 *why*, grounded in the research) is
 [docs/song-workflow.md](../../docs/song-workflow.md); this is the at-a-glance
 version. The vocabulary — *hearable unit*, *turn kind*, *the status offer*,
-*decline with scope*, *owner column* — is defined once, in
-[collaboration-turn-model.md](../../.prawduct/artifacts/collaboration-turn-model.md);
+*decline with scope*, *owner column* — is defined in
+[collaboration-turn-model.md](../../.prawduct/artifacts/collaboration-turn-model.md)
+and short-defined in [CLAUDE.md](../../CLAUDE.md), which loads every session;
 this skill uses the words and does not redefine them.
 
 ## Creativity first, depth on demand

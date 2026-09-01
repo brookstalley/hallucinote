@@ -27,7 +27,7 @@ Form **no judgment about the user's musical expertise** — no novice/expert bra
 
 **Two modes, one discipline:**
 
-1. **Open elicitation** — request underspecified, user has more in their head: ask, lightly, *only* the load-bearing unknowns (where a wrong guess wastes real work or is a creative lock-in — tonal concept, form, the central tension). **Per turn**, one or two questions before you hand them something concrete; more stacked into a single turn is an interrogation.
+1. **Open elicitation** — request underspecified, user has more in their head: ask, lightly, *only* the load-bearing unknowns (where a wrong guess wastes real work or is a creative lock-in — tonal concept, form, the central tension). **Per turn**, only the few that change the song most before you hand them something concrete — `/song-brief` sets the count, and stacking the whole sweep into one turn is an interrogation.
 2. **Proposal elicitation** — when open questions stop yielding direction (the user says "I don't know, you decide," repeats a vague answer, or trails off): **stop asking, start proposing.** A concrete, redirectable proposal — ideally a small set of *distinct* options. Choosing between concretes is the easiest way to discover what you actually wanted. Read "that's all I've got" as *propose now*, never *assume now* — and don't answer it with yet another question; put something concrete in front of them.
 
 **Both counts above bound a *turn*, never the conversation.** The conversation runs until the user hands off — however many turns that takes — and `/song-brief` owns how it is run (Phase 1 below). Nothing here licenses closing early because a question budget ran out.
@@ -38,7 +38,7 @@ Form **no judgment about the user's musical expertise** — no novice/expert bra
 
 **Name the why.** When you propose, carry the reasoning in *one plain collaborator's sentence* — "I held the verse back so the chorus opens up," never "this is a deceptive cadence, which in theory…". The expert skims it; the novice learns from it; you never decided which is which. The theory vocabulary only surfaces if the user reaches for it. **Never a classroom; never homework.**
 
-**The third register — directed-but-under-articulated.** When the user asks for something they can't yet specify — "make it feel like Bach," "a pop song like Madonna" — that is neither a directive to execute nor a question to fire back. **Open the domain:** propose concrete, *hearable* options (e.g. walking bass under the kit vs late-resolving suspensions), name the why in one sentence, and offer a real choice. This fires on the **request** (the dimension is unpinned), never on a judgment that the user is a novice. **Never** silently generate a best-guess and move on — that is the core failure.
+**The third register — directed-but-under-articulated — is the loaded prompt.** When the user asks for something they can't yet specify — "make it feel like Bach," "a pop song like Madonna" — that is neither a directive to execute nor a question to fire back. These are the same situation under two names, and the move is the one [`collaboration-turn-model.md`](../../.prawduct/artifacts/collaboration-turn-model.md) defines for a **loaded prompt**: unpack what the words imply, state which implications you take as read so they are correctable in a word, and ask about the two or three whose answer would change the song most. Where you can show rather than ask, propose concrete *hearable* options (walking bass under the kit vs late-resolving suspensions) with the why in one sentence. This fires on the **request** (the dimension is unpinned), never on a judgment that the user is a novice. **Never** silently generate a best-guess and move on — that is the core failure.
 
 **Gap-inversion for thin dimensions.** Per the capability-honesty note below, when a request leans on a thin dimension (melody *authoring* ◐, vocal synthesis ✗), invert the gap into an invitation — "sketch your topline in Ableton and I'll build the track under it, then read whether the line lands its intent" (round-trip is fully supported; the melody lens reads the line — `/compose-review`). Caveat the thin dimension, deliver the rest, never silently substitute.
 
@@ -101,9 +101,10 @@ Given the resolved slug + title + tempo + signature + sections (and optional key
 3. Run `"$PY" songs/<slug>/build.py --reset` to populate the song's DB from the synthetic snapshot.
 4. Run `pytest songs/<slug>/tests/ -v` to confirm the shape tests pass.
 5. **Write Phase 1's decisions** to `songs/<slug>/decisions/NN-<topic>.md` — one file per decision. Number prefix (`01-intent.md`, `02-genre.md`, ...) for ordering.
-6. **Pick instruments** by invoking the `/song-pick-instruments` skill with the user's resolved instrumentation. Default `portability=strict` (stock Live content) unless the user signaled tolerance for third-party plugins. The picks land in `captured_session.json` either via Sweep B's `preset_query` (composer-time portable selector — see `docs/snapshot-schema.md`) or via load-then-recapture once Live is staged.
-7. **Postlude:** call `ableton_render(action='ensure_loaded')` silently — **with no other params**. It loads the analyzer onto every existing surface; unlike `render`, it takes no `song_slug` (passing one errors `unknown param(s)`).
-8. Report the result + tell the user what to do next.
+6. **Pick instruments for the first hearable unit only** — invoke `/song-pick-instruments` with the parts *that one section needs*, not the whole resolved instrumentation. Loading twelve chains before a note exists is CTM-11 (*"shouldn't I be hearing something?"* forty-five minutes in, zero notes written); the rest of the palette follows the first hearing. Default `portability=strict` (stock Live content) unless the user signaled tolerance for third-party plugins. The picks land in `captured_session.json` either via Sweep B's `preset_query` (composer-time portable selector — see `docs/snapshot-schema.md`) or via load-then-recapture once Live is staged.
+7. **Compose that unit, push it, and offer a hearing** — `/compose-part` for the section, one full `/ableton-push` to create and link the structure (its scoped `push-notes` only reaches already-linked clips), then the status offer. *"Keep going"* authorizes the next unit; a decline carrying a scope is recorded and not re-asked. Only then the rest of the palette and the remaining sections.
+8. **Postlude:** call `ableton_render(action='ensure_loaded')` silently — **with no other params**. It loads the analyzer onto every existing surface; unlike `render`, it takes no `song_slug` (passing one errors `unknown param(s)`).
+9. Report the result + tell the user what to do next.
 
 ## Gathering input
 
@@ -198,7 +199,10 @@ Stop after the scaffold + decisions + picks land, so the user can review and dri
        --signature N/D --sections a,b,c [--key K] [--intent "..."]
 3. "$PY" songs/<slug>/build.py --reset
 4. pytest songs/<slug>/tests/ -v
-5. Report.
+5. /song-pick-instruments — for the parts the FIRST hearable unit needs, not the whole palette.
+6. /compose-part that section -> one full /ableton-push -> offer a hearing.
+   → "keep going" authorizes the next unit; a decline with a scope is recorded, not re-asked.
+7. The rest of the palette and sections, offering at each unit. Then report.
 ```
 
 ## Conventions

@@ -409,7 +409,7 @@ PR is opened with `gh` into `develop`.
   `origin/develop...HEAD` via an independent reviewer Agent.
 - **Depends on:** Chunk 05
 - **Artifacts consumed:** this plan's §*Retired phrases*; `tests/unit/test_song_lifecycle_doc_parity.py` as the pattern
-- **Deliverables:** new `tests/unit/test_collaboration_norm_parity.py`, `.prawduct/artifacts/project-preferences.md`, `.prawduct/change-log.md`, `.prawduct/artifacts/collaboration-turn-model.md` (status line), `.prawduct/operator-verification.md`
+- **Deliverables:** new `tests/unit/test_collaboration_norm_parity.py`, `.prawduct/artifacts/project-preferences.md`, `.prawduct/change-log.md`, `.prawduct/artifacts/collaboration-turn-model.md` (status line, and the applied-norms pointer replacing the draft copy), `.prawduct/operator-verification.md`, `.prawduct/project-state.yaml` (added at build time: this plan retires a *ratified* norm, and a retirement is a lifecycle transition to record rather than a row to delete — the plan as written had no home for it)
 - **Tests:** the new test, run first against the tree *before* chunk 05's edits (a discriminating test must be run against the examples it is meant to separate — check it out on the pre-sweep commit and confirm it fails there), then green on HEAD; `python -m pytest` with no path argument green
 - **Acceptance criteria:** new test fails on the pre-sweep tree and passes on HEAD; full suite green; change-log entry present with the scope tag; operator entry queued
 - **Type:** cumulative-final

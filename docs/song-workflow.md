@@ -41,9 +41,9 @@ re-opened.
   [intent-collaboration-model.md](../.prawduct/artifacts/intent-collaboration-model.md).
 - The vocabulary the pacing rule is written in — *turn kind*, *hearable unit*,
   *the status offer*, *decline with scope*, *owner column*, *loaded prompt* —
-  is defined once, there. This page carries a one-line gloss of the hearable
-  unit at stage 3, because a reader here does not auto-load the definitions,
-  and links for everything else:
+  is defined there, and short-defined in `CLAUDE.md`, which an agent loads every
+  session. This page carries a one-line gloss of the hearable unit at stage 3,
+  because a human reader here auto-loads neither, and links for everything else:
   [collaboration-turn-model.md](../.prawduct/artifacts/collaboration-turn-model.md).
 - Why nothing aesthetic can fail a build (BLOCKING is reserved for *likely
   errors* — pitch out of range, zero duration — never choices):

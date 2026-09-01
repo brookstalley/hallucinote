@@ -1783,7 +1783,7 @@ confirmed:
 
 ---
 
-## COLLAB-TURN — the collaboration turn model (2026-09-01)
+## 2026-09-01 — The collaboration turn model (COLLAB-TURN)
 
 This one is unlike every entry above it: nothing here needs Ableton. It needs a
 **person having a conversation**, because the whole intervention is prose that
@@ -1796,7 +1796,7 @@ shipped in August and decayed within one take — good on the opening turn, sile
 on everything after it. A green suite would have said nothing about that, and
 did not.
 
-8. **Start a song from a loaded prompt, in a songs workspace, with the merged
+1. **Start a song from a loaded prompt, in a songs workspace, with the merged
    plugin.** *"Make me a rap song"*, or any prompt of your choosing that carries
    more implications than words. A songs workspace, not this repo — the
    governed-repo heads-up is itself one of the things being tested, and it fires

@@ -91,6 +91,30 @@ scope** · **owner column** (yours / offer me options / mine) · **loaded prompt
 Two of them get a *short* definition in `CLAUDE.md` because that is the one
 surface loaded every session; the skills point at `CLAUDE.md` and the artifact.
 
+**Amendment, 2026-09-01 — definition vs rule.** As first written, "no chunk
+restates them" could not be obeyed: the design artifact's own *Constraints*
+require the norms to work cold from `CLAUDE.md` plus one skill, and chunks 02(b)
+and 02(f) direct a skill to carry the reply-reading signals and the status offer.
+Three independent chunk reviewers each found the same defect on a different file
+— every one of them a file promising it did not restate and then restating. The
+line the rule was reaching for:
+
+- A **definition** — what a term *means* — has exactly two homes: this design
+  artifact, and the short definition in `CLAUDE.md`. Nowhere else.
+- A **rule stated in terms already defined** — what to *do*, and where it fires —
+  belongs wherever it fires, and is not restatement. "Compose the first hearable
+  unit, then offer a hearing" is a rule; "the hearable unit is the smallest thing
+  that, once heard, …" is a definition.
+- **Bounded exception:** `docs/song-workflow.md` may carry one one-line gloss of
+  *hearable unit*, because it is human-facing and its reader does not auto-load
+  `CLAUDE.md`. One doc, one term.
+- **No file may claim it does not restate while restating.** The claim is worse
+  than the restatement: a maintainer trusts it and never looks for the second
+  copy.
+
+Chunk 06 locks this — the definitional phrase may appear only in the artifact,
+`CLAUDE.md`, and `docs/song-workflow.md`.
+
 ## Retired phrases — the sweep's target list
 
 These are the promises the plan retires. Chunk 05 greps the tree for them and

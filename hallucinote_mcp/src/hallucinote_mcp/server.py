@@ -118,9 +118,12 @@ work, read /song-workflow first — it is the lifecycle map. The arc:
   /return-new, /mix-sidechain, /clip-humanize, /ableton-pull, /song-context.
   The three checkpoints (/song-brief, /compose-review, /mix-review) are easy
   to skip and shouldn't be — /song-brief specifies the work, the other two
-  apply the framework's ear to it. Each stage has a definition of done
-  (docs/song-workflow.md): a stage may not hand a load-bearing question
-  downstream dressed as a decision.
+  apply the framework's ear to it. /song-brief is a conversation that runs
+  until the user hands off, not a single turn. Each stage has a definition
+  of done (docs/song-workflow.md): a stage may not hand a load-bearing
+  question downstream dressed as a decision. It is a loop, not a line:
+  compose the first hearable unit, push it, offer a hearing, continue —
+  the offer is never a requirement.
 
 Hard constraints:
   - 1-based indexing throughout (track_index >= 1).

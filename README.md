@@ -77,7 +77,7 @@ Want the bridge to hit harder?
 ## What to ask for
 
 - **Any genre, any shape.** Conceptual (*"a song about overcoming loss"*), musical (*"a Baroque prelude in G minor from a single broken-chord figuration"*), or stylistic (*"Duran Duran if they dropped acid with Black Sabbath"*).
-- **Under-specify on purpose.** Claude works out what your prompt leans on (`/hallucinote:song-brief`) — key, tempo, what a named turn means musically — and comes back **once** with proposals you can wave through or redirect in a word.
+- **Under-specify on purpose.** Claude works out what your prompt leans on (`/hallucinote:song-brief`) — key, tempo, what a named turn means musically — and brings you proposals you can wave through or redirect in a word. It keeps talking until you hand off, and once there is something worth hearing it offers to play it rather than building on past you.
 - **Share and fork.** A collaborator clones the directory; Hallucinote checks their plugins first and names anything missing.
 
 ## Status

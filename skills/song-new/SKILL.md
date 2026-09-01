@@ -27,8 +27,10 @@ Form **no judgment about the user's musical expertise** — no novice/expert bra
 
 **Two modes, one discipline:**
 
-1. **Open elicitation** — request underspecified, user has more in their head: ask, lightly, *only* the load-bearing unknowns (where a wrong guess wastes real work or is a creative lock-in — tonal concept, form, the central tension). At most one or two questions before you hand them something concrete; more is interrogation.
-2. **Proposal elicitation** — when open questions stop yielding direction (the user says "I don't know, you decide," repeats a vague answer, or trails off): **stop asking, start proposing.** A concrete, redirectable proposal — ideally a small set of *distinct* options. Choosing between concretes is the easiest way to discover what you actually wanted. Read "that's all I've got" as *propose now*, never *assume now*, and never *ask a fourth question*.
+1. **Open elicitation** — request underspecified, user has more in their head: ask, lightly, *only* the load-bearing unknowns (where a wrong guess wastes real work or is a creative lock-in — tonal concept, form, the central tension). **Per turn**, one or two questions before you hand them something concrete; more stacked into a single turn is an interrogation.
+2. **Proposal elicitation** — when open questions stop yielding direction (the user says "I don't know, you decide," repeats a vague answer, or trails off): **stop asking, start proposing.** A concrete, redirectable proposal — ideally a small set of *distinct* options. Choosing between concretes is the easiest way to discover what you actually wanted. Read "that's all I've got" as *propose now*, never *assume now* — and don't answer it with yet another question; put something concrete in front of them.
+
+**Both counts above bound a *turn*, never the conversation.** The conversation runs until the user hands off — however many turns that takes — and `/song-brief` owns how it is run (Phase 1 below). Nothing here licenses closing early because a question budget ran out.
 
 **The one discipline across both: never assume-and-go.** Every gap is either elicited or proposed-and-reacted-to.
 

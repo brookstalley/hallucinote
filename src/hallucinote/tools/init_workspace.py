@@ -149,8 +149,14 @@ def _is_governed_repo(directory: Path) -> bool:
     Same upward walk as :func:`_is_git_repo` and
     ``hallucinote.workspace.find_workspace_above``: look for a
     :data:`GOVERNANCE_MARKER_DIRNAME` directory at ``directory`` or any ancestor,
-    up to the filesystem root. A pure path probe — it raises nothing, so there is
-    nothing to catch.
+    up to the filesystem root.
+
+    A pure path probe, deliberately uncaught. ``Path.is_dir()`` answers ``False``
+    for a missing or non-traversable path, so the only escape is a
+    ``PermissionError`` on an unreadable ancestor — which the walk cannot reach in
+    practice, because every directory it visits is one the caller already
+    traversed to name ``directory``. If that ever does happen it is a broken
+    environment the caller needs to see, not a "not governed" answer to invent.
     """
     for d in (directory, *directory.parents):
         if (d / GOVERNANCE_MARKER_DIRNAME).is_dir():

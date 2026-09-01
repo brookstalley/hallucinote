@@ -126,6 +126,19 @@ def test_check_reports_existing_workspace(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+def test_governance_marker_is_the_prawduct_directory(tmp_path):
+    """The literal name, pinned.
+
+    Every other test in this section builds the marker from the constant, so a
+    typo'd constant would keep them all green while the feature is dead in every
+    real repo — and the acceptance criterion (``--check`` reports ``true`` inside
+    this repo) rests entirely on the value.
+    """
+    assert IW.GOVERNANCE_MARKER_DIRNAME == ".prawduct"
+    (tmp_path / ".prawduct").mkdir()
+    assert init_workspace(tmp_path, check=True).governed_repo is True
+
+
 def test_governed_repo_false_in_a_plain_directory(tmp_path):
     assert init_workspace(tmp_path, check=True).governed_repo is False
 
@@ -192,6 +205,29 @@ def test_cli_check_reports_governed_repo_false(tmp_path, capsys):
     rc = IW.main([str(tmp_path), "--check"])
     assert rc == 0
     assert json.loads(capsys.readouterr().out)["governed_repo"] is False
+
+
+def test_cli_check_with_no_directory_argument_probes_the_cwd(tmp_path, capsys, monkeypatch):
+    """The shape the skills actually run: `init-workspace --check`, no path.
+
+    argparse supplies ``"."``, which only reaches the right directory because
+    ``init_workspace`` resolves it before probing. This is the only invocation
+    users hit, so it gets its own coverage.
+    """
+    here = tmp_path / "workdir"
+    here.mkdir()
+    monkeypatch.chdir(here)
+
+    rc = IW.main(["--check"])
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["directory"] == str(here.resolve())
+    assert out["governed_repo"] is False
+
+    (tmp_path / IW.GOVERNANCE_MARKER_DIRNAME).mkdir()  # governed ancestor
+    rc = IW.main(["--check"])
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["governed_repo"] is True
 
 
 # ---------------------------------------------------------------------------

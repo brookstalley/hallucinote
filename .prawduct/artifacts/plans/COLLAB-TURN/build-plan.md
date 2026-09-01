@@ -67,7 +67,7 @@ while the user is adding, a hearing offered at the first unit and not required.
 - [x] Chunk 03: `/song-new` + `/getting-started` + governed-repo detection
 - [x] Chunk 04: `/song-workflow` skill + `docs/song-workflow.md` — the hearing loop
 - [x] Chunk 05: docs sweep — every remaining surface that promised "once"
-- [ ] Chunk 06: drift lock, bookkeeping, operator session, cumulative Critic
+- [x] Chunk 06: drift lock, bookkeeping, operator session, cumulative Critic
 
 ## Goal
 

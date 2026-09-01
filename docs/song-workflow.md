@@ -41,7 +41,9 @@ re-opened.
   [intent-collaboration-model.md](../.prawduct/artifacts/intent-collaboration-model.md).
 - The vocabulary the pacing rule is written in — *turn kind*, *hearable unit*,
   *the status offer*, *decline with scope*, *owner column*, *loaded prompt* —
-  is defined once and linked from here, never restated:
+  is defined once, there. This page carries a one-line gloss of the hearable
+  unit at stage 3, because a reader here does not auto-load the definitions,
+  and links for everything else:
   [collaboration-turn-model.md](../.prawduct/artifacts/collaboration-turn-model.md).
 - Why nothing aesthetic can fail a build (BLOCKING is reserved for *likely
   errors* — pitch out of range, zero duration — never choices):
@@ -142,17 +144,27 @@ the agent's context.
 **Compose the first hearable unit first, and offer it before the next.** The
 hearable unit is the smallest thing that, once heard, tells the user whether the
 idea works — one idea in a study, a few bars of one section with the parts that
-carry it in a sketch; it is read fresh every turn, never fixed per song. Because
-`/compose-part` scoped-pushes what it wrote, the unit is audible in Live the
-moment it exists, and that is when the **status offer** is made: what is
-settled, hear it or keep going, what has not come up — named, not asked. "Keep
-going" authorizes the next unit, after which the offer is made again; a decline
-with scope ("build it all, I'll listen at the end") is recorded in the brief's
-owner column and not re-asked inside that scope. A decision you expect the user
-to overturn is played to them, not filed past. What this rules out is the
-whole-song pass: twelve chains and every section authored, rendered last, with
-the first audio at the end. The bound is on the *offer*, never on the listening
-— the user is never required to hear a unit in order to continue.
+carry it in a sketch; it is read fresh every turn, never fixed per song. Getting
+it into the user's ears has one precondition: a brand-new track or clip needs
+one full `/ableton-push` to create and link the structure before `/compose-part`'s
+scoped `push-notes` can reach it (it only touches already-linked clips, and
+returns a teaching error per clip otherwise — see `/compose-part`'s
+precondition). After that first full push, every pass is audible in Live as soon
+as it exists — and that is when the **status offer** is made: what is settled,
+hear it or keep going, what has not come up — named, not asked. It fires when
+the settled material has reached a hearable unit *and* the user's last turn was
+a closure rather than an opening; if their last turn opened something, follow
+the opening; if nothing is hearable yet, propose one concrete thing toward it.
+"Keep going" authorizes the next unit, after which the offer is made again; a
+decline with scope ("build it all, I'll listen at the end") is recorded in the
+brief's owner column and not re-asked inside that scope. A decision you expect
+the user to overturn is played to them, not filed past. And after the user
+listens, their report is a *reacting* turn, not authorization to build the next
+unit: interpret it, adjust what they pointed at, name any confound in your own
+study's design, offer at most one concrete next study, and wait. What this rules
+out is the whole-song pass: twelve chains and every section authored, rendered
+last, with the first audio at the end. The bound is on the *offer*, never on the
+listening — the user is never required to hear a unit in order to continue.
 
 This is where the line-level craft lives:
 

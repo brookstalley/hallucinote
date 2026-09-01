@@ -70,14 +70,21 @@ all, I'll listen at the end"), is theirs and is not re-opened.
 3. **Compose the parts** — `/compose-part` (author-as-code in `build.py`).
    Melody, feel, and form are authorship: microtiming feel is baked in at
    generation time, not humanized after. **Compose the first hearable unit
-   first** — one part, one section, the smallest thing that, once heard, tells
-   the user whether the idea works — and because `/compose-part` scoped-pushes
-   what it wrote, the unit is audible in Live the moment it exists. That is
-   where you **offer** a hearing, as the status offer: what is settled, hear it
-   or keep going, what has not come up (named, not asked). "Keep going" is a
-   complete answer and authorizes the next unit; a decline with scope is
-   recorded in the brief's owner column and not re-asked. Then the next unit,
-   the same way — never the rest of the song in one pass.
+   first** — one part, one section — and get it into the user's ears: one full
+   `/ableton-push` creates and links the structure (that is `/compose-part`'s
+   precondition — its scoped `push-notes` only reaches already-linked clips,
+   and errors per clip otherwise), after which each pass is audible in Live as
+   soon as it exists. Then **offer** a hearing, as the status offer: what is
+   settled, hear it or keep going, what has not come up (named, not asked). It
+   fires when a unit is hearable *and* the user's last turn closed something;
+   if their last turn opened something, follow the opening instead, and if
+   nothing is hearable yet, propose one concrete thing toward it. "Keep going"
+   is a complete answer and authorizes the next unit; a decline with scope is
+   recorded in the brief's owner column and not re-asked. After they listen, a
+   listening report is a *reacting* turn, not authorization: interpret it,
+   adjust what they pointed at, name any confound in your own study's design,
+   offer at most one concrete next move, and wait. Then the next unit, the same
+   way — never the rest of the song in one pass.
 4. ⭐ **Read the composition** — **`/compose-review`**. After a first pass, read
    the composition + the melody and recurrence lenses *against intent*. Runs
    **before** the mix.

@@ -122,6 +122,79 @@ def test_check_reports_existing_workspace(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# governed-repo probe (the heads-up before song work starts inside one)
+# ---------------------------------------------------------------------------
+
+
+def test_governed_repo_false_in_a_plain_directory(tmp_path):
+    assert init_workspace(tmp_path, check=True).governed_repo is False
+
+
+def test_governed_repo_true_with_marker_at_the_directory(tmp_path):
+    (tmp_path / IW.GOVERNANCE_MARKER_DIRNAME).mkdir()
+    assert init_workspace(tmp_path, check=True).governed_repo is True
+
+
+def test_governed_repo_true_with_marker_at_an_ancestor(tmp_path):
+    (tmp_path / IW.GOVERNANCE_MARKER_DIRNAME).mkdir()
+    deep = tmp_path / "songs" / "punk-fate"
+    deep.mkdir(parents=True)
+    assert init_workspace(deep, check=True).governed_repo is True
+
+
+def test_governed_repo_ignores_a_file_of_that_name(tmp_path):
+    """The marker is a directory; a same-named file is not a governed repo."""
+    (tmp_path / IW.GOVERNANCE_MARKER_DIRNAME).write_text("not a governance dir\n")
+    assert init_workspace(tmp_path, check=True).governed_repo is False
+
+
+def test_governed_repo_is_independent_of_already_workspace(tmp_path):
+    """A governed repo may legitimately hold a songs workspace, and vice versa."""
+    governed = tmp_path / "framework"
+    governed.mkdir()
+    (governed / IW.GOVERNANCE_MARKER_DIRNAME).mkdir()
+    res = init_workspace(governed, git=False)  # writes a marker inside a governed repo
+    assert res.written is True
+    assert res.already_workspace is False and res.governed_repo is True
+
+    plain = tmp_path / "songs-repo"
+    plain.mkdir()
+    init_workspace(plain, git=False)
+    nested = plain / "songs" / "foo"
+    nested.mkdir(parents=True)
+    res = init_workspace(nested, check=True)
+    assert res.already_workspace is True and res.governed_repo is False
+
+
+def test_governed_repo_does_not_block_the_write(tmp_path):
+    """The flag is a heads-up for the caller — init still writes its marker."""
+    (tmp_path / IW.GOVERNANCE_MARKER_DIRNAME).mkdir()
+    res = init_workspace(tmp_path, git=False)
+    assert res.written is True and res.governed_repo is True
+    assert find_workspace(start=tmp_path) is not None
+
+
+def test_cli_check_reports_governed_repo(tmp_path, capsys):
+    (tmp_path / IW.GOVERNANCE_MARKER_DIRNAME).mkdir()
+    rc = IW.main([str(tmp_path), "--check"])
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["governed_repo"] is True
+
+    plain = tmp_path / "elsewhere"
+    plain.mkdir()  # still inside tmp_path's governed marker → probe walks up
+    rc = IW.main([str(plain), "--check"])
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["governed_repo"] is True
+
+
+def test_cli_check_reports_governed_repo_false(tmp_path, capsys):
+    rc = IW.main([str(tmp_path), "--check"])
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["governed_repo"] is False
+
+
+# ---------------------------------------------------------------------------
 # git
 # ---------------------------------------------------------------------------
 

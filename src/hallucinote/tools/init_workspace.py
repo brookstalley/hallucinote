@@ -9,7 +9,9 @@ happened to launch from, untracked and unmarked.
 
 This module is the author side: a tested, atomic marker write plus a ``--check``
 dry-run the onboarding skills use to detect "you're not in a workspace yet" before
-they scaffold. See ``.prawduct/artifacts/project-root-contract.md``.
+they scaffold — and, via ``governed_repo``, to warn when song work is starting
+inside a governed engineering repo. See
+``.prawduct/artifacts/project-root-contract.md``.
 
 CLI::
 
@@ -44,6 +46,13 @@ from hallucinote.workspace import (
 )
 
 DEFAULT_SONGS_ROOT = "songs"
+
+#: The directory that marks a Prawduct-governed engineering repo. Song work
+#: started inside one inherits an engineering register — governance advisories
+#: and status footers land in the middle of a creative conversation — so the
+#: onboarding skills warn before scaffolding there. Detection is a pure path
+#: probe: no plugin import, no subprocess, nothing that can fail.
+GOVERNANCE_MARKER_DIRNAME = ".prawduct"
 
 # A managed .gitignore block covering everything the toolchain *regenerates* — so a
 # freshly-bootstrapped workspace doesn't tempt the user to commit a 30-table SQLite
@@ -97,6 +106,11 @@ class InitResult:
     already_git: bool
     gitignore_written: bool
     gitignore_updated: bool
+    #: ``directory`` is at or inside a Prawduct-governed repo. Independent of
+    #: ``already_workspace`` — a governed repo may legitimately host a songs
+    #: workspace (this repo ships the ``examples/`` demo one), so this is a
+    #: heads-up for the caller, never a refusal.
+    governed_repo: bool
 
 
 def render_marker(layout: str, songs_root: str, slug: str | None) -> str:
@@ -125,6 +139,27 @@ def _is_git_repo(directory: Path) -> bool:
     """
     for d in (directory, *directory.parents):
         if (d / ".git").exists():
+            return True
+    return False
+
+
+def _is_governed_repo(directory: Path) -> bool:
+    """True if ``directory`` is at or inside a Prawduct-governed repo.
+
+    Same upward walk as :func:`_is_git_repo` and
+    ``hallucinote.workspace.find_workspace_above``: look for a
+    :data:`GOVERNANCE_MARKER_DIRNAME` directory at ``directory`` or any ancestor,
+    up to the filesystem root.
+
+    A pure path probe, deliberately uncaught. ``Path.is_dir()`` answers ``False``
+    for a missing or non-traversable path, so the only escape is a
+    ``PermissionError`` on an unreadable ancestor — which the walk cannot reach in
+    practice, because every directory it visits is one the caller already
+    traversed to name ``directory``. If that ever does happen it is a broken
+    environment the caller needs to see, not a "not governed" answer to invent.
+    """
+    for d in (directory, *directory.parents):
+        if (d / GOVERNANCE_MARKER_DIRNAME).is_dir():
             return True
     return False
 
@@ -192,6 +227,7 @@ def init_workspace(
 
     marker_path = directory / MARKER_FILENAME
     already_git = _is_git_repo(directory)
+    governed_repo = _is_governed_repo(directory)
 
     if check:
         return InitResult(
@@ -207,6 +243,7 @@ def init_workspace(
             already_git=already_git,
             gitignore_written=False,
             gitignore_updated=False,
+            governed_repo=governed_repo,
         )
 
     if already_workspace and not force:
@@ -256,6 +293,7 @@ def init_workspace(
         already_git=already_git,
         gitignore_written=gitignore_written,
         gitignore_updated=gitignore_updated,
+        governed_repo=governed_repo,
     )
 
 

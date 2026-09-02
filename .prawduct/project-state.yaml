@@ -548,7 +548,7 @@ build_state:
 # because the scope->plan resolver globbed `artifacts/*.md` non-recursively and
 # could not see a nested plan; discovery is recursive now, so that reason is
 # gone.)
-active_build_plan: .prawduct/artifacts/plans/EFFORT-S-BURNDOWN/build-plan.md
+active_build_plan:
 
 # Test roots for the evidence recorder, which otherwise discovers repo-root
 # `tests/` only. This repo is a two-package layout: the engine's suite is under

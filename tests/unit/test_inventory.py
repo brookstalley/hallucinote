@@ -113,6 +113,31 @@ def test_read_cache_wrong_schema_raises(tmp_path):
         INV.read_cache(p)
 
 
+def test_cache_errors_teach_a_runnable_invocation(tmp_path, capsys):
+    """The errors-teach model only holds if the taught command runs.
+
+    ``python -m hallucinote.inventory refresh`` is retired — it fails to
+    import from a bare shell, since the engine lives in the plugin env.
+    Both cache-failure paths and the usage line must name the CLI form.
+    """
+    corrupt = tmp_path / "corrupt.json"
+    corrupt.write_text("{not json")
+    with pytest.raises(ValueError) as corrupt_exc:
+        INV.read_cache(corrupt)
+
+    stale = tmp_path / "stale.json"
+    stale.write_text('{"schema_version": 999, "entries": []}')
+    with pytest.raises(ValueError) as stale_exc:
+        INV.read_cache(stale)
+
+    assert INV._main([]) == 2
+    usage = capsys.readouterr().out
+
+    for text in (str(corrupt_exc.value), str(stale_exc.value), usage):
+        assert "hallucinote.cli inventory refresh" in text
+        assert "python -m hallucinote.inventory" not in text
+
+
 def test_refresh_then_read_round_trips(tmp_path):
     send = FakeSend({
         ("drums", ()): _inv_result(_entry("drums", "Kit-Core 909"), scope=["drums"]),

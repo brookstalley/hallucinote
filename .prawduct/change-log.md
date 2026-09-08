@@ -70,6 +70,72 @@ crossing is bimodal on multi-lobe material.
 Build plan: `.prawduct/artifacts/build-plan-aud-sharpness-transients.md`. Six Critic
 rounds (three cumulative, three verify-resolutions), the last clean.
 
+## 2026-09-01 — Elicitation becomes a conversation: read the turn, build to the hearable unit, offer a hearing
+
+<!-- prawduct: type=feat | scope=collab-turn -->
+
+The owner's complaint was that the agent "does a poor balance of assisting the
+user versus taking over and building too much before discussing" — the same
+complaint they had made three weeks earlier. The first fix rewrote the opening
+turn; the next take had the best opening turn in the evidence corpus and then
+declared *"That's identity resolved. Scaffolding now"* while the user's answers
+were still arriving. A failure that moves one exchange later is structural, not
+a wording problem.
+
+Five structural causes were diagnosed and are recorded in
+`.prawduct/artifacts/collaboration-turn-model.md`, with a twenty-case evidence
+corpus beside it. The load-bearing one: **two different complaints had been
+collapsed onto one dial.** The June complaint was about *procedural* stops
+("scaffold done, what next?"), and it became the loudest norms in the repo —
+stop only on high-stakes decisions, the burden of proof for stopping is high.
+The collaborative stance was then written as a *carve-out* to those rules, and
+under pressure an agent obeys the hard rule and treats the carve-out as
+optional. The agent named its own inversion: it *"asked permission for craft and
+took authorship of identity."*
+
+What changed:
+
+- **"The user leads the creative project" is now the primary norm**, and
+  stop-less is scoped to *procedural* stops. Not a carve-out — that shape was
+  the cause. Both failures stay named: never stop to summarize-and-ask, and
+  never build past a hearable unit without offering to play it.
+- **Every turn is read before acting.** Six kinds — directing, reacting,
+  exploring, asking, delegating, handing-off — and only two of them authorize
+  building. Musing touches nothing.
+- **The one-turn elicitation bound is retired.** `/song-brief` is a conversation
+  that runs until the user hands off. The two failures the bound prevented (the
+  stage that never converges, the turn that fragments) are now bounded by the
+  hearable unit and the status offer. The three-state model and *a stage may not
+  emit an unresolved gap* were right and are untouched.
+- **Identity closes at hand-off, never by inference.** An answer that adds a
+  noun is not a closure; silence on an asked item is still-thinking.
+- **The brief gains an owner column** (*yours / offer me options / mine*),
+  learned from the conversation rather than asked for, and is a ledger updated
+  every turn.
+- **A loaded prompt opens its domain.** A genre, a form, an era, an artist:
+  unpack it, say what you take as read, ask the two or three that would change
+  the song most. The checklist's "a reference collapses 5 other answers into
+  one" framing is deleted — that compressor reading is what produces
+  "run off and build".
+- **Song work belongs in a songs workspace.** `init-workspace --check` now
+  reports `governed_repo`, and both entry skills give a heads-up — never a
+  block — before scaffolding inside a governed repo.
+
+Verification is honest about its own limit: no test can judge a conversational
+register. `tests/unit/test_collaboration_norm_parity.py` locks what *is*
+mechanical — that no live surface promises the retired rule, that the vocabulary
+is defined only in its sanctioned homes, that the brief template still parses
+against the live validator — and an operator session is queued as the acceptance
+test for the rest. The retired-phrase check matches over collapsed whitespace,
+because the plain grep the plan specified could not fail: the phrase wraps
+across line breaks, and did so in two of the files being swept.
+
+Built by four parallel delegates in isolated worktrees with disjoint file
+ownership; the delegation shape they used is now a pre-approved
+`project-preferences.md` row. Three of the four independent chunk reviews
+converged on the same finding — a file promising it did not restate the
+vocabulary and then restating it — which made it the plan's defect rather than
+any delegate's, and the plan gained a `definition` vs `rule` amendment.
 ## 2026-08-20 — Three post-sync advisories cleared: a merge driver, a triaged bug report, and a norm re-affirmed
 
 <!-- prawduct: type=chore | scope=advisory-clearing -->

@@ -11,6 +11,22 @@ build cycle). **Related:** `onboarding-and-teaching-model.md`
 `tour-walkthrough-design.md` (which names this work as a prerequisite for the
 next take), `gate-verdict-policy.md` (why none of this is a build-blocking lint).
 
+**Partly superseded (2026-09-01) by
+[`collaboration-turn-model.md`](collaboration-turn-model.md).** What that
+document replaced, on the owner's ruling:
+
+- **The one-turn bound is withdrawn.** Elicitation is a conversation that runs
+  until the user hands off. The two failures the bound existed to prevent are now
+  bounded by the *hearable unit* (what a turn may raise) and *the status offer*
+  (when to stop asking) — see the collaboration artifact for both.
+- **The "watchable on camera" rationale for that bound is withdrawn with it.**
+  It was a demo constraint standing in for a design reason.
+
+What still stands, unchanged and in force: the three-state model (DECIDED /
+UNDECIDED / NOT-APPLICABLE), *a stage may not emit an unresolved gap*, the
+DESCRIBED-BUT-UNBUILT prohibition, and the per-stage exit criteria. The brief
+additionally now carries an **owner column** (*yours / offer me options / mine*).
+
 ---
 
 ## The defect
@@ -346,7 +362,14 @@ appear in the turn**. The design stays quiet.
 
 ---
 
-## The CLAUDE.md amendment — RATIFIED AND APPLIED (2026-08-07)
+## The CLAUDE.md amendment — RATIFIED AND APPLIED (2026-08-07), SUPERSEDED (2026-09-01)
+
+> **The block quotes below are the 2026-08-07 text, kept as the record of what
+> shipped then. They are no longer what `CLAUDE.md` says.** The one-turn bullet
+> was retired and the "drive end-to-end" sentence rescoped to *drive to the next
+> hearable unit, offer a hearing, continue* — see
+> [`collaboration-turn-model.md`](collaboration-turn-model.md) and the status
+> block at the top of this file. Read `CLAUDE.md` itself for the current norms.
 
 `CLAUDE.md`'s behavioural norms are owner-ratified, so this began as proposed
 text only. **The owner ratified it on 2026-08-07 and both edits are applied** —

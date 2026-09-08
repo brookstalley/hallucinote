@@ -67,11 +67,13 @@ the evidence in [the tour](tour.md); the finished source ships in this repo as
 
 Claude will:
 
-1. Come back **once** (`/hallucinote:song-brief`) with proposals for whatever the
-   prompt left open and load-bearing — here, the key Beethoven's progressions get
+1. Come back (`/hallucinote:song-brief`) with proposals for whatever the prompt
+   left open and load-bearing — here, the key Beethoven's progressions get
    condensed into and how the 2 minutes are budgeted across the four parts. Each
    comes with reasoning and a recommendation, so *"yep"* is a complete answer.
-   The result is written down as the song's brief.
+   This is a conversation, not a form: it runs until you hand off, and anything
+   you already pinned down is taken as read rather than asked back. The result is
+   written down as the song's brief.
 2. Scaffold `songs/punk-fate/` (`/hallucinote:song-new punk-fate`) — `build.py`,
    a snapshot, tests, and intent/decision folders — using the brief's values.
 3. Pick instrument **chains** per track (instrument + effects + send levels).
@@ -82,6 +84,11 @@ Claude will:
    ```
    tempo → meter → tracks → returns → scenes → clips → mix → devices → routing → device sidechain → envelopes → performed automation → arrangement → cues
    ```
+
+You won't wait until step 5 to hear anything. Claude composes the first
+section, pushes that, and offers to play it before writing the rest — *"keep
+going"* is a complete answer if you'd rather it kept building, and *"build it
+all, I'll listen at the end"* is too.
 
 **What you should see:** Live fills with named tracks (drums, bass, …), return
 tracks (reverbs/delays), clips in the Session view, and device chains on each

@@ -333,6 +333,19 @@ design_decisions:
         expensive-to-reverse forks earn a proposal.
       artifact: .prawduct/artifacts/intent-collaboration-model.md
     - name: "One consolidated turn, bounded"
+      status: >-
+        RETIRED 2026-09-01 (owner-decided) — superseded by "Build to the
+        hearable unit, then offer a hearing" and "The status offer". The norm
+        was right that elicitation needs a bound and wrong about which one: the
+        turn cap solved correctness (no gap travels downstream dressed as a
+        decision) but said nothing about ownership, and it told the agent that
+        after one turn the stage closes and it may not ask again. What followed
+        was a 186-tool-call build the user never authorized (CTM-10), and an
+        agent declaring identity resolved while the user's answers were still
+        arriving (CTM-09). The two failure modes it bounded are now bounded by
+        the hearable unit (what a turn may raise) and the status offer (when to
+        stop asking). Elicitation is a conversation that ends at the user's
+        hand-off.
       summary: >-
         Elicitation gets exactly one turn, with every proposal, disclosure and
         piece of arithmetic in a single message. Sequential Q&A burns patience
@@ -342,6 +355,53 @@ design_decisions:
         failure modes that both look like diligence: the stage that never
         converges, and the turn that fragments.
       artifact: .prawduct/artifacts/elicitation-and-stage-exit-criteria.md
+    - name: "Read the turn before acting"
+      summary: >-
+        Every user turn is one of six kinds — directing, reacting, exploring,
+        asking, delegating, handing-off — and only directing and handing-off
+        authorize building. Musing is not a request: when the user thinks out
+        loud, think with them and touch nothing. Nearly every failure in the
+        evidence corpus is a misread here.
+      artifact: .prawduct/artifacts/collaboration-turn-model.md
+    - name: "Build to the hearable unit, then offer a hearing"
+      summary: >-
+        The hearable unit is the smallest thing that, once heard, tells the user
+        whether the idea works. Never author past one unit without having
+        OFFERED to play it — and never require the user to listen in order to
+        continue: "keep going" is a complete answer, and a decline carrying a
+        scope ("build it all, I'll listen at the end") is recorded and not
+        re-asked. The bound is on the offer, never on the listening; insisting
+        on a listen is the inquisition in another costume. Reading "done" better
+        without this bound just moves the cliff — the two are one design.
+      artifact: .prawduct/artifacts/collaboration-turn-model.md
+    - name: "The status offer"
+      summary: >-
+        When you have nothing to follow and something to play: name what is
+        settled so it can be corrected in a word, offer hearing as an option
+        rather than a default, and name what has not come up WITHOUT asking
+        about it. Naming is an invitation; asking is a demand. Fires when the
+        material has reached a hearable unit AND the user's last turn closed
+        rather than opened something, and no scoped decline is in force.
+      artifact: .prawduct/artifacts/collaboration-turn-model.md
+    - name: "A loaded prompt opens its domain"
+      summary: >-
+        A few words carrying many implications — a genre, a form, an era, an
+        artist — are unpacked, not run with. State which implications you take
+        as read so they are correctable in a word, then ask about the two or
+        three whose answer would change the song most. Never the whole list,
+        never a form. The reference artist is one rare instance of the general
+        case, not a special case to over-index on; reading a reference as a
+        shortcut that "collapses five other answers" is what produces the
+        run-off-and-build failure.
+      artifact: .prawduct/artifacts/collaboration-turn-model.md
+    - name: "Identity closes at hand-off, never by inference"
+      summary: >-
+        An answer that adds a new dimension means the user has more; silence on
+        something you asked is still-thinking, not agreement. The brief carries
+        an owner column (yours / offer me options / mine) learned from the
+        conversation rather than asked for, and is updated every turn rather
+        than written once and obeyed.
+      artifact: .prawduct/artifacts/collaboration-turn-model.md
     - name: "Three states, and a forbidden fourth"
       summary: >-
         Every dimension a stage touches ends DECIDED (value AND mechanism
@@ -587,7 +647,20 @@ backlog_service_repo: brookstalley/hallucinote
 # data-model, nonfunctional-requirements and observability-strategy; the Enforcement
 # table in artifacts/project-preferences.md is the index (pointer rows for the
 # artifact-homed norms, plus the code-level rows with Audit home / Why columns).
-norm_registry_ratified: 2026-08-12 — 29 norms: 27 across six strategy artifacts, plus two prose norms homed in project-preferences.md itself (write what a thing IS; user holds the creative verbs). The pending veto on the two agent-authored narrowings is RESOLVED by owner ruling: narrowing 1 (the "competitor/critic vs mechanism" test) REJECTED — the absolute reading stands and a contrast-definition is banned whatever it is describing; narrowing 2 (prior-art lineage may be named, never ranked against) RATIFIED. The owner also set the norm's scope for the first time: positioning prose only (README, CONTRIBUTING, SECURITY, VISION, faq, tour), and later the same day ratified the two carve-outs the sweep had applied and recorded as pending — a prescriptive rule may prohibit, and verbatim quotation is untouchable. The row now carries FOUR owner-ratified carve-outs and nothing pending; adding a fifth is a ruling, not a judgment call. Prior 2026-08-11 — same 29, both narrowings pending veto. Prior 2026-08-10 — 27 norms; six forks ruled by the owner (API scope stays internal; arrangement projection contained push-side)
+norm_registry_ratified: >-
+  2026-08-12 — 29 norms: 27 across six strategy artifacts, plus two prose norms homed in
+  project-preferences.md itself (write what a thing IS; user holds the creative verbs). The
+  pending veto on the two agent-authored narrowings is RESOLVED by owner ruling: narrowing 1
+  (the "competitor/critic vs mechanism" test) REJECTED — the absolute reading stands and a
+  contrast-definition is banned whatever it is describing; narrowing 2 (prior-art lineage may
+  be named, never ranked against) RATIFIED. The owner also set the norm's scope for the first
+  time: positioning prose only (README, CONTRIBUTING, SECURITY, VISION, faq, tour), and later
+  the same day ratified the two carve-outs the sweep had applied and recorded as pending — a
+  prescriptive rule may prohibit, and verbatim quotation is untouchable. The row now carries
+  FOUR owner-ratified carve-outs and nothing pending; adding a fifth is a ruling, not a
+  judgment call. Prior 2026-08-11 — same 29, both narrowings pending veto. Prior 2026-08-10 —
+  27 norms; six forks ruled by the owner (API scope stays internal; arrangement projection
+  contained push-side)
 
 # API versioning — the decision is authored in artifacts/api-contract.md
 # ("Recorded decision: versioning" + "Recorded decision: deprecation and

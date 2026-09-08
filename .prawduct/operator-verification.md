@@ -1780,3 +1780,49 @@ confirmed:
 7. **The A/B pair at beat 16 differs audibly**, chapter 1 vs chapter 2. This is
    the release's central claim; if the two renders sound the same to an operator,
    the chapter is not proven no matter what the flatness numbers say.
+
+---
+
+## 2026-09-01 — The collaboration turn model (COLLAB-TURN)
+
+This one is unlike every entry above it: nothing here needs Ableton. It needs a
+**person having a conversation**, because the whole intervention is prose that
+shapes how the agent behaves, and no test in this repo can judge a register.
+The build plan holds its own Requirements Confidence at *Medium on one axis* for
+exactly this reason, and this session is the acceptance test for that axis.
+
+**Why it is not optional.** A near-identical rewrite of these same surfaces
+shipped in August and decayed within one take — good on the opening turn, silent
+on everything after it. A green suite would have said nothing about that, and
+did not.
+
+1. **Start a song from a loaded prompt, in a songs workspace, with the merged
+   plugin.** *"Make me a rap song"*, or any prompt of your choosing that carries
+   more implications than words. A songs workspace, not this repo — the
+   governed-repo heads-up is itself one of the things being tested, and it fires
+   here.
+
+   Read the session against three things, each traceable to a recorded failure:
+
+   - **No build before a proposal turn you reacted to.** (CTM-01: an open,
+     hedged prompt that got scaffolded from a spec the agent wrote itself.)
+   - **Identity was not closed while you were still adding.** An answer of yours
+     that brought in a new dimension should have been read as *you have more*,
+     never as the last word. (CTM-09: *"That's identity resolved. Scaffolding
+     now"*, while the answers were still arriving.)
+   - **A hearing was offered at the first hearable unit, and not required.**
+     *"Keep going"* must be a real, zero-cost answer, and *"build it all, I'll
+     listen at the end"* must be remembered rather than re-asked at every unit.
+     (CTM-11: *"shouldn't I be hearing something?"* forty-five minutes in, with
+     zero notes taken. CTM-10: a whole song built in one pass and deleted
+     unheard.)
+
+   **And watch for the opposite failure**, which is equally real and which this
+   work could have reintroduced: if the session stops to summarize and ask
+   *"what next?"* at a procedural seam, that is CTM-12 and it is a defect, not
+   diligence.
+
+   **If the session shows the wall or the early close again, the finding is
+   against the prose lever itself** — the answer is not a seventh chunk of
+   prose, it is to bring the external eval framework in sooner, against the
+   corpus already seeded at `.prawduct/artifacts/collaboration-corpus/`.

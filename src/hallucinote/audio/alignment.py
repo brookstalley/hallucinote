@@ -36,9 +36,9 @@ were mis-aligned yet happened to be equal-length would hit the no-op path and
 feed phase-misaligned content downstream with NO visible drift — a silent wrong
 answer this trim cannot catch. If the capture mechanism ever changes (e.g. the
 AUD-4S8T source-side stop fix alters timing), add a cheap head cross-correlation
-guard here: ``cross_correlation_peak_lag`` in
-``tests/unit/audio/test_pdc_alignment.py`` was scaffolded for exactly that and
-asserts a ±64-sample (1.3 ms @ 48 kHz) PDC tolerance.
+guard here: :func:`cross_correlation_peak_lag`, below, is exactly that
+measurement, and :data:`PDC_TOLERANCE_SAMPLES` is the residual it must stay
+inside.
 """
 from __future__ import annotations
 
@@ -46,7 +46,58 @@ import dataclasses
 from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
+
 from .io import CaptureSet, Surface
+
+# How far a stem's content may sit from the master's before the two are no
+# longer usefully called aligned: 64 samples, ~1.3 ms at 48 kHz. That is inside
+# one audio buffer at every session size Live offers (128 / 256 / 512), so a
+# residual under it is buffer granularity rather than a compensation failure —
+# Live's PDC can be sample-accurate but is buffer-granular under some
+# conditions. Anything beyond it is a real, audible time offset.
+PDC_TOLERANCE_SAMPLES = 64
+
+
+def cross_correlation_peak_lag(
+    stem: np.ndarray,
+    master: np.ndarray,
+    *,
+    max_lag_samples: int | None = None,
+) -> int:
+    """Sample lag at which ``master`` is best explained by ``stem``.
+
+    Positive lag = master arrives later than stem (the expected PDC case).
+    Operates on the mono sum so stereo phase tricks don't bias the peak.
+    Both inputs must be stereo float arrays of equal length.
+
+    ``max_lag_samples`` bounds the search to ±that many samples. Unbounded, the
+    peak is free to land on a musical coincidence — two different parts sharing
+    a downbeat a bar apart correlate strongly at a lag no device chain could
+    produce. A caller asking "is this stem time-shifted relative to that one"
+    knows the delay range it cares about and says so; a caller measuring a
+    known-shared signal (a stem against the master carrying it) leaves it open.
+    """
+    if stem.shape != master.shape:
+        raise ValueError(
+            f"stem {stem.shape} and master {master.shape} must match"
+        )
+    from scipy.signal import correlate, correlation_lags
+
+    stem_mono = stem.mean(axis=1)
+    master_mono = master.mean(axis=1)
+    # SciPy's FFT-based correlate. mode='full' returns 2N-1 lags; we read
+    # the peak and convert its index to a signed lag in samples.
+    xcorr = correlate(master_mono, stem_mono, mode="full", method="fft")
+    lags = correlation_lags(master_mono.size, stem_mono.size, mode="full")
+    magnitude = np.abs(xcorr)
+    if max_lag_samples is not None:
+        # Mask rather than slice: the lag array stays index-aligned with the
+        # correlation, so the recovered lag is still read straight off it.
+        magnitude = np.where(np.abs(lags) <= max_lag_samples, magnitude, -np.inf)
+        if not np.any(np.isfinite(magnitude)):
+            return 0
+    return int(lags[int(np.argmax(magnitude))])
 
 
 @dataclass(frozen=True)
@@ -160,7 +211,9 @@ def _trim(surface: Surface, n: int) -> Surface:
 
 
 __all__ = [
+    "PDC_TOLERANCE_SAMPLES",
     "AlignmentReport",
     "SurfaceTrim",
+    "cross_correlation_peak_lag",
     "trim_to_common_length",
 ]

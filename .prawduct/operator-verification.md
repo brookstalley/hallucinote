@@ -44,6 +44,36 @@ After the reorder, same set, steps 1-5 and 8 of the checks below:
 | past-the-extent refusal | raises naming beat 200, `last_event_time=128`, and what to do |
 | set left clean | not playing, `record_mode` disarmed, no `back_to_arranger` latch, no stray cues |
 
+### Multi-arc round — after the drift fix (`d168224`), same day
+
+Every pass above was single-arc, which is exactly why the Critic's drift finding
+survived the live run. Re-vendored at `0.1.0+48ad09639ba3` and re-ran with two
+arcs on STAGGERED spans, from a start position poisoned to beat 104.011:
+
+| | |
+|---|---|
+| locate | `temporary_cue`, `start_position_moved: true` |
+| `vol` — master volume, span 8-40 (32 beats) | **41 writes**, `outcome: recorded` |
+| `pan` — master pan, span 24-40 (16 beats) | **21 writes**, `outcome: recorded` |
+
+The write counts ARE the test. 41:21 tracks the 32:16 span ratio; an arc that
+opened early on a drifted playhead read would carry roughly the union-span count
+instead of its own.
+
+Read-back confirms independent windowing:
+
+- volume 0.85 before the span → 0.3372 (b10) → 0.5918 (b24) → 0.8749 (b39) → 0.90 after
+- pan **exactly +0.0000 through beat 24** → -0.4438 (b28) → +0.1862 (b34) → +0.6662 (b39) → +0.80 after
+
+Pan stamped nothing before its own span start, which is the live form of the
+drift defect. `cue_count: 0` after the pass.
+
+One honest note: pan's lane begins just AFTER beat 24 rather than exactly on it —
+the recorder lays down its first breakpoint on the tick following the span entry.
+That is the known ~0.21 beat/tick resolution (`--perform-slowdown` is the lever,
+ENV-2T9K), not a new defect, and it is the same limitation issue #471's ask 4
+raises about the session_clip route being finer.
+
 **Still PENDING, and not covered by the above:**
 
 - **Check 7, the render capture path.** Untested. It is the same defect and the

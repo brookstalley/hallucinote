@@ -165,7 +165,11 @@ span began inside that drift opened early, and `start_playing()` re-asserts
 value across beats it was never authored over. The read was only ever a proxy
 for `union_start`; it now asks `union_start` directly, which is the question it
 was always answering. The fake that catches it is the first one here to model
-arming as a transport event rather than an inert flag.
+arming as a transport event rather than an inert flag — and a multi-arc live
+round then confirmed it in Live: two arcs on staggered spans (32 beats and 16)
+came back with 41 and 21 writes, a ratio that tracks the spans rather than the
+union, and the later arc's parameter read exactly centred through its own span
+start. An early open would have shown in both numbers.
 
 Handlers changed, so the wire fingerprint flips: re-vendor and a full Live
 quit/reopen precede any of this reaching Live. **The render capture path is NOT

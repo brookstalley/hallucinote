@@ -15,6 +15,134 @@ pending entries when `operator_verification_required: true`.
 
 ---
 
+## PERFORM-START-POSITION — the cue jump moves Live's start playing position (issue #471, 2026-09-08) — **PERFORM PATH CONFIRMED LIVE 2026-09-08; render path still PENDING**
+
+### Result — run 2026-09-08 against Live 12.4.2, scratch set, driven over the Remote Script socket
+
+**The verification found a regression before it confirmed anything**, which is the
+argument for having run it. `song.record_mode = True` is Live's Record BUTTON and
+pressing Record STARTS the transport (measured: beat 0 → 2.768 at +1.0s → 8.402 at
++1.5s). The fix as first written located AFTER the record-mode settle, so it aimed
+at a moving playhead, could never place its cue, and degraded to `playhead_only`
+every time — inert, while reporting itself accurately. First live pass: 21 values
+written, `automation_state: 0`, read-back flat at 0.9000 across every beat. A stop
+is not the escape hatch either: a stop DISARMS record_mode. Reordered to
+locate-then-arm; see `learnings.md`.
+
+After the reorder, same set, steps 1-5 and 8 of the checks below:
+
+| check | result |
+|---|---|
+| handshake after re-vendor | passes, `0.1.0+902495017a53` |
+| pass 1 — virgin parameter | `temporary_cue`, `start_position_moved: true`, 21 writes, `outcome: recorded` |
+| pass 1 read-back (shape) | 0.3149 → 0.4341 → 0.5894 → 0.7431 → 0.8586 across 9-23 — a real ramp, flat 0.85 before the span and 0.90 after |
+| start position poisoned | located to bar 26, rolled, stopped — playhead left at 104.181 |
+| **pass 2 — parameter that ALREADY has a lane, from the poisoned position** | `temporary_cue`, `start_position_moved: true`, 21 writes, `outcome: recorded` |
+| **pass 2 read-back (shape)** | 0.8339 → 0.6930 → 0.5180 → 0.3456 → 0.2039 — DESCENDING, so pass 2 genuinely overwrote pass 1's ascent. This is the case that silently did nothing three times in one day. |
+| borrowed locator given back | `cue_count: 0` after every pass |
+| seek-then-play (check 8) | seek to beat 8 → play → rolled 8.000 → 11.188 |
+| past-the-extent refusal | raises naming beat 200, `last_event_time=128`, and what to do |
+| set left clean | not playing, `record_mode` disarmed, no `back_to_arranger` latch, no stray cues |
+
+### Multi-arc round — after the drift fix (`d168224`), same day
+
+Every pass above was single-arc, which is exactly why the Critic's drift finding
+survived the live run. Re-vendored at `0.1.0+48ad09639ba3` and re-ran with two
+arcs on STAGGERED spans, from a start position poisoned to beat 104.011:
+
+| | |
+|---|---|
+| locate | `temporary_cue`, `start_position_moved: true` |
+| `vol` — master volume, span 8-40 (32 beats) | **41 writes**, `outcome: recorded` |
+| `pan` — master pan, span 24-40 (16 beats) | **21 writes**, `outcome: recorded` |
+
+The write counts ARE the test. 41:21 tracks the 32:16 span ratio; an arc that
+opened early on a drifted playhead read would carry roughly the union-span count
+instead of its own.
+
+Read-back confirms independent windowing:
+
+- volume 0.85 before the span → 0.3372 (b10) → 0.5918 (b24) → 0.8749 (b39) → 0.90 after
+- pan **exactly +0.0000 through beat 24** → -0.4438 (b28) → +0.1862 (b34) → +0.6662 (b39) → +0.80 after
+
+Pan stamped nothing before its own span start, which is the live form of the
+drift defect. `cue_count: 0` after the pass.
+
+One honest note: pan's lane begins just AFTER beat 24 rather than exactly on it —
+the recorder lays down its first breakpoint on the tick following the span entry.
+That is the known ~0.21 beat/tick resolution (`--perform-slowdown` is the lever,
+ENV-2T9K), not a new defect, and it is the same limitation issue #471's ask 4
+raises about the session_clip route being finer.
+
+**Still PENDING, and not covered by the above:**
+
+- **Check 7, the render capture path.** Untested. It is the same defect and the
+  same fix, but it needs analyzers, OSC and written WAVs, and nothing here
+  exercised it. Do not read the perform result as covering it.
+- **Check 3 against `songs/alien`.** This ran on a scratch set. The mechanism is
+  confirmed; that the reported song now performs correctly is not.
+- The `existing_cue` path (operator's own locator already at the span start) —
+  every pass here took the `temporary_cue` branch.
+
+**Visual change:** no, but a locator briefly appears and disappears in the
+arrangement's locator strip during a perform, render or seek. That is the
+temporary cue the locate borrows; if one is ever left behind, say so.
+
+This branch changes `handlers/automation.py`, `handlers/render.py`,
+`handlers/session.py` and adds `handlers/_transport.py` — all inside
+`_FINGERPRINT_PATHS`, so **`__version__` flips and the Remote Script must be
+re-vendored with a full Live quit/reopen** before any of this is live.
+
+Everything here rests on one Live behaviour this session cannot exercise:
+`CuePoint.jump()` moves the start playing position while
+`song.current_song_time` does not. The reporter verified it directly (0
+`updates_written` before the jump, 27 after, same set and span minutes apart);
+these checks confirm the shipped code uses it correctly on a real set.
+
+1. **One-time setup:** `/ableton-mcp-install`, quit Live fully, reopen.
+   `ableton://server/info` → handshake passes, new fingerprint reported.
+
+2. **Make the start position stale — the condition the bug needs.** Open
+   `songs/alien`, click somewhere late in the arrangement (around bar 87) and
+   press play, then stop. This is the ordinary act that used to poison every
+   subsequent pass.
+
+3. **Perform against a parameter that ALREADY has a lane.** Re-author one of
+   the arcs from the report (`Reverb / Decay Time` on return 1, or the Human
+   Riff `send_level`) and `push_cli execute --only performed_automation`.
+   Expect: `updates_written > 0` for every arc, each arc's `outcome` reading
+   `recorded`, and the push report carrying a per-arc roll-up line naming all
+   of them. Before this fix the pass reported `ok` and wrote nothing.
+
+4. **Confirm by SHAPE, not by value** — the diagnostic the reporter had to
+   invent. Seek to two adjacent beats inside the gesture and read the parameter
+   at each. A recorded ramp is never flat across a beat; identical readings
+   mean an untouched older recording. Record both numbers here.
+
+5. **The locator is given back.** After the pass, check Live's locator strip:
+   no cue at the span start that you did not put there. If you HAD a locator
+   there already, confirm it survived — the locate is supposed to jump to it
+   rather than toggle it away, and a toggle would have deleted it.
+
+6. **The guard fires when the mechanism cannot.** Hard to stage deliberately;
+   if you ever see `PlayheadPositionError` naming a beat far from the span,
+   that is the intended behaviour — record the message rather than retrying
+   past it.
+
+7. **Render, from the same stale-start-position state.** `ableton_render` a
+   short window and confirm the WAVs contain the section you asked for, not
+   the one the playhead was parked in. This path had the identical defect and
+   its engine pre-flight could never see it: a transport in the wrong place
+   advances exactly as healthily as one in the right place.
+
+8. **`seek` reports honestly.** `ableton_session(action='seek', bar=N)` then
+   `play`. Expect playback to begin at bar N, and the seek result to carry
+   `start_position_moved: true` with `locate_method` naming `existing_cue` or
+   `temporary_cue`. A `playhead_only` method here means the strong path was
+   unavailable — record `locate_detail`, which says why.
+
+---
+
 ## EFFORT-S-BURNDOWN — the fingerprint flip re-vendors, and the #264 fix works in real Live (2026-08-22) — PENDING
 
 This branch changed seven files inside `_FINGERPRINT_PATHS` (`dispatcher.py`,
@@ -83,7 +211,9 @@ the NODE-ADDR learning, a fake that encodes how an EXTERNAL system responds
 proves nothing until an operator confirms it. The full-session census backstop
 (`_AlwaysLeakyBrowser`) is what protects the composer if the prevention half
 turns out not to be the whole mechanism.
-## PSH-4L6C — the perform_batch locate settle is real, not just modelled (2026-08-07) — PENDING
+## PSH-4L6C — the perform_batch locate settle is real, not just modelled (2026-08-07) — **SUPERSEDED by PERFORM-START-POSITION (issue #471, 2026-09-08)**
+
+**Do not run these checks.** The fix they describe (`_wait_for_locate_on_worker`) no longer ships — its poll was retired into `handlers/_transport.py`'s shared settle — and the root-cause model below is the one #471 disproved: the settle-verify was never missing, it was polling `current_song_time` while `start_playing()` rolls from Live's separate start playing position. Check 2 (park at 0, perform an arc whose span starts far downstream) is the PERFORM-START-POSITION entry's own scenario and was verified live on 2026-09-08. Checks 3 and 4 went with the mechanism: the 1-beat locate tolerance and the settle-timeout message both belonged to the retired poll. Nothing here is still open; the entry is kept because it records the wrong model that a year of this bug was diagnosed against.
 
 `ableton_automation(action='perform_batch')` intermittently timed out on an
 8-beat arc (beats 96..104, 3.4 s at 140 BPM) against a 12.3 s budget, with

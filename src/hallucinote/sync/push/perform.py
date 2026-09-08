@@ -35,6 +35,12 @@ from .envelopes import classify_envelope_route
 
 _DEFAULT_BPM = 120.0
 
+# The handler's per-arc verdict for an arc it recorded AND verified. Mirrors
+# ``hallucinote_mcp.handlers.automation.PERFORM_OUTCOME_RECORDED`` — the engine
+# does not import the MCP package (they ship and version separately), so the
+# string is the contract and `sync-boundary-contract.md` records it.
+PERFORM_OUTCOME_RECORDED = "recorded"
+
 # Client-side read ceiling for the perform_batch wire call (ENV-8K2R #5). The
 # read-timeout POLICY leaves perform_batch unbounded on purpose — a fixed socket
 # timeout would sever the per-arc ``automation_state`` verification this
@@ -520,9 +526,13 @@ def record_perform_result(
 ) -> str | None:
     """Apply-layer hook for a single arc of a successful ``perform_batch``
     result. Records the performed-state fingerprint for this (envelope,
-    session) ONLY when the handler verified the write
-    (``automation_state == 1``); anything else
-    leaves the fingerprint unwritten so the next push retries the arc.
+    session) ONLY when the handler reported ``outcome == "recorded"`` —
+    its own verdict, computed where the pass happened; anything else leaves
+    the fingerprint unwritten so the next push retries the arc.
+    ``automation_state == 1`` plus a non-zero ``updates_written`` remain the
+    floor for a server predating the field, never the gate: the flag reads 1
+    whenever ANY lane exists on the parameter, so after the first iteration
+    it says yes regardless of what the pass did.
     Returns None when state was recorded, else a human-readable warning
     naming the arc and why — the caller surfaces it (never a silent skip).
 
@@ -531,6 +541,18 @@ def record_perform_result(
     the arc was edited mid-cycle (the stored print then reflects neither
     old nor new Live state, forcing a re-perform next push).
     """
+    # The handler states its own verdict per arc. Prefer it — it is computed
+    # where the pass actually happened — but keep the two field checks below as
+    # the floor, because an older server predates the field and a result with
+    # no `outcome` must not be read as an absent objection.
+    outcome = result.get("outcome")
+    if outcome is not None and outcome != PERFORM_OUTCOME_RECORDED:
+        reason_text = result.get("outcome_reason") or "no reason given"
+        return (
+            f"perform {envelope_id}: the handler reported outcome="
+            f"{outcome!r} — {reason_text} Fingerprint left unwritten; the "
+            "next push retries this arc."
+        )
     state = result.get("automation_state")
     if state != 1:
         return (
@@ -540,17 +562,20 @@ def record_perform_result(
             "If it never verifies, check the parameter isn't "
             "automation-overridden or locked in Live."
         )
-    # A verified state with zero value writes means the playhead crossed the
-    # arc's whole span between ramp ticks (sub-tick / degenerate window): the
-    # gesture opened and closed but nothing was recorded, so automation_state=1
-    # reflects the STALE pre-edit lane, not this arc. Don't trust it — leave
-    # the fingerprint unwritten so the next push re-performs. (updates_written
-    # absent → a caller that doesn't report it; don't second-guess that case.)
+    # A verified state with zero value writes means this pass wrote nothing for
+    # the arc — either the playhead crossed its whole span between ramp ticks
+    # (a degenerate sub-tick window) or the transport never entered the span at
+    # all. Either way ``automation_state=1`` is answering about a lane an
+    # EARLIER pass wrote: the property reads 1 whenever any lane exists on the
+    # parameter, so it cannot distinguish this pass's work from last week's.
+    # Leave the fingerprint unwritten so the next push re-performs.
+    # (updates_written absent → a caller that doesn't report it; don't
+    # second-guess that case.)
     if result.get("updates_written") == 0:
         return (
             f"perform {envelope_id}: automation_state=1 but updates_written=0 "
-            "— the playhead crossed the arc's span between ticks, so no value "
-            "was recorded this pass and the '1' reflects a stale lane. "
+            "— no value was recorded this pass, so the '1' reflects a stale "
+            "lane from an earlier one. "
             "Fingerprint left unwritten; the next push retries this arc."
         )
     env = Q.get_envelope(conn, envelope_id)

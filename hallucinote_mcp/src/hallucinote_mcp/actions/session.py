@@ -211,9 +211,11 @@ register(
         tool="ableton_session",
         name="play",
         description=(
-            "Start playback — Live's *Start* transport verb. In a clean "
-            "transport state, seek then play locates-and-plays. Returns the "
-            "verb invoked (not a read-back of the realized start position)."
+            "Start playback — Live's *Start* transport verb. Rolls from "
+            "Live's START PLAYING POSITION, which is a different property "
+            "from the playhead: use ableton_session(action='seek') to move "
+            "it, never a raw current_song_time write. Returns the verb "
+            "invoked (not a read-back of the realized start position)."
         ),
         handler=session_handlers.play_handler,
         example="ableton_session(action='play')",
@@ -284,7 +286,11 @@ register(
     Action(
         tool="ableton_session",
         name="seek",
-        description="Move the playhead to (bar, beat). 1-based bar, 0-based-within-bar beat.",
+        description=(
+            "Move the transport to (bar, beat) — the playhead AND Live's "
+            "start playing position, so a following 'play' begins there. "
+            "1-based bar, 0-based-within-bar beat."
+        ),
         params=(
             ParamSpec(name="bar", type="int", minimum=1),
             ParamSpec(name="beat", type="float", required=False, minimum=0.0),
@@ -302,6 +308,16 @@ register(
             "(0 = downbeat, 1 = beat 2, etc.).",
             "Live counts a beat as a quarter note regardless of meter — "
             "in 6/8, bar 1 has 3 beats (0.0, 1.0, 2.0).",
+            "Refuses a bar past the arrangement's last_event_time: Live "
+            "clamps the playhead to the arrangement's extent, so playback "
+            "can never begin there. Place arrangement content covering the "
+            "position first.",
+            "start_position_moved says whether playback will actually begin "
+            "here. False means only the playhead moved (locate_detail says "
+            "why) — the position is right to read from, but 'play' may roll "
+            "from wherever it was last pressed. Never write "
+            "current_song_time directly to position for playback: it moves "
+            "the playhead alone.",
         ),
     )
 )

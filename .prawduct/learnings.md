@@ -88,6 +88,18 @@ put any narrative there.
 
 **When writing a Live property (especially anything bound to transport — `current_song_time`, anything that affects the audio thread), do NOT verify success by reading the same property back in the same callback. Verify by inspecting the actual side effect (e.g., `song.cue_points` after a `set_or_delete_cue` toggle).**
 
+## Arming Live's record STARTS the transport — so position before you arm
+
+**`song.record_mode = True` is Live's Record BUTTON, and pressing Record rolls the transport. Any positioning done after the arm therefore aims at a MOVING playhead, and a stop is not the escape hatch because a stop disarms record_mode. Position first, then arm, and let the arm roll from where you put it.** Measured on Live 12.4: armed at beat 0, the playhead reads 2.8 one second later and 8.4 after ninety.
+
+## An honest read-back of the wrong property is the hardest bug to see
+
+**When a write is supposed to change a BEHAVIOUR, verify the behaviour, not the property you wrote. A property that reads back exactly what you set proves the write landed — never that it governs what you wanted.** Ask at design time what property the behaviour actually reads, and prefer a check on the realized effect, which holds even when the mechanism is wrong.
+
+## A field that is 1 whenever ANY prior state exists cannot verify THIS pass
+
+**Before trusting an external system's verification flag, ask what it reads true for. If it answers about the target's STATE rather than about your OPERATION, it is asymmetric — honest on a virgin target, unconditionally affirmative on one you have touched before — so it verifies the first run and nothing after. Verify with a count the operation itself owns, and state the verdict rather than leaving a reader to derive it from two fields that can disagree.**
+
 ## Unit fakes that mirror an *assumed* Live API give false confidence
 
 **Test fakes for Live's Remote Script API must simulate the real API's quirks — not the API's documented or assumed shape. Without an integration smoke test against a real Live process, the unit suite gives a green light to handlers that crash empirically.**

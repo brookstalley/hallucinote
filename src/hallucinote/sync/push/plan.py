@@ -15,7 +15,11 @@ from .clips import plan_push_clips
 from .devices import plan_push_devices, plan_push_device_sidechain
 from .envelopes import plan_push_envelopes
 from .mix import plan_push_mix
-from .perform import plan_push_performed_automation, record_perform_result
+from .perform import (
+    PERFORM_OUTCOME_RECORDED,
+    plan_push_performed_automation,
+    record_perform_result,
+)
 from .routing import plan_push_routing
 from .scenes import plan_push_scenes
 from .tempo import plan_push_tempo_map, plan_push_time_signature_map
@@ -573,6 +577,36 @@ KNOWN_RESULT_KEY_KINDS: frozenset[str] = (
 )
 
 
+def _describe_arc_outcome(arc: dict[str, Any], *, fingerprinted: bool) -> str:
+    """One perform arc, as a line an author can act on: which envelope, over
+    which beats, what happened to it, and how many values the pass actually
+    wrote. The write count is there because it is the number that separates a
+    real recording from a stale lane answering for one.
+
+    The verdict comes from the handler's own ``outcome`` where it is present,
+    not from whether a warning came back. Those two answer different questions:
+    an envelope deleted mid-cycle also produces a warning, and printing
+    UNVERIFIED for it would send the reader hunting a recording fault that
+    never happened. ``fingerprinted`` is the fallback for a server predating
+    the field, and is named for what it actually observed.
+    """
+    span = arc.get("span_beats") or []
+    where = (
+        f"[{float(span[0]):g}-{float(span[1]):g}] " if len(span) == 2 else ""
+    )
+    outcome = arc.get("outcome")
+    if outcome is None:
+        verdict = "recorded" if fingerprinted else "UNVERIFIED"
+    elif outcome == PERFORM_OUTCOME_RECORDED:
+        verdict = "recorded" if fingerprinted else "recorded, NOT FINGERPRINTED"
+    else:
+        verdict = str(outcome).upper()
+    return (
+        f"{arc.get('arc_id')} {where}{verdict} "
+        f"({arc.get('updates_written')} value writes)"
+    )
+
+
 def apply_push_results(
     conn: sqlite3.Connection,
     results: list[dict[str, Any]],
@@ -581,6 +615,7 @@ def apply_push_results(
     actor: str = "sync",
     request_id: str | None = None,
     reason: str | None = None,
+    notes_sink: Callable[[str], None] | None = None,
 ) -> list[str]:
     """After the agent runs the plan, feed structured results back here so the
     DB knows what's now in Ableton. Bindings are recorded in `ableton_links`
@@ -603,12 +638,22 @@ def apply_push_results(
     Failed results (`ok=False`) are skipped — the agent layer is the source
     of truth for tool-side errors; hallucinote records nothing for them.
 
+    ``notes_sink`` receives operator-facing lines that are NOT problems — the
+    perform phase's per-arc roll-up, which is worth reading precisely when
+    nothing went wrong. The returned warnings ride the errors file, so a clean
+    push must not put anything there; without a second channel the choice is
+    between an accurate report that looks failed and a phase that spends
+    minutes of realtime and says only "ok (1 call)". The caller supplies the
+    benign channel it already has.
+
     Returns apply-layer warnings (empty when everything recorded cleanly).
-    Today these come from the `perform_batch` branch — for any arc whose
-    handler could NOT verify the write (`automation_state != 1`) the apply
-    layer records nothing for that arc and the warning says so (never a
-    silent skip; the next push retries just that arc). Callers must surface
-    them.
+    Today these come from the `perform_batch` branch: for any arc the handler
+    could not confirm it recorded, the apply layer records nothing for that
+    arc and the warning says so (never a silent skip; the next push retries
+    just that arc). `record_perform_result` states the gate that decides
+    that — restating it here is how this paragraph went stale once already.
+    A degraded locate is warned about on the same channel. Callers must
+    surface them.
     """
     warnings: list[str] = []
     with transaction(conn):
@@ -645,6 +690,7 @@ def apply_push_results(
                         "or the playhead moved; check record_mode in Live."
                     )
                 processed = 0
+                outcomes: list[str] = []
                 for arc in res.get("arcs", []):
                     arc_eid = arc.get("arc_id")
                     if not arc_eid:
@@ -663,7 +709,40 @@ def apply_push_results(
                     )
                     if perform_warning is not None:
                         warnings.append(perform_warning)
+                    outcomes.append(
+                        _describe_arc_outcome(
+                            arc, fingerprinted=perform_warning is None
+                        )
+                    )
                     processed += 1
+                # A realtime phase that spends minutes of wall clock and
+                # reports "ok (1 call)" gives the author nothing to act on —
+                # the divergence this names was found by ear, three passes
+                # late. Say what happened to every arc, not just the ones that
+                # failed, and say it on the benign channel so a clean push
+                # still reads as clean.
+                if outcomes and notes_sink is not None:
+                    notes_sink(
+                        "performed-automation: " + "; ".join(outcomes)
+                    )
+                # How the transport was positioned. A pass that ran on a
+                # degraded locate recorded against a start position nothing
+                # moved — it may well be right, and a per-arc verdict cannot
+                # say. The handler logs it, but that log is in Live; this is
+                # where the author looks.
+                if res.get("start_position_moved") is False:
+                    warnings.append(
+                        "perform_batch: the transport was positioned by "
+                        f"{res.get('locate_method')!r}, which moves the "
+                        "playhead but NOT Live's start playing position — "
+                        "playback was not guaranteed to begin at the span. "
+                        + (
+                            f"Reason: {res['locate_detail']} "
+                            if res.get("locate_detail") else ""
+                        )
+                        + "The arcs above recorded, but check the lanes "
+                        "landed where you authored them."
+                    )
                 # ENV-8K2R #4: planned-vs-returned cross-check. The handler
                 # reports `arc_count` = how many arcs it prepared (== the
                 # planner's queued count on the success path). If fewer per-arc

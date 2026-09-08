@@ -32,6 +32,161 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-09-08 — Live plays from a position `current_song_time` never moved
+
+<!-- prawduct: type=fix | scope=perform-start-position -->
+
+Issue #471 opened as "a perform pass reports success and records nothing", and
+the reporter closed it themselves with the mechanism: `song.current_song_time`
+is the playhead, and `start_playing()` rolls from Live's **start playing
+position**, which that write does not move. The LOM exposes no writable
+property for the second — `CuePoint.jump()` is the one surface that moves it.
+
+The two agree on a set nobody has listened to and part company the moment
+someone presses play in the arrangement, so locate-then-play was only ever
+coincidentally correct. On `songs/alien` the start position had drifted to ~351
+while the arcs lived at 96-104: three passes in one day each seeked correctly,
+read the seek back correctly, rolled from 351, exited the ramp loop on the first
+tick already past the span, and returned a clean result. The divergence was
+found by ear, from a reverb wash that did not match what the DB said was there.
+
+**The settle-verify was not missing — it was answering about the wrong
+property.** `perform_batch` already had a worker-thread poll on
+`current_song_time` (PSH-4L6C), and it passed every time, honestly. That is what
+makes this class hard to see, and it is why the fix has two halves rather than
+one.
+
+`handlers/_transport.py` is the first: `locate_start_position` moves the start
+position by jumping to a cue at the target — the operator's own where one is
+there, otherwise borrowing one (create, jump, delete) and reporting rather than
+swallowing a locator it fails to give back.
+
+**Borrowing writes to the operator's set, and that was the decision worth
+weighing.** A locate now costs two Undo entries and shows a locator flickering
+in the arrangement — a mutation nobody asked for, in a set that is somebody's
+song. The alternative was to jump to the nearest cue at or before the target and
+let each arc's window gate the writes, which mutates nothing. It was rejected on
+cost: for an arc at beat 345 on a set whose nearest earlier locator is at bar 1,
+that is a realtime pre-roll of several minutes per pass, on a mechanism whose
+whole expense is already wall-clock. The borrow is bounded instead — one cue, at
+one beat, given back in a `finally` so it survives a raise, and its failure to
+come back is logged with the beat named. A third option, requiring the operator
+to place a locator at every span they author, was not seriously considered: it
+makes the tool's mechanism their problem. A cue that exists but cannot be
+jumped degrades instead of falling through to the borrow path, because that
+path's toggle fires at the same beat and a toggle where a cue already sits
+DELETES it.
+
+The second half is `require_playhead_within`, which judges where the transport
+ACTUALLY rolled from. That one is mechanism-independent — it holds when the
+locate is defeated by something nobody has seen yet — and it is why a wrong
+position is now a loud error rather than silent divergence. Both callers hand it
+a beat they already read (the ramp loop reads one every tick; the render reads
+one for its engine pre-flight), so the guard costs no extra Live touch — and
+both read it only once the transport is demonstrably rolling, because Live's
+playhead mirror lags the audio thread and the first read after `start_playing()`
+still shows the position the locate parked, which is the one value that would
+make the check pass at the moment it must fail.
+
+**The same two lines were in two more places.** `render.py`'s capture seeked and
+played, and its engine pre-flight asks whether the transport ADVANCES — a
+transport in the wrong place advances exactly as well as one in the right place,
+so a render could capture minutes of the wrong section and report a healthy
+capture. And `session.py`'s play note *told operators* that "seek then play
+locates-and-plays: the render capture path relies on exactly that", which is the
+false belief that cost the reporter six hours, shipped as documentation and read
+at precisely the moment someone is debugging this. `seek` now moves the start
+position too and says which method did it, so the read-back workflow that
+diagnosed the bug is trustworthy.
+
+A source-level test now fails on any handler that reaches `start_playing()` for
+a positioned pass without locating first, with a two-entry exemption list for
+the bare transport verbs. The mistake leaves no trace in the code that made it,
+so it is checked rather than left to reviewers.
+
+**Reporting, the other half of the issue.** `automation_state` cannot verify a
+perform: it reads 1 whenever ANY lane exists on the parameter, so on every
+iteration after the first it is 1 regardless of what the pass did. A parameter
+with no prior lane failed honestly; one with a lane could not. Each arc now
+carries a stated `outcome` (`recorded` / `unverified`) plus the reason, computed
+where the pass happened, and the apply layer branches on that with the old two
+field checks kept as the floor for a server predating it. `apply_push_results`
+gains a `notes_sink` — a benign channel next to the actionable one, since the
+returned warnings ride `.last-push-errors.json` and a per-arc roll-up there
+would make a clean push look failed — and every arc gets a line naming its span,
+its verdict and its write count.
+
+**Not built, and why.** The issue's ask 1 (verify each arc by sampling the
+parameter back across its span) was written before the mechanism was known, when
+read-back shape was the only diagnostic available from outside. `updates_written`
+is a direct count of what the pass wrote and the position guard catches the
+failure before the ramp even runs, so it is filed as defence-in-depth rather
+than built. Ask 4 (prefer the `session_clip` route wherever the span allows) is a
+routing-policy change with real consequences the reporter names themselves —
+`insert_step`-only, so a ramp must be authored as an explicit staircase — and
+deserves its own design pass. Filed as #478 and #479; #479 should be read
+alongside the already-open #474, which asks for the inferred route to be
+surfaced at all.
+
+**Verified against Live 12.4.2 the same day — and the verification found a
+regression before it confirmed anything.** `song.record_mode = True` is Live's
+Record BUTTON, and pressing Record starts the transport (beat 0 → 2.768 at
++1.0s → 8.402 at +1.5s). The fix as first written located AFTER the record-mode
+settle, reasoning that arming was the last thing that could disturb the
+playhead. Arming does not disturb the playhead; it starts it. So the locate
+aimed at a moving target, could never place its cue — the toggle fires at the
+transport's real position, so an imprecise one is refused by design — and every
+locate degraded to `playhead_only`. The whole fix was inert while reporting
+itself accurately: the first live pass wrote 21 values, recorded no lane, and
+read back flat at 0.9000 on every beat.
+
+Stopping between the arm and the locate is not the escape hatch either: a stop
+DISARMS `record_mode`. The order is now quiet-the-transport → locate → arm, and
+the arm rolls from the start position the locate just set, which is where the
+pass wanted it. Two tests that encoded the old sequence were updated with the
+measurement as their reason, and a third now pins locate-before-arm.
+
+After the reorder, on the same set: a virgin parameter records and reads back as
+a real ramp (0.315 → 0.859). Then the start position was poisoned to beat 104
+the way a human does it — click late, roll, stop — and a second arc was
+performed against that same, now lane-bearing parameter. It recorded, and the
+read-back DESCENDS (0.834 → 0.204) where the first pass ascended, which is what
+proves the second pass landed rather than the first still answering for it. That
+is the exact case that silently did nothing three times in one day. The borrowed
+locator came back every time (`cue_count: 0`), and the past-the-extent refusal
+fires with its teaching message.
+
+The reorder had one consequence the live run could not show, because every pass
+there was single-arc: the initial gesture-open read the live playhead to decide
+which arcs were already active, and with the transport now rolling since the arm
+that read is `union_start` plus whatever the settle let it travel. An arc whose
+span began inside that drift opened early, and `start_playing()` re-asserts
+`union_start` a line later — so the ramp would write that arc's first breakpoint
+value across beats it was never authored over. The read was only ever a proxy
+for `union_start`; it now asks `union_start` directly, which is the question it
+was always answering. The fake that catches it is the first one here to model
+arming as a transport event rather than an inert flag — and a multi-arc live
+round then confirmed it in Live: two arcs on staggered spans (32 beats and 16)
+came back with 41 and 21 writes, a ratio that tracks the spans rather than the
+union, and the later arc's parameter read exactly centred through its own span
+start. An early open would have shown in both numbers.
+
+The same reorder moved one more thing under the guard's feet, caught on review
+rather than by measurement. The ramp's movement gate — the thing that decides a
+read is evidence the mirror caught up — compared against the beat the LOCATE
+settled at. Since the arm now rolls the transport away from that beat before
+play, a stale first read reporting the pre-play position looked like movement
+and retired the position check on the read that proves the least. The baseline
+is now the beat read immediately before `start_playing()`, which is the only one
+a stale read can equal.
+
+Handlers changed, so the wire fingerprint flips: re-vendor and a full Live
+quit/reopen precede any of this reaching Live. **The render capture path is NOT
+covered by that verification** — same defect, same fix, but it needs analyzers,
+OSC and written WAVs and none of that was exercised; nor was `songs/alien`
+itself, only the mechanism on a scratch set. Both stay in
+`operator-verification.md`.
+
 ## 2026-09-08 — The governance files stop growing without a ceiling
 
 <!-- prawduct: type=chore | scope=governance-file-sizes -->

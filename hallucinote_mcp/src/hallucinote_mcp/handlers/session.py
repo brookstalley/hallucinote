@@ -27,6 +27,7 @@ import re as _re
 from typing import Any
 
 from ..dispatcher import LiveContext
+from ._transport import locate_start_position
 from ._arrangement_latch import (
     CLICK_BACK_TO_ARRANGEMENT,
     OVERRIDE_DESCRIPTION,
@@ -183,16 +184,28 @@ def set_master_property_handler(
 def seek_handler(
     context: LiveContext, *, bar: int, beat: float = 0.0
 ) -> dict[str, Any]:
-    """Move the playhead to (bar, beat). 1-based bar, 0-based-within-bar beat.
+    """Move the transport to (bar, beat). 1-based bar, 0-based-within-bar beat.
+
+    Moves Live's **start playing position**, not only the playhead. Those are
+    separate, and ``start_playing()`` rolls from the first while writing
+    ``current_song_time`` moves only the second — so a seek that moved only the
+    playhead read back perfectly and then played from wherever the operator had
+    last pressed play. Anyone using seek-then-play to inspect a position (the
+    read-back workflow that diagnosed #471) needs the strong one. See
+    ``handlers/_transport.py``.
+
+    ``start_position_moved`` says whether that succeeded; ``locate_method``
+    says how, and ``locate_detail`` says why not when it is False. A degraded
+    locate still leaves the playhead where it was asked — it just cannot
+    promise playback will begin there.
 
     Returns the COMPUTED ``song_time`` from the input, not a getter-readback.
     Live 12.x's ``Song.current_song_time`` getter can return a stale cached
     value within the same callback as the setter (the audio thread picks
     up writes on a delayed schedule); reporting the readback gave false
     response values like ``song_time=last_event_time`` when the readback
-    raced the write. The write itself is correct — Live's transport
-    eventually settles to the target — so reporting what we wrote is the
-    honest answer.
+    raced the write. ``settled_beats`` carries what the position actually
+    settled to, which is a different fact and is polled for, not raced.
 
     **Threading (W3-F follow-up):** Registered with ``runs_on_worker=True``.
     Holds ``context.live_state_lock`` around the write to serialize
@@ -204,18 +217,27 @@ def seek_handler(
     acquiring a lock held by worker-thread cue_create) was the
     deadlock that the Critic caught.
     """
-    def _compute_and_seek_on_main() -> float:
+    def _compute_song_time_on_main() -> float:
         song = context.song
         beats_per_bar = float(song.signature_numerator) * (
             4.0 / float(song.signature_denominator)
         )
-        song_time = (bar - 1) * beats_per_bar + beat
-        song.current_song_time = song_time
-        return float(song_time)
+        return float((bar - 1) * beats_per_bar + beat)
 
     with context.live_state_lock:
-        song_time = context.run_on_main(_compute_and_seek_on_main)
-    return {"bar": bar, "beat": beat, "song_time": song_time}
+        song_time = context.run_on_main(_compute_song_time_on_main)
+        locate = locate_start_position(context, song_time)
+    result: dict[str, Any] = {
+        "bar": bar,
+        "beat": beat,
+        "song_time": song_time,
+        "settled_beats": locate.settled_beats,
+        "start_position_moved": locate.start_position_moved,
+        "locate_method": locate.method,
+    }
+    if locate.detail is not None:
+        result["locate_detail"] = locate.detail
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -237,13 +259,15 @@ _PLAY_SEMANTICS_NOTE = (
     "play invokes Live's *Start*; continue_playing invokes *Continue* (resume "
     "from the last-stopped position). This result reports the verb invoked, NOT "
     "a read-back of where Live actually began — the realized start position is "
-    "Live-state-dependent and a handler can't reliably read it back. In a clean "
-    "transport state, seek then play locates-and-plays: the render capture path "
-    "relies on exactly that (current_song_time set, then start_playing). If you "
-    "seeked and playback didn't begin there — or the transport moves but you "
-    "hear no audio — the usual cause is the back_to_arranger override latch "
-    "suppressing Arrangement playback, not the seek; clear it with "
-    "ableton_session(action='back_to_arrangement')."
+    "Live-state-dependent and a handler can't reliably read it back. Both verbs "
+    "roll from Live's START PLAYING POSITION, which is a different property "
+    "from the playhead: writing current_song_time moves the playhead alone, so "
+    "a raw seek-then-play begins wherever play was last pressed. "
+    "ableton_session(action='seek') moves the start position too and reports "
+    "start_position_moved, so use it rather than writing the playhead directly. "
+    "If the transport moves but you hear no audio, the usual cause is the "
+    "back_to_arranger override latch suppressing Arrangement playback; clear it "
+    "with ableton_session(action='back_to_arrangement')."
 )
 
 

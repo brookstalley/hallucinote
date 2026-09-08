@@ -1591,6 +1591,7 @@ def test_cli_apply_writes_link_from_result(conn, song, session, db_path, tmp_pat
     summary = json.loads(capsys.readouterr().out)
     assert summary == {
         "applied": 1, "failed": 0, "details": [], "apply_warnings": [],
+        "apply_notes": [],
     }
     # Re-open for fresh connection so the apply's transaction is visible.
     fresh = init_db(db_path)
@@ -1628,6 +1629,7 @@ def test_cli_apply_skips_link_when_result_lacks_index(
     summary = json.loads(capsys.readouterr().out)
     assert summary == {
         "applied": 1, "failed": 0, "details": [], "apply_warnings": [],
+        "apply_notes": [],
     }
     fresh = init_db(db_path)
     try:

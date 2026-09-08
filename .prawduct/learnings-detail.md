@@ -117,6 +117,28 @@ The fakes that DON'T simulate wrapper recreation still pass when `is` is used �
 
 **Diagnostic discipline**: when a handler writes a transport-coupled property, always include `target`, `last_observed`, and `prior` in any error response. The "each call observes the previous call's target" race pattern is visible in 30 seconds with these fields, invisible without them.
 
+## Arming Live's record STARTS the transport — so position before you arm
+
+Found by operator verification, and it could not have been found any other way. The #471 fix positioned the transport AFTER the record-mode settle, on the reasoning that "arming is the last thing that could disturb the playhead". Arming does not disturb the playhead; it starts it.
+
+The consequence was total and silent. The locate settled against a playhead moving away from it, landing wherever it happened to be — a real pass reported having "parked the playhead at beat 8.392 rather than 8". The cue toggle fires at the transport's actual position, so an imprecise one cannot be placed safely, and the borrow path correctly refused every time: every locate degraded to `playhead_only`, and the fix was inert while reporting itself accurately. The first live pass wrote 21 values and recorded no lane at all (`automation_state: 0`, read-back flat at the endpoint value).
+
+Two measurements settled the shape of the fix. `song.record_mode = True` at beat 0 → playhead 2.768 at +1.0s, 8.402 at +1.5s, `is_playing: True`. And `stop` → `record_mode` goes back to False, so stopping between the arm and the locate is not available. The order has to be: quiet the transport, locate the start position, THEN arm — the arm rolls from the start position the locate just set, which is where the pass wants it anyway.
+
+After the reorder, on the same set: `locate_method: temporary_cue`, `start_position_moved: true`, 21 writes, `outcome: recorded`, and a read-back that ramps 0.315 → 0.859 instead of sitting flat.
+
+The general form: **before ordering a setup sequence, ask of each step what it does to the thing the NEXT step measures.** A step whose name sounds passive ("arm", "enable", "select") can be the one that moves the world.
+
+## An honest read-back of the wrong property is the hardest bug to see
+
+`song.current_song_time` is the playhead. `start_playing()` and `continue_playing()` roll from Live's separate START PLAYING POSITION, which that write does not move — the LOM exposes no writable property for it at all; `CuePoint.jump()` is the one surface that moves it ("when not playing, simply move the start playing position").
+
+The two agree on a set nobody has listened to, and part company the moment a human presses play in the arrangement. So seek-then-play was only ever coincidentally correct, and the whole class hides behind "it works on my test set". Issue #471: a perform pass sought to the span start, read it back honestly, played, and rolled from beat 351 — three passes in one day, each reporting success, each recording nothing, found by ear from a stale reverb wash. The same two lines were in the render capture path and asserted as a guarantee in `ableton_session(action='play')`'s operator-facing note.
+
+The sibling rule above (trust the side effect, not the getter read-back) was already followed here: `perform_batch` had a worker-thread settle-poll on `current_song_time`, and it passed every time, because the locate really had landed. A settle-verify on the wrong property is indistinguishable from a correct one.
+
+Two habits. At design time, ask what property the BEHAVIOUR reads, not whether your write took. At code time, prefer a check on the realized effect — where the transport ACTUALLY is after play — because that one holds even when the mechanism is defeated by something nobody has seen yet. `handlers/_transport.py` is the shared primitive; `test_handlers_transport.py`'s fake keeps the two fields separate so a bare `current_song_time` write fails every test in it.
+
 ## Unit fakes that mirror an *assumed* Live API give false confidence
 
 The 2026-05-17 push session shipped five handler fixes (the B-1/B-2/B-10/B-11/B-12 bug bucket; original triage doc deleted in the v0.9.0 hygiene sweep — `git log -- .prawduct/artifacts/bug-triage.md` recovers it) that each had passing unit tests. The fakes mirrored what we *thought* Live exposed: collection appends preserved identity, `set_or_delete_cue` accepted a time argument, `Track.load_device` existed, etc. Real Live 12.4 differs on every count. The unit suite never saw the divergence.

@@ -1329,6 +1329,10 @@ def execute_push(
                 actor=actor,
                 request_id=request_id,
                 reason=reason or f"push_cli execute phase={phase_name}",
+                # Operator-facing lines that are NOT problems (the perform
+                # phase's per-arc roll-up) ride the benign warnings channel,
+                # not the errors file — a clean push must still read as clean.
+                notes_sink=warning_messages.append,
             )
         except ValueError as exc:
             error_records.append({

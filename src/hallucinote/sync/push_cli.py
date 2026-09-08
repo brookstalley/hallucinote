@@ -458,11 +458,13 @@ def _cmd_apply(args: argparse.Namespace) -> int:
     # Surface a tiny summary so the skill can report per-phase progress.
     applied = sum(1 for r in results if r.get("ok"))
     failed = [r for r in results if not r.get("ok")]
+    apply_notes: list[str] = []
     apply_warnings = push.apply_push_results(
         conn, results,
         session_id=args.session_id,
         actor="sync",
         reason=args.reason or f"push from session {args.session_id}",
+        notes_sink=apply_notes.append,
     )
     out = {
         "applied": applied,
@@ -472,6 +474,10 @@ def _cmd_apply(args: argparse.Namespace) -> int:
             for r in failed
         ],
         "apply_warnings": apply_warnings,
+        # Operator-facing lines that are not problems — the perform phase's
+        # per-arc roll-up. Separate from apply_warnings so a clean apply does
+        # not have to look like a failed one to say what it did.
+        "apply_notes": apply_notes,
     }
     json.dump(out, sys.stdout, indent=2)
     sys.stdout.write("\n")

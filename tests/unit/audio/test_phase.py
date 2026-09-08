@@ -253,3 +253,44 @@ def test_non_positive_sample_rate_is_rejected():
     stem = fixtures.pink_noise(1.0)
     with pytest.raises(ValueError):
         measure_phase_relations([("a", stem), ("b", stem)], sample_rate=0)
+
+
+class TestLagCorrelationSeparatesDelayFromCoincidence:
+    """A cross-correlation always peaks somewhere, so a lag alone proves nothing.
+
+    A real render made this concrete: every uncorrelated stem pair in a finished
+    song reported a confident-looking offset of tens of milliseconds at r ~ 0.
+    That is two parts sharing a downbeat, not a device delay — and a consumer
+    that acted on it would chase a latency bug that does not exist.
+    """
+
+    def test_a_genuine_delay_has_a_strong_lag_correlation(self) -> None:
+        source = fixtures.pink_noise(1.0, rng=np.random.default_rng(7))
+        delayed = fixtures.delayed_copy(source, delay_samples=240)
+        [rel] = measure_phase_relations(
+            [("dry", source), ("delayed", delayed)], sample_rate=SR
+        )
+        assert rel.lag_samples != 0
+        assert rel.lag_correlation > 0.9
+
+    def test_unrelated_parts_report_a_lag_nobody_should_believe(self) -> None:
+        [rel] = measure_phase_relations(
+            [
+                ("a", fixtures.pink_noise(1.0, rng=np.random.default_rng(1))),
+                ("b", fixtures.pink_noise(1.0, rng=np.random.default_rng(2))),
+            ],
+            sample_rate=SR,
+        )
+        # The lag itself is not asserted — it is whatever the argmax landed on,
+        # which is the point. What must hold is that the confidence says so.
+        assert rel.lag_correlation < 0.5
+
+    def test_a_delay_on_an_inverted_pair_is_still_a_confident_lag(self) -> None:
+        source = fixtures.pink_noise(1.0, rng=np.random.default_rng(11))
+        flipped_late = (-fixtures.delayed_copy(source, delay_samples=180)).astype(
+            source.dtype
+        )
+        [rel] = measure_phase_relations(
+            [("dry", source), ("wet", flipped_late)], sample_rate=SR
+        )
+        assert rel.lag_correlation > 0.9

@@ -147,6 +147,16 @@ class PhaseRelation:
     broadband_cancellation_db: float
     band_cancellation: list[BandCancellation]
     skipped: str | None = None
+    # How much of the lag reading to believe: the normalized correlation AT
+    # ``lag_samples``, 0..1. A cross-correlation always has a peak somewhere, so
+    # two unrelated parts always yield some lag — on a real render every
+    # uncorrelated pair returned a confident-looking offset of tens of
+    # milliseconds, which is musical coincidence (two parts sharing a downbeat),
+    # not device latency. Without this field a consumer cannot tell that apart
+    # from a genuine plugin delay, and reporting the wrong one as latency is
+    # worse than reporting nothing. Near 0 means the lag is noise; a real
+    # uncompensated delay puts a sharp peak here.
+    lag_correlation: float = float("nan")
 
 
 def measure_phase_relations(
@@ -225,6 +235,7 @@ def measure_phase_relations(
             audio_a, audio_b, max_lag_samples=max_lag_samples
         )
         relations.append(PhaseRelation(
+            lag_correlation=_correlation_at_lag(monos[i], monos[j], lag),
             track_id_a=track_a,
             track_id_b=track_b,
             correlation=correlation,
@@ -304,6 +315,30 @@ def _correlation(a: np.ndarray, b: np.ndarray) -> float:
     # Float error lets a perfectly correlated pair land at 1.0000000000000002,
     # which breaks any bounded-range assertion downstream.
     return max(-1.0, min(1.0, corr))
+
+
+def _correlation_at_lag(a: np.ndarray, b: np.ndarray, lag: int) -> float:
+    """Absolute Pearson between two mono sums after sliding ``b`` by ``lag``.
+
+    This is how much of the lag reading to believe. ``cross_correlation_peak_lag``
+    always returns some argmax, so an honest consumer needs to know whether that
+    peak stands above the correlation function's own noise. Absolute value
+    because a polarity-inverted pair aligned at ``lag`` is still ALIGNED — the
+    flip is reported separately, and folding it in here would make a genuine
+    delay on an inverted pair look like no delay at all.
+    """
+    # A positive lag means ``b`` is the LATE one (the convention
+    # ``cross_correlation_peak_lag`` is pinned to: a signal delayed by d reports
+    # +d), so undoing it advances ``b`` and shortens ``a`` from the end.
+    if lag > 0:
+        left, right = a[: a.shape[0] - lag], b[lag:]
+    elif lag < 0:
+        left, right = a[-lag:], b[: b.shape[0] + lag]
+    else:
+        left, right = a, b
+    if left.shape[0] < 2:
+        return float("nan")
+    return abs(_correlation(left, right))
 
 
 def _cancellation_db(a: np.ndarray, b: np.ndarray) -> float:

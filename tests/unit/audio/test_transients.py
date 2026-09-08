@@ -153,7 +153,15 @@ def test_censored_estimators_are_counted_not_reported():
     long_ring = kick_onset(duration_s=1.0, f_start_hz=60.0, f_end_hz=50.0, decay_s=1.5)
     res = analyze_transients_window([("k", _hits(long_ring, n=4, spacing_s=1.0, total_s=5.0))], SR)
     t = res.parts[0]
+    assert t.hit_count == 4
     assert t.t20_ms is None and t.censored_t20_hits == 4
+    # the same ring is still above 10 % of the NEXT hit's peak 60 ms before it
+    # (and the first hit starts at the slice edge), so every rise is censored
+    # too: rise_ms is None, never a boundary value
+    assert t.rise_ms is None and t.censored_rise_hits == 4
+    # a normal kick census: no rise censored except the one at the slice edge
+    n = _one(_punchy())
+    assert n.rise_ms is not None and n.censored_rise_hits <= 1
     # a hit 12 ms before the slice end: its peak is inside the slice but its
     # attack window (which must reach 15 ms past the peak) is cut — censored,
     # excluded from the bands, still counted as a hit

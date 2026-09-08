@@ -647,11 +647,13 @@ def apply_push_results(
     benign channel it already has.
 
     Returns apply-layer warnings (empty when everything recorded cleanly).
-    Today these come from the `perform_batch` branch — for any arc whose
-    handler could NOT verify the write (`automation_state != 1`) the apply
-    layer records nothing for that arc and the warning says so (never a
-    silent skip; the next push retries just that arc). Callers must surface
-    them.
+    Today these come from the `perform_batch` branch: for any arc the handler
+    could not confirm it recorded, the apply layer records nothing for that
+    arc and the warning says so (never a silent skip; the next push retries
+    just that arc). `record_perform_result` states the gate that decides
+    that — restating it here is how this paragraph went stale once already.
+    A degraded locate is warned about on the same channel. Callers must
+    surface them.
     """
     warnings: list[str] = []
     with transaction(conn):

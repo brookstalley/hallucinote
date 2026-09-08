@@ -239,11 +239,15 @@ that a perform against a set with pre-existing lanes now records.
   `.last-push-errors.json`; a per-arc roll-up there would make a clean push look
   failed). In `src/hallucinote/sync/push_execute.py` — wire `notes_sink` to the
   existing `warning_messages` list that the push state file already surfaces.
-- **Tests:** unit — a mixed batch (one recorded, one unverified, one skipped
-  unchanged) produces one roll-up line naming all three and exactly one
-  actionable warning; an all-recorded batch produces the roll-up and no
-  actionable warning; a result from a server predating `outcome` still routes on
-  `updates_written` (the floor).
+- **Tests:** unit — a mixed batch of DISPATCHED arcs (one recorded, one
+  unverified) produces one roll-up line naming both and exactly one actionable
+  warning; an all-recorded batch produces the roll-up and no actionable warning;
+  a result from a server predating `outcome` still routes on `updates_written`
+  (the floor). An arc skipped as unchanged is fingerprint-gated out by the
+  planner and never reaches `res["arcs"]`, so the roll-up structurally cannot
+  name it — that half is already surfaced by the planner's
+  `performed-automation: skipped (unchanged)` alert on this same benign
+  channel.
 - **Acceptance criteria:** the push report names every arc the perform phase
   touched and what happened to it.
 - **Done when:**

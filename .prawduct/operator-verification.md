@@ -211,7 +211,9 @@ the NODE-ADDR learning, a fake that encodes how an EXTERNAL system responds
 proves nothing until an operator confirms it. The full-session census backstop
 (`_AlwaysLeakyBrowser`) is what protects the composer if the prevention half
 turns out not to be the whole mechanism.
-## PSH-4L6C — the perform_batch locate settle is real, not just modelled (2026-08-07) — PENDING
+## PSH-4L6C — the perform_batch locate settle is real, not just modelled (2026-08-07) — **SUPERSEDED by PERFORM-START-POSITION (issue #471, 2026-09-08)**
+
+**Do not run these checks.** The fix they describe (`_wait_for_locate_on_worker`) no longer ships — its poll was retired into `handlers/_transport.py`'s shared settle — and the root-cause model below is the one #471 disproved: the settle-verify was never missing, it was polling `current_song_time` while `start_playing()` rolls from Live's separate start playing position. Check 2 (park at 0, perform an arc whose span starts far downstream) is the PERFORM-START-POSITION entry's own scenario and was verified live on 2026-09-08. Checks 3 and 4 went with the mechanism: the 1-beat locate tolerance and the settle-timeout message both belonged to the retired poll. Nothing here is still open; the entry is kept because it records the wrong model that a year of this bug was diagnosed against.
 
 `ableton_automation(action='perform_batch')` intermittently timed out on an
 8-beat arc (beats 96..104, 3.4 s at 140 BPM) against a 12.3 s budget, with

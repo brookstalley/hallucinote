@@ -85,6 +85,7 @@ from .section import (
     slice_audio,
 )
 from .timing import analyze_timing_window
+from .transients import analyze_transients_window
 
 
 # Product reporting floor for masking — pairs/bed below this masked fraction are
@@ -183,6 +184,7 @@ def analyze_mix(
     analyze_masking: bool = False,
     analyze_timing: bool = False,
     analyze_cross_rhythm: bool = False,
+    analyze_transients: bool = False,
     stem_gains: "Mapping[str, float] | None" = None,
     master_fader_volume: float | None = None,
     compare_to: int | Path | str | None = None,
@@ -345,6 +347,7 @@ def analyze_mix(
         analyze_masking=analyze_masking,
         analyze_timing=analyze_timing,
         analyze_cross_rhythm=analyze_cross_rhythm,
+        analyze_transients=analyze_transients,
         stem_gains=stem_gains or {},
     )
     skipped.extend(section_skips)
@@ -659,6 +662,7 @@ def _measure_sections(
     analyze_masking: bool = False,
     analyze_timing: bool = False,
     analyze_cross_rhythm: bool = False,
+    analyze_transients: bool = False,
     stem_gains: Mapping[str, float] = {},
 ) -> tuple[list[SectionMetrics], list[dict]]:
     """Measure per-surface loudness scoped to each named section window.
@@ -751,6 +755,15 @@ def _measure_sections(
         phasing = []
         polymeter = []
         onset_density = None
+        # Low-band hit shape (thud vs punch). Level-blind in its differences
+        # and times, so it reads the raw pre-fader slices like timing; it needs
+        # no grid geometry (hits are picked on the envelope, not the grid).
+        transients = []
+        transient_skips = []
+        if analyze_transients:
+            tres = analyze_transients_window(sliced_stems, capture.sample_rate)
+            transients = tres.parts
+            transient_skips = tres.skipped
         if analyze_timing or analyze_cross_rhythm:
             geom = _window_grid_geometry(sl, capture, beat_map)
             if geom is not None:
@@ -800,6 +813,8 @@ def _measure_sections(
             cross_rhythm=cross_rhythm,
             phasing=phasing,
             polymeter=polymeter,
+            transients=transients,
+            transient_skips=transient_skips,
             onset_density=onset_density,
         ))
 

@@ -136,7 +136,7 @@ _analyze_action = register(
             "Sync vs async: this synchronous 'analyze' is the one-call fast "
             "path for a quick few-surface capture. For a full-band song (many "
             "tracks + returns) or one with many declared sections — each adds "
-            "masking/timing/cross-rhythm passes — the full pipeline can exceed "
+            "masking/timing/cross-rhythm/transient passes — the full pipeline can exceed "
             "the 60s tool-call timeout and this call red-times-out (the report "
             "still lands on disk, but you're left polling for it). Use "
             "action='start' + 'status' for those.",

@@ -14,6 +14,22 @@ rebuild won't clear the old source. To drop it durably, rebuild from a fresh DB,
 clear it in `build.py` with `set_device_sidechain(None)`, or write an explicit
 null source into the snapshot.
 
+## Switching branches in the engine checkout breaks the push CLI's bridge
+
+The push CLI spawns its own MCP server side from the plugin's environment, which imports `hallucinote_mcp` from an editable checkout and stamps it with the content fingerprint of that package's wire-bearing files (`_FINGERPRINT_PATHS`: the wire, schema, dispatcher, actions, handlers and Remote Script sources — see `docs/release-process.md`).
+The Remote Script vendored into Live carries the fingerprint it was installed from.
+Check out a branch whose copy of any of those files differs, even with no local edits, and every CLI probe refuses with a version mismatch until the Remote Script is reinstalled; branches that differ only outside those paths keep working.
+The MCP tools inside a running session keep working, because that server process already has the old code in memory, which makes the failure look intermittent.
+Do engine work in a git worktree and leave the checkout the Remote Script was installed from where it is, or reinstall the Remote Script (`/hallucinote:ableton-mcp-install`) and restart Live after the switch.
+
+## A dead audio engine looks like a stalled perform, and leaves the tempo slowed
+
+When Live's audio engine is off (an interface asleep, a device lost), the transport reports playing while the playhead stays at its start and every meter reads zero.
+The performed-automation pass aborts cleanly ("transport stopped advancing").
+In the session where this was observed the set was then found at the slowed record tempo, and a manual tempo change reverted the moment the transport started; the abort path's `finally` does restore `song.tempo`, so the write appears not to take while the engine is down — treat the slowed tempo as a symptom to check for, not a promise.
+Restore the engine in Live, then set the tempo, seek to bar 1, confirm the playhead advances, and re-run the pass.
+A ten-second play check before any perform or render after a break is cheaper than the abort.
+
 ## Human audio can't be read back through the bridge
 
 MIDI and the mix are what Hallucinote builds; a recorded vocal take or a hand-ridden

@@ -399,3 +399,7 @@ rather than silently matching either. (2026-08-07, TOUR B1)
 ## A rule restated in N carriers is a rule that will drift in N-1 of them
 
 **When a rule needs recording in a plan, a change-log and its home artifact, restate it ONLY in the home and have the others point at it. Fixing one defective test wording here meant four hand-synced edits; a completed build plan is archived rather than deleted, so its stale copy outlives the source where someone still reads it.**
+
+## An estimator that reports the FIRST threshold crossing is bimodal on multi-lobe material
+
+**When a measurement is the interval between two threshold crossings, anchor BOTH scans on the feature you mean and scan back from it — never forward from a search window's edge. Forward-scanning let an earlier envelope lobe capture a kick's 90 % point, so a 1 % change in that lobe's height moved the reported rise by 28 ms and a uniform mix edit "changed" two sections of ten. A bimodal reading on real material looks exactly like a real difference.**

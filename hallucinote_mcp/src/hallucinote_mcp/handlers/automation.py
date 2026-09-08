@@ -2323,8 +2323,17 @@ def perform_batch_handler(
             # (begin_gesture BEFORE start_playing, as the single-arc path
             # did), THEN play. Values are written by the ramp loop while the
             # transport is actually moving.
+            #
+            # Judged against `union_start`, NOT against a live playhead read.
+            # Which arcs are active at the union start is a question about the
+            # union start, and the read was only ever a proxy for it — one the
+            # arm now invalidates, because arming rolls the transport and this
+            # runs after it. A drifted read opens any arc whose span begins
+            # inside that drift early, and `start_playing()` re-asserts
+            # `union_start` a line later, so the ramp then writes the arc's
+            # first breakpoint value across beats it was never authored over.
             def _begin_initial_and_play() -> None:
-                _open_entering(float(context.song.current_song_time))
+                _open_entering(float(union_start))
                 context.song.start_playing()
 
             context.run_on_main(_begin_initial_and_play)

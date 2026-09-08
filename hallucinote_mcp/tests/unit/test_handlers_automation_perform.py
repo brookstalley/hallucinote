@@ -1656,6 +1656,30 @@ class FakeStartPositionSong(FakePerformSong):
         FakePerformSong.current_song_time.fset(self, v)  # type: ignore[attr-defined]
 
 
+class ArmRollsTransportSong(FakeStartPositionSong):
+    """A Song where ARMING rolls the transport, which is what Live does.
+
+    `song.record_mode = True` is Live's Record button; pressing Record starts
+    playback (measured on 12.4: beat 0 -> 2.768 at +1.0s). Every other fake in
+    this module models `record_mode` as an inert async flag, which is the belief
+    that let the locate be ordered after the arm — so nothing here could see the
+    transport drift that ordering introduced.
+    """
+
+    #: Beats the transport covers between the arm and the settle landing.
+    arm_drift_beats = 0.0
+
+    @property
+    def record_mode(self) -> bool:
+        return FakePerformSong.record_mode.fget(self)  # type: ignore[attr-defined]
+
+    @record_mode.setter
+    def record_mode(self, v: bool) -> None:
+        FakePerformSong.record_mode.fset(self, v)  # type: ignore[attr-defined]
+        if v and self.arm_drift_beats:
+            self._song_time += float(self.arm_drift_beats)
+
+
 class StartPositionCtx(FakeCtx):
     def __init__(self, clock=None, **song_kwargs):
         super().__init__(clock=clock)
@@ -1829,4 +1853,37 @@ def test_the_transport_is_positioned_before_record_is_armed():
     assert "seek" in kinds and "record_mode" in kinds
     assert kinds.index("seek") < kinds.index("record_mode"), (
         f"the locate must precede the arm; got {kinds[:6]}"
+    )
+
+
+def test_the_arms_transport_drift_does_not_open_a_later_arc_early():
+    """Which arcs are active at the union start is a question about the UNION
+    START. Reading the live playhead was only ever a proxy for it, and arming
+    invalidates that proxy: the transport has been rolling since the arm, so a
+    read taken here is `union_start` plus however far the settle let it travel.
+
+    An arc whose span begins inside that drift then opens before play, and
+    `start_playing()` re-asserts union_start a line later — so the ramp writes
+    that arc's first breakpoint value across beats it was never authored over,
+    and inflates its write count. Single-arc passes cannot show this, which is
+    why the live verification did not."""
+    clock = _VirtualClock()
+    ctx = FakeCtx(clock=clock)
+    ctx._song = ArmRollsTransportSong(ctx.events, clock=clock)
+    ctx.song.arm_drift_beats = 5.0   # the arm rolls the transport past beat 12
+
+    perform_batch_handler(ctx, arcs=[
+        {"arc_id": "early", "target_kind": "mixer_volume", "master": True,
+         "breakpoints": [_bp(8.0, 0.2), _bp(24.0, 0.9)]},
+        {"arc_id": "later", "target_kind": "mixer_pan", "master": True,
+         "breakpoints": [_bp(12.0, 0.1), _bp(24.0, 0.8)]},
+    ])
+
+    events = ctx.events
+    play_at = events.index(("play",))
+    opened_before_play = [e for e in events[:play_at] if e == ("begin_gesture",)]
+    assert len(opened_before_play) == 1, (
+        "only the arc active AT the union start may open before play; the "
+        f"later arc opened early on a drifted read ({len(opened_before_play)} "
+        "gestures opened)"
     )

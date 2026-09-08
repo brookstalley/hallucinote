@@ -156,6 +156,17 @@ is the exact case that silently did nothing three times in one day. The borrowed
 locator came back every time (`cue_count: 0`), and the past-the-extent refusal
 fires with its teaching message.
 
+The reorder had one consequence the live run could not show, because every pass
+there was single-arc: the initial gesture-open read the live playhead to decide
+which arcs were already active, and with the transport now rolling since the arm
+that read is `union_start` plus whatever the settle let it travel. An arc whose
+span began inside that drift opened early, and `start_playing()` re-asserts
+`union_start` a line later — so the ramp would write that arc's first breakpoint
+value across beats it was never authored over. The read was only ever a proxy
+for `union_start`; it now asks `union_start` directly, which is the question it
+was always answering. The fake that catches it is the first one here to model
+arming as a transport event rather than an inert flag.
+
 Handlers changed, so the wire fingerprint flips: re-vendor and a full Live
 quit/reopen precede any of this reaching Live. **The render capture path is NOT
 covered by that verification** — same defect, same fix, but it needs analyzers,

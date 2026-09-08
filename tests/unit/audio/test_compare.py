@@ -347,8 +347,12 @@ def test_resolve_baseline_skips_non_int_db_seq(tmp_path):
         resolve_baseline(tmp_path, 1)
 
 
-def _section(name, stems, transients=()):
-    return {"section_name": name, "stems": stems, "transients": list(transients)}
+def _section(name, stems, transients=(), *, master=None, returns=()):
+    sec = {"section_name": name, "stems": stems, "transients": list(transients),
+           "returns": list(returns)}
+    if master is not None:
+        sec["master"] = master
+    return sec
 
 
 def _transient(track_id, **over):
@@ -377,6 +381,40 @@ def test_section_deltas_carry_per_section_timbre_and_transient_rows():
     assert click["delta"] == pytest.approx(7.0) and click["significant"] is True
     rise = rows[("chorus3", "track:1", "rise_ms")]
     assert rise["delta"] == pytest.approx(1.0) and rise["significant"] is False
+
+
+def test_section_deltas_cover_the_master_and_returns_not_just_stems():
+    """The per-section MASTER is the whole-mix read a de-shrill edit is judged
+    on, and a return's timbre is how the send bus moved — both are measured per
+    section, so both get an A/B row. Iterating stems alone left the surfaces
+    carrying the section's summary with no row at all."""
+    base_sec = _section(
+        "chorus3", [_surface("track:4", timbre=_timbre(sharpness_acum=2.51))],
+        master=_surface("master", timbre=_timbre(sharpness_acum=1.78)),
+        returns=[_surface("return:1", timbre=_timbre(sharpness_acum=1.20))])
+    cur_sec = _section(
+        "chorus3", [_surface("track:4", timbre=_timbre(sharpness_acum=2.36))],
+        master=_surface("master", timbre=_timbre(sharpness_acum=1.66)),
+        returns=[_surface("return:1", timbre=_timbre(sharpness_acum=1.05))])
+    baseline = _report(); baseline["per_section"] = [base_sec]
+    current = _report(); current["per_section"] = [cur_sec]
+    out = diff_reports(current, baseline)
+    rows = {(r["section"], r["track_id"], r["metric"]): r for r in out["section_deltas"]}
+    assert rows[("chorus3", "master", "sharpness_acum")]["delta"] == pytest.approx(-0.12)
+    assert rows[("chorus3", "return:1", "sharpness_acum")]["delta"] == pytest.approx(-0.15)
+    assert rows[("chorus3", "track:4", "sharpness_acum")]["delta"] == pytest.approx(-0.15)
+
+
+def test_section_deltas_tolerate_a_section_with_no_master_or_returns():
+    """Older reports (and any section the analyzer measured stems-only) carry
+    neither key — the surface sweep must not invent a row or raise."""
+    base_sec = _section("verse1", [_surface("track:1", timbre=_timbre(sharpness_acum=1.4))])
+    cur_sec = _section("verse1", [_surface("track:1", timbre=_timbre(sharpness_acum=1.4))])
+    base_sec.pop("returns"); cur_sec.pop("returns")
+    baseline = _report(); baseline["per_section"] = [base_sec]
+    current = _report(); current["per_section"] = [cur_sec]
+    out = diff_reports(current, baseline)
+    assert {r["track_id"] for r in out["section_deltas"]} == {"track:1"}
 
 
 def test_section_deltas_skip_unmatched_sections_and_null_sides():

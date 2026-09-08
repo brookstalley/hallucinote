@@ -40,10 +40,14 @@ Design (see build-plan-aud-sharpness-transients.md):
     hit; the window is 30 ms from that point (at least 15 ms past the peak).
   * An estimator that hits its own boundary is CENSORED, not reported: a rise
     whose 10 % point was not found inside the search window, a T20 the envelope
-    never reached inside the cap or the slice, an attack window cut by the
-    slice end. Censored hits are counted (``censored_*``) and excluded from the
-    medians, which read ``None`` when nothing survives — never a boundary
-    value dressed as a measurement.
+    never reached inside the cap or the slice, an attack window with no 10 %
+    point to anchor it (its own rise was censored) or cut by the slice end.
+    Censored hits are counted (``censored_*``) and excluded from the medians,
+    which read ``None`` when nothing survives — never a boundary value dressed
+    as a measurement. Rise-censored implies attack-censored, so
+    ``all_hits_censored`` is reachable on real material: a part whose hits all
+    ride the previous hit's tail is a skip, not four band levels read over a
+    window that was never placed.
   * A part with no reading says WHY, as a structured skip (``skipped``) the
     section carries as ``transient_skips`` — the lens has a failure channel,
     so an empty ``transients`` list is never four outcomes wearing one shape.
@@ -126,8 +130,9 @@ _DB_FLOOR = 1e-9
 @dataclass(frozen=True)
 class TransientWindowResult:
     """Per-part transient shapes for one (pre-sliced) window, plus one
-    structured skip per part that produced no reading (``kind`` names why:
-    ``window_too_short`` / ``no_low_band_energy`` / ``too_few_hits``)."""
+    structured skip per part that produced no reading (``kind`` names why —
+    the complete set is ``invalid_sample_rate`` / ``window_too_short`` /
+    ``no_low_band_energy`` / ``too_few_hits`` / ``all_hits_censored``)."""
     parts: list[PartTransient]
     skipped: list[dict] = field(default_factory=list)
 
@@ -266,7 +271,7 @@ def _part_transient(
             rises.append((i90_rel - i10_rel) / sr * 1000.0)
         else:
             censored_rise += 1
-            i10 = w0
+            i10 = None
         # Censored T20: never fell 20 dB inside the cap, or the slice ended first.
         after = env[p:p + n_decay]
         below = np.nonzero(after <= pv * 10.0 ** (-20.0 / 20.0))[0]
@@ -274,7 +279,18 @@ def _part_transient(
             t20s.append(float(below[0]) / sr * 1000.0)
         else:
             censored_t20 += 1
-        # Censored attack window: cut by the slice end.
+        # Censored attack window: no onset to anchor it, or cut by the slice
+        # end. A censored RISE is a censored ATTACK — the window is anchored on
+        # the 10 % point, so without one there is nothing to anchor. Falling
+        # back to the search window's edge instead (as this did) silently reads
+        # a 75 ms window, [peak-60 ms, peak+15 ms], into medians documented as
+        # the first 30 ms: two window lengths 2.5x apart pooled in one number
+        # whose mix depends on how many hits happened to be censored. Same
+        # defect class as the bimodal rise — a level produced by window
+        # geometry rather than by the sound.
+        if i10 is None:
+            censored_attack += 1
+            continue
         a0, a1 = i10, max(i10 + n_attack, p + n_post_min)
         if a1 > mono.shape[0]:
             censored_attack += 1
@@ -285,7 +301,9 @@ def _part_transient(
     if not any(bands.values()):
         return None, {
             "kind": "all_hits_censored", "track_id": track_id, "hit_count": int(peaks.size),
-            "reason": "every hit's attack window was cut by the slice end",
+            "reason": ("every hit's attack window was unplaceable (its rise was "
+                       "censored, so there is no 10 % point to anchor it) or cut "
+                       "by the slice end"),
         }
     med = {b: float(np.median(v)) for b, v in bands.items()}
     return PartTransient(

@@ -152,10 +152,12 @@ first — see "Refreshing the analysis"). For each section, you have:
   the `censored_*_hits` counts say how many did (a hit on a section's last
   beat is the normal case, so read a high count as "the window cut it", not
   as a fault). **Absence is explained**: a part missing from `transients` has
-  a row in the section's `transient_skips` naming why — `window_too_short`
-  (the slice is under ~0.66 s), `no_low_band_energy` (a pad, a voice),
-  `too_few_hits` (with the count seen and the 4 needed), or
-  `all_hits_censored`. If both lists are empty the lens was off (no sections
+  a row in the section's `transient_skips` naming why — the complete set is
+  `window_too_short` (the slice is under ~0.66 s), `no_low_band_energy` (a pad,
+  a voice), `too_few_hits` (with the count seen and the 4 needed),
+  `all_hits_censored` (every hit's attack window was unplaceable or cut — a
+  part whose hits all ride the previous hit's tail lands here), and
+  `invalid_sample_rate`. If both lists are empty the lens was off (no sections
   declared). "The kick's attack sits in the 100–250 Hz thud register with the
   click 23 dB under the sub" — a click layer / a low-mid cut / a different
   sample, or is the thud the intended weight? A/B it through `compare_to`
@@ -425,10 +427,14 @@ push mislabels the report's own audio), then re-render + re-analyze with
 `compare_to` field lists per-surface deltas with significance flags, in THREE
 families — **loudness**, **timbre** (centroid / flatness / rolloff /
 `sharpness_acum`) and **stereo** (`correlation`, `mono_sum_loss_db`) — plus
-`section_deltas`: the same **timbre** family per stem PER SECTION and the
-**transient** shape per part per section (`rise_ms`, `t20_ms`,
-`click_minus_sub_db`, `low_minus_sub_db`), matched by section name then
-`track_id`. That is where a "de-shrill chorus 3" or "sharpen the kick" edit
+`section_deltas`: the same **timbre** family PER SECTION on every surface the
+window measured — stems, returns AND the master, so a whole-mix "is chorus 3
+less shrill?" has a row — and the **transient** shape per part per section
+(`rise_ms`, `t20_ms`, `click_minus_sub_db`, `low_minus_sub_db`), matched by
+section name then `track_id`. The summary counts these as
+`significant_section_delta_count`, separate from the surface-level
+`significant_delta_count`; zero there while the surface count is nonzero means
+the change did not land where it was made. That is where a "de-shrill chorus 3" or "sharpen the kick" edit
 shows up; the surface rows average the whole song and can hide it. Read it to confirm the change
 did what it predicted instead of re-arguing from the absolute numbers; a width
 fix in particular shows up ONLY in the stereo rows, so an A/B run to confirm one

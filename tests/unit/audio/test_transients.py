@@ -52,6 +52,17 @@ def _one(audio: np.ndarray, track_id: str = "kick"):
     return res.parts[0]
 
 
+def _hit_count(res) -> int:
+    """The picker's count, whichever side of the failure channel it landed on.
+
+    A part whose every hit is censored is a SKIP, not a shape — but the skip
+    still carries what the picker found, which is what the picker's own tests
+    are asserting."""
+    if res.parts:
+        return res.parts[0].hit_count
+    return res.skipped[0]["hit_count"]
+
+
 def test_counts_every_hit():
     assert _one(_punchy()).hit_count == 8
     assert _one(_thuddy()).hit_count == 8
@@ -131,8 +142,12 @@ def test_prominence_rejects_a_bump_riding_a_tail():
         buf[s:s + big.shape[0]] += big
         s2 = s + int(0.100 * SR)
         buf[s2:s2 + small.shape[0]] += small
-    assert analyze_transients_window([("k", buf)], SR).parts[0].hit_count == 4
-    assert analyze_transients_window([("k", buf)], SR, prominence_rel=0.0).parts[0].hit_count > 4
+    # The composite peak here IS the bump (the small hit rides high enough on
+    # the big one's decay to outrank its onset), so every rise is censored and
+    # the part is a skip — the picker's count is what this test is about, and
+    # the skip carries it.
+    assert _hit_count(analyze_transients_window([("k", buf)], SR)) == 4
+    assert _hit_count(analyze_transients_window([("k", buf)], SR, prominence_rel=0.0)) > 4
 
 
 def test_min_sep_counts_fast_sixteenths_separately():
@@ -148,17 +163,28 @@ def test_min_sep_counts_fast_sixteenths_separately():
 
 
 def test_censored_estimators_are_counted_not_reported():
-    # a hit whose ring never falls 20 dB inside the cap: t20 is None, counted
-    # (a near-static pitch so the band-passed envelope is one smooth decay)
+    # a ring still above 10 % of the NEXT hit's peak 60 ms before it: every
+    # rise is censored, so every attack window is unplaceable too (it is
+    # anchored on the 10 % point) and the part is a SKIP naming that — not four
+    # band levels read over a window that was never placed
     long_ring = kick_onset(duration_s=1.0, f_start_hz=60.0, f_end_hz=50.0, decay_s=1.5)
     res = analyze_transients_window([("k", _hits(long_ring, n=4, spacing_s=1.0, total_s=5.0))], SR)
-    t = res.parts[0]
+    assert not res.parts
+    assert res.skipped[0]["kind"] == "all_hits_censored"
+    assert res.skipped[0]["hit_count"] == 4
+
+    # a ring that never falls 20 dB inside the 600 ms cap but decays enough to
+    # leave the next hit's rise clean: t20 is None and counted, while rise_ms
+    # is still reported — the estimators censor independently
+    ring = kick_onset(duration_s=0.9, f_start_hz=60.0, f_end_hz=50.0, decay_s=0.30)
+    t = _one(_hits(ring, n=4, spacing_s=0.85, total_s=3.9), "k")
     assert t.hit_count == 4
     assert t.t20_ms is None and t.censored_t20_hits == 4
-    # the same ring is still above 10 % of the NEXT hit's peak 60 ms before it
-    # (and the first hit starts at the slice edge), so every rise is censored
-    # too: rise_ms is None, never a boundary value
-    assert t.rise_ms is None and t.censored_rise_hits == 4
+    assert t.rise_ms is not None
+    # a rise-censored hit is ALWAYS attack-censored: without a 10 % point there
+    # is nothing to anchor the attack window on, so its bands never enter the
+    # medians (the first hit here starts at the slice edge)
+    assert t.censored_rise_hits == 1 and t.censored_attack_hits == 1
     # a normal kick census: no rise censored except the one at the slice edge
     n = _one(_punchy())
     assert n.rise_ms is not None and n.censored_rise_hits <= 1
@@ -171,7 +197,11 @@ def test_censored_estimators_are_counted_not_reported():
     buf[-tail:] += body[:tail]
     t = analyze_transients_window([("k", buf)], SR).parts[0]
     assert t.hit_count == 5
-    assert t.censored_attack_hits == 1
+    # two censored attacks from the two different causes the count covers: the
+    # slice-end cut just planted, and the slice-edge hit whose rise is censored
+    # (no 10 % point, so no window to place)
+    assert t.censored_rise_hits == 1
+    assert t.censored_attack_hits == 2
 
 
 def _two_lobe_kick(first_rel: float, *, sep_s: float = 0.032, n: int = 6) -> np.ndarray:
@@ -191,6 +221,33 @@ def _two_lobe_kick(first_rel: float, *, sep_s: float = 0.032, n: int = 6) -> np.
     return buf
 
 
+def _first_lobe_ratio(audio: np.ndarray) -> float:
+    """Median height of the lobe BEFORE the peak, as a fraction of the peak.
+
+    The quantity the old forward-scanning estimator turned on: at or above 0.90
+    it captured the 90 % crossing and the rise collapsed to the first lobe's.
+    Measured the way the lens measures — same band, same envelope, same picker.
+    """
+    from scipy.signal import find_peaks, hilbert
+
+    from hallucinote.audio.onsets import to_mono
+    from hallucinote.audio.transients import _bandpass
+
+    mono = to_mono(audio).astype(np.float64)
+    env = np.abs(hilbert(_bandpass(mono, SR, 40.0, 150.0)))
+    k = max(1, int(0.005 * SR))
+    env = np.convolve(env, np.ones(k) / k, mode="same")
+    top = float(env.max())
+    peaks, _ = find_peaks(env, height=0.25 * top, prominence=0.5 * top,
+                         distance=max(1, int(0.09 * SR)))
+    ratios = []
+    for p in peaks:
+        win = env[max(0, p - int(0.060 * SR)):p + 1]
+        pre = win[:max(1, len(win) - int(0.012 * SR))]
+        ratios.append(float(pre.max() / env[p]))
+    return float(np.median(ratios))
+
+
 def test_a_two_lobe_hit_does_not_read_bimodally_across_the_90_percent_line():
     # The rise is measured on the FINAL approach to the peak. Scanning forward
     # from the search window's edge instead, a first lobe that clears 0.90 x
@@ -199,12 +256,18 @@ def test_a_two_lobe_hit_does_not_read_bimodally_across_the_90_percent_line():
     # (alien, 2026-09-08: verse 1 read 42 ms and eight other sections 16 ms off
     # the same kick, and a mix edit that lowered every section's first lobe by
     # the same amount flipped exactly the two that crossed 0.90.)
-    rises = []
+    rises, ratios = [], []
     for first_rel in (0.86, 0.88, 0.895, 0.905, 0.92, 0.96):
-        t = _one(_two_lobe_kick(first_rel))
+        audio = _two_lobe_kick(first_rel)
+        t = _one(audio)
         assert t.hit_count == 6  # one hit per pair: the lobes are closer than min_sep
         assert t.rise_ms is not None and t.censored_rise_hits == 0
         rises.append(t.rise_ms)
+        ratios.append(_first_lobe_ratio(audio))
+    # The sweep is only a test of this at all if it STRADDLES the 0.90 line the
+    # old estimator turned on — pin that, or a fixture change that lands all six
+    # on one side passes green over a forward-scanning regression.
+    assert min(ratios) < 0.90 < max(ratios), ratios
     assert max(rises) - min(rises) < 3.0, rises
     # and it is the LATER lobe's approach that is measured throughout — never a
     # short reading borrowed from the first lobe

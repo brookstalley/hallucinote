@@ -533,20 +533,34 @@ class PartTransient:
     kit stem's hats and snares don't register there). All values are MEDIANS
     across the window's hits.
 
-      ``rise_ms``            — 10 -> 90 % rise of the low-band envelope into
-                               the hit. A punchy kick is a few ms; a soft,
-                               thuddy one tens of ms. ``None`` when every
-                               hit's rise was censored (see below).
+      ``rise_ms``            — 10 -> 90 % of the low-band envelope on the
+                               hit's FINAL approach to its peak (both
+                               thresholds found scanning back from the peak, so
+                               an earlier lobe cannot capture the 90 % point).
+                               RELATIVE, never an absolute attack time: it sees
+                               only 40-150 Hz, so a kick whose beater click
+                               leads its low-band peak by tens of ms has an
+                               attack this number never looks at, and it moves
+                               with the hit band's edges (one real kit read
+                               44 ms at 40-150 Hz and 15 ms at 50-150 Hz for
+                               the same hits). Compare it across renders and
+                               sections of ONE kit; not across kits, and not
+                               against an absolute "punchy" threshold.
+                               ``None`` when every hit's rise was censored
+                               (see below).
       ``t20_ms``             — time after the peak for the low envelope to
                                fall 20 dB. The ring. ``None`` when every hit's
                                T20 was censored.
       ``censored_*_hits``    — hits whose estimator hit its own boundary (the
                                10 % point earlier than the 60 ms search window;
                                no 20 dB fall inside the 600 ms cap or before the
-                               slice ended; an attack window cut by the slice
-                               end). Excluded from the medians, counted here —
-                               a boundary value is never reported as a
-                               measurement.
+                               slice ended; an attack window with no 10 % point
+                               to anchor it — a rise-censored hit is always
+                               attack-censored — or cut by the slice end).
+                               Excluded from the medians, counted here — a
+                               boundary value is never reported as a
+                               measurement, and no band level is read over a
+                               window that could not be placed.
       ``attack_<band>_db``   — band RMS (dBFS, PRE-FADER stem as captured)
                                over the first 30 ms of the hit; the names carry
                                their edges: sub 40-100, low 100-250 (the thud

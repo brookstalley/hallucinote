@@ -839,6 +839,15 @@ def analyze_handler(
                 sum(1 for d in diff["deltas"] if d["significant"])
                 + (1 if diff["overshoot_count"]["significant"] else 0)
             ),
+            # Counted separately, not folded into the line above: there is one
+            # section_delta row per surface per family per section, so folding
+            # them in would let a many-sectioned song's routine churn swamp the
+            # surface-level headline this summary exists to carry. Zero here
+            # while the count above is nonzero means the change did not land
+            # where it was made.
+            "significant_section_delta_count": sum(
+                1 for d in diff["section_deltas"] if d["significant"]
+            ),
             "overshoot_delta": diff["overshoot_count"]["delta"],
             "added_surfaces": diff["added_surfaces"],
             "missing_surfaces": diff["missing_surfaces"],

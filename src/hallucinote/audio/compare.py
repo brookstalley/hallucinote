@@ -184,21 +184,39 @@ def diff_reports(
     }
 
 
+def _section_surfaces(section: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every surface a section window measured: its stems, its returns, and its
+    master. All three carry the timbre family; only stems carry transients."""
+    out = list(section.get("stems", []) or [])
+    out.extend(section.get("returns", []) or [])
+    master = section.get("master")
+    if isinstance(master, dict) and master.get("track_id"):
+        out.append(master)
+    return out
+
+
 def _section_deltas(
     current: dict[str, Any], baseline: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Per-section, per-part deltas: stem timbre (sharpness and the rest) and
-    transient shape. Sections are matched by name (a renamed or added section
-    yields no rows — the surface-level ``added/missing`` lists are the place
-    structure changes are named); parts by ``track_id``. Null on either side
-    yields ``delta: null, significant: false``, like every other family."""
+    """Per-section, per-surface deltas: timbre (sharpness and the rest) on every
+    surface the window measured — stems, returns AND the master — plus transient
+    shape per part (stems only; that is where hits are picked). Sections are
+    matched by name (a renamed or added section yields no rows — the
+    surface-level ``added/missing`` lists are the place structure changes are
+    named); surfaces by ``track_id``. Null on either side yields
+    ``delta: null, significant: false``, like every other family."""
     cur = {s.get("section_name"): s for s in current.get("per_section", []) or []}
     base = {s.get("section_name"): s for s in baseline.get("per_section", []) or []}
     rows: list[dict[str, Any]] = []
     for name in [n for n in cur if n in base]:
         cs, bs = cur[name], base[name]
-        cstems = {s["track_id"]: s for s in cs.get("stems", []) or []}
-        bstems = {s["track_id"]: s for s in bs.get("stems", []) or []}
+        # Every surface the section measured, not just its stems: the master's
+        # per-section timbre is the whole-mix read a "de-shrill chorus 3" edit
+        # is judged on, and a return's is how a send bus moved. `_measure_window`
+        # produces all three; iterating stems alone left the two that carry the
+        # section's summary with no A/B row at all.
+        cstems = {s["track_id"]: s for s in _section_surfaces(cs)}
+        bstems = {s["track_id"]: s for s in _section_surfaces(bs)}
         for tid in [t for t in cstems if t in bstems]:
             for row in _family_deltas(cstems[tid], bstems[tid], "timbre",
                                       SIGNIFICANCE_TIMBRE, provisional=True):

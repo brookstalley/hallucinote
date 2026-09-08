@@ -383,3 +383,41 @@ class TestInputContract:
         before = audio.copy()
         _measure(audio, onset_samples=[])
         assert np.array_equal(audio, before)
+
+
+class TestLoudIsNotClipped:
+    """A pre-fader stem may peak far above 0 dBFS and be perfectly undamaged.
+
+    Captured stems are float32 and pre-fader: the mixer applies the fader
+    afterwards, so a healthy part routinely runs hot and float has no ceiling for
+    it to hit. A real render exposed the failure this pins — a stem peaking at
+    +6.3 dBFS drew thousands of clip runs from an amplitude-threshold rule,
+    because a waveform that loud spends most of every cycle above full scale
+    without ever going flat. Clipping is a flat top; loudness is not damage.
+    """
+
+    def test_a_stem_peaking_above_full_scale_is_not_clipped(self) -> None:
+        # +6 dBFS, curving through every peak — nothing is pinned.
+        hot = (sine(100.0, 0.5, amplitude=0.5) * 4.0).astype(np.float32)
+        result = _measure(hot, onset_samples=[])
+        assert result.peak_dbfs > 6.0
+        assert result.clip_events == []
+        assert result.clipped_sample_fraction == 0.0
+        assert result.worst_clip_run_samples == 0
+
+    def test_a_hot_stem_that_IS_flat_topped_still_reports(self) -> None:
+        # Same level, but genuinely squared off — the flat top is the defect, and
+        # it must survive being far above full scale.
+        hot = (sine(100.0, 0.5, amplitude=0.5) * 4.0).astype(np.float32)
+        squared = np.clip(hot, -1.5, 1.5).astype(np.float32)
+        result = _measure(squared, onset_samples=[])
+        assert result.clip_events, "a flat top above full scale is still a flat top"
+        assert result.worst_clip_run_samples >= 3
+
+    def test_a_low_frequency_peak_is_not_mistaken_for_a_plateau(self) -> None:
+        # 20 Hz is the flattest a musical waveform gets near its peak; normalized
+        # to exactly full scale it is the hardest honest signal to tell from a
+        # clip, and it must still read clean.
+        slow = sine(20.0, 0.5, amplitude=1.0).astype(np.float32)
+        result = _measure(slow, onset_samples=[])
+        assert result.clip_events == []

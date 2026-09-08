@@ -81,17 +81,33 @@ _Event = TypeVar("_Event")
 # set from the physics plus the shape of a Live capture, not from a listening
 # campaign — that is what keeps this lens outside the analyzer freeze.
 
-# Full scale. A capture is float32, which has no hard ceiling, so damage arrives
-# two ways: a signal that already met an integer stage sits flat at exactly 1.0,
-# and one that never did simply runs past it. `|x| >= this` catches both, and the
-# 0.999 (-0.0087 dBFS) rather than 1.0 covers a fixed-point round-trip landing a
-# hair under.
-_CLIP_PEAK = 0.999
+# Clipping is a FLAT TOP, and flatness is the whole test — not loudness.
+#
+# Captured stems are float32 and PRE-fader, so a perfectly healthy part routinely
+# peaks well above 0 dBFS and the mixer brings it down afterwards; float has no
+# ceiling to hit. That makes an absolute amplitude threshold useless here: a
+# waveform peaking at +6 dBFS spends most of every cycle above 0.999 without ever
+# being flat, so a `|x| >= 0.999` rule reports thousands of clip runs on undamaged
+# audio. It fails in the worst possible direction, accusing the loudest healthy
+# stem in the song.
+#
+# What a clipped run actually looks like is samples pinned to ONE value: an
+# integer stage or a hard limiter returns bit-identical samples for the duration
+# of the over. A band-limited waveform passing through its own peak never does —
+# it is curving, so consecutive samples differ. So a run qualifies when its
+# samples are equal to within `_FLAT_TOP_EPS` AND it sits near the surface's own
+# peak, which makes the test work at any level and for clipping that happened
+# inside a plugin before later gain.
+_FLAT_TOP_EPS = 1e-6
 
-# A single sample touching full scale is what a correctly normalized waveform does
-# at its peak; three CONSECUTIVE ones is a flat top, which no band-limited signal
-# produces. Three is the long-standing convention in clip counters for exactly
-# this reason, and at 48 kHz it is 62 microseconds of held ceiling.
+# The flat top has to be AT the ceiling the surface actually reached; a brief
+# plateau partway down is a waveform shape, not an over.
+_FLAT_TOP_REL_TO_PEAK = 0.9
+
+# Three CONSECUTIVE pinned samples: one sample at the peak is what every correctly
+# normalized waveform does, two can be a sampling coincidence, three is held.
+# Three is the long-standing convention in clip counters, and at 48 kHz it is
+# 62 microseconds of held ceiling.
 _MIN_CLIP_RUN = 3
 
 # Below this peak amplitude a surface carries nothing at all: -120 dBFS is under
@@ -282,7 +298,17 @@ def measure_integrity(
     clipped_samples = 0
     worst_clip_run = 0
     for channel in range(2):
-        starts, lengths = _true_runs(abs_data[:, channel] >= _CLIP_PEAK)
+        column = abs_data[:, channel]
+        # Pinned = this sample is level with the next one, near the surface's own
+        # ceiling. A run of pinned samples is a flat top; a waveform curving
+        # through its peak breaks the equality on the first sample.
+        near_ceiling = column >= peak * _FLAT_TOP_REL_TO_PEAK
+        level_with_next = np.abs(np.diff(column)) <= _FLAT_TOP_EPS
+        pinned = np.zeros(column.shape[0], dtype=bool)
+        pinned[:-1] = near_ceiling[:-1] & level_with_next
+        starts, lengths = _true_runs(pinned)
+        # A run of N pinned transitions spans N+1 samples.
+        lengths = lengths + 1
         keep = lengths >= _MIN_CLIP_RUN
         starts, lengths = starts[keep], lengths[keep]
         if starts.size == 0:

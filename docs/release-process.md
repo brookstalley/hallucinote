@@ -57,24 +57,56 @@ release (`git describe --tags --abbrev=0 main`), `vNEW` = the bump.
 
 ### 1. Reconcile the change-log — every shipped cluster has an entry
 
-Each cluster in `origin/main..develop` needs a `.prawduct/change-log.md` entry. Entries
-authored on feature branches are **statusless**, then `prawduct-hook stamp-merged`
-flips them to `status=merged` at merge time. On the feature branch, the entry lands
-inside the single **ship-stamp commit** (change-log entry + backlog close + any
-project-state record, batched — see the **Backlog norms** in
+Each cluster in `origin/main..develop` needs a `.prawduct/change-log.md` entry, written
+on the feature branch inside its single **ship-stamp commit** (change-log entry +
+backlog close + any project-state record, batched — see the **Backlog norms** in
 [`.prawduct/artifacts/project-preferences.md`](../.prawduct/artifacts/project-preferences.md),
 rule 1, PRC-5W2N).
-At release:
 
-- For each `status=merged` entry being released: change `status=merged` →
-  `status=shipped` and add `| release=vNEW` to the `<!-- prawduct: … -->` tag line.
+**An entry with no `release=` key IS the release-pending marker** — that absence is what
+`prawduct-hook check-releasability` enumerates, and it is the only marker. So at release:
+
+- For each pending entry being released, add `| release=vNEW` to its
+  `<!-- prawduct: … -->` tag line.
 - For any shipped cluster with **no entry**, write one now (reconstruct from its commit
-  bodies — `git show -s <sha>`), tagged `status=shipped | release=vNEW` directly.
+  bodies — `git show -s <sha>`), tagged `release=vNEW` directly.
+- Never write a placeholder value. `check-releasability` treats *any* value as "already
+  released", so `release=unreleased` silently drops the entry's whole scope out of the
+  pending set and the work never ships.
 
-Tag-line grammar (matches existing entries): `type=feature|bugfix | chunks=A,B |
-scope=area1,area2 | status=shipped | release=vNEW`. Use a distinct chunk id when a
-second half of an earlier chunk ships separately (e.g. `SDC-7K3M-pull` vs the already-
-shipped `SDC-7K3M`) so the rollups don't collide.
+Tag-line grammar for a new entry is two keys plus the type: `type=feature|fix|docs|chore
+| scope=<tag> | release=vNEW`. **`status=` and `chunks=` are retired** — nothing reads
+either, and the derived-view regenerator that once did is gone. Historical entries carry
+them and are preserved verbatim; do not add them to a new one. Which chunks an entry
+shipped belongs in the entry body, where readers actually look.
+
+Give a scope a distinct id when a second half of earlier work ships separately (e.g.
+`SDC-7K3M-pull` against the already-shipped `SDC-7K3M`), so the two don't collide in the
+pending set — `scope` is what `check-releasability` groups by, and two entries sharing
+one scope are one line to the gate.
+
+`prawduct-hook stamp-merged` is likewise **deprecated and inert** — it warns and does
+nothing. Do not call it.
+
+#### Roll the log
+
+`.prawduct/change-log.md` is append-only and grows without bound; past ~55 KB
+(`oversized_file_threshold_kb` in `project-state.yaml`) every session that reads it pays
+for the whole history. After stamping `release=vNEW` above, move the oldest entries into
+[`.prawduct/change-log-archive.md`](../.prawduct/change-log-archive.md) — verbatim,
+newest-first, under the existing header — until the live log is comfortably under the
+ceiling, keeping the last few releases for context.
+
+**Move only entries that already carry a `release=` key.** Archiving a release-pending
+entry drops its scope out of the release gate silently, which is the one failure this
+step can cause. Assert it before you write:
+
+```sh
+grep '^<!-- prawduct: ' .prawduct/change-log-archive.md | grep -v 'release=' && echo "STOP: pending entry archived"
+```
+
+Nothing reads the archive — `lib/change_log.py` names `.prawduct/change-log.md`
+specifically — so it is history for humans, and git carries it either way.
 
 ### 2. Bump the product version (all four surfaces, in lockstep)
 

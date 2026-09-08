@@ -656,9 +656,11 @@ class SectionMetrics:
     # answer to "thud or punch?". Neutral — the interpreter grades it.
     transients: list[PartTransient] = field(default_factory=list)
     # The transient lens's failure channel: one structured skip per part that
-    # produced no reading (window_too_short / no_low_band_energy /
-    # too_few_hits / all_hits_censored), so an empty ``transients`` never hides
-    # WHY. Empty when the lens is off or every part measured.
+    # produced no reading — the complete set is invalid_sample_rate /
+    # window_too_short / no_low_band_energy / too_few_hits / all_hits_censored
+    # (``transients.TransientWindowResult`` is the home) — so an empty
+    # ``transients`` never hides WHY. Empty when the lens is off or every part
+    # measured.
     transient_skips: list[dict] = field(default_factory=list)
     # Onset/event density (onsets-per-beat summed across stems) over the section
     # window — the second energy-realization correlate (ARR-7M3D), alongside

@@ -269,6 +269,9 @@ def test_a_two_lobe_hit_does_not_read_bimodally_across_the_90_percent_line():
     # on one side passes green over a forward-scanning regression.
     assert min(ratios) < 0.90 < max(ratios), ratios
     assert max(rises) - min(rises) < 3.0, rises
-    # and it is the LATER lobe's approach that is measured throughout — never a
-    # short reading borrowed from the first lobe
+    # and the interval SPANS both lobes throughout (the valley between them
+    # stays above 10 % of the peak, so the 10 % point is the first lobe's
+    # onset) — never the ~14 ms reading the old estimator borrowed from the
+    # first lobe once it cleared 0.90. Lobes are 32 ms apart, so > 30 ms is
+    # what spanning them looks like.
     assert min(rises) > 30.0, rises

@@ -177,9 +177,11 @@ def diff_reports(
         "added_surfaces": sorted(current_surfaces.keys() - baseline_surfaces.keys()),
         "missing_surfaces": sorted(baseline_surfaces.keys() - current_surfaces.keys()),
         # Per-SECTION rows (matched by section name, then track_id): the timbre
-        # family per stem — so a "de-shrill chorus 3" edit is A/B-able where it
-        # was made — and the transient shape per part. Surfaces-only deltas
-        # above cannot carry either (transients exist only per section).
+        # family on every surface the window measured — stems, returns and the
+        # master, so a "de-shrill chorus 3" edit is A/B-able where it was made,
+        # on the whole mix as well as per part — and the transient shape per
+        # part. Surfaces-only deltas above cannot carry either (they average the
+        # whole song; transients exist only per section). See _section_deltas.
         "section_deltas": section_deltas,
     }
 

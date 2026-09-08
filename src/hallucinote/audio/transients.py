@@ -32,7 +32,13 @@ Design (see build-plan-aud-sharpness-transients.md):
     relative number across renders and parts, not as the sample's true attack.
     It is also a reading of the LOW band only: a kick whose beater click leads
     its low-band peak by tens of ms has an attack the hit band never sees, and
-    a kick with two low-band lobes has its rise measured on the later one. The
+    a kick with two low-band lobes has its rise measured across BOTH of them
+    whenever the valley between them stays above 10 % of the peak — the 10 %
+    point is the last sample under the threshold before the final 90 % crossing,
+    which on such a hit is the FIRST lobe's onset (the alien kit reads ~44 ms
+    for lobes 31.8 ms apart: the span, not the later lobe's own ~14 ms). That is
+    the hit's full rise, and it is stable, which is the property that matters —
+    but it is not the later lobe's attack. The
     number is comparable across renders and sections of the SAME kit; it is not
     comparable across kits, and it moves with ``band_hz`` (on the alien kit,
     40-150 Hz reads 44 ms and 50-150 Hz reads 15 ms for the same hits).

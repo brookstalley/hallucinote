@@ -90,9 +90,12 @@ Not a slower kick — the estimator.
 - **Fix.** Measure the rise on the hit's FINAL approach to the peak: scan
   BACKWARD from the peak for the last sample under 90 %, then backward from there
   for the last under 10 %. An earlier lobe can no longer capture the crossing.
-  Censoring semantics unchanged in kind (no 10 % crossing inside the window →
-  censored, `i10 = w0` for the attack window) and now strictly more correct: it
-  subsumes the old `win[0] >= 0.10 * pv` edge test.
+  Rise censoring is strictly more correct: it subsumes the old
+  `win[0] >= 0.10 * pv` edge test. *(This bullet originally said the censoring
+  semantics were "unchanged in kind (… `i10 = w0` for the attack window)" —
+  round 4 found that `i10 = w0` fallback to be a second defect and removed it;
+  see the round-4 block below. Corrected here rather than left to contradict
+  it 20 lines apart.)*
 - **Also documented, because the number invited an absolute reading.** `rise_ms`
   is a LOW-BAND, band-edge-dependent, relative number: the same alien hits read
   44 ms at 40–150 Hz, 49 ms at 30–200 Hz, 41 ms at 40–120 Hz and 15 ms at

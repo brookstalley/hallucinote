@@ -10,7 +10,7 @@ branch: feat/render-integrity
 **Branch:** `feat/render-integrity` (off `develop`)
 **Type:** Feature (four read-side analysis lenses + integration) · **Size:** Large
 **Critic mode:** cumulative (run via an independent Agent — worktree work is blind to the primary session's Stop-hook gate; same posture as `build-plan-aud-sharpness-transients.md`)
-**Worktree:** `/Users/brookstalley/source/hallucinote-wt-integrity`. The primary checkout `/Users/brookstalley/source/hallucinote` serves `--plugin-dir` to a live songs session and is deliberately untouched.
+**Worktree:** `~/source/hallucinote-wt-integrity`. The primary checkout `~/source/hallucinote` serves `--plugin-dir` to a live songs session and is deliberately untouched.
 **Origin:** owner ask (2026-09-08), after the sharpness/transient lenses merged. The question "are there other lenses we should add" was steered to a class the report has none of: *is the audio itself damaged* — clipping, clicks and pops, dropouts, phase and soundstage problems.
 
 ## Confidence Check

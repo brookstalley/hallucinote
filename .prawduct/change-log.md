@@ -98,6 +98,43 @@ ownership; the delegation shape they used is now a pre-approved
 converged on the same finding — a file promising it did not restate the
 vocabulary and then restating it — which made it the plan's defect rather than
 any delegate's, and the plan gained a `definition` vs `rule` amendment.
+## 2026-09-08 — Two read-side lenses: psychoacoustic sharpness and drum-hit transient shape
+
+<!-- prawduct: type=feature | scope=aud-lenses -->
+
+Dogfooding `alien`'s listen turn left two by-ear complaints with no number in the
+MixReport to reason over — "the high elements are a bit shrill" and "the kick is a
+thud". Both now have one.
+
+- **`timbre.sharpness_acum`** — psychoacoustic sharpness (von Bismarck / Zwicker
+  weighting over Bark specific loudness) on every surface and section. A piercing
+  lead reads higher than a warm pad at the same centroid; scale-invariant.
+  Provisional 0.10 acum significance floor.
+- **`per_section[].transients`** — per-part low-band (40–150 Hz) hit shape: rise,
+  T20 ring, the attack window's sub / low / low-mid / click levels, and the two
+  level-blind reads `click_minus_sub_db` / `low_minus_sub_db`. Estimators that hit
+  their own boundary are censored and counted, never reported as measurements, and
+  every part without a reading has a structured reason in `transient_skips`.
+- **`compare_to.section_deltas`** — the timbre family per section on every surface
+  the window measured (stems, returns and the master) plus transient shape per
+  part, counted in the summary as `significant_section_delta_count`, so a
+  "de-shrill chorus 3" or "sharpen the kick" edit is A/B-able where it was made.
+
+**The lens found its own defect, which is the part worth remembering.** Used on
+alien, `rise_ms` read 42 ms in verse 1 and ~16 ms in eight other sections off the
+*same kick sample*. The kick had not changed — the estimator was bimodal. This kick's
+low-band envelope has two comparable lobes 31.8 ms apart, and the rise was found by
+scanning FORWARD from the search window's edge for the first 90 % crossing, so
+whether the first lobe cleared 0.90 × peak decided which lobe was measured. A mix
+edit that lowered every section's first lobe by the same amount flipped exactly the
+two that crossed the line. Scanning BACKWARD from the peak fixed it; a second pass
+found the same defect class one step later, where a censored rise left the attack
+window anchored on the search window's edge and read band levels over 75 ms instead
+of 30. Recorded as a learning: an estimator that reports the FIRST threshold
+crossing is bimodal on multi-lobe material.
+
+Build plan: `.prawduct/artifacts/build-plan-aud-sharpness-transients.md`. Six Critic
+rounds (three cumulative, three verify-resolutions), the last clean.
 
 ## 2026-08-20 — Three post-sync advisories cleared: a merge driver, a triaged bug report, and a norm re-affirmed
 

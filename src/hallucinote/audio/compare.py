@@ -51,6 +51,23 @@ SIGNIFICANCE_TIMBRE: dict[str, float] = {
     "spectral_centroid_hz": 50.0,   # Hz
     "spectral_flatness": 0.02,      # 0..1 Wiener entropy
     "spectral_rolloff_hz": 100.0,   # Hz
+    # Sharpness: an EQ move of a couple of dB on a shrill surface's 3-6 kHz
+    # region moved a rendered stem ~0.15-0.3 acum in the alien dogfood pass;
+    # re-render jitter on an unchanged stem sat well under 0.05. Provisional.
+    "sharpness_acum": 0.10,         # acum
+}
+
+# PROVISIONAL transient-shape significance floors (the kick-class lens). Sized
+# from the alien dogfood pass: an EQ move on the kick's own chain moved
+# ``click_minus_sub_db`` ~0.5 dB and ``low_minus_sub_db`` ~2 dB (below and above
+# the floor respectively — the floor is meant to separate "the chain changed"
+# from re-render jitter, which sat under 0.3 dB / 1 ms); an authored attack
+# layer moved ``click_minus_sub_db`` +6.5 dB. No jitter calibration set exists.
+SIGNIFICANCE_TRANSIENTS: dict[str, float] = {
+    "rise_ms": 3.0,                 # ms
+    "t20_ms": 25.0,                 # ms
+    "click_minus_sub_db": 1.5,      # dB
+    "low_minus_sub_db": 1.5,        # dB
 }
 
 # Stereo-image significance (STR-4C8N). Carries ``provisional: true`` for the
@@ -140,6 +157,8 @@ def diff_reports(
     overshoots_before = len(baseline.get("overshoots", []))
     overshoots_after = len(current.get("overshoots", []))
 
+    section_deltas = _section_deltas(current, baseline)
+
     return {
         "baseline": {
             "ref": baseline_ref,
@@ -157,7 +176,68 @@ def diff_reports(
         },
         "added_surfaces": sorted(current_surfaces.keys() - baseline_surfaces.keys()),
         "missing_surfaces": sorted(baseline_surfaces.keys() - current_surfaces.keys()),
+        # Per-SECTION rows (matched by section name, then track_id): the timbre
+        # family on every surface the window measured — stems, returns and the
+        # master, so a "de-shrill chorus 3" edit is A/B-able where it was made,
+        # on the whole mix as well as per part — and the transient shape per
+        # part. Surfaces-only deltas above cannot carry either (they average the
+        # whole song; transients exist only per section). See _section_deltas.
+        "section_deltas": section_deltas,
     }
+
+
+def _section_surfaces(section: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every surface a section window measured: its stems, its returns, and its
+    master. All three carry the timbre family; only stems carry transients."""
+    out = list(section.get("stems", []) or [])
+    out.extend(section.get("returns", []) or [])
+    master = section.get("master")
+    if isinstance(master, dict) and master.get("track_id"):
+        out.append(master)
+    return out
+
+
+def _section_deltas(
+    current: dict[str, Any], baseline: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Per-section, per-surface deltas: timbre (sharpness and the rest) on every
+    surface the window measured — stems, returns AND the master — plus transient
+    shape per part (stems only; that is where hits are picked). Sections are
+    matched by name (a renamed or added section yields no rows — the
+    surface-level ``added/missing`` lists are the place structure changes are
+    named); surfaces by ``track_id``. Null on either side yields
+    ``delta: null, significant: false``, like every other family."""
+    cur = {s.get("section_name"): s for s in current.get("per_section", []) or []}
+    base = {s.get("section_name"): s for s in baseline.get("per_section", []) or []}
+    rows: list[dict[str, Any]] = []
+    for name in [n for n in cur if n in base]:
+        cs, bs = cur[name], base[name]
+        # Every surface the section measured, not just its stems: the master's
+        # per-section timbre is the whole-mix read a "de-shrill chorus 3" edit
+        # is judged on, and a return's is how a send bus moved. `_measure_window`
+        # produces all three; iterating stems alone left the two that carry the
+        # section's summary with no A/B row at all.
+        cstems = {s["track_id"]: s for s in _section_surfaces(cs)}
+        bstems = {s["track_id"]: s for s in _section_surfaces(bs)}
+        for tid in [t for t in cstems if t in bstems]:
+            for row in _family_deltas(cstems[tid], bstems[tid], "timbre",
+                                      SIGNIFICANCE_TIMBRE, provisional=True):
+                rows.append({"section": name, **row})
+        ctr = {t["track_id"]: t for t in cs.get("transients", []) or []}
+        btr = {t["track_id"]: t for t in bs.get("transients", []) or []}
+        for tid in [t for t in ctr if t in btr]:
+            # _family_deltas reads the surface identity off the dict it is
+            # given; a transient entry names only its track_id, so wrap it in
+            # a surface shell (the name comes from the section's stem when
+            # that stem is present).
+            def shell(entry):
+                stem = cstems.get(tid) or {}
+                return {"track_id": tid, "surface_kind": stem.get("surface_kind", "track"),
+                        "surface_name": stem.get("surface_name", tid), "transients": entry}
+            for row in _family_deltas(shell(ctr[tid]), shell(btr[tid]), "transients",
+                                      SIGNIFICANCE_TRANSIENTS, provisional=True):
+                rows.append({"section": name, **row})
+    return rows
 
 
 def resolve_baseline(analysis_dir: Path | str, seq: int) -> Path:

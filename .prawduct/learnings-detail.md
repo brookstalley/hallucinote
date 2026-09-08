@@ -540,3 +540,25 @@ criterion in the plan and say so — never quietly pass, and never loosen the co
 to satisfy a wrong spec. (2026-08-10, STR-4C8N A2)
 
 **How to apply.** (1) Expand a count into its individual symptoms before calling a partial pass a failure. (2) If satisfying the criterion would require the tool to report something untrue, the criterion is wrong — correct it in the plan and say so. (3) Never tune a threshold until a count reaches zero; that is how a rubber stamp gets built and called a fix.
+
+## An estimator that reports the FIRST threshold crossing is bimodal on multi-lobe material
+
+`transients._part_transient` measured a kick's 10→90 % rise with
+`np.argmax(win >= 0.90 * pv)` — the first crossing scanning forward from the
+edge of a 60 ms search window. Real kicks are not single-lobed: the alien kit's
+40–150 Hz envelope has two comparable lobes 31.8 ms apart, invariant across the
+song. Whether the FIRST lobe cleared `0.90 × peak` decided which lobe the
+estimator measured, so the reading was bimodal — ~16 ms or ~44 ms — with a 1 %
+change in one lobe's height flipping it. A mix edit that lowered every section's
+first lobe by the same ~0.04 of the peak flipped exactly the two sections that
+crossed 0.90, and that read as "verse 1's kick got worse" when nothing about
+verse 1 had changed. The fix is to scan BACKWARD from the peak for the last
+sample under each threshold, making the rise the hit's final approach; all ten
+sections then read within 1 ms of each other and the mix edit showed as the
+uniform −1.3 ms it was. The same review found the twin defect one step later:
+a censored rise left the attack window anchored on the search window's edge, so
+its band levels were read over 75 ms instead of 30 and pooled into medians whose
+mix depended on how many hits happened to censor. (2026-09-08, AUD lenses,
+Chunk 03)
+
+**How to apply.** (1) For any interval between two threshold crossings, scan both from the feature you mean (the peak), not from a window boundary. (2) Before trusting a per-section difference, check whether the estimator is bimodal on this material — plot or tabulate the per-hit values, not just the median; a 50/50 split means the median is a coin toss. (3) Sweep the estimator's band edges and thresholds: a number that moves 44 → 15 ms when a filter edge moves 10 Hz is a property of the filter, and its docstring must say so where the FIELD is defined, not only in the skill that reads it. (4) When an estimator censors, censor everything anchored on what it failed to find — a fallback anchor silently changes the geometry of a different measurement.

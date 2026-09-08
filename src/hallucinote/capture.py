@@ -270,7 +270,7 @@ def _guard_stale_snapshot(
             "NOW. Re-capture to bake live edits durably and stamp the "
             "snapshot so this check becomes exact: run `/song-snapshot` "
             "(probe -> diff -> confirmed overwrite of captured_session.json), "
-            "or `python -m hallucinote.tools.capture_cli execute --song "
+            'or `"<python>" -m hallucinote.cli capture execute --song '
             "<slug>` — note that writes captured_session.refresh.json, NOT "
             "the canonical file: review/diff it, then copy it over "
             "captured_session.json yourself. (A legacy file is never "
@@ -867,7 +867,8 @@ def replay_capture(
             f"replay_capture: snapshot predates SNP-8R4K ({detail}) — analyzer "
             "rows are ignored on build (the DB is clean either way), but the "
             "committed snapshot file is still dirty at rest. Run "
-            "`python -m hallucinote.tools.capture_cli migrate <captured_session.json>` "
+            '`"<python>" -m hallucinote.cli capture migrate '
+            "<captured_session.json>` "
             "to clean + version-stamp the committed file.",
             UserWarning,
             stacklevel=2,

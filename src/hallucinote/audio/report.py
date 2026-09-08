@@ -94,10 +94,20 @@ class TimbreMetrics:
       ``spectral_rolloff_hz``   — frequency below which 85 % of the energy lies.
                                   A second brightness/edge cue, robust to a
                                   bright but low-energy top end.
+      ``sharpness_acum``        — psychoacoustic sharpness (von Bismarck /
+                                  Zwicker weighting over Bark specific
+                                  loudness). The SHRILLNESS axis: a piercing
+                                  lead reads higher than a warm pad at the same
+                                  centroid. Scale-invariant; ordering and A/B
+                                  deltas are the contract, the acum calibration
+                                  is provisional. NaN default so hand-built
+                                  fixtures and pre-sharpness baselines stay
+                                  valid (the AUD-2N6K optional-field pattern).
     """
     spectral_centroid_hz: float
     spectral_flatness: float
     spectral_rolloff_hz: float
+    sharpness_acum: float = float("nan")
 
 
 @dataclass(frozen=True)
@@ -515,6 +525,73 @@ class Polymeter:
 
 
 @dataclass(frozen=True)
+class PartTransient:
+    """One part's LOW-BAND (kick-class) hit SHAPE within a section window.
+
+    The read-side answer to "is the kick a thud or a punch?" — measured from
+    the hits the transient lens picks on the 40-150 Hz band of the stem (a
+    kit stem's hats and snares don't register there). All values are MEDIANS
+    across the window's hits.
+
+      ``rise_ms``            — 10 -> 90 % of the low-band envelope on the
+                               hit's FINAL approach to its peak (both
+                               thresholds found scanning back from the peak, so
+                               an earlier lobe cannot capture the 90 % point).
+                               RELATIVE, never an absolute attack time: it sees
+                               only 40-150 Hz, so a kick whose beater click
+                               leads its low-band peak by tens of ms has an
+                               attack this number never looks at, and it moves
+                               with the hit band's edges (one real kit read
+                               44 ms at 40-150 Hz and 15 ms at 50-150 Hz for
+                               the same hits). Compare it across renders and
+                               sections of ONE kit; not across kits, and not
+                               against an absolute "punchy" threshold.
+                               ``None`` when every hit's rise was censored
+                               (see below).
+      ``t20_ms``             — time after the peak for the low envelope to
+                               fall 20 dB. The ring. ``None`` when every hit's
+                               T20 was censored.
+      ``censored_*_hits``    — hits whose estimator hit its own boundary (the
+                               10 % point earlier than the 60 ms search window;
+                               no 20 dB fall inside the 600 ms cap or before the
+                               slice ended; an attack window with no 10 % point
+                               to anchor it — a rise-censored hit is always
+                               attack-censored — or cut by the slice end).
+                               Excluded from the medians, counted here — a
+                               boundary value is never reported as a
+                               measurement, and no band level is read over a
+                               window that could not be placed.
+      ``attack_<band>_db``   — band RMS (dBFS, PRE-FADER stem as captured)
+                               over the first 30 ms of the hit; the names carry
+                               their edges: sub 40-100, low 100-250 (the thud
+                               register), lowmid 250-600 (boxiness), click
+                               2-6 kHz (the beater). These are NOT the
+                               attribution bands (``sub_20_60`` …).
+      ``click_minus_sub_db`` — the punch read (level-blind): how far the click
+                               sits under the sub weight. Near 0 = a defined
+                               attack; -15 or below = no click to speak of.
+      ``low_minus_sub_db``   — the thud read (level-blind): > 0 means the
+                               attack lives in the low-mids rather than the
+                               sub — the "muffled / muddy with the bass" shape.
+
+    Neutral measurement — the interpreter grades it against intent.
+    """
+    track_id: str
+    hit_count: int
+    rise_ms: float | None
+    t20_ms: float | None
+    censored_rise_hits: int
+    censored_t20_hits: int
+    censored_attack_hits: int
+    attack_sub_40_100_db: float
+    attack_low_100_250_db: float
+    attack_lowmid_250_600_db: float
+    attack_click_2k_6k_db: float
+    click_minus_sub_db: float
+    low_minus_sub_db: float
+
+
+@dataclass(frozen=True)
 class SectionMetrics:
     """Per-surface loudness scoped to one named section window.
 
@@ -574,6 +651,17 @@ class SectionMetrics:
     # >= 2 accented parts whose recovered cells differ. Empty when parts share a
     # cell or carry no audible accent. Neutral — the interpreter grades intent.
     polymeter: list[Polymeter] = field(default_factory=list)
+    # Per-part low-band hit SHAPE (one entry per stem with enough kick-class
+    # hits), populated only when transient analysis is enabled. The read-side
+    # answer to "thud or punch?". Neutral — the interpreter grades it.
+    transients: list[PartTransient] = field(default_factory=list)
+    # The transient lens's failure channel: one structured skip per part that
+    # produced no reading — the complete set is invalid_sample_rate /
+    # window_too_short / no_low_band_energy / too_few_hits / all_hits_censored
+    # (``transients.TransientWindowResult`` is the home) — so an empty
+    # ``transients`` never hides WHY. Empty when the lens is off or every part
+    # measured.
+    transient_skips: list[dict] = field(default_factory=list)
     # Onset/event density (onsets-per-beat summed across stems) over the section
     # window — the second energy-realization correlate (ARR-7M3D), alongside
     # master.loudness.lufs_s_median. Level-blind. None when timing/cross-rhythm
@@ -835,6 +923,7 @@ def _stem_to_dict(s: StemMetrics) -> dict[str, Any]:
                 "spectral_centroid_hz": _finite_or_none(s.timbre.spectral_centroid_hz),
                 "spectral_flatness": _finite_or_none(s.timbre.spectral_flatness),
                 "spectral_rolloff_hz": _finite_or_none(s.timbre.spectral_rolloff_hz),
+                "sharpness_acum": _finite_or_none(s.timbre.sharpness_acum),
             }
             if s.timbre is not None
             else None
@@ -878,7 +967,27 @@ def _section_to_dict(
         "cross_rhythm": [_part_cross_rhythm_to_dict(c) for c in s.cross_rhythm],
         "phasing": [_phasing_to_dict(p) for p in s.phasing],
         "polymeter": [_polymeter_to_dict(p) for p in s.polymeter],
+        "transients": [_part_transient_to_dict(t) for t in s.transients],
+        "transient_skips": [dict(sk) for sk in s.transient_skips],
         "onset_density": s.onset_density,
+    }
+
+
+def _part_transient_to_dict(t: PartTransient) -> dict[str, Any]:
+    return {
+        "track_id": t.track_id,
+        "hit_count": t.hit_count,
+        "rise_ms": _finite_or_none(t.rise_ms),
+        "t20_ms": _finite_or_none(t.t20_ms),
+        "censored_rise_hits": t.censored_rise_hits,
+        "censored_t20_hits": t.censored_t20_hits,
+        "censored_attack_hits": t.censored_attack_hits,
+        "attack_sub_40_100_db": _finite_or_none(t.attack_sub_40_100_db),
+        "attack_low_100_250_db": _finite_or_none(t.attack_low_100_250_db),
+        "attack_lowmid_250_600_db": _finite_or_none(t.attack_lowmid_250_600_db),
+        "attack_click_2k_6k_db": _finite_or_none(t.attack_click_2k_6k_db),
+        "click_minus_sub_db": _finite_or_none(t.click_minus_sub_db),
+        "low_minus_sub_db": _finite_or_none(t.low_minus_sub_db),
     }
 
 

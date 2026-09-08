@@ -249,7 +249,8 @@ register(
         handler=browser_handlers.inventory_handler,
         example="ableton_browser(action='inventory', root='drums')",
         tips=(
-            "Built for `python -m hallucinote.inventory refresh`, which calls "
+            'Built for `"<python>" -m hallucinote.cli inventory refresh`, '
+            "which calls "
             "this per root and writes ~/.hallucinote/inventory. The whole walk "
             "runs in ONE main-thread bout under the server's 15s ceiling; "
             "max_nodes (default 200000) bounds it and max_entries (default "

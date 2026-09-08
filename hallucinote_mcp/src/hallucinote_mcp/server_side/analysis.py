@@ -736,6 +736,13 @@ def analyze_handler(
             # declared sections; level-blind. Composes with timing: the timing
             # pass's swing read feeds cross-rhythm's swing-deference internally.
             analyze_cross_rhythm=bool(sections),
+            # Per-part low-band hit SHAPE (rise / ring / sub-vs-thud-vs-click
+            # balance of the kick-class hits) — the "is the kick a thud or a
+            # punch?" read. Level-blind in its differences. Like the three
+            # flags above this is an OPT-IN, not a gate: the engine reads it
+            # only inside the per-section loop, which cannot run without
+            # sections; ``bool(sections)`` just states the policy in one place.
+            analyze_transients=bool(sections),
             # Mix-level reconstruction (F1): scale each pre-fader stem by its
             # static fader gain so masking sees mix balance, not source level.
             # Fader curve is Live-12-calibrated (see audio/levels.py).
@@ -831,6 +838,15 @@ def analyze_handler(
             "significant_delta_count": (
                 sum(1 for d in diff["deltas"] if d["significant"])
                 + (1 if diff["overshoot_count"]["significant"] else 0)
+            ),
+            # Counted separately, not folded into the line above: there is one
+            # section_delta row per surface per family per section, so folding
+            # them in would let a many-sectioned song's routine churn swamp the
+            # surface-level headline this summary exists to carry. Zero here
+            # while the count above is nonzero means the change did not land
+            # where it was made.
+            "significant_section_delta_count": sum(
+                1 for d in diff["section_deltas"] if d["significant"]
             ),
             "overshoot_delta": diff["overshoot_count"]["delta"],
             "added_surfaces": diff["added_surfaces"],

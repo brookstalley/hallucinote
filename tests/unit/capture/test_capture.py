@@ -1805,9 +1805,16 @@ def test_compile_snapshot_output_does_not_need_migration():
 
 def test_replay_warns_on_needs_migration_snapshot(conn):
     """A needs-migration snapshot triggers the build-time guidance warning that
-    names the analyzer count + the migrate command."""
+    names the analyzer count + the migrate command.
+
+    The command is pinned in its runnable plugin-env form: the bare
+    ``python -m hallucinote.tools.capture_cli`` invocation this used to name
+    fails to import outside the plugin env (issue #449).
+    """
     snapshot = _polluted_snapshot()
-    with pytest.warns(UserWarning, match=r"predates SNP-8R4K.*capture_cli migrate"):
+    with pytest.warns(
+        UserWarning, match=r"predates SNP-8R4K.*hallucinote\.cli capture migrate"
+    ):
         replay_capture(conn, snapshot, song_name="t")
     # DB is clean regardless (chunk 1's _replay_devices strips analyzers).
     assert conn.execute(

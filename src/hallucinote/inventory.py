@@ -93,14 +93,14 @@ def read_cache(path: Path | None = None) -> dict | None:
     except (json.JSONDecodeError, OSError) as exc:
         raise ValueError(
             f"inventory cache at {p} is unreadable ({exc}); refresh it with "
-            "`python -m hallucinote.inventory refresh`"
+            '`"<python>" -m hallucinote.cli inventory refresh`'
         ) from exc
     if not isinstance(data, dict) or data.get("schema_version") != SCHEMA_VERSION:
         raise ValueError(
             f"inventory cache at {p} has schema_version "
             f"{data.get('schema_version') if isinstance(data, dict) else '?'} "
             f"(expected {SCHEMA_VERSION}); refresh it with "
-            "`python -m hallucinote.inventory refresh`"
+            '`"<python>" -m hallucinote.cli inventory refresh`'
         )
     return data
 
@@ -329,7 +329,7 @@ def refresh(
 
 def _main(argv: list[str]) -> int:
     if not argv or argv[0] != "refresh":
-        print("usage: python -m hallucinote.inventory refresh")
+        print('usage: "<python>" -m hallucinote.cli inventory refresh')
         return 2
     cache = refresh()
     p = cache_path()

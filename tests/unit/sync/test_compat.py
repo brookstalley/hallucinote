@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
+from typing import get_args
 
 import pytest
 
@@ -478,6 +479,115 @@ def test_format_requirements_md_includes_placeholder_section(
     md = C.format_requirements_md(report)
     assert "Author-intentional placeholders" in md
     assert "warm pad slot" in md
+
+
+def test_format_requirements_md_lists_preset_query_unverified(
+    conn, song, track_chain, db_path,
+):
+    """A structurally-valid preset_query with no dry-run map lands in
+    ``preset_query_unverified`` — and must still be NAMED in the file.
+
+    Before the fix that bucket was rendered by no section, so the device
+    appeared nowhere: REQUIREMENTS.md read "None. This song uses only
+    Live's built-in devices" while ``has_issues`` refused the push on the
+    very same report. ``regen_requirements`` never passes
+    ``browser_dry_runs``, so on the sole write path EVERY structurally-valid
+    preset_query device lands here.
+    """
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="Operator", display_name="Bass Pluck Slot",
+        preset_query={"root": "instruments", "pattern": "Bass-Pluck"},
+    )
+    conn.commit()
+    report = C.check_song(db_path)
+    assert len(report.preset_query_unverified) == 1
+
+    md = C.format_requirements_md(report)
+    assert "preset_query authoring issues" in md
+    assert "Bass Pluck Slot" in md
+    assert "_preset_query_unverified_" in md
+    # Framed as unresolved — NOT as a load-time refusal the report can't
+    # stand behind (nothing was checked, so nothing is known to fail).
+    assert "never resolved against a browser" in md
+    assert "will refuse at load time" not in md
+
+
+def test_format_requirements_md_separates_refusals_from_unverified(
+    conn, song, track_chain, db_path,
+):
+    """Refusals and unverified rows share the heading, keep their framing.
+
+    The refusal sentence is a claim about load-time behaviour; applying it
+    to a selector nobody resolved would overstate what compat knows.
+    """
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="Operator", display_name="Broken Selector",
+        preset_query={"root": "not-a-root", "pattern": "x"},
+    )
+    M.create_device(
+        conn, chain_id=track_chain, position=2,
+        kind="Operator", display_name="Unchecked Selector",
+        preset_query={"root": "instruments", "pattern": "Bass-Pluck"},
+    )
+    conn.commit()
+    report = C.check_song(db_path)
+    assert len(report.preset_query_invalid) == 1
+    assert len(report.preset_query_unverified) == 1
+
+    md = C.format_requirements_md(report)
+    assert md.count("## preset_query authoring issues") == 1
+    assert "Broken Selector" in md
+    assert "Unchecked Selector" in md
+    assert "will refuse at load time" in md
+    assert "never resolved against a browser" in md
+
+
+def test_format_requirements_md_names_every_device_status(
+    conn, song, track_chain, db_path,
+):
+    """The DeviceStatus caller contract: the REQUIREMENTS.md generator
+    "MUST handle each value explicitly". No status may render to silence.
+
+    Every status reachable from the sole write path is exercised here —
+    ``regen_requirements`` calls ``check_song`` with neither
+    ``installed_plugins`` nor ``browser_dry_runs``, which is exactly this
+    call. The bucket count is pinned against the enum so a newly added
+    status fails here until the generator is taught to render it.
+    """
+    M.create_device(conn, chain_id=track_chain, position=1,
+                    kind="Operator", display_name="Warm Keys")
+    M.create_device(conn, chain_id=track_chain, position=2,
+                    kind="placeholder", display_name="warm pad slot")
+    M.create_device(conn, chain_id=track_chain, position=3,
+                    kind="PluginDevice", display_name="Serum")
+    M.create_device(
+        conn, chain_id=track_chain, position=4,
+        kind="Operator", display_name="Bass Pluck Slot",
+        preset_query={"root": "instruments", "pattern": "Bass-Pluck"},
+    )
+    conn.commit()
+    report = C.check_song(db_path)
+
+    buckets = {
+        "native": report.native,
+        "placeholder": report.placeholders,
+        "third_party_ok": report.third_party_ok,
+        "third_party_missing": report.missing,
+        "third_party_unverified": report.unverified,
+        "preset_query_invalid": report.preset_query_invalid,
+        "kind_unresolvable": report.kind_unresolvable,
+        "kind_ambiguous": report.kind_ambiguous,
+        "preset_query_unverified": report.preset_query_unverified,
+    }
+    assert set(buckets) == set(get_args(C.DeviceStatus))
+
+    md = C.format_requirements_md(report)
+    # Natives are summarised by kind; the rest are named individually.
+    assert "`Operator`" in md
+    for name in ("warm pad slot", "Serum", "Bass Pluck Slot"):
+        assert name in md, f"{name} is in the report but named nowhere in the file"
 
 
 # ---------------------------------------------------------------------------

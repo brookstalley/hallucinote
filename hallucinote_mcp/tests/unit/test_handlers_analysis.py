@@ -1509,6 +1509,9 @@ def test_analyze_handler_compare_to_seq_end_to_end(synthetic_song: Path):
     assert result["summary"]["compare_to"] == {
         "baseline_ref": baseline_result["report_path"],
         "significant_delta_count": 0,
+        # counted separately from the surface-level number so a many-sectioned
+        # song's routine churn can't swamp the headline
+        "significant_section_delta_count": 0,
         "overshoot_delta": 0,
         "added_surfaces": [],
         "missing_surfaces": [],

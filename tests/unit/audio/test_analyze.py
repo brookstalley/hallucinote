@@ -1424,3 +1424,47 @@ def test_analyze_mix_report_carries_no_publishable_leak(tmp_path: Path):
             "analysis/ reports are git-tracked, so this ships to whoever "
             "clones the repo"
         )
+
+
+def test_analyze_mix_populates_section_transients_when_enabled(tmp_path: Path):
+    """With ``analyze_transients=True``, a covered section carries the low-band
+    hit shape of every stem with enough kick-class hits (a pad is omitted), and
+    it serializes under ``per_section[].transients``."""
+    from .fixtures import kick_onset, sine
+
+    kick = np.zeros((SAMPLE_RATE * 8, 2), dtype=np.float32)
+    one = kick_onset()
+    for i in range(16):
+        s = i * SAMPLE_RATE // 2
+        kick[s:s + one.shape[0]] += one
+    pad = sine(440.0, 8.0, amplitude=0.2)
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "Kit", kick), ("track:2", "Pad", pad)],
+        master_audio=kick + pad,
+        start_at_beat=0.0,
+        stop_at_beat=16.0,
+    )
+    sections = [SectionWindow(name="verse", start_beat=0.0, end_beat=16.0)]
+
+    off = analyze_mix(captures_dir, sections=sections)
+    assert off.per_section[0].transients == []
+
+    on = analyze_mix(captures_dir, sections=sections, analyze_transients=True)
+    sec = on.per_section[0]
+    assert [t.track_id for t in sec.transients] == ["track:1"]
+    kit = sec.transients[0]
+    assert kit.hit_count == 16
+    assert kit.rise_ms > 0.0 and kit.t20_ms > 0.0
+    # the pad's absence is EXPLAINED, not silent
+    assert [s["track_id"] for s in sec.transient_skips] == ["track:2"]
+    assert sec.transient_skips[0]["kind"] in ("no_low_band_energy", "too_few_hits")
+
+    sj = on.to_json_dict()["per_section"][0]
+    j = sj["transients"]
+    assert len(j) == 1 and j[0]["track_id"] == "track:1"
+    assert isinstance(j[0]["click_minus_sub_db"], float)
+    assert isinstance(j[0]["attack_sub_40_100_db"], float)
+    assert isinstance(j[0]["hit_count"], int)
+    assert isinstance(j[0]["censored_t20_hits"], int)
+    assert sj["transient_skips"][0]["track_id"] == "track:2"

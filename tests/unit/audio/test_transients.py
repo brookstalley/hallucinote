@@ -172,3 +172,40 @@ def test_censored_estimators_are_counted_not_reported():
     t = analyze_transients_window([("k", buf)], SR).parts[0]
     assert t.hit_count == 5
     assert t.censored_attack_hits == 1
+
+
+def _two_lobe_kick(first_rel: float, *, sep_s: float = 0.032, n: int = 6) -> np.ndarray:
+    """A kick whose LOW BAND has two comparable lobes ``sep_s`` apart.
+
+    The shape that made the forward-scanning rise estimator bimodal — on the
+    alien kit the two lobes sit 31.8 ms apart, invariant across the song.
+    ``first_rel`` scales the first lobe, sweeping it across the 90 % line.
+    """
+    lobe = kick_onset(duration_s=0.25, f_start_hz=80.0, f_end_hz=55.0, decay_s=0.008)
+    buf = np.zeros((int(5.0 * SR), 2), dtype=np.float32)
+    for i in range(n):
+        s = int((0.3 + i * 0.7) * SR)
+        buf[s:s + lobe.shape[0]] += lobe * first_rel
+        s2 = s + int(sep_s * SR)
+        buf[s2:s2 + lobe.shape[0]] += lobe
+    return buf
+
+
+def test_a_two_lobe_hit_does_not_read_bimodally_across_the_90_percent_line():
+    # The rise is measured on the FINAL approach to the peak. Scanning forward
+    # from the search window's edge instead, a first lobe that clears 0.90 x
+    # peak captures the 90 % crossing and the reading collapses to THAT lobe's
+    # rise — so a 1 % change in one lobe's height moved rise_ms by ~30 ms.
+    # (alien, 2026-09-08: verse 1 read 42 ms and eight other sections 16 ms off
+    # the same kick, and a mix edit that lowered every section's first lobe by
+    # the same amount flipped exactly the two that crossed 0.90.)
+    rises = []
+    for first_rel in (0.86, 0.88, 0.895, 0.905, 0.92, 0.96):
+        t = _one(_two_lobe_kick(first_rel))
+        assert t.hit_count == 6  # one hit per pair: the lobes are closer than min_sep
+        assert t.rise_ms is not None and t.censored_rise_hits == 0
+        rises.append(t.rise_ms)
+    assert max(rises) - min(rises) < 3.0, rises
+    # and it is the LATER lobe's approach that is measured throughout — never a
+    # short reading borrowed from the first lobe
+    assert min(rises) > 30.0, rises

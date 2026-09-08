@@ -134,14 +134,20 @@ first — see "Refreshing the analysis"). For each section, you have:
   realign every 12 beats" — intended polymeter, or an accident?
 - `transients` — per-part LOW-BAND hit SHAPE (the kick-class read: hits are
   picked on the 40–150 Hz band, so a kit stem's hats and snares don't register).
-  Medians across the section's hits: `rise_ms` (10→90 % rise — a punchy kick is
-  a few ms, a soft thud tens), `t20_ms` (the ring), `attack_sub_40_100_db` /
+  Medians across the section's hits: `rise_ms` (10→90 % on the hit's FINAL
+  approach to its low-band peak — punchier is shorter), `t20_ms` (the ring), `attack_sub_40_100_db` /
   `attack_low_100_250_db` / `attack_lowmid_250_600_db` / `attack_click_2k_6k_db`
   (the first 30 ms of the hit — dBFS of the PRE-FADER stem; the names carry
   their edges because these are NOT the attribution bands), and the two
   level-blind reads: **`click_minus_sub_db`** (near 0 = a defined attack; −15
   or below = no beater to speak of) and **`low_minus_sub_db`** (> 0 = the
   attack lives in the low-mids, the "muffled / muddy with the bass" shape).
+  **Read `rise_ms` as a RELATIVE number, never an absolute attack time.** It
+  sees only 40–150 Hz, so a kick whose beater click leads its low-band peak by
+  tens of ms has an attack this lens never looks at, and it moves with the band
+  edges (one real kit read 44 ms at 40–150 Hz and 15 ms at 50–150 Hz for the
+  same hits). Compare it across renders and sections of the SAME kit — through
+  `compare_to` — and not across kits or against an absolute "punchy" threshold.
   `rise_ms` / `t20_ms` are `null` when every hit's estimator hit its boundary;
   the `censored_*_hits` counts say how many did (a hit on a section's last
   beat is the normal case, so read a high count as "the window cut it", not

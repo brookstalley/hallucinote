@@ -18,8 +18,10 @@ Design (see build-plan-aud-sharpness-transients.md):
     5 ms; peaks at >= ``peak_rel`` of the window's loudest peak, rising at
     least ``prominence_rel`` of it above their surrounding valley, >=
     ``min_sep_s`` apart.
-  * Per hit: rise = 10 -> 90 % of the low envelope up to the peak (searched back
-    ``_RISE_SEARCH_S``); T20 = time after the peak for the low envelope to fall
+  * Per hit: rise = 10 -> 90 % of the low envelope on its FINAL approach to the
+    peak — both thresholds are found by scanning BACKWARD from the peak, so an
+    earlier lobe of a two-lobe hit cannot capture the 90 % crossing (searched
+    back ``_RISE_SEARCH_S``); T20 = time after the peak for the low envelope to fall
     20 dB (within ``_DECAY_CAP_S``); the ATTACK window = the first 30 ms
     from the 10 % point (reaching at least 15 ms past the peak), over which four
     band RMS levels are read. Medians
@@ -28,6 +30,12 @@ Design (see build-plan-aud-sharpness-transients.md):
   * ``rise_ms`` carries the zero-phase band-pass's pre-ring (a few ms of
     envelope BEFORE the true onset), the same for every hit — so read it as a
     relative number across renders and parts, not as the sample's true attack.
+    It is also a reading of the LOW band only: a kick whose beater click leads
+    its low-band peak by tens of ms has an attack the hit band never sees, and
+    a kick with two low-band lobes has its rise measured on the later one. The
+    number is comparable across renders and sections of the SAME kit; it is not
+    comparable across kits, and it moves with ``band_hz`` (on the alien kit,
+    40-150 Hz reads 44 ms and 50-150 Hz reads 15 ms for the same hits).
     The pre-ring moves the attack window's start by the same few ms on every
     hit; the window is 30 ms from that point (at least 15 ms past the peak).
   * An estimator that hits its own boundary is CENSORED, not reported: a rise
@@ -234,15 +242,31 @@ def _part_transient(
         pv = env[p]
         w0 = max(0, p - n_search)
         win = env[w0:p + 1]
-        # Censored rise: the envelope was already above 10 % at the search
-        # window's edge, so the true 10 % point is earlier than we can see.
-        if win[0] >= 0.10 * pv:
+        # The rise is the FINAL approach to the peak: scan BACKWARD from the
+        # peak for the last sample under each threshold. Scanning FORWARD from
+        # the window's edge instead lets an EARLIER envelope lobe capture the
+        # 90 % crossing, which makes the estimator bimodal on any hit whose low
+        # band has two comparable lobes: whether that lobe clears 0.90 x peak
+        # decides which one is measured, so a 1 % change in its height moves
+        # rise_ms by tens of ms. Measured on the alien kit (two lobes 31.8 ms
+        # apart, invariant across the song): forward-scanning read 16 ms in
+        # eight sections and 42-44 ms in two, off the same sample, and a mix
+        # edit that lowered every section's first lobe by the same ~0.04 of the
+        # peak flipped exactly the two that crossed 0.90. Backward-scanning
+        # reads 43.6-44.6 ms in all ten and shows the mix edit as the uniform
+        # -1.3 ms it was.
+        below90 = np.nonzero(win < 0.90 * pv)[0]
+        i90_rel = int(below90[-1]) + 1 if below90.size else 0
+        below10 = np.nonzero(win[:i90_rel + 1] < 0.10 * pv)[0]
+        # Censored rise: the envelope never fell under 10 % inside the search
+        # window, so the true 10 % point is earlier than we can see.
+        if below10.size:
+            i10_rel = int(below10[-1]) + 1
+            i10 = w0 + i10_rel
+            rises.append((i90_rel - i10_rel) / sr * 1000.0)
+        else:
             censored_rise += 1
             i10 = w0
-        else:
-            i10 = w0 + int(np.argmax(win >= 0.10 * pv))
-            i90 = w0 + int(np.argmax(win >= 0.90 * pv))
-            rises.append((i90 - i10) / sr * 1000.0)
         # Censored T20: never fell 20 dB inside the cap, or the slice ended first.
         after = env[p:p + n_decay]
         below = np.nonzero(after <= pv * 10.0 ** (-20.0 / 20.0))[0]

@@ -67,4 +67,57 @@ the Remote Script was vendored from, see the songs workspace memory
 `framework-checkout-fingerprint-trap`). Full suite run recorded in the commit.
 `SCHEMA_VERSION` stays "1": both fields are additive (a pre-sharpness baseline
 diffs to a null sharpness delta; `transients` is an empty list when disabled).
-Critic rounds: rev-20260908T132456Z-cec6448a (3 blocking / 12 warning / 12 note) → fixes in 53b0d05 → rev-20260908T141447Z-4f0c1b2a (all resolved, 1 new blocking) → c785301 → rev-20260908T143223Z-ffb4b53e (clean). Six demoted observations accepted as-is: the `### Chunk N —` heading shape in nine older plans is other work's record; `section_deltas` covers timbre + transients only (timing / cross-rhythm / phasing / polymeter stay per-section-undiffed — a follow-up if a by-ear A/B ever needs them); no reachable off-switch for the lens (it mirrors the other three per-section lenses); `all_hits_censored` is near-unreachable and kept as the honest terminal branch; "both lists empty = lens off" is also true over zero stems; the pre-ship field rename crosses no schema bump. Remaining: PR to `develop`.
+Critic rounds: rev-20260908T132456Z-cec6448a (3 blocking / 12 warning / 12 note) → fixes in 53b0d05 → rev-20260908T141447Z-4f0c1b2a (all resolved, 1 new blocking) → c785301 → rev-20260908T143223Z-ffb4b53e (clean). Six demoted observations accepted as-is: the `### Chunk N —` heading shape in nine older plans is other work's record; `section_deltas` covers timbre + transients only (timing / cross-rhythm / phasing / polymeter stay per-section-undiffed — a follow-up if a by-ear A/B ever needs them); no reachable off-switch for the lens (it mirrors the other three per-section lenses); `all_hits_censored` is near-unreachable and kept as the honest terminal branch; "both lists empty = lens off" is also true over zero stems; the pre-ship field rename crosses no schema bump. Remaining: merge PR #470 to `develop`.
+
+### Chunk 03: the rise estimator's bimodality (dogfood finding, post-#470-open)
+
+Found by using the lens on alien: `rise_ms` read **42 ms in verse 1 and ~16 ms in
+eight other sections** off the same kick sample, and the tenth (outro) read 43.6.
+Not a slower kick — the estimator.
+
+- **Mechanism.** This kick's 40–150 Hz envelope has two comparable lobes 31.8 ms
+  apart (invariant across the song; the beater click leads the second lobe by
+  ~50 ms, so the hit band never sees the real onset). `_part_transient` found the
+  90 % point with `np.argmax(win >= 0.90 * pv)` — the FIRST crossing scanning
+  forward from the search window's edge. First lobe ≥ 0.90 × peak → `i90` lands
+  on lobe 1 → ~16 ms; first lobe < 0.90 × peak → `i90` skips to lobe 2 → ~44 ms.
+  A 1 % change in one lobe's height moves the reported number by ~28 ms.
+- **What tripped it.** A mix edit (−2 dB at 100–250 Hz on the kick's EQ, the drum
+  bus Glue attack 1 → 10 ms) lowered every section's lobe-1/peak ratio by the
+  same ~0.04. Verse 1 landed at 0.889 and the outro at 0.878 — the only two under
+  0.90 — so exactly those two flipped. Verse 1's hits split 30 fast / 32 slow:
+  the median was a coin toss.
+- **Fix.** Measure the rise on the hit's FINAL approach to the peak: scan
+  BACKWARD from the peak for the last sample under 90 %, then backward from there
+  for the last under 10 %. An earlier lobe can no longer capture the crossing.
+  Censoring semantics unchanged in kind (no 10 % crossing inside the window →
+  censored, `i10 = w0` for the attack window) and now strictly more correct: it
+  subsumes the old `win[0] >= 0.10 * pv` edge test.
+- **Also documented, because the number invited an absolute reading.** `rise_ms`
+  is a LOW-BAND, band-edge-dependent, relative number: the same alien hits read
+  44 ms at 40–150 Hz, 49 ms at 30–200 Hz, 41 ms at 40–120 Hz and 15 ms at
+  50–150 Hz. `/mix-review`'s field list now says compare it across renders and
+  sections of the same kit, never across kits or against an absolute "punchy"
+  threshold; the old gloss ("a punchy kick is a few ms, a soft thud tens") is
+  gone, since it is what made 42 ms read as "the kick got worse".
+- **Test.** `test_a_two_lobe_hit_does_not_read_bimodally_across_the_90_percent_line`
+  sweeps a synthetic two-lobe kick's first lobe across the 0.90 line. Verified to
+  FAIL on the old estimator with the flip in the assertion message
+  (`[45.4, 45.6, 45.9, 15.7, 15.3, 14.8]`) and pass on the new one.
+- **Done when:** suites green; Critic round 4 clean.
+
+**Evidence (real material, shipped code, alien drum stem per section, ms):**
+
+| render | intro | verse1 | pre1 | ch1 | verse2 | pre2 | ch2 | bridge | ch3 | outro |
+|---|---|---|---|---|---|---|---|---|---|---|
+| pre-fix, old estimator | 15.8 | **15.3** | 16.0 | 15.7 | 15.8 | 15.9 | 16.1 | 15.9 | 15.9 | 14.6 |
+| final, old estimator | 15.7 | **41.8** | 15.8 | 16.3 | 16.7 | 15.8 | 16.9 | 15.9 | 16.8 | **43.6** |
+| pre-fix, new estimator | 45.1 | 45.4 | 45.2 | 45.3 | 45.2 | 45.2 | 45.6 | 45.1 | 45.0 | 14.6 |
+| final, new estimator | 43.8 | 43.7 | 44.2 | 43.8 | 44.0 | 44.2 | 44.6 | 44.1 | 44.4 | 43.6 |
+
+The mix edit now reads as the uniform −1.3 ms it was, instead of two sections
+teleporting. (The outro's pre-fix 14.6 is a REAL shape change between the two
+renders — its lobe-1/peak went 0.231 → 0.878 while every other section moved
+~0.04 — not an artifact, and out of scope here.)
+
+Full suite after the fix: **5097 passed, 2 skipped**.

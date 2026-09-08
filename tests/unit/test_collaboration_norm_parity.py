@@ -82,6 +82,7 @@ _EXEMPT_FILES = {
     "docs/tour.md": "a transcript of a real session, locked by test_tour_freshness",
     "CHANGELOG.md": "the history of shipped releases",
     ".prawduct/change-log.md": "the repo's own change history",
+    ".prawduct/change-log-archive.md": "the same history, rolled out of the live log",
     ".prawduct/project-state.yaml": "the norm registry names retired norms",
     # Documents whose subject IS the retired phrase.
     ".prawduct/artifacts/collaboration-turn-model.md": "names the phrases it retires",
@@ -133,8 +134,17 @@ def _flatten(text: str) -> str:
 
 
 def _tracked_files() -> list[str]:
+    """Every file git would carry: tracked, plus untracked-and-not-ignored.
+
+    `--others --exclude-standard` is the load-bearing half. Scanning only the
+    index makes a NEW file invisible until the commit that adds it, so the lock
+    passes locally and fails in CI on the same content — which has now happened
+    twice to this test (once on the file that carries the phrase table, once on
+    `.prawduct/change-log-archive.md`). Ignored paths stay out, so a dirty tree
+    costs nothing; what a developer sees is what the branch will.
+    """
     out = subprocess.run(
-        ["git", "-C", str(_REPO), "ls-files"],
+        ["git", "-C", str(_REPO), "ls-files", "--cached", "--others", "--exclude-standard"],
         capture_output=True,
         text=True,
         check=True,

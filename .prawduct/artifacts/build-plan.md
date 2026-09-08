@@ -74,11 +74,23 @@ three positioning sites now locate
 Live's start playing position and prove where the transport actually rolled
 from, and every perform arc carries a stated outcome that reaches the push
 report. Artifacts, learnings, change-log and the operator-verification entry are
-written; the two descoped asks are filed as #478 and #479. Chunk 01's deferred
-review is covered by the cumulative pass. Remaining: the cumulative Critic, then
-operator verification against a real Live — the fingerprint flips, so a
-re-vendor and a full Live quit/reopen come first, and nothing here is proven
-against Live until that runs.
+written; the two descoped asks are filed as #478 and #479.
+
+**Post-plan: operator verification ran, and it changed the code three times.**
+The plan treated Live as the thing that would confirm the work. It was the thing
+that corrected it. Arming Live's record STARTS the transport, so locating after
+the arm made the entire fix inert while reporting itself accurately (`eb82a91`).
+Reordering to locate-before-arm then left the initial gesture-open reading a
+drifted playhead, opening later arcs early (`d168224`), and left the ramp's
+movement gate keyed to a beat the arm had moved away from (`ddfad5d`). The first
+was found by running against Live; the other two by review, because every live
+pass was single-arc and the damage was to multi-arc windowing.
+
+The perform path is now verified live across two rounds — single-arc from a
+poisoned start position, then multi-arc with staggered spans whose write counts
+(41 over 32 beats, 21 over 16) track the arcs rather than the union. The render
+capture path and `songs/alien` itself remain unverified; both are queued in
+`operator-verification.md` and neither is covered by the above.
 
 ## Verification Strategy
 

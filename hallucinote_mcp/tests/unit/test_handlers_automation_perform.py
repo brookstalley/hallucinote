@@ -556,13 +556,22 @@ def test_perform_batch_windows_overlapping_arcs():
     assert b_param.own[0] == ("begin",) and b_param.own[-1] == ("end",)
 
 
-def test_perform_batch_degenerate_window_reports_zero_writes():
+def test_perform_batch_degenerate_window_reports_zero_writes(monkeypatch):
     """A tiny window the playhead jumps in a single tick opens+closes with
     ZERO value writes — the handler reports updates_written==0 even though
     end_gesture flipped automation_state to 1. The apply layer treats that as
     a stale-lane non-verification (see test_push_perform); here we prove the
-    handler actually produces the degenerate datum."""
-    ctx = FakeCtx()
+    handler actually produces the degenerate datum.
+
+    The clock is virtual because the transport is: a playhead covering 60 beats
+    has, by physics, taken 30 seconds at this tempo, and the realized-position
+    check compares the playhead against the beats elapsed time can account for.
+    A coarse tick with a frozen wall clock is a transport travelling 600x
+    realtime — which is what a mis-positioned playhead looks like, and rightly
+    trips the check."""
+    clock = _VirtualClock()
+    monkeypatch.setattr(automation_handlers, "time", clock)
+    ctx = FakeCtx(clock=clock)
     ctx.song.beats_per_read = 60.0  # huge step jumps the tiny window whole
     result = perform_batch_handler(ctx, arcs=[
         {"arc_id": "driver", "target_kind": "mixer_volume", "master": True,
@@ -1610,12 +1619,31 @@ class FakeStartPositionSong(FakePerformSong):
         self.cue_points.append(_JumpableCue(self, at))
         self.cue_points.sort(key=lambda c: c.time)
 
+    #: Reads to keep returning the PRE-PLAY position after the transport has
+    #: actually started — Live's playhead mirror lagging the audio thread.
+    mirror_lag_reads = 0
+
     def start_playing(self) -> None:
         self._events.append(("play",))
         self._locate_pending = None
-        self._song_time = self._start_position
+        self._rolled_to = self._start_position
+        if self.mirror_lag_reads <= 0:
+            self._song_time = self._start_position
         self.song_time_at_play = self._song_time
         self.is_playing = True
+
+    @property
+    def current_song_time(self) -> float:
+        if self.is_playing and self.mirror_lag_reads > 0:
+            self.mirror_lag_reads -= 1
+            if self.mirror_lag_reads == 0:
+                self._song_time = self._rolled_to
+            return self._song_time
+        return FakePerformSong.current_song_time.fget(self)  # type: ignore[attr-defined]
+
+    @current_song_time.setter
+    def current_song_time(self, v: float) -> None:
+        FakePerformSong.current_song_time.fset(self, v)  # type: ignore[attr-defined]
 
 
 class StartPositionCtx(FakeCtx):
@@ -1749,3 +1777,23 @@ def test_an_unconfirmed_lane_is_unverified_and_says_which_check_failed():
     assert arc["updates_written"] > 0
     assert arc["outcome"] == "unverified"
     assert "automation_state=0" in arc["outcome_reason"]
+
+
+def test_a_lagging_playhead_mirror_cannot_launder_a_wrong_position(monkeypatch):
+    """Live's mirror lags the audio thread, so the first read after play can
+    still show the pre-play position — which is exactly where the locate parked
+    it. Judged once, there, the check would pass at the one moment it must
+    fail, and the tick would WRITE a value at the span start; the arc then
+    comes back `recorded` while the lane it actually stamped is three hundred
+    bars away. Zero writes is not the only shape this failure takes."""
+    clock = _VirtualClock()
+    monkeypatch.setattr(automation_handlers, "time", clock)
+    ctx = StartPositionCtx(clock=clock, start_position=351.3, has_cue_api=False)
+    ctx.song.mirror_lag_reads = 1
+
+    with pytest.raises(PlayheadPositionError) as exc:
+        perform_batch_handler(ctx, arcs=[_far_arc()])
+
+    assert exc.value.observed_beats == pytest.approx(351.3)
+    assert ctx.song.is_playing is False
+    assert ("record_mode", False) in ctx.events

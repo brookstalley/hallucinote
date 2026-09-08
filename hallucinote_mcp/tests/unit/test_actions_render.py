@@ -1426,6 +1426,10 @@ def test_render_refuses_to_capture_from_the_wrong_part_of_the_song(
             output_dir=str(tmp_path / "c"),
             _osc_factory=osc_factory,
             _sidecar=stub_sidecar,
+            # A healthy engine — which is the whole point. This transport is
+            # rolling perfectly well, three hundred bars from where it was
+            # sent, and the advance check cannot tell the difference.
+            _engine_check=lambda: True,
         )
 
     err = exc.value

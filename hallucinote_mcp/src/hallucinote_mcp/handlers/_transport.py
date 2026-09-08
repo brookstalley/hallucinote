@@ -25,8 +25,8 @@ question about the wrong property.
 
 So: never position Live for playback by writing ``current_song_time`` alone.
 Use :func:`locate_start_position`, and prove where the transport ACTUALLY
-started with :func:`assert_playhead_within`. The second is the one that holds
-when the first is defeated by something nobody has seen yet — it reads the
+started with :func:`require_playhead_within`. The second is the one that holds
+when the first is defeated by something nobody has seen yet — it judges the
 realized position instead of trusting any mechanism, which is why it is worth
 having even where the locate is believed to work.
 
@@ -83,19 +83,13 @@ _LOCATE_TOLERANCE_BEATS = 0.001
 # and toggle a duplicate on top of it.
 _CUE_MATCH_EPSILON_BEATS = 1e-6
 
-# How long :func:`assert_playhead_within` gives a transport that is SHORT of
-# its window to travel into it (a render's pre-roll is the ordinary case).
-# A playhead PAST the window fails immediately regardless — see the function.
-_PLAYHEAD_ARRIVAL_TIMEOUT_S = 2.0
-_PLAYHEAD_POLL_S = 0.05
-
-
 #: The start playing position really was moved.
 LOCATE_EXISTING_CUE = "existing_cue"
 LOCATE_TEMPORARY_CUE = "temporary_cue"
-#: The playhead was moved but the start position was NOT — degraded, and the
-#: caller must treat a pass positioned this way as unverified until
-#: :func:`assert_playhead_within` says otherwise.
+#: The playhead was moved but the start position was NOT — degraded. A caller
+#: positioned this way has no promise that playback begins there; only
+#: :func:`require_playhead_within`, on a beat read after the transport is
+#: demonstrably rolling, can say whether it did.
 LOCATE_PLAYHEAD_ONLY = "playhead_only"
 
 _START_POSITION_METHODS = frozenset({LOCATE_EXISTING_CUE, LOCATE_TEMPORARY_CUE})
@@ -195,6 +189,23 @@ def _cue_toggle(song: Any) -> Any | None:
     )
 
 
+def _cue_at(context: LiveContext, target_beats: float) -> bool:
+    """Is there a cue at ``target_beats`` right now? Never raises — it runs on
+    a cleanup path where a failed read must not replace the exception that got
+    us there."""
+    try:
+        return context.run_on_main(
+            lambda: _cue_index_at(context.song, target_beats) is not None
+        )
+    except Exception as exc:  # prawduct:allow prawduct/broad-except -- a cleanup-path read must not mask the exception being unwound
+        logger.warning(
+            "locate_start_position could not re-check for its temporary cue "
+            "at beat %g (%s: %s); assuming it exists so the give-back is at "
+            "least attempted.", target_beats, type(exc).__name__, exc,
+        )
+        return True
+
+
 def _jump_cue_at(song: Any, target_beats: float) -> bool:
     """Jump to the cue sitting at ``target_beats``. False when there is none,
     or when this Live's ``CuePoint`` has no ``jump``.
@@ -236,7 +247,6 @@ def locate_start_position(
     *,
     settle_timeout_s: float = _LOCATE_SETTLE_TIMEOUT_S,
     arrival_tolerance_beats: float = _LOCATE_TOLERANCE_BEATS,
-    allow_temporary_cue: bool = True,
 ) -> LocateResult:
     """Move Live's START PLAYING POSITION to ``target_beats`` and settle.
 
@@ -251,9 +261,6 @@ def locate_start_position(
        (:data:`LOCATE_PLAYHEAD_ONLY`). The caller is responsible for treating
        what follows as unproven; :func:`assert_playhead_within` is how it
        finds out.
-
-    ``allow_temporary_cue=False`` skips path 2 for a caller that must not
-    write to the set at all.
 
     ``arrival_tolerance_beats`` is how close the playhead must read to count as
     ARRIVED. It defaults to a quantization epsilon, which is what a caller that
@@ -319,11 +326,6 @@ def locate_start_position(
         # ---- path 3 preconditions: is path 2 even available? ----
         if degraded_detail is not None:
             pass  # path 1 already ruled the borrow out; keep its reason.
-        elif not allow_temporary_cue:
-            degraded_detail = (
-                "no cue at the target and this caller forbids creating a "
-                "temporary one"
-            )
         elif not survey["has_toggle"]:
             degraded_detail = (
                 "this Live version exposes no cue-toggle API "
@@ -401,12 +403,6 @@ def locate_start_position(
             toggle()
             return True
 
-        toggled = context.run_on_main(_toggle_one_in)
-        # The toggle reads the same audio-thread-mediated position the seek
-        # wrote, so the new cue is not visible in the same bout. Yield on the
-        # worker thread and look again.
-        time.sleep(_LOCATE_POLL_S)
-
         def _jump_to_cue_at_target() -> tuple[bool, bool]:
             """(is a cue at the target, did we jump to it)"""
             song = context.song
@@ -414,21 +410,37 @@ def locate_start_position(
                 return False, False
             return True, _jump_cue_at(song, target)
 
-        cue_present, jumped = context.run_on_main(_jump_to_cue_at_target)
-
-        # Give the cue back only if we can see the one we made. A toggle that
-        # produced nothing at the target either did nothing or landed
-        # elsewhere; toggling again on that guess is how a stray locator ends
-        # up in the operator's set at a beat nobody named.
+        # From the toggle to the give-back, a locator exists in the operator's
+        # set that they did not make. `run_on_main` refuses outright when
+        # Live's main thread is busy, and Live wrappers raise arbitrary types
+        # besides — so the window between them is a try/finally, not a
+        # forward path. Leaving a stray locator is survivable; leaving one
+        # SILENTLY is the thing this module says must never happen.
+        toggled = context.run_on_main(_toggle_one_in)
+        cue_present = jumped = False
+        try:
+            # The toggle reads the same audio-thread-mediated position the seek
+            # wrote, so the new cue is not visible in the same bout. Yield on
+            # the worker thread and look again.
+            time.sleep(_LOCATE_POLL_S)
+            cue_present, jumped = context.run_on_main(_jump_to_cue_at_target)
+        finally:
+            # Give the cue back only if we can SEE the one we made. A toggle
+            # that produced nothing at the target either did nothing or landed
+            # elsewhere; toggling again on that guess is how a stray locator
+            # ends up in the set at a beat nobody named. On the exception path
+            # `cue_present` is still False, so re-check rather than assume.
+            if toggled:
+                if cue_present or _cue_at(context, target):
+                    _delete_borrowed_cue(context, target)
+                else:
+                    logger.warning(
+                        "locate_start_position toggled a cue for beat %g but "
+                        "none appeared there — Live may have clamped it "
+                        "elsewhere. Not toggling again; check the set's "
+                        "locators.", target,
+                    )
         borrowed = toggled and cue_present
-        if borrowed:
-            _delete_borrowed_cue(context, target)
-        elif toggled and not cue_present:
-            logger.warning(
-                "locate_start_position toggled a cue for beat %g but none "
-                "appeared there — Live may have clamped it elsewhere. Not "
-                "toggling again; check the set's locators.", target,
-            )
 
         if not jumped:
             # The toggle did not produce a jumpable cue. The playhead is still
@@ -540,11 +552,23 @@ def require_playhead_within(
     """Judge an ALREADY-READ playhead beat. Raises
     :class:`PlayheadPositionError` when it is past ``high``.
 
-    Split out from :func:`assert_playhead_within` so a caller that is already
-    reading the playhead every tick — a perform pass's ramp loop — can check
-    the beat it has rather than pay a second Live touch to fetch the same
-    number. Being short of ``low`` is not judged here: a caller with its own
-    travel budget (that ramp loop, a render's pre-roll) owns that direction.
+    Takes a beat rather than reading one, because both callers already have
+    the number — a perform pass's ramp loop reads it every tick, and a render
+    reads it for the engine pre-flight — and a second Live touch to fetch the
+    same value would buy nothing.
+
+    Only the PAST-``high`` direction is fatal. A transport beyond the window
+    cannot travel back into it, so there is nothing to wait for; a transport
+    SHORT of it may simply be early, and each caller has its own budget for
+    that (the ramp's wall-clock ceiling, the render's capture wait). ``low``
+    is carried into the message so the reader sees the window that was
+    expected, not half of it.
+
+    **Read the beat only once the transport is demonstrably rolling.** Live's
+    playhead mirror lags the audio thread, so the first read after
+    ``start_playing()`` can still show the pre-play position — which is
+    exactly where the locate parked it, so the check would pass at the one
+    moment it needs to fail.
     """
     if high < low:
         raise ValueError(
@@ -567,63 +591,12 @@ def require_playhead_within(
     )
 
 
-def assert_playhead_within(
-    context: LiveContext,
-    *,
-    low: float,
-    high: float,
-    target_beats: float,
-    what: str,
-    timeout_s: float = _PLAYHEAD_ARRIVAL_TIMEOUT_S,
-    poll_s: float = _PLAYHEAD_POLL_S,
-) -> float:
-    """After ``start_playing()``, prove the transport is rolling where it was
-    sent. Returns the beat observed inside ``[low, high]``.
-
-    The two directions are not symmetric, and the asymmetry is the point:
-
-    * **Past ``high``** — fail at once. A transport already beyond the window
-      cannot travel back into it, so waiting only delays the report. This is
-      the shape of the failure this function exists for: a span at beats 8-24
-      and a playhead at 351.
-    * **Short of ``low``** — wait. A caller may deliberately start early (a
-      render's pre-roll), and the first read after ``start_playing()`` can
-      still show the pre-play mirror. Give it ``timeout_s`` to travel in.
-
-    ``what`` names the operation in the message ("perform pass", "render
-    capture") so the reader knows what was abandoned.
-    """
-    deadline = time.monotonic() + timeout_s
-    observed = _read_song_time(context)
-    while True:
-        require_playhead_within(
-            observed, low=low, high=high, target_beats=target_beats, what=what,
-        )
-        if observed >= low:
-            return observed
-        if time.monotonic() >= deadline:
-            raise PlayheadPositionError(
-                f"{what} was positioned at beat {target_beats:g} but after "
-                f"{timeout_s:.1f}s the transport reads beat {observed:.3f} — "
-                f"still short of the expected window [{low:g}, {high:g}]. "
-                "Either the transport is not rolling (Live's audio engine off, "
-                "a modal dialog) or it started far earlier than it was sent.",
-                target_beats=target_beats,
-                observed_beats=observed,
-                low=low,
-                high=high,
-            )
-        time.sleep(poll_s)
-        observed = _read_song_time(context)
-
-
 __all__ = [
     "LOCATE_EXISTING_CUE",
     "LOCATE_PLAYHEAD_ONLY",
     "LOCATE_TEMPORARY_CUE",
     "LocateResult",
     "PlayheadPositionError",
-    "assert_playhead_within",
     "locate_start_position",
     "require_playhead_within",
 ]

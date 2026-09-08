@@ -22,7 +22,7 @@ Line references are against this branch's HEAD (SYN-8Q3F chunks applied).
 
 **The trust chain in one paragraph.** Planners are pure DB→plan functions: they
 read the song DB + `ableton_links` and *never* talk to Live
-(`push/plan.py:25-51` — the thunk contract). All Live truth enters through three
+(`push/plan.py` — the thunk contract). All Live truth enters through three
 doors: (1) the **pre-phase gates** (`push_cli._cmd_execute` — coherence check +
 arrangement probe, §Gates), (2) **apply_push_results** writing link rows between
 phases (§Apply), and (3) the **executor's explicit re-probe passes**
@@ -32,38 +32,38 @@ probe, and every prior phase that creates X halted the push if it failed.
 
 ---
 
-## Gates (before any phase runs — `push_cli._cmd_execute`, push_cli.py:694-808)
+## Gates (before any phase runs — `push_cli._cmd_execute`, push_cli.py)
 
 | Gate | What it establishes | Failure policy |
 |---|---|---|
-| Phase-target validation (`push_execute.validate_phase_targets`, push_execute.py:91-131; called pre-probe at push_cli.py:763-774 per PSH-PHASEORDER) | `--only/--start-at/--stop-after` name real phases, coherent window | `PhaseTargetError` → stderr teaching message, exit 2, no Live traffic |
-| Coherence check (`push/probe.py:976-1134 check_coherence`; wired push_cli.py:776-796) | session row exists; every `track`/`return` link points at a live index; no link points at a canonical default-scaffold track (set-swap signature) | refuse execute, exit 1, per-error `recovery` hints. **Opt-out:** `--no-coherence-check`. Nested links (clip/device) are NOT validated — a stale parent cascade-invalidates them (probe.py:1003-1007); residual risk note R1 below |
+| Phase-target validation (`push_execute.validate_phase_targets`, push_execute.py; called pre-probe at push_cli.py per PSH-PHASEORDER) | `--only/--start-at/--stop-after` name real phases, coherent window | `PhaseTargetError` → stderr teaching message, exit 2, no Live traffic |
+| Coherence check (`push/probe.py check_coherence`; wired push_cli.py) | session row exists; every `track`/`return` link points at a live index; no link points at a canonical default-scaffold track (set-swap signature) | refuse execute, exit 1, per-error `recovery` hints. **Opt-out:** `--no-coherence-check`. Nested links (clip/device) are NOT validated — a stale parent cascade-invalidates them (probe.py); residual risk note R1 below |
 | Arrangement probe (`_probe_live_arrangement_clips_via_mcp`, wrapped by `_cmd_execute._probe_arrangement_lanes`) | per-track Live arrangement clip inventory, feeding the projection's clear | **NOT a pre-phase gate** (PSH-ARRPROBE): it is passed as a THUNK and resolved inside the arrangement phase's planner, because the map is keyed by Live track index and a first push CREATES those tracks in the `tracks` phase — a pre-phase map described the pre-push numbering and made every track read as unprobed. The thunk re-probes `ableton_track(list)` itself; it does NOT reuse the coherence probe's track list. A per-track probe failure still leaves the lane out of the map, and the arrangement planner still skips that track rather than guess — but now via `PushPlan.blocked`, so the phase reports `incomplete` (non-zero exit), not `skipped` |
 | `probe_and_link` (separate subcommand, NOT run by execute; push/probe.py:360-748) | name-matched track/return links; W20-A device links by (parent, position, class); W18-B/SYN-3C8K/SYN-SCAFFOLD-MISLINK stale-link reconciliation | additive only (never deletes Live entities); duplicate names link-first + note; case near-matches noted, not linked |
 
-## Executor cross-phase contract (`push_execute.execute_push`, push_execute.py:640-1576)
+## Executor cross-phase contract (`push_execute.execute_push`, push_execute.py)
 
-- **Phase-bounded error accumulation** (module docstring :15-19): within a phase
-  every call runs and per-call failures accumulate (`_dispatch_calls`, :936-1103);
-  at the phase boundary any failure **halts** (`_halt`, :1179-1205 — later phases
+- **Phase-bounded error accumulation** (module docstring): within a phase
+  every call runs and per-call failures accumulate (`_dispatch_calls`);
+  at the phase boundary any failure **halts** (`_halt` — later phases
   PENDING). No internal retry; re-running `execute` IS the retry (push idempotent).
-- **Connection loss halts immediately** mid-batch (:967-982, `_CONNECTION_EXCS` =
-  `LiveConnectionError`/`OSError` only, :684-690) → outcome `connection_lost`,
+- **Connection loss halts immediately** mid-batch (`_CONNECTION_EXCS` =
+  `LiveConnectionError`/`OSError` only) → outcome `connection_lost`,
   exit 2. Other exceptions from `send_fn` deliberately propagate (wire-protocol
   bugs must not be mislabeled connection loss).
-- **Plan errors halt pre-dispatch** (:1237-1256): a planner's `plan.errors`
+- **Plan errors halt pre-dispatch**: a planner's `plan.errors`
   (hard authoring error, `_core.py:57-63`) halts the phase with zero calls
   dispatched — the DB describes something unmaterializable.
-- **Apply between phases** (:1325-1333, `_apply_results` :1104-1164): successes
+- **Apply between phases** (`_apply_results`): successes
   are applied even on a failed phase, so link rows are live for the next
   plan/convergence. Apply-layer warnings ride the errors file without flipping
   the phase.
-- **State file always written** (`_flush_state`, :742-797): at every phase start,
-  on mid-phase heartbeat (every 25 calls, :59), and terminally — atomic replace.
-  `.last-push-errors.json` only on errors (stale one deleted on clean re-run,
-  :1547-1548). The push is one attributed request row, closed with
-  ok/partial/failed (:716-727, :1549-1567 — try/finally: the errors-file
-  write cannot leave the request open, review W1). **A contract-drift `ValueError` from
+- **State file always written** (`_flush_state`): at every phase start,
+  on mid-phase heartbeat (every 25 calls), and terminally — atomic replace.
+  `.last-push-errors.json` only on errors (stale one deleted on clean re-run).
+  The push is one attributed request row, closed with ok/partial/failed
+  (try/finally: the errors-file write cannot leave the request open, review W1).
+  **A contract-drift `ValueError` from
   the apply layer is converted to a controlled phase halt (SYN-8Q3F Chunk 03) —
   see §Apply.**
 - **Per-phase special-case passes** (complexity-budget rule 4 — new entries must
@@ -73,10 +73,10 @@ probe, and every prior phase that creates X halted the push if it failed.
     `device_param_diff.py`; skip-on-confident-equal, keep-on-any-doubt).
   - *devices*: empty-rack guard — re-probe `get_device_chains` for each rack a
     nested write addresses; drop doomed writes, synthesize ONE clear failure
-    (:1294-1306 main pass, :1364-1382 convergence pass → `empty_rack_guard.py`;
+    (:1294-1306 main pass convergence pass → `empty_rack_guard.py`;
     suppress-on-confident-empty, keep-on-any-doubt).
   - *devices*: convergence re-plan — after an all-ok pass, re-run the planner once
-    so params of devices loaded THIS pass land same-push (:1335-1392, SYN-9F2L).
+    so params of devices loaded THIS pass land same-push (SYN-9F2L).
   - *devices*: **pre-phase chain probe + link reconcile** (PSH-DEVDUP) — a
     lazily-resolved, once-per-push `ableton_device(list)` per linked parent
     (`_probe_live_device_chains`), fed to `reconcile_device_links` and then to
@@ -91,24 +91,22 @@ probe, and every prior phase that creates X halted the push if it failed.
     hides in the fully-linked state (`device_chain_verify.py`).
   - *devices*: post-phase pad probe — best-effort `pad_info` per linked Drum Rack,
     persisted via `M.replace_drum_pad_mappings`; never affects the outcome
-    (:491-583, :804-826; runs on ok AND skipped, not on halt).
+    (:804-826; runs on ok AND skipped, not on halt).
   - *devices dispatch fallbacks*: preset-URI miss → browser search + one retry
     (:305-398 M1-B); refused `value_display` → one retry as enum or normalized
     (:415-488 SYN-9F2L); orphan-param hint rewrite (:261-281 SYN-2D9K).
   - *arrangement*: post-phase integrity assert — FRESH re-probe of every clip's
     audible note set vs the DB collapsed set; HALT on silent corruption; per-clip
-    NOTE probe failures degrade to a benign "N unverified" warning (:1423-1507,
-    ARR-PROJ Chunk 3). ARR-ORPHAN2: a per-track LANE probe failure
+    NOTE probe failures degrade to a benign "N unverified" warning (ARR-PROJ Chunk 3). ARR-ORPHAN2: a per-track LANE probe failure
     (`ableton_clip(list, location='arrangement')`) does NOT degrade — it is
     `lane_probe_failed`, counted as corruption, and HALTs. The planner reads the
     clear inventory from that same probe, so an unreadable lane was never cleared
     and never rebuilt, and orphan detection could not run on it.
   - *cues*: handler-deferred cues (`skipped_out_of_range`) surface as benign
-    warnings, never failures (:1039-1064, SYN-6B4Q).
-  - *pre-loop*: alt-tuning notices (gated, inert for tuning_ref NULL;
-    :1207-1218, MICROTUNE).
+    warnings, never failures (SYN-6B4Q).
+  - *pre-loop*: alt-tuning notices (gated, inert for tuning_ref NULL;, MICROTUNE).
 
-## Apply layer (`push/plan.py:485-623 apply_push_results`)
+## Apply layer (`push/plan.py apply_push_results`)
 
 Table-driven on the `<kind>:` prefix of each result key: `_LINK_KINDS` (:351-363,
 writes an `ableton_links` binding from the declared result field),
@@ -230,7 +228,7 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
 - **Failure/halt:** audio clips refuse-with-warn (CLP-AUD1, :51-61 — a MIDI
   create would corrupt the slot). Per-call failure → boundary halt. `clip:` link
   kind (create returns `clip_index`; `replace_notes` returns none → link skip,
-  plan.py:516-520).
+  plan.py).
 
 ### 7. `mix` (`push/mix.py:25-176`)
 - **Assumes:** tracks + returns linked. Master needs no link
@@ -305,7 +303,7 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
   Per-call failure → boundary halt. `envelope:` link kind (handler returns
   `envelope_index`).
 
-### 12. `performed_automation` (`push/perform.py:325-508`)
+### 12. `performed_automation` (`push/perform.py`)
 - **Assumes:** tracks/returns/devices linked (per-arc warn + "arc pending, next
   push retries", :108-262); the `performed_automation` fingerprint table is an
   honest memory of what Live's lanes hold (NOT re-probed — the perform surface is
@@ -330,7 +328,7 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
 - **Failure/halt:** duplicate-target arcs: recorded lanes claimed first, extra
   arcs **alert** + defer (:424-454, ENV-8K2R #3). One `perform_batch:` call with
   a derived read ceiling (:487-496) — realtime cost surfaced via alert. Restore
-  failures + count mismatches → apply warnings (plan.py:461-506). Watchdog for a
+  failures + count mismatches → apply warnings (plan.py). Watchdog for a
   dead worker = **PSH-3H8M**, not this contract.
 
 ### 13. `arrangement` (`push/arrangement.py:91-331`)
@@ -371,7 +369,7 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
   (idempotent re-push). Ack-only.
 
 *(`plan_push_sections` is deliberately NOT a phase — no canonical Live surface;
-plan.py:217-219, arrangement.py:491-507.)*
+plan.py, arrangement.py.)*
 
 ---
 
@@ -382,7 +380,7 @@ plan.py:217-219, arrangement.py:491-507.)*
   vs 14 names in `_PHASE_NAMES` (the `device_sidechain` "9b." splice). Fixed on
   the files the chunk already touches.
 - **V2 (open, behavior): a plan_fn raise escapes the executor as a raw
-  traceback.** `plan = phase.plan_fn()` (push_execute.py:1229) is uncaught, so
+  traceback.** `plan = phase.plan_fn()` (push_execute.py) is uncaught, so
   the clips planner's W3-C strict `ValueError` (clips.py:72-80) — reachable via
   `--only clips` / `--start-at clips` against unlinked tracks — and the envelopes
   unknown-target-kind raise (envelopes.py:159-162) bypass the terminal state
@@ -396,7 +394,7 @@ plan.py:217-219, arrangement.py:491-507.)*
   matches clips' W3-C posture) or keep for direct-call ergonomics and document.
   → Chunk 06.
 - **V4 (fixed in SYN-8Q3F Chunk 03): unknown result kind escaped as a
-  traceback.** The apply-layer `ValueError` (plan.py:619-624) propagated out of
+  traceback.** The apply-layer `ValueError` (plan.py) propagated out of
   `execute_push` uncaught — no terminal state file, request left open, exit = a
   Python traceback. This is the runtime half of the twice-point-patched bug
   class. Now a controlled phase halt (§Apply).
@@ -426,7 +424,7 @@ plan.py:217-219, arrangement.py:491-507.)*
   every empty phase carries a "no … to push" warn; `plan_push_song_tracks`/
   `_returns` return a bare empty plan when fully linked (tracks.py:44-45) and
   `plan_push_arrangement_clip_notes` emits neither. The Chunk 02 docstring
-  rewrite (plan.py:222-228) now states both shapes are reported SKIPPED.
+  rewrite (plan.py) now states both shapes are reported SKIPPED.
 
 **Residual risk (documented design, not a violation):**
 - **R1:** the coherence gate validates only track/return links; a stale *device*

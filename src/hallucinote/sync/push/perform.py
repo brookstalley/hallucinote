@@ -526,9 +526,13 @@ def record_perform_result(
 ) -> str | None:
     """Apply-layer hook for a single arc of a successful ``perform_batch``
     result. Records the performed-state fingerprint for this (envelope,
-    session) ONLY when the handler verified the write
-    (``automation_state == 1``); anything else
-    leaves the fingerprint unwritten so the next push retries the arc.
+    session) ONLY when the handler reported ``outcome == "recorded"`` —
+    its own verdict, computed where the pass happened; anything else leaves
+    the fingerprint unwritten so the next push retries the arc.
+    ``automation_state == 1`` plus a non-zero ``updates_written`` remain the
+    floor for a server predating the field, never the gate: the flag reads 1
+    whenever ANY lane exists on the parameter, so after the first iteration
+    it says yes regardless of what the pass did.
     Returns None when state was recorded, else a human-readable warning
     naming the arc and why — the caller surfaces it (never a silent skip).
 

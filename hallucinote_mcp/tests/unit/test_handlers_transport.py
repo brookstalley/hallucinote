@@ -24,8 +24,8 @@ from hallucinote_mcp.handlers._transport import (
     LOCATE_PLAYHEAD_ONLY,
     LOCATE_TEMPORARY_CUE,
     PlayheadPositionError,
-    assert_playhead_within,
     locate_start_position,
+    require_playhead_within,
 )
 
 
@@ -254,17 +254,6 @@ def test_a_live_without_the_cue_toggle_degrades_and_names_the_reason():
     assert song._playhead == 8.0
 
 
-def test_a_caller_that_forbids_writing_to_the_set_gets_a_playhead_only_locate():
-    song = FakeTransportSong()
-    ctx = FakeCtx(song)
-
-    result = locate_start_position(ctx, 8.0, allow_temporary_cue=False)
-
-    assert result.method == LOCATE_PLAYHEAD_ONLY
-    assert "forbids creating a temporary one" in (result.detail or "")
-    assert song.cue_points == []
-
-
 def test_an_unjumpable_existing_cue_never_falls_through_to_the_toggle():
     """The destructive path: a cue is at the target but cannot be jumped. The
     borrow path's toggle fires at that same beat, so falling through would
@@ -331,31 +320,31 @@ def test_no_live_touch_ever_nests_a_main_thread_bout():
 
 
 # ---------------------------------------------------------------------------
-# assert_playhead_within
+# require_playhead_within
 # ---------------------------------------------------------------------------
 
 
-def test_a_playhead_inside_the_window_is_returned():
-    song = FakeTransportSong()
-    song._playhead = 9.5
-    ctx = FakeCtx(song)
-
-    assert assert_playhead_within(
-        ctx, low=8.0, high=24.0, target_beats=8.0, what="perform pass",
-    ) == 9.5
+def test_a_playhead_inside_the_window_is_accepted():
+    require_playhead_within(
+        9.5, low=8.0, high=24.0, target_beats=8.0, what="perform pass",
+    )
 
 
-def test_a_playhead_past_the_window_fails_immediately_and_names_the_beat():
+def test_a_playhead_short_of_the_window_is_left_to_the_callers_own_budget():
+    """A render deliberately starts before its capture window (the pre-roll),
+    and a perform pass has a wall-clock ceiling that already answers "rolling,
+    but from too far back". Neither wants this to raise."""
+    require_playhead_within(
+        4.0, low=8.0, high=24.0, target_beats=8.0, what="render capture",
+    )
+
+
+def test_a_playhead_past_the_window_raises_and_names_the_beat():
     """The #471 signature: a span at 8..24 and a transport at 351. It can
-    never arrive, so waiting for it only delays the report."""
-    song = FakeTransportSong()
-    song._playhead = 351.3
-    ctx = FakeCtx(song)
-
+    never arrive, so there is nothing to wait for."""
     with pytest.raises(PlayheadPositionError) as excinfo:
-        assert_playhead_within(
-            ctx, low=8.0, high=24.0, target_beats=8.0, what="perform pass",
-            timeout_s=60.0,
+        require_playhead_within(
+            351.3, low=8.0, high=24.0, target_beats=8.0, what="perform pass",
         )
 
     err = excinfo.value
@@ -363,45 +352,14 @@ def test_a_playhead_past_the_window_fails_immediately_and_names_the_beat():
     assert err.target_beats == 8.0
     assert "351.3" in str(err)
     assert "START PLAYING POSITION" in str(err)
-
-
-def test_a_playhead_short_of_the_window_is_given_time_to_travel_in():
-    """A render deliberately starts before its capture window (the pre-roll),
-    so short-of-the-window is a wait, not a failure."""
-    song = FakeTransportSong()
-    song._playhead = 4.0
-    song.is_playing = True
-    song.beats_per_read = 1.0
-    ctx = FakeCtx(song)
-
-    landed = assert_playhead_within(
-        ctx, low=8.0, high=24.0, target_beats=8.0, what="render capture",
-        timeout_s=60.0,
-    )
-
-    assert 8.0 <= landed <= 24.0
-
-
-def test_a_transport_that_never_reaches_the_window_times_out_with_the_beat():
-    song = FakeTransportSong()
-    song._playhead = 4.0
-    ctx = FakeCtx(song)
-
-    with pytest.raises(PlayheadPositionError) as excinfo:
-        assert_playhead_within(
-            ctx, low=8.0, high=24.0, target_beats=8.0, what="render capture",
-            timeout_s=0.0,
-        )
-
-    assert excinfo.value.observed_beats == pytest.approx(4.0)
-    assert "still short of the expected window" in str(excinfo.value)
+    # The window the reader was owed, not half of it.
+    assert "[8, 24]" in str(err)
 
 
 def test_an_inverted_window_is_a_caller_bug_and_says_so():
-    ctx = FakeCtx(FakeTransportSong())
     with pytest.raises(ValueError, match="is below low"):
-        assert_playhead_within(
-            ctx, low=24.0, high=8.0, target_beats=8.0, what="perform pass",
+        require_playhead_within(
+            9.0, low=24.0, high=8.0, target_beats=8.0, what="perform pass",
         )
 
 
@@ -543,3 +501,102 @@ def test_the_borrowed_cue_is_not_toggled_away_from_the_wrong_beat():
     # stray at 8.5 alongside it.
     assert [c.time for c in song.cue_points] == [8.0]
     assert ("toggle", 8.5) not in song.events
+
+
+def test_a_raise_mid_borrow_still_gives_the_cue_back():
+    """Between the toggle and the give-back, a locator exists in the set that
+    the operator did not make. `run_on_main` refuses outright when Live's main
+    thread is busy, so that window is not a forward path — and a locator left
+    behind by an unrelated-looking failure is the silent leak this module says
+    must never happen."""
+    song = FakeTransportSong(start_position=351.3)
+    ctx = FakeCtx(song)
+    real_run = ctx.run_on_main
+
+    def _run(fn, **kw):
+        # Fail the jump bout, once the borrowed cue exists.
+        if song.cue_points and fn.__name__ == "_jump_to_cue_at_target":
+            raise RuntimeError("Live's main thread is occupied")
+        return real_run(fn, **kw)
+
+    ctx.run_on_main = _run  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="main thread is occupied"):
+        locate_start_position(ctx, 8.0)
+
+    assert song.cue_points == []
+
+
+def test_a_raise_mid_borrow_is_the_error_that_propagates():
+    """The give-back is best-effort cleanup. If IT fails too, the original
+    failure is what the operator needs — a cleanup error replacing it would
+    describe the tidying rather than the fault."""
+    song = FakeTransportSong(start_position=351.3)
+    ctx = FakeCtx(song)
+    real_run = ctx.run_on_main
+
+    def _run(fn, **kw):
+        if song.cue_points:
+            raise RuntimeError("Live's main thread is occupied")
+        return real_run(fn, **kw)
+
+    ctx.run_on_main = _run  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="main thread is occupied"):
+        locate_start_position(ctx, 8.0)
+
+    # The cue could not be removed — but that is reported, not raised over the
+    # cause, and the locator is named in the log rather than lost.
+    assert [c.time for c in song.cue_points] == [8.0]
+
+# The false claim this bundle removed had four copies across three surfaces —
+# a handler note, a tool description, an action description and a guide — and
+# fixing one is what let the other three survive a whole chunk. Anything an
+# agent or operator READS is in scope.
+_AGENT_FACING = (
+    "handlers/session.py",
+    "handlers/automation.py",
+    "handlers/render.py",
+    "actions/session.py",
+    "actions/render.py",
+    "resources/guides",
+)
+
+# Phrases that assert the disproved behaviour. Each is a claim that writing
+# the playhead positions playback.
+_DISPROVED_CLAIMS = (
+    "locates-and-plays",
+    "locates and plays",
+    "seek then play locates",
+)
+
+
+def _agent_facing_files():
+    pkg = _HANDLERS_DIR.parent
+    for rel in _AGENT_FACING:
+        target = pkg / rel
+        if target.is_dir():
+            yield from sorted(target.rglob("*.md"))
+            yield from sorted(target.rglob("*.py"))
+        elif target.is_file():
+            yield target
+
+
+def test_no_shipped_surface_still_promises_that_seeking_positions_playback():
+    """`current_song_time` is the playhead; `start_playing()` rolls from the
+    start playing position. Any surface that tells a reader otherwise teaches
+    them to reproduce #471 — and does it at the moment they are debugging it,
+    which is when they are most likely to believe it."""
+    offenders = []
+    for path in _agent_facing_files():
+        text = path.read_text(encoding="utf-8", errors="ignore").lower()
+        for claim in _DISPROVED_CLAIMS:
+            if claim in text:
+                offenders.append(f"{path.name}: {claim!r}")
+
+    assert not offenders, (
+        f"{offenders} still assert that a seek positions playback. Live rolls "
+        "from its START PLAYING POSITION, which current_song_time does not "
+        "move. Say what seek actually does, and point at "
+        "start_position_moved."
+    )

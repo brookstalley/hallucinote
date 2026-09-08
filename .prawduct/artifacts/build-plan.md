@@ -61,7 +61,8 @@ run against the `songs/alien` set that produced the report.
 
 Context: Plan written 2026-09-08 against issue #471 on branch
 `fix/perform-start-position` (off `develop` @ 6339887). Chunks 01-04 built and
-green — 5158 pass, ruff and mypy clean. The three positioning sites now locate
+green (suite green per `prawduct-hook test-status`; ruff and mypy clean). The
+three positioning sites now locate
 Live's start playing position and prove where the transport actually rolled
 from, and every perform arc carries a stated outcome that reaches the push
 report. Artifacts, learnings, change-log and the operator-verification entry are
@@ -240,10 +241,17 @@ that a perform against a set with pre-existing lanes now records.
 - **Artifacts consumed:** all of the above
 - **Deliverables:** `.prawduct/learnings.md` rule; `.prawduct/change-log.md`
   entry (`type=fix | scope=perform-start-position`, no `release=` key);
-  `api-contract.md` and `sync-boundary-contract.md` updated for the additive arc
-  fields and the `notes_sink` parameter; `.prawduct/operator-verification.md`
+  `sync-boundary-contract.md` and `boundary-patterns.md` updated for the
+  additive arc fields and the `notes_sink` parameter;
+  `.prawduct/operator-verification.md`
   entries for the two Live-only questions; the two descoped asks filed via
   `/prawduct:backlog` (see Descoped below).
+
+  **Not `api-contract.md`.** The plan listed it; it is wrong — the artifact
+  documents tool-level surface, stability and versioning decisions and carries
+  no per-action payload shapes, so nothing in it can go stale from an additive
+  arc field. `sync-boundary-contract.md` and `boundary-patterns.md` own the
+  payload, and both were updated.
 
   **Not `CHANGELOG.md`.** The plan listed it; it is wrong. That file is the
   public release record, distilled from the engineering change-log AT RELEASE

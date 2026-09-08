@@ -56,7 +56,7 @@ from ..analyzer import (
 from ..analyzer.osc import AnalyzerOSC
 from ..analyzer.sidecar import OSCSidecar, shared_sidecar
 from ..dispatcher import LiveContext
-from ._transport import assert_playhead_within, locate_start_position
+from ._transport import locate_start_position, require_playhead_within
 from ..handlers import device as device_handlers
 
 
@@ -594,30 +594,6 @@ def render_handler(
             context.song.start_playing()
         context.run_on_main(_play_on_main)
 
-        # Prove the transport is rolling somewhere the capture can use, before
-        # spending the whole render window on it. Starting EARLY is harmless
-        # here (the patch detects the transport crossing start_at_beat, so a
-        # long pre-roll only costs wall-clock); starting PAST the capture
-        # window is the failure, and the engine pre-flight below cannot see it
-        # — a transport in the wrong place advances just as healthily as one in
-        # the right place. A provided `_clock_source` is a transport
-        # SIMULATION, so the position is the test's to own, not ours.
-        if _clock_source is None:
-            assert_playhead_within(
-                context,
-                low=0.0,
-                high=max(
-                    float(start_at_beat),
-                    seek_to + _RENDER_START_WINDOW_BEATS,
-                ),
-                target_beats=seek_to,
-                what=(
-                    f"render capture (locate method: {locate.method}"
-                    + (f", {locate.detail}" if locate.detail else "")
-                    + ")"
-                ),
-            )
-
         # Engine pre-flight: the transport must advance now that we've pressed play.
         # A frozen transport means Live's audio engine is off — fail fast (in ~probe_s)
         # rather than blocking the full max_wait_s window for a capture that can't
@@ -631,6 +607,39 @@ def render_handler(
                 context, probe_s=_TRANSPORT_PROBE_S)
         else:
             transport_advancing = True
+        # Prove the transport is rolling somewhere the capture can USE — after
+        # the pre-flight, never before it. The two questions look alike and are
+        # not: the pre-flight asks whether the transport moves, and a transport
+        # in the wrong place moves exactly as healthily as one in the right
+        # place, so it can never see this. Order matters for a second reason:
+        # Live's playhead mirror lags the audio thread, and the pre-flight has
+        # just spent `probe_s` watching it advance, so by now a read is the
+        # rolled position rather than the pre-play one the locate parked.
+        #
+        # Only PAST the capture window is fatal. Starting early is harmless —
+        # the patch detects the transport crossing `start_at_beat`, so a long
+        # pre-roll costs wall-clock and nothing else. A provided
+        # `_clock_source` is a transport SIMULATION; the position is the
+        # test's to own, not ours.
+        if transport_advancing and _clock_source is None:
+            require_playhead_within(
+                context.run_on_main(
+                    lambda: float(
+                        getattr(context.song, "current_song_time", 0.0)
+                    )
+                ),
+                low=seek_to,
+                high=max(
+                    float(start_at_beat),
+                    seek_to + _RENDER_START_WINDOW_BEATS,
+                ),
+                target_beats=seek_to,
+                what=(
+                    f"render capture (locate method: {locate.method}"
+                    + (f", {locate.detail}" if locate.detail else "")
+                    + ")"
+                ),
+            )
         if not transport_advancing:
             # Clean up Live's transport before raising (mirror the no_frames path).
             def _stop_engine_off() -> None:

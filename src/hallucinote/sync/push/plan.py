@@ -15,7 +15,11 @@ from .clips import plan_push_clips
 from .devices import plan_push_devices, plan_push_device_sidechain
 from .envelopes import plan_push_envelopes
 from .mix import plan_push_mix
-from .perform import plan_push_performed_automation, record_perform_result
+from .perform import (
+    PERFORM_OUTCOME_RECORDED,
+    plan_push_performed_automation,
+    record_perform_result,
+)
 from .routing import plan_push_routing
 from .scenes import plan_push_scenes
 from .tempo import plan_push_tempo_map, plan_push_time_signature_map
@@ -573,16 +577,30 @@ KNOWN_RESULT_KEY_KINDS: frozenset[str] = (
 )
 
 
-def _describe_arc_outcome(arc: dict[str, Any], *, recorded: bool) -> str:
+def _describe_arc_outcome(arc: dict[str, Any], *, fingerprinted: bool) -> str:
     """One perform arc, as a line an author can act on: which envelope, over
     which beats, what happened to it, and how many values the pass actually
     wrote. The write count is there because it is the number that separates a
-    real recording from a stale lane answering for one."""
+    real recording from a stale lane answering for one.
+
+    The verdict comes from the handler's own ``outcome`` where it is present,
+    not from whether a warning came back. Those two answer different questions:
+    an envelope deleted mid-cycle also produces a warning, and printing
+    UNVERIFIED for it would send the reader hunting a recording fault that
+    never happened. ``fingerprinted`` is the fallback for a server predating
+    the field, and is named for what it actually observed.
+    """
     span = arc.get("span_beats") or []
     where = (
         f"[{float(span[0]):g}-{float(span[1]):g}] " if len(span) == 2 else ""
     )
-    verdict = "recorded" if recorded else "UNVERIFIED"
+    outcome = arc.get("outcome")
+    if outcome is None:
+        verdict = "recorded" if fingerprinted else "UNVERIFIED"
+    elif outcome == PERFORM_OUTCOME_RECORDED:
+        verdict = "recorded" if fingerprinted else "recorded, NOT FINGERPRINTED"
+    else:
+        verdict = str(outcome).upper()
     return (
         f"{arc.get('arc_id')} {where}{verdict} "
         f"({arc.get('updates_written')} value writes)"
@@ -691,7 +709,7 @@ def apply_push_results(
                         warnings.append(perform_warning)
                     outcomes.append(
                         _describe_arc_outcome(
-                            arc, recorded=perform_warning is None
+                            arc, fingerprinted=perform_warning is None
                         )
                     )
                     processed += 1
@@ -703,8 +721,25 @@ def apply_push_results(
                 # still reads as clean.
                 if outcomes and notes_sink is not None:
                     notes_sink(
-                        "performed-automation: "
-                        + "; ".join(outcomes)
+                        "performed-automation: " + "; ".join(outcomes)
+                    )
+                # How the transport was positioned. A pass that ran on a
+                # degraded locate recorded against a start position nothing
+                # moved — it may well be right, and a per-arc verdict cannot
+                # say. The handler logs it, but that log is in Live; this is
+                # where the author looks.
+                if res.get("start_position_moved") is False:
+                    warnings.append(
+                        "perform_batch: the transport was positioned by "
+                        f"{res.get('locate_method')!r}, which moves the "
+                        "playhead but NOT Live's start playing position — "
+                        "playback was not guaranteed to begin at the span. "
+                        + (
+                            f"Reason: {res['locate_detail']} "
+                            if res.get("locate_detail") else ""
+                        )
+                        + "The arcs above recorded, but check the lanes "
+                        "landed where you authored them."
                     )
                 # ENV-8K2R #4: planned-vs-returned cross-check. The handler
                 # reports `arc_count` = how many arcs it prepared (== the

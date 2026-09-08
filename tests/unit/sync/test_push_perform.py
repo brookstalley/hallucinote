@@ -1113,3 +1113,67 @@ def test_a_caller_with_no_benign_channel_still_applies_cleanly(
 
     assert warnings == []
     assert Q.get_performed_automation(conn, master_arc, session) is not None
+
+
+def test_the_roll_up_states_the_handlers_verdict_not_a_proxy_for_it():
+    """An envelope deleted mid-cycle also produces a warning. Reading the
+    verdict off "did a warning come back" prints UNVERIFIED for an arc the
+    handler recorded correctly, sending the reader after a recording fault
+    that never happened."""
+    from hallucinote.sync.push.plan import _describe_arc_outcome
+
+    arc = {
+        "arc_id": "e1", "span_beats": [96.0, 104.0],
+        "updates_written": 27, "outcome": "recorded",
+    }
+
+    assert "recorded, NOT FINGERPRINTED" in _describe_arc_outcome(
+        arc, fingerprinted=False
+    )
+    assert "UNVERIFIED" not in _describe_arc_outcome(arc, fingerprinted=False)
+    assert _describe_arc_outcome(arc, fingerprinted=True).endswith(
+        "recorded (27 value writes)"
+    )
+
+
+def test_a_degraded_locate_reaches_the_push_report(
+    conn, song, session, master_arc,
+):
+    """A pass that ran on `playhead_only` recorded against a start position
+    nothing moved. It may well be right, and no per-arc verdict can say — so
+    the author is told, rather than left to read Live's own log."""
+    notes: list[str] = []
+    result = _batch_result(
+        {"arc_id": master_arc, "automation_state": 1, "updates_written": 27,
+         "outcome": "recorded"},
+    )
+    result["result"]["start_position_moved"] = False
+    result["result"]["locate_method"] = "playhead_only"
+    result["result"]["locate_detail"] = "this Live exposes no cue-toggle API"
+
+    warnings = push.apply_push_results(
+        conn, [result], session_id=session, notes_sink=notes.append,
+    )
+
+    assert len(warnings) == 1
+    assert "playhead_only" in warnings[0]
+    assert "no cue-toggle API" in warnings[0]
+    # The arc itself still recorded — this is a caveat, not a failure.
+    assert Q.get_performed_automation(conn, master_arc, session) is not None
+
+
+def test_a_healthy_locate_adds_no_caveat(conn, song, session, master_arc):
+    notes: list[str] = []
+    result = _batch_result(
+        {"arc_id": master_arc, "automation_state": 1, "updates_written": 27,
+         "outcome": "recorded"},
+    )
+    result["result"]["start_position_moved"] = True
+    result["result"]["locate_method"] = "temporary_cue"
+
+    warnings = push.apply_push_results(
+        conn, [result], session_id=session, notes_sink=notes.append,
+    )
+
+    assert warnings == []
+    assert len(notes) == 1

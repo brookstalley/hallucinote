@@ -59,7 +59,20 @@ one.
 `handlers/_transport.py` is the first: `locate_start_position` moves the start
 position by jumping to a cue at the target — the operator's own where one is
 there, otherwise borrowing one (create, jump, delete) and reporting rather than
-swallowing a locator it fails to give back. A cue that exists but cannot be
+swallowing a locator it fails to give back.
+
+**Borrowing writes to the operator's set, and that was the decision worth
+weighing.** A locate now costs two Undo entries and shows a locator flickering
+in the arrangement — a mutation nobody asked for, in a set that is somebody's
+song. The alternative was to jump to the nearest cue at or before the target and
+let each arc's window gate the writes, which mutates nothing. It was rejected on
+cost: for an arc at beat 345 on a set whose nearest earlier locator is at bar 1,
+that is a realtime pre-roll of several minutes per pass, on a mechanism whose
+whole expense is already wall-clock. The borrow is bounded instead — one cue, at
+one beat, given back in a `finally` so it survives a raise, and its failure to
+come back is logged with the beat named. A third option, requiring the operator
+to place a locator at every span they author, was not seriously considered: it
+makes the tool's mechanism their problem. A cue that exists but cannot be
 jumped degrades instead of falling through to the borrow path, because that
 path's toggle fires at the same beat and a toggle where a cue already sits
 DELETES it.

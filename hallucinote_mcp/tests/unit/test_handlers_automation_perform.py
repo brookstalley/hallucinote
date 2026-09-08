@@ -1645,10 +1645,13 @@ class FakeStartPositionSong(FakePerformSong):
     @property
     def current_song_time(self) -> float:
         if self.is_playing and self.mirror_lag_reads > 0:
+            # Hand back the PRE-PLAY position, then catch up. Returning the
+            # rolled position here would be a mirror that never lagged.
+            stale = self._song_time
             self.mirror_lag_reads -= 1
             if self.mirror_lag_reads == 0:
                 self._song_time = self._rolled_to
-            return self._song_time
+            return stale
         return FakePerformSong.current_song_time.fget(self)  # type: ignore[attr-defined]
 
     @current_song_time.setter
@@ -1887,3 +1890,27 @@ def test_the_arms_transport_drift_does_not_open_a_later_arc_early():
         f"later arc opened early on a drifted read ({len(opened_before_play)} "
         "gestures opened)"
     )
+
+
+def test_a_stale_first_read_after_play_does_not_retire_the_position_check():
+    """The movement gate's baseline must be the beat read just BEFORE play, not
+    the one the locate settled at. Since arming rolls the transport, those are
+    different: the locate settles at the union start and the arm carries the
+    playhead past it. Live's mirror can hand back that drifted pre-play position
+    on the first read after `start_playing()` — and against a settle-based
+    baseline it looks like movement, retiring the position check on the read
+    that proves the least."""
+    clock = _VirtualClock()
+    ctx = FakeCtx(clock=clock)
+    # No cue API, so the locate degrades and cannot move the start position —
+    # which is what leaves the transport rolling from somewhere else.
+    ctx._song = ArmRollsTransportSong(ctx.events, clock=clock, has_cue_api=False)
+    song = ctx.song
+    song.arm_drift_beats = 2.0     # the arm carries the playhead off the locate
+    song.mirror_lag_reads = 1      # one read still shows the pre-play position
+    song._start_position = 400.0   # ...but the transport is really out here
+
+    with pytest.raises(PlayheadPositionError) as exc:
+        perform_batch_handler(ctx, arcs=[_far_arc()])
+
+    assert exc.value.observed_beats == pytest.approx(400.0)

@@ -171,6 +171,15 @@ came back with 41 and 21 writes, a ratio that tracks the spans rather than the
 union, and the later arc's parameter read exactly centred through its own span
 start. An early open would have shown in both numbers.
 
+The same reorder moved one more thing under the guard's feet, caught on review
+rather than by measurement. The ramp's movement gate — the thing that decides a
+read is evidence the mirror caught up — compared against the beat the LOCATE
+settled at. Since the arm now rolls the transport away from that beat before
+play, a stale first read reporting the pre-play position looked like movement
+and retired the position check on the read that proves the least. The baseline
+is now the beat read immediately before `start_playing()`, which is the only one
+a stale read can equal.
+
 Handlers changed, so the wire fingerprint flips: re-vendor and a full Live
 quit/reopen precede any of this reaching Live. **The render capture path is NOT
 covered by that verification** — same defect, same fix, but it needs analyzers,

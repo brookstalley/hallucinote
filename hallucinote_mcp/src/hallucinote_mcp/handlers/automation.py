@@ -2332,11 +2332,22 @@ def perform_batch_handler(
             # inside that drift early, and `start_playing()` re-asserts
             # `union_start` a line later, so the ramp then writes the arc's
             # first breakpoint value across beats it was never authored over.
-            def _begin_initial_and_play() -> None:
+            def _begin_initial_and_play() -> float:
+                # Read the playhead BEFORE play, and keep it: it is the
+                # baseline the ramp's movement gate compares against, and the
+                # only honest one. Live's mirror can return this pre-play
+                # position on the first read after `start_playing()`, so a
+                # read equal to it proves nothing — while a baseline taken
+                # from the locate's settle would MISS that, because the arm
+                # has rolled the transport away from it since. Then a stale
+                # first read looks like movement and retires the position
+                # check a tick early, on the read that proves the least.
+                pre_play_beat = float(context.song.current_song_time)
                 _open_entering(float(union_start))
                 context.song.start_playing()
+                return pre_play_beat
 
-            context.run_on_main(_begin_initial_and_play)
+            pre_play_beat = context.run_on_main(_begin_initial_and_play)
 
             # Ramp loop over the union span. Beat-space interpolation makes
             # tempo maps free: the playhead position IS the authored
@@ -2369,8 +2380,8 @@ def perform_batch_handler(
             # It runs on EVERY tick until the playhead has demonstrably moved,
             # not just the first, because Live's mirror lags the audio thread:
             # the first read after `start_playing()` can still show the
-            # pre-play position — exactly where the locate parked it — so
-            # judging once, there, would pass at the one moment it must fail.
+            # pre-play position — the beat captured just above — so judging
+            # once, there, would pass at the one moment it must fail.
             # And a first tick that reads the stale mirror WRITES a value at
             # the span start, so `updates_written` is no longer zero and the
             # arc would come back `recorded` while the lane it stamped is
@@ -2389,7 +2400,7 @@ def perform_batch_handler(
             # wall-clock budget and `_describe_perform_stall`, which names that
             # case specifically.
             position_checked = False
-            located_at = float(locate.settled_beats)
+            located_at = pre_play_beat
             playhead_check_label = (
                 f"perform_batch pass (locate method: {locate.method}"
                 + (f", {locate.detail}" if locate.detail else "")

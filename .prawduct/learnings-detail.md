@@ -117,6 +117,16 @@ The fakes that DON'T simulate wrapper recreation still pass when `is` is used �
 
 **Diagnostic discipline**: when a handler writes a transport-coupled property, always include `target`, `last_observed`, and `prior` in any error response. The "each call observes the previous call's target" race pattern is visible in 30 seconds with these fields, invisible without them.
 
+## An honest read-back of the wrong property is the hardest bug to see
+
+`song.current_song_time` is the playhead. `start_playing()` and `continue_playing()` roll from Live's separate START PLAYING POSITION, which that write does not move — the LOM exposes no writable property for it at all; `CuePoint.jump()` is the one surface that moves it ("when not playing, simply move the start playing position").
+
+The two agree on a set nobody has listened to, and part company the moment a human presses play in the arrangement. So seek-then-play was only ever coincidentally correct, and the whole class hides behind "it works on my test set". Issue #471: a perform pass sought to the span start, read it back honestly, played, and rolled from beat 351 — three passes in one day, each reporting success, each recording nothing, found by ear from a stale reverb wash. The same two lines were in the render capture path and asserted as a guarantee in `ableton_session(action='play')`'s operator-facing note.
+
+The sibling rule above (trust the side effect, not the getter read-back) was already followed here: `perform_batch` had a worker-thread settle-poll on `current_song_time`, and it passed every time, because the locate really had landed. A settle-verify on the wrong property is indistinguishable from a correct one.
+
+Two habits. At design time, ask what property the BEHAVIOUR reads, not whether your write took. At code time, prefer a check on the realized effect — where the transport ACTUALLY is after play — because that one holds even when the mechanism is defeated by something nobody has seen yet. `handlers/_transport.py` is the shared primitive; `test_handlers_transport.py`'s fake keeps the two fields separate so a bare `current_song_time` write fails every test in it.
+
 ## Unit fakes that mirror an *assumed* Live API give false confidence
 
 The 2026-05-17 push session shipped five handler fixes (the B-1/B-2/B-10/B-11/B-12 bug bucket; original triage doc deleted in the v0.9.0 hygiene sweep — `git log -- .prawduct/artifacts/bug-triage.md` recovers it) that each had passing unit tests. The fakes mirrored what we *thought* Live exposed: collection appends preserved identity, `set_or_delete_cue` accepted a time argument, `Track.load_device` existed, etc. Real Live 12.4 differs on every count. The unit suite never saw the divergence.

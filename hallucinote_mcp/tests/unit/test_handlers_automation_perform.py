@@ -31,6 +31,7 @@ import pytest
 from hallucinote_mcp import schema
 from hallucinote_mcp.dispatcher import dispatch
 from hallucinote_mcp.handlers import automation as automation_handlers
+from hallucinote_mcp.handlers._transport import PlayheadPositionError
 from hallucinote_mcp.handlers.automation import (
     _describe_perform_stall,
     _interp_performed_value,
@@ -1552,3 +1553,199 @@ def test_resolve_send_resolves_and_bounds_check():
         _resolve_send(track, track_index=2, return_index=2)
     with pytest.raises(IndexError, match="out of range"):
         _resolve_send(track, track_index=2, return_index=0)
+
+
+# ---------------------------------------------------------------------------
+# #471 — the START PLAYING POSITION is not the playhead
+# ---------------------------------------------------------------------------
+
+
+class _JumpableCue:
+    """A Live CuePoint. ``jump()`` is the only surface that moves the start
+    playing position, which is the whole reason a locate is a cue jump."""
+
+    def __init__(self, song: "FakeStartPositionSong", time_: float):
+        self._song = song
+        self.time = float(time_)
+        self.name = ""
+
+    def jump(self) -> None:
+        self._song.cue_events.append(("cue_jump", round(self.time, 6)))
+        self._song._start_position = self.time
+        self._song._song_time = self.time
+
+
+class FakeStartPositionSong(FakePerformSong):
+    """``FakePerformSong`` with Live's ACTUAL transport shape: the playhead and
+    the start playing position are separate fields, and ``start_playing()``
+    rolls from the second.
+
+    The base fake models a single position, which was the belief that let #471
+    hide — a seek that reads back correctly and playback that begins somewhere
+    else are indistinguishable when there is only one field. Cue bookkeeping
+    lands in ``cue_events`` rather than the shared ``events`` timeline, which
+    stays the gesture/arm ordering log the rest of this module asserts against.
+    """
+
+    def __init__(self, events, clock=None, *, start_position: float = 0.0,
+                 has_cue_api: bool = True):
+        super().__init__(events, clock=clock)
+        self._start_position = float(start_position)
+        self.cue_events: list[tuple] = []
+        self.last_event_time = 4096.0
+        self.cue_points: list[Any] = []
+        if not has_cue_api:
+            # A Live with no cue-toggle surface. The handler probes by
+            # ``getattr(..., None)``, so shadowing the method is exactly what
+            # absence looks like from where it stands.
+            self.set_or_delete_cue = None  # type: ignore[assignment]
+
+    def set_or_delete_cue(self) -> None:
+        at = self._song_time
+        self.cue_events.append(("toggle", round(at, 6)))
+        for i, cue in enumerate(self.cue_points):
+            if abs(cue.time - at) < 1e-6:
+                del self.cue_points[i]
+                return
+        self.cue_points.append(_JumpableCue(self, at))
+        self.cue_points.sort(key=lambda c: c.time)
+
+    def start_playing(self) -> None:
+        self._events.append(("play",))
+        self._locate_pending = None
+        self._song_time = self._start_position
+        self.song_time_at_play = self._song_time
+        self.is_playing = True
+
+
+class StartPositionCtx(FakeCtx):
+    def __init__(self, clock=None, **song_kwargs):
+        super().__init__(clock=clock)
+        self._song = FakeStartPositionSong(self.events, clock=clock,
+                                           **song_kwargs)
+
+
+def test_a_stale_start_position_no_longer_silently_records_nothing():
+    """#471, end to end. The set has been listened to, so Live's start playing
+    position sits at 351 while the arc lives at 96..104. Before the fix the
+    seek read back as 96.0 — honestly — the transport rolled from 351, the ramp
+    loop's first tick was already past the span end, and the pass returned a
+    clean result having written nothing."""
+    ctx = StartPositionCtx(start_position=351.3)
+
+    result = perform_batch_handler(ctx, arcs=[_far_arc()])
+
+    arc = _arc0(result)
+    assert arc["updates_written"] > 0
+    assert arc["outcome"] == "recorded"
+    assert ctx.song.song_time_at_play == pytest.approx(96.0)
+
+
+def test_the_locate_gives_back_the_cue_it_borrowed():
+    ctx = StartPositionCtx(start_position=351.3)
+
+    perform_batch_handler(ctx, arcs=[_far_arc()])
+
+    assert [c.time for c in ctx.song.cue_points] == []
+    # Created, jumped, removed — in that order, at the span start.
+    assert ctx.song.cue_events == [
+        ("toggle", 96.0), ("cue_jump", 96.0), ("toggle", 96.0),
+    ]
+
+
+def test_an_operators_own_cue_at_the_span_start_is_used_not_toggled():
+    ctx = StartPositionCtx(start_position=351.3)
+    ctx.song.cue_points = [_JumpableCue(ctx.song, 96.0)]
+
+    perform_batch_handler(ctx, arcs=[_far_arc()])
+
+    assert [c.time for c in ctx.song.cue_points] == [96.0]
+    assert ctx.song.cue_events == [("cue_jump", 96.0)]
+
+
+def test_a_transport_rolling_past_the_span_aborts_instead_of_reporting_ok():
+    """The mechanism-independent guard. With no cue API the locate can only
+    move the playhead, so the transport still rolls from the stale start
+    position — and the pass must say so rather than close its gestures on a
+    beat past the span and return a clean result."""
+    ctx = StartPositionCtx(start_position=351.3, has_cue_api=False)
+
+    with pytest.raises(PlayheadPositionError) as exc:
+        perform_batch_handler(ctx, arcs=[_far_arc()])
+
+    err = exc.value
+    assert err.observed_beats == pytest.approx(351.3)
+    assert err.target_beats == 96.0
+    assert "START PLAYING POSITION" in str(err)
+    # The set is left disarmed and restored, as on every other failure path.
+    assert ctx.song.is_playing is False
+    assert ("record_mode", False) in ctx.events
+    assert ("session_automation_record", False) in ctx.events
+
+
+def test_the_abort_names_the_degraded_locate_that_led_to_it():
+    ctx = StartPositionCtx(start_position=351.3, has_cue_api=False)
+
+    with pytest.raises(PlayheadPositionError) as exc:
+        perform_batch_handler(ctx, arcs=[_far_arc()])
+
+    assert "playhead_only" in str(exc.value)
+    assert "set_or_delete_cue" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# Per-arc outcomes — automation_state alone cannot carry this
+# ---------------------------------------------------------------------------
+
+
+def test_a_ramped_arc_reports_recorded_with_no_reason_to_explain():
+    ctx = FakeCtx()
+    arc = _arc0(_one(
+        ctx, target_kind="mixer_volume", master=True,
+        breakpoints=[_bp(0.0, 0.5), _bp(4.0, 0.9)],
+    ))
+
+    assert arc["outcome"] == "recorded"
+    assert "outcome_reason" not in arc
+
+
+def test_a_zero_write_arc_is_unverified_however_confident_live_sounds():
+    """The damaging case: a parameter that already carries a lane from an
+    earlier session reports ``automation_state == 1`` unconditionally, so a
+    pass that wrote nothing is indistinguishable from one that wrote correctly
+    — unless the count this pass is actually entitled to claim is consulted.
+
+    The second arc's window is narrower than the gap between two ramp ticks, so
+    the playhead crosses it whole: the gesture opens and closes having written
+    nothing, while the parameter's earlier lane keeps answering 1."""
+    ctx = FakeCtx()
+    ctx.song.beats_per_read = 2.0
+
+    result = perform_batch_handler(ctx, arcs=[
+        {"target_kind": "mixer_volume", "master": True,
+         "breakpoints": [_bp(0.0, 0.2), _bp(8.0, 0.9)]},
+        {"target_kind": "mixer_pan", "master": True,
+         "breakpoints": [_bp(1.0, 0.1), _bp(1.2, 0.4)]},
+    ])
+
+    ramped, skipped = result["arcs"]
+    assert ramped["outcome"] == "recorded"
+    assert skipped["updates_written"] == 0
+    assert skipped["automation_state"] == 1
+    assert skipped["outcome"] == "unverified"
+    assert "reflects a lane from an earlier pass" in skipped["outcome_reason"]
+
+
+def test_an_unconfirmed_lane_is_unverified_and_says_which_check_failed():
+    ctx = FakeCtx()
+    ctx.song.master_track.mixer_device.volume.verify_state = 0
+
+    arc = _arc0(_one(
+        ctx, target_kind="mixer_volume", master=True,
+        breakpoints=[_bp(0.0, 0.5), _bp(4.0, 0.9)],
+        settle_timeout_ms=20,
+    ))
+
+    assert arc["updates_written"] > 0
+    assert arc["outcome"] == "unverified"
+    assert "automation_state=0" in arc["outcome_reason"]

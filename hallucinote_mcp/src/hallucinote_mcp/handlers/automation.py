@@ -62,6 +62,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from ..dispatcher import LiveContext
+from ._transport import locate_start_position, require_playhead_within
 from .device import _resolve_device_path, validate_node_addr
 
 
@@ -1586,22 +1587,24 @@ _PERFORM_STALL_TIMEOUT_S = 15.0
 # can't drive it below what Live accepts.
 _PERFORM_MIN_RECORD_TEMPO_BPM = 20.0
 
-# PSH-4L6C — the locate settle tolerance. ``song.current_song_time = x`` is a
-# LOCATE, and Live applies it ASYNCHRONOUSLY (the same class of behaviour as
-# record_mode / session_automation_record, probe 10). If ``start_playing()``
-# fires while the locate is still in flight, the transport rolls from the OLD
-# position: the ramp loop then measures from the wrong beat and burns its whole
-# span-proportional budget travelling a distance nobody budgeted for (an 8-beat
-# arc at beats 96..104 turns into a 104-beat journey), and the operator hears the
-# pass start in the wrong place. THAT is the failure this tolerance guards.
-#
-# The tolerance is a BEAT, not an epsilon, deliberately: the harm is a locate
-# that has not landed AT ALL (playhead tens of beats away), not a sub-beat
-# residual. The ramp is beat-space interpolated — ``_open_entering`` /
-# ``_write_or_close`` compare the ACTUAL playhead beat — so a fraction of a beat
-# of slop is self-correcting, while a whole-beat gate cannot be tripped
-# spuriously by Live snapping the locate to a grid.
+# How close the playhead must read to the union span's start to count as
+# ARRIVED. A BEAT, not an epsilon, deliberately: Live does not promise to park
+# on the exact float it was handed, and a sub-beat residual is harmless because
+# the ramp interpolates off the ACTUAL playhead beat. The gate exists for a
+# locate that has not landed AT ALL, not for grid snapping.
 _PERFORM_LOCATE_TOLERANCE_BEATS = 1.0
+
+# How far from the union span's start the transport may ACTUALLY be rolling,
+# read back after ``start_playing()``, before the pass is abandoned.
+#
+# The tolerance is BEATS, not an epsilon, deliberately: the harm is a transport
+# that started somewhere else entirely (the failure that motivated it had a
+# span at beats 8-24 and a playhead at 351), not a sub-beat residual. The ramp
+# is beat-space interpolated — ``_open_entering`` / ``_write_or_close`` compare
+# the ACTUAL playhead beat — so a little slop is self-correcting, while a window
+# this wide cannot be tripped spuriously by Live snapping the locate to a grid
+# or by the beats the transport travels between pressing play and the read.
+_PERFORM_START_WINDOW_BEATS = 4.0
 
 
 @dataclass
@@ -1825,50 +1828,6 @@ def _wait_for_song_flag_on_worker(
         time.sleep(poll_interval_s)
 
 
-def _wait_for_locate_on_worker(
-    context: LiveContext,
-    target_beats: float,
-    *,
-    timeout_s: float,
-    tolerance_beats: float = _PERFORM_LOCATE_TOLERANCE_BEATS,
-    poll_interval_s: float = _PERFORM_SETTLE_POLL_S,
-) -> float:
-    """Settle-poll ``song.current_song_time`` until the playhead has actually
-    ARRIVED at ``target_beats`` (within ``tolerance_beats``); return the beat
-    finally observed.
-
-    PSH-4L6C: ``current_song_time = x`` is an async LOCATE. Starting playback
-    before it lands makes the transport roll from the OLD position — the ramp
-    then measures from the wrong beat and blows its wall-clock budget travelling
-    a distance nobody budgeted for, and the pass is audibly wrong at the start.
-    So the locate gets the same settle-verify treatment ``record_mode`` already
-    has, bounded by the SAME ``settle_timeout_ms`` knob rather than a new one.
-
-    Like ``_wait_for_song_flag_on_worker`` this MUST be called DIRECTLY on the
-    worker thread — it polls via ``run_on_main`` itself, so nesting it inside a
-    main-thread bout would deadlock.
-    """
-    deadline = time.monotonic() + timeout_s
-    while True:
-        observed = context.run_on_main(
-            lambda: float(context.song.current_song_time)
-        )
-        if abs(observed - target_beats) <= tolerance_beats:
-            return observed
-        if time.monotonic() >= deadline:
-            raise TimeoutError(
-                f"perform_batch could not locate the playhead to beat "
-                f"{target_beats:g} within {timeout_s:.1f}s — it still reads "
-                f"{observed:.3f} ({abs(observed - target_beats):.3f} beats "
-                f"away). Live applies a locate asynchronously; starting the "
-                f"record pass here would roll the transport from the WRONG "
-                f"position. Live may be busy or showing a modal dialog; retry, "
-                f"or pass a larger settle_timeout_ms. The handler's cleanup "
-                f"disarms the set and restores transport state."
-            )
-        time.sleep(poll_interval_s)
-
-
 def _read_transport_diagnostics(context: LiveContext) -> dict[str, Any]:
     """Snapshot the transport state that EXPLAINS a perform timeout, in one
     main-thread bout: where the playhead actually is, whether it is rolling,
@@ -1938,7 +1897,7 @@ def _describe_perform_stall(
             "The playhead position could not be read, so the shortfall cannot "
             "be attributed; check the server log for the per-tick beats."
         )
-    elif beat < union_start - _PERFORM_LOCATE_TOLERANCE_BEATS:
+    elif beat < union_start - _PERFORM_START_WINDOW_BEATS:
         reading = (
             f"The transport IS rolling but the playhead is BEHIND the span "
             f"start ({_fmt(beat)} < {union_start:g}) — it is playing from the "
@@ -1965,6 +1924,41 @@ def _describe_perform_stall(
             "start, or a heavily loaded audio engine."
         )
     return f"{observed}. {reading}"
+
+
+#: An arc the pass recorded and verified.
+PERFORM_OUTCOME_RECORDED = "recorded"
+#: An arc the pass could not prove it recorded. The apply layer must leave its
+#: fingerprint unwritten so the next push retries it.
+PERFORM_OUTCOME_UNVERIFIED = "unverified"
+
+
+def _arc_outcome(arc: "_PreparedArc") -> tuple[str, str | None]:
+    """What actually happened to one arc, stated rather than left to be
+    derived from two fields that disagree.
+
+    ``automation_state`` alone cannot carry this. It reads 1 whenever ANY lane
+    exists on the parameter — including one an earlier session wrote — so on
+    every iteration after the first it is 1 no matter what this pass did. That
+    asymmetry is what let three passes report success while the set kept the
+    previous session's lanes: a parameter with no prior lane failed honestly,
+    and a parameter with one could not. ``updates_written`` is the count this
+    pass is actually entitled to claim.
+    """
+    if arc.updates_written == 0:
+        return PERFORM_OUTCOME_UNVERIFIED, (
+            "no value was written during the pass (updates_written=0), so "
+            "nothing was recorded for this arc. An automation_state of 1 here "
+            "reflects a lane from an earlier pass, not this one."
+        )
+    if arc.automation_state != 1:
+        return PERFORM_OUTCOME_UNVERIFIED, (
+            f"values were written but Live reports automation_state="
+            f"{arc.automation_state!r} (not 1), so the lane could not be "
+            "confirmed. Check the parameter is not automation-overridden or "
+            "locked in Live."
+        )
+    return PERFORM_OUTCOME_RECORDED, None
 
 
 def perform_batch_handler(
@@ -2249,7 +2243,6 @@ def perform_batch_handler(
                     song.tempo = record_tempo
                 song.session_automation_record = True
                 song.record_mode = True
-                song.current_song_time = float(union_start)
 
             context.run_on_main(_arm_and_seek)
 
@@ -2257,18 +2250,19 @@ def perform_batch_handler(
                 context, "record_mode", True, timeout_s=settle_timeout_s
             )
 
-            # PSH-4L6C — settle the LOCATE before playing. The seek above is
-            # async: without this wait, `start_playing()` can fire while the
-            # playhead is still at its OLD position, so the transport rolls from
-            # the wrong place (audibly wrong at the start) and the ramp below
-            # measures a journey nobody budgeted for — an 8-beat arc at 96..104
-            # becomes a 104-beat travel that blows the wall-clock ceiling. It
-            # runs AFTER the record_mode settle on purpose: that wait has
-            # already given the locate ~300 ms of cover, and arming is the last
-            # thing that could disturb the playhead. Bounded by the SAME
-            # settle_timeout_ms — no new knob.
-            _wait_for_locate_on_worker(
-                context, float(union_start), timeout_s=settle_timeout_s
+            # Position the transport LAST — arming is the only remaining thing
+            # that could disturb the playhead, and it has now settled.
+            #
+            # This is a locate of Live's START PLAYING POSITION, not of the
+            # playhead: `start_playing()` rolls from the former, and writing
+            # `current_song_time` moves only the latter. A playhead-only locate
+            # settles honestly and still leaves the pass recording somewhere
+            # else entirely — the #471 failure, where three passes in one day
+            # reported success and wrote nothing. See `handlers/_transport.py`.
+            # Bounded by the SAME settle_timeout_ms — no new knob.
+            locate = locate_start_position(
+                context, float(union_start), settle_timeout_s=settle_timeout_s,
+                arrival_tolerance_beats=_PERFORM_LOCATE_TOLERANCE_BEATS,
             )
 
             # Open the gestures for arcs already active at the union start
@@ -2300,9 +2294,40 @@ def perform_batch_handler(
                 _PERFORM_WALL_CLOCK_FLOOR_S,
             ) + settle_timeout_s
 
+            # The first tick doubles as the realized-position check. The locate
+            # above is a MECHANISM, and a mechanism can be defeated by
+            # something nobody has seen yet; this reads where the transport is
+            # ACTUALLY rolling, so it holds regardless. Without it a pass whose
+            # start position was never moved reads a beat already past the
+            # span, closes every gesture having written nothing, and returns a
+            # result that looks fine — three of those in one day is what #471
+            # is. The check rides the beat the ramp already reads: an extra
+            # Live touch here would buy nothing and cost a bout.
+            #
+            # Only the PAST-the-span direction is fatal here. A transport
+            # rolling from BEFORE the span is already handled downstream by the
+            # wall-clock budget and `_describe_perform_stall`, which names that
+            # case specifically.
+            first_tick = True
+            playhead_check_label = (
+                f"perform_batch pass (locate method: {locate.method}"
+                + (f", {locate.detail}" if locate.detail else "")
+                + ")"
+            )
+
             def _ramp_step() -> float:
+                nonlocal first_tick
                 song = context.song
                 beat = float(song.current_song_time)
+                if first_tick:
+                    first_tick = False
+                    require_playhead_within(
+                        beat,
+                        low=0.0,
+                        high=float(union_start) + _PERFORM_START_WINDOW_BEATS,
+                        target_beats=float(union_start),
+                        what=playhead_check_label,
+                    )
                 _open_entering(beat)
                 _write_or_close(beat)
                 return beat
@@ -2511,6 +2536,7 @@ def perform_batch_handler(
 
     arcs_result: list[dict[str, Any]] = []
     for a in prepared:
+        outcome, outcome_reason = _arc_outcome(a)
         entry: dict[str, Any] = {
             "target_kind": a.target_kind,
             "automation_state": a.automation_state,
@@ -2518,7 +2544,10 @@ def perform_batch_handler(
             "beats_performed": a.span_end - a.span_start,
             "updates_written": a.updates_written,
             "breakpoint_count": len(a.cleaned),
+            "outcome": outcome,
         }
+        if outcome_reason is not None:
+            entry["outcome_reason"] = outcome_reason
         if a.arc_id is not None:
             entry["arc_id"] = a.arc_id
         _echo_addressing_args(
@@ -2546,9 +2575,14 @@ def perform_batch_handler(
         result["restore_failures"] = restore_failures
     logger.info(
         "perform_batch complete: %.1fs wall-clock, per-arc "
-        "(automation_state, updates_written): %s%s",
+        "(outcome, automation_state, updates_written): %s%s",
         result["wall_clock_s"],
-        {a.arc_id: (a.automation_state, a.updates_written) for a in prepared},
+        {
+            e.get("arc_id"): (
+                e["outcome"], e["automation_state"], e["updates_written"],
+            )
+            for e in arcs_result
+        },
         f", restore_failures={restore_failures}" if restore_failures else "",
     )
     return result
@@ -2557,6 +2591,8 @@ def perform_batch_handler(
 __all__ = [
     "TARGET_KINDS",
     "PERFORM_TARGET_KINDS",
+    "PERFORM_OUTCOME_RECORDED",
+    "PERFORM_OUTCOME_UNVERIFIED",
     "list_handler",
     "get_envelope_handler",
     "read_envelope_handler",

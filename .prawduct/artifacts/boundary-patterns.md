@@ -55,7 +55,8 @@ When changing this surface:
     arc-results — `apply_push_results`' `perform_batch` branch iterates
     `result["arcs"]` and correlates each to its envelope by the opaque
     `arc_id` the handler echoes back (NOT by the call key), recording each
-    arc's performed-state independently on its own `automation_state`.
+    arc's performed-state independently on its own `outcome` (with
+    `automation_state` + `updates_written` as the floor for an older server).
   - `PushPlan` carries four channels: `calls` (dispatched), `notes`
     (diagnostic — "nothing to push", "not linked yet"; NOT surfaced to the
     operator), `alerts` (SYN-9F2L — operator-actionable, non-fatal warnings),

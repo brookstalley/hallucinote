@@ -11,6 +11,7 @@ import pytest
 from hallucinote_mcp.analyzer.osc import AnalyzerOSC
 from hallucinote_mcp.dispatcher import dispatch
 from hallucinote_mcp.handlers import render as render_handlers
+from hallucinote_mcp.handlers._transport import PlayheadPositionError
 from hallucinote_mcp.wire import Request
 
 
@@ -219,6 +220,7 @@ class _FakeSong:
         self._loop = True
         self.start_playing_calls = 0
         self.stop_playing_calls = 0
+        self.stale_start_position: float | None = None
 
     @property
     def loop(self):
@@ -232,6 +234,13 @@ class _FakeSong:
     def start_playing(self):
         self.is_playing = True
         self.start_playing_calls += 1
+        # Live rolls from its START PLAYING POSITION, which is a different
+        # property from the playhead. Set this to model a set someone has
+        # listened to: playback then begins wherever they last pressed play,
+        # no matter what the seek read back. Default None keeps the playhead
+        # where it was put, which is the healthy case.
+        if self.stale_start_position is not None:
+            self.current_song_time = self.stale_start_position
 
     def stop_playing(self):
         self.is_playing = False
@@ -1398,3 +1407,73 @@ def test_ensure_loaded_action_surfaces_terminal_status(ctx_two_tracks_one_return
     for inst in resp.result["instances"]:
         assert inst["terminal"] is True
         assert inst["was_repositioned"] is False
+
+
+def test_render_refuses_to_capture_from_the_wrong_part_of_the_song(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, stub_sidecar,
+):
+    """The render half of #471. Live rolls from a start playing position the
+    seek never moved, so a capture can record a completely different section
+    while every check the handler had said it was healthy — the engine
+    pre-flight asks whether the transport ADVANCES, and a transport in the
+    wrong place advances exactly as well as one in the right place."""
+    ctx_two_tracks_one_return.song.stale_start_position = 999.0
+
+    with pytest.raises(PlayheadPositionError) as exc:
+        render_handlers.render_handler(
+            ctx_two_tracks_one_return,
+            song_slug="t",
+            output_dir=str(tmp_path / "c"),
+            _osc_factory=osc_factory,
+            _sidecar=stub_sidecar,
+        )
+
+    err = exc.value
+    assert err.observed_beats == pytest.approx(999.0)
+    assert "render capture" in str(err)
+    assert "START PLAYING POSITION" in str(err)
+
+
+def test_a_healthy_render_locates_the_start_position_before_playing(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, stub_sidecar,
+):
+    """The capture positions with a cue jump, not a bare playhead write — and
+    gives back the locator it borrowed to do it."""
+    song = ctx_two_tracks_one_return.song
+    song.cue_points = []
+    cue_ops: list[tuple] = []
+
+    def _toggle() -> None:
+        at = song.current_song_time
+        cue_ops.append(("toggle", at))
+        for i, cue in enumerate(song.cue_points):
+            if abs(cue.time - at) < 1e-6:
+                del song.cue_points[i]
+                return
+        song.cue_points.append(_JumpingCue(song, at, cue_ops))
+
+    song.set_or_delete_cue = _toggle
+
+    render_handlers.render_handler(
+        ctx_two_tracks_one_return,
+        song_slug="t",
+        output_dir=str(tmp_path / "c"),
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 999.0,
+    )
+
+    assert [op[0] for op in cue_ops] == ["toggle", "jump", "toggle"]
+    assert song.cue_points == []
+
+
+class _JumpingCue:
+    def __init__(self, song, time_, ops):
+        self._song = song
+        self._ops = ops
+        self.time = float(time_)
+        self.name = ""
+
+    def jump(self) -> None:
+        self._ops.append(("jump", self.time))
+        self._song.current_song_time = self.time

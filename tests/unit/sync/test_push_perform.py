@@ -1000,3 +1000,116 @@ def test_collision_key_parity_planner_vs_handler():
     # collide (the whole point of putting device_path in the key).
     a5 = {**a4, "device_path": [{"chain_index": 2, "device_position": 1}]}
     assert perform_target_key(a4) != perform_target_key(a5)
+
+
+# ---------------------------------------------------------------------------
+# Per-arc outcomes reach the push report (#471 ask 3)
+# ---------------------------------------------------------------------------
+
+
+def test_apply_honours_the_handlers_own_verdict(conn, song, session, master_arc):
+    """The handler computes the verdict where the pass actually happened, so
+    the apply layer takes it rather than re-deriving one. An arc it calls
+    unverified records nothing, even though the two legacy fields — a lane that
+    exists, values that were written — would both have said yes."""
+    arc = {
+        "arc_id": master_arc,
+        "automation_state": 1,
+        "updates_written": 12,
+        "outcome": "unverified",
+        "outcome_reason": "the transport rolled from beat 351.",
+    }
+    warnings = push.apply_push_results(
+        conn, [_batch_result(arc)], session_id=session,
+    )
+
+    assert len(warnings) == 1
+    assert "unverified" in warnings[0]
+    assert "beat 351" in warnings[0]
+    assert Q.get_performed_automation(conn, master_arc, session) is None
+
+
+def test_apply_still_gates_on_the_fields_when_outcome_is_absent(
+    conn, song, session, master_arc,
+):
+    """A server predating the outcome field must not read as an absent
+    objection — the two field checks stay the floor."""
+    arc = {"arc_id": master_arc, "automation_state": 1, "updates_written": 0}
+    warnings = push.apply_push_results(
+        conn, [_batch_result(arc)], session_id=session,
+    )
+
+    assert len(warnings) == 1
+    assert "updates_written=0" in warnings[0]
+    assert Q.get_performed_automation(conn, master_arc, session) is None
+
+
+def test_apply_reports_what_happened_to_every_arc_not_only_the_failures(
+    conn, song, session, master, linked_group,
+):
+    """A phase that spends minutes of realtime and reports "ok (1 call)" gives
+    the author nothing to act on. Every arc gets a line, on the benign channel
+    so a clean push still reads as clean."""
+    a_eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume", target_track_id=master,
+    )
+    _two_point_ramp(conn, a_eid)
+    b_eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=linked_group,
+    )
+    _two_point_ramp(conn, b_eid)
+
+    notes: list[str] = []
+    warnings = push.apply_push_results(
+        conn,
+        [_batch_result(
+            {"arc_id": a_eid, "automation_state": 1, "updates_written": 27,
+             "outcome": "recorded", "span_beats": [96.0, 104.0]},
+            {"arc_id": b_eid, "automation_state": 1, "updates_written": 0,
+             "outcome": "unverified",
+             "outcome_reason": "no value was written during the pass.",
+             "span_beats": [96.0, 104.0]},
+        )],
+        session_id=session,
+        notes_sink=notes.append,
+    )
+
+    assert len(notes) == 1
+    line = notes[0]
+    assert f"{a_eid} [96-104] recorded (27 value writes)" in line
+    assert f"{b_eid} [96-104] UNVERIFIED (0 value writes)" in line
+    # The failure is ALSO on the actionable channel; the roll-up does not
+    # replace it.
+    assert len(warnings) == 1
+    assert b_eid in warnings[0]
+
+
+def test_a_clean_perform_still_gets_a_roll_up_and_no_warning(
+    conn, song, session, master_arc,
+):
+    notes: list[str] = []
+    warnings = push.apply_push_results(
+        conn,
+        [_batch_result({"arc_id": master_arc, "automation_state": 1,
+                        "updates_written": 27, "outcome": "recorded"})],
+        session_id=session,
+        notes_sink=notes.append,
+    )
+
+    assert warnings == []
+    assert len(notes) == 1
+    assert "recorded (27 value writes)" in notes[0]
+
+
+def test_a_caller_with_no_benign_channel_still_applies_cleanly(
+    conn, song, session, master_arc,
+):
+    """The roll-up is an extra, not a requirement — ``notes_sink`` is optional
+    and its absence must not cost the arc its fingerprint."""
+    warnings = push.apply_push_results(
+        conn, [_batch_result(master_arc)], session_id=session,
+    )
+
+    assert warnings == []
+    assert Q.get_performed_automation(conn, master_arc, session) is not None

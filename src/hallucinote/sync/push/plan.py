@@ -573,6 +573,22 @@ KNOWN_RESULT_KEY_KINDS: frozenset[str] = (
 )
 
 
+def _describe_arc_outcome(arc: dict[str, Any], *, recorded: bool) -> str:
+    """One perform arc, as a line an author can act on: which envelope, over
+    which beats, what happened to it, and how many values the pass actually
+    wrote. The write count is there because it is the number that separates a
+    real recording from a stale lane answering for one."""
+    span = arc.get("span_beats") or []
+    where = (
+        f"[{float(span[0]):g}-{float(span[1]):g}] " if len(span) == 2 else ""
+    )
+    verdict = "recorded" if recorded else "UNVERIFIED"
+    return (
+        f"{arc.get('arc_id')} {where}{verdict} "
+        f"({arc.get('updates_written')} value writes)"
+    )
+
+
 def apply_push_results(
     conn: sqlite3.Connection,
     results: list[dict[str, Any]],
@@ -581,6 +597,7 @@ def apply_push_results(
     actor: str = "sync",
     request_id: str | None = None,
     reason: str | None = None,
+    notes_sink: Callable[[str], None] | None = None,
 ) -> list[str]:
     """After the agent runs the plan, feed structured results back here so the
     DB knows what's now in Ableton. Bindings are recorded in `ableton_links`
@@ -602,6 +619,14 @@ def apply_push_results(
 
     Failed results (`ok=False`) are skipped — the agent layer is the source
     of truth for tool-side errors; hallucinote records nothing for them.
+
+    ``notes_sink`` receives operator-facing lines that are NOT problems — the
+    perform phase's per-arc roll-up, which is worth reading precisely when
+    nothing went wrong. The returned warnings ride the errors file, so a clean
+    push must not put anything there; without a second channel the choice is
+    between an accurate report that looks failed and a phase that spends
+    minutes of realtime and says only "ok (1 call)". The caller supplies the
+    benign channel it already has.
 
     Returns apply-layer warnings (empty when everything recorded cleanly).
     Today these come from the `perform_batch` branch — for any arc whose
@@ -645,6 +670,7 @@ def apply_push_results(
                         "or the playhead moved; check record_mode in Live."
                     )
                 processed = 0
+                outcomes: list[str] = []
                 for arc in res.get("arcs", []):
                     arc_eid = arc.get("arc_id")
                     if not arc_eid:
@@ -663,7 +689,23 @@ def apply_push_results(
                     )
                     if perform_warning is not None:
                         warnings.append(perform_warning)
+                    outcomes.append(
+                        _describe_arc_outcome(
+                            arc, recorded=perform_warning is None
+                        )
+                    )
                     processed += 1
+                # A realtime phase that spends minutes of wall clock and
+                # reports "ok (1 call)" gives the author nothing to act on —
+                # the divergence this names was found by ear, three passes
+                # late. Say what happened to every arc, not just the ones that
+                # failed, and say it on the benign channel so a clean push
+                # still reads as clean.
+                if outcomes and notes_sink is not None:
+                    notes_sink(
+                        "performed-automation: "
+                        + "; ".join(outcomes)
+                    )
                 # ENV-8K2R #4: planned-vs-returned cross-check. The handler
                 # reports `arc_count` = how many arcs it prepared (== the
                 # planner's queued count on the success path). If fewer per-arc

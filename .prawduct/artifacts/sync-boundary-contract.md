@@ -113,10 +113,29 @@ probe, and every prior phase that creates X halted the push if it failed.
 Table-driven on the `<kind>:` prefix of each result key: `_LINK_KINDS` (:351-363,
 writes an `ableton_links` binding from the declared result field),
 `_ACK_ONLY_KINDS` (:374-463, no DB write), the dedicated `perform_batch` branch
-(:535-592, per-arc fingerprint recording gated on `automation_state == 1` +
-`updates_written`, planned-vs-returned count cross-check). Failed results are
-skipped (the executor already recorded them). Runs in ONE transaction (:523) — a
+(per-arc fingerprint recording gated on the handler's `outcome`, with
+`automation_state == 1` + `updates_written` as the floor for a server that
+predates the field; planned-vs-returned count cross-check). Failed results are
+skipped (the executor already recorded them). Runs in ONE transaction — a
 mid-batch raise rolls back every link in the batch.
+
+**Two channels out, and the split is load-bearing.** The return value is the
+ACTIONABLE one: `push_execute` writes it into `.last-push-errors.json`, so
+anything put there makes a clean push look failed. The optional `notes_sink`
+callable is the BENIGN one, wired to the same `warnings` list the push state
+file already carries. The perform phase's per-arc roll-up goes there — a
+realtime phase that spends minutes of wall clock and reports `ok (1 call)`
+leaves an author with nothing to act on, which is how a whole session's
+divergence went unnoticed until it was heard (issue #471, ask 3). `notes_sink`
+is optional; its absence costs the roll-up and nothing else.
+
+**The `outcome` string is the contract.** The engine does not import the MCP
+package — they ship and version separately — so `push/perform.py`'s
+`PERFORM_OUTCOME_RECORDED` and `handlers/automation.py`'s constant of the same
+name are two spellings of one wire value (`"recorded"`). Anything else the
+handler reports is a non-recording, whatever it is called, so the apply layer
+branches on inequality rather than on an enumeration it would have to keep in
+step.
 
 **Unknown-kind policy (deliberate, SYN-8Q3F Chunk 03).** A key kind outside
 `KNOWN_RESULT_KEY_KINDS` raises `ValueError` with the full key + the declaration
@@ -294,9 +313,20 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
   protects hand-edited Live lanes); `perform_target_key` stays field-identical to
   the handler's `_PreparedArc.addressing_key()` (cross-package parity test,
   :265-307).
-- **Re-probes:** verification is handler-side: per-arc `automation_state == 1` +
-  `updates_written > 0` gate the fingerprint write at apply
-  (perform.py:511-571) — an unverified arc re-performs next push.
+- **Re-probes:** verification is handler-side and now stated rather than
+  derived: each arc carries an `outcome` (`recorded` / `unverified`) plus an
+  `outcome_reason`, and the apply layer records a fingerprint only for
+  `recorded`. `automation_state == 1` + `updates_written > 0` remain the floor
+  for a server predating the field. An unverified arc re-performs next push.
+  `automation_state` alone can never carry this: it reads 1 whenever ANY lane
+  exists on the parameter, including one an earlier session wrote, so on every
+  iteration after the first it is 1 no matter what the pass did (#471).
+- **Positions before it plays.** The pass locates Live's START PLAYING POSITION
+  (`handlers/_transport.py`), not just the playhead — those are separate
+  properties and `start_playing()` rolls from the first. It then judges the
+  ramp's own first beat against the span, so a transport rolling from somewhere
+  else aborts instead of closing every gesture on a beat past the end and
+  returning a clean result.
 - **Failure/halt:** duplicate-target arcs: recorded lanes claimed first, extra
   arcs **alert** + defer (:424-454, ENV-8K2R #3). One `perform_batch:` call with
   a derived read ceiling (:487-496) — realtime cost surfaced via alert. Restore

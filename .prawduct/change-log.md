@@ -32,6 +32,91 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-09-08 — Live plays from a position `current_song_time` never moved
+
+<!-- prawduct: type=fix | scope=perform-start-position -->
+
+Issue #471 opened as "a perform pass reports success and records nothing", and
+the reporter closed it themselves with the mechanism: `song.current_song_time`
+is the playhead, and `start_playing()` rolls from Live's **start playing
+position**, which that write does not move. The LOM exposes no writable
+property for the second — `CuePoint.jump()` is the one surface that moves it.
+
+The two agree on a set nobody has listened to and part company the moment
+someone presses play in the arrangement, so locate-then-play was only ever
+coincidentally correct. On `songs/alien` the start position had drifted to ~351
+while the arcs lived at 96-104: three passes in one day each seeked correctly,
+read the seek back correctly, rolled from 351, exited the ramp loop on the first
+tick already past the span, and returned a clean result. The divergence was
+found by ear, from a reverb wash that did not match what the DB said was there.
+
+**The settle-verify was not missing — it was answering about the wrong
+property.** `perform_batch` already had a worker-thread poll on
+`current_song_time` (PSH-4L6C), and it passed every time, honestly. That is what
+makes this class hard to see, and it is why the fix has two halves rather than
+one.
+
+`handlers/_transport.py` is the first: `locate_start_position` moves the start
+position by jumping to a cue at the target — the operator's own where one is
+there, otherwise borrowing one (create, jump, delete) and reporting rather than
+swallowing a locator it fails to give back. A cue that exists but cannot be
+jumped degrades instead of falling through to the borrow path, because that
+path's toggle fires at the same beat and a toggle where a cue already sits
+DELETES it.
+
+The second half is `require_playhead_within` / `assert_playhead_within`, which
+read where the transport ACTUALLY rolled from. That one is mechanism-independent
+— it holds when the locate is defeated by something nobody has seen yet — and it
+is why a wrong position is now a loud error rather than silent divergence.
+`perform_batch` checks the beat its ramp loop already reads, so the guard costs
+no extra Live touch.
+
+**The same two lines were in two more places.** `render.py`'s capture seeked and
+played, and its engine pre-flight asks whether the transport ADVANCES — a
+transport in the wrong place advances exactly as well as one in the right place,
+so a render could capture minutes of the wrong section and report a healthy
+capture. And `session.py`'s play note *told operators* that "seek then play
+locates-and-plays: the render capture path relies on exactly that", which is the
+false belief that cost the reporter six hours, shipped as documentation and read
+at precisely the moment someone is debugging this. `seek` now moves the start
+position too and says which method did it, so the read-back workflow that
+diagnosed the bug is trustworthy.
+
+A source-level test now fails on any handler that reaches `start_playing()` for
+a positioned pass without locating first, with a two-entry exemption list for
+the bare transport verbs. The mistake leaves no trace in the code that made it,
+so it is checked rather than left to reviewers.
+
+**Reporting, the other half of the issue.** `automation_state` cannot verify a
+perform: it reads 1 whenever ANY lane exists on the parameter, so on every
+iteration after the first it is 1 regardless of what the pass did. A parameter
+with no prior lane failed honestly; one with a lane could not. Each arc now
+carries a stated `outcome` (`recorded` / `unverified`) plus the reason, computed
+where the pass happened, and the apply layer branches on that with the old two
+field checks kept as the floor for a server predating it. `apply_push_results`
+gains a `notes_sink` — a benign channel next to the actionable one, since the
+returned warnings ride `.last-push-errors.json` and a per-arc roll-up there
+would make a clean push look failed — and every arc gets a line naming its span,
+its verdict and its write count.
+
+**Not built, and why.** The issue's ask 1 (verify each arc by sampling the
+parameter back across its span) was written before the mechanism was known, when
+read-back shape was the only diagnostic available from outside. `updates_written`
+is a direct count of what the pass wrote and the position guard catches the
+failure before the ramp even runs, so it is filed as defence-in-depth rather
+than built. Ask 4 (prefer the `session_clip` route wherever the span allows) is a
+routing-policy change with real consequences the reporter names themselves —
+`insert_step`-only, so a ramp must be authored as an explicit staircase — and
+deserves its own design pass. Filed as #478 and #479; #479 should be read
+alongside the already-open #474, which asks for the inferred route to be
+surfaced at all.
+
+Handlers changed, so the wire fingerprint flips: re-vendor and a full Live
+quit/reopen precede any of this reaching Live, and the operator-verification
+entry carries the checks. Only Live can answer whether the cue jump moves the
+start position on a real set; the reporter's A/B says it does, and the unit
+fakes model the two-field shape rather than the belief that hid the bug.
+
 ## 2026-09-08 — The governance files stop growing without a ceiling
 
 <!-- prawduct: type=chore | scope=governance-file-sizes -->

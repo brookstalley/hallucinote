@@ -15,6 +15,67 @@ pending entries when `operator_verification_required: true`.
 
 ---
 
+## PERFORM-START-POSITION — the cue jump moves Live's start playing position (issue #471, 2026-09-08) — PENDING
+
+**Visual change:** no, but a locator briefly appears and disappears in the
+arrangement's locator strip during a perform, render or seek. That is the
+temporary cue the locate borrows; if one is ever left behind, say so.
+
+This branch changes `handlers/automation.py`, `handlers/render.py`,
+`handlers/session.py` and adds `handlers/_transport.py` — all inside
+`_FINGERPRINT_PATHS`, so **`__version__` flips and the Remote Script must be
+re-vendored with a full Live quit/reopen** before any of this is live.
+
+Everything here rests on one Live behaviour this session cannot exercise:
+`CuePoint.jump()` moves the start playing position while
+`song.current_song_time` does not. The reporter verified it directly (0
+`updates_written` before the jump, 27 after, same set and span minutes apart);
+these checks confirm the shipped code uses it correctly on a real set.
+
+1. **One-time setup:** `/ableton-mcp-install`, quit Live fully, reopen.
+   `ableton://server/info` → handshake passes, new fingerprint reported.
+
+2. **Make the start position stale — the condition the bug needs.** Open
+   `songs/alien`, click somewhere late in the arrangement (around bar 87) and
+   press play, then stop. This is the ordinary act that used to poison every
+   subsequent pass.
+
+3. **Perform against a parameter that ALREADY has a lane.** Re-author one of
+   the arcs from the report (`Reverb / Decay Time` on return 1, or the Human
+   Riff `send_level`) and `push_cli execute --only performed_automation`.
+   Expect: `updates_written > 0` for every arc, each arc's `outcome` reading
+   `recorded`, and the push report carrying a per-arc roll-up line naming all
+   of them. Before this fix the pass reported `ok` and wrote nothing.
+
+4. **Confirm by SHAPE, not by value** — the diagnostic the reporter had to
+   invent. Seek to two adjacent beats inside the gesture and read the parameter
+   at each. A recorded ramp is never flat across a beat; identical readings
+   mean an untouched older recording. Record both numbers here.
+
+5. **The locator is given back.** After the pass, check Live's locator strip:
+   no cue at the span start that you did not put there. If you HAD a locator
+   there already, confirm it survived — the locate is supposed to jump to it
+   rather than toggle it away, and a toggle would have deleted it.
+
+6. **The guard fires when the mechanism cannot.** Hard to stage deliberately;
+   if you ever see `PlayheadPositionError` naming a beat far from the span,
+   that is the intended behaviour — record the message rather than retrying
+   past it.
+
+7. **Render, from the same stale-start-position state.** `ableton_render` a
+   short window and confirm the WAVs contain the section you asked for, not
+   the one the playhead was parked in. This path had the identical defect and
+   its engine pre-flight could never see it: a transport in the wrong place
+   advances exactly as healthily as one in the right place.
+
+8. **`seek` reports honestly.** `ableton_session(action='seek', bar=N)` then
+   `play`. Expect playback to begin at bar N, and the seek result to carry
+   `start_position_moved: true` with `locate_method` naming `existing_cue` or
+   `temporary_cue`. A `playhead_only` method here means the strong path was
+   unavailable — record `locate_detail`, which says why.
+
+---
+
 ## EFFORT-S-BURNDOWN — the fingerprint flip re-vendors, and the #264 fix works in real Live (2026-08-22) — PENDING
 
 This branch changed seven files inside `_FINGERPRINT_PATHS` (`dispatcher.py`,

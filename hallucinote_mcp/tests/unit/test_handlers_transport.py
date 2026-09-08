@@ -11,6 +11,8 @@ playback still begins somewhere else.
 """
 from __future__ import annotations
 
+import ast
+import pathlib
 import threading
 from typing import Any
 
@@ -401,3 +403,143 @@ def test_an_inverted_window_is_a_caller_bug_and_says_so():
         assert_playhead_within(
             ctx, low=24.0, high=8.0, target_beats=8.0, what="perform pass",
         )
+
+
+# ---------------------------------------------------------------------------
+# The invariant, checked over the source rather than trusted
+# ---------------------------------------------------------------------------
+
+
+_HANDLERS_DIR = (
+    pathlib.Path(__file__).resolve().parents[2]
+    / "src" / "hallucinote_mcp" / "handlers"
+)
+
+# Handlers that press play WITHOUT positioning first, and why that is correct.
+# Each is a bare transport verb the operator asked for by name — "press play
+# where you are" — so there is no target beat to locate to. Anything that plays
+# in order to reach a POSITION belongs on the other side of this line.
+UNPOSITIONED_PLAY = {
+    "play_handler": "Live's *Start* verb, invoked as-is; no target position",
+    "continue_playing_handler": "Live's *Continue* verb; resumes, by design",
+}
+
+
+def _module_level_functions():
+    for py_file in sorted(_HANDLERS_DIR.glob("*.py")):
+        tree = ast.parse(py_file.read_text(encoding="utf-8"))
+        for node in ast.iter_child_nodes(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                yield py_file.name, node
+
+
+def _calls_method(node, name: str) -> bool:
+    return any(
+        isinstance(sub, ast.Call)
+        and isinstance(sub.func, ast.Attribute)
+        and sub.func.attr == name
+        for sub in ast.walk(node)
+    )
+
+
+def _calls_function(node, name: str) -> bool:
+    return any(
+        isinstance(sub, ast.Call)
+        and isinstance(sub.func, ast.Name)
+        and sub.func.id == name
+        for sub in ast.walk(node)
+    )
+
+
+def test_nothing_plays_toward_a_position_without_locating_the_start_position():
+    """The defect was one line in one handler, and the same line was in three.
+
+    A seek-then-play reads back perfectly and still begins somewhere else, so
+    the mistake leaves no trace in the code that made it — which is why this is
+    checked over the source instead of left to reviewers. Add a fourth site
+    that plays toward a beat and this fails until it locates first, or until
+    someone writes down why it does not have to.
+    """
+    offenders = []
+    for filename, fn in _module_level_functions():
+        if fn.name in UNPOSITIONED_PLAY:
+            continue
+        if not _calls_method(fn, "start_playing"):
+            continue
+        if not _calls_function(fn, "locate_start_position"):
+            offenders.append(f"{filename}::{fn.name}")
+
+    assert not offenders, (
+        f"{offenders} call start_playing() without locate_start_position(). "
+        "Writing current_song_time moves the playhead, not the START PLAYING "
+        "POSITION that start_playing() rolls from, so the transport will "
+        "begin wherever play was last pressed. Locate first — or, if this "
+        "really is a bare transport verb with no target beat, add it to "
+        "UNPOSITIONED_PLAY with the reason."
+    )
+
+
+def test_the_unpositioned_play_exemptions_still_exist():
+    """A stale exemption silently re-opens the hole it was written to keep
+    narrow."""
+    present = {fn.name for _, fn in _module_level_functions()}
+    stale = sorted(set(UNPOSITIONED_PLAY) - present)
+    assert not stale, (
+        f"UNPOSITIONED_PLAY names handler(s) that no longer exist: {stale}. "
+        "Remove the entries."
+    )
+
+
+def test_a_cue_added_between_bouts_does_not_redirect_the_jump():
+    """The survey and the jump are separate main-thread bouts, and Live's
+    locator strip is clickable in between. Resolving by the surveyed INDEX
+    would jump to whatever slid into that slot — the exact "transport in the
+    wrong place" this module exists to end."""
+    song = FakeTransportSong(cues=[8.0, 64.0], start_position=351.3)
+    ctx = FakeCtx(song)
+    real_run = ctx.run_on_main
+    inserted = [False]
+
+    def _run(fn, **kw):
+        result = real_run(fn, **kw)
+        if not inserted[0]:
+            inserted[0] = True
+            # A locator appears BEFORE the target, shifting every later index.
+            song.cue_points.insert(0, FakeCue(song, 2.0))
+        return result
+
+    ctx.run_on_main = _run  # type: ignore[method-assign]
+
+    result = locate_start_position(ctx, 8.0)
+
+    assert result.method == LOCATE_EXISTING_CUE
+    assert song._start_position == 8.0
+
+
+def test_the_borrowed_cue_is_not_toggled_away_from_the_wrong_beat():
+    """``set_or_delete_cue`` acts wherever the playhead is, so the give-back is
+    only safe while the playhead is still ON the borrowed cue. A caller with a
+    loose arrival tolerance accepts a playhead half a beat off — fine to play
+    from, and NOT fine to toggle at, because the toggle would leave a stray
+    locator there while the borrowed one stayed. Skip it and say so."""
+    song = FakeTransportSong(start_position=351.3)
+    ctx = FakeCtx(song)
+    real_run = ctx.run_on_main
+
+    def _run(fn, **kw):
+        result = real_run(fn, **kw)
+        # Live nudges the playhead a half-beat off once the jump has landed.
+        if ("cue_jump", 8.0) in song.events and song._playhead == 8.0:
+            song._playhead = 8.5
+        return result
+
+    ctx.run_on_main = _run  # type: ignore[method-assign]
+
+    result = locate_start_position(ctx, 8.0, arrival_tolerance_beats=1.0)
+
+    # The start position still moved — that is what the caller asked for.
+    assert result.start_position_moved
+    # And the set carries exactly one locator, the borrowed one, rather than a
+    # stray at 8.5 alongside it.
+    assert [c.time for c in song.cue_points] == [8.0]
+    assert ("toggle", 8.5) not in song.events

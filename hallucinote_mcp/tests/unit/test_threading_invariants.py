@@ -83,11 +83,9 @@ def test_every_lock_taker_is_runs_on_worker():
             )
 
 
-def _scan_handler_source_for_lock_uses() -> set[str]:
-    """Walk every handler module, parse with ast, find functions that
-    reference ``context.live_state_lock`` (acquire OR mention). Returns
-    the set of function names — caller maps these to (tool, action)
-    via the schema."""
+def _scan_handler_functions(matches) -> set[str]:
+    """Walk every handler module, parse with ast, and return the names of
+    functions whose body contains a node ``matches`` accepts."""
     handlers_dir = (
         pathlib.Path(__file__).resolve().parents[2]
         / "src" / "hallucinote_mcp" / "handlers"
@@ -98,18 +96,36 @@ def _scan_handler_source_for_lock_uses() -> set[str]:
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
-            # Inline check: does the function body reference
-            # ``context.live_state_lock`` anywhere?
             for sub in ast.walk(node):
-                if (
-                    isinstance(sub, ast.Attribute)
-                    and sub.attr == "live_state_lock"
-                    and isinstance(sub.value, ast.Name)
-                    and sub.value.id == "context"
-                ):
+                if matches(sub):
                     found.add(node.name)
                     break
     return found
+
+
+def _is_lock_reference(node) -> bool:
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == "live_state_lock"
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "context"
+    )
+
+
+def _calls(name: str):
+    def _matches(node) -> bool:
+        return (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == name
+        )
+    return _matches
+
+
+def _scan_handler_source_for_lock_uses() -> set[str]:
+    """Function names that reference ``context.live_state_lock`` (acquire OR
+    mention). Caller maps these to (tool, action) via the schema."""
+    return _scan_handler_functions(_is_lock_reference)
 
 
 def test_no_undeclared_lock_taker_in_handler_source():
@@ -126,6 +142,12 @@ def test_no_undeclared_lock_taker_in_handler_source():
         # It's not directly bound to an action; cue_create / cue_create_batch
         # wrap it.
         lock_taker_fn_names.discard("_create_one_cue_locked")
+        # _transport.locate_start_position acquires the lock ITSELF (the RLock
+        # is re-entrant, so a caller already holding it nests). It is a shared
+        # primitive, not an action, so it has no LOCK_USERS entry — the
+        # invariant that matters for it is that its CALLERS are declared, and
+        # that is what test_every_locate_caller_is_a_declared_lock_user checks.
+        lock_taker_fn_names.discard("locate_start_position")
 
         # Map registered actions' handler functions → set of fn names
         declared_fn_names: set[str] = set()
@@ -403,3 +425,66 @@ def test_concurrent_cue_create_and_cue_jump_do_not_deadlock(loaded_actions):
         assert results["jump"].ok, f"cue_jump: {results['jump'].error}"
     finally:
         ctx.stop()
+
+
+# Functions that call ``locate_start_position`` without themselves being an
+# action handler. Each names the action that reaches it — which is the thing
+# that has to be worker-thread, since that is the thread the lock is taken on.
+LOCATE_INDIRECT_CALLERS = {
+    # render_handler is the capture body; render_start runs it as a job.
+    "render_handler": ("ableton_render", "start"),
+}
+
+
+def test_every_locate_caller_is_a_declared_lock_user():
+    """``_transport.locate_start_position`` takes ``live_state_lock``, so every
+    handler that calls it inherits the deadlock rule: an RLock is per-thread
+    re-entrant, and a main-thread caller against a worker-thread holder hangs.
+
+    The lock-taker audit above cannot see this, because the ``with`` statement
+    lives in the shared primitive rather than in the handler. This closes that
+    gap from the other side — call the locate and you are accounted for, either
+    as a declared LOCK_USERS handler or through LOCATE_INDIRECT_CALLERS.
+    """
+    with isolated_actions():
+        callers = _scan_handler_functions(_calls("locate_start_position"))
+        declared = {
+            schema.get(tool, action_name).handler.__name__
+            for (tool, action_name) in LOCK_USERS
+        }
+        undeclared = sorted(callers - declared - set(LOCATE_INDIRECT_CALLERS))
+        assert not undeclared, (
+            f"Handler function(s) call locate_start_position but are not in "
+            f"LOCK_USERS: {undeclared}. locate_start_position acquires "
+            f"context.live_state_lock, so the caller's action must be listed "
+            f"in LOCK_USERS AND registered with runs_on_worker=True — or, if "
+            f"the caller is reached indirectly from an action, recorded in "
+            f"LOCATE_INDIRECT_CALLERS with the action that reaches it."
+        )
+
+
+def test_every_indirect_locate_caller_runs_on_the_worker_thread():
+    """The indirect route is an exemption from the NAMING rule, never from the
+    threading one. The action that reaches such a caller still has to run on
+    the worker thread, or the lock it eventually takes deadlocks the same way.
+    """
+    with isolated_actions():
+        callers = _scan_handler_functions(_calls("locate_start_position"))
+        for fn_name, (tool, action_name) in sorted(
+            LOCATE_INDIRECT_CALLERS.items()
+        ):
+            assert fn_name in callers, (
+                f"LOCATE_INDIRECT_CALLERS lists {fn_name!r} but no handler "
+                f"function by that name calls locate_start_position any more "
+                f"— remove the stale entry."
+            )
+            action = schema.get(tool, action_name)
+            assert action is not None, (
+                f"{tool}({action_name}) is not registered; "
+                f"LOCATE_INDIRECT_CALLERS is out of sync"
+            )
+            assert action.runs_on_worker, (
+                f"{tool}({action_name}) reaches {fn_name}, which calls "
+                f"locate_start_position and so acquires live_state_lock, but "
+                f"is NOT registered with runs_on_worker=True."
+            )

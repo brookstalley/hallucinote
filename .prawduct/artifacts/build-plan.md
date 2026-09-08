@@ -54,15 +54,22 @@ run against the `songs/alien` set that produced the report.
 ## Status
 
 - [x] Chunk 01: `handlers/_transport.py` — locate the start playing position, and prove where the playhead actually landed
-- [ ] Chunk 02: `perform_batch` locates the start position and refuses a pass that did not roll into its span
-- [ ] Chunk 03: the render capture path and `session` transport get the same treatment
-- [ ] Chunk 04: per-arc perform outcomes reach the push report
-- [ ] Chunk 05: artifacts, change-log, learnings, operator verification, backlog
+- [x] Chunk 02: `perform_batch` locates the start position and refuses a pass that did not roll into its span
+- [x] Chunk 03: the render capture path and `session` transport get the same treatment
+- [x] Chunk 04: per-arc perform outcomes reach the push report
+- [x] Chunk 05: artifacts, change-log, learnings, operator verification, backlog
 
 Context: Plan written 2026-09-08 against issue #471 on branch
-`fix/perform-start-position` (off `develop` @ 6339887). Chunk 01 built and
-green; its Critic review is deferred to Chunk 02, which is the first diff where
-the primitive has a caller to judge it against. Next: Chunk 02.
+`fix/perform-start-position` (off `develop` @ 6339887). Chunks 01-04 built and
+green — 5158 pass, ruff and mypy clean. The three positioning sites now locate
+Live's start playing position and prove where the transport actually rolled
+from, and every perform arc carries a stated outcome that reaches the push
+report. Artifacts, learnings, change-log and the operator-verification entry are
+written; the two descoped asks are filed as #478 and #479. Chunk 01's deferred
+review is covered by the cumulative pass. Remaining: the cumulative Critic, then
+operator verification against a real Live — the fingerprint flips, so a
+re-vendor and a full Live quit/reopen come first, and nothing here is proven
+against Live until that runs.
 
 ## Verification Strategy
 
@@ -235,8 +242,15 @@ that a perform against a set with pre-existing lanes now records.
   entry (`type=fix | scope=perform-start-position`, no `release=` key);
   `api-contract.md` and `sync-boundary-contract.md` updated for the additive arc
   fields and the `notes_sink` parameter; `.prawduct/operator-verification.md`
-  entries for the two Live-only questions; `CHANGELOG.md`; the two descoped asks
-  filed via `/prawduct:backlog` (see Descoped below).
+  entries for the two Live-only questions; the two descoped asks filed via
+  `/prawduct:backlog` (see Descoped below).
+
+  **Not `CHANGELOG.md`.** The plan listed it; it is wrong. That file is the
+  public release record, distilled from the engineering change-log AT RELEASE
+  TIME, and it has no Unreleased section. Writing an entry now would either
+  invent a version number or sit under a heading that does not exist. The
+  change-log entry carrying no `release=` key IS the release-pending state, and
+  that is what `check-releasability` reads.
 - **Tests:** none — documentation.
 - **Type:** cumulative-final
 - **Visual change:** no
@@ -260,14 +274,18 @@ reporter found the root cause:
   sampling would also cost a seek-and-read per arc per push against a write-only
   surface. Filed to the backlog as a defence-in-depth follow-up rather than
   built, because the argument for it is now weaker than the argument for the two
-  guards that replace it — not because it is wrong.
+  guards that replace it — not because it is wrong. **Filed as #478.**
 - **Ask 4 — prefer the `session_clip` route wherever the span allows it.** A
   routing-policy change to `classify_envelope_route`, not a bug fix, and the
   reporter's own caveat names real consequences (`insert_step`-only, so a ramp
   must be authored as an explicit staircase). It deserves its own design pass
-  against the authoring layer. Filed to the backlog.
+  against the authoring layer. **Filed as #479**, which should be read
+  alongside the already-open #474 (the perform route and its wall-clock cost
+  are inferred silently) — #474 is the "surface the route at all" half, and its
+  union-span finding bears on when a span counts as fitting one clip.
 
-Both are filed in Chunk 05, so neither survives only in this paragraph.
+Both are filed on the backlog of record, so neither survives only in this
+paragraph.
 
 ## Governance Checkpoints
 

@@ -169,14 +169,14 @@ def _wait_for_playhead(
     transport race is invisible from a log.
     """
     deadline = time.monotonic() + timeout_s
-    prior_text = "unknown" if prior_beats is None else f"{prior_beats:.6f}"
+    prior_text = "unknown" if prior_beats is None else f"{prior_beats:.3f}"
     observed = _read_song_time(context)
     while abs(observed - target_beats) > tolerance_beats:
         if time.monotonic() >= deadline:
             raise TimeoutError(
-                f"the playhead did not reach beat {target_beats:g} within "
-                f"{timeout_s:.1f}s (last observed {observed:.6f}, "
-                f"{abs(observed - target_beats):.6f} beats away; prior "
+                f"could not locate the playhead to beat {target_beats:g} "
+                f"within {timeout_s:.1f}s — it still reads {observed:.3f} "
+                f"({abs(observed - target_beats):.3f} beats away; prior "
                 f"position {prior_text}). "
                 "Live applies a locate asynchronously through the audio "
                 "thread; it may be busy or showing a modal dialog. Retry, or "
@@ -193,6 +193,28 @@ def _cue_toggle(song: Any) -> Any | None:
     return getattr(song, "set_or_delete_cue", None) or getattr(
         song, "set_or_delete_cue_point", None,
     )
+
+
+def _jump_cue_at(song: Any, target_beats: float) -> bool:
+    """Jump to the cue sitting at ``target_beats``. False when there is none,
+    or when this Live's ``CuePoint`` has no ``jump``.
+
+    Resolves the cue inside the caller's main-thread bout every time. Live
+    re-wraps API objects on every property access, so a cue object held across
+    bouts is a different Python object next time — and an INDEX held across
+    bouts can point at a different cue entirely once one is added or removed.
+    """
+    index = _cue_index_at(song, target_beats)
+    if index is None:
+        return False
+    cues = list(getattr(song, "cue_points", ()))
+    if index >= len(cues):  # pragma: no cover - resolved in the same bout
+        return False
+    jumper = getattr(cues[index], "jump", None)
+    if jumper is None:
+        return False
+    jumper()
+    return True
 
 
 def _cue_index_at(song: Any, target_beats: float) -> int | None:
@@ -213,6 +235,7 @@ def locate_start_position(
     target_beats: float,
     *,
     settle_timeout_s: float = _LOCATE_SETTLE_TIMEOUT_S,
+    arrival_tolerance_beats: float = _LOCATE_TOLERANCE_BEATS,
     allow_temporary_cue: bool = True,
 ) -> LocateResult:
     """Move Live's START PLAYING POSITION to ``target_beats`` and settle.
@@ -231,6 +254,16 @@ def locate_start_position(
 
     ``allow_temporary_cue=False`` skips path 2 for a caller that must not
     write to the set at all.
+
+    ``arrival_tolerance_beats`` is how close the playhead must read to count as
+    ARRIVED. It defaults to a quantization epsilon, which is what a caller that
+    then acts at the position needs. A caller that only needs the transport
+    roughly there — a perform pass interpolates its ramp off the ACTUAL playhead
+    beat, so a fraction off is self-correcting — should widen it, because Live
+    does not promise to park on the exact float it was handed. Borrowing a cue
+    still requires the tight epsilon regardless: the toggle fires at wherever
+    the playhead really is, so an imprecise position would place the locator at
+    the wrong beat. That case degrades instead.
 
     Raises ``TimeoutError`` if the playhead never settles — a locate that
     never lands is a failure whichever property was being aimed at.
@@ -257,21 +290,14 @@ def locate_start_position(
 
         # ---- path 1: the operator already has a locator here ----
         if survey["cue_index"] is not None:
-            index: int = survey["cue_index"]
-
-            def _jump_existing() -> bool:
-                cues = list(getattr(context.song, "cue_points", ()))
-                if index >= len(cues):
-                    return False
-                jumper = getattr(cues[index], "jump", None)
-                if jumper is None:
-                    return False
-                jumper()
-                return True
-
-            if context.run_on_main(_jump_existing):
+            # Re-find by TIME, not by the surveyed index. Indices shift when a
+            # locator is added or removed between bouts, and jumping to the
+            # wrong cue puts the transport somewhere nobody asked for — which
+            # is the whole failure this module exists to end.
+            if context.run_on_main(lambda: _jump_cue_at(context.song, target)):
                 settled = _wait_for_playhead(
                     context, target, timeout_s=settle_timeout_s,
+                    tolerance_beats=arrival_tolerance_beats,
                     prior_beats=prior,
                 )
                 return LocateResult(
@@ -321,6 +347,7 @@ def locate_start_position(
         if degraded_detail is not None:
             settled = _seek_playhead(
                 context, target, settle_timeout_s=settle_timeout_s, prior=prior,
+                tolerance_beats=arrival_tolerance_beats,
             )
             logger.warning(
                 "locate_start_position fell back to a playhead-only locate at "
@@ -336,7 +363,27 @@ def locate_start_position(
         # ---- path 2: borrow a cue ----
         settled = _seek_playhead(
             context, target, settle_timeout_s=settle_timeout_s, prior=prior,
+            tolerance_beats=arrival_tolerance_beats,
         )
+        if abs(settled - target) > _LOCATE_TOLERANCE_BEATS:
+            # Close enough to play from, not close enough to toggle at: the
+            # cue would be created at wherever the playhead really is. Take the
+            # degraded locate rather than leave a locator at a beat nobody named.
+            detail = (
+                f"Live parked the playhead at beat {settled:.3f} rather than "
+                f"{target:g}; a cue toggle fires at the real position, so "
+                "borrowing one here would place it at the wrong beat"
+            )
+            logger.warning(
+                "locate_start_position fell back to a playhead-only locate at "
+                "beat %g: %s", target, detail,
+            )
+            return LocateResult(
+                target_beats=target,
+                settled_beats=settled,
+                method=LOCATE_PLAYHEAD_ONLY,
+                detail=detail,
+            )
 
         def _toggle_one_in() -> bool:
             """Create the cue. Returns False — WITHOUT toggling — if a cue has
@@ -363,15 +410,9 @@ def locate_start_position(
         def _jump_to_cue_at_target() -> tuple[bool, bool]:
             """(is a cue at the target, did we jump to it)"""
             song = context.song
-            index = _cue_index_at(song, target)
-            if index is None:
+            if _cue_index_at(song, target) is None:
                 return False, False
-            cues = list(getattr(song, "cue_points", ()))
-            jumper = getattr(cues[index], "jump", None)
-            if jumper is None:
-                return True, False
-            jumper()
-            return True, True
+            return True, _jump_cue_at(song, target)
 
         cue_present, jumped = context.run_on_main(_jump_to_cue_at_target)
 
@@ -409,7 +450,8 @@ def locate_start_position(
             )
 
         settled = _wait_for_playhead(
-            context, target, timeout_s=settle_timeout_s, prior_beats=prior,
+            context, target, timeout_s=settle_timeout_s,
+            tolerance_beats=arrival_tolerance_beats, prior_beats=prior,
         )
         return LocateResult(
             target_beats=target,
@@ -424,6 +466,7 @@ def _seek_playhead(
     *,
     settle_timeout_s: float,
     prior: float,
+    tolerance_beats: float = _LOCATE_TOLERANCE_BEATS,
 ) -> float:
     """Write the playhead and settle-poll it. The weak half of a locate — on
     its own it moves nothing that ``start_playing()`` reads."""
@@ -431,7 +474,8 @@ def _seek_playhead(
         lambda: setattr(context.song, "current_song_time", target)
     )
     return _wait_for_playhead(
-        context, target, timeout_s=settle_timeout_s, prior_beats=prior,
+        context, target, timeout_s=settle_timeout_s,
+        tolerance_beats=tolerance_beats, prior_beats=prior,
     )
 
 
@@ -442,13 +486,29 @@ def _delete_borrowed_cue(context: LiveContext, target: float) -> None:
     did not make. It is not worth failing the pass over — the pass is the
     thing they asked for — but it must never be silent.
     """
-    def _toggle_off() -> None:
-        toggle = _cue_toggle(context.song)
+    def _toggle_off() -> bool:
+        song = context.song
+        # The toggle fires at wherever the playhead REALLY is. If it has
+        # drifted off the target, toggling would delete or create a locator at
+        # some other beat — worse than leaving ours behind, which at least the
+        # warning below names.
+        at = float(getattr(song, "current_song_time", 0.0))
+        if abs(at - target) > _LOCATE_TOLERANCE_BEATS:
+            return False
+        toggle = _cue_toggle(song)
         if toggle is not None:
             toggle()
+        return True
 
     try:
-        context.run_on_main(_toggle_off)
+        if not context.run_on_main(_toggle_off):
+            logger.warning(
+                "locate_start_position did not remove the temporary cue at "
+                "beat %g — the playhead had moved off it, and the toggle acts "
+                "wherever the playhead is. A locator may be left in the set "
+                "at that position.", target,
+            )
+            return
     except Exception as exc:  # prawduct:allow prawduct/broad-except -- Live wrappers raise arbitrary types; a failed cleanup must not mask the locate
         logger.warning(
             "locate_start_position could not remove the temporary cue at beat "
@@ -467,6 +527,44 @@ def _delete_borrowed_cue(context: LiveContext, target: float) -> None:
             "delete toggle did not take. Remove the locator in Live if you "
             "did not put it there.", target,
         )
+
+
+def require_playhead_within(
+    observed: float,
+    *,
+    low: float,
+    high: float,
+    target_beats: float,
+    what: str,
+) -> None:
+    """Judge an ALREADY-READ playhead beat. Raises
+    :class:`PlayheadPositionError` when it is past ``high``.
+
+    Split out from :func:`assert_playhead_within` so a caller that is already
+    reading the playhead every tick — a perform pass's ramp loop — can check
+    the beat it has rather than pay a second Live touch to fetch the same
+    number. Being short of ``low`` is not judged here: a caller with its own
+    travel budget (that ramp loop, a render's pre-roll) owns that direction.
+    """
+    if high < low:
+        raise ValueError(
+            f"require_playhead_within: high {high} is below low {low}"
+        )
+    if observed <= high:
+        return
+    raise PlayheadPositionError(
+        f"{what} was positioned at beat {target_beats:g} but the transport is "
+        f"playing from beat {observed:.3f} — past the expected window "
+        f"[{low:g}, {high:g}], so it can never arrive. Live keeps a START "
+        "PLAYING POSITION separate from the playhead, and start_playing() "
+        "rolls from that; writing current_song_time does not move it. Nothing "
+        "was recorded or captured. Retry — the locate borrows a cue point to "
+        "move the start position, and this means the borrow did not take.",
+        target_beats=target_beats,
+        observed_beats=observed,
+        low=low,
+        high=high,
+    )
 
 
 def assert_playhead_within(
@@ -495,30 +593,14 @@ def assert_playhead_within(
     ``what`` names the operation in the message ("perform pass", "render
     capture") so the reader knows what was abandoned.
     """
-    if high < low:
-        raise ValueError(
-            f"assert_playhead_within: high {high} is below low {low}"
-        )
     deadline = time.monotonic() + timeout_s
     observed = _read_song_time(context)
     while True:
-        if low <= observed <= high:
+        require_playhead_within(
+            observed, low=low, high=high, target_beats=target_beats, what=what,
+        )
+        if observed >= low:
             return observed
-        if observed > high:
-            raise PlayheadPositionError(
-                f"{what} was positioned at beat {target_beats:g} but the "
-                f"transport is playing from beat {observed:.3f} — past the "
-                f"expected window [{low:g}, {high:g}], so it can never arrive. "
-                "Live keeps a START PLAYING POSITION separate from the "
-                "playhead, and start_playing() rolls from that; writing "
-                "current_song_time does not move it. Nothing was recorded or "
-                "captured. Retry — the locate borrows a cue point to move the "
-                "start position, and this means the borrow did not take.",
-                target_beats=target_beats,
-                observed_beats=observed,
-                low=low,
-                high=high,
-            )
         if time.monotonic() >= deadline:
             raise PlayheadPositionError(
                 f"{what} was positioned at beat {target_beats:g} but after "
@@ -543,4 +625,5 @@ __all__ = [
     "PlayheadPositionError",
     "assert_playhead_within",
     "locate_start_position",
+    "require_playhead_within",
 ]

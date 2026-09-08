@@ -625,7 +625,7 @@ tests_dirs: tests hallucinote_mcp/tests examples
 backlog_format_version: 2
 
 # Stamped by /prawduct:backlog list/pick/triage — resolves the backlog-overdue-grooming advisory.
-backlog_last_groomed_at: 2026-08-11
+backlog_last_groomed_at: 2026-09-08
 
 # THE LIVE BACKLOG. Set at the MG4 migration-scrub cutover 2026-08-10, after
 # `verify-migration` exited 0 with all five lists empty (225 source items, 225
@@ -680,3 +680,13 @@ distribution: plugin
 # scope `merge-base...HEAD` against develop, not the default origin/main. (INS-7V2D
 # Critic NOTE 2026-06-04.)
 base_branch: develop
+
+# Governance-file size ceiling in KB for the session-briefing nudge (default 40).
+# Raised for THIS file, whose bulk is `technical_decisions` + `design_decisions` —
+# the Reasoned Decisions principle working, not bloat. change-log.md is not covered
+# by the raise: it is ROLLED at each release cut instead (docs/release-process.md
+# step 1, "Roll the log"). Do NOT raise past ~58 without deciding that separately:
+# learnings.md sits at ~60 KB and is deliberately left above the ceiling so its
+# compaction nudge, which nobody has acted on yet, keeps firing. Full reasoning: the 2026-09-08 change-log
+# entry for scope=governance-file-sizes.
+oversized_file_threshold_kb: 55

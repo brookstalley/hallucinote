@@ -15,7 +15,44 @@ pending entries when `operator_verification_required: true`.
 
 ---
 
-## PERFORM-START-POSITION — the cue jump moves Live's start playing position (issue #471, 2026-09-08) — PENDING
+## PERFORM-START-POSITION — the cue jump moves Live's start playing position (issue #471, 2026-09-08) — **PERFORM PATH CONFIRMED LIVE 2026-09-08; render path still PENDING**
+
+### Result — run 2026-09-08 against Live 12.4.2, scratch set, driven over the Remote Script socket
+
+**The verification found a regression before it confirmed anything**, which is the
+argument for having run it. `song.record_mode = True` is Live's Record BUTTON and
+pressing Record STARTS the transport (measured: beat 0 → 2.768 at +1.0s → 8.402 at
++1.5s). The fix as first written located AFTER the record-mode settle, so it aimed
+at a moving playhead, could never place its cue, and degraded to `playhead_only`
+every time — inert, while reporting itself accurately. First live pass: 21 values
+written, `automation_state: 0`, read-back flat at 0.9000 across every beat. A stop
+is not the escape hatch either: a stop DISARMS record_mode. Reordered to
+locate-then-arm; see `learnings.md`.
+
+After the reorder, same set, steps 1-5 and 8 of the checks below:
+
+| check | result |
+|---|---|
+| handshake after re-vendor | passes, `0.1.0+902495017a53` |
+| pass 1 — virgin parameter | `temporary_cue`, `start_position_moved: true`, 21 writes, `outcome: recorded` |
+| pass 1 read-back (shape) | 0.3149 → 0.4341 → 0.5894 → 0.7431 → 0.8586 across 9-23 — a real ramp, flat 0.85 before the span and 0.90 after |
+| start position poisoned | located to bar 26, rolled, stopped — playhead left at 104.181 |
+| **pass 2 — parameter that ALREADY has a lane, from the poisoned position** | `temporary_cue`, `start_position_moved: true`, 21 writes, `outcome: recorded` |
+| **pass 2 read-back (shape)** | 0.8339 → 0.6930 → 0.5180 → 0.3456 → 0.2039 — DESCENDING, so pass 2 genuinely overwrote pass 1's ascent. This is the case that silently did nothing three times in one day. |
+| borrowed locator given back | `cue_count: 0` after every pass |
+| seek-then-play (check 8) | seek to beat 8 → play → rolled 8.000 → 11.188 |
+| past-the-extent refusal | raises naming beat 200, `last_event_time=128`, and what to do |
+| set left clean | not playing, `record_mode` disarmed, no `back_to_arranger` latch, no stray cues |
+
+**Still PENDING, and not covered by the above:**
+
+- **Check 7, the render capture path.** Untested. It is the same defect and the
+  same fix, but it needs analyzers, OSC and written WAVs, and nothing here
+  exercised it. Do not read the perform result as covering it.
+- **Check 3 against `songs/alien`.** This ran on a scratch set. The mechanism is
+  confirmed; that the reported song now performs correctly is not.
+- The `existing_cue` path (operator's own locator already at the span start) —
+  every pass here took the `temporary_cue` branch.
 
 **Visual change:** no, but a locator briefly appears and disappears in the
 arrangement's locator strip during a perform, render or seek. That is the

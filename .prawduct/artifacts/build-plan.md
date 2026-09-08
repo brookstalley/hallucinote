@@ -48,8 +48,16 @@ apart — `updates_written` 0 before the cue jump, 27 after.
   (`learnings.md`: the 2026-05-17 fakes mirrored what we *thought* Live exposed
   and the unit suite never saw the divergence).
 
-**What would raise confidence:** the operator-verification entries in Chunk 05,
-run against the `songs/alien` set that produced the report.
+**What would raise confidence:** RESOLVED for the perform path — verified
+against Live 12.4.2 on 2026-09-08, and the verification earned its keep by
+finding a regression the unit suite could not see (arming Live's record STARTS
+the transport, so locating after the arm made the whole fix inert). Both
+assumptions above are now measured rather than assumed: `CuePoint.jump()` does
+move the start position, and the borrow-and-return costs nothing visible
+(`cue_count: 0` after every pass). Results in `operator-verification.md`.
+
+STILL OPEN: the render capture path was not exercised, and nothing ran against
+`songs/alien` itself — the mechanism is confirmed, that song is not.
 
 ## Status
 

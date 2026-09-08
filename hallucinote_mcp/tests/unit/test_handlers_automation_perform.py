@@ -424,10 +424,18 @@ def test_perform_records_exact_gesture_sequence():
     )
 
     events = ctx.events
-    # Arm phase, in order: session record flag, record_mode on, seek.
-    assert events[0] == ("session_automation_record", True)
-    assert events[1] == ("record_mode", True)
-    assert events[2] == ("seek", 0.0)
+    # Setup phase, in order: POSITION, then arm, then open, then play.
+    #
+    # The locate precedes the arm, and that order is measured, not chosen:
+    # `song.record_mode = True` is Live's Record button and pressing Record
+    # STARTS THE TRANSPORT (Live 12.4 — armed at beat 0, the playhead reads 2.8
+    # a second later). Locating after the arm aims at a moving playhead, so the
+    # cue toggle cannot be placed and every locate silently degrades to
+    # playhead-only, which is the failure this whole path exists to remove.
+    # The earlier order here recorded the belief that arming was inert.
+    assert events[0] == ("seek", 0.0)
+    assert events[1] == ("session_automation_record", True)
+    assert events[2] == ("record_mode", True)
     assert events[3] == ("begin_gesture",)
     assert events[4] == ("play",)
 
@@ -489,9 +497,11 @@ def test_perform_stops_inflight_playback_before_arming():
         ctx, target_kind="mixer_volume", master=True,
         breakpoints=[_bp(0.0, 0.5), _bp(2.0, 0.9)],
     )
-    # The pre-arm stop comes before the arm writes.
+    # The pre-arm stop comes before everything — the locate included, since a
+    # locate against a rolling transport is the defect this ordering fixes.
     assert ctx.events[0] == ("stop",)
-    assert ctx.events[1] == ("session_automation_record", True)
+    assert ctx.events[1] == ("seek", 0.0)
+    assert ctx.events[2] == ("session_automation_record", True)
 
 
 # ---------------------------------------------------------------------------
@@ -1797,3 +1807,26 @@ def test_a_lagging_playhead_mirror_cannot_launder_a_wrong_position(monkeypatch):
     assert exc.value.observed_beats == pytest.approx(351.3)
     assert ctx.song.is_playing is False
     assert ("record_mode", False) in ctx.events
+
+
+def test_the_transport_is_positioned_before_record_is_armed():
+    """Live's Record button starts the transport. Measured on 12.4: arm at beat
+    0 and the playhead reads 2.8 a second later, 8.4 after ninety — which is
+    exactly the beat a real perform reported having "parked" at when the locate
+    ran second. A locate against a rolling playhead cannot place its cue, so
+    every locate degrades to playhead-only and the fix stops working while
+    still reporting success.
+
+    Stopping the transport between arm and locate is not the alternative: a
+    stop DISARMS record_mode (also measured). Position first, then arm."""
+    ctx = FakeCtx()
+    _one(
+        ctx, target_kind="mixer_volume", master=True,
+        breakpoints=[_bp(8.0, 0.3), _bp(16.0, 0.9)],
+    )
+
+    kinds = [e[0] for e in ctx.events]
+    assert "seek" in kinds and "record_mode" in kinds
+    assert kinds.index("seek") < kinds.index("record_mode"), (
+        f"the locate must precede the arm; got {kinds[:6]}"
+    )

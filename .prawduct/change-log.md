@@ -128,11 +128,40 @@ deserves its own design pass. Filed as #478 and #479; #479 should be read
 alongside the already-open #474, which asks for the inferred route to be
 surfaced at all.
 
+**Verified against Live 12.4.2 the same day — and the verification found a
+regression before it confirmed anything.** `song.record_mode = True` is Live's
+Record BUTTON, and pressing Record starts the transport (beat 0 → 2.768 at
++1.0s → 8.402 at +1.5s). The fix as first written located AFTER the record-mode
+settle, reasoning that arming was the last thing that could disturb the
+playhead. Arming does not disturb the playhead; it starts it. So the locate
+aimed at a moving target, could never place its cue — the toggle fires at the
+transport's real position, so an imprecise one is refused by design — and every
+locate degraded to `playhead_only`. The whole fix was inert while reporting
+itself accurately: the first live pass wrote 21 values, recorded no lane, and
+read back flat at 0.9000 on every beat.
+
+Stopping between the arm and the locate is not the escape hatch either: a stop
+DISARMS `record_mode`. The order is now quiet-the-transport → locate → arm, and
+the arm rolls from the start position the locate just set, which is where the
+pass wanted it. Two tests that encoded the old sequence were updated with the
+measurement as their reason, and a third now pins locate-before-arm.
+
+After the reorder, on the same set: a virgin parameter records and reads back as
+a real ramp (0.315 → 0.859). Then the start position was poisoned to beat 104
+the way a human does it — click late, roll, stop — and a second arc was
+performed against that same, now lane-bearing parameter. It recorded, and the
+read-back DESCENDS (0.834 → 0.204) where the first pass ascended, which is what
+proves the second pass landed rather than the first still answering for it. That
+is the exact case that silently did nothing three times in one day. The borrowed
+locator came back every time (`cue_count: 0`), and the past-the-extent refusal
+fires with its teaching message.
+
 Handlers changed, so the wire fingerprint flips: re-vendor and a full Live
-quit/reopen precede any of this reaching Live, and the operator-verification
-entry carries the checks. Only Live can answer whether the cue jump moves the
-start position on a real set; the reporter's A/B says it does, and the unit
-fakes model the two-field shape rather than the belief that hid the bug.
+quit/reopen precede any of this reaching Live. **The render capture path is NOT
+covered by that verification** — same defect, same fix, but it needs analyzers,
+OSC and written WAVs and none of that was exercised; nor was `songs/alien`
+itself, only the mechanism on a scratch set. Both stay in
+`operator-verification.md`.
 
 ## 2026-09-08 — The governance files stop growing without a ceiling
 

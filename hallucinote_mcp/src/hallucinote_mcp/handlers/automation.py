@@ -2251,9 +2251,10 @@ def perform_batch_handler(
                     a.updates_written += 1
 
         try:
-            # Bout 3 — arm + seek to the union span start (first mutation;
-            # inside the try so a partial arm still restores).
-            def _arm_and_seek() -> None:
+            # Bout 3 — quiet the transport (first mutation; inside the try so a
+            # partial change still restores). Arming comes AFTER the locate,
+            # for the reason spelled out there.
+            def _quiet_transport() -> None:
                 song = context.song
                 if bool(song.is_playing):
                     song.stop_playing()
@@ -2272,17 +2273,20 @@ def perform_batch_handler(
                 # pass runs at the reduced tempo (restored in the finally).
                 if slowdown_factor > 1.0:
                     song.tempo = record_tempo
-                song.session_automation_record = True
-                song.record_mode = True
 
-            context.run_on_main(_arm_and_seek)
+            context.run_on_main(_quiet_transport)
 
-            _wait_for_song_flag_on_worker(
-                context, "record_mode", True, timeout_s=settle_timeout_s
-            )
-
-            # Position the transport LAST — arming is the only remaining thing
-            # that could disturb the playhead, and it has now settled.
+            # Position the transport BEFORE arming, and the order is
+            # load-bearing: `song.record_mode = True` is Live's Record BUTTON,
+            # and pressing Record STARTS THE TRANSPORT. Measured on Live 12.4:
+            # arm at beat 0 and the playhead reads 2.8 a second later, 8.4 after
+            # ninety. Locating after the arm therefore aims at a moving
+            # playhead — the settle lands on whatever beat it happened to reach,
+            # the cue toggle cannot be placed (it fires at the real position, so
+            # an imprecise one would put the locator at the wrong beat), and
+            # every locate degrades to playhead-only. Which is to say: done in
+            # the other order, the whole fix is inert. Stopping first is not an
+            # option — a stop DISARMS record_mode.
             #
             # This is a locate of Live's START PLAYING POSITION, not of the
             # playhead: `start_playing()` rolls from the former, and writing
@@ -2298,6 +2302,22 @@ def perform_batch_handler(
             locate_method = locate.method
             locate_detail = locate.detail
             start_position_moved = locate.start_position_moved
+
+            # Arm. The transport begins rolling from the start position the
+            # locate just set, which is where this pass wants it; the
+            # `start_playing()` below re-asserts that same position, so the
+            # beats travelled during the arm settle are covered rather than
+            # lost. No gesture is open yet, so nothing is recorded in between.
+            def _arm() -> None:
+                song = context.song
+                song.session_automation_record = True
+                song.record_mode = True
+
+            context.run_on_main(_arm)
+
+            _wait_for_song_flag_on_worker(
+                context, "record_mode", True, timeout_s=settle_timeout_s
+            )
 
             # Open the gestures for arcs already active at the union start
             # (begin_gesture BEFORE start_playing, as the single-arc path

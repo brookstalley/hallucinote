@@ -535,13 +535,24 @@ class PartTransient:
 
       ``rise_ms``            — 10 -> 90 % rise of the low-band envelope into
                                the hit. A punchy kick is a few ms; a soft,
-                               thuddy one tens of ms.
+                               thuddy one tens of ms. ``None`` when every
+                               hit's rise was censored (see below).
       ``t20_ms``             — time after the peak for the low envelope to
-                               fall 20 dB (capped at 600 ms). The ring.
-      ``attack_*_db``        — band RMS (dBFS, PRE-FADER stem as captured)
-                               over the first 30 ms of the hit: sub (40-100),
-                               low (100-250, the thud register), lowmid
-                               (250-600, boxiness), click (2-6 kHz, the beater).
+                               fall 20 dB. The ring. ``None`` when every hit's
+                               T20 was censored.
+      ``censored_*_hits``    — hits whose estimator hit its own boundary (the
+                               10 % point earlier than the 60 ms search window;
+                               no 20 dB fall inside the 600 ms cap or before the
+                               slice ended; an attack window cut by the slice
+                               end). Excluded from the medians, counted here —
+                               a boundary value is never reported as a
+                               measurement.
+      ``attack_<band>_db``   — band RMS (dBFS, PRE-FADER stem as captured)
+                               over the first 30 ms of the hit; the names carry
+                               their edges: sub 40-100, low 100-250 (the thud
+                               register), lowmid 250-600 (boxiness), click
+                               2-6 kHz (the beater). These are NOT the
+                               attribution bands (``sub_20_60`` …).
       ``click_minus_sub_db`` — the punch read (level-blind): how far the click
                                sits under the sub weight. Near 0 = a defined
                                attack; -15 or below = no click to speak of.
@@ -553,12 +564,15 @@ class PartTransient:
     """
     track_id: str
     hit_count: int
-    rise_ms: float
-    t20_ms: float
-    attack_sub_db: float
-    attack_low_db: float
-    attack_lowmid_db: float
-    attack_click_db: float
+    rise_ms: float | None
+    t20_ms: float | None
+    censored_rise_hits: int
+    censored_t20_hits: int
+    censored_attack_hits: int
+    attack_sub_40_100_db: float
+    attack_low_100_250_db: float
+    attack_lowmid_250_600_db: float
+    attack_click_2k_6k_db: float
     click_minus_sub_db: float
     low_minus_sub_db: float
 
@@ -627,6 +641,11 @@ class SectionMetrics:
     # hits), populated only when transient analysis is enabled. The read-side
     # answer to "thud or punch?". Neutral — the interpreter grades it.
     transients: list[PartTransient] = field(default_factory=list)
+    # The transient lens's failure channel: one structured skip per part that
+    # produced no reading (window_too_short / no_low_band_energy /
+    # too_few_hits / all_hits_censored), so an empty ``transients`` never hides
+    # WHY. Empty when the lens is off or every part measured.
+    transient_skips: list[dict] = field(default_factory=list)
     # Onset/event density (onsets-per-beat summed across stems) over the section
     # window — the second energy-realization correlate (ARR-7M3D), alongside
     # master.loudness.lufs_s_median. Level-blind. None when timing/cross-rhythm
@@ -933,6 +952,7 @@ def _section_to_dict(
         "phasing": [_phasing_to_dict(p) for p in s.phasing],
         "polymeter": [_polymeter_to_dict(p) for p in s.polymeter],
         "transients": [_part_transient_to_dict(t) for t in s.transients],
+        "transient_skips": [dict(sk) for sk in s.transient_skips],
         "onset_density": s.onset_density,
     }
 
@@ -943,10 +963,13 @@ def _part_transient_to_dict(t: PartTransient) -> dict[str, Any]:
         "hit_count": t.hit_count,
         "rise_ms": _finite_or_none(t.rise_ms),
         "t20_ms": _finite_or_none(t.t20_ms),
-        "attack_sub_db": _finite_or_none(t.attack_sub_db),
-        "attack_low_db": _finite_or_none(t.attack_low_db),
-        "attack_lowmid_db": _finite_or_none(t.attack_lowmid_db),
-        "attack_click_db": _finite_or_none(t.attack_click_db),
+        "censored_rise_hits": t.censored_rise_hits,
+        "censored_t20_hits": t.censored_t20_hits,
+        "censored_attack_hits": t.censored_attack_hits,
+        "attack_sub_40_100_db": _finite_or_none(t.attack_sub_40_100_db),
+        "attack_low_100_250_db": _finite_or_none(t.attack_low_100_250_db),
+        "attack_lowmid_250_600_db": _finite_or_none(t.attack_lowmid_250_600_db),
+        "attack_click_2k_6k_db": _finite_or_none(t.attack_click_2k_6k_db),
         "click_minus_sub_db": _finite_or_none(t.click_minus_sub_db),
         "low_minus_sub_db": _finite_or_none(t.low_minus_sub_db),
     }

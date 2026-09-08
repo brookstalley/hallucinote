@@ -738,8 +738,10 @@ def analyze_handler(
             analyze_cross_rhythm=bool(sections),
             # Per-part low-band hit SHAPE (rise / ring / sub-vs-thud-vs-click
             # balance of the kick-class hits) — the "is the kick a thud or a
-            # punch?" read. Per-section, gated on declared sections; level-blind
-            # in its differences. Neutral measurement — the interpreter grades it.
+            # punch?" read. Level-blind in its differences. Like the three
+            # flags above this is an OPT-IN, not a gate: the engine reads it
+            # only inside the per-section loop, which cannot run without
+            # sections; ``bool(sections)`` just states the policy in one place.
             analyze_transients=bool(sections),
             # Mix-level reconstruction (F1): scale each pre-fader stem by its
             # static fader gain so masking sees mix balance, not source level.

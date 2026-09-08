@@ -759,10 +759,11 @@ def _measure_sections(
         # and times, so it reads the raw pre-fader slices like timing; it needs
         # no grid geometry (hits are picked on the envelope, not the grid).
         transients = []
+        transient_skips = []
         if analyze_transients:
-            transients = analyze_transients_window(
-                sliced_stems, capture.sample_rate,
-            ).parts
+            tres = analyze_transients_window(sliced_stems, capture.sample_rate)
+            transients = tres.parts
+            transient_skips = tres.skipped
         if analyze_timing or analyze_cross_rhythm:
             geom = _window_grid_geometry(sl, capture, beat_map)
             if geom is not None:
@@ -813,6 +814,7 @@ def _measure_sections(
             phasing=phasing,
             polymeter=polymeter,
             transients=transients,
+            transient_skips=transient_skips,
             onset_density=onset_density,
         ))
 

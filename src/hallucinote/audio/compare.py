@@ -57,6 +57,19 @@ SIGNIFICANCE_TIMBRE: dict[str, float] = {
     "sharpness_acum": 0.10,         # acum
 }
 
+# PROVISIONAL transient-shape significance floors (the kick-class lens). Sized
+# from the alien dogfood pass: an EQ move on the kick's own chain moved
+# ``click_minus_sub_db`` ~0.5 dB and ``low_minus_sub_db`` ~2 dB (below and above
+# the floor respectively — the floor is meant to separate "the chain changed"
+# from re-render jitter, which sat under 0.3 dB / 1 ms); an authored attack
+# layer moved ``click_minus_sub_db`` +6.5 dB. No jitter calibration set exists.
+SIGNIFICANCE_TRANSIENTS: dict[str, float] = {
+    "rise_ms": 3.0,                 # ms
+    "t20_ms": 25.0,                 # ms
+    "click_minus_sub_db": 1.5,      # dB
+    "low_minus_sub_db": 1.5,        # dB
+}
+
 # Stereo-image significance (STR-4C8N). Carries ``provisional: true`` for the
 # same reason as timbre: no render-jitter calibration set exists for these yet.
 # The dB floor is sized so the worked case reads as significant — reducing an
@@ -144,6 +157,8 @@ def diff_reports(
     overshoots_before = len(baseline.get("overshoots", []))
     overshoots_after = len(current.get("overshoots", []))
 
+    section_deltas = _section_deltas(current, baseline)
+
     return {
         "baseline": {
             "ref": baseline_ref,
@@ -161,7 +176,48 @@ def diff_reports(
         },
         "added_surfaces": sorted(current_surfaces.keys() - baseline_surfaces.keys()),
         "missing_surfaces": sorted(baseline_surfaces.keys() - current_surfaces.keys()),
+        # Per-SECTION rows (matched by section name, then track_id): the timbre
+        # family per stem — so a "de-shrill chorus 3" edit is A/B-able where it
+        # was made — and the transient shape per part. Surfaces-only deltas
+        # above cannot carry either (transients exist only per section).
+        "section_deltas": section_deltas,
     }
+
+
+def _section_deltas(
+    current: dict[str, Any], baseline: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Per-section, per-part deltas: stem timbre (sharpness and the rest) and
+    transient shape. Sections are matched by name (a renamed or added section
+    yields no rows — the surface-level ``added/missing`` lists are the place
+    structure changes are named); parts by ``track_id``. Null on either side
+    yields ``delta: null, significant: false``, like every other family."""
+    cur = {s.get("section_name"): s for s in current.get("per_section", []) or []}
+    base = {s.get("section_name"): s for s in baseline.get("per_section", []) or []}
+    rows: list[dict[str, Any]] = []
+    for name in [n for n in cur if n in base]:
+        cs, bs = cur[name], base[name]
+        cstems = {s["track_id"]: s for s in cs.get("stems", []) or []}
+        bstems = {s["track_id"]: s for s in bs.get("stems", []) or []}
+        for tid in [t for t in cstems if t in bstems]:
+            for row in _family_deltas(cstems[tid], bstems[tid], "timbre",
+                                      SIGNIFICANCE_TIMBRE, provisional=True):
+                rows.append({"section": name, **row})
+        ctr = {t["track_id"]: t for t in cs.get("transients", []) or []}
+        btr = {t["track_id"]: t for t in bs.get("transients", []) or []}
+        for tid in [t for t in ctr if t in btr]:
+            # _family_deltas reads the surface identity off the dict it is
+            # given; a transient entry names only its track_id, so wrap it in
+            # a surface shell (the name comes from the section's stem when
+            # that stem is present).
+            def shell(entry):
+                stem = cstems.get(tid) or {}
+                return {"track_id": tid, "surface_kind": stem.get("surface_kind", "track"),
+                        "surface_name": stem.get("surface_name", tid), "transients": entry}
+            for row in _family_deltas(shell(ctr[tid]), shell(btr[tid]), "transients",
+                                      SIGNIFICANCE_TRANSIENTS, provisional=True):
+                rows.append({"section": name, **row})
+    return rows
 
 
 def resolve_baseline(analysis_dir: Path | str, seq: int) -> Path:

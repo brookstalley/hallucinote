@@ -1456,8 +1456,15 @@ def test_analyze_mix_populates_section_transients_when_enabled(tmp_path: Path):
     kit = sec.transients[0]
     assert kit.hit_count == 16
     assert kit.rise_ms > 0.0 and kit.t20_ms > 0.0
+    # the pad's absence is EXPLAINED, not silent
+    assert [s["track_id"] for s in sec.transient_skips] == ["track:2"]
+    assert sec.transient_skips[0]["kind"] in ("no_low_band_energy", "too_few_hits")
 
-    j = on.to_json_dict()["per_section"][0]["transients"]
+    sj = on.to_json_dict()["per_section"][0]
+    j = sj["transients"]
     assert len(j) == 1 and j[0]["track_id"] == "track:1"
     assert isinstance(j[0]["click_minus_sub_db"], float)
+    assert isinstance(j[0]["attack_sub_40_100_db"], float)
     assert isinstance(j[0]["hit_count"], int)
+    assert isinstance(j[0]["censored_t20_hits"], int)
+    assert sj["transient_skips"][0]["track_id"] == "track:2"

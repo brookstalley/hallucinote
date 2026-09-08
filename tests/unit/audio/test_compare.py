@@ -345,3 +345,53 @@ def test_resolve_baseline_skips_non_int_db_seq(tmp_path):
     assert resolve_baseline(tmp_path, 10) == target
     with pytest.raises(ValueError, match=r"db_seq=1;"):
         resolve_baseline(tmp_path, 1)
+
+
+def _section(name, stems, transients=()):
+    return {"section_name": name, "stems": stems, "transients": list(transients)}
+
+
+def _transient(track_id, **over):
+    base = {"track_id": track_id, "hit_count": 16, "rise_ms": 16.0, "t20_ms": 164.0,
+            "censored_rise_hits": 0, "censored_t20_hits": 0, "censored_attack_hits": 0,
+            "attack_sub_40_100_db": -10.8, "attack_low_100_250_db": -6.9,
+            "attack_lowmid_250_600_db": -19.2, "attack_click_2k_6k_db": -33.7,
+            "click_minus_sub_db": -22.9, "low_minus_sub_db": 3.9}
+    base.update(over)
+    return base
+
+
+def test_section_deltas_carry_per_section_timbre_and_transient_rows():
+    base_sec = _section("chorus3", [_surface("track:4", timbre=_timbre(sharpness_acum=2.51))],
+                        [_transient("track:1")])
+    cur_sec = _section("chorus3", [_surface("track:4", timbre=_timbre(sharpness_acum=2.36))],
+                       [_transient("track:1", click_minus_sub_db=-15.9, rise_ms=17.0)])
+    baseline = _report(); baseline["per_section"] = [base_sec]
+    current = _report(); current["per_section"] = [cur_sec]
+    out = diff_reports(current, baseline)
+    rows = {(r["section"], r["track_id"], r["metric"]): r for r in out["section_deltas"]}
+    sharp = rows[("chorus3", "track:4", "sharpness_acum")]
+    assert sharp["delta"] == pytest.approx(-0.15) and sharp["significant"] is True
+    assert sharp["provisional"] is True
+    click = rows[("chorus3", "track:1", "click_minus_sub_db")]
+    assert click["delta"] == pytest.approx(7.0) and click["significant"] is True
+    rise = rows[("chorus3", "track:1", "rise_ms")]
+    assert rise["delta"] == pytest.approx(1.0) and rise["significant"] is False
+
+
+def test_section_deltas_skip_unmatched_sections_and_null_sides():
+    baseline = _report(); baseline["per_section"] = [
+        _section("verse", [], [_transient("track:1", t20_ms=None)])]
+    current = _report(); current["per_section"] = [
+        _section("verse", [], [_transient("track:1")]),
+        _section("outro", [], [_transient("track:1")])]
+    out = diff_reports(current, baseline)
+    sections = {r["section"] for r in out["section_deltas"]}
+    assert sections == {"verse"}                       # outro has no baseline
+    t20 = next(r for r in out["section_deltas"] if r["metric"] == "t20_ms")
+    assert t20["delta"] is None and t20["significant"] is False
+
+
+def test_reports_without_sections_yield_no_section_deltas():
+    out = diff_reports(_report(), _report())
+    assert out["section_deltas"] == []

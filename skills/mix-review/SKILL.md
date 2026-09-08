@@ -135,17 +135,27 @@ first — see "Refreshing the analysis"). For each section, you have:
 - `transients` — per-part LOW-BAND hit SHAPE (the kick-class read: hits are
   picked on the 40–150 Hz band, so a kit stem's hats and snares don't register).
   Medians across the section's hits: `rise_ms` (10→90 % rise — a punchy kick is
-  a few ms, a soft thud tens), `t20_ms` (the ring), `attack_sub_db` /
-  `attack_low_db` / `attack_lowmid_db` / `attack_click_db` (the first 30 ms of
-  the hit, in 40–100 / 100–250 / 250–600 / 2–6 kHz — dBFS of the PRE-FADER
-  stem), and the two level-blind reads: **`click_minus_sub_db`** (near 0 = a
-  defined attack; −15 or below = no beater to speak of) and
-  **`low_minus_sub_db`** (> 0 = the attack lives in the low-mids, the
-  "muffled / muddy with the bass" shape). Parts with fewer than 4 low-band hits
-  are omitted. "The kick's attack sits in the 100–250 Hz thud register with the
-  click 13 dB under the sub" — a transient shaper / a click layer / a low-mid
-  cut, or is the thud the intended weight? A/B it through `compare_to` after
-  the change (rise and click-vs-sub are the numbers that should move).
+  a few ms, a soft thud tens), `t20_ms` (the ring), `attack_sub_40_100_db` /
+  `attack_low_100_250_db` / `attack_lowmid_250_600_db` / `attack_click_2k_6k_db`
+  (the first 30 ms of the hit — dBFS of the PRE-FADER stem; the names carry
+  their edges because these are NOT the attribution bands), and the two
+  level-blind reads: **`click_minus_sub_db`** (near 0 = a defined attack; −15
+  or below = no beater to speak of) and **`low_minus_sub_db`** (> 0 = the
+  attack lives in the low-mids, the "muffled / muddy with the bass" shape).
+  `rise_ms` / `t20_ms` are `null` when every hit's estimator hit its boundary;
+  the `censored_*_hits` counts say how many did (a hit on a section's last
+  beat is the normal case, so read a high count as "the window cut it", not
+  as a fault). **Absence is explained**: a part missing from `transients` has
+  a row in the section's `transient_skips` naming why — `window_too_short`
+  (the slice is under ~0.66 s), `no_low_band_energy` (a pad, a voice),
+  `too_few_hits` (with the count seen and the 4 needed), or
+  `all_hits_censored`. If both lists are empty the lens was off (no sections
+  declared). "The kick's attack sits in the 100–250 Hz thud register with the
+  click 23 dB under the sub" — a click layer / a low-mid cut / a different
+  sample, or is the thud the intended weight? A/B it through `compare_to`
+  after the change: the per-section rows land in `compare_to.section_deltas`
+  (rise and click-vs-sub are the numbers that should move); the surface-level
+  `deltas` cannot carry them.
 - `performance` (**SYMBOLIC, render-free**) — the build-time performance lens
   (`hallucinote.performance.analyze_performance` over the song's arrangement;
   **no audio pass needed**, so it's available even before a render, and it reads
@@ -408,7 +418,12 @@ push mislabels the report's own audio), then re-render + re-analyze with
 (the audit-log state its capture reflects). The new report's
 `compare_to` field lists per-surface deltas with significance flags, in THREE
 families — **loudness**, **timbre** (centroid / flatness / rolloff /
-`sharpness_acum`) and **stereo** (`correlation`, `mono_sum_loss_db`). Read it to confirm the change
+`sharpness_acum`) and **stereo** (`correlation`, `mono_sum_loss_db`) — plus
+`section_deltas`: the same **timbre** family per stem PER SECTION and the
+**transient** shape per part per section (`rise_ms`, `t20_ms`,
+`click_minus_sub_db`, `low_minus_sub_db`), matched by section name then
+`track_id`. That is where a "de-shrill chorus 3" or "sharpen the kick" edit
+shows up; the surface rows average the whole song and can hide it. Read it to confirm the change
 did what it predicted instead of re-arguing from the absolute numbers; a width
 fix in particular shows up ONLY in the stereo rows, so an A/B run to confirm one
 goes unread if you look at loudness alone. Deltas are neutral evidence — grade

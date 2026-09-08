@@ -351,8 +351,8 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
   that kept its stale clips and got none of its placements.
 - **Failure/halt:** §6a all-or-nothing per track — every link validated BEFORE
   any of that track's calls (clear included) join the plan; an unmaterializable
-  track emits nothing + `blocked` (audio/CLP-AUD2 → warn, a deliberate no-op)
-. A phase carrying blocked reasons is reported `incomplete` with a
+  track emits nothing + `blocked` (audio/CLP-AUD2 → warn, a deliberate
+  no-op). A phase carrying blocked reasons is reported `incomplete` with a
   non-zero exit and its reasons verbatim — never `skipped (idempotent)`. Clears emitted
   descending-index. Per-call failure → boundary halt;
   `ArrangementIntegrityError` → halt (silent corruption must not report OK).

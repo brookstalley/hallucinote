@@ -91,9 +91,11 @@ that a perform against a set with pre-existing lanes now records.
 - **Description:** The defect is one missing primitive used in three places, so
   it gets built once. Two functions: `locate_start_position`, which moves Live's
   start playing position (not just the playhead) to a target beat; and
-  `assert_playhead_within`, which reads back where the transport ACTUALLY rolled
+  a realized-position check, which judges where the transport ACTUALLY rolled
   from after `start_playing()` and raises naming the observed beat when it is
-  outside the expected window. The second is the load-bearing one: it is
+  outside the expected window. (Shipped as `require_playhead_within`; the
+  polling wrapper this chunk also built was deleted in the Critic round once it
+  turned out no caller wanted the waiting half.) The second is the load-bearing one: it is
   mechanism-independent, so it converts this entire failure class from silent
   divergence into a loud error even if the locate primitive itself is wrong.
 - **Depends on:** none
@@ -103,7 +105,7 @@ that a perform against a set with pre-existing lanes now records.
 - **Deliverables:** new `hallucinote_mcp/src/hallucinote_mcp/handlers/_transport.py`
   — `locate_start_position(context, target_beats, *, settle_timeout_s)` returning
   the method actually used (`existing_cue` / `temporary_cue` / `playhead_only`)
-  and the beat it settled at; `assert_playhead_within(context, low, high, ...)`.
+  and the beat it settled at; `require_playhead_within(observed, low, high, ...)`.
   The temporary-cue path reuses the proven `cue_create` recipe in
   `hallucinote_mcp/src/hallucinote_mcp/handlers/arrangement.py` (seek → settle on
   the worker thread → toggle → scan `song.cue_points` for the new entry), jumps
@@ -113,8 +115,8 @@ that a perform against a set with pre-existing lanes now records.
   and the set's cue list is byte-identical afterwards; a target past
   `last_event_time` refuses with a teaching error rather than toggling at a
   clamped position; no cue API → `playhead_only` reported, never a silent success;
-  `assert_playhead_within` accepts an in-window beat and raises naming the
-  observed beat for one outside it.
+  the position check accepts an in-window beat and raises naming the observed
+  beat for one past the window.
 - **Acceptance criteria:** against the split-field fake (playhead ≠ start
   position), `locate_start_position` leaves the START position at the target;
   the same test fails against a bare `current_song_time` write.

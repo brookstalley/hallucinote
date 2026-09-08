@@ -625,6 +625,40 @@ def test_no_shipped_surface_still_promises_that_seeking_positions_playback():
     )
 
 
+def test_every_action_that_locates_documents_the_refusal_it_can_now_raise():
+    """`locate_start_position` refuses a target past the arrangement's extent —
+    a failure mode none of these actions had before. An action that can raise
+    it and does not say so sends the operator looking for a bug; the refusal is
+    the answer, and it names what to do about it.
+
+    Written as a roster rather than a single check because the last finding on
+    this class was closed at two of the three actions it named."""
+    from hallucinote_mcp import schema
+    from hallucinote_mcp.testing import isolated_actions
+
+    locating_actions = [
+        ("ableton_session", "seek"),
+        ("ableton_automation", "perform_batch"),
+        ("ableton_render", "start"),
+    ]
+    missing = []
+    with isolated_actions():
+        for tool, name in locating_actions:
+            action = schema.get(tool, name)
+            assert action is not None, f"{tool}({name}) is not registered"
+            text = " ".join(
+                [action.description or "", *(action.tips or ())]
+            ).lower()
+            if "last_event_time" not in text:
+                missing.append(f"{tool}({name})")
+
+    assert not missing, (
+        f"{missing} can raise the past-the-arrangement-extent refusal from "
+        "locate_start_position but do not document it. Say what it means and "
+        "what to do — an undocumented refusal reads as a bug."
+    )
+
+
 def test_the_perform_help_names_the_verdict_not_the_field_it_is_built_from():
     """`automation_state` reads 1 whenever ANY lane exists on the parameter, so
     it answers about an earlier pass on every iteration but the first. The

@@ -259,8 +259,8 @@ def locate_start_position(
        a temporary cue that survives is reported rather than swallowed.
     3. Neither is possible — seek the playhead and say so
        (:data:`LOCATE_PLAYHEAD_ONLY`). The caller is responsible for treating
-       what follows as unproven; :func:`assert_playhead_within` is how it
-       finds out.
+       what follows as unproven; :func:`require_playhead_within`, on a beat
+       read once the transport is demonstrably rolling, is how it finds out.
 
     ``arrival_tolerance_beats`` is how close the playhead must read to count as
     ARRIVED. It defaults to a quantization epsilon, which is what a caller that

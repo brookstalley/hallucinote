@@ -370,8 +370,10 @@ def test_section_deltas_carry_per_section_timbre_and_transient_rows():
                         [_transient("track:1")])
     cur_sec = _section("chorus3", [_surface("track:4", timbre=_timbre(sharpness_acum=2.36))],
                        [_transient("track:1", click_minus_sub_db=-15.9, rise_ms=17.0)])
-    baseline = _report(); baseline["per_section"] = [base_sec]
-    current = _report(); current["per_section"] = [cur_sec]
+    baseline = _report()
+    baseline["per_section"] = [base_sec]
+    current = _report()
+    current["per_section"] = [cur_sec]
     out = diff_reports(current, baseline)
     rows = {(r["section"], r["track_id"], r["metric"]): r for r in out["section_deltas"]}
     sharp = rows[("chorus3", "track:4", "sharpness_acum")]
@@ -396,8 +398,10 @@ def test_section_deltas_cover_the_master_and_returns_not_just_stems():
         "chorus3", [_surface("track:4", timbre=_timbre(sharpness_acum=2.36))],
         master=_surface("master", timbre=_timbre(sharpness_acum=1.66)),
         returns=[_surface("return:1", timbre=_timbre(sharpness_acum=1.05))])
-    baseline = _report(); baseline["per_section"] = [base_sec]
-    current = _report(); current["per_section"] = [cur_sec]
+    baseline = _report()
+    baseline["per_section"] = [base_sec]
+    current = _report()
+    current["per_section"] = [cur_sec]
     out = diff_reports(current, baseline)
     rows = {(r["section"], r["track_id"], r["metric"]): r for r in out["section_deltas"]}
     assert rows[("chorus3", "master", "sharpness_acum")]["delta"] == pytest.approx(-0.12)
@@ -410,17 +414,22 @@ def test_section_deltas_tolerate_a_section_with_no_master_or_returns():
     neither key — the surface sweep must not invent a row or raise."""
     base_sec = _section("verse1", [_surface("track:1", timbre=_timbre(sharpness_acum=1.4))])
     cur_sec = _section("verse1", [_surface("track:1", timbre=_timbre(sharpness_acum=1.4))])
-    base_sec.pop("returns"); cur_sec.pop("returns")
-    baseline = _report(); baseline["per_section"] = [base_sec]
-    current = _report(); current["per_section"] = [cur_sec]
+    base_sec.pop("returns")
+    cur_sec.pop("returns")
+    baseline = _report()
+    baseline["per_section"] = [base_sec]
+    current = _report()
+    current["per_section"] = [cur_sec]
     out = diff_reports(current, baseline)
     assert {r["track_id"] for r in out["section_deltas"]} == {"track:1"}
 
 
 def test_section_deltas_skip_unmatched_sections_and_null_sides():
-    baseline = _report(); baseline["per_section"] = [
+    baseline = _report()
+    baseline["per_section"] = [
         _section("verse", [], [_transient("track:1", t20_ms=None)])]
-    current = _report(); current["per_section"] = [
+    current = _report()
+    current["per_section"] = [
         _section("verse", [], [_transient("track:1")]),
         _section("outro", [], [_transient("track:1")])]
     out = diff_reports(current, baseline)

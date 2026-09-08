@@ -170,14 +170,14 @@ def analyze_transients_window(
         }])
     for track_id, audio in stem_segments:
         mono = to_mono(audio).astype(np.float64)
-        shape, skip = _part_transient(
+        outcome = _part_transient(
             track_id, mono, sample_rate, band_hz=band_hz, min_hits=min_hits,
             peak_rel=peak_rel, min_sep_s=min_sep_s, prominence_rel=prominence_rel,
         )
-        if shape is not None:
-            parts.append(shape)
+        if isinstance(outcome, PartTransient):
+            parts.append(outcome)
         else:
-            skipped.append(skip)
+            skipped.append(outcome)
     return TransientWindowResult(parts=parts, skipped=skipped)
 
 
@@ -209,7 +209,11 @@ def _median_or_none(values: list[float]) -> float | None:
 def _part_transient(
     track_id: str, mono: np.ndarray, sr: int, *, band_hz, min_hits, peak_rel,
     min_sep_s, prominence_rel,
-) -> tuple[PartTransient | None, dict | None]:
+) -> PartTransient | dict:
+    """The part's shape, or the skip naming why there is none — never both and
+    never neither. Returning ONE value rather than a (shape, skip) pair is that
+    invariant made unrepresentable: a pair can hold two Nones or two values, and
+    a caller then has to narrow twice and still cannot prove the second."""
     from scipy.signal import find_peaks, hilbert
 
     n_search = int(_RISE_SEARCH_S * sr)
@@ -217,7 +221,7 @@ def _part_transient(
     n_decay = int(_DECAY_CAP_S * sr)
     min_len = n_decay + n_search + 1
     if mono.shape[0] < min_len:
-        return None, {
+        return {
             "kind": "window_too_short", "track_id": track_id,
             "reason": (f"slice is {mono.shape[0] / sr * 1000:.0f} ms; the rise/decay "
                        f"estimators need {min_len / sr * 1000:.0f} ms"),
@@ -228,7 +232,7 @@ def _part_transient(
     env = np.convolve(env, np.ones(k) / k, mode="same")
     top = float(env.max())
     if top <= 0.0:
-        return None, {
+        return {
             "kind": "no_low_band_energy", "track_id": track_id,
             "reason": f"nothing in the {band_hz[0]:.0f}-{band_hz[1]:.0f} Hz hit band",
         }
@@ -237,7 +241,7 @@ def _part_transient(
         distance=max(1, int(min_sep_s * sr)),
     )
     if peaks.size < min_hits:
-        return None, {
+        return {
             "kind": "too_few_hits", "track_id": track_id, "hit_count": int(peaks.size),
             "min_hits": int(min_hits),
             "reason": (f"{int(peaks.size)} low-band hit(s) at >= {peak_rel:.0%} of the loudest; "
@@ -305,7 +309,7 @@ def _part_transient(
             bands[b].append(_rms_db(sig[a0:a1]))
 
     if not any(bands.values()):
-        return None, {
+        return {
             "kind": "all_hits_censored", "track_id": track_id, "hit_count": int(peaks.size),
             "reason": ("every hit's attack window was unplaceable (its rise was "
                        "censored, so there is no 10 % point to anchor it) or cut "
@@ -326,4 +330,4 @@ def _part_transient(
         attack_click_2k_6k_db=med["click_2k_6k"],
         click_minus_sub_db=med["click_2k_6k"] - med["sub_40_100"],
         low_minus_sub_db=med["low_100_250"] - med["sub_40_100"],
-    ), None
+    )

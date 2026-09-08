@@ -132,6 +132,20 @@ first — see "Refreshing the analysis"). For each section, you have:
   tempo). Needs an audible accent — equal-velocity parts surface nothing
   (the cell lives in dynamics). "Guitar's in a 4-bar cycle, kick in 3 — they
   realign every 12 beats" — intended polymeter, or an accident?
+- `transients` — per-part LOW-BAND hit SHAPE (the kick-class read: hits are
+  picked on the 40–150 Hz band, so a kit stem's hats and snares don't register).
+  Medians across the section's hits: `rise_ms` (10→90 % rise — a punchy kick is
+  a few ms, a soft thud tens), `t20_ms` (the ring), `attack_sub_db` /
+  `attack_low_db` / `attack_lowmid_db` / `attack_click_db` (the first 30 ms of
+  the hit, in 40–100 / 100–250 / 250–600 / 2–6 kHz — dBFS of the PRE-FADER
+  stem), and the two level-blind reads: **`click_minus_sub_db`** (near 0 = a
+  defined attack; −15 or below = no beater to speak of) and
+  **`low_minus_sub_db`** (> 0 = the attack lives in the low-mids, the
+  "muffled / muddy with the bass" shape). Parts with fewer than 4 low-band hits
+  are omitted. "The kick's attack sits in the 100–250 Hz thud register with the
+  click 13 dB under the sub" — a transient shaper / a click layer / a low-mid
+  cut, or is the thud the intended weight? A/B it through `compare_to` after
+  the change (rise and click-vs-sub are the numbers that should move).
 - `performance` (**SYMBOLIC, render-free**) — the build-time performance lens
   (`hallucinote.performance.analyze_performance` over the song's arrangement;
   **no audio pass needed**, so it's available even before a render, and it reads
@@ -218,6 +232,16 @@ first — see "Refreshing the analysis"). For each section, you have:
   authorship, not a defect. The whole `energy_realization` is `null` when fewer
   than 2 sections declare energy. It is a RULER — it never re-authors the curve
   or names a target loudness.
+- `timbre` per surface (and per section) — centroid / flatness / rolloff plus
+  **`sharpness_acum`**, the SHRILLNESS axis: psychoacoustic sharpness (von
+  Bismarck / Zwicker weighting over Bark specific loudness). Two surfaces can
+  share a centroid and differ here — a piercing lead reads higher than a warm
+  pad. Scale-invariant, so level moves don't fake it; ordering and A/B deltas
+  are the contract, the acum calibration is provisional. Read it per section
+  against the arc: "the master's sharpness climbs 1.77 → 1.94 across the
+  choruses and the Alien Voice peaks at 2.66 in chorus 3 — its register jumped
+  with the key change" is a producer question (cap the register? a couple of
+  dB at 3–6 kHz?), not a verdict; a deliberately abrasive section is authorship.
 - `stereo` per surface + `width_realizations` — the image lens (STR-4C8N).
   Per stem, `correlation` (Pearson L/R; `+1` is bit-exact mono OR any
   perfectly correlated pair — a level-imbalanced but correlated stem also reads
@@ -383,8 +407,8 @@ push mislabels the report's own audio), then re-render + re-analyze with
 `compare_to=<db_seq of the before-report>` — each report carries its `db_seq`
 (the audit-log state its capture reflects). The new report's
 `compare_to` field lists per-surface deltas with significance flags, in THREE
-families — **loudness**, **timbre** (centroid / flatness / rolloff) and
-**stereo** (`correlation`, `mono_sum_loss_db`). Read it to confirm the change
+families — **loudness**, **timbre** (centroid / flatness / rolloff /
+`sharpness_acum`) and **stereo** (`correlation`, `mono_sum_loss_db`). Read it to confirm the change
 did what it predicted instead of re-arguing from the absolute numbers; a width
 fix in particular shows up ONLY in the stereo rows, so an A/B run to confirm one
 goes unread if you look at loudness alone. Deltas are neutral evidence — grade

@@ -94,10 +94,20 @@ class TimbreMetrics:
       ``spectral_rolloff_hz``   — frequency below which 85 % of the energy lies.
                                   A second brightness/edge cue, robust to a
                                   bright but low-energy top end.
+      ``sharpness_acum``        — psychoacoustic sharpness (von Bismarck /
+                                  Zwicker weighting over Bark specific
+                                  loudness). The SHRILLNESS axis: a piercing
+                                  lead reads higher than a warm pad at the same
+                                  centroid. Scale-invariant; ordering and A/B
+                                  deltas are the contract, the acum calibration
+                                  is provisional. NaN default so hand-built
+                                  fixtures and pre-sharpness baselines stay
+                                  valid (the AUD-2N6K optional-field pattern).
     """
     spectral_centroid_hz: float
     spectral_flatness: float
     spectral_rolloff_hz: float
+    sharpness_acum: float = float("nan")
 
 
 @dataclass(frozen=True)
@@ -515,6 +525,45 @@ class Polymeter:
 
 
 @dataclass(frozen=True)
+class PartTransient:
+    """One part's LOW-BAND (kick-class) hit SHAPE within a section window.
+
+    The read-side answer to "is the kick a thud or a punch?" — measured from
+    the hits the transient lens picks on the 40-150 Hz band of the stem (a
+    kit stem's hats and snares don't register there). All values are MEDIANS
+    across the window's hits.
+
+      ``rise_ms``            — 10 -> 90 % rise of the low-band envelope into
+                               the hit. A punchy kick is a few ms; a soft,
+                               thuddy one tens of ms.
+      ``t20_ms``             — time after the peak for the low envelope to
+                               fall 20 dB (capped at 600 ms). The ring.
+      ``attack_*_db``        — band RMS (dBFS, PRE-FADER stem as captured)
+                               over the first 30 ms of the hit: sub (40-100),
+                               low (100-250, the thud register), lowmid
+                               (250-600, boxiness), click (2-6 kHz, the beater).
+      ``click_minus_sub_db`` — the punch read (level-blind): how far the click
+                               sits under the sub weight. Near 0 = a defined
+                               attack; -15 or below = no click to speak of.
+      ``low_minus_sub_db``   — the thud read (level-blind): > 0 means the
+                               attack lives in the low-mids rather than the
+                               sub — the "muffled / muddy with the bass" shape.
+
+    Neutral measurement — the interpreter grades it against intent.
+    """
+    track_id: str
+    hit_count: int
+    rise_ms: float
+    t20_ms: float
+    attack_sub_db: float
+    attack_low_db: float
+    attack_lowmid_db: float
+    attack_click_db: float
+    click_minus_sub_db: float
+    low_minus_sub_db: float
+
+
+@dataclass(frozen=True)
 class SectionMetrics:
     """Per-surface loudness scoped to one named section window.
 
@@ -574,6 +623,10 @@ class SectionMetrics:
     # >= 2 accented parts whose recovered cells differ. Empty when parts share a
     # cell or carry no audible accent. Neutral — the interpreter grades intent.
     polymeter: list[Polymeter] = field(default_factory=list)
+    # Per-part low-band hit SHAPE (one entry per stem with enough kick-class
+    # hits), populated only when transient analysis is enabled. The read-side
+    # answer to "thud or punch?". Neutral — the interpreter grades it.
+    transients: list[PartTransient] = field(default_factory=list)
     # Onset/event density (onsets-per-beat summed across stems) over the section
     # window — the second energy-realization correlate (ARR-7M3D), alongside
     # master.loudness.lufs_s_median. Level-blind. None when timing/cross-rhythm
@@ -835,6 +888,7 @@ def _stem_to_dict(s: StemMetrics) -> dict[str, Any]:
                 "spectral_centroid_hz": _finite_or_none(s.timbre.spectral_centroid_hz),
                 "spectral_flatness": _finite_or_none(s.timbre.spectral_flatness),
                 "spectral_rolloff_hz": _finite_or_none(s.timbre.spectral_rolloff_hz),
+                "sharpness_acum": _finite_or_none(s.timbre.sharpness_acum),
             }
             if s.timbre is not None
             else None
@@ -878,7 +932,23 @@ def _section_to_dict(
         "cross_rhythm": [_part_cross_rhythm_to_dict(c) for c in s.cross_rhythm],
         "phasing": [_phasing_to_dict(p) for p in s.phasing],
         "polymeter": [_polymeter_to_dict(p) for p in s.polymeter],
+        "transients": [_part_transient_to_dict(t) for t in s.transients],
         "onset_density": s.onset_density,
+    }
+
+
+def _part_transient_to_dict(t: PartTransient) -> dict[str, Any]:
+    return {
+        "track_id": t.track_id,
+        "hit_count": t.hit_count,
+        "rise_ms": _finite_or_none(t.rise_ms),
+        "t20_ms": _finite_or_none(t.t20_ms),
+        "attack_sub_db": _finite_or_none(t.attack_sub_db),
+        "attack_low_db": _finite_or_none(t.attack_low_db),
+        "attack_lowmid_db": _finite_or_none(t.attack_lowmid_db),
+        "attack_click_db": _finite_or_none(t.attack_click_db),
+        "click_minus_sub_db": _finite_or_none(t.click_minus_sub_db),
+        "low_minus_sub_db": _finite_or_none(t.low_minus_sub_db),
     }
 
 

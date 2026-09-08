@@ -736,6 +736,11 @@ def analyze_handler(
             # declared sections; level-blind. Composes with timing: the timing
             # pass's swing read feeds cross-rhythm's swing-deference internally.
             analyze_cross_rhythm=bool(sections),
+            # Per-part low-band hit SHAPE (rise / ring / sub-vs-thud-vs-click
+            # balance of the kick-class hits) — the "is the kick a thud or a
+            # punch?" read. Per-section, gated on declared sections; level-blind
+            # in its differences. Neutral measurement — the interpreter grades it.
+            analyze_transients=bool(sections),
             # Mix-level reconstruction (F1): scale each pre-fader stem by its
             # static fader gain so masking sees mix balance, not source level.
             # Fader curve is Live-12-calibrated (see audio/levels.py).

@@ -51,6 +51,10 @@ SIGNIFICANCE_TIMBRE: dict[str, float] = {
     "spectral_centroid_hz": 50.0,   # Hz
     "spectral_flatness": 0.02,      # 0..1 Wiener entropy
     "spectral_rolloff_hz": 100.0,   # Hz
+    # Sharpness: an EQ move of a couple of dB on a shrill surface's 3-6 kHz
+    # region moved a rendered stem ~0.15-0.3 acum in the alien dogfood pass;
+    # re-render jitter on an unchanged stem sat well under 0.05. Provisional.
+    "sharpness_acum": 0.10,         # acum
 }
 
 # Stereo-image significance (STR-4C8N). Carries ``provisional: true`` for the

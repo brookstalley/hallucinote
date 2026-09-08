@@ -37,11 +37,13 @@ def _timbre(
     spectral_centroid_hz: float | None = 1500.0,
     spectral_flatness: float | None = 0.1,
     spectral_rolloff_hz: float | None = 3000.0,
+    sharpness_acum: float | None = 1.5,
 ) -> dict:
     return {
         "spectral_centroid_hz": spectral_centroid_hz,
         "spectral_flatness": spectral_flatness,
         "spectral_rolloff_hz": spectral_rolloff_hz,
+        "sharpness_acum": sharpness_acum,
     }
 
 
@@ -110,8 +112,8 @@ def test_identical_reports_diff_to_zero_and_insignificant():
     assert out["overshoot_count"] == {
         "before": 0, "after": 0, "delta": 0, "significant": False,
     }
-    # master + track:1, each with 4 loudness + 3 timbre + 2 stereo metrics
-    assert len(out["deltas"]) == 18
+    # master + track:1, each with 4 loudness + 4 timbre + 2 stereo metrics
+    assert len(out["deltas"]) == 20
     for row in out["deltas"]:
         assert row["delta"] == 0.0
         assert row["significant"] is False

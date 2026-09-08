@@ -77,12 +77,16 @@ jumped degrades instead of falling through to the borrow path, because that
 path's toggle fires at the same beat and a toggle where a cue already sits
 DELETES it.
 
-The second half is `require_playhead_within` / `assert_playhead_within`, which
-read where the transport ACTUALLY rolled from. That one is mechanism-independent
-— it holds when the locate is defeated by something nobody has seen yet — and it
-is why a wrong position is now a loud error rather than silent divergence.
-`perform_batch` checks the beat its ramp loop already reads, so the guard costs
-no extra Live touch.
+The second half is `require_playhead_within`, which judges where the transport
+ACTUALLY rolled from. That one is mechanism-independent — it holds when the
+locate is defeated by something nobody has seen yet — and it is why a wrong
+position is now a loud error rather than silent divergence. Both callers hand it
+a beat they already read (the ramp loop reads one every tick; the render reads
+one for its engine pre-flight), so the guard costs no extra Live touch — and
+both read it only once the transport is demonstrably rolling, because Live's
+playhead mirror lags the audio thread and the first read after `start_playing()`
+still shows the position the locate parked, which is the one value that would
+make the check pass at the moment it must fail.
 
 **The same two lines were in two more places.** `render.py`'s capture seeked and
 played, and its engine pre-flight asks whether the transport ADVANCES — a

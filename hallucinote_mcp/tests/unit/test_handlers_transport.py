@@ -527,6 +527,29 @@ def test_a_raise_mid_borrow_still_gives_the_cue_back():
     assert song.cue_points == []
 
 
+def test_a_toggle_bout_that_fails_on_its_way_back_still_gives_the_cue_back():
+    """Marshalling off Live's main thread can fail AFTER the work on it
+    succeeded. The cue exists; the call that made it reports failure. A locator
+    created by a call that failed is the one nobody would go looking for, so
+    the give-back keys off the toggle firing, not off the bout returning."""
+    song = FakeTransportSong(start_position=351.3)
+    ctx = FakeCtx(song)
+    real_run = ctx.run_on_main
+
+    def _run(fn, **kw):
+        result = real_run(fn, **kw)
+        if fn.__name__ == "_toggle_one_in":
+            raise RuntimeError("the bout failed on its way back")
+        return result
+
+    ctx.run_on_main = _run  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="on its way back"):
+        locate_start_position(ctx, 8.0)
+
+    assert song.cue_points == []
+
+
 def test_a_raise_mid_borrow_is_the_error_that_propagates():
     """The give-back is best-effort cleanup. If IT fails too, the original
     failure is what the operator needs — a cleanup error replacing it would
@@ -599,4 +622,30 @@ def test_no_shipped_surface_still_promises_that_seeking_positions_playback():
         "from its START PLAYING POSITION, which current_song_time does not "
         "move. Say what seek actually does, and point at "
         "start_position_moved."
+    )
+
+
+def test_the_perform_help_names_the_verdict_not_the_field_it_is_built_from():
+    """`automation_state` reads 1 whenever ANY lane exists on the parameter, so
+    it answers about an earlier pass on every iteration but the first. The
+    handler stopped treating it as the verdict; the tool help an agent reads
+    has to stop too, or the agent keeps making the call the code no longer
+    makes."""
+    from hallucinote_mcp import schema
+    from hallucinote_mcp.testing import isolated_actions
+
+    with isolated_actions():
+        action = schema.get("ableton_automation", "perform_batch")
+        text = " ".join(
+            [action.description or "", *(action.tips or ())]
+        ).lower()
+
+    assert "outcome" in text, (
+        "the perform_batch help does not mention the per-arc `outcome` — the "
+        "field that actually carries the verdict."
+    )
+    assert "verify via each arc's returned automation_state" not in text, (
+        "the perform_batch help still presents automation_state as the "
+        "verification. It cannot be: it reads 1 for a lane any earlier pass "
+        "wrote."
     )

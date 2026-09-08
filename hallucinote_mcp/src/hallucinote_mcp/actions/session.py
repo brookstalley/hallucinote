@@ -308,6 +308,10 @@ register(
             "(0 = downbeat, 1 = beat 2, etc.).",
             "Live counts a beat as a quarter note regardless of meter — "
             "in 6/8, bar 1 has 3 beats (0.0, 1.0, 2.0).",
+            "Refuses a bar past the arrangement's last_event_time: Live "
+            "clamps the playhead to the arrangement's extent, so playback "
+            "can never begin there. Place arrangement content covering the "
+            "position first.",
             "start_position_moved says whether playback will actually begin "
             "here. False means only the playhead moved (locate_detail says "
             "why) — the position is right to read from, but 'play' may roll "

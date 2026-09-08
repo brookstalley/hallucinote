@@ -387,21 +387,28 @@ def locate_start_position(
                 detail=detail,
             )
 
-        def _toggle_one_in() -> bool:
-            """Create the cue. Returns False — WITHOUT toggling — if a cue has
-            appeared at the target since the survey (the operator clicking in
-            Live is outside ``live_state_lock``'s reach). The toggle is a
-            toggle: firing it there would delete their locator."""
+        # Set INSIDE the bout, the instant before the toggle fires, so the
+        # cleanup below knows a cue may exist even if the bout itself never
+        # returns — marshalling back off Live's main thread can fail after the
+        # work on it succeeded, and a locator created by a call that "failed"
+        # is exactly the one nobody would go looking for.
+        toggled = [False]
+
+        def _toggle_one_in() -> None:
+            """Create the cue. Does nothing if a cue has appeared at the target
+            since the survey (the operator clicking in Live is outside
+            ``live_state_lock``'s reach). The toggle is a toggle: firing it
+            there would delete their locator."""
             song = context.song
             if _cue_index_at(song, target) is not None:
-                return False
+                return
             toggle = _cue_toggle(song)
             if toggle is None:  # pragma: no cover - surveyed above
                 raise NotImplementedError(
                     "Live stopped exposing a cue-toggle API mid-locate"
                 )
+            toggled[0] = True
             toggle()
-            return True
 
         def _jump_to_cue_at_target() -> tuple[bool, bool]:
             """(is a cue at the target, did we jump to it)"""
@@ -416,9 +423,9 @@ def locate_start_position(
         # besides — so the window between them is a try/finally, not a
         # forward path. Leaving a stray locator is survivable; leaving one
         # SILENTLY is the thing this module says must never happen.
-        toggled = context.run_on_main(_toggle_one_in)
         cue_present = jumped = False
         try:
+            context.run_on_main(_toggle_one_in)
             # The toggle reads the same audio-thread-mediated position the seek
             # wrote, so the new cue is not visible in the same bout. Yield on
             # the worker thread and look again.
@@ -430,7 +437,7 @@ def locate_start_position(
             # elsewhere; toggling again on that guess is how a stray locator
             # ends up in the set at a beat nobody named. On the exception path
             # `cue_present` is still False, so re-check rather than assume.
-            if toggled:
+            if toggled[0]:
                 if cue_present or _cue_at(context, target):
                     _delete_borrowed_cue(context, target)
                 else:
@@ -440,7 +447,7 @@ def locate_start_position(
                         "elsewhere. Not toggling again; check the set's "
                         "locators.", target,
                     )
-        borrowed = toggled and cue_present
+        borrowed = toggled[0] and cue_present
 
         if not jumped:
             # The toggle did not produce a jumpable cue. The playhead is still

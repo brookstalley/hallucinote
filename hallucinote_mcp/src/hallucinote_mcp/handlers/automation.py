@@ -1603,6 +1603,12 @@ _PERFORM_MIN_RECORD_TEMPO_BPM = 20.0
 # locate that has not landed AT ALL, not for grid snapping.
 _PERFORM_LOCATE_TOLERANCE_BEATS = 1.0
 
+# How far the playhead must read from where the locate settled before the read
+# counts as evidence the transport is actually rolling. Small enough that any
+# real movement clears it at any tempo, large enough that float noise on a
+# mirror returning the parked position does not.
+_PERFORM_MOVED_EPSILON_BEATS = 1e-6
+
 # Slack on how fast the transport may honestly be travelling while the
 # realized-position check is still running. The check compares the playhead
 # against the beats elapsed wall-clock could account for at the record tempo;
@@ -2382,8 +2388,14 @@ def perform_batch_handler(
                         target_beats=float(union_start),
                         what=playhead_check_label,
                     )
-                    # Only a beat that MOVED is evidence the mirror caught up.
-                    position_checked = beat != located_at
+                    # Only a beat that MOVED is evidence the mirror caught
+                    # up — and "moved" is a tolerance, not an inequality: a
+                    # mirror returning the located position with a hair of
+                    # float noise on it would otherwise retire the check a
+                    # tick early, on the one read that proves nothing.
+                    position_checked = (
+                        abs(beat - located_at) > _PERFORM_MOVED_EPSILON_BEATS
+                    )
                 _open_entering(beat)
                 _write_or_close(beat)
                 return beat

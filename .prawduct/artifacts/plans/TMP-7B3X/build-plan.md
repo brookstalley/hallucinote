@@ -6,9 +6,15 @@ depends_on:
   - artifact: elicitation-and-stage-exit-criteria
   - artifact: sync-boundary-contract
 governed_by:
-  # No `## Direction` section governs the score half of the DB — the repo's only
-  # one (plans/BAK-7D2V/design.md) covers mix-bake durability. The artifacts
-  # below bind this work through their prose; each records a disposition.
+  # `## Direction` sections DO govern this work. 27 norms were ratified on
+  # 2026-08-10, after this plan was written, and the merge with develop brought
+  # them in: `data-model.md`'s Direction is the one that bites, since it says the
+  # DB is not the source of truth for what Live holds while this change makes it
+  # the source of truth for what the SONG is. Those are different claims and both
+  # stand — the score is authored; the set is projected — but the artifacts now
+  # have to say so, which is why `api-contract.md`'s refusal illustration was
+  # rewritten in this bundle. The artifacts below bind through their prose too;
+  # each records a disposition.
   - artifact: sync-boundary-contract
     dispositions:
       - "phase 2 `time_signature_map` emits one `set_signature` for the bar-1 row and warns for the rest → conforms (the message moves from `notes` to `alerts` and says more; the emitted calls are unchanged)"
@@ -136,7 +142,13 @@ dispositioned, TMP-7B3X closed and TMP-4J6Q's scope note updated via
 - [x] Chunk 01: Lift the meter refusal into the projection layer
 
 Context: Chunk 01 shipped on `fix/tmp-7b3x-meter-source-of-truth` (2026-08-07);
-suite green (counts in the evidence store), ruff + mypy clean, TMP-7B3X archived.
+suite green (counts in the evidence store), ruff + mypy clean. The branch then
+sat cold for a month and was merged up with develop on 2026-09-09.
+**The tracker close-out is still owed and happens at merge, not here:** issues
+#221 (this work), #247 and #484 (the branch's own fate) are open, and the
+earlier "TMP-7B3X archived" line referred to the markdown backlog, which froze
+on 2026-08-10 and no longer records status. Closing them in the frozen file is
+not available.
 The blocker it existed to clear is cleared: the demo song's brief can now carry
 a true meter map. The TOUR plan is parked, not finished — `active_build_plan`
 pointed at it before this cycle and should point back at it once this branch

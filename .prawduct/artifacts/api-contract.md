@@ -195,8 +195,10 @@ Ratified 2026-08-10. These bind future work; the narrative above describes it.
   wrong value.
   Why: silent data loss in an authoring tool destroys work the user cannot know to
   re-check, which is strictly worse than a refusal they can see and route around. A
-  mid-song tempo change refuses rather than corrupting timing; a device enum with no
-  normalized wire form is skipped rather than set wrong. This is a stated product value,
+  mid-song tempo change is authored into the DB and then alerted on at push — the
+  same value one layer out: the score records what the song is, and the projection
+  says loudly what it could not carry; a device enum with no normalized wire form
+  is skipped rather than set wrong. This is a stated product value,
   not a limitation to engineer away quietly.
 
 - **No compatibility shims for consumers that cannot exist; one-major-version aliases

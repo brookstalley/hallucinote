@@ -458,13 +458,10 @@ automation target), so Live's ruler reads one meter for the whole song and push
 alerts about the rest. The meter therefore has to be *felt* — bar-scaled
 generators and within-bar accent groupings — not read off the grid.
 
-Second, `hallucinote.arrangement` multiplies by ONE `beats_per_bar` and never
-reads the meter map, so for a multi-meter song its bar accumulation and push's
-disagree after the first change, and no `beats_per_bar` value reconciles them.
-Author the placements past that change directly through
-`M.add_arrangement_clip` / `M.create_section` (float bars, resolved through the
-map), or keep the DB single-meter. Details:
-`docs/song-authoring-conventions.md` → *Meter (4/4 vs. other)*.
+Second, a multi-meter song costs more to author than a single-meter one, which
+is worth knowing before you encourage one — but that cost is build-time
+mechanics, and it is not the user's to weigh here:
+`docs/song-authoring-conventions.md` → *Meter (4/4 vs. other)* carries it.
 
 ## Existing songs
 

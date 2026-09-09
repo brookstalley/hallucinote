@@ -199,17 +199,17 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
 - **Assumes:** nothing from prior phases; DB `tempo_map` rows.
 - **Re-probes:** nothing.
 - **Failure/halt:** no error path of its own; bar-1 row → one `set_tempo` call;
-  non-bar-1 rows skipped with warn (LOM gap — no per-bar tempo automation).
+  non-bar-1 rows skipped with an alert (LOM gap — no per-bar tempo automation).
   Per-call failure → boundary halt. Ack-only key `tempo_point:`.
 
 ### 2. `time_signature_map` (`push/tempo.py`)
-- Symmetric with tempo_map (`time_signature_point:` ack-only; same LOM gap warn).
+- Symmetric with tempo_map (`time_signature_point:` ack-only; same LOM gap alert).
 - **This phase is where the meter reach limit is enforced, and nowhere else.**
   The DB records the song's true meter map (within-song changes included); this
-  planner pushes the bar-1 row, skips the rest, and warns both that Live's ruler
-  will show the bar-1 meter for the whole song and that a non-bar-1 map makes the
-  arrangement layer's uniform `beats_per_bar` bar math disagree with push's
-  meter-aware translation.
+  planner pushes the bar-1 row, skips the rest, and alerts that Live's ruler will
+  show the bar-1 meter for the whole song. The two-bar-ruler divergence is NOT
+  reported here — it is reported where bar positions actually become beats, in
+  §13 and §14.
 
 ### 3. `tracks` (`push/tracks.py`)
 - **Assumes:** link rows are truthful (gate-validated) — emits `create` only for
@@ -342,6 +342,13 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
   dead worker = **PSH-3H8M**, not this contract.
 
 ### 13. `arrangement` (`push/arrangement.py`)
+- **This phase and §14 are where the two-bar-ruler divergence is reported**, not
+  the meter phase: this is where an authored bar position actually becomes a Live
+  beat. The alert names how many placements sit after a meter change, because
+  push resolves them through the `time_signature_map` while
+  `hallucinote.arrangement` accumulates whole bars against one uniform
+  `beats_per_bar`. A song whose every placement precedes the first change
+  diverges nowhere and is not alerted.
 - **Assumes:** tracks linked (alert + skip whole track otherwise); envelope-bearing
   placements' source clips linked (duplicate route); the DB is the ONLY author of
   the timeline (projection: clear then rebuild, ARR-PROJ).
@@ -366,6 +373,8 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
   `arrangement_clip_notes:` (ack-only).
 
 ### 14. `cues` (`push/arrangement.py`)
+- Carries the same two-ruler divergence alert as §13, for the same reason: a
+  cue's `position_bar` resolves through the meter map here.
 - **Assumes:** arrangement materialized (Live clamps `set_or_delete_cue` to
   `[0, last_event_time]`); DB arrangement extent = the authored truth for "can
   this cue EVER be placed".

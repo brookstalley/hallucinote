@@ -13,14 +13,14 @@ def plan_push_tempo_map(
     *,
     song_id: str,
 ) -> PushPlan:
-    """Emit `ableton_session(set_tempo)` for the bar-1 row; warn for the rest.
+    """Emit `ableton_session(set_tempo)` for the bar-1 row; alert on the rest.
 
     Live exposes `Song.tempo` as a single global value (settable via
     `ableton_session(action='set_tempo')`). Per-bar tempo automation is a
     real MCP gap — `ableton_automation` has no `song_tempo` target_kind
     (see hallucinote_mcp/.../guides/gaps.md "Arrangement-level tempo /
     signature automation"). Any tempo_map row at start_bar != 1.0 is
-    therefore skipped with a warn.
+    therefore skipped with an alert.
     """
     plan = PushPlan()
     rows = Q.get_tempo_map(conn, song_id)
@@ -59,7 +59,7 @@ def plan_push_time_signature_map(
     *,
     song_id: str,
 ) -> PushPlan:
-    """Emit `ableton_session(set_signature)` for the bar-1 row; warn the rest.
+    """Emit `ableton_session(set_signature)` for the bar-1 row; alert on the rest.
 
     Symmetric with `plan_push_tempo_map`. Live's `Song.signature_numerator` /
     `signature_denominator` are the global meter (settable via

@@ -94,6 +94,21 @@ def plan_push_arrangement_clip_notes(
     return plan
 
 
+def _divergence_bars(diverging: list[tuple[float, float, float]]) -> str:
+    """Name the diverging bars, not just the first.
+
+    An operator told only a count and one bar number knows a repair is needed
+    but not where, and this alert is the only channel carrying it — there is no
+    logger on this path. Long runs are capped so one badly-authored song cannot
+    push the rest of the report out of view; the cap is stated in the text so
+    the reader knows the list was cut rather than complete.
+    """
+    bars = [f"{b:g}" for b, _, _ in diverging]
+    if len(bars) <= 8:
+        return ", ".join(bars)
+    return ", ".join(bars[:8]) + f", and {len(bars) - 8} more"
+
+
 def plan_push_arrangement(
     conn: sqlite3.Connection,
     *,
@@ -182,7 +197,8 @@ def plan_push_arrangement(
             f"disagree: push resolves bar positions through the "
             f"time_signature_map, while hallucinote.arrangement accumulates "
             f"whole bars against one uniform beats_per_bar and never reads "
-            f"the map. Bar {first_bar:g} goes to beat {mapped:g} here; "
+            f"the map. Affected bars: {_divergence_bars(diverging)}. "
+            f"Bar {first_bar:g} goes to beat {mapped:g} here; "
             f"uniform math would put it at {uniform:g}. If build.py computed "
             f"these positions with a single beats_per_bar, they will land "
             f"somewhere other than where it intended."
@@ -456,7 +472,8 @@ def plan_push_cue_points(
         plan.alert(
             f"{len(diverging)} of {len(rows)} cue points sit after a meter "
             f"change, where push's meter-map bar→beat translation and "
-            f"hallucinote.arrangement's uniform beats_per_bar disagree. Bar "
+            f"hallucinote.arrangement's uniform beats_per_bar disagree. "
+            f"Affected bars: {_divergence_bars(diverging)}. Bar "
             f"{first_bar:g} goes to beat {mapped:g} here; uniform math would "
             f"put it at {uniform:g}."
         )

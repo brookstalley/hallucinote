@@ -120,9 +120,10 @@ class Arrangement:
     ``beats_per_bar`` for the whole arrangement. The DB, meanwhile, records a
     song's real ``time_signature_map`` and push converts bar positions through
     it, so for a song with a within-song meter change the two disagree at every
-    position after the change — this class would put bar 13 of a 4/4→7/4 song
-    at beat 48, push puts it at 60. Push detects and reports the divergence
-    when it materializes the arrangement, but cannot repair it.
+    position after the change: push's number gains the extra beats that every bar
+    after the change adds. In a 4/4 song that turns 7/4 at bar 9, this class puts
+    bar 13 at beat 48 and push puts it at 60. Push detects and reports the
+    divergence when it materializes the arrangement, but cannot repair it.
 
     So: for a multi-meter song, do not rely on this class's bar accumulation
     past the first meter change. Author those placements directly (the

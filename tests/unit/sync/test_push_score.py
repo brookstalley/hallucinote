@@ -351,6 +351,28 @@ def test_plan_push_cue_points_alerts_on_cues_past_a_meter_change(conn, song):
     hit = next(a for a in plan.alerts if "cue points sit after" in a)
     assert "1 of 2 cue points" in hit
     assert "beat 60" in hit and "48" in hit
+    assert "Affected bars: 13" in hit
+
+
+def test_plan_push_cue_points_alert_enumerates_every_diverging_bar(conn, song):
+    """Same contract as the arrangement alert: name every diverging cue, and
+    when the list is cut past the cap, say that it was cut."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    _ts_point(conn, song, 9.0, 7, 4)
+    for bar in range(10, 15):
+        M.add_cue_point(conn, song_id=song, position_bar=float(bar), name=f"c{bar}")
+    plan = push.plan_push_cue_points(conn, song_id=song)
+    hit = next(a for a in plan.alerts if "cue points sit after" in a)
+    assert "Affected bars: 10, 11, 12, 13, 14" in hit
+    assert "more" not in hit
+
+    for bar in range(15, 19):
+        M.add_cue_point(conn, song_id=song, position_bar=float(bar), name=f"c{bar}")
+    plan = push.plan_push_cue_points(conn, song_id=song)
+    hit = next(a for a in plan.alerts if "cue points sit after" in a)
+    assert "Affected bars: 10, 11, 12, 13, 14, 15, 16, 17, and 1 more" in hit
 
 
 def test_plan_push_cue_points_sets_if_exists_skip(conn, song):

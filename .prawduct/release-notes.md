@@ -19,16 +19,6 @@
 
 ## unreleased
 
-### docs-hygiene
-
-**Entry:** 2026-08-07 — Doc deep-links: the parity check now covers every link, not one file
-
-### tmp-7b3x
-
-**Entry:** 2026-08-07 — Meter is a projection concern: the DB records what the song IS
-
-**Chunks shipped:** 01
-
 ### song-lifecycle
 
 **Entry:** 2026-08-07 — `/song-brief`: a stage may not emit an unresolved gap

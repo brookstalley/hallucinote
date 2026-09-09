@@ -34,7 +34,7 @@
 
 ## 2026-09-09 — Doc deep-links: the parity check now covers every link, not one file
 
-<!-- prawduct: type=bugfix | scope=docs-hygiene | status=shipped | release=unreleased -->
+<!-- prawduct: type=bugfix | scope=docs-hygiene | status=shipped -->
 
 `test_every_song_workflow_deeplink_resolves` only validated links whose target
 was `song-workflow.md`, so a heading renamed in a design artifact left two
@@ -58,7 +58,7 @@ about at push — and restored a missing `---` rule in the conventions page.
 
 ## 2026-09-09 — Meter is a projection concern: the DB records what the song IS
 
-<!-- prawduct: type=bugfix | chunks=01 | scope=tmp-7b3x | status=shipped | release=unreleased -->
+<!-- prawduct: type=bugfix | chunks=01 | scope=tmp-7b3x | status=shipped -->
 
 `add_time_signature_point` and `update_time_signature_point` refused any
 `start_bar > 1.0`. The stated reason was a Live limitation — Live 12.4's MCP has

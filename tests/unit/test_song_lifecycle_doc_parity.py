@@ -182,7 +182,16 @@ _BARE_DOC_REF = re.compile(
 
 def test_every_bare_doc_reference_resolves():
     """A `path/to/doc.md#anchor` written as bare text — the backlog's `refs:`
-    idiom — must resolve too."""
+    idiom — must resolve too.
+
+    Currently matches NOTHING, and that is not a defect to fix by loosening the
+    exclusion. The idiom belonged to `.prawduct/backlog.md`, which froze on the
+    cutover to GitHub Issues and is therefore in `_APPEND_ONLY`; every bare ref
+    in the repo lives in that one file. What survives here is a guard against
+    the idiom reappearing in a living doc, which it can at any time — a `refs:`
+    line pasted out of an issue is all it takes. Said out loud because a test
+    that cannot currently fail should say so rather than read as coverage.
+    """
     broken = _resolve_refs(_BARE_DOC_REF, lambda md, rel: _REPO / rel)
     assert not broken, "dangling bare doc references: " + "; ".join(broken)
 

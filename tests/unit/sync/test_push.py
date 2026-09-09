@@ -482,6 +482,52 @@ def test_plan_push_arrangement_alerts_only_on_placements_past_a_meter_change(
     hit = next(a for a in plan.alerts if "bar rulers" in a)
     assert "1 of 2 arrangement placements" in hit
     assert "beat 60" in hit and "48" in hit
+    assert "Affected bars: 13" in hit, (
+        "the alert has to say WHERE, not just how many — it is the only "
+        "channel carrying the repair site, and there is no logger on this path"
+    )
+
+
+def test_plan_push_arrangement_alert_enumerates_every_diverging_bar(
+    conn, song, session, track, clip
+):
+    """Naming one bar out of many tells an operator a repair is needed and not
+    where. Past the cap the list is cut, and the alert has to SAY it was cut —
+    a silent truncation is the same defect wearing a shorter message."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=9.0, numerator=7, denominator=4
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=2
+    )
+    for start in range(10, 15):
+        M.add_arrangement_clip(
+            conn, song_id=song, track_id=track, clip_id=clip,
+            start_bar=float(start), end_bar=float(start) + 1.0,
+        )
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track={2: []},
+    )
+    hit = next(a for a in plan.alerts if "bar rulers" in a)
+    assert "Affected bars: 10, 11, 12, 13, 14" in hit
+    assert "more" not in hit, "five bars is under the cap; nothing was dropped"
+
+    # Nine diverging bars is one past the cap of eight.
+    for start in range(15, 19):
+        M.add_arrangement_clip(
+            conn, song_id=song, track_id=track, clip_id=clip,
+            start_bar=float(start), end_bar=float(start) + 1.0,
+        )
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track={2: []},
+    )
+    hit = next(a for a in plan.alerts if "bar rulers" in a)
+    assert "Affected bars: 10, 11, 12, 13, 14, 15, 16, 17, and 1 more" in hit
 
 
 def test_plan_push_arrangement_multiple_placements_create_separate_calls(

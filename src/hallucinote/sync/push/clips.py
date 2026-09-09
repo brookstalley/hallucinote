@@ -282,12 +282,22 @@ def _plan_push_audio_clip(
                 "are written in place and nothing is recreated."
             )
         else:
-            plan.warn(
+            # BLOCKED, not warn. `warn` writes to `notes`, the diagnostic
+            # channel the operator is never shown, so a conform written without
+            # verifying which file Live's slot holds would exit 0 saying
+            # nothing — the "reported OK without having determined its state"
+            # failure this contract forbids. The arrangement phase already
+            # rules an identical per-track probe failure this way. The
+            # no-probe-at-all arm above stays a warn because that caller
+            # deliberately did not probe; this one asked and did not find out.
+            plan.blocked(
                 f"{where}: the session-clip probe for track {track_at} FAILED, "
-                "so this slot's contents are unknown. Conform properties are "
-                "written in place and nothing is recreated — an unknown slot "
+                "so this slot's contents are unknown. Conform properties were "
+                "written in place and nothing was recreated — an unknown slot "
                 "is not an empty one, and answering it with a recreate would "
-                "delete a clip that is really there."
+                "delete a clip that is really there — but which file Live "
+                "actually holds was NOT verified. Re-run once Live is "
+                "reachable for that track."
             )
         for call in _audio_conform_calls(
             clip, clip_id=clip_id, track_at=track_at, clip_index=clip_at,

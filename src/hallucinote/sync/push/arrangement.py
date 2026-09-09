@@ -15,7 +15,9 @@ from ._core import (
     _position_bar_to_beats,
     uniform_bar_math_divergences,
 )
-from .clips import AUDIO_CONFORM_PROPERTIES, song_dir_for_conn
+from hallucinote.paths import song_dir_for_conn
+
+from .clips import AUDIO_CONFORM_PROPERTIES
 from .envelopes import envelope_hosting_clip_ids
 
 
@@ -208,11 +210,6 @@ def _audio_placement_call(
         prop for column, prop in AUDIO_CONFORM_PROPERTIES
         if clip_row[column] is not None
     ]
-    # EXTENT is always in the gap, authored conform columns or not. The create
-    # takes a path and a position and NO length, so the arrangement copy plays
-    # the whole file regardless of the placement's end_bar. Gating the notice on
-    # `authored` hid exactly the case with the loudest symptom: a row with an
-    # end_bar and no gain/pitch/warp column got no notice at all and ran long.
     # TWO gaps, two severities, because they are two different facts.
     #
     # EXTENT is universal: Track.create_audio_clip takes a path and a position
@@ -460,7 +457,7 @@ def plan_push_arrangement(
                 # placements for never enters `rows_by_track` at all, so
                 # hand-placed audio on it is untouched by construction; the
                 # summary below names those tracks.)
-                audio_call, refusal, conform_gap = _audio_placement_call(
+                audio_call, refusal, gaps = _audio_placement_call(
                     conn, row=row, clip_row=clip_row, track_at=track_at,
                     start_beats=start_beats,
                     hosts_envelope=row["clip_id"] in host_clip_ids,
@@ -476,8 +473,8 @@ def plan_push_arrangement(
                 # authored-conform half is present only when the row authored
                 # one. The guard keeps the pair's optionality honest rather than
                 # assuming the shape a successful return happens to have.
-                if conform_gap is not None:
-                    extent_gap, authored_gap = conform_gap
+                if gaps is not None:
+                    extent_gap, authored_gap = gaps
                     pending_extent_notes.append(extent_gap)
                     if authored_gap is not None:
                         pending_gaps.append(authored_gap)

@@ -260,7 +260,13 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
   **A track whose probe FAILED is absent from the map, and absence is not
   emptiness** — the reader is tri-state (`PROBE_UNKNOWN`), because answering an
   unknown slot as an empty one plans a `replace=True` recreate against a clip
-  the operator really has.
+  the operator really has. The two unknown cases report differently, and the
+  channel is the contract: **no probe at all** (a caller that deliberately did
+  not probe) is a `warn` plus one song-level alert; **this track's probe
+  failed** is `blocked`, so the phase reports `incomplete` with a non-zero
+  exit — same ruling as the arrangement phase's per-track probe failure, for
+  the same reason. A conform written without verifying which file Live holds
+  must not exit 0 in silence.
 - **Re-probes:** nothing on its own; the session-clip probe above is supplied by
   the caller (dict or thunk), never taken by the phase.
 - **Failure/halt:** Per-call failure → boundary halt. `clip:` link

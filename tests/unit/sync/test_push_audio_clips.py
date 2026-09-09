@@ -777,8 +777,14 @@ def test_a_track_missing_from_the_probe_map_plans_nothing_destructive(
     A probe was taken, but THIS track's per-track probe failed, so its key is
     absent from the map. That is "unknown", not "empty" — and the difference is
     a clip the operator still has. The phase must conform in place and plan no
-    create and no delete, exactly as it does when no probe was taken at all,
-    and it must say which of the two it is so the run is diagnosable.
+    create and no delete.
+
+    THE CHANNEL IS PART OF THE CONTRACT, not a detail. `warn` writes to `notes`,
+    which the operator is never shown, so reporting there would exit 0 having
+    written a conform without verifying which file Live's slot holds — the
+    "reported OK without determining its state" failure the sync contract
+    forbids. The arrangement phase rules an identical per-track probe failure
+    the same way. Asserting `blocked_reasons` is what pins that.
     """
     cid = M.create_audio_clip(
         conn, track_id=audio_track, slot=1, length_beats=8.0,
@@ -797,7 +803,9 @@ def test_a_track_missing_from_the_probe_map_plans_nothing_destructive(
         f"an unknown slot must not be answered with a create/replace; got {actions}"
     )
     assert not any(c.args.get("replace") for c in plan.calls)
-    assert any("probe for track" in n and "FAILED" in n for n in plan.notes), plan.notes
+    assert any(
+        "probe for track" in b and "FAILED" in b for b in plan.blocked_reasons
+    ), plan.blocked_reasons
 
 
 def test_extent_gap_is_reported_even_with_nothing_authored_and_does_not_block(

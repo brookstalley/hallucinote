@@ -391,6 +391,23 @@ with it — including the three stale claims the audit found (design.md § "Thre
 **Done when:** every surface above is edited or explicitly ruled inapplicable; the backlog
 reflects reality.
 
+### Found and deferred, filed rather than carried
+
+Three things this wave surfaced, cited and filed rather than fixed inside it:
+
+- **[#504](https://github.com/brookstalley/hallucinote/issues/504)** — the arrangement
+  integrity assert cannot see a *dropped* audio placement: a missing audio clip reports
+  `skipped_audio` (a `_CLEAN` member) rather than `missing_clip`, so the assert that makes a
+  silent drop loud is blind to exactly the case the destructive clear-then-rebuild phase can
+  cause.
+- **[#505](https://github.com/brookstalley/hallucinote/issues/505)** — `replace=True`
+  deletes a clip before Live can refuse the create. Mitigated here (the error names the
+  emptied slot and points at undo), not prevented; prevention needs the fake LOM to model
+  track kind.
+- **[#506](https://github.com/brookstalley/hallucinote/issues/506)** — the arrangement
+  summary credits tracks that were later skipped. Pre-existing; the new `placed_audio`
+  counter follows the existing pattern on purpose so all three are fixed together.
+
 ### The link seam — found at chunk 05 integration, owner: coordinator
 
 A pull-ingested audio clip arrives **unlinked**. Pull never writes an `ableton_link` —

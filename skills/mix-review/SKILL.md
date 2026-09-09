@@ -108,16 +108,6 @@ Read the latest report JSON under `songs/<slug>/analysis/` (or run the analysis
 first — see "Refreshing the analysis"). At the **top level**, describing the
 render rather than any section:
 
-- `integrity[]` — one row per captured surface (`track_id`). `clip_events` +
-  `worst_clip_run_samples` (flat-topping, which is *not* the same as loud — a
-  pre-fader stem legitimately peaks above 0 dBFS and `peak_dbfs` beside the runs
-  is how you tell), `dropouts` (buffer holes — `kind` separates a bit-exact
-  `zero_run` from an `rms_collapse`), `discontinuities` (clicks and pops),
-  `dc_offset_dbfs`, `tail_level_dbfs` (signal still running at the last sample =
-  the capture cut a decay), `silent`. **`checks_skipped` is load-bearing**: an
-  empty event list means "clean" only when nothing is skipped, and a truncated
-  list says so there. Known false positive: a hard-gated part rendered without
-  reverb reads its digital-silence rests as dropouts.
 - `alignment.capture_span` — the first of the two ground-truth lenses above. It
   answers whether the captured audio actually covers the span the render
   declared (`declared_beats` vs `excess_beats`, signed, against
@@ -138,6 +128,17 @@ render rather than any section:
   different thing from `null`**: the report predates this check, so the span was
   never examined — which is what you will see on any older report a `compare_to`
   baseline resolves to.
+- `integrity[]` — the second ground-truth lens: whether the audio INSIDE that
+  grid is damaged. One row per captured surface (`track_id`). `clip_events` +
+  `worst_clip_run_samples` (flat-topping, which is *not* the same as loud — a
+  pre-fader stem legitimately peaks above 0 dBFS and `peak_dbfs` beside the runs
+  is how you tell), `dropouts` (buffer holes — `kind` separates a bit-exact
+  `zero_run` from an `rms_collapse`), `discontinuities` (clicks and pops),
+  `dc_offset_dbfs`, `tail_level_dbfs` (signal still running at the last sample =
+  the capture cut a decay), `silent`. **`checks_skipped` is load-bearing**: an
+  empty event list means "clean" only when nothing is skipped, and a truncated
+  list says so there. Known false positive: a hard-gated part rendered without
+  reverb reads its digital-silence rests as dropouts.
 - `phase_relations[]` — pairwise, the only lens that sees two surfaces
   *destroying each other* (masking says B is buried under A; this says A and B
   cancelled). `broadband_cancellation_db` and per-band `band_cancellation`:

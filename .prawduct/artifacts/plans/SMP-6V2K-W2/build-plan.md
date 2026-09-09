@@ -265,7 +265,7 @@ against Live.
 Context: plan drawn 2026-09-09 on the merged, unreleased wave 1 (develop `c86df39`); owner
 handed off the same day ("go using as much fanout as will be efficient"). Chunk 11 deferred
 at dispatch. The wave-1 plan stays live until the develop→main release; this plan declares
-its own branch so both resolve. Wave A dispatched from the chunk-00 commit; eleven delegates out. Merged so far: 01, 08, 09, 10, 12 (unticked until their review). Next: reap 02–07, then the wave-A cross-delegate read, then wave B.
+its own branch so both resolve. Wave A fully merged (01–10, 12) with the coordinator's integration commit; boxes tick after one cumulative Critic at a quiet HEAD. Wave B (13, 14, 15) dispatched 2026-09-09 — 14 and 15 before 04 landed, since neither consumes it. Wave-B merges are held until the wave-A review returns.
 
 ---
 

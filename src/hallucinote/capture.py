@@ -54,8 +54,11 @@ in each track's `sends` map, keyed by return name), top-level device chains
 (1 per track/return/master that has a `devices: [...]` array — chunk 4a;
 master added by SNP-4K7M), devices
 (1 row per array entry), device parameters (1 row per entry in each device's
-`params_dialed: {...}` map). `clips: [...]` on tracks is still ignored —
-populated by build.py hand-authored sections.
+`params_dialed: {...}` map). A sampler device entry also carries
+`audio_file: "assets/..."` — the sample it plays, in the same song-relative-or-
+absolute form `clips.audio_file` uses; push hands it back via
+`ableton_device(action='assign_sample')`. `clips: [...]` on tracks is still
+ignored — populated by build.py hand-authored sections.
 
 Live capture (Ableton -> snapshot.json) runs IN CODE over the bridge push/pull
 already use: `assemble_snapshot_via_probes` walks the live set, issuing the v1
@@ -75,10 +78,12 @@ import re
 import sqlite3
 import warnings
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from hallucinote.analyzer_identity import is_analyzer_device
 from hallucinote.db import mutations as M, queries as Q
+from hallucinote.paths import audio_file_ref
 from hallucinote.return_naming import normalize_live_return_name
 
 # SNP-8R4K chunk 2 — snapshot schema version stamped on every compiled snapshot
@@ -1540,14 +1545,40 @@ def _capture_nested_chains(
     return out
 
 
+def _device_sample_ref(
+    listed: dict[str, Any], song_dir: Path | None,
+) -> str | None:
+    """The snapshot's ``audio_file`` reference for one listed device, or None.
+
+    ``sample_file_path`` rides the chain listing for any device with a sample
+    slot; its value is None for a slot nothing is loaded into, which is not a
+    reference to record — an empty Simpler round-trips as a Simpler with no
+    sample, exactly as it stands in Live.
+
+    Rendered through :func:`hallucinote.paths.audio_file_ref` so a sample under
+    the song directory is stored song-relative and a sample from the user's own
+    library keeps its absolute path — the same two forms ``clips.audio_file``
+    carries, read back by the same resolver at push time.
+    """
+    file_path = listed.get("sample_file_path")
+    if not file_path:
+        return None
+    return audio_file_ref(song_dir, str(file_path))
+
+
 def _capture_devices_for_parent(
     probe, *, parent_kind: str, parent_index: int | None = None,
+    song_dir: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Capture the full device chain (top-level + nested, to any depth) for one
     parent (track / return / master), in the snapshot ``devices`` shape.
 
     The analyzer is skipped here so it is never probed; `compile_snapshot`
     strips it again defensively (R3) and densifies positions.
+
+    ``song_dir`` anchors a sampler's ``audio_file`` reference; without it every
+    captured sample path is stored absolute, which still replays on this
+    machine but does not travel.
     """
     listing = probe("ableton_device", "list", **_parent_flat_args(parent_kind, parent_index))
     out: list[dict[str, Any]] = []
@@ -1562,6 +1593,9 @@ def _capture_devices_for_parent(
             "class_name": d.get("class_name"),
             "name": d.get("name", ""),
         }
+        sample_ref = _device_sample_ref(d, song_dir)
+        if sample_ref is not None:
+            entry["audio_file"] = sample_ref
         node = {
             "parent": _parent_node(parent_kind, parent_index),
             "terminal": "device",
@@ -1691,6 +1725,7 @@ def _capture_sends(probe, *, track_index: int) -> dict[str, Any]:
 
 def assemble_snapshot_via_probes(
     probe, *, old_snapshot: dict[str, Any] | None = None,
+    song_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Deterministically build a full ``captured_session.json`` snapshot by
     walking the live set in code — the in-code successor to the
@@ -1712,6 +1747,11 @@ def assemble_snapshot_via_probes(
     that portable seed forward and rewrites the fresh `chains` dump into a flat
     `param_overrides` list, so a by-ear nested tweak survives a rebuild without
     dropping the preset's timbre or bloating the snapshot.
+
+    ``song_dir`` is the directory the snapshot will be written beside. It
+    anchors a sampler's captured sample to a song-relative ``audio_file``
+    reference; omitted, such a path is stored absolute and stops travelling
+    between machines.
     """
     info = probe("ableton_session", "info")
     master_mixer = info.get("master")
@@ -1721,7 +1761,9 @@ def assemble_snapshot_via_probes(
             "volume": master_mixer.get("volume"),
             "panning": master_mixer.get("panning"),
         }
-        master_devices = _capture_devices_for_parent(probe, parent_kind="master")
+        master_devices = _capture_devices_for_parent(
+            probe, parent_kind="master", song_dir=song_dir,
+        )
         if master_devices:
             master_block["devices"] = master_devices
 
@@ -1744,7 +1786,7 @@ def assemble_snapshot_via_probes(
             "color": rinfo.get("color", r.get("color")),
         }
         devices = _capture_devices_for_parent(
-            probe, parent_kind="return", parent_index=ri,
+            probe, parent_kind="return", parent_index=ri, song_dir=song_dir,
         )
         if devices:
             entry["devices"] = devices
@@ -1770,7 +1812,7 @@ def assemble_snapshot_via_probes(
         if sends:
             entry["sends"] = sends
         devices = _capture_devices_for_parent(
-            probe, parent_kind="track", parent_index=ti,
+            probe, parent_kind="track", parent_index=ti, song_dir=song_dir,
         )
         if devices:
             entry["devices"] = devices

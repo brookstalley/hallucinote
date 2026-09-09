@@ -6,10 +6,12 @@ paths:
 
   - Session clips live at ``song.tracks[t].clip_slots[s].clip``. The slot
     always exists; ``.clip`` is ``None`` for empty slots. Lifecycle methods
-    live on the clip_slot (``create_clip(length)``, ``delete_clip()``).
+    live on the clip_slot (``create_clip(length)`` for MIDI,
+    ``create_audio_clip(path)`` for audio, ``delete_clip()``).
   - Arrangement clips live in ``song.tracks[t].arrangement_clips`` — a list of
     just the populated clips on the timeline. Lifecycle goes through the
-    track itself (``create_midi_clip`` / ``create_audio_clip`` / ``delete_clip``).
+    track itself (``create_midi_clip(start, length)`` /
+    ``create_audio_clip(path, start)`` / ``delete_clip``).
 
 Indices are 1-based on the wire and translated to 0-based when accessing the
 Live API.
@@ -25,6 +27,7 @@ gap #4 — see ``handlers/note.py`` for those stubs.
 """
 from __future__ import annotations
 
+import os
 from collections import Counter
 from typing import Any, Iterable
 
@@ -55,6 +58,70 @@ def _resolve_track(context: LiveContext, track_index: int) -> Any:
     return song.tracks[track_index - 1]
 
 
+# ---------------------------------------------------------------------------
+# Audio-clip read surface
+# ---------------------------------------------------------------------------
+
+
+def _is_audio_clip(clip: Any) -> bool:
+    """True when this clip plays a sample rather than notes.
+
+    ``is_audio_clip`` is the direct discriminator and the mirror of the
+    ``is_midi_clip`` guard the note reader already uses. It is read first;
+    a wrapper that exposes only the MIDI half still answers correctly
+    through the fallback, and a clip exposing neither reads as MIDI (the
+    conservative answer — the audio fields are then simply absent rather
+    than half-populated with defaults).
+    """
+    is_audio = getattr(clip, "is_audio_clip", None)
+    if is_audio is not None:
+        return bool(is_audio)
+    return not bool(getattr(clip, "is_midi_clip", True))
+
+
+def _opt_float(value: Any) -> float | None:
+    return None if value is None else float(value)
+
+
+def _opt_int(value: Any) -> int | None:
+    return None if value is None else int(value)
+
+
+def _audio_clip_fields(clip: Any) -> dict[str, Any]:
+    """The conform surface of an audio clip: what plays, and how.
+
+    These eight keys are the read half of what ``set_property`` writes, so
+    a clip a human dragged into Live can be ingested and pushed back
+    unchanged. They are emitted ONLY for audio clips — a MIDI clip omits
+    every one of them rather than reporting them null, so an absent
+    ``file_path`` always means "not an audio clip" and never "an audio clip
+    whose file we could not determine".
+
+    ``start_marker`` / ``end_marker`` carry Live's dual unit: BEATS when
+    ``warping`` is true, SECONDS when it is false. ``warping`` travels in
+    the same dict precisely so a reader can tell which it is holding.
+
+    There is no reverse field: Live exposes no reverse on a Clip at all
+    (`lom-audio-clip-surface.md` §4), so reporting one would invent state.
+    """
+    return {
+        "file_path": (
+            None if getattr(clip, "file_path", None) is None
+            else str(clip.file_path)
+        ),
+        "gain": _opt_float(getattr(clip, "gain", None)),
+        "pitch_coarse": _opt_int(getattr(clip, "pitch_coarse", None)),
+        "pitch_fine": _opt_float(getattr(clip, "pitch_fine", None)),
+        "warping": (
+            None if getattr(clip, "warping", None) is None
+            else bool(clip.warping)
+        ),
+        "warp_mode": _opt_int(getattr(clip, "warp_mode", None)),
+        "start_marker": _opt_float(getattr(clip, "start_marker", None)),
+        "end_marker": _opt_float(getattr(clip, "end_marker", None)),
+    }
+
+
 def list_handler(
     context: LiveContext,
     *,
@@ -65,16 +132,27 @@ def list_handler(
 
     Session: returns every slot (populated AND empty); the slot's 1-based
     position doubles as ``clip_index`` for writes. Empty slots carry
-    ``{clip_index, empty: True}``; populated slots add ``name`` + ``length``.
+    ``{clip_index, empty: True}``; populated slots add ``name``, ``length``
+    and ``is_audio``.
 
     Arrangement: returns every placed clip with ``arrangement_clip_index``
     (1-based, ordered by ``track.arrangement_clips`` — Live's ordering),
-    plus ``name``, ``start_beats``, ``length``, ``muted``, and ``note_count``.
+    plus ``name``, ``start_beats``, ``length``, ``muted``, ``note_count``
+    and ``is_audio``.
     ``note_count`` distinguishes an empty placement from a full one (a long clip
     spanning the song looks identical to an empty one on name/length alone — the
     "track shows no events" debugging question); it is ``None`` for audio clips
     (notes are MIDI-only). There are no "empty" arrangement positions —
     ``arrangement_clips`` is dense.
+
+    **Audio clips report what they play.** In either location, a clip whose
+    ``is_audio`` is true also carries the conform surface
+    :func:`_audio_clip_fields` returns — ``file_path``, ``gain``,
+    ``pitch_coarse``, ``pitch_fine``, ``warping``, ``warp_mode``,
+    ``start_marker``, ``end_marker``. A MIDI clip omits those keys
+    entirely; that asymmetry is the contract, because a null-filled MIDI
+    entry would read as an audio clip whose file could not be determined.
+    This is the surface a pull ingests a hand-dragged clip through.
 
     Index naming follows ``docs/terminology.md``: session uses
     ``clip_index`` (slot), arrangement uses the fully-qualified
@@ -93,12 +171,17 @@ def list_handler(
             if clip is None:
                 clips_out.append({"clip_index": i, "empty": True})
             else:
-                clips_out.append({
+                is_audio = _is_audio_clip(clip)
+                entry: dict[str, Any] = {
                     "clip_index": i,
                     "empty": False,
                     "name": clip.name,
                     "length": float(clip.length),
-                })
+                    "is_audio": is_audio,
+                }
+                if is_audio:
+                    entry.update(_audio_clip_fields(clip))
+                clips_out.append(entry)
     else:
         for i, clip in enumerate(track.arrangement_clips, start=1):
             # note_count answers the "no events" debugging question that a
@@ -110,14 +193,19 @@ def list_handler(
                 if clip.is_midi_clip
                 else None
             )
-            clips_out.append({
+            is_audio = _is_audio_clip(clip)
+            entry = {
                 "arrangement_clip_index": i,
                 "name": clip.name,
                 "start_beats": float(clip.start_time),
                 "length": float(clip.length),
                 "muted": bool(clip.muted),
                 "note_count": note_count,
-            })
+                "is_audio": is_audio,
+            }
+            if is_audio:
+                entry.update(_audio_clip_fields(clip))
+            clips_out.append(entry)
     return {
         "track_index": track_index,
         "location": location,
@@ -254,6 +342,116 @@ def _inline_notes_warning(note_count: int) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# Audio-clip creation
+# ---------------------------------------------------------------------------
+#
+# Live 12.2 added ``ClipSlot.create_audio_clip(path)`` and
+# ``Track.create_audio_clip(path, start_beats)``; 12.4 fixed a crash in the
+# arrangement one, which makes 12.4 the floor. Both were executed against a
+# running Live 12.4.1 and their refusals recorded verbatim
+# (``docs/research/audio-first-class/lom-probe-results.md`` rows 1a-1c), which
+# is where the two message fragments below come from.
+#
+# Note the argument ORDER: the audio calls take (path, position) while
+# ``create_midi_clip`` takes (position, length). An audio clip's length is
+# the file's, not the caller's.
+
+# Fragments of Live's own refusals, matched case-insensitively so a wording
+# tweak in a future Live build degrades to the raw error rather than to a
+# wrong diagnosis.
+_LIVE_WRONG_TRACK_KIND = "can only be created on audio tracks"
+_LIVE_BAD_AUDIO_PATH = "valid audio file"
+# Live checks absoluteness BEFORE existence, with its own string (probe row 17:
+# `ValueError: Please provide an absolute path`). The handler refuses a
+# relative path itself before the call, so this arrives only when Live's idea
+# of "absolute" is stricter than `os.path.isabs` — a cross-platform path form,
+# a future Live build — and then it must teach the same fix, not surface as a
+# bare ValueError that reads like a corrupt file.
+_LIVE_RELATIVE_AUDIO_PATH = "provide an absolute path"
+
+
+def _create_audio_clip(
+    create_fn: Any,
+    args: tuple[Any, ...],
+    *,
+    track_index: int,
+    audio_path: str,
+) -> Any:
+    """Call Live's ``create_audio_clip`` and teach its three refusals.
+
+    Live raises a bare ``RuntimeError`` for the wrong track kind and a bare
+    ``ValueError`` for a path it will not load — and a different
+    ``ValueError`` for a path it does not consider absolute, checked before
+    the file is looked at. None of them says what to do next. Anything else
+    propagates untouched — a message we do not recognize must not be
+    re-labelled as one we do.
+    """
+    try:
+        return create_fn(*args)
+    except RuntimeError as exc:
+        if _LIVE_WRONG_TRACK_KIND in str(exc).lower():
+            raise ValueError(
+                f"create: track {track_index} is not an audio track, and "
+                f"Live creates audio clips only on audio tracks. Make the "
+                f"host track with ableton_track(action='create', "
+                f"kind='audio'), or address an existing audio track. "
+                f"(Live said: {exc})"
+            ) from exc
+        raise
+    except ValueError as exc:
+        if _LIVE_RELATIVE_AUDIO_PATH in str(exc).lower():
+            raise ValueError(
+                f"create: Live does not accept {audio_path!r} as an absolute "
+                f"path. Live resolves nothing — resolve a song-relative "
+                f"reference with hallucinote.paths.resolve_audio_path("
+                f"song_dir, ref) and pass the result. (Live said: {exc})"
+            ) from exc
+        if _LIVE_BAD_AUDIO_PATH in str(exc).lower():
+            raise ValueError(
+                f"create: Live will not load {audio_path!r}. It reports a "
+                f"file that is missing and a file it cannot decode with the "
+                f"same refusal, so check both: the absolute path exists, and "
+                f"the format is one Live reads (wav / aiff / flac / mp3 / "
+                f"ogg). (Live said: {exc})"
+            ) from exc
+        raise
+
+
+def _locate_created_arrangement_clip(
+    track: Any, *, start_beats: float, before_starts: Counter[float]
+) -> tuple[Any, int]:
+    """Return ``(clip, 1-based index)`` for the clip just created at ``start_beats``.
+
+    Live gives the create call no usable handle back through the Remote
+    Script (and re-wraps its API objects on every property access, so
+    identity comparison silently fails — B-1). Position is the handle:
+    ``arrangement_clips`` is ordered by ``start_time``, so we look for a
+    clip there.
+
+    ``before_starts`` is a multiset of the start times present BEFORE the
+    call, which is what makes this correct when the new clip lands on top
+    of one that was already there: skip as many clips at this position as
+    were there before, and the next one is ours. Matching on length instead
+    would work for MIDI and fail for audio, whose length comes from the
+    file and is not known until after the call.
+    """
+    key = round(float(start_beats), 6)
+    to_skip = before_starts.get(key, 0)
+    for i, c in enumerate(track.arrangement_clips, start=1):
+        if abs(float(c.start_time) - float(start_beats)) < 1e-6:
+            if to_skip:
+                to_skip -= 1
+                continue
+            return c, i
+    raise RuntimeError(
+        f"create: no new arrangement clip appeared at beat {start_beats} — "
+        f"Live accepted the call but the clip is not in arrangement_clips. "
+        f"The post-create ordering or the create call itself may have "
+        f"changed in this Live build."
+    )
+
+
+# ---------------------------------------------------------------------------
 # create / delete / rename
 # ---------------------------------------------------------------------------
 
@@ -264,7 +462,7 @@ def create_handler(
     track_index: int,
     location: str,
     kind: str,
-    length: float,
+    length: float | None = None,
     clip_index: int | None = None,
     start_beats: float | None = None,
     name: str | None = None,
@@ -277,7 +475,8 @@ def create_handler(
     Branches on ``location``:
 
     - **session**: ``clip_index`` (1-based slot) is required. Calls
-      ``track.clip_slots[clip_index-1].create_clip(length)``. By default
+      ``clip_slot.create_clip(length)`` for MIDI and
+      ``clip_slot.create_audio_clip(audio_path)`` for audio. By default
       errors if the slot already holds a clip; pass ``replace=True`` to
       delete-then-create atomically (the most common Hallucinote iteration
       shape — gap #2's resolution path).
@@ -286,21 +485,71 @@ def create_handler(
       positions to beats using its time-signature map before emit; the MCP
       layer stays meter-agnostic. Calls
       ``track.create_midi_clip(start_beats, length)`` or
-      ``create_audio_clip``.
+      ``track.create_audio_clip(audio_path, start_beats)``.
 
-    ``audio_path`` is reserved for the future audio-clip ingest story;
-    today it's recorded in the result as ``audio_path_deferred`` if
-    provided, but no file is loaded.
+    The two kinds take different inputs, and the difference is Live's, not
+    ours:
 
-    ``notes``, when present, is written via ``clip.set_notes(...)`` after
-    the clip exists — a single round-trip for the common
-    "create-and-populate" iteration pattern.
+    - **MIDI** needs ``length`` (beats), and takes optional ``notes``,
+      written via ``clip.set_notes(...)`` after the clip exists — a single
+      round-trip for the common "create-and-populate" iteration pattern.
+    - **audio** needs ``audio_path``, an ABSOLUTE path to a file Live can
+      read. Live resolves nothing itself; a song-relative reference is
+      resolved engine-side through ``paths.resolve_audio_path`` before the
+      call reaches this handler. The clip's length comes from the file
+      (warped to the song tempo), so a ``length`` passed alongside is
+      ignored and said so in the result; trim with ``set_property``
+      ``start_marker`` / ``end_marker``. ``notes`` are refused — an audio
+      clip has no note array.
+
+    An audio create returns the created clip's ``file_path`` read back off
+    Live, which is the evidence that a file actually loaded.
     """
     _check_location(location)
     if kind not in ("midi", "audio"):
         raise ValueError(f"kind must be 'midi' or 'audio', got {kind!r}")
-    if length <= 0:
+    if length is not None and length <= 0:
         raise ValueError(f"length {length} must be > 0")
+    # Each kind's own required input, bound once where it is known present:
+    # the MIDI path never reads the path, and the audio path never reads the
+    # length (Live's create_audio_clip takes no length at all).
+    midi_length = 0.0
+    abs_audio_path = ""
+    if kind == "midi":
+        if length is None:
+            raise ValueError(
+                "create: kind='midi' requires length (clip length in beats, "
+                "> 0). Only an audio clip takes its length from a file."
+            )
+        midi_length = float(length)
+        if audio_path is not None:
+            raise ValueError(
+                f"create: audio_path was given for kind='midi'. A MIDI clip "
+                f"plays notes, not a file — pass kind='audio' to load "
+                f"{audio_path!r}."
+            )
+    else:
+        if audio_path is None:
+            raise ValueError(
+                "create: kind='audio' requires audio_path — an ABSOLUTE path "
+                "to an audio file Live can read. Live has no way to create "
+                "an empty audio clip; the file is what the clip is."
+            )
+        if not os.path.isabs(audio_path):
+            raise ValueError(
+                f"create: audio_path {audio_path!r} is not absolute. Live "
+                f"resolves nothing — resolve a song-relative reference with "
+                f"hallucinote.paths.resolve_audio_path(song_dir, ref) before "
+                f"the call."
+            )
+        if notes is not None:
+            raise ValueError(
+                "create: notes were given for kind='audio'. An audio clip "
+                "has no note array — conform it with set_property (gain, "
+                "pitch, pitch_fine, warp, warp_mode, start_marker, "
+                "end_marker) instead."
+            )
+        abs_audio_path = audio_path
 
     if location == "session":
         if clip_index is None:
@@ -316,6 +565,7 @@ def create_handler(
                 f"for session view of track {track_index}"
             )
         slot = slots[clip_index - 1]
+        replaced_existing = False
         if slot.clip is not None:
             if not replace:
                 raise ValueError(
@@ -324,41 +574,60 @@ def create_handler(
                     f"recreate atomically"
                 )
             slot.delete_clip()
-        if kind == "audio":
-            # W6-D investigation (2026-05-19): no API exists on
-            # ClipSlot in Live 10–12 for creating audio clips. The LOM
-            # XML (Structure-Void Live 11.0, generated by Ableton's
-            # API_MakeDoc) lists only `create_clip` on ClipSlot, whose
-            # docstring explicitly says "Throws an error when called on
-            # non-empty slots or slots in non-MIDI tracks." The M4L LOM
-            # whitelist (`_MxDCore/LomTypes.py` in
-            # gluon/AbletonLive12_MIDIRemoteScripts) is dispositive —
-            # only `create_clip` and `delete_clip` are listed.
-            #
-            # The only path to place audio in a session slot is the
-            # browser-load workaround: set
-            # `song.view.highlighted_clip_slot = target_slot`, then
-            # `application.browser.load_item(audio_browser_item)`.
-            # Caveats: async, requires the audio to be addressable as
-            # a BrowserItem (Library/User/Places — NOT an arbitrary
-            # filesystem path), and depends on browser indexing. Not
-            # wired as a separate action shape; tracked in backlog.
-            raise NotImplementedError(
-                "session-view audio clip creation is not supported by "
-                "Live 10-12's LOM (ClipSlot.create_clip is MIDI-only; "
-                "no audio variant exists). Workarounds: (a) drag the "
-                "audio from Live's browser into the slot manually; (b) "
-                "create an empty arrangement audio clip via "
-                "`ableton_clip(action='create', kind='audio', "
-                "location='arrangement', ...)` — note that `audio_path` "
-                "is recorded but not yet loaded into the clip "
-                "(audio-file ingest is deferred work, see "
-                "`audio_path_deferred` in the result); (c) wire a "
-                "browser-load action that targets the highlighted clip "
-                "slot — also deferred."
+            replaced_existing = True
+        # A slot holds at most one clip, so replace=True must delete BEFORE it
+        # creates — and Live only refuses a wrong-kind or bad-path create after
+        # that point. The old clip is then already gone. Nothing here can give
+        # it back, so the one thing owed is that the caller LEARNS it: a bare
+        # "audio clips can only be created on audio tracks" reads like a
+        # rejected call that changed nothing, which is the reported-OK-without-
+        # determining-state failure wearing an error's clothes.
+        try:
+            if kind == "audio":
+                create_fn = getattr(slot, "create_audio_clip", None)
+                if create_fn is None:
+                    raise NotImplementedError(
+                        f"the clip slot at (track={track_index}, session, "
+                        f"{clip_index}) does not expose create_audio_clip. That "
+                        f"call landed in Live 12.2 and Live 12.4 is this "
+                        f"project's floor — upgrade Live, or drag the file into "
+                        f"the slot from Live's browser by hand."
+                    )
+                _create_audio_clip(
+                    create_fn,
+                    (abs_audio_path,),
+                    track_index=track_index,
+                    audio_path=abs_audio_path,
+                )
+            else:
+                slot.create_clip(midi_length)
+        except Exception as exc:
+            if not replaced_existing:
+                raise
+            message = (
+                f"{exc} — NOTE: replace=True had already deleted the clip that "
+                f"was in session slot {clip_index} on track {track_index}, so "
+                f"that slot is now EMPTY. The previous clip is not recoverable "
+                f"through this bridge; undo in Live restores it."
             )
-        slot.create_clip(float(length))
+            # Preserve the original type where it can carry a plain message, so
+            # a caller catching ValueError still catches one. Not every
+            # exception's __init__ takes a single string, though, and this is
+            # the ONE path where a raise-inside-the-handler would be worst: the
+            # user's clip is already deleted, and a TypeError here would lose
+            # both the original error and the disclosure. So the fallback is
+            # unconditional rather than a type whitelist.
+            try:
+                raise type(exc)(message) from exc
+            except TypeError:
+                raise RuntimeError(message) from exc
         clip = slot.clip
+        if clip is None:
+            raise RuntimeError(
+                f"create: the slot at (track={track_index}, session, "
+                f"{clip_index}) is still empty after Live accepted the "
+                f"create call"
+            )
     else:
         # arrangement
         if start_beats is None:
@@ -372,6 +641,11 @@ def create_handler(
             raise ValueError(f"start_beats {start_beats} must be >= 0")
         track = _resolve_track(context, track_index)
         sb = float(start_beats)
+        # Snapshot positions before the call so the new clip can be told
+        # apart from one that was already sitting at this beat.
+        before_starts: Counter[float] = Counter(
+            round(float(c.start_time), 6) for c in track.arrangement_clips
+        )
         if kind == "midi":
             create_fn = getattr(track, "create_midi_clip", None)
             if create_fn is None:
@@ -379,34 +653,27 @@ def create_handler(
                     f"track {track_index} does not expose create_midi_clip "
                     f"(not a MIDI track, or older Live build)"
                 )
-            create_fn(sb, float(length))
+            create_fn(sb, midi_length)
         else:
             create_fn = getattr(track, "create_audio_clip", None)
             if create_fn is None:
                 raise NotImplementedError(
-                    f"track {track_index} does not expose create_audio_clip "
-                    f"(not an audio track, or older Live build)"
+                    f"track {track_index} does not expose create_audio_clip. "
+                    f"That call landed in Live 12.2 (12.4 fixed the "
+                    f"arrangement case and is this project's floor) and "
+                    f"exists only on audio tracks."
                 )
-            create_fn(sb, float(length))
-        # Find the new clip — Live appends, so it should be the last one,
-        # but we scan defensively for the one matching our (start_beats,
-        # length) since arrangement_clips ordering is implementation detail.
-        # Break on first hit so a (highly unlikely) duplicate match doesn't
-        # silently pick the wrong one.
-        new_clip = None
-        for c in track.arrangement_clips:
-            if (
-                abs(float(c.start_time) - sb) < 1e-6
-                and abs(float(c.length) - float(length)) < 1e-6
-            ):
-                new_clip = c
-                break
-        if new_clip is None:
-            raise RuntimeError(
-                "create: could not locate the newly-created arrangement clip; "
-                "Live API may have changed the post-create ordering"
+            # (path, position) — the mirror image of create_midi_clip's
+            # (position, length), because the file supplies the length.
+            _create_audio_clip(
+                create_fn,
+                (abs_audio_path, sb),
+                track_index=track_index,
+                audio_path=abs_audio_path,
             )
-        clip = new_clip
+        clip, arrangement_clip_index = _locate_created_arrangement_clip(
+            track, start_beats=sb, before_starts=before_starts
+        )
 
     if name:
         clip.name = name
@@ -425,28 +692,28 @@ def create_handler(
     if location == "session":
         result["clip_index"] = clip_index
     else:
-        # Compute the 1-based arrangement index. The result field is
-        # `arrangement_clip_index` (not `clip_index`) so the Hallucinote
-        # apply layer's `_LINK_KINDS["arrangement_clip"]` can read it to
-        # record the `ableton_links` binding.
-        #
-        # Live re-wraps API objects on each property access, so the
-        # identity scan that lived here previously (``c is clip``)
-        # silently failed and the result was missing the index field.
-        # Live's arrangement_clips are sorted by ``start_time``, so we
-        # resolve by start-time match using ``start_beats`` (the position
-        # we just created at). Float tolerance handles round-trip drift.
-        target_start = float(start_beats) if start_beats is not None else float(clip.start_time)
-        track = _resolve_track(context, track_index)
-        for i, c in enumerate(track.arrangement_clips, start=1):
-            if abs(float(c.start_time) - target_start) < 1e-6:
-                result["arrangement_clip_index"] = i
-                break
+        # The result field is `arrangement_clip_index` (not `clip_index`) so
+        # the Hallucinote apply layer's `_LINK_KINDS["arrangement_clip"]`
+        # can read it to record the `ableton_links` binding. It comes from
+        # the same positional resolution that found the clip — Live re-wraps
+        # its API objects on every property access, so an identity scan
+        # (``c is clip``) silently finds nothing and the field goes missing.
+        result["arrangement_clip_index"] = arrangement_clip_index
         result["start_beats"] = float(start_beats) if start_beats is not None else None
-    if audio_path is not None:
-        # Reserved for future audio ingest; round-trips so the planner can
-        # see we received it.
-        result["audio_path_deferred"] = audio_path
+    if kind == "audio":
+        # Read back what Live actually loaded — the evidence that the file
+        # is in the clip, not merely that the call returned.
+        loaded = getattr(clip, "file_path", None)
+        result["file_path"] = str(loaded) if loaded is not None else None
+        if length is not None:
+            result["warning"] = (
+                f"length={length} was ignored: an audio clip's length comes "
+                f"from its file (warped to the song tempo), and Live's "
+                f"create_audio_clip takes no length. The clip is "
+                f"{float(clip.length)} beats. Trim it with "
+                f"ableton_clip(action='set_property', "
+                f"property='start_marker'|'end_marker', ...)."
+            )
     if notes is not None:
         result["notes_written"] = len(notes)
         warning = _inline_notes_warning(len(notes))
@@ -607,7 +874,7 @@ def stop_handler(
 
 
 # ---------------------------------------------------------------------------
-# set_property — gain / pitch / warp / loop_start / loop_end / muted / color
+# set_property — the conform surface plus loop / muted / color
 # ---------------------------------------------------------------------------
 
 
@@ -618,20 +885,48 @@ def _coerce_int(v: Any) -> int: return int(v)
 
 
 _CLIP_PROPERTIES: dict[str, tuple[str, Any, tuple[float, float] | None]] = {
-    # Audio-clip-only properties (gain, pitch, warp) raise a teaching error
-    # if the underlying clip doesn't expose them. We keep them in the enum so
-    # the schema surface stays uniform; the handler discovers per-clip.
-    "gain":       ("gain",       _coerce_float, (-1.0, 1.0)),
-    "pitch":      ("pitch_coarse", _coerce_int, (-48, 48)),
-    "warp":       ("warping",    _coerce_bool, None),
-    "loop_start": ("loop_start", _coerce_float, None),
-    "loop_end":   ("loop_end",   _coerce_float, None),
-    "muted":      ("muted",      _coerce_bool, None),
-    "color":      ("color",      _coerce_int,  None),
+    # Audio-clip-only properties raise a teaching error if the underlying
+    # clip doesn't expose them. We keep them in the enum so the schema
+    # surface stays uniform; the handler discovers per-clip.
+    #
+    # ``pitch``/``pitch_coarse`` and ``warp``/``warping`` are each ONE Live
+    # property under two names: the shipped wire name, and the name
+    # ``action='list'`` reports it under (which is also the DB column's).
+    # Both spellings write the same attribute, so a value read back can be
+    # written back verbatim — a round trip that had to rename its own fields
+    # in flight is not one.
+    #
+    # ``warp_mode`` is Live's warp-algorithm enum. The int is passed through
+    # and only its range is checked: which algorithm each int names is a
+    # per-build fact, and a clip's own ``available_warp_modes`` is the
+    # authority. Live refuses a value it does not know.
+    #
+    # ``start_marker`` / ``end_marker`` are NOT audio-only — a MIDI clip has
+    # them too — and they carry Live's dual unit: beats when the clip is
+    # warped, seconds when it is not. Unbounded here for the same reason
+    # loop points are: the ceiling is the clip's own extent.
+    #
+    # No ``reverse``: Live exposes no settable reverse on a Clip.
+    "gain":         ("gain",         _coerce_float, (0.0, 1.0)),
+    "pitch":        ("pitch_coarse", _coerce_int,   (-48, 48)),
+    "pitch_coarse": ("pitch_coarse", _coerce_int,   (-48, 48)),
+    "pitch_fine":   ("pitch_fine",   _coerce_float, (-50.0, 50.0)),
+    "warp":         ("warping",      _coerce_bool,  None),
+    "warping":      ("warping",      _coerce_bool,  None),
+    "warp_mode":    ("warp_mode",    _coerce_int,   (0, 6)),
+    "start_marker": ("start_marker", _coerce_float, None),
+    "end_marker":   ("end_marker",   _coerce_float, None),
+    "loop_start":   ("loop_start",   _coerce_float, None),
+    "loop_end":     ("loop_end",     _coerce_float, None),
+    "muted":        ("muted",        _coerce_bool,  None),
+    "color":        ("color",        _coerce_int,   None),
 }
 
 
-_AUDIO_ONLY_CLIP_PROPERTIES: frozenset[str] = frozenset({"gain", "pitch", "warp"})
+_AUDIO_ONLY_CLIP_PROPERTIES: frozenset[str] = frozenset({
+    "gain", "pitch", "pitch_coarse", "pitch_fine", "warp", "warping",
+    "warp_mode",
+})
 
 
 def set_property_handler(
@@ -645,9 +940,12 @@ def set_property_handler(
 ) -> dict[str, Any]:
     """Write one clip property.
 
-    Audio-only properties (gain, pitch, warp) raise a teaching error on
-    MIDI clips. Loop properties are in beats; ``muted`` is a clip-level
-    mute (orthogonal to track-level mute).
+    Audio-only properties — gain, pitch / pitch_coarse, pitch_fine, warp,
+    warp_mode — raise a teaching error on MIDI clips. Together with the
+    markers they are the conform surface: what turns a raw file into a
+    sample that sits in the song. Loop properties are in beats; markers
+    follow the clip's own unit (beats when warped, seconds when not);
+    ``muted`` is a clip-level mute (orthogonal to track-level mute).
     """
     if property not in _CLIP_PROPERTIES:
         raise ValueError(
@@ -659,8 +957,8 @@ def set_property_handler(
     clip = _resolve_clip(
         context, track_index=track_index, location=location, clip_index=clip_index
     )
-    # Pre-check: audio-only properties (gain / pitch / warp) on a MIDI clip
-    # bubble Live's raw "X is only available for Audio Clips" RuntimeError.
+    # Pre-check: an audio-only property on a MIDI clip bubbles Live's raw
+    # "X is only available for Audio Clips" RuntimeError.
     # Surface a teaching error instead (Wave-1 B-26). Done BEFORE the
     # bounds check so users with a bad value on the wrong clip kind get
     # the kind-mismatch message (more actionable) instead of "out of range".
@@ -682,7 +980,8 @@ def set_property_handler(
         raise NotImplementedError(
             f"clip at (track={track_index}, {location}, {clip_index}) does not "
             f"expose attribute {attr!r}; property {property!r} likely doesn't "
-            f"apply to this clip's kind (audio-only properties: gain, pitch, warp)"
+            f"apply to this clip's kind (audio-only properties: "
+            f"{sorted(_AUDIO_ONLY_CLIP_PROPERTIES)})"
         )
     setattr(clip, attr, coerced)
     return {

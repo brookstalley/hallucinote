@@ -195,14 +195,13 @@ def push_notes(
         cid = row["id"]
         name = row["name"]
         if row["kind"] == "audio":
-            # CLP-AUD1: audio clips host no notes and have no push path
-            # until CLP-AUD2. Without this skip, plan_push_clip's
-            # refuse-loudly path (a warn, zero calls) would fall through
-            # the empty-calls loop and misreport the clip as pushed.
+            # An audio clip hosts no notes — this is a PERMANENT skip, not a
+            # pending one. The clip itself is pushed by the clips phase; there
+            # is simply nothing for a NOTE push to do with it.
             result.skipped.append({
                 "clip_id": cid, "name": name,
-                "reason": "kind='audio': audio-clip push is CLP-AUD2 "
-                          "scope — the row is authored but not synced",
+                "reason": "kind='audio': an audio clip has no notes — the clip "
+                          "itself is materialized by the clips phase",
             })
             continue
         notes = Q.get_notes_for_clip(conn, cid)

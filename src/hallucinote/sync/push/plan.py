@@ -41,6 +41,27 @@ LiveArrangementProbe = (
 )
 
 
+# SMP-6V2K: the session-clip probe is either an already-materialized
+# ``{track_index: [clip, ...]}`` dict (tests / non-execute callers) or a ZERO-ARG
+# THUNK the clips phase calls at PLAN time, for the same reason the two below are
+# lazy: on a first push the Live tracks don't exist until the `tracks` phase has
+# run, so a map probed before it names different indices.
+#
+# The degradation direction is the OPPOSITE of the arrangement probe's, because
+# the two phases fail differently. Arrangement CLEARS, so "state unknown" must
+# not become "clear anyway" — an empty map blocks per track. The clips phase does
+# not clear: without a probe it conforms in place and plans no create and no
+# delete, which is already the non-destructive answer. So ``None`` — "no probe
+# taken" — is the safe degradation here, and it costs only the changed-file
+# detection and zero-call idempotency, both of which announce themselves with an
+# alert rather than acting on a guess.
+LiveSessionClipProbe = (
+    dict[int, list[dict[str, Any]]]
+    | Callable[[], dict[int, list[dict[str, Any]]] | None]
+    | None
+)
+
+
 # PSH-DEVDUP: the device-chain probe is either an already-materialized
 # ``{(parent_kind, parent_index): [live device, ...]}`` dict (tests / callers
 # that probed themselves) or a ZERO-ARG THUNK the devices phase calls at PLAN
@@ -65,6 +86,20 @@ def resolve_live_arrangement_probe(
     Called from inside the arrangement phase's ``plan_fn``, i.e. once the
     `tracks` phase has created + linked every track, so the probe map is keyed
     by the SAME Live indices the planner resolves from ``ableton_links``.
+    """
+    if probe is None or isinstance(probe, dict):
+        return probe
+    return probe()
+
+
+def resolve_live_session_clip_probe(
+    probe: LiveSessionClipProbe,
+) -> dict[int, list[dict[str, Any]]] | None:
+    """Materialize a session-clip probe map, calling it if it's a thunk.
+
+    Called from inside the clips phase's ``plan_fn``, i.e. once the `tracks`
+    phase has created + linked every track, so the map is keyed by the SAME Live
+    indices the planner resolves from ``ableton_links``.
     """
     if probe is None or isinstance(probe, dict):
         return probe
@@ -260,6 +295,7 @@ def plan_push_song(
     perform_slowdown_factor: float = 1.0,
     live_arrangement_clips_by_track: LiveArrangementProbe = None,
     live_device_chains: LiveDeviceProbe = None,
+    live_session_clips_by_track: LiveSessionClipProbe = None,
 ) -> list[PushPhase]:
     """Master orchestration: return the fourteen phases of a full song push, in order.
 
@@ -345,6 +381,11 @@ def plan_push_song(
             name="clips",
             plan_fn=lambda: plan_push_clips(
                 conn, song_id=song_id, session_id=session_id,
+                # Resolved HERE (inside the thunk), not at plan_push_song time —
+                # the probe must see the tracks the `tracks` phase created.
+                live_session_clips_by_track=resolve_live_session_clip_probe(
+                    live_session_clips_by_track,
+                ),
             ),
             description="Create+populate every session clip (atomic create+notes per W3-C / Wave M+1-1).",
         ),
@@ -555,6 +596,25 @@ _ACK_ONLY_KINDS: frozenset[str] = frozenset({
     # apply_push_results raises on the unknown key prefix and HALTS the
     # arrangement phase before any clip is rebuilt.
     "arrangement_clip_clear",
+    # SMP-6V2K (audio clips): the conform surface an audio clip is
+    # materialized with — gain / pitch_coarse / pitch_fine / warping /
+    # warp_mode / start_marker / end_marker — written one property at a time
+    # via ableton_clip(action='set_property') and keyed
+    # `clip_conform:{clip_id}:{property}` (clips.py). Ack-only: the value
+    # ORIGINATES in the DB and a conform write records no Live-side index,
+    # exactly like the mixer `track_volume` / `device_parameter` keys above.
+    # The clip's own binding is recorded under `clip:` by the create.
+    "clip_conform",
+    # SMP-6V2K (audio clips): the destructive reconcile of a linked session
+    # slot — a row whose `audio_file` changed, or whose slot Live reports as
+    # holding a MIDI clip — is planned as an explicit
+    # ableton_clip(action='delete', location='session') keyed
+    # `clip_delete:{clip_id}` BEFORE the recreate, because `Clip.file_path` is
+    # read-only and `create_audio_clip` into an occupied slot is a hard error
+    # (clips.py `_recreate_audio_clip`). Ack-only, the session-view twin of
+    # `arrangement_clip_clear`: a delete records no binding, and the create that
+    # follows re-records the clip's link under `clip:` at the same slot index.
+    "clip_delete",
 })
 
 

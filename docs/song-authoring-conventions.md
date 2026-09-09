@@ -584,9 +584,48 @@ What that means when you author one:
 
 ## Audio-track + song-spanning envelopes (ENV-9P4T: now performed)
 
-**Mixer / pan / send / device envelopes on audio tracks** are authorable. An audio track has no MIDI session clip to host a per-clip envelope, so a clip-independent (e.g. song-spanning) ride routes to **perform** — a continuous arrangement lane, exactly like a plain or group track. (A per-clip ride that *is* covered by a single audio session clip is still refused, pending the session-audio-clip push surface CLP-AUD2.)
+**Mixer / pan / send / device envelopes on audio tracks** are authorable, and route exactly like a MIDI host's: covered by a single session clip → that clip carries the ride; covered by none → **perform**, a continuous arrangement lane, like a plain or group track. An audio *session clip* hosts an envelope perfectly well — `Clip.create_automation_envelope` is parameter-keyed and clip-type-agnostic — so a volume ride or send throw under a dialogue line is just an envelope. Arrangement clips host none, on any track kind; that is Live's limit, not ours.
 
 **Long envelopes that no single session clip covers** — midi OR audio hosts — also perform. The planner infers the route from the envelope's span: covered by one session clip → per-clip (session-clip route); not covered → perform (continuous ride). So a song-spanning volume/pan/send ride needs no hand-partitioning; it's span-bounded, not clip-bounded. A within-one-clip envelope still rides that clip.
+
+---
+
+## Referencing a sample (audio clips)
+
+A sample is song material, so it lives with the song and is referenced from
+`build.py` like anything else:
+
+```
+songs/<slug>/
+  assets/                        # audio the song is built from
+```
+
+**The path form is load-bearing.** `clips.audio_file` carries **song-relative
+POSIX** when the file lives under the song dir (`assets/line-01.wav`) and an
+**absolute** path when it does not. Those are the only two forms. Do not
+hand-write a `~`-prefixed path: the resolver this column is read back through
+does not expand `~`, so a `~` form resolves as a *relative* path under the song
+dir and fails at the next push. Pull writes the right form for you when it
+ingests a clip you dragged into Live.
+
+**Conform in Live first; commit a derived asset when you can hear why.** Live's
+warp (Complex Pro for speech), `pitch_coarse`/`pitch_fine`, clip gain and the
+start/end markers are non-destructive, modeled in the DB, and cost one push.
+They are the first reach. An offline transform is higher quality, costs a file
+somebody has to be able to regenerate, and earns its place for formant-sensitive
+work and for chopping — not by default. The producer-practice guardrail holds
+underneath: cut-and-slide before time-stretch, because stretch smears formants.
+
+**What is not there yet.** Placing and conforming is built; acquiring,
+transforming and deriving are not. There is no extraction from a media file, no
+pitch shift or stretch or chop that Hallucinote performs itself, no assigning a
+sample to a Simpler or Sampler, and no way yet to read a sample's features and
+compose *from* them. `capability-truth.md`'s audio row is the current answer;
+believe it over this paragraph if the two ever drift.
+
+Movie dialogue and commercial recordings are somebody's copyright. Personal and
+creative use is one thing and distributing a released track built on it is
+another; clearance is yours to judge, not the tool's.
 
 ---
 
@@ -615,7 +654,7 @@ Push materializes this in the `routing` phase (after `mix` and `devices` — an 
 
 **Monitor=In is load-bearing**, not optional polish: a summing bus that receives routed audio is silent until its monitor is `In` (the live-probed dependency). The `routing` push phase sets it from `monitoring_state='In'`.
 
-**Automation-fidelity caveat — read before claiming "master automation is solved."** The bus delivers **perform-fidelity** rides today (the lossy ~2.5 Hz gesture-record path described under "Master, group, and return envelopes" above) — adequate for slow master moves (volume rides, filter sweeps over many bars), not sample-accurate. **True-lossless** bus automation needs a hosting session clip the audio bus can't carry until **CLP-AUD2** lands. This convention delivers **routing** — it removes the master special-casing and makes the bus a first-class, normally-automatable track; it does **not** add a new automation fidelity. Full fidelity map + decisions: [RTE-1K9T design](../.prawduct/artifacts/plans/RTE-1K9T/archive/design.md#automation-fidelity-caveat-read-before-claiming-master-automation-solved).
+**Automation-fidelity caveat — read before claiming "master automation is solved."** The bus delivers **perform-fidelity** rides today (the lossy ~2.5 Hz gesture-record path described under "Master, group, and return envelopes" above) — adequate for slow master moves (volume rides, filter sweeps over many bars), not sample-accurate. **True-lossless** bus automation needs a hosting session clip. The reason that was out of reach has changed: an audio track *can* now hold a session audio clip, and such a clip hosts envelopes like any other — so the blocker is no longer "no audio clips exist" but the open question of what a bus track should be playing in order to carry one. Unverified either way; do not claim it works. This convention delivers **routing** — it removes the master special-casing and makes the bus a first-class, normally-automatable track; it does **not** add a new automation fidelity. Full fidelity map + decisions: [RTE-1K9T design](../.prawduct/artifacts/plans/RTE-1K9T/archive/design.md#automation-fidelity-caveat-read-before-claiming-master-automation-solved).
 
 > A `route_to_bus` convenience helper is deliberately **not** shipped yet — the pattern has no second user. Friction-driven, like the interplay primitives above: the first song to adopt the bus authors it from these mutators; a helper earns its place when a second one does.
 

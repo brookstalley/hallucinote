@@ -74,3 +74,43 @@ one the original 195 records ran against). Scratch default set, master volume.
    file_path), including during-recording state; take lanes + duplicate-to-arrangement
    give a scriptable takes-and-comping shape (comp SELECTION stays human/agent-directed,
    matching the producer-research finding that comping is curation, not automation).
+
+## SMP-6V2K chunk 01 — the reverse contract and the recreate semantics (2026-09-09)
+
+Executed against Live **12.4.5** (`application.get_major_version()` → 12, `get_minor_version()`
+→ 4, `get_bugfix_version()` → 5) through the shipped `ableton_probe` bridge, server and
+Remote Script both at wire fingerprint `c9abab64204b` (no version mismatch). Scratch default
+set (two MIDI, two audio tracks); the sample was a generated 2.0 s mono 44.1 kHz WAV at an
+absolute `/private/tmp/…/probe.wav` path. Raw records: the `smp6v2k-ch01-*` entries appended
+to `lom-probe-results.jsonl`. Where a verdict below differs from `lom-audio-clip-surface.md`,
+this section wins.
+
+| # | Question | Verdict | Evidence |
+|---|----------|---------|----------|
+| 14 | **Reverse** — does a Live 12.4.x `Clip` expose any settable reverse? | **ABSENT — CONFIRMED** | `describe song.tracks[2].clip_slots[0].clip` on a real audio clip: 49 properties, 142 methods, **no property or method whose name contains "rev"**. The property list is exactly §4's (warping, warp_mode, gain, pitch_coarse/fine, start/end markers, loop points, looping, ram_mode settable; file_path, sample_length, sample_rate, available_warp_modes, is_audio_clip read-only). `clips.reverse` stays a derived-asset / sampler concern (design D6; #237) |
+| 15 | **`available_warp_modes`** int → algorithm map | **CONFIRMED** | On the WAV clip: `[0, 1, 2, 3, 4, 6]` — every int except **5**. `ableton_clip(set_property, warp_mode=5)` → `RuntimeError: Invalid warp mode`; `warp_mode=6` → accepted, reads back 6. The only file-type-gated algorithm is REX (`.rx2` sources), so the gap at 5 pins the documented map `beats=0, tones=1, texture=2, repitch=3, complex=4, rex=5, complex_pro=6` — `WARP_MODES` in `db/mutations/clips.py` is correct as written. Creation default: `warping` true, `warp_mode` 0 |
+| 16 | **Recreate semantics (a)** — `create_audio_clip` into an **occupied** slot | **ERROR — CONFIRMED** (neither replace nor no-op) | `song.tracks[2].clip_slots[0].create_audio_clip(path)` with a clip already there → `RuntimeError: This clip slot already has a clip`. Re-pointing a clip is therefore `delete_clip()` + `create_audio_clip()`, never a single call |
+| 16b | **Recreate semantics (b)** — does an envelope survive delete-and-recreate? | **NO — CONFIRMED** | Before: `create_automation_envelope(track volume)` + `insert_step(0, 4, 0.5)`; `automation_envelope(volume).value_at_time(2)` → `0.5`, `has_envelopes` → `true`. Then `clip_slots[0].delete_clip()` → `create_audio_clip(path)` (same file) → `automation_envelope(volume)` → **`None`**. A recreate that must keep an authored ride has to re-emit it |
+| 16c | **`duplicate_clip_to_arrangement` off an AUDIO session clip hosting an envelope** — does the ride travel? | **YES — CONFIRMED** (same as MIDI) | `song.tracks[2].duplicate_clip_to_arrangement(clip, 32.0)` → Clip at `start_time` 32.0; track `mixer_device.volume.automation_state` **0 → 1**. Control on `tracks[3]`: an envelope-free audio clip duplicated the same way leaves `automation_state` at **0**. As with MIDI the ride lands on the track's arrangement lane, not on the clip: the arrangement clip reads `has_envelopes` false and `automation_envelope(volume)` `None` (row 2 unchanged). The lane automation **survives deleting the session source** — `automation_state` still 1 after row 16b's `delete_clip()` |
+| 17 | **Path handling** — absolute-path requirement + row 1c's error shapes on this build | **CONFIRMED, plus a third shape** | Relative path (`scratchpad/probe.wav`) → **`ValueError: Please provide an absolute path`** (a distinct string row 1c never recorded — the path check runs before the file check). MIDI track → `RuntimeError: Audio clips can only be created on audio tracks` (unchanged). Nonexistent absolute path → `ValueError: The provided path does not appear to point to a valid audio file` (unchanged) |
+| 18 | **Wave 4 (#330)** — how a sample assigns to Simpler via LOM; is an arbitrary `assets/` file reachable? | **`SimplerDevice.replace_sample(abs_path)` — CONFIRMED** | `ableton_device(load, kind='Simpler')` on a MIDI track → `class_name` `OriginalSimpler`, `sample` `None`. `song.tracks[0].devices[0].replace_sample('/private/tmp/…/probe.wav')` → `None`, then `.sample` is a `Sample` whose `file_path` round-trips the arbitrary path verbatim. `Sample` surface: `file_path`, `length` (88200), `sample_rate`, `gain`, `start_marker` / `end_marker` **in SAMPLES as ints** (0 / 88199 — not beats, not seconds), `warping` (false by default here), `warp_mode`, `warp_markers`, per-algorithm knobs (`beats_*`, `tones_grain_size`, `texture_*`, `complex_pro_*`), `slices` + `insert_slice` / `remove_slice` / `move_slice` / `clear_slices` / `reset_slices`, `beat_to_sample_time` / `sample_to_beat_time`. The device also carries `crop()`, `warp_as(beats)`, `warp_double()`, `warp_half()`, `guess_playback_length()` |
+| 19 | **Wave 4 (#330)** — does Simpler expose an automatable `Reverse` alongside `S Start` / `S Length`? | **NO PARAMETER — CONFIRMED; reverse is a destructive METHOD** | The parameter list (62 params, before and after a sample is loaded) has `S Start`, `S Length`, `S Loop On` / `S Loop Length` / `S Loop Fade`, `Sample Selector`, `Snap` — and **no `Reverse`**. `SimplerDevice.reverse()` exists ("Reverse the loaded sample"), returns `None`, and **re-points the sample at a derived file**: `sample.file_path` became `…/Live Recordings/2026-09-09 110958 Temp Project/Samples/Processed/Reverse/probe R.wav`. So on the sampler too a reversed sample is a *derived asset*, not a playback switch — D6's "or sets Simpler's Reverse parameter" half does not exist; the reversed-derived-asset half is the whole story, and the sampler route is `replace_sample(<reversed derived file>)` |
+| 20 | Probe-tool finding (not LOM) — `ableton_probe(set)` on an **int** property | **BLOCKED from this client** | `set song.tracks[3].clip_slots[0].clip.warp_mode value=5` → `ArgumentError: Python argument types in None.None(Clip, str) did not match C++ signature: None(TPyHandle<AClip>, int)`. `value` is declared `type="any"`, the MCP schema is untyped, and Claude Code serializes an untyped argument as a string — so numeric property writes never reach Live as numbers. Workaround used here: `ableton_clip(action='set_property')`, whose `value` is typed. Backlogged as #508, a server-side coercion fix |
+
+### What this settles downstream
+
+- **Reverse** (row 14, row 19): the `clips.reverse` schema comment is correct and now
+  live-confirmed; the column materializes only as a reversed derived asset (wave 3), and the
+  sampler route is the same derived asset loaded via `replace_sample` (wave 4). #237 carries
+  the note.
+- **Warp-mode map** (row 15): `WARP_MODES` verified; no change.
+- **Reconcile rule for a re-pointed `audio_file`** (rows 16, 16b): `delete_clip` → `create_audio_clip`
+  → conform → **re-emit every envelope the row hosts**, in that order. The two `plan.blocked`
+  refusals in `sync/push/clips.py` and `sync/push/arrangement.py` that cite this chunk can now be
+  replaced by the rule — build-plan chunk 07.
+- **Envelope-hosting audio placements** (row 16c): take the duplicate-onto-cleared route exactly
+  as MIDI does; the direct `Track.create_audio_clip` call stays for envelope-free placements.
+  Because the duplicate copies the *conformed* session clip, that route also closes the
+  arrangement conform gap for those rows.
+- **Path error shapes** (row 17): the chunk-02 teaching-error mapping gains a third source string
+  (relative path).

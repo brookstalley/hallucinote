@@ -15,6 +15,107 @@ pending entries when `operator_verification_required: true`.
 
 ---
 
+## SMP-6V2K wave 1 — an authored sample lands in Live, and a dragged-in one comes back (2026-09-09) — **PENDING**
+
+Plan: `.prawduct/artifacts/plans/SMP-6V2K/build-plan.md`. Backlog **#284**, **#268**;
+verdicts land on **#237** and **#330**. Needs Live 12.4.x open with a set loaded, the
+Hallucinote plugin loaded so `ableton_probe` / `ableton_clip` are on the wire, and — for
+everything from chunk 02 onward — the Remote Script **re-vendored** after chunk 02 lands
+(`/hallucinote:ableton-mcp-install`) and Live restarted. `actions/clip.py` and
+`handlers/clip.py` are both in `_FINGERPRINT_PATHS`, so the wire fingerprint flips and a
+stale Remote Script fails the handshake rather than misbehaving quietly.
+
+**Have a real audio file ready** — any short WAV, absolute path. The probe pass writes into
+a scratch set, not a song.
+
+### Chunk 01 — the probe session (does NOT need the re-vendor; the probe bridge is shipped) — **DISCHARGED 2026-09-09** on Live 12.4.5; verdicts in `docs/research/audio-first-class/lom-probe-results.md` rows 14-20
+
+One pass, five questions, batched so the operator is asked once. Append the answers to
+`docs/research/audio-first-class/lom-probe-results.md` as a dated section — that file is the
+canonical verdict record and supersedes the research passes where they differ.
+
+| # | Question | What to run | Why it matters |
+|---|---|---|---|
+| 1 | **Reverse** — does a Live 12.4.x `Clip` expose any settable reverse? | `describe` a real audio clip; diff the property list against `lom-audio-clip-surface.md` §4 | `db/schema.sql`'s `clips.reverse` comment claims a push materialization the LOM research says does not exist. One of them is wrong, and the column fails the first time a song sets it. The answer rewrites either the schema comment or wave 3's plan |
+| 2 | **`available_warp_modes`** on a real audio clip — the int → algorithm map | `get` the property on a created audio clip | `WARP_MODES` in `db/mutations/clips.py` is trusted, not checked. An authored mode that silently means a different algorithm is a wrong-sounding song with no error |
+| 3 | **Recreate semantics** — `create_audio_clip` into an **occupied** slot: error, replace, or silent no-op? Then delete-and-recreate a clip that hosts a mixer envelope: does the envelope survive, and what does `automation_envelope` return afterwards? | create into a filled slot; then create envelope → delete clip → recreate → read back | `Clip.file_path` is read-only, so re-pointing a clip at a different file is a **destructive** reconcile. Chunk 03 cannot write its reconcile rule without this, and destructive arrangement reconciles are where this project has been bitten before (ARR-PROJ) |
+| 4 | **Path handling** — confirm the absolute-path requirement and re-record row 1c's two error shapes against this build | create on a MIDI track; create with a bad path | Chunk 02 maps both to the teaching-error shape; the 2026-06-10 strings are what it was built against |
+| 5 | **Batched for wave 4** (#330 chunk 0) — how does a sample assign to Simpler/Sampler via LOM; is an arbitrary `assets/` file reachable that way; does Simpler expose an automatable `Reverse` alongside `S Start` / `S Length`? | describe a Simpler device's sample slot and parameter list | Costs nothing extra while Live is open, and unblocks wave 4 from a standing start |
+
+**Acceptance:** every question answered with a recorded call and its literal response; the
+reverse verdict stated unambiguously; the warp-mode map written down. Then correct (or
+confirm) the `clips.reverse` schema comment, and if reverse is absent, note on **#237** that
+the column's materialization moves to wave 3/4.
+
+### Chunk 02 — a real audio clip, created from the wire
+
+- [ ] Handshake passes after the re-vendor (fingerprint flipped; record the new value)
+- [ ] `ableton_clip(action='create', kind='audio', audio_path=<abs>)` into a **session** slot creates a clip that plays the file
+- [ ] Same into the **arrangement** at a named beat position
+- [ ] Refusal on a **MIDI track** reaches the wire as the project's teaching error, not a bare `RuntimeError`
+- [ ] Refusal on a **bad or missing path** likewise
+- [ ] Each new conform property round-trips: `warp_mode`, `start_marker`, `end_marker`, pitch fine
+- [ ] The **read** surface reports the clip as audio with its `file_path` and conform state, and reports a MIDI clip without those keys at all
+
+### Chunk 03 — push materializes `kind='audio'`
+
+**Partial live result, 2026-09-09 — the MIDI-path regression half PASSED.** Reported by the
+concurrent `alien-song` session, which was pushing a pure-MIDI song through this branch's
+engine (handshake confirmed: server, Remote Script and package all `ad27853`). `push
+--only clips` planned and applied **58/58 clips with no refusals and no warnings** beyond
+the standing tuning note.
+
+That is **R6.4** — "nothing here regresses what exists" — for the clips phase, and it is
+evidence no unit test could give: chunk 03 rewrote `push/clips.py`, which the MIDI path
+shares, and the first real set it met did not notice. It says nothing about the audio path,
+which is what the unticked boxes below are for.
+
+**Arrangement half PASSED too, same run.** 116/116 placements applied, cues 1/1, and
+`verify-arrangement` afterwards reported 58/58 placements faithful with **no orphan clips**.
+The perform pass in the same push recorded all six changed arcs with real write counts.
+
+That is the half worth having. `push/arrangement.py` is the *destructive* module — the
+arrangement-as-projection shape clears each track's lane before rebuilding it (ARR-PROJ) —
+so a regression there costs a user their timeline rather than returning an error, and no
+unit test reaches it. Both rewritten modules have now cleared a real set.
+
+**Still unverified, and this is what the boxes below are for:** every one of these results is
+from a **pure-MIDI** song. Nothing above exercised a `kind='audio'` row, so the audio path
+this wave exists to build has still never run against Live.
+
+
+- [ ] A song with one authored audio clip pushes into a real set — **session and arrangement**
+- [ ] The session clip carries its authored conform (warp/transpose/gain/markers). **The arrangement copy will NOT** — Live's direct arrangement-create takes no properties and the planner cannot address the copy until the call returns. Confirm the run *reports* that gap rather than staying silent about it
+- [ ] A **second push of the unchanged song plans no work** (the property a destructive reconcile most easily breaks)
+- [ ] A **missing sample file fails its clip loudly** — not a reported-OK push that plays silence
+- [ ] Changing the row's `audio_file` recreates the clip: the plan shows `delete` → `create` → conform → `write_envelope` for a ride authored under it, the operator channel says the clip was DELETED and recreated, and the ride reads back on the new clip (a recreate drops envelopes — probe row 16b — so the re-emit is what keeps it)
+- [ ] A slot Live holds a **MIDI** clip in, linked to an audio row, is recreated as audio the same way
+- [ ] An audio track the DB has **no** placements for is still skipped, with its warning, and the report says which tracks were projected and which skipped
+- [ ] Name the sample file used
+
+**Chunk 07 re-queues chunk 03's live clause over the two paths it opened** (built 2026-09-09
+against probe rows 16-17; planner tests green; NOT live-run). The handler edit flips the wire
+fingerprint — re-vendor (`/hallucinote:ableton-mcp-install`) + Live restart before any of this:
+
+- [ ] **Re-pointed `audio_file`** — the sequence above, against a real set with a real ride: after the push, `automation_envelope` on the new clip is non-`None` and the arrangement lane still shows the ride
+- [ ] **Envelope-hosting audio placement** takes the duplicate route: the arrangement copy carries the session clip's gain/warp/markers AND the ride (`automation_state` flips on the track), and the run reports **no** conform gap for it — while an envelope-free audio placement on the same track still reports its conform gap and lands at Live's defaults
+- [ ] The **extent** warn fires for both routes (the copy plays the clip's length, not `end_bar`)
+- [ ] A second push of the unchanged song still plans nothing (no delete, no recreate, no re-emit)
+
+### Chunk 04 — a ride under a dialogue line
+
+- [ ] A volume ride authored under an audio session clip pushes and is **audible** in the set
+- [ ] An arrangement-clip envelope on an audio host is still refused (probe row 2 is definitive)
+
+### Chunk 05 — the round trip that makes sketching work
+
+- [ ] A clip **dragged into Live by hand** comes back on pull as a real row, with its warp settings intact
+- [ ] It survives a pull → push round trip
+- [ ] A hand-dragged file living **outside** the song dir is stored **absolute**, not `~`-collapsed — a `~` form resolves as a relative path under the song dir and fails at the next push
+- [ ] An audio slot the DB no longer has is treated as a real delete, not an unknown
+
+---
+
 ## PERFORM-START-POSITION — the cue jump moves Live's start playing position (issue #471, 2026-09-08) — **PERFORM PATH CONFIRMED LIVE 2026-09-08; render path still PENDING**
 
 ### Result — run 2026-09-08 against Live 12.4.2, scratch set, driven over the Remote Script socket

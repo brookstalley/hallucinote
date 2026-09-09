@@ -146,11 +146,22 @@ generatively in `build.py`. Tracked as backlog `ING-9H2T` (with the existing
 automation-ingest cluster `ING-1R4C` / `ING-2S7K` / `ING-4P2M` / `ING-5W8H`).
 
 ### 2. Recorded audio as a song's origin
-The symbolic model has no generative source for a take, and Live won't let us
-create session audio clips (`gaps.md`, `NotImplementedError`). The honest answer is
-the asset leg: host the recording, build around it. Ergonomics (where the asset
-store lives, how a song references a take) are unspecified — file when a song needs
-it.
+The symbolic model has no generative source for a take, so the honest answer is the
+asset leg: host the recording, build around it.
+
+**The stated blocker is refuted.** This used to say Live won't let us create session
+audio clips. `ClipSlot.create_audio_clip` and `Track.create_audio_clip` landed in the
+12.2 cycle, were probe-confirmed on 12.4.1, and the bridge now uses both: an authored
+clip places into a slot and the arrangement, and a clip dropped in by hand is staged
+into the DB on pull — materialized state, folded into `build.py` to become source, the
+same lane a clip-notes pull uses. So placement is not the open half.
+
+What is still open is **ergonomics** — where the asset store lives, how a song
+references a source, and what a derived file has to record to stay regenerable. That
+is SMP-6V2K wave 3's, and the requirements for it are written (R1.6 provenance, R1.7
+recipe-regenerability): sources immutable under `assets/sources/`, every derived file
+the output of a recorded recipe, because a song that only has the WAV has lost its
+source.
 
 ### 3. Parametric / computed mix authoring (the `build.py` mix hook)
 There is no path today to compute mix state in code (a rule across chains,

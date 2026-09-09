@@ -233,14 +233,62 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
 ### 6. `clips` (`push/clips.py`)
 - **Assumes:** **every clip's track linked — RAISES `ValueError` otherwise**
   (clips.py, W3-C strict; see violation V2 for how that raise surfaces).
-  Assumes scenes provisioned (phase 5). Linked-clip slot content is irrelevant:
-  `create` carries `replace=True` so an occupied slot is replaced —
-  re-probe avoided by making the write state-independent.
-- **Re-probes:** nothing.
-- **Failure/halt:** audio clips refuse-with-warn (CLP-AUD1 — a MIDI
-  create would corrupt the slot). Per-call failure → boundary halt. `clip:` link
+  Assumes scenes provisioned (phase 5). For a MIDI clip the linked slot's
+  content is irrelevant: `create` carries `replace=True` so an occupied slot is
+  replaced, and the write is state-independent by construction.
+- **Audio clips materialize here** (SMP-6V2K): a `kind='audio'` row plans a
+  create carrying the resolved absolute path, plus one `set_property` per
+  authored conform field (gain, pitch coarse/fine, warping, warp mode, start and
+  end marker) keyed `clip_conform:{clip_id}:{property}`, ack-only because the
+  value originates in the DB and records no Live-side index. **The file's
+  existence is checked before the call is planned** — a clip that pushes and
+  then plays silence is the "reported OK without determining state" failure this
+  contract forbids, so a missing sample is `blocked`, not `error`: `error` halts
+  the phase before dispatch and one typo'd path would stop a thirty-clip song
+  pushing anything.
+- **State-independence does NOT extend to audio.** `Clip.file_path` is
+  read-only, so which file a slot plays can only be changed by delete-and-
+  recreate — a destructive reconcile the MIDI path never had. The phase
+  therefore accepts an optional session-clip probe (`live_session_clips_by_track`)
+  and diffs against it: same file → conform in place; slot empty → recreate;
+  file changed, or the slot holds a MIDI clip → **delete → create → conform →
+  re-emit every envelope the row hosts**, as one planned sequence
+  (`_recreate_audio_clip`). The delete is an explicit ack-only
+  `clip_delete:{clip_id}` call, not a `replace=True` on the create, so the
+  destruction is visible in the plan; the create re-records the `clip:` link at
+  the same slot. The re-emit goes through the envelopes phase's own per-clip
+  planner (`plan_push_envelopes_for_clip`, keyed `envelope:`), because a
+  recreate drops every envelope the old clip hosted (probe-confirmed) and a copy
+  of the emitter would be a second route table. In a full push the envelopes
+  phase writes the same envelope again — `write_envelope` clears before it
+  inserts, so redundant, not doubled; a scoped `--only clips` push has only the
+  re-emit. The recreate is announced with an alert (a clip the operator had was
+  deleted). **Probe-less is the safe degradation** — conform in place, no
+  create, no delete — and it announces itself with an alert rather than acting
+  on a guess. Only a SUCCESSFUL probe reaches the destructive branch.
+  **The not-linked branch is itself destructive for one class of row** (#507):
+  pull never writes a `clip` link, so an audio clip ingested from Live reaches the
+  clips phase unlinked and plans `create(..., replace=True)` — the handler deletes
+  the clip Live has and rebuilds it from the same file, re-conformed from the DB.
+  Sample kept, churn plus loss of un-modelled hand work (warp markers; the DB
+  models warp mode, not markers). Where the link gets written is a design
+  decision with three candidate homes, filed rather than patched here. The execute path supplies it as a thunk resolved inside the
+  phase, so it sees the tracks the `tracks` phase created on a first push.
+  **A track whose probe FAILED is absent from the map, and absence is not
+  emptiness** — the reader is tri-state (`PROBE_UNKNOWN`), because answering an
+  unknown slot as an empty one plans a `replace=True` recreate against a clip
+  the operator really has. The two unknown cases report differently, and the
+  channel is the contract: **no probe at all** (a caller that deliberately did
+  not probe) is a `warn` plus one song-level alert; **this track's probe
+  failed** is `blocked`, so the phase reports `incomplete` with a non-zero
+  exit — same ruling as the arrangement phase's per-track probe failure, for
+  the same reason. A conform written without verifying which file Live holds
+  must not exit 0 in silence.
+- **Re-probes:** nothing on its own; the session-clip probe above is supplied by
+  the caller (dict or thunk), never taken by the phase.
+- **Failure/halt:** Per-call failure → boundary halt. `clip:` link
   kind (create returns `clip_index`; `replace_notes` returns none → link skip,
-  plan.py).
+  plan.py). A blocked audio row leaves every sibling clip planned.
 
 ### 7. `mix` (`push/mix.py`)
 - **Assumes:** tracks + returns linked. Master needs no link
@@ -313,6 +361,15 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
   `ValueError`** (schema-belt; same plan_fn-raise surface as V2).
   Per-call failure → boundary halt. `envelope:` link kind (handler returns
   `envelope_index`).
+- **Host kind does not change the route.** An audio-track host partitions exactly
+  like a MIDI one — `session_clip` when a single session clip covers the span,
+  `perform` when none does — because `Clip.create_automation_envelope` is
+  parameter-keyed and clip-type-agnostic, probe-confirmed end-to-end on a real
+  audio session clip (write, `insert_step`, read back). There is no audio refusal
+  in the classifier. **Arrangement clips remain impossible hosts**, and that is
+  structural rather than a branch: every emitter addresses `location='session'`
+  and resolves `clip_index` from the source session clip's own link, never from a
+  placement.
 
 ### 12. `performed_automation` (`push/perform.py`)
 - **Assumes:** tracks/returns/devices linked (per-arc warn + "arc pending, next
@@ -352,6 +409,34 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
 - **Assumes:** tracks linked (alert + skip whole track otherwise); envelope-bearing
   placements' source clips linked (duplicate route); the DB is the ONLY author of
   the timeline (projection: clear then rebuild, ARR-PROJ).
+- **Audio placements project like any other** (SMP-6V2K). The whole-track audio
+  skip is gone: a track the DB has placements for is projected, and a track it
+  has none for is still left untouched — that distinction is *named in the
+  report* (an `alert`, so it reaches the operator) rather than being an
+  unexplained absence. The route is decided by
+  whether the source clip **hosts an envelope**, exactly as for MIDI: an
+  envelope-hosting audio placement takes `duplicate_to_arrangement` onto the
+  cleared region (needs the session clip linked), because the duplicate carries
+  a ride off an audio session clip as off a MIDI one (probe-confirmed with an
+  envelope-free control); an envelope-free audio placement is created directly
+  via `Track.create_audio_clip(path, beats)` and needs no session counterpart.
+  Only the envelope-hosting rows duplicate — the duplicate carries the session
+  clip's length, not the placement's, and the positional renumbering ARR-PROJ
+  fixed was born in that path, so widening it is a separate decision.
+- **Two audio gaps the phase reports rather than papers over.** A direct create
+  loads a fresh clip at Live's defaults, and the planner cannot `set_property`
+  the copy in the same plan: an arrangement clip is addressed by an index that
+  exists only in the create's *result*, after apply, and predicting it is exactly
+  the positional guess ARR-PROJ diagnosed as a root cause. So an envelope-free
+  placement with authored conform is planned and then reports (`blocked`) what
+  did not land; a duplicated one has no such gap, since the duplicate copies the
+  conformed session clip. The EXTENT gap is route-independent — neither the
+  direct create nor the duplicate takes the placement's `end_bar` — and is said
+  ONCE per phase as an `alert` naming each placement (capped, cap stated): an
+  alert because `notes` is the channel the executor discards and the operator
+  has to act on it (trim in Live); one per phase because one per placement
+  would bury a stem-heavy song's report. The untouched-audio-track summary is
+  an `alert` for the same reason.
 - **Re-probes:** the arrangement probe (resolved at THIS phase, not before the
   loop — §Gates) supplies each track's current Live clips for the clear; a lane
   ABSENT from the probe map → `blocked` + skip that track (unknown state must
@@ -364,10 +449,9 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
   that kept its stale clips and got none of its placements.
 - **Failure/halt:** §6a all-or-nothing per track — every link validated BEFORE
   any of that track's calls (clear included) join the plan; an unmaterializable
-  track emits nothing + `blocked` (audio/CLP-AUD2 → warn, a deliberate
-  no-op). A phase carrying blocked reasons is reported `incomplete` with a
-  non-zero exit and its reasons verbatim — never `skipped (idempotent)`. Clears emitted
-  descending-index. Per-call failure → boundary halt;
+  track emits nothing + `blocked`. A phase carrying blocked reasons is reported
+  `incomplete` with a non-zero exit and its reasons verbatim — never
+  `skipped (idempotent)`. Clears emitted descending-index. Per-call failure → boundary halt;
   `ArrangementIntegrityError` → halt (silent corruption must not report OK).
   Keys: `arrangement_clip:` (link), `arrangement_clip_clear:` /
   `arrangement_clip_notes:` (ack-only).

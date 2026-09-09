@@ -32,6 +32,112 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-09-09 — Push acts on the probe's verdicts: a re-pointed sample is recreated with its ride, and an envelope-hosting audio placement duplicates
+
+<!-- prawduct: type=feature | scope=SMP-6V2K -->
+
+The two `plan.blocked` refusals chunk 03 shipped pending the Live probe are gone, replaced by
+the rule its recorded verdicts license (`lom-probe-results.md` rows 16-17). In the clips phase
+a linked audio row whose `audio_file` changed — or whose slot Live reports as holding a MIDI
+clip — now plans one sequence: an explicit `delete` (new ack-only key `clip_delete:`), the
+`create` at the same slot, the full conform, then every envelope the row hosts written again,
+because `Clip.file_path` is read-only, a create into an occupied slot is a hard error, and a
+recreate drops the clip's envelopes. The re-emit reuses the envelopes phase's own planner
+through a new per-clip entry point (`plan_push_envelopes_for_clip`, over
+`envelope_hosts_by_clip`) rather than a copy, so the route table has one home; the recreate
+is announced as an alert. In the arrangement phase an audio placement whose source clip hosts
+an envelope takes the duplicate-onto-cleared route exactly as a MIDI one does — the duplicate
+carries the ride off an audio session clip, and the conformed session clip with it, so the
+per-placement conform gap stops firing for those rows and keeps firing for envelope-free
+direct creates. Only envelope-hosting rows duplicate: the extent gap is route-independent and
+filed as #509 rather than widened into here. The MCP handler's teaching-error mapping
+gains Live's third path shape (`Please provide an absolute path`), which flips the wire
+fingerprint — re-vendor before the live checks. `capability-truth.md`, the sync-boundary
+contract (phases 6 and 13) and `operator-verification.md` (chunk 03's live clause re-queued
+over the two new paths) track it; nothing in `sync/push` cites chunk 01 as pending.
+
+The cumulative review's fixes landed as one batch. Pull now rules an absent audio clip or
+placement on its **link**, not its kind: a linked one was in Live and is a real deletion, an
+unlinked one may be a push refusal (sample not on disk) and is kept and reported — the
+session and arrangement passes had reasoned in opposite directions. The arrangement phase's
+extent gap and untouched-audio-track summary moved from `notes` (the channel the executor
+discards) to one `alert` per phase, so the operator actually sees what the records claimed
+they did. The sample-resolution chain, the audio create call and the sub-plan merge each got
+one home (`resolve_authored_sample`, `_audio_create_call`, `PushPlan.absorb`); a duplicated
+path helper was deleted; the set_property tip stopped offering a Simpler Reverse parameter
+the probe found does not exist; README, known-issues and the pull skill stopped claiming a
+working round trip the capability table rates ◐, and now say a pulled-in clip is *staged*
+into the regenerable DB rather than made source. #504's in-wave fix is recorded as such;
+wave 2 and wave 3 are filed as #511 and #510.
+
+## 2026-09-09 — The probe session settles the reverse contract and the recreate semantics
+
+<!-- prawduct: type=research | scope=SMP-6V2K -->
+
+SMP-6V2K chunk 01 ran against Live 12.4.5 through the shipped `ableton_probe` bridge, and
+every question the wave had left open now has a recorded call and a literal response
+(`docs/research/audio-first-class/lom-probe-results.md` rows 14-20, raw records in the
+JSONL). A Live `Clip` has no reverse, and neither does Simpler — its `reverse()` is a
+destructive method that writes a derived file — so `clips.reverse` materializes only as a
+reversed derived asset, which the schema comment and design D6 now say. The warp-mode map is
+pinned by the one gap Live leaves (REX refused on a WAV). Creating into an occupied slot is a
+hard error, a delete-and-recreate drops the clip's envelopes, and `duplicate_clip_to_arrangement`
+carries a ride off an audio session clip exactly as off a MIDI one — a control duplicate
+without an envelope was run so the `automation_state` flip could be trusted. Live also
+checks path absoluteness before existence, a third error shape row 1c never saw.
+
+Two things fell out of running the write path instead of reading about it. Simpler's sample
+assignment via `replace_sample` and its `Sample` surface are recorded for wave 4 (#330), and
+`ableton_probe(set)` turned out unable to write an int from this client — its untyped
+`value` arrives as a string — which is backlogged as #508 with a repro. The two push refusals that
+cited this chunk are now **chunk 07** in the plan; they stay in force until it is built, and
+`capability-truth.md` says exactly that.
+
+## 2026-09-09 — A sample is song material: audio clips place, conform and round-trip
+
+<!-- prawduct: type=feature | scope=SMP-6V2K -->
+
+Audio clips reach Live. An audio file referenced from `build.py` places into a session
+slot with its warp mode, transpose, gain and markers as authored, and into the arrangement
+as a placement; a clip dragged into Live by hand comes back into the song's source on pull,
+in a portable path form; and a volume ride or send throw authored under an audio clip
+pushes, because an audio host now routes exactly like a MIDI one. The DB has modeled all of
+this since CLP-AUD1 and the LOM calls were probe-confirmed on 12.4.1 — this wave is the
+wiring between them. Closes the `audio_path_deferred` no-op, the two push refuse-loudly
+paths, the pull refusal, and the `refused_audio` envelope route.
+
+**The read half was the gap nobody had noticed.** `list` reported a clip's name and length
+and nothing else — no discriminator, no file path, no warp state — so pull could never have
+ingested audio at all. Found by reconciling the plan against its own requirements before
+building, which is the one place that gap had no owner: it sat at the far end of the
+dependency chain, in a chunk whose builder would have had no authority to change the wire.
+
+**What it deliberately does NOT do**, because guessing would be worse: re-pointing a clip
+at a different file, and an arrangement placement whose clip hosts an envelope, both refuse
+loudly and name what is unknown. `Clip.file_path` is read-only, so a re-point is a
+delete-and-recreate, and whether a recreate preserves the clip's envelopes has not been
+probed — a recreate could drop an authored ride, and re-emitting one "just in case" could
+double a ride that survived. The arrangement copy also carries no conform: Live's direct
+arrangement-create takes no properties and the planner cannot address the new clip until
+after the call returns, so the run reports that gap rather than implying a conform it did
+not apply.
+
+**Nothing regresses the MIDI path**, and that is measured rather than asserted: a
+concurrent song session pushed a pure-MIDI set through this branch's engine — 58/58 clips,
+116/116 arrangement placements, `verify-arrangement` faithful with no orphans. Both
+rewritten modules met a real set. The audio path itself has NOT been live-verified, and
+`capability-truth.md` says so: its new audio row ships at partial, not full.
+
+Also corrected here, because they had quietly become false: four surfaces still describing
+the refusals this wave removed (the agent-facing `gaps.md`, `terminology.md`, `README.md`,
+`song-authoring-conventions.md`), `authorship-model.md`'s claim that Live won't create
+session audio clips, and `schema.sql`'s promise that `clips.reverse` materializes at push —
+Live exposes no settable reverse at all, so the clips phase refuses a row that sets it.
+
+Deferred with citations rather than carried: #504 (the arrangement integrity assert's
+blindness to a dropped audio placement — fixed here, since this wave made that path
+destructive), #505, #506, #507.
+
 ## 2026-09-09 — Doc deep-links: the parity check now covers every link, not one file
 
 <!-- prawduct: type=bugfix | scope=docs-hygiene | status=shipped -->

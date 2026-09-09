@@ -134,11 +134,19 @@ CREATE TABLE IF NOT EXISTS clips (
     -- Consumers must read `warping` before interpreting the markers.
     start_marker            REAL,
     end_marker              REAL,
-    -- AUD-7R3M / SMP-7K2D: reverse is the playback-param sibling the audio
-    -- family above is missing — ONE immutable audio_file, played reversed when
-    -- set (NULL/0 = forward, 1 = reversed). Materialized at push as Live's clip
-    -- reverse (a playback parameter, NOT a derived/committed file). See
-    -- .prawduct/artifacts/plans/SMP-7K2D/archive/design.md.
+    -- AUD-7R3M: ONE immutable audio_file, played reversed when set
+    -- (NULL/0 = forward, 1 = reversed).
+    -- NOT MATERIALIZED AT PUSH. A Live
+    -- Clip exposes no settable reverse at all — absent from the 12.4.1
+    -- LomTypes gate table AND from a live `describe` of a real audio clip on
+    -- 12.4.5 (docs/research/audio-first-class/lom-probe-results.md row 14) —
+    -- so the wire carries no `reverse` and the clips phase refuses a row that
+    -- sets it rather than silently pushing a clip that plays forward. The
+    -- column stays because the INTENT is real; it materializes only as a
+    -- reversed DERIVED ASSET — a clip pointed at the reversed file, or a
+    -- sampler whose sample is the reversed file. Simpler has no Reverse
+    -- parameter either: its reverse() is a destructive method that writes a
+    -- derived file (row 19), so the derived asset is the whole story (#237).
     reverse                 INTEGER,
     UNIQUE(track_id, slot)
 );

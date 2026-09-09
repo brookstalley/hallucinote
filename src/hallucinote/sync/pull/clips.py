@@ -4,17 +4,42 @@
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 from typing import Any
 
 from hallucinote.db import mutations as M, queries as Q
+from hallucinote.paths import audio_file_ref, same_audio_file, song_dir_for_conn
 
 from ._core import (
     PullCall,
     PullPlan,
     ApplyResult,
-    _floats_differ,
     _beats_to_position_bar,
+    _bool_db,
+    _floats_differ,
+    _ints_differ,
+    _raw_values_match,
 )
+
+
+# ---------------------------------------------------------------------------
+# Audio-clip ingest: the path form, and the song anchor it is measured against
+# ---------------------------------------------------------------------------
+
+
+def _raw_floats_differ(new: Any, existing: Any) -> bool:
+    """:func:`_floats_differ` with a magnitude-relative tolerance (DEV-4P7R).
+
+    For values that carry native magnitude rather than a [0,1] scale — a start
+    marker 240 beats into a clip. An absolute epsilon reads Live's
+    fourth-significant-digit jitter at that magnitude as drift, and would churn
+    the row plus an event on every pull.
+    """
+    if new is None:
+        return False
+    if existing is None:
+        return True
+    return not _raw_values_match(float(new), existing)
 
 
 def plan_pull_arrangement_clips(
@@ -225,19 +250,9 @@ def _apply_arrangement_clips_for_track(
     # for the common case.
     db_by_pos: dict[tuple[float, float], sqlite3.Row] = {}
     for r in db_rows:
-        if r["clip_kind"] == "audio":
-            # CLP-AUD1: audio-clip rows are authored but not synced
-            # until CLP-AUD2, so Live never reports their placements —
-            # including them in the diff would delete authored state on
-            # every pull. Exempt them loudly.
-            out.warnings.append(
-                f"track {track_row['name']!r}: arrangement placement at "
-                f"bar {r['start_bar']:g}..{r['end_bar']:g} references "
-                f"audio clip {r['clip_name']!r} (kind='audio') — "
-                "audio-clip sync is CLP-AUD2 scope; the row is authored "
-                "but not synced, so pull leaves it untouched."
-            )
-            continue
+        # Audio placements enter the diff like any other; whether an ABSENT
+        # one is a deletion is decided in the removal pass below, on the
+        # placement's link rather than its kind.
         k = (_pos_key(r["start_bar"]), _pos_key(r["end_bar"]))
         if k in db_by_pos:
             kept = db_by_pos[k]
@@ -292,6 +307,34 @@ def _apply_arrangement_clips_for_track(
     for k, row in db_by_pos.items():
         if k in seen:
             continue
+        clip_row = Q.get_clip(conn, row["clip_id"]) if row["clip_id"] else None
+        if (
+            clip_row is not None
+            and clip_row["kind"] == "audio"
+            and Q.get_ableton_link(
+                conn, session_id=session_id, db_kind="arrangement_clip",
+                db_id=row["id"],
+            ) is None
+        ):
+            # An absent MIDI placement means the user deleted it, because push
+            # always creates one. An absent AUDIO placement is ambiguous only
+            # while it is UNLINKED: push legitimately refuses to create an
+            # audio placement whose sample is not on disk (and says so), so
+            # "Live does not have it" can mean "push declined". The link is
+            # what tells the two apart — push records one when the placement
+            # lands, so a LINKED absent placement was in Live and is gone, a
+            # real deletion diffed like any other. Pull cannot see push's
+            # refusals, so an unlinked one is kept and reported.
+            out.warnings.append(
+                f"track {track_row['name']!r}: audio arrangement placement at "
+                f"bar {row['start_bar']:g}..{row['end_bar']:g} "
+                f"({row['clip_name']!r}) is absent from Live and was never "
+                "pushed (no link) — push can legitimately refuse to create an "
+                "audio placement, so this is NOT read as a deletion and the "
+                "row is kept. If you did delete it in Live, remove the "
+                "placement in build.py."
+            )
+            continue
         M.remove_arrangement_clip(
             conn, arrangement_clip_id=row["id"],
             actor=actor, request_id=request_id, reason=reason,
@@ -328,16 +371,33 @@ def _apply_session_clips_for_track(
       - slot populated in both DB and Ableton, name + length match -> no-op
       - slot populated in both, name and/or length drift           -> `update_clip` with the drifted fields
       - slot populated in DB only (Ableton slot empty)             -> `delete_clip`
-      - slot populated in Ableton only                             -> warn + skip
+      - slot populated in Ableton only, MIDI                       -> warn + skip
         (V1 can't auto-create the DB clip from name + length alone;
          note pull would let us fill in content, but distinguishing a
          brand-new session clip from a moved-into-this-slot existing
          clip is the same identity problem as the arrangement case)
+      - slot populated in Ableton only, AUDIO                      -> `create_audio_clip`
+      - slot populated in both, but the two disagree on kind       -> warn + skip
+
+    **An audio clip in Live is ingested (R1.2).** MIDI cannot be
+    auto-created because the wire carries no note content, but an audio clip
+    is fully described by what it plays and how it is conformed — file, gain,
+    transpose, warp, markers — and every one of those travels on the `list`
+    payload. So a line the user dragged into Live by hand is ingested rather
+    than warned about. It lands in the DB, which is materialized state, not
+    source: like a `clip-notes` pull, this is the STAGING lane — the row is
+    what you read to fold the clip into `build.py`, and a `build.py --reset`
+    drops it until you do. Its file reference is stored in the two forms
+    `clips.audio_file` is defined to carry (see :func:`hallucinote.paths.audio_file_ref`).
+
+    Kind is immutable on a clip row, so a slot where Live and the DB disagree
+    on kind is reported, never coerced: converting is delete + create, and
+    doing that silently on a pull would drop authored state.
 
     Note content drift is NOT detected here — that's Chunk D's job
     (note pull via stable-ID read). This planner only diffs the
-    container-level fields (`name`, `length`) the MCP read action
-    returns.
+    container-level fields (`name`, `length`) plus, for audio, the conform
+    surface the MCP read action returns.
 
     Defense-in-depth link check parallels `_apply_arrangement_clips_for_track`.
     """
@@ -366,24 +426,13 @@ def _apply_session_clips_for_track(
         )
         return
 
-    db_by_slot: dict[int, sqlite3.Row] = {}
-    audio_slots: set[int] = set()
-    for c in Q.get_clips_for_track(conn, track_id):
-        slot = int(c["slot"])
-        if c["kind"] == "audio":
-            # CLP-AUD1: audio-clip rows are authored but not synced
-            # until CLP-AUD2, so Live's slot state says nothing about
-            # them — diffing would delete (empty slot) or mis-ingest
-            # (foreign clip in the slot) authored state. Exempt loudly.
-            audio_slots.add(slot)
-            out.warnings.append(
-                f"track {track_row['name']!r}: session slot {slot} holds "
-                f"audio clip {c['name']!r} (kind='audio') — audio-clip "
-                "sync is CLP-AUD2 scope; the row is authored but not "
-                "synced, so pull does not diff or delete it."
-            )
-            continue
-        db_by_slot[slot] = c
+    # Audio rows are in the diff like any other. Whether an EMPTY slot under
+    # an audio row is a deletion is decided on the row's link, not its kind —
+    # see the empty branch below.
+    db_by_slot: dict[int, sqlite3.Row] = {
+        int(c["slot"]): c for c in Q.get_clips_for_track(conn, track_id)
+    }
+    song_dir = song_dir_for_conn(conn)
     seen: set[int] = set()
 
     for entry in clips_in:
@@ -395,25 +444,40 @@ def _apply_session_clips_for_track(
             )
             continue
         slot = int(slot_in)
-        if slot in audio_slots:
-            # Guarded above: the DB row at this slot is an unsynced
-            # audio clip; neither the empty-slot delete nor the
-            # populated-slot diff may touch it.
-            continue
         seen.add(slot)
         empty = bool(entry.get("empty", False))
         db_clip = db_by_slot.get(slot)
 
         if empty:
-            # Ableton slot empty; if DB has a clip, delete it.
-            if db_clip is not None:
-                _delete_session_clip_observing_cascade(
-                    conn, track_row=track_row, slot=slot, db_clip=db_clip,
-                    out=out, actor=actor, request_id=request_id, reason=reason,
-                    cause="cleared in Ableton",
-                )
-            else:
+            if db_clip is None:
                 out.no_ops += 1
+                continue
+            if db_clip["kind"] == "audio" and Q.get_ableton_link(
+                conn, session_id=session_id, db_kind="clip", db_id=db_clip["id"],
+            ) is None:
+                # An empty slot under a MIDI row is a deletion, because push
+                # always creates a MIDI clip. Under an UNLINKED audio row it is
+                # ambiguous: the clips phase legitimately plans no create for
+                # an audio row whose sample is not yet on disk (blocked, and
+                # said), so the slot is empty because push declined, not
+                # because the user cleared it. Deleting on that reading erases
+                # the row AND cascades its placements. A linked audio row was
+                # in Live, so its empty slot is a real clear — the arrangement
+                # pass above rules its absent placements the same way.
+                out.warnings.append(
+                    f"track {track_row['name']!r}: session slot {slot} is empty "
+                    f"in Live but the DB's audio clip {db_clip['name']!r} there "
+                    "was never pushed (no link) — push can legitimately refuse "
+                    "to create an audio clip (sample not on disk), so this is "
+                    "NOT read as a deletion and the row is kept. If you did "
+                    "clear it in Live, remove the clip in build.py."
+                )
+                continue
+            _delete_session_clip_observing_cascade(
+                conn, track_row=track_row, slot=slot, db_clip=db_clip,
+                out=out, actor=actor, request_id=request_id, reason=reason,
+                cause="cleared in Ableton",
+            )
             continue
 
         # Ableton slot populated. SYN-9K5T parity: the arrangement-clip
@@ -430,12 +494,45 @@ def _apply_session_clips_for_track(
             )
             continue
 
+        # `is_audio` is the wire's discriminator; an audio entry also carries
+        # the conform surface, and a MIDI entry omits those keys entirely
+        # rather than null-filling them, so absence never means "audio whose
+        # file we could not determine". A payload from a pre-audio server
+        # omits the key altogether and reads as MIDI — the same conservative
+        # default the handler itself takes.
+        is_audio = bool(entry.get("is_audio", False))
+        live_kind = "audio" if is_audio else "midi"
+
+        if db_clip is not None and db_clip["kind"] != live_kind:
+            # Clip `kind` is immutable (MIDI <-> audio is delete + create), so
+            # this is reported rather than coerced. Silently drift-updating
+            # across the kinds would write Live's foreign clip over authored
+            # state — a MIDI name and length onto an audio row, or an audio
+            # file reference the mutator would refuse.
+            out.warnings.append(
+                f"track {track_row['name']!r}: session slot {slot} holds a "
+                f"kind={live_kind!r} clip in Live but a "
+                f"kind={db_clip['kind']!r} clip {db_clip['name']!r} in the "
+                "DB — clip kind is immutable, so pull does not convert it. "
+                "Delete one side (delete+create doctrine) and re-run pull."
+            )
+            continue
+
+        if is_audio:
+            _ingest_session_audio_clip(
+                conn, track_row=track_row, slot=slot, entry=entry,
+                db_clip=db_clip, song_dir=song_dir, out=out,
+                actor=actor, request_id=request_id, reason=reason,
+            )
+            continue
+
         if db_clip is None:
-            # Ableton has content the DB doesn't know about. Same V1
+            # Ableton has MIDI content the DB doesn't know about. Same V1
             # limitation as the arrangement-clip case: positional
             # matching can't distinguish a brand-new clip from a
             # session-side move, and the MCP wire shape doesn't carry
-            # note content for auto-create.
+            # note content for auto-create. (An AUDIO clip IS auto-created —
+            # everything that defines it travels on this payload.)
             out.warnings.append(
                 f"track {track_row['name']!r}: session slot {slot} has "
                 f"clip {entry.get('name')!r} (length {entry.get('length')}) "
@@ -480,6 +577,182 @@ def _apply_session_clips_for_track(
             out=out, actor=actor, request_id=request_id, reason=reason,
             cause="out of Ableton range",
         )
+
+
+def _ingest_session_audio_clip(
+    conn: sqlite3.Connection,
+    *,
+    track_row: sqlite3.Row,
+    slot: int,
+    entry: dict[str, Any],
+    db_clip: sqlite3.Row | None,
+    song_dir: Path | None,
+    out: ApplyResult,
+    actor: str,
+    request_id: str | None,
+    reason: str | None,
+) -> None:
+    """Ingest one audio clip Live reports in a session slot (R1.2).
+
+    Creates the `clips` row when the DB has nothing at this slot — **the case
+    this exists for**: a line the user dragged into Live by hand is staged
+    into the DB (materialized state — fold it into `build.py` to keep it,
+    as with a `clip-notes` pull) instead of living only in the `.als`.
+    Otherwise it conforms the existing audio row to what Live now holds.
+
+    `reverse` is never written: Live exposes no reverse property on a Clip at
+    all, so the wire reports none and pull would be inventing state.
+
+    Live's `length`, `start_marker` and `end_marker` carry a dual unit —
+    BEATS when the clip is warped, SECONDS when it is not. They are stored as
+    reported, with `warping` on the same row saying which unit it is; writing
+    a seconds-valued length into `length_beats` is called out in a warning
+    rather than silently normalized, because there is no tempo-independent
+    conversion to make.
+    """
+    name_in = entry.get("name")
+    length_in = entry.get("length")
+    file_in = entry.get("file_path")
+    gain_in = entry.get("gain")
+    coarse_in = entry.get("pitch_coarse")
+    fine_in = entry.get("pitch_fine")
+    warping_in = _bool_db(entry.get("warping"))
+    warp_mode_in = entry.get("warp_mode")
+    start_in = entry.get("start_marker")
+    end_in = entry.get("end_marker")
+
+    def _unwarped_unit_note(what: str) -> None:
+        if warping_in == 0:
+            out.warnings.append(
+                f"track {track_row['name']!r}: session slot {slot} holds an "
+                f"UNWARPED audio clip, so Live reports its {what} in SECONDS, "
+                "not beats (Live's dual unit). The value is stored as "
+                "reported and the row records warping=0 alongside it; warp "
+                "the clip in Live if you want musical-time values."
+            )
+
+    if db_clip is None:
+        # --- the hand-dragged case: Live has it, the song does not ---
+        if track_row["kind"] != "audio":
+            out.warnings.append(
+                f"track {track_row['name']!r}: session slot {slot} holds an "
+                f"audio clip {name_in!r} in Live, but the DB models this "
+                f"track as kind={track_row['kind']!r} — Live hosts audio "
+                "clips only on audio tracks, so the two disagree about what "
+                "this track is. Not ingested; fix the track kind (delete + "
+                "create) and re-run pull."
+            )
+            return
+        if not file_in:
+            out.warnings.append(
+                f"track {track_row['name']!r}: session slot {slot} reports an "
+                f"audio clip {name_in!r} with no 'file_path' — the row must "
+                "answer 'what does this clip play?', so it cannot be "
+                "ingested. Re-run pull against a server that reports audio "
+                "file paths."
+            )
+            return
+        if length_in is None:
+            out.warnings.append(
+                f"track {track_row['name']!r}: session slot {slot} reports an "
+                f"audio clip {name_in!r} with no 'length' — cannot ingest a "
+                "clip with no extent; skipping."
+            )
+            return
+        ref = audio_file_ref(song_dir, str(file_in))
+        _unwarped_unit_note("length and markers")
+        try:
+            cid = M.create_audio_clip(
+                conn,
+                track_id=track_row["id"],
+                slot=slot,
+                length_beats=float(length_in),
+                audio_file=ref,
+                name=name_in,
+                gain=None if gain_in is None else float(gain_in),
+                pitch_coarse=None if coarse_in is None else int(coarse_in),
+                pitch_fine=None if fine_in is None else float(fine_in),
+                warping=warping_in,
+                warp_mode=None if warp_mode_in is None else int(warp_mode_in),
+                start_marker=None if start_in is None else float(start_in),
+                end_marker=None if end_in is None else float(end_in),
+                actor=actor, request_id=request_id, reason=reason,
+            )
+        except ValueError as exc:
+            # The mutator validates Live's value domains. A value outside them
+            # is worth failing on — but this clip, not the whole pull: an
+            # aborted pull rolls back every OTHER clip already read, so one
+            # unexpected reading from Live would cost the user the entire
+            # round trip. Same reasoning as the push side's blocked-not-error.
+            out.warnings.append(
+                f"track {track_row['name']!r}: session slot {slot} audio clip "
+                f"{name_in!r} was NOT ingested — Live reported a value the "
+                f"model rejects ({exc}). Every other clip in this pull is "
+                "unaffected."
+            )
+            return
+        out.mutations += 1
+        out.details.append(
+            f"track {track_row['name']!r}: session slot {slot} audio clip "
+            f"{name_in!r} ingested from Live (clip_id={cid[:8]}, "
+            f"audio_file={ref!r})"
+        )
+        return
+
+    # --- the DB already knows this clip: conform it to Live ---
+    changes: dict[str, Any] = {}
+    if name_in is not None and name_in != db_clip["name"]:
+        changes["name"] = name_in
+    # A value Live did not report is silence, never "clear it": each
+    # comparison is guarded on the reported value being present, which is
+    # also what the `_*_differ` helpers' None asymmetry already encodes.
+    if length_in is not None and _floats_differ(length_in, db_clip["length_beats"]):
+        changes["length_beats"] = float(length_in)
+    if file_in and not same_audio_file(song_dir, db_clip["audio_file"], str(file_in)):
+        # The user pointed the slot at a different sample in Live. Leaving
+        # the old reference would make the next push overwrite their choice
+        # with the file they replaced.
+        changes["audio_file"] = audio_file_ref(song_dir, str(file_in))
+    if gain_in is not None and _floats_differ(gain_in, db_clip["audio_gain"]):
+        changes["audio_gain"] = float(gain_in)
+    if coarse_in is not None and _ints_differ(coarse_in, db_clip["pitch_coarse"]):
+        changes["pitch_coarse"] = int(coarse_in)
+    if fine_in is not None and _floats_differ(fine_in, db_clip["pitch_fine"]):
+        changes["pitch_fine"] = float(fine_in)
+    if warping_in is not None and _ints_differ(warping_in, db_clip["warping"]):
+        changes["warping"] = warping_in
+    if warp_mode_in is not None and _ints_differ(warp_mode_in, db_clip["warp_mode"]):
+        changes["warp_mode"] = int(warp_mode_in)
+    if start_in is not None and _raw_floats_differ(start_in, db_clip["start_marker"]):
+        changes["start_marker"] = float(start_in)
+    if end_in is not None and _raw_floats_differ(end_in, db_clip["end_marker"]):
+        changes["end_marker"] = float(end_in)
+
+    if not changes:
+        out.no_ops += 1
+        return
+    if "length_beats" in changes:
+        _unwarped_unit_note("length")
+    try:
+        M.update_clip(
+            conn, clip_id=db_clip["id"],
+            actor=actor, request_id=request_id, reason=reason,
+            **changes,
+        )
+    except ValueError as exc:
+        # Per the create path above: one clip's out-of-domain reading must not
+        # roll back every other clip this pull already conformed.
+        out.warnings.append(
+            f"track {track_row['name']!r}: session slot {slot} audio clip was "
+            f"NOT conformed — Live reported a value the model rejects "
+            f"({exc}). Every other clip in this pull is unaffected."
+        )
+        return
+    out.mutations += 1
+    out.details.append(
+        f"track {track_row['name']!r}: session slot {slot} audio clip "
+        f"conformed to Live (clip_id={db_clip['id'][:8]}): {changes!r}"
+    )
 
 
 def _delete_session_clip_observing_cascade(

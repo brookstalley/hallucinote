@@ -702,6 +702,7 @@ def execute_push(
     stop_after: str | None = None,
     progress_fn: Callable[[str], None] | None = None,
     live_arrangement_clips_by_track: push.LiveArrangementProbe = None,
+    live_session_clips_by_track: push.LiveSessionClipProbe = None,
 ) -> ExecuteResult:
     """Run the full fourteen-phase push, dispatching each call via ``send_fn``.
 
@@ -727,6 +728,12 @@ def execute_push(
     `tracks` phase has created the song's Live tracks. See
     :func:`push.plan_push_song` for why an eagerly-probed map is wrong on a
     first push.
+
+    ``live_session_clips_by_track`` is the same shape for the CLIPS phase, and
+    is what tells an audio clip's reconcile whether the slot already plays the
+    file the row names. Without it the phase conforms in place and plans no
+    create and no delete — safe, but it can neither detect a swapped sample nor
+    reach zero calls on an unchanged song, and it says so with an alert.
 
     Outcome (PSH-ARRPROBE): "ok" only when every phase either did its work or
     had none to do. A phase that could not DETERMINE its work (a failed probe,
@@ -809,6 +816,7 @@ def execute_push(
         perform_slowdown_factor=perform_slowdown_factor,
         live_arrangement_clips_by_track=live_arrangement_clips_by_track,
         live_device_chains=_device_chain_probe,
+        live_session_clips_by_track=live_session_clips_by_track,
     )
     phases, scope = _filter_phases(
         phases, only=only, start_at=start_at, stop_after=stop_after,

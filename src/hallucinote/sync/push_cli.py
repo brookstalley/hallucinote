@@ -214,10 +214,19 @@ def _probe_live_session_clips_via_mcp(
     """Probe ``ableton_clip(action='list', location='session')`` per Live track.
 
     Returns a dict keyed by ``track_index`` with the POPULATED session clips
-    (``{clip_index, name, ...}`` — empty slots dropped) for clip-prune (B1b) to
-    reconcile against the DB. A per-track probe failure falls back to "no clips
-    known" for that track (it simply won't surface orphans there) rather than
-    aborting the whole prune.
+    (``{clip_index, name, ...}`` — empty slots dropped).
+
+    **Key presence is the signal, and consumers depend on it.** A track that
+    probed successfully is always present, with an empty list when it holds no
+    clips; a track whose probe FAILED is left ABSENT. Those mean different
+    things — "this track has no clips" versus "this track's state is unknown" —
+    and a consumer that flattens them with ``.get(idx, [])`` will answer an
+    unknown slot as an empty one. For the clips phase that means a
+    ``replace=True`` recreate against a clip the operator really has. Read
+    absence with :data:`hallucinote.sync.push.clips.PROBE_UNKNOWN` semantics,
+    never with a default.
+
+    A per-track failure degrades that one track rather than aborting the run.
     """
     if send_fn is None:
         from hallucinote_mcp import client as _client  # type: ignore[import-not-found]
@@ -864,6 +873,27 @@ def _cmd_execute(args: argparse.Namespace) -> int:
             return {}
         return _probe_live_arrangement_clips_via_mcp(live_tracks=live_tracks_now)
 
+    def _probe_session_clips() -> dict[int, list[dict]] | None:
+        try:
+            live_tracks_now, _ = _probe_live_via_mcp()
+        except (SystemExit, OSError, _live_connection_errors()) as exc:
+            # Runs MID-RUN, inside the clips phase's planner, so an escaping
+            # exception would abandon the push without its terminal state file.
+            # Degrade to None — "no probe taken" — which the clips planner reads
+            # as conform-in-place with no create and no delete. That is the
+            # NON-destructive direction, the opposite of the arrangement probe's
+            # empty-map degradation, because this phase never clears: not
+            # knowing Live's state costs the changed-file check and zero-call
+            # idempotency, and both announce themselves rather than acting.
+            sys.stderr.write(
+                "push_cli execute: the session-clip probe could not read Live's "
+                f"track list ({exc}); the clips phase will conform in place and "
+                "plan no create or delete rather than reconcile against state it "
+                "cannot see.\n"
+            )
+            return None
+        return _probe_live_session_clips_via_mcp(live_tracks=live_tracks_now)
+
     try:
         result = push_execute.execute_push(
             conn=conn,
@@ -878,6 +908,7 @@ def _cmd_execute(args: argparse.Namespace) -> int:
             stop_after=stop_after,
             progress_fn=_stderr_progress,
             live_arrangement_clips_by_track=_probe_arrangement_lanes,
+            live_session_clips_by_track=_probe_session_clips,
         )
     except push_execute.PhaseTargetError as exc:
         sys.stderr.write(f"push_cli execute: {exc}\n")

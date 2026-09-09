@@ -219,6 +219,55 @@ def test_phase_plan_fn_reflects_current_db_state(conn, song, session):
 # ---------------------------------------------------------------------------
 
 
+def test_clips_phase_receives_the_session_clip_probe_and_resolves_it_lazily(
+    conn, song, session
+):
+    """The clips phase's audio reconcile is worthless unless the probe actually
+    reaches it, and the way it fails is silent: the planner accepts the map, the
+    orchestrator never passes one, and every audio re-push quietly takes the
+    probe-less branch while looking like it reconciled. This pins both halves —
+    that the map arrives, and that the thunk is called INSIDE the phase rather
+    than at ``plan_push_song`` time, which is what lets it see the Live tracks
+    the `tracks` phase creates on a first push.
+    """
+    calls: list[str] = []
+
+    def probe() -> dict[int, list[dict]]:
+        calls.append("probed")
+        return {1: [{"clip_index": 1, "name": "x", "is_audio": False}]}
+
+    phases = push.plan_push_song(
+        conn, song_id=song, session_id=session,
+        live_session_clips_by_track=probe,
+    )
+    # Building the phase list must NOT have probed.
+    assert calls == []
+
+    clips_phase = next(p for p in phases if p.name == "clips")
+    clips_phase.plan_fn()
+    assert calls == ["probed"]
+
+
+def test_session_clip_probe_accepts_a_plain_dict_too(conn, song, session):
+    """Tests and non-execute callers pass an already-materialized map; only the
+    execute path needs the thunk. Both must reach the planner identically."""
+    phases = push.plan_push_song(
+        conn, song_id=song, session_id=session,
+        live_session_clips_by_track={1: []},
+    )
+    clips_phase = next(p for p in phases if p.name == "clips")
+    clips_phase.plan_fn()  # must not raise
+
+
+def test_session_clip_probe_defaults_to_none(conn, song, session):
+    """No probe is the safe degradation for THIS phase — conform in place, no
+    create, no delete — unlike the arrangement probe, where an unknown lane must
+    block rather than be cleared. Callers that pass nothing get it."""
+    phases = push.plan_push_song(conn, song_id=song, session_id=session)
+    clips_phase = next(p for p in phases if p.name == "clips")
+    clips_phase.plan_fn()  # must not raise
+
+
 def test_empty_song_each_phase_plans_cleanly(conn, song, session):
     """Empty song: every phase's plan_fn runs without raising, each
     plan is either empty or carries an informational warn. Pin this so
@@ -421,8 +470,8 @@ def test_plan_push_clips_prefixes_per_clip_warnings(
 
     real = push.plan_push_clip
 
-    def fake(conn, *, clip_id, session_id):
-        sub = real(conn, clip_id=clip_id, session_id=session_id)
+    def fake(conn, *, clip_id, session_id, **kwargs):
+        sub = real(conn, clip_id=clip_id, session_id=session_id, **kwargs)
         sub.warn("synthetic note")
         return sub
 
@@ -450,9 +499,16 @@ def test_plan_push_clips_empty_song_warns(conn, song, session):
     assert any("no clips" in n for n in plan.notes), plan.notes
 
 
-def test_plan_push_clip_refuses_audio_clip_loudly(conn, song, session):
-    """CLP-AUD1: a kind='audio' clip must never emit the MIDI create —
-    warn (naming CLP-AUD2 + authored-but-not-synced) and emit no calls."""
+def test_plan_push_clip_materializes_an_audio_clip(
+    conn, song, session, tmp_path
+):
+    """SMP-6V2K: a kind='audio' clip materializes as an AUDIO create carrying
+    the resolved absolute sample path — and still never as the MIDI create,
+    which would put an empty MIDI clip in the slot the sample belongs in.
+    (The refusal paths this test used to pin live in
+    ``test_push_audio_clips.py``.)"""
+    (tmp_path / "assets").mkdir(exist_ok=True)
+    (tmp_path / "assets" / "gtr.wav").write_bytes(b"RIFF")
     track = M.create_track(
         conn, song_id=song, track_index=1, name="Stems", kind="audio",
     )
@@ -464,19 +520,21 @@ def test_plan_push_clip_refuses_audio_clip_loudly(conn, song, session):
         audio_file="assets/gtr.wav", name="gtr",
     )
     plan = push.plan_push_clip(conn, clip_id=cid, session_id=session)
-    assert plan.calls == []
-    assert len(plan.notes) == 1
-    note = plan.notes[0]
-    assert "CLP-AUD2" in note
-    assert "authored but not synced" in note
+    assert [c.key for c in plan.calls] == [f"clip:{cid}"]
+    assert plan.calls[0].args["kind"] == "audio"
+    assert plan.calls[0].args["audio_path"] == str(tmp_path / "assets" / "gtr.wav")
+    assert "notes" not in plan.calls[0].args
+    assert plan.blocked_reasons == []
 
 
-def test_plan_push_clips_audio_skip_leaves_midi_siblings_unchanged(
-    conn, song, session
+def test_plan_push_clips_emits_each_kind_with_its_own_create(
+    conn, song, session, tmp_path
 ):
-    """Regression: the audio refusal must not perturb the MIDI emission —
-    the sibling MIDI clip still gets its kind='midi' create call, and the
-    audio warn rides through the aggregator with the clip-name prefix."""
+    """Regression: the two kinds do not perturb each other — the MIDI clip
+    still gets its kind='midi' create with notes, and the audio clip gets a
+    kind='audio' create with a path and no note array."""
+    (tmp_path / "assets").mkdir(exist_ok=True)
+    (tmp_path / "assets" / "gtr.wav").write_bytes(b"RIFF")
     midi_track = M.create_track(
         conn, song_id=song, track_index=1, name="T", kind="midi",
     )
@@ -491,23 +549,29 @@ def test_plan_push_clips_audio_skip_leaves_midi_siblings_unchanged(
     mc = M.create_clip(
         conn, track_id=midi_track, slot=1, length_beats=4.0, name="loop_a",
     )
-    M.create_audio_clip(
+    ac = M.create_audio_clip(
         conn, track_id=audio_track, slot=1, length_beats=16.0,
         audio_file="assets/gtr.wav", name="gtr",
     )
     plan = push.plan_push_clips(conn, song_id=song, session_id=session)
-    assert [c.key for c in plan.calls] == [f"clip:{mc}"]
-    assert plan.calls[0].args["action"] == "create"
-    assert plan.calls[0].args["kind"] == "midi"
-    assert any(n.startswith("[gtr] ") and "CLP-AUD2" in n for n in plan.notes)
+    by_key = {c.key: c for c in plan.calls}
+    assert set(by_key) == {f"clip:{mc}", f"clip:{ac}"}
+    assert by_key[f"clip:{mc}"].args["kind"] == "midi"
+    assert "notes" in by_key[f"clip:{mc}"].args
+    assert by_key[f"clip:{ac}"].args["kind"] == "audio"
+    assert "notes" not in by_key[f"clip:{ac}"].args
+    assert plan.blocked_reasons == []
 
 
-def test_plan_push_arrangement_names_audio_kind_in_unlinked_skip(
-    conn, song, session
+def test_plan_push_arrangement_places_an_audio_clip_without_a_session_source(
+    conn, song, session, tmp_path
 ):
-    """An arrangement placement of an audio clip can't reach Live until
-    CLP-AUD2; the skip-warn must name the real blocker, not loop the
-    caller back to the clip-create phase (which refuses audio clips)."""
+    """SMP-6V2K: an arrangement placement of an audio clip reaches Live
+    directly — Track.create_audio_clip(path, beats) places from the file, so
+    the placement needs no linked session counterpart the way an
+    envelope-bearing MIDI one does."""
+    (tmp_path / "assets").mkdir(exist_ok=True)
+    (tmp_path / "assets" / "gtr.wav").write_bytes(b"RIFF")
     track = M.create_track(
         conn, song_id=song, track_index=1, name="Stems", kind="audio",
     )
@@ -518,13 +582,16 @@ def test_plan_push_arrangement_names_audio_kind_in_unlinked_skip(
         conn, track_id=track, slot=1, length_beats=16.0,
         audio_file="assets/gtr.wav", name="gtr",
     )
-    M.add_arrangement_clip(
+    aid = M.add_arrangement_clip(
         conn, song_id=song, track_id=track, clip_id=cid,
         start_bar=1.0, end_bar=5.0,
     )
     plan = push.plan_push_arrangement(conn, song_id=song, session_id=session)
-    assert plan.calls == []
-    assert any("kind='audio'" in n and "CLP-AUD2" in n for n in plan.notes)
+    assert [c.key for c in plan.calls] == [f"arrangement_clip:{aid}"]
+    assert plan.calls[0].args["kind"] == "audio"
+    assert plan.calls[0].args["location"] == "arrangement"
+    assert plan.calls[0].args["start_beats"] == 0.0
+    assert plan.blocked_reasons == []
 
 
 # ---------------------------------------------------------------------------

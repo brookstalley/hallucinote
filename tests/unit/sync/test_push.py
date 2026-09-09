@@ -726,10 +726,13 @@ def test_unlinked_track_skip_is_blocked(conn, song, session, track, clip):
     assert any("not linked" in b for b in plan.blocked_reasons)
 
 
-def test_audio_track_skip_is_not_blocked(conn, song, session):
-    """The counterweight: an audio track is a DELIBERATE, known-scope no-op
-    (CLP-AUD2). Nothing is owed, so it must NOT make the push read incomplete —
-    otherwise every song with a vocal stem exits non-zero forever."""
+def test_audio_track_is_not_blocked(conn, song, session, tmp_path):
+    """The counterweight: an audio track whose placements CAN be materialized
+    is ordinary work, not an incomplete push — otherwise every song with a
+    vocal stem exits non-zero forever. (SMP-6V2K: it used to be a deliberate
+    no-op; now it is a real projection, and the invariant is the same.)"""
+    (tmp_path / "assets").mkdir(exist_ok=True)
+    (tmp_path / "assets" / "vox.wav").write_bytes(b"RIFF")
     atrack = M.create_track(
         conn, song_id=song, track_index=3, name="Vox", kind="audio",
     )
@@ -749,6 +752,7 @@ def test_audio_track_skip_is_not_blocked(conn, song, session):
         live_arrangement_clips_by_track={3: []},
     )
     assert plan.blocked_reasons == []
+    assert [c.args["kind"] for c in plan.calls] == ["audio"]
 
 
 def test_no_probe_at_all_is_an_alert_not_blocked(conn, song, session, track, clip):
@@ -907,13 +911,17 @@ def test_plan_push_arrangement_all_or_nothing_on_unresolved_envelope_clip(
     ), f"expected an all-or-nothing alert, got: {plan.alerts}"
 
 
-def test_plan_push_arrangement_audio_track_skipped_untouched(
-    conn, song, session
+def test_plan_push_arrangement_projects_an_audio_track(
+    conn, song, session, tmp_path
 ):
-    """An audio placement means an audio track: the whole track is left
-    UNTOUCHED (no clear) so manually-placed audio clips survive — audio-clip
-    arrangement push is CLP-AUD2 scope. A benign note (known scope gap, NOT an
-    alert) names it; clearing it would wipe audio we cannot rebuild."""
+    """SMP-6V2K: an audio track the DB HAS placements for is projected like any
+    other — the lane is cleared and the placement materialized from the row's
+    sample. (Before, the whole track was left untouched because audio could not
+    be rebuilt; a track the DB has NO placements for is still untouched, and
+    `test_plan_push_arrangement_audio_track_without_placements_untouched`
+    pins that half.)"""
+    (tmp_path / "assets").mkdir(exist_ok=True)
+    (tmp_path / "assets" / "vox.wav").write_bytes(b"RIFF")
     atrack = M.create_track(
         conn, song_id=song, track_index=3, name="Vox", kind="audio",
     )
@@ -933,8 +941,49 @@ def test_plan_push_arrangement_audio_track_skipped_untouched(
         conn, song_id=song, session_id=session,
         live_arrangement_clips_by_track=live,
     )
-    assert plan.calls == [], "audio track must be left untouched (no clear, no rebuild)"
-    assert any("audio" in n and "CLP-AUD2" in n for n in plan.notes)
+    assert [c.args["action"] for c in plan.calls] == ["delete", "create"]
+    assert plan.calls[1].args["kind"] == "audio"
+    assert plan.calls[1].args["audio_path"] == str(tmp_path / "assets" / "vox.wav")
+
+
+def test_plan_push_arrangement_audio_track_without_placements_untouched(
+    conn, song, session, track, clip
+):
+    """The half that did NOT change: a lane the DB has no placements for is
+    never cleared, so audio dropped into Live by hand survives a push. It is
+    true by construction (the loop is driven by DB rows) and the report names
+    the track so 'untouched' can't be read as 'forgotten'."""
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=2,
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip,
+        start_bar=1.0, end_bar=5.0,
+    )
+    atrack = M.create_track(
+        conn, song_id=song, track_index=3, name="Vox", kind="audio",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=atrack, ableton_index=3,
+    )
+    M.create_audio_clip(
+        conn, track_id=atrack, slot=1, length_beats=16.0,
+        audio_file="assets/vox.wav", name="vox",
+    )
+    live = {
+        2: [],
+        3: [{"arrangement_clip_index": 1, "start_beats": 0.0}],
+    }
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track=live,
+    )
+    assert not any(
+        c.args["track_index"] == 3 for c in plan.calls
+    ), "no DB placements → nothing to project on that lane, and nothing to clear"
+    # On the operator channel (alerts), not `notes` — the executor shows the
+    # operator alerts only, and "untouched" must not read as "forgotten".
+    assert any("Vox" in a and "UNTOUCHED" in a for a in plan.alerts)
 
 
 def test_plan_push_arrangement_sibling_track_unaffected_by_skip(
@@ -1049,7 +1098,7 @@ def test_plan_push_arrangement_clip_notes_skips_audio_source(
     conn, song, session
 ):
     """An audio source clip has no notes — its arrangement copy is not
-    refreshed (audio-clip sync is CLP-AUD2 scope)."""
+    refreshed by the notes phase; the clips and arrangement phases own it."""
     atrack = M.create_track(
         conn, song_id=song, track_index=2, name="Stems", kind="audio",
     )

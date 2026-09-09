@@ -607,6 +607,77 @@ class PartTransient:
 
 
 @dataclass(frozen=True)
+class IntelligibilityBand:
+    """One Bark band of the speech band, for one spoken turn.
+
+    ``lo_hz`` / ``hi_hz`` are the band's edges. ``speech_db`` and ``bed_db``
+    are the speech surface's and the bed's mean band power over the turn's
+    frames, in STFT-power dB with a floor at the analyzer's epsilon: the scale
+    is consistent within a report and across reports of one capture format,
+    but it is not calibrated dBFS, so read the DIFFERENCE, never the absolute.
+    ``speech_over_bed_db`` is that difference — how far the line sits above
+    (positive) or under (negative) the bed in this band. ``masked_fraction``
+    is the share of the turn's frames where the speech carries energy here
+    and the bed's spread excitation covers it (the masking lens's rule with
+    the speech as the target); ``NaN`` (→ JSON ``null``) when the speech had
+    no energy in the band during the turn, because there was nothing to mask.
+    """
+    lo_hz: float
+    hi_hz: float
+    speech_db: float
+    bed_db: float
+    speech_over_bed_db: float
+    masked_fraction: float
+
+
+@dataclass(frozen=True)
+class TurnIntelligibility:
+    """The speech band over the bed for one spoken turn — the film-mix number.
+
+    A turn is one audio placement on the declared speech track (one line),
+    clipped to the section it is reported under. ``start_s`` / ``end_s`` are
+    seconds against the capture — the domain the measurement ran in;
+    ``start_beat`` / ``end_beat`` are the same span in song-absolute beats,
+    the report's usual domain, filled by the orchestrator and ``None`` when
+    the measurement was driven directly with no beat map. ``label`` names the
+    line when the caller knows it.
+
+    The turn-level numbers pool the speech band's Bark tiles: ``speech_db``
+    and ``bed_db`` are the mean power summed across those bands over the
+    turn's frames (the same uncalibrated STFT-power dB as the per-band rows),
+    ``speech_over_bed_db`` their difference, and ``masked_fraction`` the
+    masked share of the speech's energized tiles across the whole speech
+    band. ``n_frames`` is how many STFT frames the turn afforded; ``0`` means
+    the turn was too short to analyse and every measurement is ``NaN`` (→
+    JSON ``null``), the honest "unmeasured" sentinel this report uses
+    everywhere. ``bands`` is the per-band breakdown, low to high.
+
+    NEUTRAL MEASUREMENT, deliberately without a threshold, a grade or a
+    finding: a line meant to sit under the music is authorship, and only the
+    reader knows which lines those are. The framing that turns these numbers
+    into a producer's question is the interpreter's, not this row's.
+
+    Two limits carried rather than corrected: the bed is the mono sum of the
+    other stems at mix level, so it is pan-blind like the masking lens; and
+    the speech band (300–3400 Hz) is the telephone band — the consonant energy
+    above it that separates *sat* from *fat* is measured only by the bands'
+    upper edge, so a bright bed can eat articulation this row cannot see.
+    """
+    turn_index: int
+    start_s: float
+    end_s: float
+    speech_db: float
+    bed_db: float
+    speech_over_bed_db: float
+    masked_fraction: float
+    n_frames: int
+    bands: list[IntelligibilityBand]
+    label: str | None = None
+    start_beat: float | None = None
+    end_beat: float | None = None
+
+
+@dataclass(frozen=True)
 class SectionMetrics:
     """Per-surface loudness scoped to one named section window.
 
@@ -684,6 +755,13 @@ class SectionMetrics:
     # when the window had no detected onsets. A RELATIVE read across sections:
     # only the ranking feeds the energy-realization Spearman ρ.
     onset_density: float | None = None
+    # The speech band over the bed, one row per spoken turn that falls in the
+    # section window. None when the song declares no speech track (the lens
+    # did not run — `skipped_analyses` says so); an EMPTY list when it ran and
+    # no turn falls in this section. The two must stay distinguishable: null
+    # is "not measured", [] is "measured, nothing here". Neutral numbers, no
+    # threshold — the interpreter frames them.
+    intelligibility: list[TurnIntelligibility] | None = None
 
 
 @dataclass(frozen=True)
@@ -1134,6 +1212,47 @@ def _section_to_dict(
         "transients": [_part_transient_to_dict(t) for t in s.transients],
         "transient_skips": [dict(sk) for sk in s.transient_skips],
         "onset_density": s.onset_density,
+        # null and [] mean different things here (see the field comment), so
+        # the None is passed through rather than collapsed to an empty list.
+        "intelligibility": (
+            [_turn_intelligibility_to_dict(t) for t in s.intelligibility]
+            if s.intelligibility is not None
+            else None
+        ),
+    }
+
+
+def _turn_intelligibility_to_dict(t: TurnIntelligibility) -> dict[str, Any]:
+    """Serialize one spoken turn's speech-over-bed reading.
+
+    Every measurement goes through ``_finite_or_none``: an unanalysable turn
+    (``n_frames == 0``) and a band the speech never sounded in both carry NaN
+    as "honestly unmeasured", and the report must stay valid JSON under
+    ``allow_nan=False``.
+    """
+    return {
+        "turn_index": t.turn_index,
+        "label": t.label,
+        "start_s": t.start_s,
+        "end_s": t.end_s,
+        "start_beat": t.start_beat,
+        "end_beat": t.end_beat,
+        "n_frames": t.n_frames,
+        "speech_db": _finite_or_none(t.speech_db),
+        "bed_db": _finite_or_none(t.bed_db),
+        "speech_over_bed_db": _finite_or_none(t.speech_over_bed_db),
+        "masked_fraction": _finite_or_none(t.masked_fraction),
+        "bands": [
+            {
+                "lo_hz": b.lo_hz,
+                "hi_hz": b.hi_hz,
+                "speech_db": _finite_or_none(b.speech_db),
+                "bed_db": _finite_or_none(b.bed_db),
+                "speech_over_bed_db": _finite_or_none(b.speech_over_bed_db),
+                "masked_fraction": _finite_or_none(b.masked_fraction),
+            }
+            for b in t.bands
+        ],
     }
 
 

@@ -666,14 +666,20 @@ expand `~`, so such a reference would resolve as a *relative* path under the
 song dir and fail at the next push. Window,
 pitch and gain are ordinary device parameters and envelopes.
 
-**What is not there yet.** Formant-preserving grain-scatter (R4.3) waits on the
-`hallucinote stretch-ab` listening decision; an arrangement copy still plays the
-file's extent, not the placement's `end_bar` (#509); source separation for a
-dirty line (#266); a sampler nested inside a rack is pushed but not captured
-back; and a sampler's reverse has no intent column to read from. The sampler
-assignment and reverse-via-derived paths are unit-tested and await their Live
-session. `capability-truth.md`'s audio row is the current answer; believe it
-over this paragraph if the two ever drift.
+**What is not there yet.** The score-dependent `carve` / `vocode` transforms are
+built and unit-tested but have **never been pushed to Live** — the one piece of
+the sampling path with no live run behind it. Per-note MPE bends
+(`note_expression`) cannot be pushed at all on Live 12.4.5: `Clip.envelope_for_note`
+does not exist (#515), so a monophonic line's glide goes through a
+`device_parameter` ride instead. An arrangement copy's extent is fixed at
+placement (#509). Source separation is deferred (#266); a sampler nested inside
+a rack is pushed but not captured back; a sampler's reverse has no intent column
+to read from. R4.3 (formant-preserving grain-scatter) is **no longer gated** —
+R6.2 was decided on 2026-09-09 in favour of Rubber Band, which prices in the
+`rubberband` binary as a dependency. Sampler assignment and reverse-via-derived
+**ran against Live 12.4.5 on 2026-09-09** and passed. `capability-truth.md`'s
+audio row is the current answer; believe it over this paragraph if the two ever
+drift.
 
 Movie dialogue and commercial recordings are somebody's copyright. Personal and
 creative use is one thing and distributing a released track built on it is

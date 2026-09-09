@@ -659,7 +659,11 @@ pitch classes — whether the music leads is the author's call, never a default.
 
 **A sampler.** A `devices` row for a Simpler carries `audio_file`; push assigns
 the sample (`assign_sample`, re-callable, diffed against what Live reports) and
-capture writes a hand-dropped sample back in the same portable form. Window,
+capture writes a hand-dropped sample back in the same two forms
+`clips.audio_file` uses — song-relative under the song dir, **absolute**
+otherwise. Not the `~`-collapsed portable form: `resolve_audio_path` does not
+expand `~`, so such a reference would resolve as a *relative* path under the
+song dir and fail at the next push. Window,
 pitch and gain are ordinary device parameters and envelopes.
 
 **What is not there yet.** Formant-preserving grain-scatter (R4.3) waits on the

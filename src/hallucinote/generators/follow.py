@@ -76,6 +76,13 @@ def follow_pitch(
     reaches ``confidence_floor``; everything else is a rest or is folded into
     the neighbouring note as its scoop or glide.
 
+    ``bend='note_expression'`` emits envelopes that **cannot be pushed to Live
+    12.4.5** — `Clip.envelope_for_note` does not exist on that build (#515),
+    so the envelopes are authored correctly and fail at the wire. Default is
+    ``'none'``; for a MONOPHONIC follower the working route is a
+    ``device_parameter`` ride gesture-recorded by the performed-automation
+    phase, which is what the chunk-17 hearing used.
+
     With ``bend='note_expression'`` each note whose contour moves carries an
     envelope on the MPE pitch axis: the contour minus the note's own centre,
     in semitones, note-relative beats. The residual is taken against the

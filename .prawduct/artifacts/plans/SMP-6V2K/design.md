@@ -156,6 +156,17 @@ interface with librosa as the default, and only adds Rubber Band if the A/B is a
 `[ASSUMPTION: librosa-first is acceptable for wave 3's first cut | MED impact | user can
 override — say so and wave 3 prices in the binary dependency up front]`
 
+**RESOLVED 2026-09-09 by the owner, on the ears, against real dialogue: Rubber Band.**
+The chunk-12 A/B harness rendered `--rate 0.9 --semitones -4` over a 16 kHz 8-bit
+dialogue rip through both backends; the owner's verdict was "the rubberband one sounds
+much better". The spectral-centroid proxy could NOT separate them — 1174 Hz vs 1165
+against a 1474 source, nine hertz apart — which is exactly why the harness exists and
+why this was never decidable from a number. **The assumption above is overridden: the
+binary dependency is priced in.** Rubber Band is driven as a CLI, so what the repo takes
+on is the `rubberband` binary on PATH and NOT the `pyrubberband` package (that extra was
+dropped — nothing imports it). R4.3 is unblocked, and its build owes a teaching error
+naming the missing binary and how to install it.
+
 **D5 — The entry point is an already-cut clip the user drops in; Hallucinote does not
 extract from media and does not fetch from the internet.** *(User ruling, 2026-09-09 — the
 earlier assumption was ffmpeg extraction from a local media file with a timespan.)* What

@@ -53,7 +53,17 @@ report can carry a per-turn speech-over-bed measurement (`speech_track=`), numbe
 under the 2026-08-10 analyzer-freeze ruling. Wave-1 leftovers closed: pull links the
 audio clip it ingests (#507), the clip mutators refuse slot 0 (#473). Deferred at
 dispatch: source separation (#266). The Live session (sampler, reverse, the #509 and
-Sampler probes, the first hearing) is queued in `operator-verification.md`.
+Sampler probes, the first hearing) RAN on 2026-09-09 against Live 12.4.5 —
+`operator-verification.md` has it box by box and `lom-probe-results.md` rows
+21-31 hold each verdict with its literal response. Sampler assignment and its
+idempotence, the hand-drop capture round trip, and reverse in both the session
+and the arrangement all passed. Two things did not and are recorded as open:
+the symbolic carve was never pushed, and the first hearing's musical result was
+not accepted by the operator ("it does not really read as tracking") — the
+pipeline ran end to end on real material, the music did not land. R6.2 was
+decided by ear: **Rubber Band**, which commits the R4.3 path to a non-Python
+binary dependency. The CLIs shipped are `asset`, `derived`, `sample-lens` and
+`stretch-ab`.
 
 `SCHEMA_VERSION` does not move (D17): `SectionReport.intelligibility` defaults to `None`,
 so a reader written against `"1"` still loads a report that carries it and still means the

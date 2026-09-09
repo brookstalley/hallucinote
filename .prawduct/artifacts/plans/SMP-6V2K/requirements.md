@@ -275,7 +275,7 @@ running Live and recorded in `docs/research/audio-first-class/lom-probe-results.
 | R2.2, R3.1, R3.4 | numpy/scipy/librosa STFT + bark bands | libraries present, no implementation |
 | R4.1 | clip pitch-bend / CC / smooth-curve envelopes | **UNPROBED** — gates R4.1 |
 | R2.4 | source separation | not built |
-| R4.3 | formant-preserving pitch shift | **library decision open** (R6.2) |
+| R4.3 | formant-preserving pitch shift | **unblocked** — R6.2 decided 2026-09-09 by the owner's ears: Rubber Band, driven as a CLI (`rubberband` on PATH; no Python extra). See design.md D4. |
 
 ## Backlog items this capability consumes
 

@@ -23,9 +23,10 @@ Usage:
     python3 -m hallucinote.tools.stretch_ab line.wav --rate 0.85 --out /tmp/ab
     python3 -m hallucinote.tools.stretch_ab line.wav --semitones 4 --no-formant
 
-Rubber Band needs both the `pyrubberband` package (`uv sync --extra
-audio-stretch-ab`) and the `rubberband` binary on PATH; when either is missing
-the table says which one and renders librosa alone.
+Rubber Band is driven as a CLI, so it needs only the `rubberband` binary on
+PATH (`brew install rubberband`, or your platform's package) — there is no
+Python extra to install, and nothing here imports `pyrubberband`. When the
+binary is missing the table says so and renders librosa alone.
 
 Exit codes: 0 = table printed · 2 = the source cannot be read · 3 = the
 requested transform is not a transform (nothing to compare).

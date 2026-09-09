@@ -39,7 +39,16 @@ class PlacementResult:
         whole placement was dropped).
       * ``skipped_audio``   — audio placement (CLP-AUD2; no MIDI notes to check).
       * ``track_unlinked``  — the placement's track isn't linked in the session.
-      * ``probe_failed``    — Live's note/clip probe errored for this placement.
+      * ``probe_failed``    — Live's per-clip NOTE probe errored: the clip IS
+        there at the right position, only its contents could not be read. A
+        transient, per-clip read failure — not evidence of corruption.
+      * ``lane_probe_failed`` — Live's per-track ``ableton_clip(list,
+        location='arrangement')`` errored, so the whole LANE is unreadable.
+        Categorically stronger than ``probe_failed`` (ARR-ORPHAN2): the pusher
+        uses that same probe to plan the CLEAR, so an unreadable lane was
+        neither cleared nor rebuilt, and orphan detection never ran on it. A
+        placement in this state is silent data loss, not a transient read
+        hiccup — see :attr:`ArrangementReport._CORRUPTION`.
     """
     track_name: str
     section: str
@@ -55,13 +64,32 @@ class ArrangementReport:
     # Whole arrangement clips present in Live with NO DB placement at their
     # position (a stale/orphan clip the projection would otherwise clear).
     extra_live_clips: list[dict[str, Any]] = field(default_factory=list)
+    # ARR-ORPHAN2: tracks whose arrangement LANE could not be listed at all
+    # (``{track, track_index, error}``). Recorded separately from the per-
+    # placement results because it carries a second fact no placement row can:
+    # orphan detection did NOT run for this lane, so ``extra_live_clips`` is
+    # known-incomplete. format_report says so rather than implying "no orphans".
+    lane_probe_failures: list[dict[str, Any]] = field(default_factory=list)
 
     _CLEAN = ("faithful", "skipped_audio")
-    # SILENT corruption — what the push-time assert HALTs on. track_unlinked /
-    # probe_failed are operational (the planner already alerted on a skipped
-    # track; a probe error is transient), NOT silent note corruption, so they
-    # don't halt a push mid-flight — but the CLI audit still surfaces them.
-    _CORRUPTION = ("diverged", "missing_clip")
+    # SILENT corruption — what the push-time assert HALTs on.
+    #
+    # track_unlinked / probe_failed stay OUT: the planner already alerted on a
+    # deliberately-skipped track, and a per-clip note-read error is transient
+    # (the clip is demonstrably at the right position). Neither is note
+    # corruption, so neither halts a push mid-flight — the CLI audit still
+    # surfaces them.
+    #
+    # lane_probe_failed IS in (ARR-ORPHAN2). The pusher plans its per-lane CLEAR
+    # from the SAME ``ableton_clip(list, location='arrangement')`` probe: when
+    # that probe fails, ``plan_push_arrangement`` skips the whole track — no
+    # clear, no rebuild — and any orphan already sitting in that lane survives.
+    # Tolerating it here is what let a track lose every placement while the
+    # phase reported "97/97 ok": the placements came back unverifiable, the
+    # orphan was invisible (the lane could not be listed), and nothing halted.
+    # An unreadable lane immediately after a materialize is a DROPPED lane until
+    # proven otherwise.
+    _CORRUPTION = ("diverged", "missing_clip", "lane_probe_failed")
 
     @property
     def faithful(self) -> bool:
@@ -69,15 +97,18 @@ class ArrangementReport:
         return (
             all(r.status in self._CLEAN for r in self.results)
             and not self.extra_live_clips
+            and not self.lane_probe_failures
         )
 
     def has_corruption(self) -> bool:
         """The push-time HALT criterion: a materialized clip's notes diverged, a
-        placement dropped, or an orphan clip survived. Excludes the operational
-        non-corruption statuses (track_unlinked / probe_failed)."""
+        placement dropped, an orphan clip survived, or a whole lane could not be
+        read (so it was never cleared and its orphans are invisible). Excludes
+        the operational non-corruption statuses (track_unlinked / probe_failed)."""
         return (
             any(r.status in self._CORRUPTION for r in self.results)
             or bool(self.extra_live_clips)
+            or bool(self.lane_probe_failures)
         )
 
     def divergences(self) -> list[PlacementResult]:
@@ -171,12 +202,29 @@ def verify_song_arrangement(
         resp = _send(send_fn, "ableton_clip", "list",
                      track_index=track_at, location="arrangement")
         if not getattr(resp, "ok", False):
+            # ARR-ORPHAN2: the LANE is unreadable — categorically worse than a
+            # per-clip note-read failure. The pusher plans its clear from this
+            # same probe, so a lane it cannot list is a lane it did not clear
+            # and did not rebuild; whatever was there (including an orphan) is
+            # still there. Record it as its own halting status AND as a lane
+            # failure, so the report can state that orphan detection is
+            # known-incomplete for this track rather than implying "no orphans".
+            err = getattr(resp, "error", "?")
+            report.lane_probe_failures.append(
+                {"track": tname, "track_index": track_at, "error": err}
+            )
             for r in rows:
                 report.results.append(PlacementResult(
                     tname, r["clip_name"],
                     _position_bar_to_beats(r["start_bar"], ts),
-                    status="probe_failed",
-                    detail=f"ableton_clip(list) failed: {getattr(resp, 'error', '?')}",
+                    status="lane_probe_failed",
+                    detail=(
+                        f"ableton_clip(list, location='arrangement') failed for "
+                        f"track {track_at}: {err}. The lane could not be read, so "
+                        "push could not clear or rebuild it and this placement is "
+                        "UNPROVEN — treat as dropped until a successful re-probe "
+                        "says otherwise."
+                    ),
                 ))
             continue
         live_clips = list((resp.result or {}).get("clips") or [])
@@ -238,6 +286,15 @@ def assert_arrangement_materialized(
     (:meth:`ArrangementReport.has_corruption`). Returns the report otherwise.
     Reads in a fresh probe — never inline after the write (§6a).
 
+    ARR-ORPHAN2: "corruption" includes a lane whose ``ableton_clip(list)`` probe
+    FAILED. The push planner reads the lane inventory from that same probe, so a
+    failure there means the lane was never cleared and never rebuilt — the exact
+    state in which a track lost every placement while the phase printed
+    "97/97 ok". The only statuses the assert still tolerates are the two the
+    planner has ALREADY reported on its own channel: ``track_unlinked`` (planner
+    alert / blocked reason) and ``probe_failed`` (a per-clip note read on a clip
+    that is demonstrably at the right position).
+
     SCOPE (design §9 residual risk): this assert is NOTE-only — it does not read
     back clip envelopes, so it cannot catch an envelope-bearing placement that was
     mis-routed to create+fill and silently dropped its clip envelope. That branch's
@@ -280,8 +337,16 @@ def format_report(report: ArrangementReport, *, header: str = "verify-arrangemen
             f"  [extra_clip] {c.get('track')} / {c.get('name')} @ beat "
             f"{c.get('start_beats')}: a Live arrangement clip with no DB placement"
         )
+    for lane in report.lane_probe_failures:
+        lines.append(
+            f"  [lane_unreadable] {lane.get('track')} (Live track "
+            f"{lane.get('track_index')}): {lane.get('error')} — push could not "
+            "clear or rebuild this lane, and ORPHAN DETECTION DID NOT RUN on it, "
+            "so the orphan count below excludes it."
+        )
     lines.append(
         f"  {len(divs)} placement divergence(s), "
-        f"{len(report.extra_live_clips)} orphan clip(s)."
+        f"{len(report.extra_live_clips)} orphan clip(s), "
+        f"{len(report.lane_probe_failures)} unreadable lane(s)."
     )
     return "\n".join(lines)

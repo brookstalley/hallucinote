@@ -1,15 +1,359 @@
 # Changelog
 
-> **Superseded as of v1.6.0.** The release record now lives in
-> [`.prawduct/release-notes.md`](.prawduct/release-notes.md) (generated from
-> `.prawduct/change-log.md`, which carries the full per-release bodies). This
-> file is preserved as the hand-written history through v1.5.0 and is no
-> longer maintained.
+This is the public release record: what changed in each version, written for
+people using Hallucinote. It is distilled at release time from the internal
+engineering change-log (`.prawduct/change-log.md`), which carries the full
+per-fix narratives if you want the deep story behind any entry.
 
-The format below follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.6.0] — 2026-06-23 (excerpt — full scope in the release notes)
+## [Unreleased]
+
+### Deprecated
+
+- `Kit.from_device(conn, device_id)` — use `hallucinote.kits.load_kit(conn,
+  device_id)` instead. Same arguments, same return; the loading moved one layer
+  out of `hallucinote.generators` so that importing a generator pulls in no
+  database code. `Kit.from_device` keeps working for one major version and will
+  be removed in 2.0 — existing `build.py` files need no change now.
+
+### Added
+
+- `hallucinote.kits` — a new public module holding `load_kit(conn, device_id)`,
+  the database-backed way to build a `Kit`. It exists so that importing a
+  generator pulls in no database code; see the Deprecated note below for the
+  `Kit.from_device` it replaces.
+- `Kit.from_rows(rows, *, name, device_id)` — build a `Kit` from
+  `drum_pad_mappings`-shaped rows with no database connection, for songs that
+  measure a kit by hand or construct one in a test.
+
+## [1.8.6] — 2026-08-12
+
+The demo release. The README now opens with a two-minute video of a prompt
+becoming a finished arrangement playing in Live, so you can hear what this does
+before installing anything.
+
+**Upgrade note:** none. **Re-vendor: not required** — no handshake-fingerprint
+paths changed, so the Remote Script in your Live User Library keeps working as
+is. Documentation only; no behavior changes.
+
+### Added
+
+- **A demo video in the README**, playing inline. Previously the only demo was
+  an audio link you had to download to hear.
+- **A GitHub Release for each version.** The project had been tagging releases
+  without publishing them, so there was nothing to land on; v1.8.5 was published
+  retroactively and every release from here carries notes and assets.
+
+### Changed
+
+- **The README says what the tool is, in the user's own terms.** The opening,
+  the worked-example intro and the bridge example were rewritten by the project
+  owner; the round-trip through Ableton is now stated up front, including that
+  audio does not come back yet.
+- **The docs stopped defining things by what they are not.** Roughly forty-five
+  constructions across the README, VISION, FAQ, tour, CONTRIBUTING and SECURITY
+  now state the capability, the mechanism or the fact outright. The honest
+  limits are unchanged and still stated plainly — `docs/known-issues.md`,
+  VISION's non-goals and SECURITY's scope list all read as before.
+
+### Fixed
+
+- **A stale claim in the demo-video design** that listed work as outstanding
+  when it had already shipped.
+- **A contributor-facing inaccuracy**: the CI section described its own coverage
+  gaps under a heading that undersold what CI does check.
+
+## [1.8.5] — 2026-08-11
+
+A documentation release, from a critical read of everything a new user sees.
+The docs now answer what the tool costs to run, what it does with your melody,
+and whether you end up with an Ableton set you can finish and release — and
+several claims that disagreed with each other now agree. No behavior changes.
+
+**Upgrade note:** none. **Re-vendor: not required** — no handshake-fingerprint
+file changed, so the plugin auto-updates and Ableton Live needs nothing:
+no `/hallucinote:ableton-mcp-install`, no Live restart.
+
+### Added
+
+- **What it costs to run** — README Status and a new FAQ entry name all three
+  costs: the Ableton licence (plus Max for Live for the measured mix review),
+  the Claude usage behind a long agentic session, and disk for renders. No
+  token figure is published yet because none has been measured; that's tracked.
+- **"Who it's for"** in the README — what the tool gives you if you're learning
+  the craft, if you're playing already and reaching for an arrangement you'd
+  otherwise spend a week programming, or if you want leverage and a measured
+  second opinion.
+- **New FAQ answers** — what happens with the melody, whether you end up with a
+  normal Live set you can finish and release (yes), whether two builds of the
+  same song match (yes, humanization is seeded), and who owns the music (you).
+- **A guard on the tool count in the plugin marketplace description** — the
+  number shown in the `/plugin install` dialog was the one such count no test
+  pinned.
+
+### Changed
+
+- **The README speaks to the musician, not about the agent.** You make the
+  calls; the tool builds what you decided, measures it, and reports back.
+- **"Any Live 12 edition" is now "Standard and Suite"** — the editions this is
+  actually exercised on. Intro and Lite are untested; `docs/known-issues.md`
+  names the two limits likely to bite (the track ceiling, the thinner device
+  palette). This corrected five surfaces, including the capability table the
+  agent answers "what can you do?" from.
+- **`CONTRIBUTING.md` matches the toolchain that ships** — uv against the
+  locked environment, the current waiver pragma, the real `testpaths`, and a
+  new section stating plainly what CI covers (no Ableton, no macOS or Windows
+  leg, one interpreter).
+
+### Fixed
+
+- **The plugin marketplace description no longer claims you need a separate
+  engine install.** It was stale from before the plugin absorbed the engine —
+  and it was the first sentence anyone read, in the install dialog.
+- **`docs/VISION.md` no longer claims recorded audio round-trips into the
+  database.** It doesn't yet; `docs/known-issues.md` always said so. The
+  symbolic round-trip that does work is described as what it is.
+- **The FAQ's disk-usage note matches what a real workspace does** — a
+  workspace created by Hallucinote gitignores both `captures/` and `analysis/`.
+- **Documented Windows support says what's actually behind it** — implemented
+  and unit-tested, with fewer real sessions than macOS.
+
+## [1.8.4] — 2026-08-11
+
+A documentation release: the README is a quarter shorter, the docs got read
+against the writing guide, and the template that generates every new song's
+overview was fixed at the source. No behavior changes.
+
+### Changed
+
+- **The README says more with less** — 1334 → 1008 words, cut by merging two
+  sections that were describing the same three capabilities rather than by
+  squeezing sentences. The install steps, troubleshooting causes and example
+  prompts are untouched.
+- **The lifecycle diagram names what the agent measures** — the analysis step's
+  caption now reads "composition, mix, and audio measurements".
+- **`docs/quickstart.md` and the demo song's overview lead with the point** —
+  both used to open on housekeeping (a cross-reference, a note about where
+  intent files live) before saying what you actually get. That content moved
+  below the thing it was burying.
+
+### Fixed
+
+- **New songs no longer scaffold with a broken pointer or an unresolvable
+  command.** The song-overview template sent authors to
+  `.prawduct/artifacts/song-conventions.md` — a file that exists only in this
+  repo, never in a user's workspace — and told them to run a bare
+  `/song-context`, which doesn't resolve when Hallucinote is installed as a
+  plugin. Those are now `docs/song-authoring-conventions.md` and
+  `/hallucinote:song-context`, and the overview leads with the concept instead
+  of the housekeeping. Every song scaffolded from now on gets the corrected
+  template; existing songs are unaffected.
+- Screen-reader users get the current description of the lifecycle diagram — the
+  SVG's `<desc>` still carried wording that had been retired from the visible
+  caption, so the stale framing was reaching exactly the readers who couldn't
+  see the correction.
+
+### Upgrade note
+
+Nothing to do. This release does not change the Remote Script handshake
+fingerprint, so your vendored copy in Live still matches the server — no
+`/ableton-mcp-install`, no Live restart.
+
+## [1.8.3] — 2026-08-11
+
+The worked-example release: a real song ships in the repo, and a two-chapter
+walkthrough of how it actually got made. No behavior changes.
+
+### Added
+
+- **A demo song you can rebuild** — [`examples/punk-fate/`](examples/punk-fate/)
+  is Beethoven's Fifth crammed into 115 seconds of basement punk, composed by
+  Claude end-to-end from a one-sentence prompt in a live session.
+  `python examples/punk-fate/build.py` rebuilds its database from a clean
+  checkout with no Ableton Live installed, and CI runs exactly that — so the
+  example can't quietly rot.
+- **[The tour](docs/tour.md)** — that song documented beat by beat, with the real
+  session transcript, screenshots taken while it ran, and the mix numbers the
+  agent measured. **Chapter 1** is the composing session: one prompt to a mixed
+  four-track song in about forty minutes. **Chapter 2** is what happened when
+  somebody listened and said it didn't sound punk — three measured re-cuts
+  covering performance feel, garage-drum vocabulary, gain staging, and finally
+  swapping the synth "vocal" for a second guitar. It ends on something
+  deliberately *not* finished.
+- Every figure the tour quotes is recomputed from committed evidence by tests, so
+  a number that drifts fails the build instead of going quietly stale.
+
+### Changed
+
+- The demo song's overview and `REQUIREMENTS.md` describe the band that's
+  actually playing, and the docs index no longer counts the tour's parts.
+- `docs/song-authoring-conventions.md` now documents the `analysis/` vs
+  `measurements/` split — the log of every mix run versus the specific runs a
+  decision cites.
+- Building the demo song no longer prints a spurious warning about return-track
+  names.
+
+### Fixed
+
+- A test-harness bug where tests that launch a subprocess could exercise a
+  different checkout of Hallucinote than the one under test. It showed up as
+  confusing failures in the `capture` CLI tests when working from a git worktree,
+  and it meant a plain `pytest` couldn't be trusted there.
+
+No re-vendor required — no bridge code changed; the Remote Script handshake is
+unaffected.
+
+## [1.8.2] — 2026-08-11
+
+The documentation release: the repo gets the public face the code already
+earned. No behavior changes.
+
+### Changed
+
+- **README rebuilt for reading** — what it is, what you can do, how to use it,
+  where to learn more — with a real captured hero image: the README's own
+  example prompt (punk-fate) composed from scratch in a live session, beside
+  the finished arrangement it built.
+- **This changelog is maintained again**, with entries back-filled through
+  1.8.1, and the release process now owns keeping it current at every cut.
+- **Docs got an audience index** (`docs/README.md`), enforced by tests; known
+  issues split to their own page with workarounds; quickstart and FAQ now teach
+  the pull → bake → build loop; every command the docs tell you to run has been
+  verified runnable from a fresh marketplace install.
+- Governance: the project's norm registry was ratified (27 norms) — internal,
+  but it rides this tag.
+
+No re-vendor required — no bridge code changed.
+
+## [1.8.1] — 2026-08-10
+
+Internal housekeeping; no behavior changes.
+
+- The development backlog moved from an in-repo markdown file to
+  [GitHub Issues](https://github.com/brookstalley/hallucinote/issues), so open
+  work is publicly visible and linkable.
+- The release process document was corrected where the v1.8.0 cut proved it
+  wrong.
+
+No re-vendor required — no bridge code changed; the Remote Script handshake is
+unaffected.
+
+## [1.8.0] — 2026-08-10
+
+### Added
+
+- **The mix report can see stereo.** Per-stem and per-section stereo metrics —
+  L/R correlation and mono-sum loss — plus declared-vs-measured width: a width
+  or spread control a song declares is paired with what the rendered audio
+  actually did, on tracks *and* return busses. This catches the two silent
+  failure modes that motivated it: a "stereo" effect rendering bit-exact mono
+  (a flanger with its L/R phase offset at 0°), and an aggressive width setting
+  doing nothing because it multiplied a side signal that wasn't there.
+  `/mix-review` reads both. A/B comparison (`compare_to`) gained a matching
+  stereo family, so a mono-loss improvement shows as a delta instead of nothing.
+- **`/song-brief`, a new stage 0 in front of `/song-new`** — the elicitation
+  pass that resolves what a prompt left open (key, tempo, section budget, what
+  a named gesture means musically) in one consolidated turn of proposals, and
+  writes the song's brief. With it, every authoring stage got an explicit
+  definition of done: a stage may no longer hand an unresolved question
+  downstream dressed as a decision.
+
+### Fixed
+
+- **Seven push/sync correctness fixes — six of which previously reported
+  success while doing the wrong thing.** The most visible: a full push could
+  duplicate every FX chain in the set (and still say OK); a first push into an
+  empty set could silently skip the arrangement phase; a browser load aimed at
+  the master could also append devices to an unrelated track; a song slug could
+  resolve into the wrong workspace, sending renders and analysis to a phantom
+  directory; and a render could start playback from the wrong position when a
+  locate hadn't settled. Pushes now reconcile device links before planning,
+  report blocked phases as failures instead of "skipped", bracket browser loads
+  with a device census, resolve slugs to the workspace that actually holds the
+  song, and settle locates before rolling.
+- **Rebuild reliability:** captured preset names now match exactly (no more
+  refusing to load `Kit-BritishVintage` because an `MPE Kit-BritishVintage`
+  also exists), stale device links are detected when you swap Live sets, and a
+  build that *changed* an automation arc no longer loops create/delete/create
+  without converging.
+- **MixReports no longer embed your home directory.** Capture and baseline
+  paths in tracked analysis files are song-relative now; existing absolute
+  reports still load and still work as comparison baselines.
+
+### Changed
+
+- The in-repo demo song was retired; the walkthrough it anchored is being
+  re-authored from a sparse prompt through the new `/song-brief` flow. Its
+  scouting value — six framework defects found by rebuilding it from scratch —
+  shipped as the fixes above.
+
+### Upgrade note
+
+After updating, rerun `/hallucinote:ableton-mcp-install` and fully quit and
+reopen Live — this release changes bridge handler code, so the version
+handshake requires a re-vendored Remote Script.
+
+## [1.7.2] — 2026-08-06
+
+Preparation for the repo going public. No behavior changes.
+
+- Internal bug-report archives left the tree; provenance now cites backlog ids.
+- Hardcoded local paths and a private sibling project's details were scrubbed
+  from docs and history-facing files.
+- `SECURITY.md` now states the trust model explicitly — including the sharpest
+  edge: a song's `build.py` is executable Python by design, so review a song
+  you cloned before building it.
+- `architecture.md` and `api-contract.md` were written (the four-runtime
+  topology, the fingerprint-not-semver versioning decision, the errors-teach
+  model).
+
+**Upgrade note:** although behavior is unchanged, one repointed docstring sits
+in a fingerprinted bridge path, so the handshake flips — rerun
+`/hallucinote:ableton-mcp-install` and fully quit and reopen Live after
+updating.
+
+## [1.7.1] — 2026-08-03
+
+### Added
+
+- **Render captures get a rolling retention window.** Every render writes
+  ~23 MB per surface-minute of per-stem WAVs, and nothing ever deleted them —
+  real songs had reached ~4 GB per take. A song now settles at 3 takes on disk
+  after each render; pin a reference take with `captures pin` to exempt it.
+  MixReports are never swept — analysis is self-contained JSON, so deleting an
+  old take costs only the ability to re-analyze that specific audio.
+  `HALLUCINOTE_CAPTURE_KEEP` / `HALLUCINOTE_CAPTURE_SWEEP=0` tune or disable
+  the sweep.
+
+### Fixed
+
+- Provenance tests no longer assert ambient git state (first red CI run on a
+  PR branch).
+
+## [1.7.0] — 2026-07-04
+
+### Added
+
+- **CI off-laptop:** lint, types, tests, and lock-consistency run as four
+  gates in GitHub Actions; ruff and mypy debt taken to zero.
+- **Pull-durability guard:** a mix edit you pull from Live but don't bake with
+  `/song-snapshot` is no longer silently reverted by the next build — the
+  build refuses to run (`StaleSnapshotError`) until you bake or explicitly
+  `--force-replay`. The loop is pull → bake → build.
+- **Event-log hardening:** atomic write+emit, stable event IDs, and a replay
+  smoke test — groundwork for the future event-store migration.
+- Sync-boundary contract and phase-ordering DAG, with a controlled halt on
+  unknown link kinds instead of undefined behavior.
+
+## [1.6.1] — 2026-06-24
+
+### Added
+
+- Standing timbre metrics — brightness and noisiness — in the mix report.
+
+## [1.6.0] — 2026-06-23
 
 The entries below were drafted here as "Unreleased" and shipped in v1.6.0's
 catch-up window; v1.6.0 contained substantially more (see release notes).

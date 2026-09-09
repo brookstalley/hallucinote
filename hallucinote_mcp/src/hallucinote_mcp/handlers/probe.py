@@ -28,7 +28,7 @@ attribute walks and method calls on LOM objects, never arbitrary Python.
 "does ``ClipSlot.create_audio_clip`` exist and what does it accept?" is
 answered by calling it. Safety comes from the bridge being localhost-only
 and single-user, and from probing in scratch Live sets (decision recorded
-in `.prawduct/artifacts/plans/AUD-1M4V/build-plan.md`).
+in `.prawduct/artifacts/plans/AUD-1M4V/archive/build-plan.md`).
 
 Handlers run on Live's main thread (the dispatcher marshals via
 ``run_on_main``), so plain attribute access here is thread-safe.

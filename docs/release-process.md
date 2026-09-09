@@ -57,22 +57,56 @@ release (`git describe --tags --abbrev=0 main`), `vNEW` = the bump.
 
 ### 1. Reconcile the change-log — every shipped cluster has an entry
 
-Each cluster in `origin/main..develop` needs a `.prawduct/change-log.md` entry. Entries
-authored on feature branches are **statusless**, then `prawduct-hook stamp-merged`
-flips them to `status=merged` at merge time. On the feature branch, the entry lands
-inside the single **ship-stamp commit** (change-log entry + backlog close + any
-project-state record, batched — see `.prawduct/backlog.md` header rule 1, PRC-5W2N).
-At release:
+Each cluster in `origin/main..develop` needs a `.prawduct/change-log.md` entry, written
+on the feature branch inside its single **ship-stamp commit** (change-log entry +
+backlog close + any project-state record, batched — see the **Backlog norms** in
+[`.prawduct/artifacts/project-preferences.md`](../.prawduct/artifacts/project-preferences.md),
+rule 1, PRC-5W2N).
 
-- For each `status=merged` entry being released: change `status=merged` →
-  `status=shipped` and add `| release=vNEW` to the `<!-- prawduct: … -->` tag line.
+**An entry with no `release=` key IS the release-pending marker** — that absence is what
+`prawduct-hook check-releasability` enumerates, and it is the only marker. So at release:
+
+- For each pending entry being released, add `| release=vNEW` to its
+  `<!-- prawduct: … -->` tag line.
 - For any shipped cluster with **no entry**, write one now (reconstruct from its commit
-  bodies — `git show -s <sha>`), tagged `status=shipped | release=vNEW` directly.
+  bodies — `git show -s <sha>`), tagged `release=vNEW` directly.
+- Never write a placeholder value. `check-releasability` treats *any* value as "already
+  released", so `release=unreleased` silently drops the entry's whole scope out of the
+  pending set and the work never ships.
 
-Tag-line grammar (matches existing entries): `type=feature|bugfix | chunks=A,B |
-scope=area1,area2 | status=shipped | release=vNEW`. Use a distinct chunk id when a
-second half of an earlier chunk ships separately (e.g. `SDC-7K3M-pull` vs the already-
-shipped `SDC-7K3M`) so the rollups don't collide.
+Tag-line grammar for a new entry is two keys plus the type: `type=feature|fix|docs|chore
+| scope=<tag> | release=vNEW`. **`status=` and `chunks=` are retired** — nothing reads
+either, and the derived-view regenerator that once did is gone. Historical entries carry
+them and are preserved verbatim; do not add them to a new one. Which chunks an entry
+shipped belongs in the entry body, where readers actually look.
+
+Give a scope a distinct id when a second half of earlier work ships separately (e.g.
+`SDC-7K3M-pull` against the already-shipped `SDC-7K3M`), so the two don't collide in the
+pending set — `scope` is what `check-releasability` groups by, and two entries sharing
+one scope are one line to the gate.
+
+`prawduct-hook stamp-merged` is likewise **deprecated and inert** — it warns and does
+nothing. Do not call it.
+
+#### Roll the log
+
+`.prawduct/change-log.md` is append-only and grows without bound; past ~55 KB
+(`oversized_file_threshold_kb` in `project-state.yaml`) every session that reads it pays
+for the whole history. After stamping `release=vNEW` above, move the oldest entries into
+[`.prawduct/change-log-archive.md`](../.prawduct/change-log-archive.md) — verbatim,
+newest-first, under the existing header — until the live log is comfortably under the
+ceiling, keeping the last few releases for context.
+
+**Move only entries that already carry a `release=` key.** Archiving a release-pending
+entry drops its scope out of the release gate silently, which is the one failure this
+step can cause. Assert it before you write:
+
+```sh
+grep '^<!-- prawduct: ' .prawduct/change-log-archive.md | grep -v 'release=' && echo "STOP: pending entry archived"
+```
+
+Nothing reads the archive — `lib/change_log.py` names `.prawduct/change-log.md`
+specifically — so it is history for humans, and git carries it either way.
 
 ### 2. Bump the product version (all four surfaces, in lockstep)
 
@@ -89,16 +123,33 @@ The handshake `BASE_VERSION` is **not** one of these — it is the wire-protocol
 deliberately decoupled from the product version (see
 [§Version surfaces](#version-surfaces) and step 5).
 
-### 3. Regenerate derived views
+### 3. Archive the plans this release shipped
+
+**There are no derived views to regenerate.** `prawduct-hook regen-views` is inert
+and warns that it will be removed — build-plan `## Status` boxes are ticked by hand
+(nothing overwrites them), and the release notes ARE the change log. Do not
+hand-write `.prawduct/release-notes.md` to compensate; the `release=vNEW` tags you
+set in step 1 are the record.
+
+What this step *is*, on gitflow: the plans whose scopes this release just tagged
+have been retained live since their feature merges, and now retire.
 
 ```sh
-prawduct-hook regen-views
+prawduct-hook plan-backfill --apply
 ```
 
-Rewrites three derived surfaces from the change-log `release=` tags (never hand-edit
-them): `.prawduct/release-notes.md`, the `scope_rollups:` block in `project-state.yaml`,
-and each build plan's `## Status`. Confirm the new `## vNEW` section in
-`release-notes.md` lists **every** cluster you tagged.
+It archives every plan whose scope the release tagged. Then clear
+`active_build_plan` in `project-state.yaml` if it names one that just archived —
+leave it **empty**, never the literal `null` (the pointer reader treats the
+post-colon text as a path, so `null` resolves to `.prawduct/null` and mis-fires the
+missing-build-plan advisory).
+
+Also write the **release-plan artifact** `check-releasability` requires:
+`.prawduct/artifacts/release-plan-vNEW.md`, carrying a `## Release
+classification` table that dispositions every release-pending scope (use the
+previous release's as the template). Then verify with `prawduct-hook
+check-releasability --release vNEW` — it should report `releasable` with no
+pending scopes.
 
 ### 4. Update the engine-pin row
 
@@ -121,17 +172,30 @@ Record the verdict in the release commit body and the change-log entry as
 **`Re-vendor: required`** or **`Re-vendor: not required`**, so consumers know without
 having to diff.
 
-### 6. Commit the release on `develop` and push
+### 6. Distill the public CHANGELOG entry
+
+`CHANGELOG.md` is the **public** release record — the file README sends users to
+— and its header promises it is distilled at release time from the internal
+change-log. Keep that promise here, at the cut, or it strands again (it sat two
+minors stale between v1.6.0 and v1.8.0 precisely because no step owned it):
+
+- Write a `## [vNEW] — YYYY-MM-DD` section at the top: user-facing
+  Added/Fixed/Changed entries distilled from this release's change-log clusters.
+  Translate away chunk ids and backlog ids; write for someone *using* Hallucinote.
+- Carry the step-5 verdict as an **Upgrade note** whenever the re-vendor is
+  required — that is the consumer-facing fact of the release.
+
+### 7. Commit the release on `develop` and push
 
 ```sh
 git add pyproject.toml hallucinote_mcp/pyproject.toml src/hallucinote/__init__.py \
         .claude-plugin/plugin.json .prawduct/change-log.md .prawduct/project-state.yaml \
-        .prawduct/release-notes.md docs/engine-pin.md
+        .prawduct/release-notes.md docs/engine-pin.md CHANGELOG.md
 git commit -m "chore(release): vNEW — <headline>"   # body: clusters + Re-vendor verdict
 git push origin develop
 ```
 
-(These eight files plus `uv.lock` are the canonical release fileset. The first three
+(These nine files plus `uv.lock` are the canonical release fileset. The first three
 are the lockstep product-version surfaces from step 2 beyond `plugin.json`. `uv.lock`
 **does** record the workspace members' versions — a bump without a re-lock leaves the
 lock stale, and the plugin launches with `uv run --frozen`, which uses the lock as-is.
@@ -142,7 +206,7 @@ lock still recording 0.9.0. CI now enforces `uv lock --check` on every push/PR t
 `develop` and `main` (`.github/workflows/ci.yml`), so a stale lock can no longer
 reach a release unnoticed.)
 
-### 7. Promote `develop` → `main`
+### 8. Promote `develop` → `main`
 
 `main` accumulates only merge commits, so it diverges from `develop` by the historical
 release-merge commits (none introduce unique file content — verify with
@@ -158,7 +222,7 @@ git push origin main
 A merge-tree dry-run (`git merge-tree $(git merge-base main develop) main develop`)
 should show no conflicts — `develop` is strictly ahead in file content.
 
-### 8. Tag the merge commit and return to `develop`
+### 9. Tag the merge commit and return to `develop`
 
 Tags are **annotated** and sit on the **`main`-side merge commit** (not the
 `chore(release)` commit) — matching every prior `vX` tag:
@@ -178,7 +242,34 @@ back-merge introduces no file content — `develop` is strictly ahead in content
 it only reconciles history so `git rev-list --left-right --count main...develop`
 reads `0 <N>` instead of `<releases> <N>`.
 
-### 9. Verify
+**The back-merge must fast-forward — do NOT pass `--no-ff` here.** This is the one
+merge in the process that is deliberately *not* a merge commit, so it is an
+explicit exception to the repo-wide "always `--no-ff`" habit (and to step 8, two
+paragraphs up, which *does* require it). The release merge already has the
+`chore(release)` commit as a parent, so `origin/main` fast-forwards cleanly onto
+`develop` and the two branches land on the identical commit. Forcing a merge
+commit instead leaves `develop` one commit ahead of `main` forever, and step 10's
+`git rev-list --count origin/main..develop` then reads `1` rather than `0` — the
+check appears to fail while nothing is actually wrong. Harmless in content (the
+next release absorbs it with an empty diff) but not worth the false alarm; it
+happened at the v1.8.4 cut.
+
+**If `main` is checked out in another worktree**, `git checkout main` in step 8
+refuses outright. Do not disturb that worktree. Promote with plumbing from
+`develop` instead — verify the merged tree first, then build the merge commit and
+push it straight to the remote ref:
+
+```sh
+git merge-tree --write-tree origin/main develop   # must equal `git rev-parse develop^{tree}`
+MERGE=$(git commit-tree <tree> -p origin/main -p develop \
+        -m "Release: merge develop into main — vNEW")
+git push origin $MERGE:main
+```
+
+That produces the same two-parent merge commit step 8 describes. The local `main`
+ref stays where the other worktree has it and is that session's to update.
+
+### 10. Verify
 
 ```sh
 git rev-list --count origin/main..develop        # 0 — develop fully promoted
@@ -186,9 +277,47 @@ git describe --tags --exact-match origin/main     # vNEW
 pytest tests/unit/test_version_parity.py -q        # all four product surfaces == vNEW
 ```
 
-Build plans for shipped clusters are **retained** (not deleted) — gitflow keeps them
-until the next release's `regen-views` re-derives status. Only `active_build_plan`
-pointing at an *unfinished* parked plan stays meaningful between releases.
+Build plans are **archived, never deleted** — step 3 does this, and an archived plan
+stays findable by name while no longer reading as live work. Two things that step
+cannot decide for you, both of which bit at the v1.8.0 cut:
+
+- **`plan-backfill` archives by SCOPE, not by completeness.** A plan whose scope the
+  release tagged is archived even if some of its chunks are unticked. At v1.8.0 it
+  wanted to archive `TOUR` because `scope=tour` shipped, while chunks C1 and D1 were
+  unbuilt — archiving would have declared them done. Check each plan it names against
+  its own `## Status` before accepting, and restore any that still has open chunks.
+- **`active_build_plan` is cleared only when the plan it names just archived.** Leave
+  it EMPTY, never the literal `null`. A pointer at an unfinished parked plan stays
+  meaningful between releases and should survive the cut.
+
+### 11. Publish the GitHub Release
+
+The tag is the record; the **Release** is what a person lands on. Steps 1–10 leave
+six annotated tags and, until 2026-08-12, zero Release objects — so anyone arriving
+at the repo saw no release at all.
+
+```sh
+gh release create vNEW --draft --verify-tag \
+  --title "vNEW — <the tag's own subject line>" \
+  --notes-file <notes>            # notes come from the change-log entries carrying release=vNEW
+```
+
+- **Draft first, always.** A published Release notifies watchers and is the most
+  outward-facing artifact the process produces. A draft is invisible and deletable,
+  so it is reviewed before it exists publicly.
+- **`--verify-tag`** refuses to invent a tag, so a typo fails instead of creating a
+  release pointing at nothing.
+- A draft's URL reads `releases/tag/untagged-<hash>` until it is published. That is
+  normal — the tag binds on publish, and `gh release view vNEW --json tagName`
+  already shows the right tag.
+- **Release notes are reader-facing positioning prose**, so the norm in
+  `project-preferences.md` § Documentation & prose governs them: write what the
+  release IS, and never define it by what it isn't.
+- Attach any media the release is the canonical home for (`gh release upload`). Note
+  that a release asset serves from `github.com/.../releases/download/...`, which
+  **will not** render as an inline player in markdown — only a
+  `user-attachments` URL does that, and obtaining one is a web-UI upload with no
+  `gh` equivalent.
 
 ## Version surfaces
 
@@ -200,11 +329,15 @@ handshake — is on its **own clock**. Full rationale in
 
 | Surface | File | Moves when | Today |
 |---|---|---|---|
-| **Product** (canonical) | `pyproject.toml` `[project].version` | every release (lockstep) | `1.6.0` |
-| **MCP package** (`hallucinote-mcp`) | `hallucinote_mcp/pyproject.toml` | every release (lockstep) | `1.6.0` |
-| **Plugin manifest** | `.claude-plugin/plugin.json` `version` | every release (lockstep) | `1.6.0` |
-| **Engine dunder** (`hallucinote`) | `src/hallucinote/__init__.py` `__version__` | every release (lockstep) | `1.6.0` |
+| **Product** (canonical) | `pyproject.toml` `[project].version` | every release (lockstep) | see `pyproject.toml` |
+| **MCP package** (`hallucinote-mcp`) | `hallucinote_mcp/pyproject.toml` | every release (lockstep) | see `pyproject.toml` |
+| **Plugin manifest** | `.claude-plugin/plugin.json` `version` | every release (lockstep) | see `pyproject.toml` |
+| **Engine dunder** (`hallucinote`) | `src/hallucinote/__init__.py` `__version__` | every release (lockstep) | see `pyproject.toml` |
 | **Handshake** | `BASE_VERSION` + content fingerprint, `hallucinote_mcp/src/hallucinote_mcp/__init__.py` | any wire-shape file changes (`_FINGERPRINT_PATHS`) | `0.1.0+<12-hex>` |
+
+The **Today** column deliberately names the file rather than a number: a literal here
+is a copy of a value that moves every release, and it sat at `1.6.0` through three
+cuts before anyone noticed.
 
 The product version (all four lockstep surfaces) is **marketing/changelog metadata**.
 The **handshake fingerprint** is what actually gates whether Live will talk to the
@@ -310,9 +443,11 @@ env, one source. See [`docs/engine-pin.md`](engine-pin.md).
 - [ ] `origin/main..develop` scope reviewed; every cluster has a change-log entry
 - [ ] change-log entries flipped to `status=shipped | release=vNEW`
 - [ ] all four product-version surfaces bumped to `vNEW` (`test_version_parity.py` green)
-- [ ] `prawduct-hook regen-views` run; `release-notes.md` `## vNEW` lists all clusters
+- [ ] `plan-backfill --apply` run and its named plans checked against their own `## Status`
+- [ ] `release-plan-vNEW.md` written; `check-releasability --release vNEW` reports `releasable`
 - [ ] `engine-pin.md` Engine + Plugin rows bumped
 - [ ] **Re-vendor verdict computed (step 5) and recorded in the release commit + notes**
+- [ ] `CHANGELOG.md` `## [vNEW]` entry distilled (step 6), upgrade note if re-vendor required
 - [ ] `chore(release): vNEW` committed + pushed to `develop`
 - [ ] `develop`→`main` `--no-ff` merge pushed
 - [ ] annotated `vNEW` tag on the merge commit pushed

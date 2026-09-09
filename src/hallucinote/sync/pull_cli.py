@@ -20,8 +20,9 @@ imports enter this module (lazy, via :func:`_resolve_send_fn`, mirroring the
 same seam ``compat.py`` and ``push_cli.py`` use); ``plan``/``apply`` are
 unaffected and remain MCP-free.
 
-DB resolution is prescriptive: `--song <slug>` resolves to the canonical path
-`songs/<slug>/<slug>.db`. The `--db PATH` escape hatch exists for tests and
+DB resolution is prescriptive: `--song <slug>` resolves through
+`resolve_db_path` — the song's own directory, per-branch filename, with the
+legacy bare `<slug>.db` as the outside-a-repo fallback. The `--db PATH` escape hatch exists for tests and
 non-standard layouts. Exactly one is required. `session_id` may be
 omitted (WFL-7Q2N): the only / most-recent session in the DB is
 auto-selected and echoed on stderr.
@@ -263,7 +264,7 @@ def _cmd_apply(args: argparse.Namespace) -> int:
             request_id=request_id,
             reason=args.reason or f"pull from session {args.session_id}",
         )
-    except Exception:  # prawduct:ok-broad-except — audit-log finalizer: close the request with outcome='failed' for any exception, then re-raise.
+    except Exception:  # prawduct:allow prawduct/broad-except -- audit-log finalizer: close the request with outcome='failed' for any exception, then re-raise.
         M.close_request(conn, request_id=request_id, outcome="failed", actor="sync")
         raise
     M.close_request(conn, request_id=request_id, outcome="ok", actor="sync")
@@ -398,7 +399,7 @@ def _cmd_execute(args: argparse.Namespace) -> int:
                 actor="sync", request_id=request_id,
                 reason=args.reason or f"pull from session {args.session_id}",
             )
-        except Exception:  # prawduct:ok-broad-except — audit-log finalizer: close the request with outcome='failed' for any exception, then re-raise.
+        except Exception:  # prawduct:allow prawduct/broad-except -- audit-log finalizer: close the request with outcome='failed' for any exception, then re-raise.
             M.close_request(conn, request_id=request_id, outcome="failed", actor="sync")
             raise
         M.close_request(conn, request_id=request_id, outcome="ok", actor="sync")
@@ -452,7 +453,11 @@ def _cmd_execute(args: argparse.Namespace) -> int:
 
 def _add_db_args(p: argparse.ArgumentParser) -> None:
     group = p.add_mutually_exclusive_group(required=True)
-    group.add_argument("--song", help="song slug (resolves to songs/<slug>/<slug>.db)")
+    group.add_argument(
+        "--song",
+        help="song slug; its DB is resolved by resolve_db_path (per-branch name "
+             "in the song's own dir, legacy <slug>.db fallback)",
+    )
     group.add_argument("--db", help="explicit path to the SQLite DB (escape hatch)")
 
 

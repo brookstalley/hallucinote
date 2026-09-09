@@ -174,7 +174,9 @@ Read `songs/<slug>/.last-push-state.json`. Surface in this order:
 
 - **`probe-and-link` exits non-zero**: snapshot malformed, DB path wrong, or session_id unknown. Show stderr.
 - **`execute` exits 1 (partial)**: act on the stdout "Halt cause" block (cause + next step); fix in `build.py`/snapshot, rebuild, re-run `execute`. Idempotent — already-applied rows skip. `.last-push-errors.json` has per-call forensics.
-- **Arrangement looks wrong (missing / doubled notes), or you hand-edited clips in Live?** The arrangement phase is a pure projection (clear + rebuild from the DB every push) guarded by a post-phase integrity assert that HALTs on divergence — a corrupt materialize fails loud, never `OK`. To audit the current DB↔Live arrangement at any time, run **`"$PY" -m hallucinote.cli verify-arrangement --song <slug>`**: it probes Live via the note API and reports `extra` / `missing` / `mismatch` per (track, section), exit 0 = faithful, 1 = divergence (rebuild `build.py` first to compare build.py↔Live). The old SYN-4R7P `IndexError: clip_index out of range` from a stale arrangement link can no longer occur — clear+rebuild never refreshes into a dead index, so the fix for a wrong-looking timeline is simply to re-run `execute --only arrangement`.
+- **Arrangement looks wrong (missing / doubled notes), or you hand-edited clips in Live?** The arrangement phase is a pure projection (clear + rebuild from the DB every push) guarded by a post-phase integrity assert that HALTs on divergence — a corrupt materialize fails loud, never `OK`. To audit the current DB↔Live arrangement at any time, run **`"$PY" -m hallucinote.cli verify-arrangement --song <slug>`**: it probes Live via the note API and reports `extra` / `missing` / `mismatch` per (track, section), exit 0 = faithful, 1 = divergence (rebuild `build.py` first to compare build.py↔Live). If the push halts with `lane_unreadable` for a track, Live could not list that track's arrangement lane — push therefore neither cleared nor rebuilt it, so its old clips are still there. Re-run `execute --only arrangement --probe` (idempotent); if it keeps failing on the same track, inspect that lane in Live for a clip Live can't read. The old SYN-4R7P `IndexError: clip_index out of range` from a stale arrangement link can no longer occur — clear+rebuild never refreshes into a dead index, so the fix for a wrong-looking timeline is simply to re-run `execute --only arrangement`.
+- **`devices` halts with `REFUSING to load …`**: the phase found a device the DB authors at a position Live already has something at, and could not match the two (class drift), or could not read that parent's chain at all. It refuses rather than loading — Live 12.4 has no reorder API, so a load TAIL-APPENDS, and appending onto a chain that already has the device silently doubles the signal path (and doubles again on every later push). The message names the track and what it saw. Fix: run `probe-and-link --probe` to bind the chain that is already there, or re-snapshot the set (`/song-snapshot`) so the DB describes it — then re-run `execute`.
+- **`devices` halts with `devices integrity: … DUPLICATE`**: the post-phase assert re-probed Live and found a chain carrying more of a device class than the DB authors there. This set is already doubled and a re-push cannot undo it (no reorder API): delete the duplicate devices in Live, or push into a fresh set, then re-run `probe-and-link --probe`. Devices Live carries that the DB never authored (a stock return effect, a hand-dropped utility) are surfaced as warnings, not halts.
 - **`execute` exits 2 (connection lost)**: see `ableton://guides/error-recovery`. Re-execute.
 - **`ValueError` from a planner**: usually a strict-precondition issue. Show the error and stop.
 
@@ -201,6 +203,16 @@ silently no-op are `envelopes`, `performed automation`, `arrangement` and
 a pitch bend, a filter sweep or a rise and the envelopes phase pushed nothing,
 that is a **gap, not a clean run**.
 
+One class of that gap now reports itself. A phase that pushed nothing because it
+could not **determine** what to do — a failed per-track probe, a link that isn't
+there — is marked `[GAP] … NOT PUSHED — could not determine state`, the run's
+outcome is `INCOMPLETE`, the exit code is non-zero, and the summary lists the
+reason verbatim under `INCOMPLETE —`. Do not read that as a halt (nothing
+failed) and do not read it as clean. Fix the named precondition and re-run
+`execute --probe`; it re-probes and is idempotent. `skipped (nothing to push)`
+still means exactly that — there was no work — and remains the case you have to
+judge yourself against the brief.
+
 **Route the gap to the stage that owns it**, not reflexively back one step:
 
 - `envelopes` · `performed automation` · `arrangement` moved nothing the brief
@@ -213,6 +225,12 @@ One caveat specific to `devices`: it **diff-reconciles**, so zero work legitimat
 means "already current". Distinguish the two by checking whether the thing the
 brief names is actually present in the set — not by the phase count alone. A push
 into a set that already matches proves nothing.
+
+The reverse of that caveat is now guarded rather than trusted: a devices phase
+that reports work it did NOT need to do (re-loading a chain Live already had)
+used to double every effect silently. `execute` now probes each parent's chain
+before planning, binds what is already there, refuses to append onto an occupied
+slot, and re-probes afterwards to assert no chain came out duplicated.
 
 Full model: [docs/song-workflow.md](../../docs/song-workflow.md#stage-exit-criteria).
 

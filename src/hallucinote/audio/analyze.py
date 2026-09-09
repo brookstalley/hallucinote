@@ -10,17 +10,22 @@ wrapper that resolves the song DB connection, calls this function,
 serializes the report to JSON at
 ``songs/<slug>/analysis/<iso-ts>.json``, and returns the path.
 
-Intent extraction is narrow: DB-declared RT60s flow in via the
-``sends.intended_rt60_s`` column (see ``set_send_intended_rt60`` +
-``get_reverb_send_intents_for_song``). The MCP handler reads them and
-passes ``declared_reverb_sends=...`` here; this module is DB-agnostic
-and does the work on the list it's given. When no intent is declared,
-the reverb-verification section is emitted as a structured
-``skipped_analyses`` entry rather than silently absent — per CLAUDE.md
-"Never silently drop a requirement."
+Declared intent arrives as ARGUMENTS, never by reaching into the DB —
+this module is DB-agnostic and does the work on the lists it is given.
+The MCP handler resolves each from the song DB and passes it in:
+``declared_reverb_sends`` (``sends.intended_rt60_s``),
+``declared_envelopes`` (automation to verify), ``declared_width_controls``
+(dialled stereo-width params), ``sections`` and ``declared_energy``. The
+join is always on capture ``surface_id``, which is why no DB import
+belongs here.
+
+When a declared analysis has no intent to work from, it is emitted as a
+structured ``skipped_analyses`` entry rather than silently absent — per
+CLAUDE.md "Never silently drop a requirement."
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 from collections import Counter
 from dataclasses import dataclass, replace
@@ -33,7 +38,7 @@ if TYPE_CHECKING:
     import numpy as np
 
 from ..paths import portable_path
-from .alignment import trim_to_common_length
+from .alignment import CaptureSpan, measure_capture_span, trim_to_common_length
 from .compare import diff_reports, ensure_comparable, resolve_baseline
 from .attribution import (
     band_attribution,
@@ -43,6 +48,12 @@ from .attribution import (
 from .io import CaptureSet, Surface, load_capture
 from .levels import apply_stem_gains, live_fader_db
 from .loudness import MIN_LOUDNESS_DURATION_S, measure_loudness
+from .imaging import measure_imaging
+from .integrity import SurfaceIntegrity, measure_integrity
+from .onsets import detect_onset_samples, to_mono
+from .phase import PhaseRelation, measure_phase_relations
+from .reconcile import reconcile_stem_sum
+from .stereo import measure_stereo
 from .timbre import measure_timbre
 from .cross_rhythm import (
     analyze_cross_rhythm_window,
@@ -68,6 +79,7 @@ from .report import (
     SectionEnergy,
     SectionMetrics,
     StemMetrics,
+    WidthRealization,
 )
 from .reverb import find_decay_onset, measure_return_rt60
 from .section import (
@@ -79,6 +91,7 @@ from .section import (
     slice_audio,
 )
 from .timing import analyze_timing_window
+from .transients import analyze_transients_window
 
 
 # Product reporting floor for masking — pairs/bed below this masked fraction are
@@ -149,17 +162,37 @@ class DeclaredReverbSend:
     declared_rt60_s: float
 
 
+@dataclass(frozen=True)
+class DeclaredWidthControl:
+    """One authored width control, to be read beside what the audio did.
+
+    The MCP handler builds these from the song's dialled device parameters; this
+    module stays DB-agnostic and joins on ``surface_id`` alone. ``declared_display``
+    is carried verbatim rather than parsed to a number on purpose — the report
+    quotes what the author wrote ("165 %"), and the *measurement* beside it is
+    what carries the argument, so nothing depends on parsing a unit string.
+    """
+    surface_id: str
+    device_name: str
+    parameter_name: str
+    declared_display: str
+
+
 def analyze_mix(
     captures_dir: Path | str,
     *,
     declared_reverb_sends: Sequence[DeclaredReverbSend] = (),
     declared_envelopes: Sequence[DeclaredEnvelope] = (),
+    declared_width_controls: Sequence[DeclaredWidthControl] = (),
     sections: Sequence[SectionWindow] = (),
     declared_energy: Sequence[SectionEnergy] = (),
     tempo_map: Sequence[TempoSegment] = (),
     analyze_masking: bool = False,
     analyze_timing: bool = False,
     analyze_cross_rhythm: bool = False,
+    analyze_transients: bool = False,
+    analyze_imaging: bool = False,
+    analyze_integrity: bool = False,
     stem_gains: "Mapping[str, float] | None" = None,
     master_fader_volume: float | None = None,
     compare_to: int | Path | str | None = None,
@@ -167,18 +200,25 @@ def analyze_mix(
 ) -> MixReport:
     """Run the audio-analysis MVP pipeline against a captures directory.
 
-    Four passes:
+    The MVP passes, which the optional lenses below have since been added
+    alongside rather than folded into — so this is the spine, not an inventory
+    (a count here restales every time a lens lands, and has):
 
-      1. Per-surface loudness — master, every stem, every return.
-      2. Master-bus overshoot detection + per-stem contribution
-         attribution.
-      3. Per return with a declared send: measure RT60 from the return's
-         own captured ring-out (Schroeder decay-tail, dry-source-free),
-         compare to declared. If none declared, emit a
-         ``skipped_analyses`` entry.
-      4. Per-section loudness — the pass-1 metrics scoped to each named
-         section window. If no sections are declared, emit a
-         ``skipped_analyses`` entry.
+      * Per-surface loudness — master, every stem, every return.
+      * Master-bus overshoot detection + per-stem contribution
+        attribution.
+      * Per return with a declared send: measure RT60 from the return's
+        own captured ring-out (Schroeder decay-tail, dry-source-free),
+        compare to declared. If none declared, emit a
+        ``skipped_analyses`` entry.
+      * Per-section loudness — the metrics above scoped to each named
+        section window. If no sections are declared, emit a
+        ``skipped_analyses`` entry.
+
+    Every ``analyze_*`` flag in the signature is one further lens, each one
+    emitting a ``skipped_analyses`` entry when it is off or cannot run — that
+    convention, not this list, is what tells a reader what did and did not
+    happen for a given report.
 
     DB intent extraction is the handler's job: it walks
     ``sends.intended_rt60_s`` rows (for ``declared_reverb_sends``) and the
@@ -254,6 +294,22 @@ def analyze_mix(
     # No-op on already-equal-length synthetic fixtures.
     capture, alignment_report = trim_to_common_length(capture)
 
+    # Does the capture cover the span it CLAIMS to? The trim above reconciles the
+    # surfaces against each other; this reconciles the set against the manifest.
+    # It must run before BeatSampleMap, because the map's rescale is precisely
+    # what makes a length defect invisible (see its docstring: the rescale exists
+    # so a global tempo offset can't shift boundaries, and it cannot tell that
+    # apart from audio of the wrong length). Needs real tempo evidence, so it can
+    # decline — the caller names the decline rather than staying quiet.
+    capture_span, capture_span_skip = measure_capture_span(capture, tempo_map)
+    # Recorded on the PASSING path too: a check that only speaks when it fails is
+    # indistinguishable from one that never ran. AlignmentReport owns the whole
+    # `alignment` wire block, so it carries the result rather than the call site
+    # splicing it in.
+    alignment_report = dataclasses.replace(
+        alignment_report, capture_span=capture_span
+    )
+
     # One beat↔sample map for the whole capture, shared by overshoot rebeat-ing
     # and section windowing. Variable-tempo accurate when a tempo_map is
     # supplied; degenerates to the constant-tempo linear map otherwise.
@@ -272,9 +328,73 @@ def analyze_mix(
         tempo_map,
     )
 
-    master_metrics = _measure_surface(capture.master)
-    stem_metrics = [_measure_surface(s) for s in capture.stems]
-    return_metrics = [_measure_surface(r) for r in capture.returns]
+    master_metrics = _measure_surface(capture.master, imaging=analyze_imaging)
+    stem_metrics = [
+        _measure_surface(s, imaging=analyze_imaging) for s in capture.stems
+    ]
+    return_metrics = [
+        _measure_surface(r, imaging=analyze_imaging) for r in capture.returns
+    ]
+
+    # Render integrity runs FIRST among the render-level passes and its results
+    # sit beside the others rather than gating them. It is upstream in meaning,
+    # not in control flow: a click reads as an onset to the timing lens and a
+    # dropout reads as a dynamics move, so a reader who sees damage here knows
+    # to distrust the musical numbers — but suppressing those numbers would
+    # remove the evidence that makes the damage legible.
+    # Off by default, like every other analysis flag here: the pass runs onset
+    # detection on each surface and compares every stem pair, which is the most
+    # expensive thing in this function, and `analyze_mix` stays DB-agnostic while
+    # the handler decides what a given render is worth.
+    integrity_rows: list = []
+    phase_relations: list = []
+    sum_reconciliation = None
+    # An empty list IS silently absent unless something names it — this module's
+    # own convention, and the one thing these lenses exist to avoid. Collected
+    # here and merged into `skipped` once the reverb pass has created it.
+    integrity_skips: list[dict] = []
+    if not analyze_integrity:
+        integrity_skips.append({
+            "kind": "render_integrity",
+            "reason": "analyze_integrity=False — no defect, phase or "
+                      "reconciliation pass was run for this capture",
+        })
+    if not analyze_imaging:
+        integrity_skips.append({
+            "kind": "imaging",
+            "reason": "analyze_imaging=False — no per-surface or per-section "
+                      "soundstage reading was measured",
+        })
+    if analyze_integrity:
+        all_surfaces = [capture.master, *capture.stems, *capture.returns]
+        # Onsets are threaded in so a musical attack is not reported as a click.
+        # Without them every note lands in `discontinuities` — the detector says
+        # so itself via `checks_skipped`, but a report nobody can read is worse
+        # than the omission it warns about.
+        for surface in all_surfaces:
+            integrity_rows.append(
+                measure_integrity(
+                    surface.audio,
+                    sample_rate=surface.sample_rate,
+                    onset_samples=detect_onset_samples(
+                        to_mono(surface.audio), surface.sample_rate
+                    ),
+                    track_id=surface.track_id,
+                )
+            )
+        phase_relations = measure_phase_relations(
+            [(s.track_id, s.audio) for s in capture.stems],
+            sample_rate=capture.sample_rate,
+        )
+        # Returns are part of what reaches the master — a send is audible in the
+        # bus and absent from the dry stems — so excluding them would guarantee a
+        # residual that says nothing about whether the capture set is complete.
+        sum_reconciliation = reconcile_stem_sum(
+            [(s.track_id, s.audio) for s in (*capture.stems, *capture.returns)],
+            capture.master.audio,
+            sample_rate=capture.sample_rate,
+            stem_gains=stem_gains,
+        )
 
     # The master metrics are PRE master-fader — the HallucinoteAnalyzer taps the
     # master DEVICE CHAIN, before the master mixer volume. When the caller supplies
@@ -306,6 +426,7 @@ def analyze_mix(
         declared_sends=declared_reverb_sends,
         beat_map=beat_map,
     )
+    skipped.extend(integrity_skips)
 
     automation_verifications, automation_skips = _run_automation_verifications(
         capture=capture,
@@ -322,6 +443,8 @@ def analyze_mix(
         analyze_masking=analyze_masking,
         analyze_timing=analyze_timing,
         analyze_cross_rhythm=analyze_cross_rhythm,
+        analyze_transients=analyze_transients,
+        analyze_imaging=analyze_imaging,
         stem_gains=stem_gains or {},
     )
     skipped.extend(section_skips)
@@ -329,13 +452,30 @@ def analyze_mix(
     energy_realization, energy_skips = _realize_energy(declared_energy, per_section)
     skipped.extend(energy_skips)
 
+    width_realizations, width_skips = _realize_widths(
+        declared_width_controls, [*stem_metrics, *return_metrics]
+    )
+    skipped.extend(width_skips)
+
+    if capture_span_skip is not None:
+        # An empty list IS silently absent unless something names it — this
+        # module's convention, and exactly the silence #491 was: the capture was
+        # a beat long and the report said nothing at all.
+        skipped.append({
+            "kind": "capture_span",
+            "reason": capture_span_skip,
+        })
+
     findings = _derive_findings(
+        integrity=integrity_rows,
+        phase_relations=phase_relations,
         master=master_metrics,
         stems=stem_metrics,
         overshoots=overshoots,
         reverbs=reverb_verifications,
         automation=automation_verifications,
         sections=sections,
+        capture_span=capture_span,
     )
 
     report = MixReport(
@@ -349,11 +489,15 @@ def analyze_mix(
         overshoots=overshoots,
         reverb_verifications=reverb_verifications,
         automation_verifications=automation_verifications,
+        width_realizations=width_realizations,
         per_section=per_section,
         findings=findings,
         skipped_analyses=skipped,
         energy_realization=energy_realization,
         alignment=alignment_report.to_json_dict(),
+        integrity=integrity_rows,
+        phase_relations=phase_relations,
+        sum_reconciliation=sum_reconciliation,
         db_seq=capture.db_seq,
         master_fader_volume=master_fader_volume,
         master_fader_db=master_fader_db,
@@ -368,7 +512,7 @@ def analyze_mix(
     return report
 
 
-def _measure_surface(surface) -> StemMetrics:
+def _measure_surface(surface, *, imaging: bool = False) -> StemMetrics:
     loudness = measure_loudness(surface.audio, sr=surface.sample_rate)
     return StemMetrics(
         track_id=surface.track_id,
@@ -376,7 +520,81 @@ def _measure_surface(surface) -> StemMetrics:
         surface_name=surface.surface_name,
         loudness=loudness,
         timbre=measure_timbre(surface.audio, surface.sample_rate),
+        stereo=measure_stereo(surface.audio),
+        imaging=(
+            measure_imaging(surface.audio, sample_rate=surface.sample_rate)
+            if imaging
+            else None
+        ),
     )
+
+
+def _realize_widths(
+    declared: Sequence[DeclaredWidthControl],
+    surfaces: Sequence[StemMetrics],
+) -> tuple[list[WidthRealization], list[dict]]:
+    """Pair each declared width control with the measured image on its surface.
+
+    ``surfaces`` is tracks AND returns — a width control on a reverb bus is an
+    ordinary move, and a join that saw only tracks would report such a control as
+    unmeasurable when the audio for it was captured all along.
+
+    Neutral evidence only: the declared value beside what the audio did. No
+    threshold, no severity, no verdict — a control doing nothing may be an
+    oversight or may be a part with no side content to widen, and only the
+    reader knows which. ``/mix-review`` grades it against declared intent.
+
+    Catching this needs BOTH halves — the declaration and the rendered audio —
+    which is why no DAW reports it and why the join lives here.
+    """
+    # The recognition scope is disclosed on EVERY analysis, not only when nothing
+    # was recognised. The partial case is the dangerous one and the common one:
+    # one control recognised and three missed produces a non-empty list that a
+    # reader takes for the complete set of declared width controls, and concludes
+    # an unlisted one is absent or fine — which is the "declared but silently
+    # doing nothing" failure this lens exists to end, one layer up.
+    scope_note = {
+        "kind": "width_realization_scope",
+        "reason": (
+            f"`width_realizations` lists the {len(declared)} width control(s) "
+            "RECOGNISED, which is not necessarily every one AUTHORED. Recognition "
+            "is a closed set of exact parameter names (currently: Stereo Width) at "
+            "a non-default value, on top-level track and return devices; a width "
+            "control under another name, inside a rack's nested chain, or left at "
+            "unity is not listed. Read an absence as 'not recognised', never as "
+            "'not authored'"
+        ),
+    }
+    if not declared:
+        return [], [scope_note]
+
+    by_surface = {s.track_id: s for s in surfaces}
+    realizations: list[WidthRealization] = []
+    skipped: list[dict] = [scope_note]
+    for control in declared:
+        stem = by_surface.get(control.surface_id)
+        if stem is None or stem.stereo is None:
+            skipped.append({
+                "kind": "width_realization",
+                "reason": (
+                    f"declared width control {control.parameter_name!r} on "
+                    f"{control.device_name!r} targets surface "
+                    f"{control.surface_id!r}, which this capture has no measured "
+                    f"stereo for — the control cannot be checked against audio "
+                    f"that wasn't captured"
+                ),
+            })
+            continue
+        realizations.append(WidthRealization(
+            surface_id=control.surface_id,
+            surface_name=stem.surface_name,
+            device_name=control.device_name,
+            parameter_name=control.parameter_name,
+            declared_display=control.declared_display,
+            correlation=stem.stereo.correlation,
+            mono_sum_loss_db=stem.stereo.mono_sum_loss_db,
+        ))
+    return realizations, skipped
 
 
 def _rebeat_overshoot(
@@ -561,6 +779,8 @@ def _measure_sections(
     analyze_masking: bool = False,
     analyze_timing: bool = False,
     analyze_cross_rhythm: bool = False,
+    analyze_transients: bool = False,
+    analyze_imaging: bool = False,
     stem_gains: Mapping[str, float] = {},
 ) -> tuple[list[SectionMetrics], list[dict]]:
     """Measure per-surface loudness scoped to each named section window.
@@ -653,6 +873,15 @@ def _measure_sections(
         phasing = []
         polymeter = []
         onset_density = None
+        # Low-band hit shape (thud vs punch). Level-blind in its differences
+        # and times, so it reads the raw pre-fader slices like timing; it needs
+        # no grid geometry (hits are picked on the envelope, not the grid).
+        transients = []
+        transient_skips = []
+        if analyze_transients:
+            tres = analyze_transients_window(sliced_stems, capture.sample_rate)
+            transients = tres.parts
+            transient_skips = tres.skipped
         if analyze_timing or analyze_cross_rhythm:
             geom = _window_grid_geometry(sl, capture, beat_map)
             if geom is not None:
@@ -692,9 +921,15 @@ def _measure_sections(
             section_id=window.section_id,
             start_beat=window.start_beat,
             end_beat=window.end_beat,
-            master=_measure_window(capture.master, sl),
-            stems=[_measure_window(s, sl) for s in capture.stems],
-            returns=[_measure_window(r, sl) for r in capture.returns],
+            master=_measure_window(capture.master, sl, imaging=analyze_imaging),
+            stems=[
+                _measure_window(s, sl, imaging=analyze_imaging)
+                for s in capture.stems
+            ],
+            returns=[
+                _measure_window(r, sl, imaging=analyze_imaging)
+                for r in capture.returns
+            ],
             attribution=band_attribution(sliced_stems, capture.sample_rate),
             masking=masking_pairs,
             bed_masking=bed_masking,
@@ -702,6 +937,8 @@ def _measure_sections(
             cross_rhythm=cross_rhythm,
             phasing=phasing,
             polymeter=polymeter,
+            transients=transients,
+            transient_skips=transient_skips,
             onset_density=onset_density,
         ))
 
@@ -893,7 +1130,9 @@ def _measure_window_polymeter(
     ]
 
 
-def _measure_window(surface: Surface, window_slice: WindowSlice) -> StemMetrics:
+def _measure_window(
+    surface: Surface, window_slice: WindowSlice, *, imaging: bool = False
+) -> StemMetrics:
     """Loudness of one surface over a clamped section window."""
     sliced = slice_audio(surface.audio, window_slice)
     loudness = measure_loudness(sliced, sr=surface.sample_rate)
@@ -903,6 +1142,15 @@ def _measure_window(surface: Surface, window_slice: WindowSlice) -> StemMetrics:
         surface_name=surface.surface_name,
         loudness=loudness,
         timbre=measure_timbre(sliced, surface.sample_rate),
+        stereo=measure_stereo(sliced),
+        # Per-section too, like the two above: "the chorus goes wide and the
+        # verse is narrow" is the soundstage question people actually ask, and a
+        # whole-capture average is exactly the reading that cannot answer it.
+        imaging=(
+            measure_imaging(sliced, sample_rate=surface.sample_rate)
+            if imaging
+            else None
+        ),
     )
 
 
@@ -929,6 +1177,9 @@ def _derive_findings(
     reverbs: list[ReverbVerification],
     automation: Sequence[EnvelopeVerification] = (),
     sections: Sequence[SectionWindow] = (),
+    integrity: Sequence[SurfaceIntegrity] = (),
+    phase_relations: Sequence[PhaseRelation] = (),
+    capture_span: CaptureSpan | None = None,
 ) -> list[Finding]:
     """Translate raw metrics into structured findings.
 
@@ -940,6 +1191,9 @@ def _derive_findings(
         whose measured RT60 falls outside tolerance.
       - ``master_clipping_risk`` (info) — when master true-peak ≥ -0.1 dBTP
         but no overshoots crossed 0.
+      - ``capture_span_mismatch`` (warning) — the captured audio does not
+        cover the beat span the manifest declares, so every beat this report
+        cites is computed on a stretched map.
 
     When ``sections`` are declared, each ``master_overshoot`` finding's
     ``db_reference`` names the section the overshoot lands in
@@ -952,6 +1206,20 @@ def _derive_findings(
     mutation proposals (the "fix" side) are P2 backlog.
     """
     findings: list[Finding] = []
+
+    # First, because it conditions how every other finding below should be read:
+    # if the capture does not cover the span it claims, the beat references those
+    # findings carry are offset by the excess.
+    if capture_span is not None and not capture_span.within_tolerance:
+        findings.append(Finding(
+            kind="capture_span_mismatch",
+            severity="warning",
+            subject="capture",
+            metric="span_beats",
+            observed=capture_span.declared_beats + capture_span.excess_beats,
+            expected=capture_span.declared_beats,
+            db_reference=capture_span.human_summary,
+        ))
 
     for o in overshoots:
         section_name = _section_name_for_beat(o.start_beat, sections)
@@ -1060,6 +1328,57 @@ def _derive_findings(
                 db_reference=e.note,
             ))
 
+    # Render integrity. These describe DAMAGE, not intent, so unlike every other
+    # finding here they are not read against a declared value — `expected` is the
+    # clean reading. Severity stays at `warning`: the detectors are validated
+    # against two real renders plus a synthetic corpus, which is enough to report
+    # a defect and not enough to halt on one. `blocking` is deliberately unused
+    # until they have been through a broader corpus, because a wrong `blocking`
+    # on a healthy render is a worse failure than a missed defect — this family
+    # spent its first real-capture pass fixing exactly that class of error.
+    for row in integrity:
+        if row.clip_events:
+            findings.append(Finding(
+                kind="stem_clipping",
+                severity="warning",
+                subject=row.track_id,
+                metric="worst_clip_run_samples",
+                observed=float(row.worst_clip_run_samples),
+                expected=0.0,
+                db_reference=row.track_id,
+            ))
+        cuts = [d for d in row.dropouts if d.kind == "zero_run"]
+        if cuts:
+            findings.append(Finding(
+                kind="capture_dropout",
+                severity="warning",
+                subject=row.track_id,
+                metric="dropouts",
+                observed=float(len(cuts)),
+                expected=0.0,
+                db_reference=row.track_id,
+            ))
+        if row.discontinuities:
+            findings.append(Finding(
+                kind="discontinuity",
+                severity="warning",
+                subject=row.track_id,
+                metric="discontinuities",
+                observed=float(len(row.discontinuities)),
+                expected=0.0,
+                db_reference=row.track_id,
+            ))
+    for pair in phase_relations:
+        if pair.polarity_inverted:
+            findings.append(Finding(
+                kind="polarity_inversion",
+                severity="warning",
+                subject=f"{pair.track_id_a} x {pair.track_id_b}",
+                metric="correlation",
+                observed=pair.correlation,
+                expected=0.0,
+                db_reference=pair.track_id_a,
+            ))
     return findings
 
 

@@ -1,7 +1,8 @@
 # Song creation in Hallucinote — the full picture
 
 This is the map for making a song here: the **lifecycle** (which skill runs each
-phase, and the checkpoints agents most often miss), each stage's
+phase, where in the loop the user first hears something, and the checkpoints
+agents most often miss), each stage's
 [**definition of done**](#stage-exit-criteria), and the **expertise** behind
 every tool — grounded in the framework's research corpus,
 linked so it never rots out of sync. Read it when you start song work, or when
@@ -24,9 +25,26 @@ as a *producer's question* ("is the chorus landing?"), never a verdict. A
 near-silent part, a drone, a dissonance, a 3/4 bar in a 4/4 song — these are
 valid art, and nothing in the build blocks them.
 
+A producer also knows when to hand over the headphones. The pacing rule is
+**two-sided**, and each half exists because the other, alone, produced a real
+failure: **never stop to summarize-and-ask** at a procedural seam — a finished
+phase is not a decision point — and **never build past a hearable unit without
+offering to play it** — the hearable unit is the bound on what gets authored
+unheard. Drop the first half and every skill boundary becomes a checkpoint;
+drop the second and the user asks "shouldn't I be hearing something?" forty-five
+minutes in, with zero notes taken. The offer is for what the user left open: a
+choice they directed, or a hearing rhythm they set, is theirs and is not
+re-opened.
+
 - The producer stance, the propose-and-react discipline, and the three intent
   registers (directed / volunteered / directed-but-underarticulated):
   [intent-collaboration-model.md](../.prawduct/artifacts/intent-collaboration-model.md).
+- The vocabulary the pacing rule is written in — *turn kind*, *hearable unit*,
+  *the status offer*, *decline with scope*, *owner column*, *loaded prompt* —
+  is defined there, and short-defined in `CLAUDE.md`, which an agent loads every
+  session. This page carries a one-line gloss of the hearable unit at stage 3,
+  because a human reader here auto-loads neither, and links for everything else:
+  [collaboration-turn-model.md](../.prawduct/artifacts/collaboration-turn-model.md).
 - Why nothing aesthetic can fail a build (BLOCKING is reserved for *likely
   errors* — pitch out of range, zero duration — never choices):
   [gate-verdict-policy.md](../.prawduct/artifacts/gate-verdict-policy.md).
@@ -45,12 +63,19 @@ below). Tools are conveniences, not limits.
 ## The lifecycle
 
 Song-making here is a **loop, not a line** — you'll circle back through compose
-and mix many times. But the arc has a natural order, and two of its phases are
-*review checkpoints* that are easy to skip and shouldn't be:
+and mix many times, and the **first pass is short on purpose**: compose the
+first hearable unit → push it → **offer** a hearing (the status offer) →
+continue to the next unit. The user hears something after one unit of
+authoring, not after the song; "keep going" is a complete answer to the offer,
+and a decline with scope is remembered rather than re-asked. The hearing is a
+property of the loop, not a stage in the table below — every pass through
+compose ends at something the user could hear. But the arc has a natural order,
+and two of its phases are *review checkpoints* that are easy to skip and
+shouldn't be:
 
 | # | Phase | Skill(s) | The expertise behind it |
 |---|-------|----------|-------------------------|
-| 0 | **Elicit the brief** ⭐ | **`/song-brief`** | [elicitation-and-stage-exit-criteria.md](../.prawduct/artifacts/elicitation-and-stage-exit-criteria.md), [onboarding-and-teaching-model.md](../.prawduct/artifacts/onboarding-and-teaching-model.md) |
+| 0 | **Elicit the brief** ⭐ | **`/song-brief`** | [collaboration-turn-model.md](../.prawduct/artifacts/collaboration-turn-model.md), [elicitation-and-stage-exit-criteria.md](../.prawduct/artifacts/elicitation-and-stage-exit-criteria.md), [onboarding-and-teaching-model.md](../.prawduct/artifacts/onboarding-and-teaching-model.md) |
 | 1 | Frame the intent | `/song-new`, `/song-context` | [onboarding-and-teaching-model.md](../.prawduct/artifacts/onboarding-and-teaching-model.md), [intent-architecture.md](../.prawduct/artifacts/intent-architecture.md) |
 | 2 | Pick instrument **chains** | `/song-pick-instruments` | sound design is composition (below) |
 | 3 | Compose the parts | `/compose-part` | [melody-model.md](../.prawduct/artifacts/melody-model.md), [performance-model.md](../.prawduct/artifacts/performance-model.md), [arrangement-model.md](../.prawduct/artifacts/arrangement-model.md) |
@@ -68,16 +93,29 @@ the framework's ear gets applied to it.
 A starting prompt is not a brief. `/song-brief` sweeps the load-bearing
 dimensions the prompt left open — harmony, tempo, production stance, what a
 named narrative turn means musically, meter, the section time budget, and the
-**mechanism behind every named gesture** — and closes them in **one consolidated
-turn of informed proposals**, each carrying its reasoning and a recommendation
-so a one-word reaction settles it. Never a questionnaire, never sequential Q&A.
+**mechanism behind every named gesture** — and closes them in a **conversation
+that ends at the user's hand-off**: it opens with the two or three identity
+questions it cannot guess, proposes the rest as informed, redirectable reads
+(each carrying its reasoning so a one-word reaction settles it), and keeps
+reading each reply for whether the user is done. An answer that adds a noun is
+not a closure; silence on an asked item is still thinking; identity closes when
+the user hands off, never by inference. Never a questionnaire, never sequential
+Q&A — and never a form on a creative question. A loaded prompt ("make a rap
+song", "write a symphony") opens its domain rather than being run with.
 
 Its output is `annotations/01-the-brief.md`: the prompt verbatim, plus the
-resolution table every later stage reads. It also produces the tempo, meter and
-section values `/song-new` requires as command arguments — which is why it runs
-first. Skipped silently when a directed prompt leaves nothing applicable open.
+resolution table every later stage reads — a ledger the stage updates every
+turn, carrying for each dimension not only its state but **who owns it**
+(*yours* / *offer me options* / *mine*), learned from the conversation rather
+than asked for. It also produces the tempo, meter and section values `/song-new`
+requires as command arguments — which is why it runs first. What the user
+directed is taken as read, not re-asked; when a directed prompt leaves nothing
+applicable open, there is nothing to ask and the stage executes.
 
-→ [elicitation-and-stage-exit-criteria.md](../.prawduct/artifacts/elicitation-and-stage-exit-criteria.md)
+→ [collaboration-turn-model.md](../.prawduct/artifacts/collaboration-turn-model.md)
+(the conversation, the turn kinds, the owner column) ·
+[elicitation-and-stage-exit-criteria.md](../.prawduct/artifacts/elicitation-and-stage-exit-criteria.md)
+(the three states and the no-unresolved-gap rule)
 
 ### 1 — Frame the intent
 `/song-new` scaffolds `songs/<slug>/` (build.py, captured_session.json, tests,
@@ -101,7 +139,34 @@ have as part of being finished.
 `/compose-part` writes note-generating code in the song's `build.py` using
 `hallucinote.generators`, runs the build (DB through mutators; events fall out),
 and scoped-pushes the changed clips. Notes are authored as code and never enter
-the agent's context. This is where the line-level craft lives:
+the agent's context.
+
+**Compose the first hearable unit first, and offer it before the next.** The
+hearable unit is the smallest thing that, once heard, tells the user whether the
+idea works — one idea in a study, a few bars of one section with the parts that
+carry it in a sketch; it is read fresh every turn, never fixed per song. Getting
+it into the user's ears has one precondition: a brand-new track or clip needs
+one full `/ableton-push` to create and link the structure before `/compose-part`'s
+scoped `push-notes` can reach it (it only touches already-linked clips, and
+returns a teaching error per clip otherwise — see `/compose-part`'s
+precondition). After that first full push, every pass is audible in Live as soon
+as it exists — and that is when the **status offer** is made: what is settled,
+hear it or keep going, what has not come up — named, not asked. It fires when
+the settled material has reached a hearable unit *and* the user's last turn was
+a closure rather than an opening; if their last turn opened something, follow
+the opening; if nothing is hearable yet, propose one concrete thing toward it.
+"Keep going" authorizes the next unit, after which the offer is made again; a
+decline with scope ("build it all, I'll listen at the end") is recorded in the
+brief's owner column and not re-asked inside that scope. A decision you expect
+the user to overturn is played to them, not filed past. And after the user
+listens, their report is a *reacting* turn, not authorization to build the next
+unit: interpret it, adjust what they pointed at, name any confound in your own
+study's design, offer at most one concrete next study, and wait. What this rules
+out is the whole-song pass: twelve chains and every section authored, rendered
+last, with the first audio at the end. The bound is on the *offer*, never on the
+listening — the user is never required to hear a unit in order to continue.
+
+This is where the line-level craft lives:
 
 - **Melody** is a structural dimension — contour, intervals, harmonic fit,
   motivic economy. There is *no universal "good melody"*: a line is graded
@@ -134,52 +199,31 @@ idempotent, with preflight and rollback. → [push-execute-design.md](../.prawdu
 ### 6 — Capture + analyze `/render-analyze`
 `/render-analyze` runs the capture + analysis in one step: `ableton_render`
 auto-loads the HallucinoteAnalyzer and runs a WAV capture pass; `ableton_analysis`
-builds a **MixReport** from the captures (loudness, master attribution, reverb
-verification, per-part timing/feel, masking, energy realization). Both are
+builds a **MixReport** from the captures (render integrity — clipping, dropouts,
+clicks, phase/polarity, stem-sum reconciliation — plus loudness, master
+attribution, reverb verification, per-part timing/feel, masking, soundstage
+imaging, energy realization). The integrity family runs over the whole capture
+and the imaging one runs per section as well, so together they add roughly a
+minute or two to the analysis of a full-length song — the analysis is a
+start+poll action already, so this lands as a longer poll, not a blocked call. Both are
 realtime / long-running **start + poll** actions (they exceed the 60 s tool-call
 timeout — see `ableton://guides/conventions` "Long-running actions = start +
 poll"), so `/render-analyze` delegates their poll loops to a subagent and hands
 back only the MixReport summary + `report_path` — keeping the plumbing out of
 your context. This is the expensive real-time step — it feeds the next checkpoint.
 
-**Capture retention.** Each render writes one take to `songs/<slug>/captures/<ts>/`
-— a 32-bit-float WAV per track, return and master, roughly 23 MB per
-surface-minute, so a full-length multi-track song costs gigabytes per take. A
-rolling window runs automatically **at render start**: it keeps the **2 newest
-takes already on disk** and removes the rest, then the render writes its own — so
-a song settles at **3 takes** after each render. (`hallucinote captures prune
---keep 2` run on its own leaves 2, because no new take follows it.) Deleting an
-old take is safe because the durable measurement is the MixReport in
-`songs/<slug>/analysis/` — analysis reads a take once and writes a self-contained
-JSON, and baseline comparison (`compare_to`) resolves against those JSONs, never
-the audio. Reports are never swept; what a sweep costs is re-analyzing that
-specific take with different parameters.
-
-To keep a reference take permanently, pin it — `hallucinote captures pin
-songs/<slug>/captures/<ts>` (pinned takes are skipped by every sweep and don't
-consume a keep slot). An unpinned take survives the next two renders and
-is removed at the start of the third.
-`hallucinote captures list` shows what's on disk and `hallucinote captures prune
---song <slug> --dry-run` previews a sweep without deleting.
-
-> **Agents: `hallucinote` is not on your PATH.** The engine ships inside the
-> plugin's uv env, so these read as `"$PY" -m hallucinote.cli captures …` with
-> `$PY` resolved from `ableton://server/info` — see
-> [`running-the-engine.md`](running-the-engine.md). This matters most for `pin`:
-> a `command not found` there is silent, and the take it was meant to protect is
-> swept at a later render.
-
-`HALLUCINOTE_CAPTURE_KEEP` changes the window and `HALLUCINOTE_CAPTURE_SWEEP=0`
-turns the automatic sweep off. Both are read by the **MCP server process**, so to
-affect the automatic sweep they must be set in the `env` block of this server's
-entry in the user's Claude settings — exporting them in a terminal reaches the
-CLI but not the server. The server logs `retention sweep disabled` at INFO when
-the opt-out reached it, so the setting confirms itself.
+**Capture retention.** Renders are big (~23 MB per surface-minute of per-stem
+WAV), so a rolling window keeps a song at **3 takes** on disk; the durable
+measurement is the MixReport JSON in `songs/<slug>/analysis/`, which is never
+swept. Pin a reference take to exempt it from the sweep. The mechanics — the
+`captures list/prune/pin` commands, the env-var knobs, and why they must reach
+the server process — are in
+[`running-the-engine.md` → Capture retention](running-the-engine.md#capture-retention-render-takes).
 
 ### 7 — Read the mix ⭐ `/mix-review`
 The single read-side surface over all audio analyses. It reads rendered audio, so
 it **needs Max for Live** (Live Suite, or the M4L add-on); `/compose-review` is the
-any-edition symbolic read. `/mix-review` recalls the
+symbolic read, available on Standard too. `/mix-review` recalls the
 song's intent, reads the whole MixReport per section, and interprets the
 measurements *against* intent — surfacing only the collisions that hurt the
 element meant to *win* each section, framed as a producer's question. Masking is
@@ -217,7 +261,10 @@ master volume/pan ingest, so a "tempo-only" pull arms the guard whenever the
 master fader or pan drifted. Arming follows the event kinds a pull actually
 emitted, not the domain you asked for — so trust the durability notice.
 
-Then loop back to compose or mix.
+Then loop back to compose or mix. The hearing offer rides every pass, not just
+the first: each loop through compose ends at a unit the user could hear, and the
+offer is made again — unless they declined with a scope that has not yet been
+reached.
 
 As you loop, keep the **attempt ledger** (`songs/<slug>/attempts/`, `kind: attempt`)
 current — log each move you *tried* and how it turned out (`outcome` worked/partial/failed,
@@ -273,7 +320,7 @@ depends on."*
 
 | Stage | Done when |
 |---|---|
-| **0 · `/song-brief`** | `annotations/01-the-brief.md` exists with the prompt verbatim and a resolution table in which every applicable dimension is DECIDED or UNDECIDED-with-an-owner. NOT-APPLICABLE rows are recorded, not asked about. The time budget is costed if a duration was stated. |
+| **0 · `/song-brief`** | `annotations/01-the-brief.md` exists with the prompt verbatim and a resolution table in which every applicable dimension is DECIDED or UNDECIDED-with-an-owner, **and carries the owner column** (*yours* / *offer me options* / *mine*) for each, as the conversation revealed it. NOT-APPLICABLE rows are recorded, not asked about. The time budget is costed if a duration was stated. The user has handed off — the stage does not close identity by inference. |
 | **1 · `/song-new`** | Tempo, meter and the section/bar list are **values from the brief**, not invented at the command line. Scaffold builds; shape tests pass. Each brief decision is filed in `decisions/`. If the CLI needs a value the brief lacks, that is an UNDECIDED row — close it before scaffolding, never default it silently. |
 | **2 · `/song-pick-instruments`** | Every part the brief names has a resolved **chain** in the snapshot. Where the brief says the sonic worlds differ, that difference exists **as chain differences**. No chain is "TBD at mix time" — sound design is composition. |
 | **3 · `/compose-part`** | Every gesture the section needs **exists in `build.py`** — notes, envelope, or device. **The docstring test:** if prose in the song names a device, an envelope or a mechanism, grep the song for it; absent ⇒ the stage is not done. Per-part `feel` is set explicitly, not defaulted by omission. |
@@ -289,6 +336,12 @@ the one that survives every stage.
 the loop-back, not a stage handing work downstream. It cannot emit a gap dressed
 as a decision because it emits no decisions; the next pass through stages 3–7
 re-applies theirs.
+
+**The hearing is not a ninth stage either, and has no row.** It is a property of
+the loop — the bound on how much of stages 3–7 is built between moments the user
+can hear — not a stage that hands work downstream. Its rule lives with stage 3
+above and in the design: never author past one hearable unit without having
+offered to play it; never require the listen.
 
 ### Meter is a projection concern
 
@@ -309,6 +362,9 @@ meter-aware `Arrangement.plan()` and lenses).
 
 → Full design, including the worked examples and what is deliberately not built:
 [elicitation-and-stage-exit-criteria.md](../.prawduct/artifacts/elicitation-and-stage-exit-criteria.md)
+(the three states and stage exit) ·
+[collaboration-turn-model.md](../.prawduct/artifacts/collaboration-turn-model.md)
+(the conversation, the hearable unit, the status offer)
 
 ---
 

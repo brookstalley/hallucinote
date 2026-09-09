@@ -330,7 +330,13 @@ unaddressed; flagged.
 - **Extend `song-new`:** lighter, altitude-aware intent elicitation; collaborate
   by default (propose-and-react), retiring the make-me-X / scaffold-only mode
   split. Lift section/song intent into the existing corpus.
-- **Amend two CLAUDE.md norms:**
+- **Amend two CLAUDE.md norms:** *(done, 2026-09-01, and gone further than a
+  carve-out — see [`collaboration-turn-model.md`](collaboration-turn-model.md).
+  Writing the collaborative stance as a carve-out to the stop-less rule turned
+  out to be the reason the August fix decayed: under pressure the agent obeyed
+  the hard rule and treated the carve-out as optional. "The user leads the
+  creative project" is now the primary norm and stop-less is scoped to
+  procedural stops.)*
   - "Stop only on high-stakes decisions" — a *collaborative musical proposal /
     teaching choice* is a legitimate stop (creative lock-in), distinct from a
     summarize-and-ask.

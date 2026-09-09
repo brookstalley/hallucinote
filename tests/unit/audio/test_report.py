@@ -102,6 +102,7 @@ def test_to_json_dict_round_trips_through_json():
                 measurable=True,
                 realized=True,
                 note="timbre shift realized",
+                probe="timbre",
             )
         ],
         findings=[
@@ -136,6 +137,10 @@ def test_to_json_dict_round_trips_through_json():
     assert av["target_kind"] == "device_parameter"
     assert av["metric"] == "spectral_centroid_hz"
     assert av["measurable"] is True and av["realized"] is True
+    # `probe` must cross the JSON boundary: /mix-review reads this file, never
+    # the in-process dataclass, and the field exists precisely so it need not
+    # string-match `note` to learn which probe carried the verdict.
+    assert av["probe"] == "timbre"
     assert deserialized["findings"][0]["kind"] == "master_overshoot"
     assert deserialized["compare_to"] is None  # no baseline requested
 
@@ -463,6 +468,8 @@ def test_timbre_serializes_when_present_and_is_null_when_absent():
         "spectral_centroid_hz": 1820.0,
         "spectral_flatness": 0.42,
         "spectral_rolloff_hz": 4100.0,
+        # sharpness defaults to NaN when a fixture doesn't measure it → null
+        "sharpness_acum": None,
     }
     assert parsed["stems"][1]["timbre"] is None
 
@@ -485,6 +492,7 @@ def test_timbre_nan_sentinel_serializes_as_null():
         "spectral_centroid_hz": None,
         "spectral_flatness": None,
         "spectral_rolloff_hz": None,
+        "sharpness_acum": None,
     }
 
 

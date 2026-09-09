@@ -269,8 +269,11 @@ register(
             "entry and closes at its exit, so a short arc never stamps a "
             "flat value across the whole song. Wall-clock cost is "
             "union-span / tempo (NOT the sum of per-arc spans). Write-only: "
-            "verify via each arc's returned automation_state (1 = active) "
-            "and playback; arrangement automation has no LOM read surface. "
+            "arrangement automation has no LOM read surface, so verify via "
+            "each arc's returned outcome ('recorded' / 'unverified') and "
+            "playback — NEVER via automation_state alone, which reads 1 "
+            "whenever any lane exists on the parameter and so answers about "
+            "an earlier pass on every iteration but the first. "
             "Breakpoint times are absolute arrangement beats."
         ),
         params=(
@@ -305,9 +308,10 @@ register(
                 minimum=1,
                 description=(
                     "How long to wait for async Song state "
-                    "(record_mode applies ~300 ms late — probe 10) and "
-                    "the post-perform automation_state read. Default "
-                    "2000."
+                    "(record_mode applies ~300 ms late — probe 10; the "
+                    "pre-play LOCATE to the span start is async too and "
+                    "gets the same settle-verify) and the post-perform "
+                    "automation_state read. Default 2000."
                 ),
             ),
             ParamSpec(
@@ -344,10 +348,25 @@ register(
             "Pass only the arcs that changed; the Hallucinote push planner "
             "fingerprint-gates so unchanged arcs never re-record (and a "
             "hand-edited lane survives).",
-            "Each result arc carries its own automation_state: 0 = no "
-            "automation recorded, 1 = active (success), 2 = overridden. A "
-            "non-1 result is returned, not raised — the caller owns the "
-            "per-arc failed-verification policy.",
+            "Each result arc carries its own outcome — 'recorded' (values "
+            "were written AND the lane confirmed) or 'unverified', with an "
+            "outcome_reason saying which check failed. That is the verdict; "
+            "automation_state and updates_written are the inputs it is "
+            "computed from, and automation_state alone cannot verify a pass "
+            "because it reads 1 for a lane ANY earlier pass wrote. An "
+            "unverified arc is returned, not raised — the caller owns the "
+            "per-arc policy (Hallucinote's push withholds the fingerprint so "
+            "the next push retries just that arc).",
+            "The result also reports how the transport was positioned: "
+            "locate_method, start_position_moved and (when degraded) "
+            "locate_detail. start_position_moved false means the pass ran "
+            "against a start playing position nothing moved — the arcs may "
+            "still be right, but check the lanes landed where you authored "
+            "them.",
+            "Refuses when the union span starts past the arrangement's "
+            "last_event_time: Live clamps the playhead to the arrangement's "
+            "extent, so playback can never begin there. Place arrangement "
+            "content covering the span first.",
             "Re-performing a changed arc over the same span overwrites the "
             "previous recording (Live punch-over semantics).",
         ),

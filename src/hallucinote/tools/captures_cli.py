@@ -69,13 +69,22 @@ def _unknown_song(slug: str) -> bool:
 def discover_song_slugs() -> list[str]:
     """Every song with a captures directory, from the songs root renders use.
 
-    Mirrors ``workspace.resolve_song_dir``'s precedence exactly —
-    ``$HALLUCINOTE_SONGS_ROOT``, then a ``hallucinote.toml`` marker found above
-    OR (unambiguously) below, then the legacy ``songs/`` — because the two must
-    agree on WHERE songs live. If this enumerated a different root than the
-    per-slug resolver, ``--all`` would scan a directory renders never write to
-    and silently prune nothing. ``descend=True`` is what keeps the two in step:
-    the per-slug resolver descends (precedence step 4), so this must too.
+    Mirrors ``workspace.resolve_song_dir``'s precedence as far as a slug-less
+    question can — ``$HALLUCINOTE_SONGS_ROOT``, then a ``hallucinote.toml``
+    marker found above OR (unambiguously) below, then the legacy ``songs/`` —
+    because the two must agree on WHERE songs live. If this enumerated a
+    different root than the per-slug resolver, ``--all`` would scan a directory
+    renders never write to and silently prune nothing. ``descend=True`` is what
+    keeps the two in step for the descent (precedence step 5).
+
+    **The one divergence, deliberate.** Precedence step 4 picks the workspace
+    that *holds the slug*, which can be a SIBLING of the start directory (the
+    two-repo topology). That test is slug-keyed by construction, so an
+    enumerator cannot apply it: there is no slug to hold. Enumeration therefore
+    answers for the workspace this session is in or above, and a sibling songs
+    repo is out of its scope — ``--all`` prunes what it can see, never what it
+    guessed at. Naming the song (``--song``) resolves through the full
+    precedence and does reach the sibling.
 
     A single-song workspace reports its own slug.
     """

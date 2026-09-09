@@ -1,0 +1,163 @@
+---
+lifecycle: completed
+archived: 2026-09-08
+maintained: false
+---
+
+> **Archived — no longer maintained.** This plan records what was built, not what will be. Do not edit it to reflect later changes; write those where they are true.
+
+# DEEP-RACK-ADDR — Build Plan
+
+Branch: `fix/deep-rack-addressing` (to create). Critic mode: **cumulative** (base `develop`),
+per chunk for medium+ chunks. Design: `./design.md`.
+
+Resolves the Severity-H capability gap: rack devices nested 2+ levels deep are unreadable,
+unsettable, un-automatable, and — the killer — **non-durable** (capture stores depth-1 params,
+push drops them, so a `build.py` rebuild reverts any deep fix).
+
+## Requirements Confidence: **High**
+- Firsthand-scoped bug + four independent code investigations + a live probe of the exact
+  swell case (track 4 → "Guitar-Dual Amped Heavy" → nested "Guitar" rack → "Guitar Dead
+  Notes" MultiSampler at depth 2).
+- DB verified depth-N capable already → no schema/mutator changes.
+- Addressing model locked: positional `device_path` + name read-back.
+
+## Dependency ordering (critical)
+Chunk 1 (wire primitive + resolver) MUST land before Chunk 2 (push), or push will fall back
+to the depth-2 `set_parameter_in_rack` and silently re-cap depth at 2 (design §8). Chunks 3
+and 4 depend on Chunk 1's primitive; they are independent of each other.
+
+---
+
+### Chunk 1: canonical `device_path` primitive + shared resolver (read/set/enumerate) [FLIP]
+Thin vertical slice — after this you can READ and SET a param at any depth in a live set
+(not yet durable).
+- **handlers/device.py:** add `_resolve_device_path(parent, device_index, device_path)` — the
+  one recursive walk; teaching errors per level + depth cap.
+- **actions/device.py:** add optional `device_path` ParamSpec to `set_parameter`,
+  `get_parameters`, `load`. `get_device_chains` recurses → reports each device's
+  `{name, class_name, is_rack, device_path}`.
+- **Retire** `set_parameter_in_rack` + `load_in_rack` (fold into the path); grep+update
+  skills/ + docs/ references (discovery sub-step — no silent break).
+- **Tests:** `_resolve_device_path` unit (depth 0/1/2/3, out-of-range, non-rack descent, cap);
+  handler depth-N get/set/enumerate against a synthetic nested structure.
+- **Re-vendor:** required (actions/ + handlers/ flip the fingerprint).
+
+### Chunk 2: snapshot durability — replay + push depth-N (THE unblocker)
+> **Correction (NODE-ADDR / DEV-9K7N, 2026-06-15):** this chunk shipped *replay*
+> (snapshot→DB) + *push* depth-N, NOT *acquisition* (Live→snapshot). The earlier
+> "capture + push depth-N" wording overclaimed — there was no in-code Live→snapshot
+> capture, so a deep dialed param could be re-emitted only if it was already in a
+> hand-authored snapshot. The acquisition half (`capture execute`) is NODE-ADDR Chunk B.
+- **capture.py:** delete the `_depth > 0` raise; replay already handles params at any depth.
+- **db/queries.py:** add `get_device_nesting_path(conn, device_id)` → positional path from the
+  DB hierarchy alone (no live round-trips).
+- **sync/push/devices.py:** recurse `get_device_chains_for_rack_device` → emit `set_parameter`
+  with the unified `device_path` for each nested device's dialed params. (Nested devices are
+  NOT loaded by push — they arrive with the rack preset; push only sets their params.)
+- **Tests:** capture→DB→push round-trip of a depth-2 nested param — assert re-emitted on push
+  (the swell regression: a deep fix survives a rebuild). `get_device_nesting_path` unit.
+- **No re-vendor** (engine/sync only; no wire-shape change) — but depends on Chunk 1's wire.
+
+### Chunk 3: nested-rack `device_parameter` automation [FLIP]
+- **actions/automation.py:** add `device_path` to `write_envelope` + `perform_batch`.
+- **perform handler `_arc_addressing`:** resolve target via `_resolve_device_path` (reuse).
+- **sync/push/envelopes.py `classify_envelope_route`:** lift the
+  `parent_rack_device_id → unroutable` gate; route nested → `perform` with the path from
+  `get_device_nesting_path`. Keep the *session-clip* nested case as an honest teaching skip
+  (Live 12.4 LOM gap — `Clip.create_automation_envelope` can't address nested params).
+- **Tests:** nested `device_parameter` envelope routes to `perform` + materializes; session-
+  clip nested case emits the documented skip (not a silent drop).
+- **Re-vendor:** required (actions/automation.py flips the fingerprint).
+
+### Chunk 4: voices accessor (ask #4 — `MultiSampler`)
+- Probe via the new depth-N `get_parameters`: is "Voices" a `DeviceParameter`?
+  - **Yes** → already covered; add a round-trip test, document, done.
+  - **No (LOM property)** → add a generic settable-property accessor on the device handler
+    (probe + adapt, never whitelist). Durability for non-parameter properties is out of the
+    `device_parameters` table scope → flag a small follow-up explicitly (do not silently
+    drop).
+- **Tests:** per the branch taken.
+- **Re-vendor:** required only if the property accessor adds a wire action.
+
+---
+
+## Re-vendor note
+Chunks 1 and 3 flip the MCP fingerprint → `Re-vendor: required`. Bundle into one re-vendor at
+release / dev (`/mcp` respawn THEN `/ableton-mcp-install`, in that order — see the
+MASTER-PREFADER-TP re-vendor sequence: server must respawn so running==disk before the
+version-pinned install).
+
+## Coordination
+This branch edits MCP handlers + the sync layer — possible overlap with a parallel session.
+Resolve before building: worktree-isolate this branch, or confirm the other session is
+song/Live-side. (Design + planning are collision-free; building is not.)
+
+## Status
+- [x] Chunk 1: canonical device_path primitive + shared resolver
+- [x] Chunk 2: snapshot durability — *replay* + push depth-N (acquisition/`capture execute` deferred to NODE-ADDR/DEV-9K7N — corrected 2026-06-15)
+- [x] Chunk 3: nested-rack device_parameter automation
+- [x] Chunk 4: voices accessor (covered branch shipped; property branch probe-gated)
+
+**Context (Chunk 4 done):** ask #4 ("Voices") is the lowest-priority "(Nice)"
+ask and the bug itself says it needs a live probe. The **"Voices IS a
+DeviceParameter" branch is already fully delivered** by Chunks 1-2 — read+set
+via device_path, durable via push — proven by
+`test_voices_param_on_nested_multisampler_is_covered` (the swell MultiSampler
+case). The **"Voices is a non-parameter LOM property" branch** is NOT built
+speculatively (can't run live Ableton here; it would be a durability-incomplete
+half-feature against an unverified requirement). It's flagged explicitly in
+`.prawduct/operator-verification.md` (DEEP-RACK-ADDR block, check #4): the live
+`get_parameters` probe DECIDES it — if "Voices" is absent, file the
+capability-probed settable-property accessor follow-up (with its persistence
+caveat scoped first). No code change, no re-vendor for this chunk.
+
+ALL CHUNKS COMPLETE. Re-vendor required overall (Chunks 1 & 3 flipped the MCP
+fingerprint). Next: cumulative Critic (base develop), then the pull-dry-run
+drift bug, then PR → develop.
+
+**Context (Chunk 3 done):** Nested device-param automation rides the PERFORM
+surface. Wire: write_envelope + perform_batch accept device_path; perform
+handler resolves the target via Chunk 1's `_resolve_device_path` (imported
+device→automation, no cycle); write_envelope REFUSES a nested device_parameter
+with a teaching error → perform_batch (Live's Clip.create_automation_envelope is
+top-level-only — honest gap, not silent). Planner: `classify_envelope_route`
+nested device_parameter → 'perform' (was 'unroutable'); the perform arc builder
+resolves the TOP-LEVEL ancestor (`Q.get_top_level_device`, shared walker with
+get_device_nesting_path) for the link + emits device_path; session-clip emitter
+now NOTES the perform route (dropped the stale "MCP gap" skip). device_path is
+in BOTH `_PreparedArc.addressing_key` AND `perform_target_key` (same hashable
+normalization — cross-package parity test extended with a nested case + a
+distinct-path non-collision check). Full suite 3728 passed. Re-vendor required
+(actions/ + handlers/automation.py flip the fingerprint) — bundles with Chunk 1.
+Next: Chunk 4 (voices accessor — probe whether 'Voices' is a DeviceParameter via
+the depth-N get_parameters).
+
+**Context (Chunk 2 done):** THE unblocker shipped. capture.py replay `_depth>0`
+raise DELETED — `_replay_devices`/`_replay_rack_chains` recurse to arbitrary
+depth (DB is depth-agnostic). Added `Q.get_device_nesting_path(conn, device_id)`
+— pure-DB positional path (walk up via chain.parent_rack_device_id), [] for
+top-level, depth-64 cycle guard. push/devices.py: extracted `_emit_param_writes`
+(shared top-level + nested), added `_emit_nested_param_writes` recursion —
+nested devices emit `set_parameter` + `device_path` (NOT loaded; they arrive
+with the rack preset). Executor retry preserves device_path (it's in `base`);
+nested key shape `device_parameter:<id>:<name>` unchanged. The snapshot-refresh
+diff/merge preview (`diff_snapshots`/`merge_snapshots`) deliberately still
+itemizes one level + summarizes deeper subtrees opaquely — DOCUMENTED as a
+preview simplification (no data loss; replay/push handle full depth). Tests:
+capture depth-2 persist + nesting-path, push depth-1/depth-2/round-trip (swell
+guitar case), top-level no-device_path lock. Full suite 3725 passed. No
+re-vendor (engine/sync only). Next: Chunk 3 (nested automation — reuse
+get_device_nesting_path + Chunk 1's _resolve_device_path).
+
+**Context (Chunk 1 done):** `_resolve_device_path` (handlers/device.py) is the
+one canonical descent — `device_index` + `[{chain_index, device_position}…]` to
+any depth, positional (never `is`), teaching error per failed step + depth cap
+16. `set_parameter` / `get_parameters` / `load` (with `chain_index`) gained
+optional `device_path`; `get_device_chains` now recurses the whole tree and
+reports `is_rack` + `device_path` per device. `set_parameter_in_rack` /
+`load_in_rack` RETIRED (zero production callers; tests migrated, docs +
+conventions/gaps guides updated). MCP suite green (1226). Re-vendor required
+(actions/ + handlers/ flip the fingerprint) — bundle with Chunk 3 at release.
+Next: Chunk 2 (capture + push depth-N) — push must emit `set_parameter` with
+`device_path`, NOT the retired in_rack triple (design §8 risk).

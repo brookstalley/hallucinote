@@ -229,6 +229,15 @@ register(
             "ableton_render(action='start', song_slug='falling-walking')"
         ),
         tips=(
+            "Positions Live's START PLAYING POSITION before playing, not "
+            "just the playhead — those are different properties and the "
+            "transport rolls from the first, so a capture used to be able "
+            "to record a completely different section while every check "
+            "said it was healthy. Refuses when start_at_beat minus the "
+            "pre-roll lands past the arrangement's last_event_time (Live "
+            "clamps the playhead to that extent, so playback can never "
+            "begin there), and aborts rather than capturing if the "
+            "transport turns out to be rolling past the capture window.",
             "This is the ONLY render entry — the synchronous 'render' action "
             "was retired because it held the tool-call socket for the whole "
             "realtime pass and red-timed-out before the WAVs landed.",

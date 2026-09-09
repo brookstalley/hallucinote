@@ -209,12 +209,74 @@ def test_coincident_placements_each_pair_to_own_clip(conn, song, session):
     assert not report.has_corruption()
 
 
+def test_lane_probe_failure_is_corruption_and_assert_halts(conn, song, session):
+    """ARR-ORPHAN2 regression — the witness bug, at the assert boundary.
+
+    A whole-LANE probe failure (``ableton_clip(list, location='arrangement')``)
+    is NOT the same as a per-clip note-read failure, and tolerating it is what
+    let a track lose every placement while the phase printed "97/97 ok": the
+    pusher plans its per-lane CLEAR from this same probe, so an unreadable lane
+    was neither cleared nor rebuilt, and its surviving orphan was invisible
+    (orphan detection needs the listing that just failed). The assert must HALT,
+    and the report must say orphan detection did not run on that lane."""
+    _setup_one_placement(conn, song, session, db_notes=[dbn(60, 0.0)])
+
+    def send(req):
+        if req.tool == "ableton_clip" and req.action == "list":
+            return FakeResp(ok=False, error="simulated lane-probe failure")
+        return FakeResp(ok=False, error="unexpected")
+
+    report = verify_song_arrangement(conn, song_id=song, session_id=session, send_fn=send)
+    assert [r.status for r in report.results] == ["lane_probe_failed"]
+    assert not report.faithful
+    assert report.has_corruption()
+    assert len(report.lane_probe_failures) == 1
+    assert report.lane_probe_failures[0]["track_index"] == 1
+    # The push-time assert HALTs rather than reporting the phase ok.
+    with pytest.raises(ArrangementIntegrityError) as exc:
+        assert_arrangement_materialized(conn, song_id=song, session_id=session, send_fn=send)
+    text = str(exc.value)
+    assert "lane_unreadable" in text
+    assert "ORPHAN DETECTION DID NOT RUN" in text
+
+
+def test_dropped_lane_with_surviving_orphan_halts(conn, song, session):
+    """ARR-ORPHAN2 regression — the witness bug's other branch. When the lane IS
+    readable at assert time, a track whose placements were dropped and whose
+    orphan survived must fail the phase: every DB placement reads `missing_clip`
+    and the unmatched Live clip reads as an orphan. Modeled on the observed
+    `the-argument` Lead Gtr state (3 placements dropped, 1 orphan at beat 0)."""
+    M.add_time_signature_point(conn, song_id=song, start_bar=1.0, numerator=4, denominator=4)
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Lead Gtr")
+    M.link_db_to_ableton(conn, session_id=session, db_kind="track", db_id=tid, ableton_index=4)
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=16.0, name="verse rock 2")
+    M.insert_notes(conn, clip_id=cid, notes=[dbn(60, 0.0)])
+    for start_bar in (57.0, 60.5, 66.5):  # beats 224 / 238 / 262
+        M.add_arrangement_clip(conn, song_id=song, track_id=tid, clip_id=cid,
+                               start_bar=start_bar, end_bar=start_bar + 4.0)
+    # Live holds ONE clip, the orphan at beat 0 — none of the three placements.
+    live = {4: [{"arrangement_clip_index": 1, "start_beats": 0.0,
+                 "name": "Lead Gtr 2", "notes": []}]}
+    send = make_send_fn(live)
+    report = verify_song_arrangement(conn, song_id=song, session_id=session, send_fn=send)
+    assert [r.status for r in report.results] == ["missing_clip"] * 3
+    assert [c["start_beats"] for c in report.extra_live_clips] == [0.0]
+    assert report.has_corruption()
+    with pytest.raises(ArrangementIntegrityError):
+        assert_arrangement_materialized(conn, song_id=song, session_id=session, send_fn=send)
+
+
 def test_probe_failed_does_not_halt_but_is_not_faithful(conn, song, session):
     """Cumulative-Critic W1: a per-clip note re-probe FAILURE is not silent
     corruption — has_corruption() is False so the push-time assert must NOT HALT —
     but the placement went UNVERIFIED, so it is NOT faithful either. (The executor
     turns this into a benign warning so 'couldn't verify' reads distinctly from
-    'verified OK'; see test_push_execute.)"""
+    'verified OK'; see test_push_execute.)
+
+    ARR-ORPHAN2 keeps this carve-out DELIBERATELY NARROW: it applies only when the
+    lane listing SUCCEEDED, i.e. the clip is demonstrably at the right position and
+    only its note contents could not be read. A failure of the lane listing itself
+    is `lane_probe_failed` and DOES halt — see the test above."""
     _setup_one_placement(conn, song, session, db_notes=[dbn(60, 0.0)])
 
     def send(req):

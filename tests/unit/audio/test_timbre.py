@@ -100,3 +100,39 @@ def test_whole_window_spectral_centroid_hz():
     )
     assert spectral_centroid_hz(np.zeros(n), SR) == 0.0      # silent → 0
     assert spectral_centroid_hz(np.array([]), SR) == 0.0     # empty → 0
+
+
+# --------------------------------------------------------------------------- #
+# Sharpness — the shrillness axis
+# --------------------------------------------------------------------------- #
+
+def test_sharpness_orders_dark_to_piercing():
+    dark = measure_timbre(sine(200.0, DUR), SR)
+    mid = measure_timbre(sine(1000.0, DUR), SR)
+    piercing = measure_timbre(sine(5000.0, DUR), SR)
+    assert dark.sharpness_acum < mid.sharpness_acum < piercing.sharpness_acum
+    # The weighting above 14 Bark is what separates "bright" from "shrill":
+    # 1 kHz -> 5 kHz must move sharpness by more than 200 Hz -> 1 kHz did.
+    assert (piercing.sharpness_acum - mid.sharpness_acum) > (
+        mid.sharpness_acum - dark.sharpness_acum)
+
+
+def test_sharpness_reads_a_high_boost_as_shriller_at_equal_centroid_family():
+    # A 3 kHz + 6 kHz pair vs a 300 Hz + 6 kHz pair: the second has MORE
+    # of its loudness in the low bands, so it reads less sharp even though
+    # both carry the same top partial.
+    a = measure_timbre(sine(3000.0, DUR) + sine(6000.0, DUR), SR)
+    b = measure_timbre(sine(300.0, DUR) + sine(6000.0, DUR), SR)
+    assert a.sharpness_acum > b.sharpness_acum
+
+
+def test_sharpness_is_scale_invariant_and_nan_on_silence():
+    sig = _white(DUR)
+    assert measure_timbre(sig * 8.0, SR).sharpness_acum == pytest.approx(
+        measure_timbre(sig, SR).sharpness_acum, rel=1e-6)
+    assert math.isnan(measure_timbre(silence(DUR), SR).sharpness_acum)
+
+
+def test_white_noise_is_sharper_than_a_low_tone():
+    assert measure_timbre(_white(DUR), SR).sharpness_acum > \
+        measure_timbre(sine(200.0, DUR), SR).sharpness_acum

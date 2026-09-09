@@ -5,6 +5,56 @@ Incident narratives and how-to-apply guidance for the rules in
 heading here matches one there (a rule with no narrative simply has no entry here).
 **Never delete an entry here** — this is the long-term memory the index points at.
 
+## A norm sweep must ask WHICH SIDE moved — the remedy for statement drift is the opposite of the remedy for code drift
+
+The first Norm Health sweep (2026-09-08) measured ten norms: six clean, four with
+distance, and the four split evenly by cause — which is the finding, because a sweep that
+assumes one cause gets half its remedies backwards.
+
+**Statement drift (2).** "No raw SQL in callers, EVER" — its own stated why is that a
+caller reaching around the mutators makes the event log a lie, which a `SELECT` cannot do.
+Seventeen read sites were violations of nothing; the wording had outgrown its
+justification. The `sync.*` row said the layer never invokes MCP while seven modules
+called `client.send` — and `sync-boundary-contract.md` had *already ratified* an Executor
+whose job is exactly that. The row was narrower than the design its own sibling artifact
+held.
+
+**Code drift (2).** `kit.py` imported `hallucinote.db.queries`, making the purity norm
+false at the point it was meant to pay. Five modules lacked the future import, on a row
+carrying an unacted-on "promote to a ruff rule" note.
+
+**How to apply.** Ask whether the norm's why reaches the sites it condemns. If it does not,
+the statement moved and the fix is an owner-ruled amendment citing its authority. If it
+does, the code moved and the fix is code. Then watch yourself: this same sweep's Critic
+caught it narrowing the future-import norm from "every module" to "every module that has
+code" to excuse two files a two-line fix would have closed — the amendment cited no ruling
+while every sibling amendment cited one, which is the signature. Being the one who wrote
+the rule above does not exempt you from it.
+
+## An archived record is not a live surface — path-shaped exemptions go stale the moment you archive
+
+`test_collaboration_norm_parity` exempted one plan by exact path
+(`plans/COLLAB-TURN/build-plan.md`, "carries the sweep's own target list") and exempted
+`.prawduct/artifacts/archive/` by prefix. Archiving that plan moved it to
+`plans/COLLAB-TURN/archive/build-plan.md`, matching neither, and the lock failed on a file
+stamped "archived — no longer maintained. Do not edit."
+
+Both exemptions were the same rule wearing two shapes. Stating it once as
+`"/archive/" in path` covers every archive location, including ones the archival tool has
+not invented yet.
+
+**The corollary, which cost a second mistake.** When the sweep then repointed ~130 dangling
+path citations, the same rule applied in reverse: citations inside *live* artifacts were
+fixed, citations inside archived records were left alone, and `backlog.md` and
+`change-log-archive.md` — both frozen history — had to be reverted after a first pass
+rewrote them. "Do not rewrite the record" binds the person tidying up as much as the person
+being tidied after.
+
+**Related mechanical trap.** `git ls-files --cached` lists the index, so a file moved but
+not yet staged appears at its old path and `read_text` raises `FileNotFoundError` — a scan
+that walks tracked files must skip paths with no file, or it crashes on any mid-rename
+tree instead of failing honestly.
+
 ## Threading a new param means making the test doubles faithful — not weakening tests
 
 ENV-8K2R #5 added `ToolCall.read_timeout` (forwarded to `client.send`) and ENV-2T9K added `plan_push_song(perform_slowdown_factor=...)`. Two 1-arg doubles broke — `_make_send_fn`'s `send(req)` and a `plan_without_scenes(conn, *, song_id, session_id)` monkeypatch. Both were resolved by widening the double to the real contract (`send(req, *, read_timeout=None)` recording the value; `plan_without_scenes(..., **kwargs)` forwarding through), and the `send` double additionally grew the `arc_count` field the real handler returns so the new apply-layer cross-check (#4) was exercised. The executor's own forwarding was written to pass the new kwarg ONLY when set, so the *non*-perform path still hits 1-arg doubles untouched — pick the conditional at the production boundary, the faithful-signature widening at the test boundary.
@@ -116,6 +166,28 @@ The fakes that DON'T simulate wrapper recreation still pass when `is` is used �
 **What doesn't work**: `schedule_message(0, fn)` chains. Multiple deferred callbacks fire back-to-back within a single engine tick; no wall-clock time passes. The deferred-completion infrastructure (`DeferredCompletion`, `LiveContext.schedule_after_tick`) is still a useful primitive for other async patterns, but it doesn't solve cross-thread real-time settles.
 
 **Diagnostic discipline**: when a handler writes a transport-coupled property, always include `target`, `last_observed`, and `prior` in any error response. The "each call observes the previous call's target" race pattern is visible in 30 seconds with these fields, invisible without them.
+
+## Arming Live's record STARTS the transport — so position before you arm
+
+Found by operator verification, and it could not have been found any other way. The #471 fix positioned the transport AFTER the record-mode settle, on the reasoning that "arming is the last thing that could disturb the playhead". Arming does not disturb the playhead; it starts it.
+
+The consequence was total and silent. The locate settled against a playhead moving away from it, landing wherever it happened to be — a real pass reported having "parked the playhead at beat 8.392 rather than 8". The cue toggle fires at the transport's actual position, so an imprecise one cannot be placed safely, and the borrow path correctly refused every time: every locate degraded to `playhead_only`, and the fix was inert while reporting itself accurately. The first live pass wrote 21 values and recorded no lane at all (`automation_state: 0`, read-back flat at the endpoint value).
+
+Two measurements settled the shape of the fix. `song.record_mode = True` at beat 0 → playhead 2.768 at +1.0s, 8.402 at +1.5s, `is_playing: True`. And `stop` → `record_mode` goes back to False, so stopping between the arm and the locate is not available. The order has to be: quiet the transport, locate the start position, THEN arm — the arm rolls from the start position the locate just set, which is where the pass wants it anyway.
+
+After the reorder, on the same set: `locate_method: temporary_cue`, `start_position_moved: true`, 21 writes, `outcome: recorded`, and a read-back that ramps 0.315 → 0.859 instead of sitting flat.
+
+The general form: **before ordering a setup sequence, ask of each step what it does to the thing the NEXT step measures.** A step whose name sounds passive ("arm", "enable", "select") can be the one that moves the world.
+
+## An honest read-back of the wrong property is the hardest bug to see
+
+`song.current_song_time` is the playhead. `start_playing()` and `continue_playing()` roll from Live's separate START PLAYING POSITION, which that write does not move — the LOM exposes no writable property for it at all; `CuePoint.jump()` is the one surface that moves it ("when not playing, simply move the start playing position").
+
+The two agree on a set nobody has listened to, and part company the moment a human presses play in the arrangement. So seek-then-play was only ever coincidentally correct, and the whole class hides behind "it works on my test set". Issue #471: a perform pass sought to the span start, read it back honestly, played, and rolled from beat 351 — three passes in one day, each reporting success, each recording nothing, found by ear from a stale reverb wash. The same two lines were in the render capture path and asserted as a guarantee in `ableton_session(action='play')`'s operator-facing note.
+
+The sibling rule above (trust the side effect, not the getter read-back) was already followed here: `perform_batch` had a worker-thread settle-poll on `current_song_time`, and it passed every time, because the locate really had landed. A settle-verify on the wrong property is indistinguishable from a correct one.
+
+Two habits. At design time, ask what property the BEHAVIOUR reads, not whether your write took. At code time, prefer a check on the realized effect — where the transport ACTUALLY is after play — because that one holds even when the mechanism is defeated by something nobody has seen yet. `handlers/_transport.py` is the shared primitive; `test_handlers_transport.py`'s fake keeps the two fields separate so a bare `current_song_time` write fails every test in it.
 
 ## Unit fakes that mirror an *assumed* Live API give false confidence
 
@@ -483,6 +555,85 @@ A 0.9.0 song DB (swell) crashed `push_cli execute` at `plan_push_routing` readin
 SNP-MIX-CLUSTER's plan used `## Chunk C — MIX-3S7P close-out`. `verify-chunk-refs` errored with `chunk 'C — MIX-3S7P close-out' not found in build-plan` (exit 0 — advisory, doesn't gate the PR). I first chased it as a text-divergence between the Status line and the heading and made them byte-identical — it STILL failed. The Critic's verify-resolutions pass named the real cause: `lib/buildplan_refs.py` `_chunk_section_lines` anchors only on `### Chunk <id>:` (h3 + colon), and `_current_chunk_id_from_status` extracts a bare id from a `Chunk X: name` Status line. Rewriting all three headings to `### Chunk A:` / `### Chunk B:` / `### Chunk C:` and the Status lines to the `Chunk X:` form made it pass (`ok: chunk C — 0 file ref(s) verified`).
 
 **How to apply.** (1) Author build-plan chunk headings as `### Chunk <id>: <name>` (h3, colon after the id) and Status checkboxes as `- [ ] Chunk <id>: <name>` from the start — not `## Chunk X — …`. (2) When a verifier complains despite text that looks right, stop tuning the text and check what the verifier actually keys on (heading LEVEL, a delimiter char) — read the resolver, don't guess. (3) `verify-chunk-refs` is exit-0 advisory, so a wrong heading form silently gives the plan zero chunk-ref coverage — it won't block, it just stops protecting you.
+
+## A sampler/drum part's note mapping is only verifiable by rendering it
+
+`examples/b-natural`'s `11 Latin Perc` rendered as digital silence (-180 dB) while all ten other stems had audio. The part was authored against a Drum Rack's pad layout (C1 = MIDI 36); its instrument was an Instrument Rack wrapping an **Impulse**, whose eight slots are C3-G3 in Live's display — MIDI **60-67**. Every gate in the system was green: the notes were in the DB (129 of them), the notes were in Live, `verify-arrangement` passed on all 34 placements, `compat check` was 38/38 native, and the push reported `OK — all 14 phases completed`. The defect was found by rendering and listing per-stem RMS.
+
+**How to apply.** (1) After the first push of any song with a sampler/drum-device part, render once and print per-stem RMS before doing any mix work — a stem at -180 dB is a mapping bug, not a quiet part. (2) Probe the actual pad layout (`ableton_device(action='get_device_chains')` exposes `in_note` per DrumChain) rather than assuming GM; `Kit.from_dict` with probed values documents what you measured. (3) An Impulse exposes no drum chains at all, so a chain walk returns nothing and tells you nothing — that silence in the probe is itself the signal to check the device class. (4) Never carry a pad constant across device kinds: "the first pad" is 36 on a Drum Rack and 60 on an Impulse.
+
+## `skipped (idempotent)` is two different outcomes wearing one word
+
+b-natural's first push reported `OK — all 14 phases completed` with both `envelopes` and `arrangement` showing `skipped (idempotent)`. They meant opposite things. `envelopes` skipped correctly: all 17 arcs had been routed through `performed_automation`, which recorded them in one realtime pass — the warning block enumerated every arc by name. `arrangement` skipped because its per-track probe had failed for all 11 tracks (Live's default scaffold tracks were still present and shifting indices), so nothing was placed on the timeline at all. The phase table rendered both as `[ok]`.
+
+**How to apply.** (1) Treat the warning block as part of the exit criteria, not as decoration. (2) For each skipped phase, ask which of the two it is: work-done-elsewhere or precondition-failed. (3) `arrangement`, `envelopes`, `performed_automation` and `devices` are the four that report success on zero work — check the thing the brief names is actually present, rather than trusting the count. (4) Run the default-scaffold cleanup before concluding a probe failure is real; leftover default tracks were the cause here.
+
+## A declared-vs-measured gap has two possible culprits — name which
+
+b-natural's melody lens raised three declared-vs-measured questions, and all three resolved differently. `contour_intent="arch"` was declared out of habit and the line genuinely climbed to a late apex — the *declaration* moved. The chorus had drifted off its motif to 27% cell coverage, which meant a listener would hear a nice tune rather than the same tune resolved — the *music* was rewritten. `repetition_appetite` still read "moderate" afterwards and was left that way, because the claim being made was motivic ECONOMY, which the recurrence lens asserts separately (1/1 motifs recurring, 100% coverage) — the metric was measuring literal repetition, which a line that varies its cell every return should score low on.
+
+**How to apply.** (1) Write which side moved, and why, next to the declaration — the reasoning is the artifact, the value is not. (2) A declaration that changes to match a measurement is only honest if the measurement described the intent better than the declaration did; say so. (3) When one lens's metric and another lens's metric disagree about the same musical claim, name which lens owns the claim rather than optimizing both. (4) Two different lines under one layer name need two profiles; a single profile flattens a real intent and makes the lens question the arc the song is.
+
+## A correct automation arc is not evidence of an audible result
+
+Two consecutive sessions misdiagnosed the same silent failure. Session one blamed
+a latched `back_to_arranger` override; session two (me) blamed short automation
+arcs not landing. Both were wrong, and both were reached by inspecting mechanism
+— `automation_state` read 1 (playing), and parking the playhead mid-sweep read
+back the exact authored value 0.387. The arc was perfect. The device it drove
+could not do what was asked: `Mod Phase 0.0°` ran both channels' LFOs in
+lockstep, so a wet flanger stayed bit-exact mono. Only a per-stem `L−R`
+measurement on rendered audio separates "the automation didn't land" from "it
+landed on a parameter that cannot express the intent". (2026-08-10, STR-4C8N)
+
+**How to apply.** (1) Before diagnosing WHY a gesture didn't happen, render and measure the stem — `automation_state`, a parameter read-back and a green push all describe the mechanism, not the sound. (2) A lens that verifies the arc is not verifying the intent; ask which one you actually need. (3) When two sessions running reach two different wrong causes, the shared mistake is usually the missing measurement, not the reasoning.
+
+## A "no effect" verdict indicts the probe as much as the device
+
+Device-parameter verification probed spectral centroid alone. A flanger is a comb
+filter and notches roughly symmetrically, so it barely moves the centroid however
+wet it gets — producing `no audible timbre shift (2244→2219 Hz, 1% < 12%)`
+against automation that provably landed. The fix is a second probe (stereo
+correlation), not a looser threshold. The regression test that matters pins the
+opposite direction: identical before/after windows must STILL read not-realized,
+because a fix for false positives that becomes a rubber stamp is worse than the
+bug. (2026-08-10, STR-4C8N A2)
+
+**How to apply.** (1) Ask what the device physically does to the signal before trusting a probe's verdict — a comb filter moves the image, not the brightness. (2) Fix a false negative by ADDING a probe, never by loosening a threshold. (3) Pair every such fix with a test asserting the opposite direction still fails, or the fix is a rubber stamp. (4) Check the fixture models the real mechanism: simulating width with injected noise also changes the spectrum, so it tests something else.
+
+## A criterion built from a symptom COUNT can fail by being satisfied
+
+A2's criterion said "the three Dry/Wet findings stop being reported as
+not-realized", written from the finding count on the assumption all were false.
+Each arc had three change points; the beat-288 move was `0.38 → 0.42`, a 4 %
+change that is genuinely inaudible, so "not realized" there was correct. Meeting
+the criterion as written would have required making the probe lie. Correct the
+criterion in the plan and say so — never quietly pass, and never loosen the code
+to satisfy a wrong spec. (2026-08-10, STR-4C8N A2)
+
+**How to apply.** (1) Expand a count into its individual symptoms before calling a partial pass a failure. (2) If satisfying the criterion would require the tool to report something untrue, the criterion is wrong — correct it in the plan and say so. (3) Never tune a threshold until a count reaches zero; that is how a rubber stamp gets built and called a fix.
+
+## An estimator that reports the FIRST threshold crossing is bimodal on multi-lobe material
+
+`transients._part_transient` measured a kick's 10→90 % rise with
+`np.argmax(win >= 0.90 * pv)` — the first crossing scanning forward from the
+edge of a 60 ms search window. Real kicks are not single-lobed: the alien kit's
+40–150 Hz envelope has two comparable lobes 31.8 ms apart, invariant across the
+song. Whether the FIRST lobe cleared `0.90 × peak` decided which lobe the
+estimator measured, so the reading was bimodal — ~16 ms or ~44 ms — with a 1 %
+change in one lobe's height flipping it. A mix edit that lowered every section's
+first lobe by the same ~0.04 of the peak flipped exactly the two sections that
+crossed 0.90, and that read as "verse 1's kick got worse" when nothing about
+verse 1 had changed. The fix is to scan BACKWARD from the peak for the last
+sample under each threshold, making the rise the hit's final approach; all ten
+sections then read within 1 ms of each other and the mix edit showed as the
+uniform −1.3 ms it was. The same review found the twin defect one step later:
+a censored rise left the attack window anchored on the search window's edge, so
+its band levels were read over 75 ms instead of 30 and pooled into medians whose
+mix depended on how many hits happened to censor. (2026-09-08, AUD lenses,
+Chunk 03)
+
+**How to apply.** (1) For any interval between two threshold crossings, scan both from the feature you mean (the peak), not from a window boundary. (2) Before trusting a per-section difference, check whether the estimator is bimodal on this material — plot or tabulate the per-hit values, not just the median; a 50/50 split means the median is a coin toss. (3) Sweep the estimator's band edges and thresholds: a number that moves 44 → 15 ms when a filter edge moves 10 Hz is a property of the filter, and its docstring must say so where the FIELD is defined, not only in the skill that reads it. (4) When an estimator censors, censor everything anchored on what it failed to find — a fallback anchor silently changes the geometry of a different measurement.
 
 ## A planted mutation proves nothing until you know WHERE it landed
 

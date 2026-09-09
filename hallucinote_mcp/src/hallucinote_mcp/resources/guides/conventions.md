@@ -137,7 +137,7 @@ There is a window between step 1 and step 2 where the chain is empty — issue
 all the delete + reload calls back-to-back (don't pause for unrelated work
 while the chain is gutted). Afterward, re-run the push probe-and-link step so
 the DB↔Live device bindings re-attach to the rebuilt chain; the next
-`push_cli execute` then reports `devices: skipped (idempotent)`.
+`push_cli execute` then reports `devices: skipped (nothing to push)`.
 
 > No `rebuild_chain` convenience ships for this (DEV-5R8Q). It isn't a
 > pure-planner emission: the push planner binds devices idempotently by
@@ -210,14 +210,20 @@ These results report the **verb invoked**, **not** a read-back of where Live
 actually began — a handler can't reliably read the realized start position back
 (`current_song_time` settles on a delayed schedule).
 
-**To audition from a specific bar** in a clean transport state, `seek` then
-`play` locates-and-plays — this is exactly what the render capture path does
-(set `current_song_time`, then `start_playing`):
+**To audition from a specific bar**, `seek` then `play`. Live keeps a **start
+playing position** separate from the playhead, and `play` rolls from that one —
+writing `current_song_time` moves only the playhead, so a raw seek-then-play
+begins wherever play was last pressed. `seek` moves both, and reports
+`start_position_moved` so you can tell:
 
 ```
 ableton_session(action='seek', bar=243)
 ableton_session(action='play')
 ```
+
+A `start_position_moved: false` means only the playhead moved (`locate_detail`
+says why) — the position is right to read from, but playback may not begin
+there.
 
 If a seek "doesn't take" — the playhead rolls but you hear **no audio** — the
 usual cause is **not** the transport verb but the `back_to_arranger` override

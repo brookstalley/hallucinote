@@ -32,7 +32,16 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:  # the lens modules import stereo.py, which imports this
+    # module — importing them at runtime would close that cycle. Annotations
+    # are lazy (`from __future__ import annotations`) and the serializers
+    # below read attributes, so the string form is all that is needed.
+    from .imaging import ImagingMetrics
+    from .integrity import SurfaceIntegrity
+    from .phase import PhaseRelation
+    from .reconcile import SumReconciliation
 
 SCHEMA_VERSION = "1"
 
@@ -94,10 +103,74 @@ class TimbreMetrics:
       ``spectral_rolloff_hz``   — frequency below which 85 % of the energy lies.
                                   A second brightness/edge cue, robust to a
                                   bright but low-energy top end.
+      ``sharpness_acum``        — psychoacoustic sharpness (von Bismarck /
+                                  Zwicker weighting over Bark specific
+                                  loudness). The SHRILLNESS axis: a piercing
+                                  lead reads higher than a warm pad at the same
+                                  centroid. Scale-invariant; ordering and A/B
+                                  deltas are the contract, the acum calibration
+                                  is provisional. NaN default so hand-built
+                                  fixtures and pre-sharpness baselines stay
+                                  valid (the AUD-2N6K optional-field pattern).
     """
     spectral_centroid_hz: float
     spectral_flatness: float
     spectral_rolloff_hz: float
+    sharpness_acum: float = float("nan")
+
+
+@dataclass(frozen=True)
+class StereoMetrics:
+    """Per-surface stereo image descriptors (STR-4C8N).
+
+    A read-side lens — neutral measurement, never a grade. ``NaN`` (→ JSON
+    ``null`` via ``_finite_or_none``) when the window is silent or empty, so a
+    silent surface never reads as a healthy image.
+
+      ``correlation``       Pearson L/R, -1..+1. ``+1`` is bit-exact mono or a
+                            perfectly correlated pair; ``0`` fully decorrelated;
+                            negative means the channels partly cancel.
+      ``mono_sum_loss_db``  Level LOST when summed to mono,
+                            ``20·log10(rms(mono)/rms(stereo))``. ``0 dB`` = nothing
+                            lost; ``≈-3 dB`` = two equal uncorrelated channels;
+                            large negatives mean the part cancels itself on mono
+                            playback. This is the actionable number — it says what
+                            a listener loses, in units a composer thinks in.
+
+    Both are BROADBAND: a part wide in the highs and mono in the lows averages to
+    something unremarkable, and neither localises where the image lives.
+    """
+    correlation: float
+    mono_sum_loss_db: float
+
+
+@dataclass(frozen=True)
+class WidthRealization:
+    """A declared width control beside what the audio actually did (STR-4C8N).
+
+    Neutral evidence, deliberately with NO severity and NO verdict — the same
+    stance as ``masking``. A width control doing nothing may be an oversight or
+    may be a part that simply has no side content to widen; a large mono loss may
+    be exactly the image the composer wanted. Only the reader knows, so
+    ``/mix-review`` grades this against declared intent and this row does not.
+
+    The pairing is the point: a declared value with no measured effect is the
+    silent failure nothing else in the toolchain can see, because catching it
+    needs BOTH the declaration and the rendered audio.
+
+      ``declared_display``    the control's value as authored ("165 %").
+      ``mono_sum_loss_db``    what the surface loses summed to mono. Near ``0``
+                              against an above-unity declared width is the
+                              no-op signature.
+      ``correlation``         the L/R correlation behind that loss.
+    """
+    surface_id: str
+    surface_name: str
+    device_name: str
+    parameter_name: str
+    declared_display: str
+    correlation: float
+    mono_sum_loss_db: float
 
 
 @dataclass(frozen=True)
@@ -111,6 +184,15 @@ class StemMetrics:
     # hand-built fixtures and pre-timbre baselines stay valid (AUD-2N6K
     # optional-field pattern); ``analyze_mix`` always populates it.
     timbre: "TimbreMetrics | None" = None
+    # Standing stereo descriptors (STR-4C8N). Same optional-field pattern, same
+    # reason: pre-stereo baselines and hand-built fixtures stay valid.
+    stereo: "StereoMetrics | None" = None
+    # Where this surface sits across the stage and where its width lives, per
+    # band. Sibling to `stereo` rather than a replacement: `stereo` is the
+    # broadband correlation and mono-sum loss, and its own docstring names the
+    # case it cannot see — a comb filter in the top over a mono low end averages
+    # to something unremarkable. Same optional-field pattern as the two above.
+    imaging: "ImagingMetrics | None" = None
 
     def __post_init__(self) -> None:
         if self.surface_kind not in _VALID_SURFACE_KINDS:
@@ -180,17 +262,32 @@ class EnvelopeVerification:
 
     One record per value-changing breakpoint of a declared envelope. ``metric``
     + ``before`` / ``after`` are the measured quantity across the change
-    (``spectral_centroid_hz`` for a device-parameter timbre flip, ``rms_db``
-    for a send-level step, ``master_rms_db`` / ``master_balance_db`` for the
-    post-fader mixer_volume / mixer_pan kinds — measured on the master, the
-    post-fader sum, per AUD-3F8M). ``realized`` says whether the authored
+    (``spectral_centroid_hz`` for a device-parameter flip, ``rms_db``
+    for a send-level step — the return's STEREO RMS, the same quantity the
+    silence gate reads, so a wide return is not judged on a half-cancelling mono
+    sum — and ``master_rms_db`` / ``master_balance_db`` for the post-fader
+    mixer_volume / mixer_pan kinds, measured on the master, the post-fader sum,
+    per AUD-3F8M). ``realized`` says whether the authored
     change actually happened in the audio. ``measurable`` is False when the
     change can't be verified from this capture — a window too quiet to
     characterise, a mixer move whose predicted master effect is below the
     detectability floor (stem too diluted in the mix), or a master-chain-
     compressed window where the prediction model breaks down; in that case
     ``realized`` is meaningless and ``before``/``after`` are NaN. ``note`` is
-    the human-readable explanation the interpreter (``/mix-review``) surfaces."""
+    the human-readable explanation the interpreter (``/mix-review``) surfaces.
+
+    **``device_parameter`` is verified on TWO probes — timbre OR image
+    (STR-4C8N) — and ``probe`` names which one carried the verdict**
+    (``"timbre"`` / ``"image"``, ``None`` for every other kind and for an
+    unmeasurable window). Spectral centroid alone cannot see a comb/width
+    effect, so a working flanger read as unrealized; accepting either probe
+    fixes that, at the cost that ``metric``/``before``/``after`` are ALWAYS the
+    centroid pair whichever probe fired. **On an image-carried verdict they are
+    therefore a near-unchanged centroid sitting beside a ``realized: true``, and
+    reading them as the evidence asserts a brightness change the audio does not
+    support.** ``probe`` exists so that basis is machine-readable rather than
+    recoverable only by string-matching ``note``.
+    """
     target_surface_id: str
     target_kind: str
     parameter_path: str | None
@@ -201,6 +298,7 @@ class EnvelopeVerification:
     measurable: bool
     realized: bool
     note: str
+    probe: str | None = None
 
 
 @dataclass(frozen=True)
@@ -442,6 +540,73 @@ class Polymeter:
 
 
 @dataclass(frozen=True)
+class PartTransient:
+    """One part's LOW-BAND (kick-class) hit SHAPE within a section window.
+
+    The read-side answer to "is the kick a thud or a punch?" — measured from
+    the hits the transient lens picks on the 40-150 Hz band of the stem (a
+    kit stem's hats and snares don't register there). All values are MEDIANS
+    across the window's hits.
+
+      ``rise_ms``            — 10 -> 90 % of the low-band envelope on the
+                               hit's FINAL approach to its peak (both
+                               thresholds found scanning back from the peak, so
+                               an earlier lobe cannot capture the 90 % point).
+                               RELATIVE, never an absolute attack time: it sees
+                               only 40-150 Hz, so a kick whose beater click
+                               leads its low-band peak by tens of ms has an
+                               attack this number never looks at, and it moves
+                               with the hit band's edges (one real kit read
+                               44 ms at 40-150 Hz and 15 ms at 50-150 Hz for
+                               the same hits). Compare it across renders and
+                               sections of ONE kit; not across kits, and not
+                               against an absolute "punchy" threshold.
+                               ``None`` when every hit's rise was censored
+                               (see below).
+      ``t20_ms``             — time after the peak for the low envelope to
+                               fall 20 dB. The ring. ``None`` when every hit's
+                               T20 was censored.
+      ``censored_*_hits``    — hits whose estimator hit its own boundary (the
+                               10 % point earlier than the 60 ms search window;
+                               no 20 dB fall inside the 600 ms cap or before the
+                               slice ended; an attack window with no 10 % point
+                               to anchor it — a rise-censored hit is always
+                               attack-censored — or cut by the slice end).
+                               Excluded from the medians, counted here — a
+                               boundary value is never reported as a
+                               measurement, and no band level is read over a
+                               window that could not be placed.
+      ``attack_<band>_db``   — band RMS (dBFS, PRE-FADER stem as captured)
+                               over the first 30 ms of the hit; the names carry
+                               their edges: sub 40-100, low 100-250 (the thud
+                               register), lowmid 250-600 (boxiness), click
+                               2-6 kHz (the beater). These are NOT the
+                               attribution bands (``sub_20_60`` …).
+      ``click_minus_sub_db`` — the punch read (level-blind): how far the click
+                               sits under the sub weight. Near 0 = a defined
+                               attack; -15 or below = no click to speak of.
+      ``low_minus_sub_db``   — the thud read (level-blind): > 0 means the
+                               attack lives in the low-mids rather than the
+                               sub — the "muffled / muddy with the bass" shape.
+
+    Neutral measurement — the interpreter grades it against intent.
+    """
+    track_id: str
+    hit_count: int
+    rise_ms: float | None
+    t20_ms: float | None
+    censored_rise_hits: int
+    censored_t20_hits: int
+    censored_attack_hits: int
+    attack_sub_40_100_db: float
+    attack_low_100_250_db: float
+    attack_lowmid_250_600_db: float
+    attack_click_2k_6k_db: float
+    click_minus_sub_db: float
+    low_minus_sub_db: float
+
+
+@dataclass(frozen=True)
 class SectionMetrics:
     """Per-surface loudness scoped to one named section window.
 
@@ -501,6 +666,17 @@ class SectionMetrics:
     # >= 2 accented parts whose recovered cells differ. Empty when parts share a
     # cell or carry no audible accent. Neutral — the interpreter grades intent.
     polymeter: list[Polymeter] = field(default_factory=list)
+    # Per-part low-band hit SHAPE (one entry per stem with enough kick-class
+    # hits), populated only when transient analysis is enabled. The read-side
+    # answer to "thud or punch?". Neutral — the interpreter grades it.
+    transients: list[PartTransient] = field(default_factory=list)
+    # The transient lens's failure channel: one structured skip per part that
+    # produced no reading — the complete set is invalid_sample_rate /
+    # window_too_short / no_low_band_energy / too_few_hits / all_hits_censored
+    # (``transients.TransientWindowResult`` is the home) — so an empty
+    # ``transients`` never hides WHY. Empty when the lens is off or every part
+    # measured.
+    transient_skips: list[dict] = field(default_factory=list)
     # Onset/event density (onsets-per-beat summed across stems) over the section
     # window — the second energy-realization correlate (ARR-7M3D), alongside
     # master.loudness.lufs_s_median. Level-blind. None when timing/cross-rhythm
@@ -634,6 +810,10 @@ class MixReport:
     overshoots: list[MasterOvershoot] = field(default_factory=list)
     reverb_verifications: list[ReverbVerification] = field(default_factory=list)
     automation_verifications: list[EnvelopeVerification] = field(default_factory=list)
+    # Declared width controls beside their measured effect (STR-4C8N). Empty
+    # with a skipped_analyses entry when the song declares none — never
+    # silently absent.
+    width_realizations: list[WidthRealization] = field(default_factory=list)
     per_section: list[SectionMetrics] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
     skipped_analyses: list[dict[str, Any]] = field(default_factory=list)
@@ -642,10 +822,39 @@ class MixReport:
     # needs >= 2 ranks) — recorded with a skipped_analyses entry, never a
     # fabricated ρ. A ruler: ranked intensity vs intent + inversions, no verdict.
     energy_realization: "EnergyRealization | None" = None
-    # Capture-alignment audit (AUD-1C7K): per-surface trim applied before
-    # analysis so the correction is visible, not silent. None when analysis ran
-    # without an alignment pass (e.g. a directly-constructed report in a test).
+    # Capture-length audit, BOTH questions, serialized by AlignmentReport alone:
+    # `method`/`common_length`/`max_drift_*`/`surfaces` are the per-surface trim
+    # applied before analysis so the correction is visible, not silent
+    # (AUD-1C7K); `capture_span` is whether the capture covers the beat span the
+    # manifest DECLARED, which conditions every beat this report cites. Those are
+    # independent failures — surfaces can agree perfectly with each other and
+    # still, together, span the wrong stretch of the song. `capture_span` is null
+    # when that check declined (`skipped_analyses` says why) and ABSENT on a
+    # report written before the check existed; the two are not the same and only
+    # the skip entry distinguishes them. None here when analysis ran without an
+    # alignment pass (e.g. a directly-constructed report in a test).
     alignment: dict[str, Any] | None = None
+    # Render integrity, one row per captured surface. This family answers "is
+    # this audio damaged" rather than "did it realize its intent", so unlike
+    # every other lens here it has physical ground truth and may legitimately
+    # emit blocking findings. It is also UPSTREAM of the rest: a click reads as
+    # an onset to the timing lens, a dropout reads as a dynamics move, so these
+    # rows are the precondition for believing the numbers beside them. Empty
+    # when the pass did not run — never silently absent.
+    integrity: list["SurfaceIntegrity"] = field(default_factory=list)
+    # Pairwise phase relationships between surfaces. The only lens that sees two
+    # surfaces destroying each other: `stereo` measures L/R within one surface
+    # and masking measures magnitude overlap, so a kick and a sub cancelling, a
+    # polarity-flipped stem, or an uncompensated plugin delay are invisible to
+    # both. Read `lag_samples` together with `lag_correlation` — a lag with low
+    # confidence is two parts sharing a downbeat, not a device delay.
+    phase_relations: list["PhaseRelation"] = field(default_factory=list)
+    # Do the captured stems, summed, reconstruct the captured master? The one
+    # check that validates the capture SET rather than its members: every other
+    # lens analyses the surfaces it was handed, and none asks whether that set
+    # was complete. A residual is diagnostic evidence, not a verdict — a
+    # nonlinear master chain produces one legitimately.
+    sum_reconciliation: "SumReconciliation | None" = None
     compare_to: dict[str, Any] | None = None
     # Song audit-log seq the analyzed capture reflects (copied from
     # manifest.db_seq — AUD-4W7K). The key ``compare.resolve_baseline``
@@ -709,6 +918,18 @@ class MixReport:
             "automation_verifications": [
                 _envelope_to_dict(e) for e in self.automation_verifications
             ],
+            "width_realizations": [
+                {
+                    "surface_id": w.surface_id,
+                    "surface_name": w.surface_name,
+                    "device_name": w.device_name,
+                    "parameter_name": w.parameter_name,
+                    "declared_display": w.declared_display,
+                    "correlation": _finite_or_none(w.correlation),
+                    "mono_sum_loss_db": _finite_or_none(w.mono_sum_loss_db),
+                }
+                for w in self.width_realizations
+            ],
             "per_section": [
                 _section_to_dict(s, surface_names) for s in self.per_section
             ],
@@ -720,6 +941,13 @@ class MixReport:
                 else None
             ),
             "alignment": self.alignment,
+            "integrity": [_integrity_to_dict(i) for i in self.integrity],
+            "phase_relations": [_phase_to_dict(p) for p in self.phase_relations],
+            "sum_reconciliation": (
+                _reconciliation_to_dict(self.sum_reconciliation)
+                if self.sum_reconciliation is not None
+                else None
+            ),
             "compare_to": self.compare_to,
         }
 
@@ -746,10 +974,134 @@ def _stem_to_dict(s: StemMetrics) -> dict[str, Any]:
                 "spectral_centroid_hz": _finite_or_none(s.timbre.spectral_centroid_hz),
                 "spectral_flatness": _finite_or_none(s.timbre.spectral_flatness),
                 "spectral_rolloff_hz": _finite_or_none(s.timbre.spectral_rolloff_hz),
+                "sharpness_acum": _finite_or_none(s.timbre.sharpness_acum),
             }
             if s.timbre is not None
             else None
         ),
+        # Standing stereo image (STR-4C8N). None when not measured (hand-built
+        # fixture); NaN "unmeasurable" collapses to null like the others.
+        "stereo": (
+            {
+                "correlation": _finite_or_none(s.stereo.correlation),
+                "mono_sum_loss_db": _finite_or_none(s.stereo.mono_sum_loss_db),
+            }
+            if s.stereo is not None
+            else None
+        ),
+        # Where the surface sits and where its width lives. Per-band rows are
+        # always present (a missing band cannot be told from an unmeasured one);
+        # an unmeasurable band carries null, the report's existing sentinel.
+        "imaging": (
+            {
+                "balance_db": _finite_or_none(s.imaging.balance_db),
+                "mid_side_ratio_db": _finite_or_none(s.imaging.mid_side_ratio_db),
+                "position": _finite_or_none(s.imaging.position),
+                "width": _finite_or_none(s.imaging.width),
+                "skipped": s.imaging.skipped,
+                "bands": [
+                    {
+                        "band": b.band,
+                        "correlation": _finite_or_none(b.correlation),
+                        "width": _finite_or_none(b.width),
+                    }
+                    for b in s.imaging.band_images
+                ],
+            }
+            if s.imaging is not None
+            else None
+        ),
+    }
+
+
+def _integrity_to_dict(i: "SurfaceIntegrity") -> dict[str, Any]:
+    """Serialize one surface's render-integrity row.
+
+    Event lists are capped upstream and the cap is recorded in ``checks_skipped``
+    rather than implied by a short list, so a clean surface and a badly damaged
+    one whose rows were truncated never look alike.
+    """
+    return {
+        "track_id": i.track_id,
+        "silent": i.silent,
+        "peak_dbfs": _finite_or_none(i.peak_dbfs),
+        "clipped_sample_fraction": _finite_or_none(i.clipped_sample_fraction),
+        "worst_clip_run_samples": i.worst_clip_run_samples,
+        "clip_events": [
+            {
+                "start_sample": c.start_sample,
+                "length_samples": c.length_samples,
+                "channel": c.channel,
+            }
+            for c in i.clip_events
+        ],
+        "dc_offset": [_finite_or_none(v) for v in i.dc_offset],
+        "dc_offset_dbfs": _finite_or_none(i.dc_offset_dbfs),
+        "dropouts": [
+            {
+                "start_sample": d.start_sample,
+                "length_samples": d.length_samples,
+                "kind": d.kind,
+            }
+            for d in i.dropouts
+        ],
+        "discontinuities": [
+            {
+                "sample": d.sample,
+                "channel": d.channel,
+                "magnitude": _finite_or_none(d.magnitude),
+            }
+            for d in i.discontinuities
+        ],
+        "tail_level_dbfs": _finite_or_none(i.tail_level_dbfs),
+        "checks_skipped": list(i.checks_skipped),
+    }
+
+
+def _phase_to_dict(p: "PhaseRelation") -> dict[str, Any]:
+    """Serialize one pairwise phase relationship.
+
+    ``lag_samples`` is meaningless without ``lag_correlation`` beside it — a
+    cross-correlation always peaks somewhere — so the two are emitted together
+    and documented as one reading.
+    """
+    return {
+        "track_id_a": p.track_id_a,
+        "track_id_b": p.track_id_b,
+        "correlation": _finite_or_none(p.correlation),
+        "polarity_inverted": p.polarity_inverted,
+        "lag_samples": p.lag_samples,
+        "lag_ms": _finite_or_none(p.lag_ms),
+        "lag_correlation": _finite_or_none(p.lag_correlation),
+        "broadband_cancellation_db": _finite_or_none(p.broadband_cancellation_db),
+        "band_cancellation": [
+            {"band": b.band, "sum_minus_parts_db": _finite_or_none(b.sum_minus_parts_db)}
+            for b in p.band_cancellation
+        ],
+        "skipped": p.skipped,
+    }
+
+
+def _reconciliation_to_dict(r: "SumReconciliation") -> dict[str, Any]:
+    """Serialize the stem-sum-vs-master reconciliation.
+
+    Band residuals share the broadband gain match, so a discrepancy large enough
+    to move that fit lifts every band by the same trim. They are therefore read
+    AGAINST EACH OTHER, never against an absolute floor — per-band gain matching
+    would absorb the very thing the band split exists to expose.
+    """
+    return {
+        "residual_db": _finite_or_none(r.residual_db),
+        "correlation": _finite_or_none(r.correlation),
+        "best_lag_samples": r.best_lag_samples,
+        "gain_offset_db": _finite_or_none(r.gain_offset_db),
+        "gains_assumed_unity": r.gains_assumed_unity,
+        "band_residuals": [
+            {"band": b.band, "residual_db": _finite_or_none(b.residual_db)}
+            for b in r.band_residuals
+        ],
+        "worst_offender": r.worst_offender,
+        "skipped": r.skipped,
     }
 
 
@@ -779,7 +1131,27 @@ def _section_to_dict(
         "cross_rhythm": [_part_cross_rhythm_to_dict(c) for c in s.cross_rhythm],
         "phasing": [_phasing_to_dict(p) for p in s.phasing],
         "polymeter": [_polymeter_to_dict(p) for p in s.polymeter],
+        "transients": [_part_transient_to_dict(t) for t in s.transients],
+        "transient_skips": [dict(sk) for sk in s.transient_skips],
         "onset_density": s.onset_density,
+    }
+
+
+def _part_transient_to_dict(t: PartTransient) -> dict[str, Any]:
+    return {
+        "track_id": t.track_id,
+        "hit_count": t.hit_count,
+        "rise_ms": _finite_or_none(t.rise_ms),
+        "t20_ms": _finite_or_none(t.t20_ms),
+        "censored_rise_hits": t.censored_rise_hits,
+        "censored_t20_hits": t.censored_t20_hits,
+        "censored_attack_hits": t.censored_attack_hits,
+        "attack_sub_40_100_db": _finite_or_none(t.attack_sub_40_100_db),
+        "attack_low_100_250_db": _finite_or_none(t.attack_low_100_250_db),
+        "attack_lowmid_250_600_db": _finite_or_none(t.attack_lowmid_250_600_db),
+        "attack_click_2k_6k_db": _finite_or_none(t.attack_click_2k_6k_db),
+        "click_minus_sub_db": _finite_or_none(t.click_minus_sub_db),
+        "low_minus_sub_db": _finite_or_none(t.low_minus_sub_db),
     }
 
 
@@ -901,6 +1273,11 @@ def _envelope_to_dict(e: EnvelopeVerification) -> dict[str, Any]:
         "measurable": e.measurable,
         "realized": e.realized,
         "note": e.note,
+        # Which probe carried the verdict (STR-4C8N). The whole point of the
+        # field is that a consumer never has to string-match `note` to learn
+        # it, and /mix-review reads this JSON rather than the dataclass — so
+        # omitting it here would leave the capability existing in-process only.
+        "probe": e.probe,
     }
 
 

@@ -122,21 +122,76 @@ resolved with this precedence — first hit wins:
    server inherits `CLAUDE_PROJECT_DIR`, from which the launcher derives the songs root).
 3. **Marker discovery (up)** — walk up for `hallucinote.toml`, read `[workspace]`, resolve
    `songs_root` relative to the marker's directory.
-4. **Marker discovery (down)** — when the upward walk found none, scan at most
-   `MAX_DESCEND_DEPTH` (2) levels *below* the start directory, skipping hidden /
-   VCS / cache / build / dependency dirs, never descending into a directory that is
-   itself a workspace, and bounded by a directory budget. Exactly one workspace found
-   → use it. Zero or more than one → decline and fall through, because a guess here is
-   how the silent-wrong-answer bug happens. `find_workspace()` does **not** descend
-   unless asked (`descend=True`): its default answers "which workspace am I *inside*?",
-   which is the question `init-workspace`'s refuse-inside-a-workspace guard needs.
-5. **Legacy default** — `"songs"` relative to cwd. *Transition-only* back-compat that keeps
-   the live monorepo working while 1–4 land; remove once the monorepo carries a marker.
+4. **The workspace that HOLDS the slug** — the candidates are the markers found by a
+   bounded descent *below* the start directory (`find_workspaces_below`: at most
+   `MAX_DESCEND_DEPTH` (2) levels, skipping hidden / VCS / cache / build / dependency
+   dirs, never descending into a directory that is itself a workspace, bounded by a
+   directory budget) **and** the start directory's immediate *sibling* workspaces
+   (`find_workspaces_beside`: one level, a single `iterdir` of the parent). A candidate
+   qualifies only if it actually carries the song (`build.py` or a `*.db` — a bare
+   `captures/` does not count, so the residue of a misresolved render can never vote
+   itself into being the answer). **Below outranks beside**; exactly one holder → use
+   it; more than one → decline and fall through, naming the candidates, because a guess
+   here is how the silent-wrong-answer bug happens.
+5. **The sole workspace below** — when *nothing* holds the slug, which is the normal
+   state of a song that does not exist yet, a lone marker below the start directory is
+   still the right place to scaffold it (`/song-new`). Zero or more than one → decline.
+6. **Legacy default** — `"songs"` relative to cwd. *Transition-only* back-compat that keeps
+   the live monorepo working while 1–5 land; remove once the monorepo carries a marker.
 
-Any caller enumerating songs (rather than resolving one) must mirror this precedence
-including the descent — `captures_cli.discover_song_slugs()` passes `descend=True` for
-exactly that reason. A per-slug resolver and an enumerator that disagree about where
-songs live is the shape of the next silent bug.
+`find_workspace()` does **not** descend unless asked (`descend=True`): its default answers
+"which workspace am I *inside*?", which is the question `init-workspace`'s
+refuse-inside-a-workspace guard needs.
+
+Any caller enumerating songs (rather than resolving one) must mirror this precedence as
+far as a slug-less question can — `captures_cli.discover_song_slugs()` passes
+`descend=True` for exactly that reason. It cannot mirror steps 4–5's *holder* test, which
+is slug-keyed by construction; the divergence is bounded to the sibling rung and is
+recorded in that function's docstring. A per-slug resolver and an enumerator that
+disagree about where songs live is the shape of the next silent bug.
+
+### Decision — why step 4 is slug-keyed, and why siblings are in scope
+
+**Recorded 2026-08-07**, resolving the precedence question WSP-6N4Q left open
+(`stage: design`, "decide precedence vs `HALLUCINOTE_SONGS_ROOT` and record it").
+
+*The failure.* WSP-6N4Q's descent rung shipped as *"exactly one workspace below → use
+it."* But the framework repo ships a demo workspace at `examples/`, so a session rooted
+at the framework repo — the normal setup, since the framework repo is what you
+`--plugin-dir` from — found exactly one marker below, took it as unambiguous, and
+resolved **every** slug into the demo workspace. `ableton_render` wrote captures into the
+wrong tree (workable around with an explicit `output_dir`) and `ableton_analysis`, which
+has no such escape hatch, hard-failed with *"no song DB at .../examples/&lt;slug&gt;/…"* for a
+song that was built all along in the sibling songs repo. **A lone candidate is not the
+same as a correct one**, and that was the whole content of the old rung.
+
+*The decision.* Inference asks *"which workspace HOLDS this song?"*, never *"which
+workspace is nearest?"* Nearness is only a tiebreak *among holders* (below beats beside).
+This also lets the supported two-repo topology (`~/src/hallucinote` +
+`~/src/hallucinote-songs`) work with **zero configuration** from either repo, which
+neither the up-walk nor the descent can reach: the songs repo is not above the framework
+repo and not below it.
+
+*Precedence vs `HALLUCINOTE_SONGS_ROOT` — the env var still wins, and step 3 still beats
+step 4.* The ordering principle is **statements beat inference**. `HALLUCINOTE_SONGS_ROOT`
+and the workspace the session is *inside* are the operator stating where songs live;
+steps 4–5 are the resolver guessing. A holder found by inference never overrides a
+statement, even when the statement resolves to nothing — that case fails loudly through
+`explain_unresolved_song`, which names the env var and its value. So the env var remains
+the escape hatch for every layout the bounded search cannot see (a songs repo deeper than
+one level sideways, several candidate holders, a deliberately non-adjacent tree), and it
+needs no change to work: it was already read, and is now also the remediation every
+teaching error points at.
+
+*Rejected alternatives.* **Delete `examples/hallucinote.toml`** — treats the symptom;
+any user with a second workspace anywhere below their session root hits the same bug, and
+the TOUR demo needs the marker. Because step 4 is slug-keyed, the demo workspace still
+resolves its own songs and stops shadowing everyone else's, so the marker stays.
+**An explicit workspace parameter on the MCP actions** — a per-call workaround the agent
+must remember on every call; the resolver being right is the point. **A registry of known
+workspaces** — new persistent state, and stale the moment a repo is moved or cloned.
+**Requiring `HALLUCINOTE_SONGS_ROOT` for nested workspaces** — punts to the operator, and
+the audience most likely to hit this is the one least likely to set it.
 
 Per-layout `slug → DB` mapping:
 

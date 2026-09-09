@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ..db import queries as Q
+from ..paths import SONG_DIR_IGNORED_FILES, self_ignore_files
 from . import push
 
 logger = logging.getLogger(__name__)
@@ -282,6 +283,12 @@ def push_notes(
     # Persist fingerprints (best-effort, even after a connection abort, so a
     # re-run skips the clips that did land).
     state_dir.mkdir(parents=True, exist_ok=True)
+    # WSP-3R7K: these state caches are regenerable push bookkeeping that sits
+    # in the song dir beside authored work, so they self-ignore by NAME (a
+    # blanket ignore here would swallow build.py and the snapshot). Written
+    # where they are generated, so a workspace that predates
+    # `init-workspace`'s managed root block stops surfacing them.
+    self_ignore_files(state_dir, SONG_DIR_IGNORED_FILES)
     state_path.write_text(
         json.dumps(
             {"song_id": song_id, "session_id": session_id, "fingerprints": new_fps},

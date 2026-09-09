@@ -108,7 +108,7 @@ _VALID_TRACK_TYPES = frozenset({"midi", "audio", "group"})
 # `requests.kind='pull'` row and every event they emit carries that
 # request_id + song_id + ts. `replay_capture` refuses (StaleSnapshotError)
 # when such events are NEWER than the snapshot's `captured_at` stamp.
-# Design + refuse/warn matrix: .prawduct/artifacts/plans/BAK-7D2V/design.md.
+# Design + refuse/warn matrix: .prawduct/artifacts/plans/BAK-7D2V/archive/design.md.
 
 # Event kinds for state replay_capture re-asserts from the snapshot. A pulled
 # event OUTSIDE this set (clip-notes, envelopes, tempo/cue, routing, tuning,
@@ -116,7 +116,7 @@ _VALID_TRACK_TYPES = frozenset({"midi", "audio", "group"})
 # what keeps ordinary build.py-staging pulls from tripping it.
 #
 # Coverage contract (audited 2026-07-04; method + full table in
-# .prawduct/artifacts/plans/BAK-7D2V/design.md §"Kind-set audit"): for EVERY
+# .prawduct/artifacts/plans/BAK-7D2V/archive/design.md §"Kind-set audit"): for EVERY
 # mutator any pull apply handler calls (grep `M\.` over sync/pull/), the event
 # kind(s) it emits are either in this tuple (replay re-asserts that state) or
 # provably outside replay's write surface. Cascade-deleting mutators matter
@@ -150,9 +150,8 @@ def has_usable_captured_at(snapshot: dict[str, Any]) -> bool:
     the guard can order it against pulled events instead of falling back to the
     legacy warn-and-proceed branch.
 
-    The one public read of :data:`_CAPTURED_AT_SHAPE`, so callers that must
-    distinguish a stamped snapshot from a legacy one (the guard itself, and the
-    re-stamp override, which refuses on an unstamped file) share one definition
+    The one public read of :data:`_CAPTURED_AT_SHAPE`, so every caller that must
+    distinguish a stamped snapshot from a legacy one shares a single definition
     of "usable" rather than re-deriving the shape.
     """
     captured_at = snapshot.get("captured_at")
@@ -181,33 +180,6 @@ def utc_now_eventlike() -> str:
     string comparison against event rows is chronological comparison."""
     now = datetime.now(timezone.utc)
     return now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z"
-
-
-def restamp_captured_at(snapshot: dict[str, Any]) -> str:
-    """Refresh ``snapshot['captured_at']`` to now (in place); return the new stamp.
-
-    The guard is armed by pull EVENTS newer than the snapshot, not by snapshot
-    content, so re-stamping the canonical snapshot newer than those events
-    disarms it with no content change (BAK-7D2V).
-
-    This is an operator override, not a workflow step: it ASSERTS that the
-    on-disk content already matches Live, and nothing here can verify that
-    assertion. An empty ``diff_snapshots`` result does not verify it either —
-    the diff compares device identity, dialed parameters, and chain names, but
-    never device sidechain source, drum-pad mappings, or ``chain_authored_props``,
-    all of which replay re-asserts. A pull touching only those fields diffs clean
-    over a stale file, so re-stamping there would silently revert it. Baking a
-    real capture is the durable fix (``/song-snapshot`` merges the fresh refresh
-    over the canonical file, carrying those fields AND a fresh stamp);
-    ``--force-replay`` is the conscious-discard path, and it re-warns every build
-    rather than disarming permanently.
-
-    Only a genuine capture or this explicit re-stamp may move the stamp;
-    ``migrate_snapshot`` deliberately never does (stamping unknown-age content
-    newer than pulls it lacks would defeat the guard)."""
-    stamp = utc_now_eventlike()
-    snapshot["captured_at"] = stamp
-    return stamp
 
 
 def _pulled_rows_newer_than(
@@ -298,7 +270,7 @@ def _guard_stale_snapshot(
             "NOW. Re-capture to bake live edits durably and stamp the "
             "snapshot so this check becomes exact: run `/song-snapshot` "
             "(probe -> diff -> confirmed overwrite of captured_session.json), "
-            "or `python -m hallucinote.tools.capture_cli execute --song "
+            'or `"<python>" -m hallucinote.cli capture execute --song '
             "<slug>` — note that writes captured_session.refresh.json, NOT "
             "the canonical file: review/diff it, then copy it over "
             "captured_session.json yourself. (A legacy file is never "
@@ -718,7 +690,7 @@ def _replay_devices(
         # `drum_pads` array captured via `ableton_device(action='pad_info')`:
         # ``[{chain_name: str, midi_note: int}, ...]``. Replay persists into
         # `drum_pad_mappings` so the song's generators can resolve
-        # ``Kit.from_device(...).kick`` to the kit's actual MIDI note.
+        # ``load_kit(...).kick`` to the kit's actual MIDI note.
         # Arc 4 / D4: identity check uses the browser display name
         # ``"Drum Rack"`` (post-D4 ``snapshot.class`` semantics).
         pads = d.get("drum_pads")
@@ -895,7 +867,8 @@ def replay_capture(
             f"replay_capture: snapshot predates SNP-8R4K ({detail}) — analyzer "
             "rows are ignored on build (the DB is clean either way), but the "
             "committed snapshot file is still dirty at rest. Run "
-            "`python -m hallucinote.tools.capture_cli migrate <captured_session.json>` "
+            '`"<python>" -m hallucinote.cli capture migrate '
+            "<captured_session.json>` "
             "to clean + version-stamp the committed file.",
             UserWarning,
             stacklevel=2,
@@ -1211,7 +1184,7 @@ def capture_plan() -> list[dict[str, str]]:
                     "field on the snapshot: ``[{midi_note: int, chain_name: "
                     "str}, ...]``. Replay persists into `drum_pad_mappings` "
                     "so songs can "
-                    "use `Kit.from_device(conn, device_id)` to author kit-"
+                    "use `hallucinote.kits.load_kit(conn, device_id)` to author kit-"
                     "portable drum patterns instead of GM-assumed MIDI notes."},
     ]
 

@@ -270,9 +270,9 @@ technical_decisions:
       alternatives_considered: "Logging-style events outside the transaction (rejected — opens drift between state and audit log)."
       date: "2026-05-15"
     - decision: "Audio clips share the `clips` table via a `kind` discriminator (CLP-AUD1 wave 1)"
-      rationale: "Audio material is a clip row with kind='audio' + locked wave-1 audio columns; invariants live in mutators (not schema CHECKs); path resolution is caller-owned via stdlib-only `hallucinote.paths.resolve_audio_path`. Full column semantics + sync exemptions in .prawduct/artifacts/plans/CLP-AUD1/design.md."
+      rationale: "Audio material is a clip row with kind='audio' + locked wave-1 audio columns; invariants live in mutators (not schema CHECKs); path resolution is caller-owned via stdlib-only `hallucinote.paths.resolve_audio_path`. Full column semantics + sync exemptions in .prawduct/artifacts/plans/CLP-AUD1/archive/design.md."
       alternatives_considered: "Separate audio_clips table (duplicates every clip constraint); warp_mode as TEXT enum (drifts from LOM int domain); absolute-only paths (breaks portability)."
-      date: "2026-06-10 (CLP-AUD1 chunks 1-2; design at .prawduct/artifacts/plans/CLP-AUD1/design.md)"
+      date: "2026-06-10 (CLP-AUD1 chunks 1-2; design at .prawduct/artifacts/plans/CLP-AUD1/archive/design.md)"
     - decision: "ableton_sessions + ableton_links projection separation"
       rationale: "Bindings to Ableton don't live on core rows. Multiple sessions per song are intentional — one song can be bound to several Live sets without aliasing. `link_db_to_ableton(session_id, db_kind, db_id, ableton_index)` is the generic mutator that replaced three per-domain link_*_to_ableton functions."
       alternatives_considered: "Per-domain ableton_index columns on every entity row (rejected — coupled core schema to the rendering layer)."
@@ -301,6 +301,10 @@ technical_decisions:
       rationale: "The PUB-READY scrub cleaned the tracked tree, not the commits behind it: as of daa9ba6 (develop @ v1.7.1, the last commit before this branch), 17 commits carry absolute home-directory paths and 4 name a private sibling project, one of them holding that project's local source path plus a file inventory. Publishing the repo publishes those commits. Owner accepted the exposure on 2026-08-06: no credentials are involved, the private project's repo URL was already redacted before any of it was written, and stable SHAs are worth more than the residue is worth removing. Recorded here so `we scrubbed it` is never later misread as `it is not in the repo` — the distinction is tree vs history, and only the tree was cleaned. NOTE the count is anchored to a SHA on purpose: `git log <rev> -S'/Users/' --oneline | wc -l` SELF-COUNTS, because the scrub commits and this record are themselves commits containing the string. It reads 17 at daa9ba6, 19 after the scrub, 21 after this entry — re-running it today and comparing against a bare number would look like a regression that never happened. Do not `fix` this by adding a `':!.prawduct/'` pathspec; that returns a different, smaller number and silently measures something else."
       alternatives_considered: "git-filter-repo over all refs before publishing — rejected: it invalidates every open branch and PR, and the residue does not justify that. The window was genuinely cheap only until the first external clone or fork, so this decision is effectively one-way once the repo is public."
       date: "2026-08-06 (PRC-6N2X; from the independent PR review of chore/public-readiness)"
+    - decision: "The backlog of record is GitHub Issues on brookstalley/hallucinote; .prawduct/backlog.md is frozen history (backlog_service_repo cutover)"
+      rationale: "Forced by the plugin: while a structured markdown backlog existed with backlog_service_repo unset, every session raised the backlog-service-migration-required advisory, and a future upgrade retires the shared markdown read path — so the choice was migrate deliberately or be degraded to a zeroed backlog count later. Archive scope was `all` (225 items, not just the 111 live) on a MEASURED basis: 70 of 111 live items (63%) cite at least one archived id, spanning 60 distinct archived items, and under `open` those citations would dangle because no adapter op reads the skipped set. Recorded only after `verify-migration --archive-scope all` exited 0 with all five lists empty (225 source items, 225 aliased) — the gate is what makes the key safe to set, since setting it is what makes the markdown stop being read. Full audit record incl. which plugin build ran it: .prawduct/artifacts/migration-scrub-decisions.md. PUBLISH EXPOSURE: this puts 225 issues carrying candid internal material (owner rulings, Critic findings, dogfood reports) in the repo's Issues — private today, public the moment the repo is, which is the same tree-vs-history exposure question PRC-6N2X answered for commits. Accepted 2026-08-10 on the same basis: no credentials are involved. ROLLBACK IS NOT FREE and takes all three halves — unset the key, close the migrated issues (filter on the `id:` alias namespace; never delete, GitHub does not reuse numbers), and revert backlog.md's frozen-history banner. Skip the third and the restored live backlog announces that it is frozen and redirects to a tracker you just closed. It also silently discards every post-cutover tracker edit and returns the six disposed items to open, because the frozen markdown still records them that way."
+      alternatives_considered: "Stay on markdown — rejected: the advisory is permanent and the read path is scheduled for retirement, so this defers a forced migration into a worse one. Archive scope `open` (111 items, half the title work, ~7min not ~20) — rejected on the 63%-citation measurement above; it is also only nominally reversible, since a later `all` backfill re-syncs status on already-migrated items and would reopen anything closed since cutover. A dedicated backlog repo — rejected: cross-repo links to code for no gain while the repo is private."
+      date: "2026-08-10 (migration-scrub MG4; owner-confirmed target, archive scope and dispositions)"
 
 # =============================================================================
 # DESIGN DECISIONS
@@ -329,6 +333,19 @@ design_decisions:
         expensive-to-reverse forks earn a proposal.
       artifact: .prawduct/artifacts/intent-collaboration-model.md
     - name: "One consolidated turn, bounded"
+      status: >-
+        RETIRED 2026-09-01 (owner-decided) — superseded by "Build to the
+        hearable unit, then offer a hearing" and "The status offer". The norm
+        was right that elicitation needs a bound and wrong about which one: the
+        turn cap solved correctness (no gap travels downstream dressed as a
+        decision) but said nothing about ownership, and it told the agent that
+        after one turn the stage closes and it may not ask again. What followed
+        was a 186-tool-call build the user never authorized (CTM-10), and an
+        agent declaring identity resolved while the user's answers were still
+        arriving (CTM-09). The two failure modes it bounded are now bounded by
+        the hearable unit (what a turn may raise) and the status offer (when to
+        stop asking). Elicitation is a conversation that ends at the user's
+        hand-off.
       summary: >-
         Elicitation gets exactly one turn, with every proposal, disclosure and
         piece of arithmetic in a single message. Sequential Q&A burns patience
@@ -338,6 +355,53 @@ design_decisions:
         failure modes that both look like diligence: the stage that never
         converges, and the turn that fragments.
       artifact: .prawduct/artifacts/elicitation-and-stage-exit-criteria.md
+    - name: "Read the turn before acting"
+      summary: >-
+        Every user turn is one of six kinds — directing, reacting, exploring,
+        asking, delegating, handing-off — and only directing and handing-off
+        authorize building. Musing is not a request: when the user thinks out
+        loud, think with them and touch nothing. Nearly every failure in the
+        evidence corpus is a misread here.
+      artifact: .prawduct/artifacts/collaboration-turn-model.md
+    - name: "Build to the hearable unit, then offer a hearing"
+      summary: >-
+        The hearable unit is the smallest thing that, once heard, tells the user
+        whether the idea works. Never author past one unit without having
+        OFFERED to play it — and never require the user to listen in order to
+        continue: "keep going" is a complete answer, and a decline carrying a
+        scope ("build it all, I'll listen at the end") is recorded and not
+        re-asked. The bound is on the offer, never on the listening; insisting
+        on a listen is the inquisition in another costume. Reading "done" better
+        without this bound just moves the cliff — the two are one design.
+      artifact: .prawduct/artifacts/collaboration-turn-model.md
+    - name: "The status offer"
+      summary: >-
+        When you have nothing to follow and something to play: name what is
+        settled so it can be corrected in a word, offer hearing as an option
+        rather than a default, and name what has not come up WITHOUT asking
+        about it. Naming is an invitation; asking is a demand. Fires when the
+        material has reached a hearable unit AND the user's last turn closed
+        rather than opened something, and no scoped decline is in force.
+      artifact: .prawduct/artifacts/collaboration-turn-model.md
+    - name: "A loaded prompt opens its domain"
+      summary: >-
+        A few words carrying many implications — a genre, a form, an era, an
+        artist — are unpacked, not run with. State which implications you take
+        as read so they are correctable in a word, then ask about the two or
+        three whose answer would change the song most. Never the whole list,
+        never a form. The reference artist is one rare instance of the general
+        case, not a special case to over-index on; reading a reference as a
+        shortcut that "collapses five other answers" is what produces the
+        run-off-and-build failure.
+      artifact: .prawduct/artifacts/collaboration-turn-model.md
+    - name: "Identity closes at hand-off, never by inference"
+      summary: >-
+        An answer that adds a new dimension means the user has more; silence on
+        something you asked is still-thinking, not agreement. The brief carries
+        an owner column (yours / offer me options / mine) learned from the
+        conversation rather than asked for, and is updated every turn rather
+        than written once and obeyed.
+      artifact: .prawduct/artifacts/collaboration-turn-model.md
     - name: "Three states, and a forbidden fourth"
       summary: >-
         Every dimension a stage touches ends DECIDED (value AND mechanism
@@ -357,9 +421,9 @@ design_decisions:
         judgements never fail a build.
       artifact: .prawduct/artifacts/gate-verdict-policy.md
   accessibility_approach: null
-  error_handling_approach: "Plain exceptions (ValueError, KeyError); no custom hierarchy. Broad catches require `# prawduct:ok-broad-except` annotation with rationale; every catch logs context. Narrow carve-out (ONBOARD-M4L): two leaf classes callers catch by identity — `PresetQueryNoMatchError` (device.py) and `AnalyzerNotInstalledError` (analyzer/setup.py); new code still defaults to plain exceptions."
+  error_handling_approach: "Plain exceptions (ValueError, KeyError); no custom hierarchy. Broad catches require a `# prawduct:allow prawduct/broad-except -- <reason>` waiver stating what is absorbed and why; every catch logs context. Narrow carve-out (ONBOARD-M4L): two leaf classes callers catch by identity — `PresetQueryNoMatchError` (device.py) and `AnalyzerNotInstalledError` (analyzer/setup.py); new code still defaults to plain exceptions."
   observability_approach: "The event log IS the audit trail. Every mutator emits an event with actor (in events.ACTORS), reason, request_id, and monotonic seq. No logging frameworks beyond stdlib `logging`. The `requests` table groups events under higher-level intent for cross-mutator correlation."
-  infrastructure_dependencies: "SQLite (embedded, WAL mode) for state. Ableton Live + hallucinote-mcp Remote Script for the rendering engine. No external services. Live-Ableton tests are manual; CI runs against mocked dispatcher tests in hallucinote_mcp/tests/."
+  infrastructure_dependencies: "SQLite (embedded, WAL mode) for state. Ableton Live + hallucinote-mcp Remote Script for the rendering engine. GitHub Issues on brookstalley/hallucinote is the backlog of record since the 2026-08-10 cutover — a real external service dependency, reached via the `gh` CLI (needs `repo` scope + network). It is NOT on the product's runtime path: no shipped code calls it, so a song builds, pushes and renders with GitHub unreachable; what degrades is development workflow (backlog read/write), and `prawduct-hook backlog cache-query` serves the last synced state offline. Live-Ableton tests are manual; CI runs against mocked dispatcher tests in hallucinote_mcp/tests/."
   visual_direction: null
 
 # =============================================================================
@@ -442,12 +506,16 @@ artifact_manifest:
       file_path: .prawduct/artifacts/project-preferences.md
       version: 3
       depends_on: []
+    - name: migration-scrub-decisions
+      file_path: .prawduct/artifacts/migration-scrub-decisions.md
+      version: 1
+      depends_on: [project-preferences]
     - name: boundary-patterns
       file_path: .prawduct/artifacts/boundary-patterns.md
       version: 3
       depends_on: [project-preferences]
     - name: build-plan
-      file_path: .prawduct/artifacts/build-plan-highroi-sweep.md
+      file_path: .prawduct/artifacts/archive/build-plan-highroi-sweep.md
       version: 2
       depends_on: [project-preferences, boundary-patterns]
     - name: arrangement-model
@@ -516,10 +584,34 @@ build_state:
   source_root: "src/hallucinote/"
 
 # Active build plan pointer (.prawduct/-relative).
-# In-flight plans with pending Live-gated work (see each plan's Status section):
-#   SMP-7K2D — chunks 1-2 + no-Live 5 done; probe chunk 0 + push chunks 3-4 pending.
-#   ARR-PROJ — all 5 headless chunks built on plan/arr-proj-arrangement-materialization;
-#     cumulative-Critic PR gate + live e2e + ARR-9X4T/ARR-7H2N backlog close remain.
+# In-flight plans with pending Live-gated work: NONE as of 2026-09-08.
+# The JANITOR-2026-09 sweep archived every plan under artifacts/plans/ (46
+# directories plus the EXECUTION-ORDER wave doc), and six finished
+# build-plan-*.md at the artifacts root; 8 of the 53 were superseded, each
+# naming what absorbed it. The three this list
+# used to name are all resolved:
+#   SMP-7K2D — archived superseded; its unbuilt Live probe + push chunks are
+#     brookstalley/hallucinote#330.
+#   ARR-PROJ — archived completed; the residual live e2e is #306, and the two
+#     witness items it named are closed (#349) or subsumed.
+#   TOUR — was already archived on 2026-08-11 by the v1.8.3 release checklist's
+#     plan-backfill, so this entry described it as live for four weeks after the
+#     release that retired it. That is the failure this list invites: a
+#     hand-maintained roster of live plans drifts the moment one is archived by
+#     any other route.
+# Where the live plans are, rather than which they are: the per-scope
+# directories under artifacts/plans/, plus the flat build-plan*.md files at the
+# artifacts root. Those flat ones are merged-but-unreleased and stay live per
+# gitflow until the develop->main release ships; each names the merged PR that
+# carried it, and those are PULL REQUEST numbers, not backlog issues —
+# `backlog resolve` will not find them. Enumerating the set here is what the
+# warning above is about, and a roster written in this comment has already gone
+# stale twice: `ls .prawduct/artifacts/plans/ .prawduct/artifacts/*build-plan*.md`
+# (the infix glob, not a `build-plan*` prefix — onboarding-teaching-build-plan.md
+# does not start with it, and both prior enumerations here missed exactly that)
+# answers it from the tree, which cannot drift.
+# Each plan says so in its own text;
+# this comment is a pointer, and if it disagrees with the tree the tree wins.
 # Shipped/stale plan history: the git history of this file (pre-2026-07-04,
 # PRC-5W2N trim) has the full narrative; a per-machine copy also sits in the
 # gitignored reflections archive where present.
@@ -527,248 +619,23 @@ build_state:
 # pointer reader treats the post-colon text as a path, so `null` resolves to
 # `.prawduct/null` and mis-fires the "missing build plan" advisory.
 #
-# Named `build-plan-<scope>.md`, not the generic `build-plan.md`: regen-views'
-# scope->plan resolver globs `artifacts/*.md` non-recursively (a plan nested in
-# `artifacts/plans/<id>/` is invisible to it and regen-views then refuses to write
-# ANY view), and on gitflow a plan must survive until the develop->main release —
-# so the generic name would be contended by the next plan authored in that window.
-active_build_plan: .prawduct/artifacts/plans/TMP-7B3X/build-plan.md
+# The `artifacts/plans/<ID>/build-plan.md` layout is what this repo uses (~48
+# plans). The per-ID directory is what keeps the generic filename uncontended —
+# on gitflow a plan must survive until the develop->main release, so several are
+# live at once. (The older rule here required a `build-plan-<scope>.md` name
+# because the scope->plan resolver globbed `artifacts/*.md` non-recursively and
+# could not see a nested plan; discovery is recursive now, so that reason is
+# gone.)
+active_build_plan:
 
-# =============================================================================
-# CHANGE LOG
-# =============================================================================
-# Retired in J-3 (2026-05-17). The hallucinote_mcp/CHANGELOG.md, the per-chunk
-# Status section in .prawduct/artifacts/build-plan.md, and the reflections trail
-# at .prawduct/.session-reflected cover the same ground with less drift risk.
-
-# =============================================================================
-# SCOPE ROLLUPS (derived view, v1.4+)
-# =============================================================================
-# Auto-generated by `python3 tools/product-hook regen-views` from
-# .prawduct/change-log.md `scope=` tags. Do not hand-edit — edits will be
-# overwritten on next regen.
-
-scope_rollups:
-  analysis,docs,tests:
-    chunks: ["AUD-8T3K"]
-    releases: ["v1.6.1"]
-  arc-2-live-verification-fallout:
-    chunks: ["hotfix"]
-    releases: ["v1.4.0"]
-  arrangement-model:
-    chunks: ["arrangement-1-5"]
-    releases: ["v1.4.0"]
-  arrangement-verify,tests:
-    chunks: ["ARR-CMPHALT"]
-    releases: ["v1.6.0"]
-  aud-2d6t:
-    chunks: ["1", "2", "3", "4"]
-    releases: ["v1.7.1"]
-  aud-3f8m:
-    chunks: ["AUD-3F8M-01", "AUD-3F8M-02"]
-    releases: ["v0.9.5"]
-  aud-4w7k:
-    chunks: ["AUD-4W7K-01", "AUD-4W7K-02"]
-    releases: ["v0.9.5"]
-  audio-analysis-mvp:
-    chunks: ["1", "2", "2a", "2b-partial", "3", "3-followup", "section-windowing"]
-    releases: ["v1.4.0"]
-  audio-verification:
-    chunks: ["AUD-4S8T", "AUD-6R2M", "AUD-8H2M"]
-    releases: ["v0.9.2"]
-  backlog-low-cost-sweep:
-    chunks: ["backlog-low-cost-sweep"]
-    releases: ["v0.9.2"]
-  bulk-note-authoring:
-    chunks: ["bulk-notes-B1-B4"]
-    releases: ["v1.4.0"]
-  capture,db-schema,db-mutations,db-queries,sync-push,docs,tests:
-    chunks: ["SNP-2H9F"]
-    releases: ["v1.5.0"]
-  capture,sync,docs,tests:
-    chunks: ["BAK-7D2V"]
-    releases: ["v1.7.0"]
-  capture,sync-push,snapshot,render,analysis,skills:
-    chunks: ["BUG1A-analyzer-match", "BUG1B-strip", "BUG3-status-json", "BUG3-timeout-doc", "BUG4-params-dialed"]
-    releases: ["v0.9.8"]
-  capture,sync-push,sync-pull,render:
-    chunks: ["SNP-8R4K-01", "SNP-8R4K-02", "SNP-8R4K-03", "SNP-8R4K-04"]
-    releases: ["v0.9.7"]
-  ci,lint,types,tests:
-    chunks: ["INF-2C4X"]
-    releases: ["v1.7.0"]
-  cli,tools,skills,docs,backlog,artifacts,tests:
-    chunks: ["WS-BOOTSTRAP"]
-    releases: ["v1.5.0"]
-  clip-audio:
-    chunks: ["CLP-AUD1-01", "CLP-AUD1-02"]
-    releases: ["v0.9.5"]
-  compose-loop-reliability:
-    chunks: ["CLR-A-01", "CLR-A-02", "CLR-A-03", "CLR-A-04", "CLR-A-05"]
-    releases: ["v0.9.5"]
-  compose-validation-r2-followons:
-    chunks: ["C1", "C2", "C3"]
-    releases: ["v1.4.0"]
-  cross-machine-portability+v0.9.0-cut:
-    chunks: ["W13-B", "W13-C", "hygiene"]
-    releases: ["v0.9.0"]
-  db,sync-push,audio-analysis,mcp-bridge:
-    chunks: ["AUD-2N6K", "ENV-2T9K", "ENV-8K2R", "MEL-1A7K-line", "SDC-7K3M", "SMP-7K2D-01", "SMP-7K2D-02"]
-    releases: ["v0.9.6"]
-  db,tests:
-    chunks: ["EVT-6H9R"]
-    releases: ["v1.7.0"]
-  db-schema,markdown-refs,song-context,skills,docs,claude-md:
-    chunks: ["ATL-7K3M-ch1", "ATL-7K3M-ch2"]
-    releases: ["v1.5.0"]
-  docs-hygiene:
-    chunks: []
-    releases: ["unreleased"]
-  enum-envelope-authoring+device-load-post-condition+w13a-fallback-identity:
-    chunks: ["E1", "E2", "E3"]
-    releases: ["v1.4.0"]
-  envelope-polish+nested-rack-tombstone+device-load-class+mutator-prefix-strip+mcp-auto-mutate:
-    chunks: ["B5", "P1", "P4", "P5", "P7", "backlog-scrub"]
-    releases: ["v1.4.0"]
-  friction-basket:
-    chunks: ["FRICTION-01", "FRICTION-02", "FRICTION-03"]
-    releases: ["v0.9.5"]
-  highroi-sweep:
-    chunks: ["A", "B", "C"]
-    releases: ["v1.7.1"]
-  install-hardening:
-    chunks: ["install-hardening"]
-    releases: ["v0.9.2"]
-  iteration-loop-polish+backlog-discipline:
-    chunks: ["P1", "P2", "P3", "P4", "P5", "P6"]
-    releases: ["v1.4.0"]
-  loader-display-name-convention:
-    chunks: ["D4-1", "D4-2", "D4-3", "D4-4", "D4-5", "D4-6", "D4-7"]
-    releases: ["v1.4.0"]
-  masking-analyzer:
-    chunks: ["masking-C1-C7"]
-    releases: ["v1.4.0"]
-  mcp-actions,mcp-handlers,capture,sync-push,sync-pull,db-queries,skills,docs:
-    chunks: ["DEEP-RACK-ADDR-1", "DEEP-RACK-ADDR-2", "DEEP-RACK-ADDR-3", "DEEP-RACK-ADDR-4", "PULL-DRIFT-DETECT"]
-    releases: ["v0.9.8"]
-  mcp-bridge,db,sync-push:
-    chunks: ["ENV-7G4K-01", "ENV-7G4K-02", "ENV-7G4K-03", "ENV-7G4K-04"]
-    releases: ["v0.9.5"]
-  mcp-bridge,db,sync-push,sync-pull,docs:
-    chunks: ["RTE-1K9T-01", "RTE-1K9T-02", "RTE-1K9T-03", "RTE-1K9T-04", "RTE-1K9T-05", "RTE-1K9T-06"]
-    releases: ["v0.9.5"]
-  mcp-bridge,discovery:
-    chunks: ["AUD-1M4V-discovery"]
-    releases: ["v0.9.4"]
-  mcp-bridge,sync-push:
-    chunks: ["DEV-6M2K"]
-    releases: ["v0.9.5"]
-  mcp-bridge,sync-push,db:
-    chunks: ["ENV-9P4T-01", "ENV-9P4T-02"]
-    releases: ["v0.9.5"]
-  mcp-device,sync-push,tests:
-    chunks: ["MCP-1V8K", "PSH-PHASEORDER"]
-    releases: ["v1.6.0"]
-  mcp-handlers,sync-push,analysis,tests:
-    chunks: ["captures-dir-recency", "master-device-analyzer-aware"]
-    releases: ["v1.5.0"]
-  mcp-perform,tests:
-    chunks: ["PSH-3H8M"]
-    releases: ["v1.6.0"]
-  mcp-render,tests:
-    chunks: ["RND-2R9K"]
-    releases: ["v1.6.0"]
-  mutator-event-shape+test-coverage+wire-schema-enrichment+fingerprint-binary-safety:
-    chunks: ["hygiene"]
-    releases: ["v1.4.0"]
-  node-features,mcp-handlers,capture,sync-pull,db-mutations,skills,docs,readme,pyproject,cli,hooks,project-state:
-    chunks: ["NODE-ADDR-B", "NODE-ADDR-C", "NODE-ADDR-D", "NODE-ADDR-E", "NODE-ADDR-F", "ONBOARD-M4L", "PLUGIN-SELF-CONTAINED"]
-    releases: ["v1.5.0"]
-  plugin-distribution:
-    chunks: ["INS-7V2D", "INS-7V2D-cold-start-timeout"]
-    releases: ["v0.9.3", "v0.9.4"]
-  plugin-distribution,mcp-bridge:
-    chunks: ["INS-3W8P"]
-    releases: ["v0.9.7"]
-  process,docs,skills:
-    chunks: ["PRC-5W2N"]
-    releases: ["v1.7.0"]
-  provenance+annotations-mcp+dev-ergonomics:
-    chunks: ["B2", "B3-resid", "B4", "B5", "Q1"]
-    releases: ["v1.4.0"]
-  pub-ready:
-    chunks: ["C1", "C2", "C3", "C4", "C5", "C6"]
-    releases: ["v1.7.2"]
-  push-reliability+compose-time-validation:
-    chunks: ["R-1", "R-2"]
-    releases: ["v1.0.1"]
-  push-reliability+drum-mapping:
-    chunks: ["A1-resid", "A2-resid", "A3", "A5"]
-    releases: ["v1.1.0"]
-  skills,docs,mcp-primer,claude-md:
-    chunks: ["discoverability-wiring", "song-workflow-spine"]
-    releases: ["v0.9.8"]
-  song-author-hygiene+kit-strict+negative-beats-refusal:
-    chunks: ["H1", "H2", "H3", "H4", "H5", "backlog-scrub"]
-    releases: ["v1.4.0"]
-  song-lifecycle:
-    chunks: []
-    releases: ["unreleased"]
-  sync,artifacts,tests:
-    chunks: ["SYN-8Q3F"]
-    releases: ["v1.7.0"]
-  sync,snapshot,audio:
-    chunks: ["AUD-3T6L", "SNP-4K7M"]
-    releases: ["v0.9.8"]
-  sync-pull,analysis:
-    chunks: ["DEV-4X2N", "SDC-7K3M-pull"]
-    releases: ["v0.9.7"]
-  sync-pull,db-mutations,sync-push,tests:
-    chunks: ["ENV-5R2J", "SYN-6T2W"]
-    releases: ["v0.9.8"]
-  sync-push,arrangement-verify,cli,skills,docs,tests:
-    chunks: ["ARR-PROJ"]
-    releases: ["v1.6.0"]
-  sync-push,capture,tests:
-    chunks: ["SYN-2D9K"]
-    releases: ["v1.6.0"]
-  sync-push,cli:
-    chunks: ["PSH-2R7K", "PSH-5T9D"]
-    releases: ["v0.9.7"]
-  sync-push,db,mcp-bridge,skills:
-    chunks: ["DPP-7H2K", "RTE-2P9X", "SKL-8N3V", "SYN-3C8K"]
-    releases: ["v0.9.7"]
-  sync-push,queries,tests:
-    chunks: ["PSH-6W2J"]
-    releases: ["v1.5.0"]
-  tmp-7b3x:
-    chunks: ["01"]
-    releases: ["unreleased"]
-  tools-dont-narrow-the-art+helpers-dry:
-    chunks: ["GEN-1S4K", "LNT-1V9K", "REV-2W8K", "chunk0", "helpers"]
-    releases: ["v0.9.2"]
-  tour:
-    chunks: ["A1", "A2", "A3", "A4"]
-    releases: ["unreleased"]
-  tour+push+workspace+db-converger:
-    chunks: ["B1"]
-    releases: ["unreleased"]
-  tuning,mcp-bridge,mcp-render,sync-push,sync-pull,db,analysis,methodology,docs,tests:
-    chunks: ["ARR-ORPHAN", "DEC-CAP", "DOC-7K3M", "FK-clip-guard", "IDX-5W2P", "MCP-2K9F", "MCP-5N8K", "MCP-7F2K", "MCP-7P3R", "MCP-8H4N", "MCP-9R3T", "MICROTUNE", "PSH-3K9D", "PSH-8K3D", "REC-4Z8Q", "SYN-4R7P", "SYN-7N4K", "SYN-9F4K", "SYN-RACK-PRESET-RELINK", "SYN-RENDER-RELINK", "SYN-SCAFFOLD-MISLINK", "master-true-peak"]
-    releases: ["v1.6.0"]
-
-# =============================================================================
-# DERIVED VIEWS (enabled by default, v1.4+)
-# =============================================================================
-# When true (default), three derived views are regenerated from
-# change-log.md tagged entries (see that file for the tag format):
-#   * build-plan `## Status` block (checkboxes from `status=shipped` tags)
-#   * `.prawduct/release-notes.md` (from `release=` tags)
-#   * `scope_rollups:` block above (from `scope=` tags)
-# Run `python3 tools/product-hook regen-views` to apply. Set to `false`
-# to opt out.
-
-views_enabled: true
+# Test roots for the evidence recorder, which otherwise discovers repo-root
+# `tests/` only. This repo is a two-package layout: the engine's suite is under
+# `tests/`, the MCP server's under `hallucinote_mcp/tests/`, and `examples/`
+# carries the demo song's own assertions — the same three roots as pyproject's
+# `testpaths`, and they must stay in step with it. Without this the recorded
+# `tests_executed` lists engine tests only, so an MCP-side test reads as
+# unevidenced even though the counted run included it.
+tests_dirs: tests hallucinote_mcp/tests examples
 
 # Backlog format: 2 = structured (id + metadata bar + body, three canonical
 # sections). Set by `/backlog migrate` 2026-05-29. Resolves the
@@ -776,7 +643,85 @@ views_enabled: true
 backlog_format_version: 2
 
 # Stamped by /prawduct:backlog list/pick/triage — resolves the backlog-overdue-grooming advisory.
-backlog_last_groomed_at: 2026-07-04
+backlog_last_groomed_at: 2026-09-08
+
+# THE LIVE BACKLOG. Set at the MG4 migration-scrub cutover 2026-08-10, after
+# `verify-migration` exited 0 with all five lists empty (225 source items, 225
+# aliased). From this point `.prawduct/backlog.md` is FROZEN HISTORY and is no
+# longer read: the backlog lives in this repo's GitHub Issues, reached through
+# `prawduct-hook backlog <op> --repo …`. Decisions + audit record:
+# `.prawduct/artifacts/migration-scrub-decisions.md`.
+#
+# Unsetting this key restores markdown as live, but that is only one of three
+# halves — the migrated issues must also be closed (filter on the `id:` alias
+# namespace; never delete, GitHub does not reuse numbers) and backlog.md's
+# frozen-history banner reverted. Skip the third and the restored backlog
+# announces that it is frozen and redirects to a tracker that is closed.
+backlog_service_repo: brookstalley/hallucinote
+
+# Norm registry — owner-ratified via /prawduct:doctor. Seeds the Norm Health sweep
+# baseline, so the value must LEAD with the date. Twenty-seven norms were ratified
+# into `## Direction` sections across architecture, security-model, api-contract,
+# data-model, nonfunctional-requirements and observability-strategy; the Enforcement
+# table in artifacts/project-preferences.md is the index (pointer rows for the
+# artifact-homed norms, plus the code-level rows with Audit home / Why columns).
+norm_registry_ratified: >-
+  2026-08-12 — 29 norms: 27 across six strategy artifacts, plus two prose norms homed in
+  project-preferences.md itself (write what a thing IS; user holds the creative verbs). The
+  pending veto on the two agent-authored narrowings is RESOLVED by owner ruling: narrowing 1
+  (the "competitor/critic vs mechanism" test) REJECTED — the absolute reading stands and a
+  contrast-definition is banned whatever it is describing; narrowing 2 (prior-art lineage may
+  be named, never ranked against) RATIFIED. The owner also set the norm's scope for the first
+  time: positioning prose only (README, CONTRIBUTING, SECURITY, VISION, faq, tour), and later
+  the same day ratified the two carve-outs the sweep had applied and recorded as pending — a
+  prescriptive rule may prohibit, and verbatim quotation is untouchable. The row now carries
+  FOUR owner-ratified carve-outs and nothing pending; adding a fifth is a ruling, not a
+  judgment call. Prior 2026-08-11 — same 29, both narrowings pending veto. Prior 2026-08-10 —
+  27 norms; six forks ruled by the owner (API scope stays internal; arrangement projection
+  contained push-side)
+
+# Norm Health sweep — stamped by /prawduct:janitor's Norm Health theme. Resolves the
+# `norm-health-sweep-overdue` advisory.
+norm_health_last_run: 2026-09-08
+
+# Measured distance per norm, one entry per sweep, APPENDED never overwritten — the
+# trend is the point. Many individually-defensible exceptions summing to a dead norm is
+# exactly what no single diff review can see, and a point-in-time reading cannot either.
+# Keep the last 3 entries; git holds the rest.
+norm_health:
+  - date: 2026-09-08
+    note: >-
+      First sweep — this is the baseline, so there is no trend yet. Of the ten norms
+      measured, six held clean and four had real distance, and the four split evenly by
+      cause, which is the part worth carrying forward. TWO were statement drift, where the
+      code was disciplined and the norm's wording had grown wrong: "no raw SQL in callers,
+      EVER" was wider than the why that justifies it, and the sync row was narrower than
+      the Executor layer its own sibling artifact had already ratified. TWO were ordinary
+      code drift: kit.py imported db.queries, and five modules lacked the future import
+      whose row had carried an unacted-on "promote to a ruff rule" note. The lesson is not
+      that statements always drift — it is that a sweep must ask which side moved, because
+      the remedy is opposite. Fixing code to match a wrong statement, or amending a
+      statement to excuse real drift, are both available and both wrong.
+    measurements:
+      "raw-sql-outside-db": "22 sites outside db/ — 5 writes (all markdown_refs, now a recorded bounded exception), 17 reads. Norm narrowed to writes by owner ruling R1; reads tracked as #486"
+      "generators-pure": "1 violation site (kit.py imported db.queries) — inverted this sweep, now 0, locked by an import-graph test"
+      "sync-plans-not-calls": "7 modules call client.send. Not code drift: sync-boundary-contract.md already ratified an Executor layer, so the preferences row was narrower than its own sibling artifact. Row restated"
+      "future-annotations": "5 modules missing the import — now 0 and mechanized via ruff I002. Two docstring-only __init__ modules are outside the rule's reach and recorded as such"
+      "mcp-handlers-async": "0 violations — enforced structurally at one anyio.to_thread wrapper (server.py) plus test_threading_invariants.py"
+      "broad-except-waived": "38 catches / 45 waiver pragmas — over-covered, not under"
+      "deps-locked": "0 violations — uv lock --check gates CI"
+      "no-telemetry": "0 outbound calls in the tree"
+      "push-projection": "0 violations. Had sat AGENT-PROPOSED / PENDING OWNER VETO for 19 days; ratified by owner ruling R4 this sweep"
+      "engine-api-support-window": "event-bound revisit has NOT fired — no external contributor song repo, no break report (#305 is the owner's own two-machine experiment). Correctly still deferred"
+
+# API versioning — the decision is authored in artifacts/api-contract.md
+# ("Recorded decision: versioning" + "Recorded decision: deprecation and
+# compatibility"): the MCP surface is versioned by content fingerprint rather
+# than semver, because the two halves ship together and the only question worth
+# answering is "are these byte-identical?". This scalar is the machine-readable
+# flag that the decision EXISTS; the contract artifact remains its home, so the
+# rationale has one carrier and cannot drift from a copy here.
+api_versioning_decided: true
 
 # Distribution mode — set by /prawduct:migrate (v2.0.0 plugin cutover).
 # `plugin` tells the legacy file-sync hook to stand down (Chunk 8).
@@ -787,3 +732,13 @@ distribution: plugin
 # scope `merge-base...HEAD` against develop, not the default origin/main. (INS-7V2D
 # Critic NOTE 2026-06-04.)
 base_branch: develop
+
+# Governance-file size ceiling in KB for the session-briefing nudge (default 40).
+# Raised for THIS file, whose bulk is `technical_decisions` + `design_decisions` —
+# the Reasoned Decisions principle working, not bloat. change-log.md is not covered
+# by the raise: it is ROLLED at each release cut instead (docs/release-process.md
+# step 1, "Roll the log"). Do NOT raise past ~58 without deciding that separately:
+# learnings.md sits at ~60 KB and is deliberately left above the ceiling so its
+# compaction nudge, which nobody has acted on yet, keeps firing. Full reasoning: the 2026-09-08 change-log
+# entry for scope=governance-file-sizes.
+oversized_file_threshold_kb: 55

@@ -8,7 +8,7 @@ name = "hallucinote"
 # Keep .claude-plugin/plugin.json and src/hallucinote/__init__.py in lockstep;
 # tests/unit/test_version_parity.py FAILS if any drifts. (The MCP server's
 # hallucinote_mcp.BASE_VERSION is a SEPARATE wire-protocol axis — see that file.)
-version = "1.7.2"
+version = "1.8.6"
 description = "DB-backed MIDI authoring with Ableton sync via MCP"
 requires-python = ">=3.10"
 dependencies = [
@@ -53,7 +53,7 @@ dev = [
 # --- uv workspace (INS-7V2D) ---------------------------------------------------
 # The plugin bundles BOTH the engine (this package) and the MCP server
 # (hallucinote_mcp) and runs the server with uv from a committed uv.lock into a
-# ${CLAUDE_PLUGIN_DATA} env (see .prawduct/artifacts/plans/INS-7V2D/design.md).
+# ${CLAUDE_PLUGIN_DATA} env (see .prawduct/artifacts/plans/INS-7V2D/archive/design.md).
 # Declaring the workspace lets `uv sync --all-packages` build ONE env containing
 # the server (mcp) + the engine (for the lazy-imported analysis path) — without
 # hallucinote_mcp hard-depending on hallucinote (the import-time isolation
@@ -99,7 +99,20 @@ select = [
     "F",   # pyflakes (unused/undefined names, f-strings, redefinitions)
     "W",   # pycodestyle warnings (already clean)
     "PLE", # pylint errors (already clean)
+    # I002 ONLY, not the whole `I` set. It mechanizes the
+    # "`from __future__ import annotations` on every module" norm
+    # (project-preferences.md, code-level norms), which sat Critic-owned behind a
+    # standing "promote to a ruff rule" note for long enough that five modules
+    # drifted without it — a rule cannot forget. Its sibling I001
+    # (unsorted-imports) is deliberately NOT enabled: it flags 248 files, and
+    # reordering them is a formatting-churn decision the owner deferred to its
+    # own chunk rather than smuggle into a maintenance sweep.
+    # JANITOR-2026-09 R3, 2026-09-08.
+    "I002",
 ]
+
+[tool.ruff.lint.isort]
+required-imports = ["from __future__ import annotations"]
 
 [tool.ruff.lint.per-file-ignores]
 # Package __init__ files are deliberate re-export surfaces (e.g.
@@ -196,13 +209,11 @@ disable_error_code = ["arg-type", "assignment", "union-attr"]
 [tool.pytest.ini_options]
 # Songs now live in their own repo (hallucinote-songs) with their own pytest
 # config — the framework tests the ENGINE + MCP server only. The one exception
-# is `examples/`, the in-repo demo workspace: its song is documentation that has
-# to keep working, and its tests assert the composition's own thesis (the intro
-# and chorus chords are the same pitch-class set, their roots a tritone apart,
-# the outro REUSES the chorus voicing rather than restating it). Those are
-# contracts on a public artifact, so they belong in the default run — and the
-# demo's whole claim is that it builds headless with no Live present, which only
-# a suite that actually executes it can back.
+# is `examples/`, the in-repo demo workspace, currently carrying the demo song
+# `punk-fate` (its predecessor was retired — its real output was the framework
+# defects found by rebuilding it from scratch). A demo song is documentation
+# that has to keep working, and "builds headless with no Live present" is only
+# backed by a suite that actually executes it.
 # Front-insert THIS checkout's source dirs (relative to rootdir) so a bare
 # `pytest` always tests the local tree — critical in a git worktree, where the
 # editable-install `.pth` files resolve `hallucinote`/`hallucinote_mcp` to the

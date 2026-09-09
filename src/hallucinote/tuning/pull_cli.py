@@ -165,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_apply.add_argument(
         "--song", required=True,
-        help="song slug (its DB name; also resolves songs/<slug>/<slug>.db)",
+        help="song slug; its DB is resolved by resolve_db_path (per-branch name in the song's own dir)",
     )
     p_apply.add_argument(
         "--db", default=None,

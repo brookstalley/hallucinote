@@ -6,6 +6,20 @@ narrative, it lives in [learnings-detail.md](learnings-detail.md) under the **sa
 in the same order (a rule with no narrative has no detail counterpart). Add new rules here;
 put any narrative there.
 
+<!-- prawduct:descent-obligation — the statement below is the HOME of the
+     descent rule; `/prawduct:learnings` points here rather than restating
+     it. Reword the prose freely; keep this marker, above the first rule. -->
+
+**Reading a rule is not applying it.** The failure mode of a learnings file is not absence, it is assent: a rule arrives at the right moment, is read, is agreed with, and changes nothing, because nothing made you recognize the case in hand as an instance of it. So for any rule you read here, name the decision you are about to make and say what the rule changes about it — or say that it does not apply, which is also an answer.
+
+## A norm sweep must ask WHICH SIDE moved — the remedy for statement drift is the opposite of the remedy for code drift
+
+**When a norm and the code disagree, decide WHICH SIDE moved before reaching for a fix — the two remedies are opposite and both are always available. The tell for statement drift is that the norm's why does not reach the sites it condemns; the tell for code drift is that the why reaches them exactly. Amending a norm to match your own code, and refactoring code to satisfy wording nobody would write today, are both failures.**
+
+## An archived record is not a live surface — path-shaped exemptions go stale the moment you archive
+
+**A lock that scans "every live surface" must express its exemption as a RULE (`"/archive/" in path`), never a path list — the first archival moves a file out from under an exact-path exemption and the lock fails on a record whose own banner says do not edit it. Rewriting an archived record to satisfy a live-surface check falsifies the record, which is the thing the check exists to protect.**
+
 ## Newly enabling a capability doesn't update the guards that predated it — grep for stale exclusions
 
 **When a change makes a previously-impossible thing possible (DEV-6M2K made master device chains pushable; the earlier premise that Live can't load onto the master was refuted), the exclusions/guards/skips written under the old invariant don't auto-update — they silently become bugs. The push probe's master-exclusion ("master has no pushable devices, reached via ableton_session not a track index") was a correct invariant that became the analyzer-aware-reconciliation gap once master devices were real. After enabling a capability, grep for every guard keyed on the old "can't" (skips, `if kind != 'master'`, detect-only carve-outs, "still-open piece" comments) and audit whether it's now stale.**
@@ -46,6 +60,8 @@ put any narrative there.
 
 **For any analyzer whose input is *detected* (onset detection, pitch tracking, beat tracking) rather than given, run real/representative cases through the actual pipeline and read the numbers BEFORE writing test assertions. The detection stage has latency and failure modes that abstract reasoning misses, and a fixture chosen for convenience can hide them.**
 
+**Sharpened for DEFECT detectors: the negative control has to be real program material, not clean fixtures — a synthetic corpus is structurally incapable of containing the case that breaks you.** A detector's dangerous failure is the false positive, and a hand-built corpus contains only the shapes its author already imagined. Two lenses shipped one each, both accusing healthy audio, and neither was reachable synthetically: clipping keyed on amplitude when captured stems are pre-fader float32 (a healthy part peaking at +6.30 dBFS drew 7970 phantom clip runs — clipping is a FLAT TOP, not a loud one), and every uncorrelated stem pair reported a confident lag because a cross-correlation always peaks somewhere. Ask for a real capture, then ask again for a known-CLEAN one; proving the detector stays SILENT is the harder and more valuable half.
+
 ## A staleness/version signature must be content-derived, never hand-bumped
 
 **When you surface a "version" or "signature" so a consumer can tell whether loaded code is stale, derive it from the content (hash the source), not a hand-maintained string. Forgetting to bump a manual version is the exact failure mode the signature exists to catch — a manual bump and the stale-reload it's meant to detect are indistinguishable.**
@@ -82,6 +98,18 @@ put any narrative there.
 
 **When writing a Live property (especially anything bound to transport — `current_song_time`, anything that affects the audio thread), do NOT verify success by reading the same property back in the same callback. Verify by inspecting the actual side effect (e.g., `song.cue_points` after a `set_or_delete_cue` toggle).**
 
+## Arming Live's record STARTS the transport — so position before you arm
+
+**`song.record_mode = True` is Live's Record BUTTON, and pressing Record rolls the transport. Any positioning done after the arm therefore aims at a MOVING playhead, and a stop is not the escape hatch because a stop disarms record_mode. Position first, then arm, and let the arm roll from where you put it.** Measured on Live 12.4: armed at beat 0, the playhead reads 2.8 one second later and 8.4 after ninety.
+
+## An honest read-back of the wrong property is the hardest bug to see
+
+**When a write is supposed to change a BEHAVIOUR, verify the behaviour, not the property you wrote. A property that reads back exactly what you set proves the write landed — never that it governs what you wanted.** Ask at design time what property the behaviour actually reads, and prefer a check on the realized effect, which holds even when the mechanism is wrong.
+
+## A field that is 1 whenever ANY prior state exists cannot verify THIS pass
+
+**Before trusting an external system's verification flag, ask what it reads true for. If it answers about the target's STATE rather than about your OPERATION, it is asymmetric — honest on a virgin target, unconditionally affirmative on one you have touched before — so it verifies the first run and nothing after. Verify with a count the operation itself owns, and state the verdict rather than leaving a reader to derive it from two fields that can disagree.**
+
 ## Unit fakes that mirror an *assumed* Live API give false confidence
 
 **Test fakes for Live's Remote Script API must simulate the real API's quirks — not the API's documented or assumed shape. Without an integration smoke test against a real Live process, the unit suite gives a green light to handlers that crash empirically.**
@@ -95,6 +123,10 @@ put any narrative there.
 **Corollary:** treat probe-confirmable platform/API facts as must-verify, not recall. We live-probed `DeviceParameter.default_value` and found it exists but *raises* on some quantized params — a nuance pure reasoning would have missed. (Reinforces *Verify, don't guess*.)
 
 **Corollary (read-SHAPE, not just settability): when a foreign-API field's shape is only documented loosely — or not at all — STUB LOUD (raise) until a real probe pins it; do NOT guess the shape to "unblock."** MICROTUNE (verify-api, 2026-06-19): the Cycling '74 ref typed Live's `TuningSystem.note_tunings` as "dictionary"; we refused to guess and shipped `read.py`'s extraction as a `raise`-ing stub with a fixture test pinning the held contract. When a real tuning (Wendy Carlos gamma) was finally loadable, the probe showed the shape was BOTH simpler AND *different* from the doc — a flat `list[float]` (degree-indexed, unison at `[0]`, period excluded), and `reference_pitch` a standard 12-key anchor, not a dict. A guessed dict-shape would have passed its own unit tests (the fake encodes the guess — see the NODE-ADDR test-trap learning below) while being silently wrong about pitch. The loud stub cost one extra session of waiting for Live; the wrong guess would have cost a corrupted tuning shipped green. Stubbing-loud-until-probed is the cheap insurance.
+
+## A shipped "can't" is a dated snapshot — re-probe a challenged capability verdict before defending it
+
+**When a recorded capability verdict ("can't / not supported / impossible") is challenged and the platform is live, RE-PROBE before citing the artifact — it is a dated snapshot of one build, not a law, and the re-probe costs minutes against a false premise that can span many surfaces. Capability claims must record the build they were verified against; a build-less verdict is untrustable on a later one.**
 
 ## Link, don't summarize
 
@@ -361,3 +393,43 @@ made a chunk invisible to this repo's derived views, because only `status=shippe
 feeds them. When a written rule and the implementation disagree, the rule may be
 describing a different repo's tooling — verify which, and record the departure
 rather than silently matching either. (2026-08-07, TOUR B1)
+
+## A sampler/drum part's note mapping is only verifiable by rendering it
+
+**When a part's instrument is a sampler or drum device, verify its note mapping by RENDERING and checking per-stem RMS. No symbolic gate can see a note sent where nothing is mapped — the clip, the push and the arrangement all report success while the pad stays silent.**
+
+## `skipped (idempotent)` is two different outcomes wearing one word
+
+**When a push reports OK with a phase `skipped (idempotent)`, read the warning block before concluding anything. The same word covers both work-already-done-elsewhere and precondition-probe-failed, and only the warnings separate them.**
+
+## A declared-vs-measured gap has two possible culprits — name which
+
+**When a review lens reports declared-vs-measured drift, record explicitly whether the DECLARATION or the WORK was wrong. Tuning the declaration until the question disappears is gaming the lens, and it leaves no trace that anything was ever off.**
+
+## A correct automation arc is not evidence of an audible result
+
+**When a declared audible gesture "doesn't happen", measure the RENDERED AUDIO before diagnosing the mechanism. A verified-correct automation arc proves the arc and not the sound — the parameter can read back its exact authored value mid-sweep while the stem is bit-exact mono.**
+
+## A "no effect" verdict indicts the probe as much as the device
+
+**When a verification lens reports "no effect", check whether the PROBE can see the effect that device produces. The wrong probe manufactures false negatives that look like real defects — a comb filter changes the stereo picture, so a centroid-only check calls a working flanger unrealized.**
+
+## A criterion built from a symptom COUNT can fail by being satisfied
+
+**When an acceptance criterion is derived from a COUNT of symptoms, re-derive it per-symptom before treating a partial pass as failure. Some of the symptoms may be the tool being right, in which case the count was never the thing to hold.**
+
+## Narrowing a norm right after review finds you violating it is the tell
+
+**When review finds prose or code violating a norm and your first instinct is to narrow the NORM, stop — that is amending the rule to fit your own work, and "the corpus violates it" is evidence about the corpus. Record who actually decided each clause, ship the narrowing as PENDING OWNER VETO rather than as ratified, and let the owner rule. This norm was narrowed twice in one day; only the pending-veto record made the owner's later rejection possible at all.**
+
+## A discriminating test must be run against the examples it is meant to separate
+
+**When you write an operational test for a judgment call, apply it to your own banned AND permitted examples before shipping it. A test that sounds discriminating can invert: "would removing the negated half leave the subject undefined?" cleared "Ableton is the speaker, not the score" — the exact sentence its own row banned — because the remainder is perfectly well defined.**
+
+## A rule restated in N carriers is a rule that will drift in N-1 of them
+
+**When a rule needs recording in a plan, a change-log and its home artifact, restate it ONLY in the home and have the others point at it. Fixing one defective test wording here meant four hand-synced edits; a completed build plan is archived rather than deleted, so its stale copy outlives the source where someone still reads it.**
+
+## An estimator that reports the FIRST threshold crossing is bimodal on multi-lobe material
+
+**When a measurement is the interval between two threshold crossings, anchor BOTH scans on the feature you mean and scan back from it — never forward from a search window's edge. Forward-scanning let an earlier envelope lobe capture a kick's 90 % point, so a 1 % change in that lobe's height moved the reported rise by 28 ms and a uniform mix edit "changed" two sections of ten. A bimodal reading on real material looks exactly like a real difference.**

@@ -82,6 +82,24 @@ def _resolve_send_fn():
     return _client.send
 
 
+class _NeverRaised(Exception):
+    """Placeholder in an ``except`` tuple when the MCP client isn't importable
+    — nothing ever raises it, so the clause is inert."""
+
+
+def _live_connection_errors() -> type[BaseException]:
+    """``LiveConnectionError`` when the MCP client is importable, else an inert
+    stand-in. Mirrors ``push_execute``'s lazy ``_CONNECTION_EXCS``: this module
+    must import without ``hallucinote_mcp`` present."""
+    try:
+        from hallucinote_mcp.client import (  # type: ignore[import-not-found]
+            LiveConnectionError,
+        )
+    except ImportError:
+        return _NeverRaised
+    return LiveConnectionError
+
+
 def _probe_live_via_mcp(
     send_fn=None,
 ) -> tuple[list[dict], list[dict]]:
@@ -240,6 +258,14 @@ def _probe_live_arrangement_clips_via_mcp(
     "no clips, safe to fill" — a transient failure must never let create+fill stack
     onto unprobed clips (mirrors the per-parent tolerance of
     :func:`_probe_live_devices_via_mcp`).
+
+    PSH-ARRPROBE: ``live_tracks`` must be the track list as it stands WHEN THE
+    ARRANGEMENT PHASE RUNS, not the pre-push one. The execute path therefore
+    calls this from a thunk (``_probe_arrangement_lanes``) that re-probes
+    ``ableton_track(list)`` first — on a first push the song's tracks don't
+    exist until the `tracks` phase creates them, and a map keyed by the OLD
+    indices makes every track look unprobed (or, worse, points a lane's clear at
+    a different track).
     """
     if send_fn is None:
         from hallucinote_mcp import client as _client  # type: ignore[import-not-found]
@@ -432,11 +458,13 @@ def _cmd_apply(args: argparse.Namespace) -> int:
     # Surface a tiny summary so the skill can report per-phase progress.
     applied = sum(1 for r in results if r.get("ok"))
     failed = [r for r in results if not r.get("ok")]
+    apply_notes: list[str] = []
     apply_warnings = push.apply_push_results(
         conn, results,
         session_id=args.session_id,
         actor="sync",
         reason=args.reason or f"push from session {args.session_id}",
+        notes_sink=apply_notes.append,
     )
     out = {
         "applied": applied,
@@ -446,6 +474,10 @@ def _cmd_apply(args: argparse.Namespace) -> int:
             for r in failed
         ],
         "apply_warnings": apply_warnings,
+        # Operator-facing lines that are not problems — the perform phase's
+        # per-arc roll-up. Separate from apply_warnings so a clean apply does
+        # not have to look like a failed one to say what it did.
+        "apply_notes": apply_notes,
     }
     json.dump(out, sys.stdout, indent=2)
     sys.stdout.write("\n")
@@ -773,14 +805,12 @@ def _cmd_execute(args: argparse.Namespace) -> int:
         sys.stderr.write(f"push_cli execute: {exc}\n")
         return 2
 
-    coherence_live_tracks: list[dict] | None = None
     if not args.no_coherence_check:
         # The mutex group makes --probe or --snapshot the only other paths,
         # so exactly one is set here.
         live_tracks, live_returns = _cmd_check_coherence_probe_or_snapshot(
             args, subcmd="execute",
         )
-        coherence_live_tracks = live_tracks
         check = push.check_coherence(
             conn,
             session_id=args.session_id,
@@ -798,14 +828,41 @@ def _cmd_execute(args: argparse.Namespace) -> int:
     # ARR-PROJ: the arrangement phase projects the DB onto a CLEARED timeline, so
     # it needs Live's current arrangement clips per track to plan the per-clip
     # clear. Probe live (same call probe-and-link uses); execute reaches Live at
-    # dispatch regardless, so this is always valid. Reuse the coherence probe's
-    # track list when present to avoid a redundant ableton_track(list).
-    arr_probe_tracks = coherence_live_tracks
-    if arr_probe_tracks is None:
-        arr_probe_tracks, _ = _probe_live_via_mcp()
-    live_arrangement_clips_by_track = _probe_live_arrangement_clips_via_mcp(
-        live_tracks=arr_probe_tracks,
-    )
+    # dispatch regardless, so this is always valid.
+    #
+    # PSH-ARRPROBE: this is a THUNK, resolved inside the arrangement phase's
+    # planner, and the laziness is load-bearing. The probe map is keyed by LIVE
+    # TRACK INDEX and matched against the indices the arrangement planner reads
+    # from `ableton_links` — which, on a FIRST push, do not exist until the
+    # `tracks` phase has created the tracks. Probing here (the pre-fix
+    # behavior), or reusing the coherence probe's pre-phase track list,
+    # described a DIFFERENT set of tracks: a fresh 9-track song pushed into a
+    # Live set still holding its 4 default scaffold tracks probed lanes 1-4
+    # while the song's tracks landed at 5-13, so every track read as
+    # "probe failed" and the whole arrangement silently no-op'd. Re-probing the
+    # track list here (rather than reusing `coherence_live_tracks`) is the
+    # point, not a redundancy — and the whole probe is now skipped entirely on
+    # scoped runs that never reach the arrangement phase.
+    def _probe_arrangement_lanes() -> dict[int, list[dict]]:
+        try:
+            live_tracks_now, _ = _probe_live_via_mcp()
+        except (SystemExit, OSError, _live_connection_errors()) as exc:
+            # This now runs MID-RUN (inside the arrangement phase's planner),
+            # so an escaping exception would abandon the push without its
+            # terminal state file or a closed request row. Degrade instead: an
+            # EMPTY map means "probed, and no lane's state is known", which the
+            # projection planner reads as blocked-per-track → the phase reports
+            # INCOMPLETE and touches nothing. Returning None would be the unsafe
+            # degradation (it means "no probe taken" → create+fill with NO
+            # clear, which can stack onto existing clips).
+            sys.stderr.write(
+                "push_cli execute: the arrangement lane probe could not read "
+                f"Live's track list ({exc}); the arrangement phase will report "
+                "INCOMPLETE rather than write into lanes whose state is "
+                "unknown.\n"
+            )
+            return {}
+        return _probe_live_arrangement_clips_via_mcp(live_tracks=live_tracks_now)
 
     try:
         result = push_execute.execute_push(
@@ -820,7 +877,7 @@ def _cmd_execute(args: argparse.Namespace) -> int:
             start_at=start_at,
             stop_after=stop_after,
             progress_fn=_stderr_progress,
-            live_arrangement_clips_by_track=live_arrangement_clips_by_track,
+            live_arrangement_clips_by_track=_probe_arrangement_lanes,
         )
     except push_execute.PhaseTargetError as exc:
         sys.stderr.write(f"push_cli execute: {exc}\n")

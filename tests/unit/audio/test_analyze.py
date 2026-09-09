@@ -1424,3 +1424,395 @@ def test_analyze_mix_report_carries_no_publishable_leak(tmp_path: Path):
             "analysis/ reports are git-tracked, so this ships to whoever "
             "clones the repo"
         )
+
+
+def test_analyze_mix_populates_section_transients_when_enabled(tmp_path: Path):
+    """With ``analyze_transients=True``, a covered section carries the low-band
+    hit shape of every stem with enough kick-class hits (a pad is omitted), and
+    it serializes under ``per_section[].transients``."""
+    from .fixtures import kick_onset, sine
+
+    kick = np.zeros((SAMPLE_RATE * 8, 2), dtype=np.float32)
+    one = kick_onset()
+    for i in range(16):
+        s = i * SAMPLE_RATE // 2
+        kick[s:s + one.shape[0]] += one
+    pad = sine(440.0, 8.0, amplitude=0.2)
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "Kit", kick), ("track:2", "Pad", pad)],
+        master_audio=kick + pad,
+        start_at_beat=0.0,
+        stop_at_beat=16.0,
+    )
+    sections = [SectionWindow(name="verse", start_beat=0.0, end_beat=16.0)]
+
+    off = analyze_mix(captures_dir, sections=sections)
+    assert off.per_section[0].transients == []
+
+    on = analyze_mix(captures_dir, sections=sections, analyze_transients=True)
+    sec = on.per_section[0]
+    assert [t.track_id for t in sec.transients] == ["track:1"]
+    kit = sec.transients[0]
+    assert kit.hit_count == 16
+    assert kit.rise_ms > 0.0 and kit.t20_ms > 0.0
+    # the pad's absence is EXPLAINED, not silent
+    assert [s["track_id"] for s in sec.transient_skips] == ["track:2"]
+    assert sec.transient_skips[0]["kind"] in ("no_low_band_energy", "too_few_hits")
+
+    sj = on.to_json_dict()["per_section"][0]
+    j = sj["transients"]
+    assert len(j) == 1 and j[0]["track_id"] == "track:1"
+    assert isinstance(j[0]["click_minus_sub_db"], float)
+    assert isinstance(j[0]["attack_sub_40_100_db"], float)
+    assert isinstance(j[0]["hit_count"], int)
+    assert isinstance(j[0]["censored_t20_hits"], int)
+    assert sj["transient_skips"][0]["track_id"] == "track:2"
+
+
+def test_analyze_mix_populates_render_integrity_and_serializes_it(tmp_path: Path):
+    """The three render-level lenses populate and round-trip through JSON.
+
+    Integrity, phase and reconciliation describe the CAPTURE rather than a
+    section, so they sit at the top level beside ``alignment`` — and each must be
+    distinguishable from "did not run", which is why the pass is asserted present
+    rather than merely non-crashing.
+    """
+    from .fixtures import pink_noise, sine
+
+    bass = sine(80.0, 4.0, amplitude=0.3)
+    lead = pink_noise(4.0, rng=np.random.default_rng(3))
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "Bass", bass), ("track:2", "Lead", lead)],
+        master_audio=(bass + lead).astype(np.float32),
+        start_at_beat=0.0,
+        stop_at_beat=8.0,
+    )
+
+    # Explicit: the flag defaults OFF, like every other analysis flag here,
+    # and the handler is what turns it on for a real render.
+    report = analyze_mix(
+        captures_dir, analyze_integrity=True, analyze_imaging=True
+    )
+
+    # One integrity row per captured surface, each naming what it measured.
+    measured = {row.track_id for row in report.integrity}
+    assert {"track:1", "track:2"} <= measured, measured
+    assert len(report.integrity) == 3, "master, and one row per stem"
+    assert all(not row.silent for row in report.integrity)
+
+    # A clean synthetic render carries no damage.
+    assert all(row.clip_events == [] for row in report.integrity)
+
+    # One phase relation for the single stem pair, and the lag carries its
+    # confidence so a coincidental peak is not read as device latency.
+    assert len(report.phase_relations) == 1
+    pair = report.phase_relations[0]
+    assert pair.skipped is None
+    # A sine and pink noise share no structure, so whatever lag the argmax found
+    # must arrive labelled as not worth believing.
+    assert 0.0 <= pair.lag_correlation <= 1.0
+    assert not pair.polarity_inverted
+
+    # The master IS the stem sum here, so reconciliation should find it faithful.
+    assert report.sum_reconciliation is not None
+    assert report.sum_reconciliation.skipped is None
+
+    payload = report.to_json_dict()
+    assert len(payload["integrity"]) == 3
+    assert len(payload["phase_relations"]) == 1
+    assert payload["sum_reconciliation"] is not None
+    assert payload["stems"][0]["imaging"] is not None
+    assert [b["band"] for b in payload["stems"][0]["imaging"]["bands"]]
+    # Valid JSON under strict mode is the contract every consumer relies on.
+    json.dumps(payload, allow_nan=False)
+
+
+def test_analyze_mix_can_skip_render_integrity(tmp_path: Path):
+    """``analyze_integrity=False`` leaves the three lists empty rather than
+    half-populated, so "off" and "clean" never look alike."""
+    from .fixtures import sine
+
+    tone = sine(220.0, 2.0, amplitude=0.3)
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "Tone", tone)],
+        master_audio=tone,
+        start_at_beat=0.0,
+        stop_at_beat=4.0,
+    )
+
+    report = analyze_mix(captures_dir, analyze_integrity=False)
+
+    assert report.integrity == []
+    assert report.phase_relations == []
+    assert report.sum_reconciliation is None
+
+
+def test_per_section_stems_carry_imaging(tmp_path: Path):
+    """Imaging is measured per SECTION, not only whole-capture.
+
+    "The chorus goes wide and the verse is narrow" is the soundstage question
+    people actually ask, and a whole-capture average is precisely the reading
+    that cannot answer it. This pins that the section path populates the field
+    rather than leaving it None — the failure mode is silent, because a None
+    reads as "not measured" and nobody notices the sections never had one.
+    """
+    from .fixtures import sine
+
+    tone = sine(300.0, 8.0, amplitude=0.3)
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "Tone", tone)],
+        master_audio=tone,
+        start_at_beat=0.0,
+        stop_at_beat=16.0,
+    )
+    sections = [
+        SectionWindow(name="verse", start_beat=0.0, end_beat=8.0),
+        SectionWindow(name="chorus", start_beat=8.0, end_beat=16.0),
+    ]
+
+    report = analyze_mix(captures_dir, sections=sections, analyze_imaging=True)
+
+    assert len(report.per_section) == 2
+    for section in report.per_section:
+        assert section.master.imaging is not None, section.section_name
+        for stem in section.stems:
+            assert stem.imaging is not None, (section.section_name, stem.track_id)
+
+    payload = report.to_json_dict()
+    assert payload["per_section"][0]["stems"][0]["imaging"] is not None
+
+
+def test_analyze_mix_passes_stem_gains_as_linear_gains(tmp_path: Path):
+    """The gain UNIT is a seam, and a seam is what nobody owns by default.
+
+    ``stem_gains`` carries LINEAR gains — the handler converts Live's normalized
+    fader value through the calibrated curve exactly once. A second conversion
+    inside the reconciliation mis-levelled a unity fader by +6 dB and a -14 dB
+    fader by -20 dB, and did it while ``gains_assumed_unity`` reported ``False``,
+    so the report asserted the levels were modelled while they were wrong.
+
+    Neither side's own tests could see it: the module's tests were
+    self-consistent in its own convention, and the analyze-level test passed no
+    gains at all. This one exercises the PRODUCTION argument shape — a non-unity
+    linear gain map — which is the only place the mismatch is visible.
+    """
+    from .fixtures import pink_noise, sine
+
+    bass = sine(80.0, 4.0, amplitude=0.4)
+    lead = pink_noise(4.0, rng=np.random.default_rng(9))
+    half = 10.0 ** (-6.0 / 20.0)
+    # The master is what Live would produce: each stem at its LINEAR gain.
+    master = (bass * half + lead).astype(np.float32)
+
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "Bass", bass), ("track:2", "Lead", lead)],
+        master_audio=master,
+        start_at_beat=0.0,
+        stop_at_beat=8.0,
+    )
+
+    report = analyze_mix(
+        captures_dir,
+        analyze_integrity=True,
+        stem_gains={"track:1": half, "track:2": 1.0},
+    )
+
+    recon = report.sum_reconciliation
+    assert recon is not None
+    assert recon.gains_assumed_unity is False
+    # Interpreting these as normalized fader values instead would scale track:1
+    # by live_fader_gain(0.501) and blow the residual apart.
+    assert recon.residual_db < -20.0, recon
+    assert recon.gain_offset_db == pytest.approx(0.0, abs=1.0), recon
+
+
+# --- capture span mismatch (#491) ---------------------------------------------
+#
+# A capture of songs/alien covered 1.06 beats more audio than its manifest
+# declared. Every per-section number in the resulting mix report was computed on
+# the stretched span, a reverb peak was read as landing a beat after the moment
+# it actually landed, and the report said `status: ok` and nothing else. These
+# tests hold the report to speaking.
+
+ALIEN_BPM = 124.0
+
+
+def _span_capture_dir(
+    tmp_path: Path, *, declared_beats: float, captured_seconds: float
+) -> Path:
+    """A synthetic capture whose audio length and declared span can disagree."""
+    audio = calibrated_pink_noise(-26.0, captured_seconds)
+    return _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "01 Drums", calibrated_pink_noise(-26.0, captured_seconds))],
+        master_audio=audio,
+        start_at_beat=0.0,
+        stop_at_beat=declared_beats,
+        ring_out_beats=0.0,
+    )
+
+
+def test_analyze_mix_flags_a_capture_longer_than_its_declared_span(tmp_path: Path):
+    """The reported capture's own numbers, scaled down to a testable length: at
+    124 BPM a 40-beat span is 19.355 s, and audio of 19.868 s overruns it by the
+    same 1.06 beats the real capture did."""
+    declared_beats = 40.0
+    declared_s = declared_beats * 60 / ALIEN_BPM
+    captured_s = declared_s + 1.06 * 60 / ALIEN_BPM
+    captures_dir = _span_capture_dir(
+        tmp_path, declared_beats=declared_beats, captured_seconds=captured_s
+    )
+
+    report = analyze_mix(captures_dir, tempo_map=[TempoSegment(0.0, ALIEN_BPM)])
+
+    mismatches = [f for f in report.findings if f.kind == "capture_span_mismatch"]
+    assert len(mismatches) == 1
+    finding = mismatches[0]
+    assert finding.severity == "warning"
+    assert finding.subject == "capture"
+    assert finding.expected == pytest.approx(declared_beats)
+    assert finding.observed == pytest.approx(declared_beats + 1.06, abs=0.01)
+    # It must not claim to know WHICH end the extra audio is at.
+    assert "head or the tail" in (finding.db_reference or "")
+
+    span = report.alignment["capture_span"]
+    assert span["within_tolerance"] is False
+    assert span["excess_beats"] == pytest.approx(1.06, abs=0.01)
+
+
+def test_analyze_mix_is_silent_on_a_capture_that_spans_what_it_declares(
+    tmp_path: Path,
+):
+    """The healthy captures measured alongside the defective one sat inside 0.05
+    beats. No finding — but the numbers are still recorded, so a reader can tell
+    a passing check from one that never ran."""
+    declared_beats = 40.0
+    captures_dir = _span_capture_dir(
+        tmp_path,
+        declared_beats=declared_beats,
+        captured_seconds=declared_beats * 60 / ALIEN_BPM,
+    )
+
+    report = analyze_mix(captures_dir, tempo_map=[TempoSegment(0.0, ALIEN_BPM)])
+
+    assert [f for f in report.findings if f.kind == "capture_span_mismatch"] == []
+    span = report.alignment["capture_span"]
+    assert span["within_tolerance"] is True
+    assert span["excess_beats"] == pytest.approx(0.0, abs=0.01)
+    assert [
+        s for s in report.skipped_analyses if s["kind"] == "capture_span"
+    ] == []
+
+
+def test_analyze_mix_names_the_span_check_it_could_not_run(tmp_path: Path):
+    """Without a tempo map there is no wall-clock duration to compare against.
+    The check must say so rather than pass silently — the silence is the bug."""
+    captures_dir = _span_capture_dir(
+        tmp_path, declared_beats=40.0, captured_seconds=25.0
+    )
+
+    report = analyze_mix(captures_dir)
+
+    assert [f for f in report.findings if f.kind == "capture_span_mismatch"] == []
+    assert report.alignment["capture_span"] is None
+    skips = [
+        s for s in report.skipped_analyses if s["kind"] == "capture_span"
+    ]
+    assert len(skips) == 1
+    assert "no tempo_map rows" in skips[0]["reason"]
+
+
+def test_analyze_mix_names_the_push_gap_rather_than_blaming_the_capture(
+    tmp_path: Path,
+):
+    """A song declaring a tempo change renders at the bar-1 tempo today, so the
+    declared duration is not what was played. The report must say that is why it
+    could not check, not report the difference as a bad capture."""
+    captures_dir = _span_capture_dir(
+        tmp_path, declared_beats=120.0, captured_seconds=60.0
+    )
+
+    report = analyze_mix(
+        captures_dir,
+        tempo_map=[TempoSegment(0.0, 120.0), TempoSegment(60.0, 60.0)],
+    )
+
+    assert [f for f in report.findings if f.kind == "capture_span_mismatch"] == []
+    skips = [
+        s for s in report.skipped_analyses if s["kind"] == "capture_span"
+    ]
+    assert len(skips) == 1
+    assert "bar-1 tempo" in skips[0]["reason"]
+
+
+def test_every_skipped_analysis_entry_is_keyed_the_same_way(tmp_path: Path):
+    """`kind` is how a consumer selects a skip entry, and consumers index it
+    unguarded. Two entries were once keyed `analysis` instead; they never reached
+    a real report only because the MCP handler happens to enable both lenses, so
+    the inconsistency sat one default away from a KeyError in the reader. This
+    pins the shape across EVERY skip the pipeline can emit, rather than the few
+    a given test happens to trigger."""
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "01 Drums", calibrated_pink_noise(-26.0, 2.0))],
+        master_audio=calibrated_pink_noise(-20.0, 2.0),
+    )
+
+    # Every lens off and nothing declared — the maximal-skip report.
+    report = analyze_mix(captures_dir)
+
+    assert report.skipped_analyses, "expected skips with nothing declared"
+    for entry in report.skipped_analyses:
+        assert "kind" in entry, f"skip entry missing 'kind': {entry}"
+        assert "reason" in entry, f"skip entry missing 'reason': {entry}"
+    assert {"render_integrity", "imaging", "capture_span"} <= {
+        e["kind"] for e in report.skipped_analyses
+    }
+
+
+def test_analyze_mix_flags_a_capture_shorter_than_its_declared_span(tmp_path: Path):
+    """The other end of the same defect, pinned end-to-end so the finding's
+    observed < expected ordering is held, not just the measurement's sign."""
+    declared_beats = 40.0
+    captured_s = (declared_beats - 1.0) * 60 / ALIEN_BPM
+    captures_dir = _span_capture_dir(
+        tmp_path, declared_beats=declared_beats, captured_seconds=captured_s
+    )
+
+    report = analyze_mix(captures_dir, tempo_map=[TempoSegment(0.0, ALIEN_BPM)])
+
+    mismatches = [f for f in report.findings if f.kind == "capture_span_mismatch"]
+    assert len(mismatches) == 1
+    assert mismatches[0].observed < mismatches[0].expected
+    assert report.alignment["capture_span"]["excess_beats"] == pytest.approx(
+        -1.0, abs=0.01
+    )
+
+
+def test_analyze_mix_distinguishes_a_missing_tempo_map_from_a_late_first_point(
+    tmp_path: Path,
+):
+    """Two declines an operator would act on differently must not read the same.
+    A song whose first tempo row is not at bar 1 HAS a usable map; telling the
+    operator it is missing sends them to the wrong place."""
+    captures_dir = _span_capture_dir(
+        tmp_path, declared_beats=40.0, captured_seconds=40 * 60 / ALIEN_BPM
+    )
+
+    absent = analyze_mix(captures_dir)
+    late = analyze_mix(captures_dir, tempo_map=[TempoSegment(16.0, ALIEN_BPM)])
+
+    def _reason(report):
+        entries = [
+            s for s in report.skipped_analyses if s["kind"] == "capture_span"
+        ]
+        assert len(entries) == 1
+        return entries[0]["reason"]
+
+    assert "no tempo_map rows" in _reason(absent)
+    assert "before the song's first tempo point" in _reason(late)

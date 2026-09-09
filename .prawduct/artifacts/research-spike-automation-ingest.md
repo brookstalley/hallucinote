@@ -357,7 +357,7 @@ Capture mechanisms are **data SOURCES**; the LLM never sees raw data. Full detai
 - `docs/research/audio-first-class/lom-recording-automation.md` — TOPIC B is the
   load-bearing reference: binary-docstring-confirmed facts about the 12.4.1 LOM automation
   surface. Several conclusions below are lifted from it (marked **[CONFIRMED — lom-rec doc]**).
-- `.prawduct/artifacts/plans/ENV-9P4T/api-notes.md` — the perform-path probe notes.
+- `.prawduct/artifacts/plans/ENV-9P4T/archive/api-notes.md` — the perform-path probe notes.
 - The current read path: `src/hallucinote/sync/pull/envelopes.py` (709 LOC) — `value_at_time`
   sampling + step-transition detection + curve-preservation merge.
 

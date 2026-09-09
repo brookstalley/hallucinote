@@ -20,7 +20,7 @@ are the same.)
 | Skill | What it does |
 |---|---|
 | `/hallucinote:getting-started` | Orientation for a new user — checks your install (uv, the MCP bridge, the Remote Script, the Max for Live analyzer), says plainly what works with and without Max for Live, and **proposes** the next step (install if needed, then a new or existing song). Run it first, or whenever you're unsure "what now?". |
-| `/hallucinote:song-workflow` | The song-creation **lifecycle map** — the phases, the skill that runs each, each stage's [definition of done](song-workflow.md#stage-exit-criteria), and the three checkpoints (`/song-brief`, `/compose-review`, `/mix-review`) that are easy to skip. Read first for any song work; links to [`docs/song-workflow.md`](song-workflow.md) for the full depth and the research behind each tool. |
+| `/hallucinote:song-workflow` | The song-creation **lifecycle map** — the phases, the skill that runs each, each stage's [definition of done](song-workflow.md#stage-exit-criteria), the three checkpoints (`/song-brief`, `/compose-review`, `/mix-review`) that are easy to skip, and **where in the loop the user first hears something** (after the first hearable unit — offered, never required). Read first for any song work; links to [`docs/song-workflow.md`](song-workflow.md) for the full depth and the research behind each tool. |
 
 ## Setup
 
@@ -33,7 +33,7 @@ are the same.)
 
 | Skill | What it does |
 |---|---|
-| `/hallucinote:song-brief` | **The elicitation stage — runs before `/song-new`.** Sweeps the load-bearing dimensions a starting prompt left open (harmony, tempo, production stance, named narrative turns, meter, the section time budget, and the mechanism behind every named gesture), marking each **DECIDED / UNDECIDED / NOT-APPLICABLE**, and closes the undecided ones in **one consolidated turn of informed proposals** — never a questionnaire, and silent when nothing applicable is open. Writes `annotations/01-the-brief.md`, which supplies the tempo/meter/section values `/song-new` needs as arguments. |
+| `/hallucinote:song-brief` | Turn a starting prompt into the song's brief through a conversation that ends at the user's hand-off — the elicitation stage that runs BEFORE /song-new. Sweeps the load-bearing dimensions (harmony, tempo, production stance, named narrative turns, meter, the section time budget, and the mechanism behind every named gesture), marks each DECIDED / UNDECIDED / NOT-APPLICABLE, and opens with the two or three identity questions it cannot guess while showing the craft it decided — proposals in prose, never a questionnaire, never a picker. Reads each reply before acting (an answer that adds a noun is not a closure), records who owns each choice (yours / offer me options / mine), and closes with the status offer. Writes `annotations/01-the-brief.md` as a ledger updated every turn — the song's origin record and the input to /song-new. Use whenever a song starts from a prompt rather than from explicit scaffold arguments, or when asked "what do you need to know?" / "what's underspecified here?". |
 | `/hallucinote:song-new` | Scaffold a new song: `songs/<slug>/` with `build.py`, snapshot, tests, and intent/decision folders — on the brief's values, not values invented to satisfy the command line. |
 | `/hallucinote:song-pick-instruments` | Pick instrument **chains** per track (instrument + post-FX + send levels) from Live's browser, respecting a portability mode. The chain is authorship, not a mix-time to-do. |
 | `/hallucinote:compose-part` | Compose a part to a finished, audible state via the author-as-code loop: write/extend note-generating code in `build.py`, build, and scoped-push the changed clips. Use to write or rewrite drums, bass, a lead line, or a section's comp. |
@@ -61,6 +61,7 @@ are the same.)
 | Skill | What it does |
 |---|---|
 | `/hallucinote:compose-review` | Compose-stage guided evaluation — reads the composition (sections, density, energy arc) and the symbolic melody/recurrence lenses *against* declared intent: *"you wanted the chorus to lift — does it?"* Use before the mix stage, or when you ask *"is the chorus landing?"* / *"what's missing?"* |
+| `/hallucinote:render-analyze` | Render the set to per-stem audio and build the **MixReport** (loudness, masking, reverb, per-part timing/feel) in one step — the measurement pass that feeds `/mix-review`. Long-running; the skill keeps the polling out of your context and hands back the summary. **Needs Max for Live** (Live Suite, or the M4L add-on). |
 | `/hallucinote:mix-review` | Holistic, intent-aware mix review — reads the whole MixReport (masking, loudness, reverb, per-part timing/feel, cross-rhythm) per section and interprets it *against* declared intent. Use after an analysis pass or when you ask *"how's the mix?"* **Uses Max for Live (Live Suite, or the M4L add-on); without it, `/compose-review` is the symbolic alternative.** |
 
 ## Understand a song
@@ -73,7 +74,9 @@ are the same.)
 
 ## Contributing & project health
 
-These are for working on Hallucinote itself, not on a song.
+These are for working on Hallucinote itself, not on a song — and they come from
+the separate **prawduct** governance plugin used for development, so they're only
+available if you've installed it (see [`CONTRIBUTING.md`](../CONTRIBUTING.md)).
 
 | Skill | What it does |
 |---|---|

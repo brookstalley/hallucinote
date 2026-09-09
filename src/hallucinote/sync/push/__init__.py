@@ -78,6 +78,7 @@ from .mix import (
 from .devices import (
     plan_push_devices,
     plan_push_device_sidechain,
+    classify_load_target,
     _emit_device_calls,
 )
 from .routing import (
@@ -120,6 +121,9 @@ from .probe import (
     plan_clip_prune,
     ProbeAndLinkResult,
     probe_and_link,
+    DeviceLinkReconcileResult,
+    linked_device_parents,
+    reconcile_device_links,
     _match_devices_for_linked_parents,
     _flag_case_near_matches,
     CoherenceResult,
@@ -128,6 +132,10 @@ from .probe import (
 from .plan import (
     PushPhase,
     PhaseOrderError,
+    LiveArrangementProbe,
+    resolve_live_arrangement_probe,
+    LiveDeviceProbe,
+    resolve_live_device_probe,
     _PHASE_NAMES,
     _PHASE_DEPS,
     validate_phase_order,
@@ -176,6 +184,7 @@ __all__ = [
     # Devices
     "plan_push_devices",
     "plan_push_device_sidechain",
+    "classify_load_target",
     "_emit_device_calls",
     # Routing (RTE-1K9T)
     "plan_push_routing",
@@ -213,6 +222,9 @@ __all__ = [
     "plan_clip_prune",
     "ProbeAndLinkResult",
     "probe_and_link",
+    "DeviceLinkReconcileResult",
+    "linked_device_parents",
+    "reconcile_device_links",
     "_match_devices_for_linked_parents",
     "_flag_case_near_matches",
     "CoherenceResult",
@@ -220,6 +232,10 @@ __all__ = [
     # Orchestrator + apply
     "PushPhase",
     "PhaseOrderError",
+    "LiveArrangementProbe",
+    "resolve_live_arrangement_probe",
+    "LiveDeviceProbe",
+    "resolve_live_device_probe",
     "_PHASE_NAMES",
     "_PHASE_DEPS",
     "validate_phase_order",

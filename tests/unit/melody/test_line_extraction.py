@@ -6,7 +6,7 @@ higher harmony) into a single TOP-VOICE line by reading note DURATIONS — dropp
 note masked by a still-sounding higher note — instead of interleaving a staggered
 second voice into the "monophonic" line (which inflated leaps / ballooned ambitus /
 scrambled contour on sun-zone-done's back-half lead sections; see
-.prawduct/artifacts/plans/MEL-1A7K/extraction-fidelity-build-plan.md).
+.prawduct/artifacts/plans/MEL-1A7K/archive/extraction-fidelity-build-plan.md).
 """
 from __future__ import annotations
 

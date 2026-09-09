@@ -66,3 +66,30 @@ def test_capture_cli_main_accepts_argv():
     from hallucinote.tools import capture_cli
 
     assert "argv" in inspect.signature(capture_cli.main).parameters
+
+
+def test_every_subcommand_appears_in_the_running_the_engine_table():
+    """`docs/running-the-engine.md`'s command table is the user-facing list, and
+    `cli._SUMMARY` is the `--help` list. They were fixed by hand once (the
+    `overview-drift` row under-claimed while `--help` over-claimed), and nothing
+    stopped them drifting apart again — the same rot class `overview-drift`
+    itself exists to catch, one level up.
+    """
+    import re
+    from pathlib import Path
+
+    from hallucinote import cli
+
+    table = (Path(__file__).resolve().parents[2] / "docs" / "running-the-engine.md").read_text()
+    # Row cells open with the command in backticks: `| \`push …\` | … |`.
+    documented: set[str] = set()
+    for row in re.findall(r"^\|([^|]+)\|", table, re.MULTILINE):
+        for name in re.findall(r"`([a-z][a-z-]*)", row):
+            documented.add(name)
+
+    missing = sorted(n for n in cli._SUBCOMMANDS if n not in documented)
+    assert not missing, (
+        f"subcommand(s) absent from docs/running-the-engine.md's table: {missing}. "
+        "The table is how a user discovers the command; an undocumented "
+        "subcommand is an undiscoverable one."
+    )

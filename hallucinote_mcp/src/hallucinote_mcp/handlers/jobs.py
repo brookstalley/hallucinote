@@ -3,7 +3,7 @@
 Background: Claude Code has no wake-on-done for MCP tools and the tool-call
 timeout is a transport-agnostic wall-clock limit, so a multi-minute render or a
 many-surface analysis MUST use a **start + poll** pattern (see
-``.prawduct/artifacts/plans/MCP-ASYNC-RENDER-ANALYZE/api-notes.md`` for the full
+``.prawduct/artifacts/plans/MCP-ASYNC-RENDER-ANALYZE/archive/api-notes.md`` for the full
 design + the persisted-shape lock-in). ``start`` kicks the work onto a detached
 worker and returns a job handle immediately; ``status`` long-polls this registry.
 

@@ -101,6 +101,12 @@ NOTES_BULK_UPDATED = "notes_bulk_updated"
 ARRANGEMENT_CLIP_ADDED = "arrangement_clip_added"
 ARRANGEMENT_CLIP_REMOVED = "arrangement_clip_removed"
 
+# Audio capture (AUD-5M8H). Audit-only: records THAT a capture pass ran and
+# where its WAVs landed, so "when was this take captured" answers from the
+# event log instead of a directory listing. Carries no song state — the
+# captures dir is a build artifact, not a domain object.
+AUDIO_CAPTURED = "audio_captured"
+
 # Provenance
 REQUEST_CREATED = "request_created"
 REQUEST_CLOSED = "request_closed"

@@ -9,9 +9,13 @@ hardcoded GM-standard guess.
 
 The :class:`Kit` object is the typed read surface. Build one of three ways:
 
-* :meth:`Kit.from_device` — load mappings persisted by
+* :func:`hallucinote.kits.load_kit` — load mappings persisted by
   ``tools/capture_cli.py`` for the Drum Rack at ``device_id``. The
-  authoritative path for songs whose snapshot has been captured.
+  authoritative path for songs whose snapshot has been captured. It lives
+  outside ``generators/`` so this module imports no database code;
+  :meth:`Kit.from_device` is the one-major-version alias for it.
+* :meth:`Kit.from_rows` — the pure constructor it delegates to; rows in,
+  Kit out, no connection required.
 * :meth:`Kit.from_dict` — pass an explicit ``{canonical_name: midi_note}``
   dict. Test-friendly; also useful for songs whose author has measured
   the kit by hand.
@@ -45,9 +49,21 @@ from __future__ import annotations
 
 import sqlite3
 import warnings
+from collections.abc import Iterable
 from dataclasses import dataclass, field
+from typing import Any, Protocol
 
-from hallucinote.db import queries as Q
+
+class _PadRow(Protocol):
+    """A `drum_pad_mappings` row, by the only access `from_rows` performs.
+
+    Typed structurally rather than as a `Mapping` because the real caller
+    passes `sqlite3.Row`, which supports `row["col"]` but is not a Mapping —
+    annotating the nominal type would force every caller through a cast, and
+    annotating `Any` would give up the check entirely.
+    """
+
+    def __getitem__(self, key: str) -> Any: ...
 
 
 # General-MIDI-flavored canonical pad layout. Mirror of the constants in
@@ -165,6 +181,33 @@ class Kit:
     mappings_by_note: dict[int, str] = field(default_factory=dict)
 
     @classmethod
+    def from_rows(
+        cls,
+        rows: Iterable[_PadRow],
+        *,
+        name: str | None = None,
+        device_id: str | None = None,
+    ) -> "Kit":
+        """Build a Kit from ``drum_pad_mappings``-shaped rows.
+
+        The pure constructor: rows come from the caller, so a Kit is
+        buildable and testable with no database and no Live. Each row needs
+        a ``midi_note`` and a ``chain_name``; anything else is ignored.
+
+        ``name`` defaults to a stub derived from ``device_id`` — pass the
+        device's display_name explicitly when you want the warning text
+        to be informative.
+        """
+        mappings = {int(r["midi_note"]): str(r["chain_name"]) for r in rows}
+        # `or`, not `is None`: an empty name falls through to the stub, which
+        # is what `from_device` did before the split. Tightening this to an
+        # identity check would silently give a Kit a blank name in warning
+        # text, for callers that pass "" meaning "I have no name for this".
+        if not name:
+            name = f"device:{device_id[:8]}" if device_id else "rows"
+        return cls(name=name, device_id=device_id, mappings_by_note=mappings)
+
+    @classmethod
     def from_device(
         cls,
         conn: sqlite3.Connection,
@@ -174,17 +217,19 @@ class Kit:
     ) -> "Kit":
         """Build a Kit from the DB's ``drum_pad_mappings`` rows for ``device_id``.
 
-        ``name`` defaults to a stub derived from the device_id — pass the
-        device's display_name explicitly when you want the warning text
-        to be informative.
+        .. deprecated::
+           Prefer :func:`hallucinote.kits.load_kit`, which is the same call
+           one layer out. This alias is kept for one major version because
+           every ``build.py`` ever written is a consumer that did not choose
+           its version (`api-contract.md` § Direction); see ``CHANGELOG.md``.
+
+        The import is function-local on purpose: it is the alias, not the
+        engine, that reaches for the loader, so importing this module still
+        pulls in no database code and the purity norm holds at module scope.
         """
-        rows = Q.get_drum_pad_mappings(conn, device_id)
-        mappings = {int(r["midi_note"]): str(r["chain_name"]) for r in rows}
-        return cls(
-            name=name or f"device:{device_id[:8]}",
-            device_id=device_id,
-            mappings_by_note=mappings,
-        )
+        from hallucinote.kits import load_kit
+
+        return load_kit(conn, device_id, name=name)
 
     @classmethod
     def from_dict(

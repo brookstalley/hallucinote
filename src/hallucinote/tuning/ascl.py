@@ -5,7 +5,7 @@ directives (Live ≥ 12.1). We only ever **write** ``.ascl`` (pull-from-Live-onl
 no parser ships) — this module is that writer.
 
 Format (per the Scala spec + Ableton's ASCL spec; see
-``.prawduct/artifacts/plans/MICROTUNE/api-notes-tuning.md``):
+``.prawduct/artifacts/plans/MICROTUNE/archive/api-notes-tuning.md``):
 
 - ``!``-prefixed lines are comments; every ``@ABL`` directive rides one.
 - The first **non-comment** line is the free-text description; the second is the

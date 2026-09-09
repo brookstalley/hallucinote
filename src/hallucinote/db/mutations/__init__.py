@@ -102,6 +102,9 @@ from .devices import (
     set_device_parameter,
     set_device_sidechain,
 )
+from .audio import (
+    record_audio_capture,
+)
 from .links import (
     ABLETON_LINK_KINDS,
     create_ableton_session,
@@ -243,6 +246,7 @@ __all__ = [
     "ABLETON_LINK_KINDS",
     "create_ableton_session",
     "link_db_to_ableton",
+    "record_audio_capture",
     "reset_song_content",
     "unlink_db_from_ableton",
     # requests / provenance

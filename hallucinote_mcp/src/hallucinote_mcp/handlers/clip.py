@@ -25,6 +25,7 @@ gap #4 — see ``handlers/note.py`` for those stubs.
 """
 from __future__ import annotations
 
+from collections import Counter
 from typing import Any, Iterable
 
 from ..dispatcher import LiveContext
@@ -354,8 +355,7 @@ def create_handler(
                 "(audio-file ingest is deferred work, see "
                 "`audio_path_deferred` in the result); (c) wire a "
                 "browser-load action that targets the highlighted clip "
-                "slot — also deferred (see W6-D investigation in "
-                ".prawduct/backlog.md)."
+                "slot — also deferred."
             )
         slot.create_clip(float(length))
         clip = slot.clip
@@ -699,6 +699,16 @@ def set_property_handler(
 # ---------------------------------------------------------------------------
 
 
+def _clip_identity(clip: Any) -> tuple[float, float, str]:
+    """A clip's (start, length, name), rounded — enough to tell two clips at
+    the same start apart when one of them is about to be deleted."""
+    return (
+        round(float(clip.start_time), 6),
+        round(float(clip.length), 6),
+        str(getattr(clip, "name", "")),
+    )
+
+
 def duplicate_to_arrangement_handler(
     context: LiveContext,
     *,
@@ -754,9 +764,28 @@ def duplicate_to_arrangement_handler(
 
     # Snapshot start_times before the duplicate so we can identify the
     # spurious overlap-split side effect afterward.
-    before_starts: set[float] = {
+    #
+    # A MULTISET, not a set: a set answers "was anything here before?", which
+    # is the wrong question when Live adds a SECOND clip at a position that
+    # already had one. If a pre-existing clip happens to sit at exactly
+    # `dest_beats + source_length` — precisely where the B-24 split emits its
+    # copy — a set-based check sees the start_time already present and waves
+    # the spurious clip through. Counting occurrences instead asks "is there
+    # one MORE clip here than before?", which is the question that catches it.
+    # Identity (`id(c)`) would also answer it, but Live recreates its clip
+    # wrappers (B-1), so identities don't survive the call.
+    before_starts: Counter[float] = Counter(
         round(float(c.start_time), 6) for c in track.arrangement_clips
-    }
+    )
+    # The IDENTITY multiset, alongside the position one. Counting starts says
+    # how MANY clips are surplus at a position; it cannot say WHICH of the
+    # clips now sitting there is the surplus one — and the loser of that
+    # question gets deleted. Keying on (start, length, name) lets a contested
+    # position be settled by matching each survivor against what was there
+    # before, rather than by the order Live happens to enumerate in.
+    before_identities: Counter[tuple[float, float, str]] = Counter(
+        _clip_identity(c) for c in track.arrangement_clips
+    )
     duplicate_fn(source_clip, dest_beats)
 
     # The new arrangement clip is whichever one starts at dest_beats.
@@ -772,20 +801,89 @@ def duplicate_to_arrangement_handler(
             "clip after Live's duplicate call"
         )
 
-    # Identify any NEW arrangement clip whose start_time wasn't present
-    # before AND isn't our intended destination — that's Live's B-24
+    # Identify any arrangement clip that is SURPLUS to what was here before,
+    # once our intended destination clip is accounted for — that's Live's B-24
     # split-and-shift side effect.
-    spurious_clips: list[Any] = []
+    #
+    # Walk the after-state drawing down the before-counts: each clip that can
+    # be paired with one that existed before is accounted for, the first
+    # unaccounted clip at the destination is the one we asked Live to make,
+    # and anything still unaccounted after that is spurious. Pairing by count
+    # rather than by "start_time seen before" is what makes a collision at
+    # `dest_beats + source_length` detectable.
+    # Resolved a POSITION AT A TIME, never clip-by-clip in enumeration order.
+    # Counting answers how many clips are surplus at a start; identity answers
+    # which one. Answering the second by iteration order means that when Live
+    # enumerates the split copy before the operator's pre-existing clip, this
+    # handler deletes the operator's authored clip, keeps the artifact, and
+    # reports it as a successful cleanup. Live's ordering for two clips
+    # sharing a start is not something this code controls, so it is not
+    # something this code may bet a deletion on. A start that will not resolve
+    # deletes NOTHING and goes out through `spurious_clips_remaining`.
+    after_by_start: dict[float, list[Any]] = {}
     for c in track.arrangement_clips:
-        start_key = round(float(c.start_time), 6)
-        if start_key in before_starts:
-            continue
+        after_by_start.setdefault(round(float(c.start_time), 6), []).append(c)
+
+    spurious_clips: list[Any] = []
+    ambiguous_clips: list[Any] = []
+    for start_key, group in after_by_start.items():
+        surplus = len(group) - before_starts.get(start_key, 0)
         if start_key == expected_start_key:
+            # One surplus clip at the destination is the one we asked for.
+            surplus -= 1
+        if surplus <= 0:
             continue
-        spurious_clips.append(c)
+        if len(group) == surplus:
+            # Nothing survives here from before, so there is no contest and
+            # nothing to identify.
+            spurious_clips.extend(group)
+            continue
+        # Contested. Two clips here look alike enough that only one of them
+        # should go, so the first question is whether identity can tell them
+        # apart at all. Where the SAME identity occurs twice in the group,
+        # it cannot: drawing one of the pair down against the before-state
+        # and calling the other the newcomer just re-runs the enumeration-order
+        # coin-flip one level down, and in real Live the split copy carries the
+        # OVERLAPPED clip's content — so the two are not interchangeable and
+        # deleting the wrong one is still a destroyed authored clip.
+        group_identities = Counter(_clip_identity(c) for c in group)
+        tied = [c for c in group if group_identities[_clip_identity(c)] > 1]
+        if tied:
+            ambiguous_clips.extend(tied)
+            continue
+        # Every clip here is distinguishable. Draw each survivor down against
+        # the identities present before the call; whatever is left over is
+        # what the duplicate added.
+        unmatched = Counter(before_identities)
+        newcomers: list[Any] = []
+        for c in group:
+            identity = _clip_identity(c)
+            if unmatched.get(identity, 0) > 0:
+                unmatched[identity] -= 1
+            else:
+                newcomers.append(c)
+        if len(newcomers) == surplus:
+            spurious_clips.extend(newcomers)
+        else:
+            # Distinguishable from each other, but the group does not reconcile
+            # with what was here before — so which one the duplicate added is
+            # not established, and a wrong guess destroys authored work.
+            ambiguous_clips.extend(group)
 
     spurious_removed: list[dict[str, Any]] = []
-    spurious_remaining: list[dict[str, Any]] = []
+    spurious_remaining: list[dict[str, Any]] = [
+        {
+            "start_beats": float(c.start_time),
+            "length": float(c.length),
+            "name": str(getattr(c, "name", "")),
+            "reason": (
+                "more clips at this start than before, but the survivors "
+                "cannot be told apart from what was already here — delete "
+                "the surplus one by hand"
+            ),
+        }
+        for c in ambiguous_clips
+    ]
     for c in spurious_clips:
         info = {
             "start_beats": float(c.start_time),
@@ -938,7 +1036,9 @@ def replace_notes_handler(
 #     songs, version-controlled with the rest of the project, and immune to
 #     Live's per-set Groove Pool isolation.
 #
-# The Hallucinote-side quantize/groove module is tracked in `.prawduct/backlog.md`.
+# The Hallucinote-side quantize/groove module has no LIVE tracker item: GEN-2T8M
+# (issue #272) was dropped, not deferred. The rationale above is therefore the
+# whole record, which is why it is written out here rather than left to a link.
 
 
 __all__ = [

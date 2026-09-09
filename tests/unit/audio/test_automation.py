@@ -409,3 +409,239 @@ def test_mixer_pan_model_breakdown_is_unmeasurable_not_false_verdict():
     assert len(results) == 1
     assert results[0].measurable is False
     assert "breaks down" in results[0].note
+
+
+# ---------------------------------------------------------------------------
+# Dual-probe device-parameter verification (STR-4C8N A2).
+#
+# Spectral centroid alone is the wrong probe for an IMAGE effect. A flanger is a
+# comb filter: it notches roughly symmetrically, so it barely moves the centroid
+# however wet it gets. On `the-argument` that produced three `warning` findings
+# ("no audible timbre shift ... 1% < 12%") against automation that provably DID
+# land — the parameter read back its exact authored value mid-sweep, and the
+# stereo appeared in the render. A device-parameter change is realized when it
+# moves the timbre OR the image.
+# ---------------------------------------------------------------------------
+
+
+def _widened(mono_src: np.ndarray, *, shift_samples: int) -> np.ndarray:
+    """Decorrelate a stereo pair by PHASE-shifting one channel.
+
+    This is how a flanger with a non-zero Mod Phase actually creates width, and
+    why it is invisible to a brightness probe: each channel keeps an identical
+    magnitude spectrum, so no per-channel timbre changes at all — only the
+    relationship between the channels does.
+
+    (An earlier version of this fixture injected white noise as the side signal.
+    That decorrelates too, but it genuinely brightens both channels, so it was
+    modelling a change the centroid SHOULD see — it only looked right because a
+    mono sum cancelled the noise away.)
+    """
+    out = mono_src.astype(np.float64).copy()
+    out[:, 1] = np.roll(out[:, 1], shift_samples)
+    return out
+
+
+def test_device_parameter_image_shift_is_realized_without_a_timbre_shift():
+    """The flanger case: the image opens, the centroid does not move."""
+    half = 2.0
+    tone = sine(440.0, half, amplitude=0.5)
+    dry = tone                      # channels identical — bit-exact mono
+    wet = _widened(sine(440.0, half, amplitude=0.5), shift_samples=27)
+    audio = _two_half_audio(dry, wet)
+    env = DeclaredEnvelope(
+        target_surface_id="track:3",
+        target_kind="device_parameter",
+        parameter_path="Dry/Wet",
+        breakpoints=((0.0, 0.0), (8.0, 0.38)),
+    )
+    results = verify_envelope_realization(
+        env, audio, sample_rate=SAMPLE_RATE,
+        beat_map=_beat_map(audio), master_audio=audio,
+    )
+    assert len(results) == 1
+    v = results[0]
+    assert v.measurable is True
+    assert v.realized is True, (
+        "an image change with no centroid change must count as realized — this "
+        "is the false-positive class the dual probe exists to remove"
+    )
+    # The note must say WHICH probe fired, or a reader can't tell a timbre move
+    # from an image move.
+    assert "image" in v.note.lower()
+
+
+def test_device_parameter_flat_image_and_flat_timbre_is_still_not_realized():
+    """The regression that matters most: the dual probe must not become a
+    rubber stamp. Nothing moved, so nothing is realized."""
+    flat = sine(440.0, 4.0, amplitude=0.5)
+    env = DeclaredEnvelope(
+        target_surface_id="track:3",
+        target_kind="device_parameter",
+        parameter_path="Dry/Wet",
+        breakpoints=((0.0, 0.0), (8.0, 0.38)),
+    )
+    results = verify_envelope_realization(
+        env, flat, sample_rate=SAMPLE_RATE,
+        beat_map=_beat_map(flat), master_audio=flat,
+    )
+    assert len(results) == 1
+    assert results[0].measurable is True
+    assert results[0].realized is False
+
+
+def test_wet_but_mono_flanger_is_still_not_realized():
+    """The true positive the old code got right for the wrong reason.
+
+    A flanger whose Mod Phase is 0° combs both channels identically: the stem
+    stays bit-exact mono and the centroid barely shifts. Neither probe fires, so
+    the reading stays 'not realized' — which is the correct diagnosis of a
+    device that cannot do what was declared.
+    """
+    half = 2.0
+    dry = sine(440.0, half, amplitude=0.5)
+    # Same signal, marginally comb-filtered IN BOTH CHANNELS EQUALLY.
+    combed = sine(440.0, half, amplitude=0.5) * 0.97
+    audio = _two_half_audio(dry, combed)
+    env = DeclaredEnvelope(
+        target_surface_id="track:3",
+        target_kind="device_parameter",
+        parameter_path="Dry/Wet",
+        breakpoints=((0.0, 0.0), (8.0, 0.38)),
+    )
+    results = verify_envelope_realization(
+        env, audio, sample_rate=SAMPLE_RATE,
+        beat_map=_beat_map(audio), master_audio=audio,
+    )
+    assert len(results) == 1
+    assert results[0].realized is False
+
+
+def test_timbre_shift_still_reported_as_timbre():
+    """The existing centroid path keeps its own voice — a brightness flip must
+    not start describing itself as an image move."""
+    half = 2.0
+    audio = _two_half_audio(
+        sine(300.0, half, amplitude=0.5), sine(3500.0, half, amplitude=0.5)
+    )
+    env = DeclaredEnvelope(
+        target_surface_id="track:3",
+        target_kind="device_parameter",
+        parameter_path="Amp Type",
+        breakpoints=((0.0, 0.0), (8.0, 1.0)),
+    )
+    results = verify_envelope_realization(
+        env, audio, sample_rate=SAMPLE_RATE,
+        beat_map=_beat_map(audio), master_audio=audio,
+    )
+    v = results[0]
+    assert v.realized is True
+    assert "timbre" in v.note.lower()
+
+
+def test_anti_phase_window_is_not_mistaken_for_silence():
+    """The silence gate must read STEREO energy, not the mono sum.
+
+    A near anti-phase window sums to almost nothing while the surface plays at
+    full level. Gating on the mono sum called it "too quiet to characterise" and
+    skipped the whole verification — including the image probe, for which
+    anti-phase is the single most informative shape there is.
+    """
+    half = 2.0
+    tone = sine(440.0, half, amplitude=0.5)
+    mono_pair = tone                       # channels identical
+    anti = tone.copy()
+    anti[:, 1] = -anti[:, 1]               # sums to ~zero, still plainly audible
+    audio = _two_half_audio(mono_pair, anti)
+    env = DeclaredEnvelope(
+        target_surface_id="track:3",
+        target_kind="device_parameter",
+        parameter_path="Dry/Wet",
+        breakpoints=((0.0, 0.0), (8.0, 1.0)),
+    )
+    results = verify_envelope_realization(
+        env, audio, sample_rate=SAMPLE_RATE,
+        beat_map=_beat_map(audio), master_audio=audio,
+    )
+    assert len(results) == 1
+    v = results[0]
+    assert v.measurable is True, "an audible anti-phase window is not silence"
+    assert v.realized is True
+    assert "image" in v.note.lower()
+
+
+def test_image_carried_verdict_names_its_probe():
+    """`probe` makes the verdict's basis machine-readable.
+
+    An image-carried verdict sits beside a near-unchanged centroid in
+    `metric`/`before`/`after`, so a consumer that reads those as the evidence
+    asserts a brightness change the audio does not support. `probe` says which
+    probe fired without string-matching the note.
+    """
+    half = 2.0
+    tone = sine(440.0, half, amplitude=0.5)
+    anti = tone.copy()
+    anti[:, 1] = -anti[:, 1]
+    audio = _two_half_audio(tone, anti)
+    env = DeclaredEnvelope(
+        target_surface_id="track:3",
+        target_kind="device_parameter",
+        parameter_path="Dry/Wet",
+        breakpoints=((0.0, 0.0), (8.0, 1.0)),
+    )
+    v = verify_envelope_realization(
+        env, audio, sample_rate=SAMPLE_RATE,
+        beat_map=_beat_map(audio), master_audio=audio,
+    )[0]
+    assert v.probe == "image"
+    # The centroid pair is unchanged — which is exactly why it must not be read
+    # as the evidence for this verdict.
+    assert v.metric == "spectral_centroid_hz"
+    assert abs(v.after - v.before) / v.before < 0.12
+
+    # A genuine timbre move reports the other probe.
+    bright = _two_half_audio(
+        sine(300.0, half, amplitude=0.5), sine(3500.0, half, amplitude=0.5)
+    )
+    v2 = verify_envelope_realization(
+        env, bright, sample_rate=SAMPLE_RATE,
+        beat_map=_beat_map(bright), master_audio=bright,
+    )[0]
+    assert v2.probe == "timbre"
+
+
+def test_send_level_is_graded_on_the_same_signal_the_gate_measures():
+    """A decorrelated return must not be judged on two cancellation residues.
+
+    The silence gate reads STEREO energy for every kind. If `_verify_level`
+    graded the MONO SUM instead, a wide return — a ping-pong delay, a stereo
+    reverb — would clear the gate at full level and then have its send step
+    measured on near-silent residue, yielding a confident dB verdict from noise.
+    Here the send is declared UP and the return genuinely gets louder while
+    staying decorrelated throughout; the verdict must follow the audible level.
+    """
+    half = 2.0
+
+    def _decorrelated(amplitude: float) -> np.ndarray:
+        # L and R are different tones, so the mono sum is NOT a scaled copy of
+        # the stereo signal — the two measurements genuinely disagree.
+        left = sine(440.0, half, amplitude=amplitude)[:, 0]
+        right = sine(441.7, half, amplitude=amplitude, phase=math.pi)[:, 0]
+        return np.stack([left, right], axis=1).astype(np.float32)
+
+    audio = _two_half_audio(_decorrelated(0.05), _decorrelated(0.5))
+    env = DeclaredEnvelope(
+        target_surface_id="return:1",
+        target_kind="send_level",
+        parameter_path=None,
+        breakpoints=((0.0, 0.2), (8.0, 0.8)),  # declared UP at beat 8
+    )
+    v = verify_envelope_realization(
+        env, audio, sample_rate=SAMPLE_RATE,
+        beat_map=_beat_map(audio), master_audio=audio,
+    )[0]
+    assert v.measurable is True
+    assert v.realized is True, "a 20 dB rise on a wide return is a realized send step"
+    # ~20 dB (0.05 → 0.5), which is the STEREO level move. Grading the mono sum
+    # would read some unrelated residue delta here.
+    assert 18.0 < (v.after - v.before) < 22.0

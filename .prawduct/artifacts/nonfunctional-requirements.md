@@ -56,6 +56,32 @@ quietly.
 
 ## Test-suite integrity
 
-**Requirement:** the full suite runs with **no path argument**. `testpaths` covers both
-`tests/` and `hallucinote_mcp/tests/`; a path-scoped run silently skips half. CI
-enforces this, and so must local verification before any "green" claim.
+**Requirement:** the full suite runs with **no path argument**. `testpaths` covers
+`tests/`, `hallucinote_mcp/tests/` and `songs/`; a path-scoped run silently skips the
+rest. CI enforces this, and so must local verification before any "green" claim.
+
+## Direction
+
+Ratified 2026-08-10. The requirements above are the norms; two are homed here, the rest
+point at the artifact that owns them.
+
+- **The MCP server is stdlib-only at import time; engine imports are lazy, at call time.**
+  Why: the Remote Script imports the server *inside Live*, where the heavy audio stack
+  (numpy/scipy/librosa/soundfile) is unavailable and slow startup is user-visible. This is
+  a narrow rule about **import time in the MCP server** — the engine depends on that stack
+  freely at runtime, and the plugin's uv environment carries it deliberately. Trimming
+  those dependencies to "shrink the build" breaks analysis; moving an engine import to
+  module scope breaks the Remote Script.
+
+- **The full test suite runs with no path argument.**
+  Why: `testpaths` spans three trees, so a path-scoped run silently skips the others and
+  reports green over untested code — a false "green" claim is worse than a slow one,
+  because it is acted on. CI enforces it; local verification before any "green" claim must
+  match.
+  Rulings: [[In a git worktree, pin `pythonpath` in pytest config — a bare `pytest` silently tests the PRIMARY checkout]]
+
+- Latency (`start` + `status` for long operations), event-loop availability (`async`
+  handlers), and push idempotency are ratified in
+  [`architecture.md`](architecture.md) § Direction.
+- "Correctness over completeness" — refuse-and-teach, never write the wrong value — is
+  ratified in [`api-contract.md`](api-contract.md) § Direction.

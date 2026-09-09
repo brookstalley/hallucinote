@@ -53,6 +53,141 @@ def _partial_beats(bpm0: float, slope: float, seconds: float) -> float:
     return (bpm0 / slope) * (math.exp(slope * seconds / 60.0) - 1.0)
 
 
+# Tempo used for a stretch of beats that precedes every supplied tempo segment.
+# Harmless for BeatSampleMap, which rescales the whole curve onto the real audio
+# length so any constant here cancels; NOT harmless for an absolute duration,
+# which is why `_integrate_span` reports whether it was reached and
+# `declared_span_seconds` refuses rather than returning a fabricated number.
+_NO_TEMPO_EVIDENCE_BPM = 120.0
+
+
+@dataclass(frozen=True)
+class _SpanIntegral:
+    """Beats→seconds integration of ``[start_beat, stop_beat]`` across a tempo map.
+
+    ``beats`` are the interval breakpoints (window ends plus every tempo change
+    strictly inside), ``raw_seconds`` the cumulative wall-clock seconds at each
+    one, and ``bpm0s``/``slopes`` the tempo line per interval.
+
+    ``used_fallback`` is true when some interval preceded every supplied segment
+    and was integrated at ``_NO_TEMPO_EVIDENCE_BPM``. A caller that rescales can
+    ignore it; a caller reading ``total_seconds`` as a real duration cannot.
+    """
+
+    beats: tuple[float, ...]
+    raw_seconds: tuple[float, ...]
+    bpm0s: tuple[float, ...]
+    slopes: tuple[float, ...]
+    used_fallback: bool
+
+    @property
+    def total_seconds(self) -> float:
+        return self.raw_seconds[-1]
+
+
+def _integrate_span(
+    start_beat: float,
+    stop_beat: float,
+    tempo_segments: "Sequence[TempoSegment]",
+) -> "_SpanIntegral | None":
+    """Integrate seconds-per-beat across ``[start_beat, stop_beat]``.
+
+    ``None`` when the span is non-positive. The single beats→seconds integrator
+    in this package: :class:`BeatSampleMap` builds its beat↔sample curve from
+    the result and :func:`declared_span_seconds` reads its total, so the two
+    cannot disagree about how long a declared span is.
+    """
+    if stop_beat - start_beat <= 0:
+        return None
+
+    segs = sorted(
+        ((float(s.start_beat), float(s.bpm), str(s.ramp)) for s in tempo_segments
+         if s.bpm > 0),
+        key=lambda p: p[0],
+    )
+    # Breakpoints: window endpoints plus any tempo change strictly inside.
+    # Each resulting interval lies within a single segment, so tempo varies
+    # at most linearly across it — exactly what the closed form integrates.
+    interior = sorted({
+        sb for sb, _, _ in segs if start_beat < sb < stop_beat
+    })
+    beats = [start_beat, *interior, stop_beat]
+
+    def _seg_index_at(beat: float) -> int:
+        """Index of the segment active at ``beat`` (last start <= beat), or
+        -1 when ``beat`` precedes every segment."""
+        idx = -1
+        for i, (sb, _, _) in enumerate(segs):
+            if sb <= beat:
+                idx = i
+            else:
+                break
+        return idx
+
+    used_fallback = False
+
+    def _bpm_endpoints(b0: float, b1: float) -> tuple[float, float]:
+        """bpm at the two ends of interval ``[b0, b1]`` along the underlying
+        segment's tempo line (constant for a hold/last segment, interpolated
+        for a linear ramp)."""
+        nonlocal used_fallback
+        idx = _seg_index_at(0.5 * (b0 + b1))
+        if idx < 0:
+            used_fallback = True
+            return _NO_TEMPO_EVIDENCE_BPM, _NO_TEMPO_EVIDENCE_BPM
+        sb, bpm, ramp = segs[idx]
+        if ramp == "linear" and idx + 1 < len(segs):
+            nsb, nbpm, _ = segs[idx + 1]
+            if nsb > sb:
+                glide = (nbpm - bpm) / (nsb - sb)
+                return bpm + glide * (b0 - sb), bpm + glide * (b1 - sb)
+        return bpm, bpm
+
+    raw = [0.0]
+    bpm0s: list[float] = []
+    slopes: list[float] = []
+    for i in range(1, len(beats)):
+        b0, b1 = beats[i - 1], beats[i]
+        length = b1 - b0
+        bpm0, bpm1 = _bpm_endpoints(b0, b1)
+        slope = 0.0 if length <= 0 else (bpm1 - bpm0) / length
+        bpm0s.append(bpm0)
+        slopes.append(slope)
+        raw.append(raw[-1] + _partial_seconds(bpm0, slope, length))
+
+    if raw[-1] <= 0:
+        return None
+
+    return _SpanIntegral(
+        beats=tuple(beats),
+        raw_seconds=tuple(raw),
+        bpm0s=tuple(bpm0s),
+        slopes=tuple(slopes),
+        used_fallback=used_fallback,
+    )
+
+
+def declared_span_seconds(
+    start_beat: float,
+    stop_beat: float,
+    tempo_segments: "Sequence[TempoSegment]",
+) -> float | None:
+    """Wall-clock seconds a declared beat span SHOULD take, or ``None``.
+
+    ``None`` means there is no tempo evidence to answer with — an empty or
+    all-zero-bpm tempo map, a non-positive span, or a span that reaches back
+    before the first tempo point. Refusing matters: :class:`BeatSampleMap` can
+    integrate a tempo-less span at an arbitrary constant because it rescales the
+    result onto the real audio length, but a caller comparing this number
+    against real audio would then be comparing against a fabricated duration and
+    would find a discrepancy on every song not at that constant.
+    """
+    integral = _integrate_span(start_beat, stop_beat, tempo_segments)
+    if integral is None or integral.used_fallback:
+        return None
+    return integral.total_seconds
+
+
 @dataclass(frozen=True)
 class SectionWindow:
     """One named section as a half-open beat-domain window.
@@ -144,7 +279,8 @@ class BeatSampleMap:
     * **The render honored the supplied tempo.** The map shifts boundaries by
       the tempo *it is given*; if a song declares variable tempo but was
       rendered at a single tempo (e.g. the push layer only materializes the
-      bar-1 tempo — see ``.prawduct/backlog.md`` non-bar-1-tempo gap), the
+      bar-1 tempo — the non-bar-1-tempo gap, tracker ids ``TMP-7B3X`` /
+      ``TMP-4J6Q`` / ``TMP-5K1R``), the
       declared changes never appear in the audio and the map can be *less*
       accurate than the constant-tempo linear fallback. The rescale cancels a
       global tempo offset but not this declared-vs-rendered divergence. Pass an
@@ -167,66 +303,21 @@ class BeatSampleMap:
             self._mark_degenerate()
             return
 
-        segs = sorted(
-            ((float(s.start_beat), float(s.bpm), str(s.ramp)) for s in tempo_segments
-             if s.bpm > 0),
-            key=lambda p: p[0],
+        # The rescale below divides by the total, so the fallback tempo a
+        # segment-less span integrates at cancels — which is why this caller can
+        # ignore ``used_fallback`` and ``declared_span_seconds`` cannot.
+        integral = _integrate_span(
+            capture_start_beat, capture_stop_beat, tempo_segments
         )
-        # Breakpoints: window endpoints plus any tempo change strictly inside.
-        # Each resulting interval lies within a single segment, so tempo varies
-        # at most linearly across it — exactly what the closed form integrates.
-        interior = sorted({
-            sb for sb, _, _ in segs if capture_start_beat < sb < capture_stop_beat
-        })
-        beats = [capture_start_beat, *interior, capture_stop_beat]
-
-        def _seg_index_at(beat: float) -> int:
-            """Index of the segment active at ``beat`` (last start ≤ beat), or
-            -1 when ``beat`` precedes every segment."""
-            idx = -1
-            for i, (sb, _, _) in enumerate(segs):
-                if sb <= beat:
-                    idx = i
-                else:
-                    break
-            return idx
-
-        def _bpm_endpoints(b0: float, b1: float) -> tuple[float, float]:
-            """bpm at the two ends of interval ``[b0, b1]`` along the underlying
-            segment's tempo line (constant for a hold/last segment, interpolated
-            for a linear ramp)."""
-            idx = _seg_index_at(0.5 * (b0 + b1))
-            if idx < 0:
-                return 120.0, 120.0  # before any segment; cancels in the rescale
-            sb, bpm, ramp = segs[idx]
-            if ramp == "linear" and idx + 1 < len(segs):
-                nsb, nbpm, _ = segs[idx + 1]
-                if nsb > sb:
-                    glide = (nbpm - bpm) / (nsb - sb)
-                    return bpm + glide * (b0 - sb), bpm + glide * (b1 - sb)
-            return bpm, bpm
-
-        raw = [0.0]
-        bpm0s: list[float] = []
-        slopes: list[float] = []
-        for i in range(1, len(beats)):
-            b0, b1 = beats[i - 1], beats[i]
-            length = b1 - b0
-            bpm0, bpm1 = _bpm_endpoints(b0, b1)
-            slope = 0.0 if length <= 0 else (bpm1 - bpm0) / length
-            bpm0s.append(bpm0)
-            slopes.append(slope)
-            raw.append(raw[-1] + _partial_seconds(bpm0, slope, length))
-        raw_total = raw[-1]
-        if raw_total <= 0:
+        if integral is None:
             self.degenerate = True
             self._mark_degenerate()
             return
-        self._beats = np.asarray(beats, dtype=np.float64)
-        self._raw = np.asarray(raw, dtype=np.float64)
-        self._bpm0s = bpm0s
-        self._slopes = slopes
-        self._raw_total = raw_total
+        self._beats = np.asarray(integral.beats, dtype=np.float64)
+        self._raw = np.asarray(integral.raw_seconds, dtype=np.float64)
+        self._bpm0s = list(integral.bpm0s)
+        self._slopes = list(integral.slopes)
+        self._raw_total = integral.total_seconds
 
     def _mark_degenerate(self) -> None:
         """Null out the interpolation state for a degenerate map. The accessors
@@ -327,6 +418,7 @@ __all__ = [
     "WindowSlice",
     "TempoSegment",
     "BeatSampleMap",
+    "declared_span_seconds",
     "intersect_window",
     "slice_audio",
 ]

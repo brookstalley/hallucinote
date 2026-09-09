@@ -39,7 +39,7 @@ and [`api-contract.md`](api-contract.md); where a song's authorship lives is
 ┌─ Ableton Live ──────────────────────────────────────────────────────┐
 │  Remote Script (Control Surface) — runs INSIDE Live's Python, with  │
 │  Live's privileges and lifecycle. Plus the HallucinoteAnalyzer      │
-│  Max for Live device on audio tracks/returns/master (Suite only).   │
+│  Max for Live device on audio tracks/returns/master (needs M4L — Suite, or the Standard add-on).   │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -137,7 +137,7 @@ adopted the projection model: `sync/pull/clips.py::plan_pull_arrangement_clips` 
 diffs arrangement placements positionally against `arrangement_clips` rows.
 
 The invariant that makes both safe: **every write goes through a mutator and emits an
-event in the same transaction.** No raw SQL in callers, ever. That discipline is what
+event in the same transaction.** No write SQL in callers. That discipline is what
 keeps the eventual event-store migration cheap (see [`authorship-model.md`](authorship-model.md)).
 
 ## Deployment topology
@@ -151,6 +151,27 @@ One consequence bites contributors specifically. A marketplace-installed plugin
 unless the marketplace copy is disabled via `/plugin`. On a development machine, run
 two worktrees and drop the marketplace install — the rationale is in
 [`docs/dev-vs-use-coexistence.md`](../../docs/dev-vs-use-coexistence.md).
+
+## Altitude — what this artifact is, and what indexes the code
+
+This document models **runtimes, boundaries, failure independence and data flow**. It
+deliberately does **not** inventory modules: the source tree is the module index, and a
+second list here would drift every time a package is added or renamed, with nothing
+mechanical keeping it honest (the repo's own "link, don't summarize" learning).
+
+The ten packages under `src/hallucinote/` are `audio/`, `db/`, `generators/`, `melody/`,
+`performance/`, `recurrence/`, `sync/`, `theory/`, `tools/` and `tuning/`. They are named
+so a reader knows what exists and where to look; what each one *does* is read from the
+package itself, never restated here. The absence of a description for any of them is the
+intended altitude, not drift.
+
+Owner ruling 2026-09-08 (JANITOR-2026-09 R5). The bare names are here for a second reason
+worth stating: the session-briefing staleness probe tests whether each package name
+appears in this file as a substring, with no way to declare an artifact
+deliberately module-free — so a doc at this altitude either names them or reports stale
+forever. That gap is drafted as an upstream report but not yet sent — filing it crosses
+an owner boundary, so it is tracked at #489 until the owner rules. The enumeration above
+is truthful either way.
 
 ## What is deliberately not modeled
 
@@ -167,3 +188,67 @@ two worktrees and drop the marketplace install — the rationale is in
   arrives it belongs at the DB/application layer, where the event-store flip is its
   natural foundation — not as per-element locking or version vectors in the protocol.
 - **Linux.** Ableton ships no Linux build.
+
+## Direction
+
+Ratified 2026-08-10. These bind future work; the narrative above describes it.
+
+- **`_FINGERPRINT_PATHS` names exactly the code that is both vendored into Live and
+  executed in Live** — no more, no less.
+  Why: the fingerprint is the only thing standing between a contributor and silent
+  server/Remote-Script drift, the failure that produced this project's worst debugging
+  session. Listing extra paths trains contributors to ignore re-vendor demands until they
+  ignore a real one; omitting a real path reopens the hole the mechanism exists to close.
+  Rulings: [[A Live-side change OUTSIDE `_FINGERPRINT_PATHS` ships silently — the handshake won't tell you to re-vendor]],
+  [[A staleness/version signature must be content-derived, never hand-bumped]]
+
+- **Server-side-only code lives in the top-level `server_side/` package.**
+  Why: exclusion from the fingerprint *by construction* beats exclusion by list
+  maintenance — a path that must be remembered to stay off the list eventually lands on
+  it. This is why analysis handlers don't flip the fingerprint while render's Live-side
+  handlers do.
+
+- **Every MCP tool handler is `async` and dispatches blocking work through
+  `anyio.to_thread`.**
+  Why: FastMCP runs synchronous tool functions inline on the event loop, so one blocking
+  `def` handler freezes the server for every other call. Reverting a handler to plain
+  `def` is a whole-server availability bug, not a style preference.
+
+- **Any operation that can exceed the agent host's tool-call timeout exposes `start` +
+  `status` rather than blocking.**
+  Why: the host's wall-clock timeout is not reset by progress notifications and there is
+  no wake-on-done, so a long synchronous call is *severed*, not merely slow — the
+  synchronous `render` action was retired for exactly this. Socket read timeouts are
+  selected per (tool, action) and must exceed the handler's own long-poll window, or the
+  transport severs a call that was healthy.
+  Rulings: [[A realtime / long-playback MCP action needs a read-timeout policy entry — applied at the layer EVERY recv route shares, not just one]]
+
+- **Push is idempotent and diff-reconciling; the arrangement phase is a projection.**
+  Why: a re-push must change what was asked for and leave the rest alone, or the tool is
+  unsafe to run twice — a phase that reapplies unconditionally is a defect, and was a real
+  one in `devices`. Arrangement is the exception because incremental reconciliation against
+  Live's positional, renumbering clip model produced years of whack-a-mole bugs.
+  Status: steady-state — re-affirmed 2026-08-20 on the decay fork (the why cited work that has
+  since shipped), and **owner-ratified 2026-09-08** (JANITOR-2026-09 R4), which closed the
+  agent-proposed standing the re-affirmation had carried unruled for 19 days. The rationale
+  no longer *rests on* tracked work: the projection rewrite
+  landed, `duplicate_to_arrangement` survives only inside the narrow envelope-bearing exception
+  the statement already carves out, and the positional reconcile subsystem is gone — so this is
+  settled experience, not a pending migration. Residual cleanup is verification, not
+  compliance: the flagship projection path has still never run full-scale against real Live,
+  scheduled under brookstalley/hallucinote#306, which names ARR-PROJ Chunk 2 E2E as its first
+  burn-down target.
+  Retroactivity: contain — projection is the **push**-side regime, settled push-side by ARR-PROJ
+  (brookstalley/hallucinote#350, shipped 2026-06-22) and its follow-on ARR-ORPHAN (#349, closed).
+  Pull still diffs arrangement placements positionally
+  (`sync/pull/clips.py::plan_pull_arrangement_clips`), and the pull planner is the modeled
+  boundary between the two regimes. Convergence is
+  deliberately not intended: the renumbering hazard is a write-path problem and does not
+  transfer to reading. (Owner ruling, 2026-08-10 ratification.)
+
+- **Multi-user concurrency stays out of the wire shape.**
+  Why: this is a single-user, single-machine tool (see the topology above and
+  [`security-model.md`](security-model.md)'s threat model). If concurrency ever arrives it
+  belongs at the DB/application layer where the event log is its natural foundation —
+  per-element locking or version vectors in the protocol would tax every single-user call
+  forever to serve a user who does not exist.

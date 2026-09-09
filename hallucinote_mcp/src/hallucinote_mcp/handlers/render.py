@@ -56,6 +56,7 @@ from ..analyzer import (
 from ..analyzer.osc import AnalyzerOSC
 from ..analyzer.sidecar import OSCSidecar, shared_sidecar
 from ..dispatcher import LiveContext
+from ._transport import locate_start_position, require_playhead_within
 from ..handlers import device as device_handlers
 
 
@@ -145,6 +146,13 @@ _NO_FRAME_CHECKPOINT_BEATS = 4.0
 # robust, property-independent detector.
 _TRANSPORT_PROBE_S = 0.5
 _TRANSPORT_ADVANCE_EPSILON_BEATS = 0.02
+
+# How far PAST the capture's start the transport may actually be rolling before
+# the render is abandoned. Beats, not an epsilon: the failure this catches is a
+# transport playing a different part of the song entirely, and the tolerance
+# only has to be wider than the beats travelled between pressing play and
+# reading the position back.
+_RENDER_START_WINDOW_BEATS = 4.0
 
 
 # --- public types ----------------------------------------------------
@@ -573,9 +581,14 @@ def render_handler(
         time.sleep(_INTER_MUTATION_YIELD_S)
 
         seek_to = max(0.0, float(start_at_beat) - float(pre_roll_beats))
-        def _seek_on_main() -> None:
-            context.song.current_song_time = seek_to
-        context.run_on_main(_seek_on_main)
+        # Move Live's START PLAYING POSITION, not just the playhead —
+        # `start_playing()` rolls from the former and writing
+        # `current_song_time` does not move it. On a set someone has listened
+        # to they hold different values, and a capture would then record
+        # whatever part of the song that stale position happens to sit in,
+        # while every read-back agreed the seek had landed. See
+        # `handlers/_transport.py`.
+        locate = locate_start_position(context, seek_to)
         time.sleep(_INTER_MUTATION_YIELD_S)
         def _play_on_main() -> None:
             context.song.start_playing()
@@ -594,6 +607,39 @@ def render_handler(
                 context, probe_s=_TRANSPORT_PROBE_S)
         else:
             transport_advancing = True
+        # Prove the transport is rolling somewhere the capture can USE — after
+        # the pre-flight, never before it. The two questions look alike and are
+        # not: the pre-flight asks whether the transport moves, and a transport
+        # in the wrong place moves exactly as healthily as one in the right
+        # place, so it can never see this. Order matters for a second reason:
+        # Live's playhead mirror lags the audio thread, and the pre-flight has
+        # just spent `probe_s` watching it advance, so by now a read is the
+        # rolled position rather than the pre-play one the locate parked.
+        #
+        # Only PAST the capture window is fatal. Starting early is harmless —
+        # the patch detects the transport crossing `start_at_beat`, so a long
+        # pre-roll costs wall-clock and nothing else. A provided
+        # `_clock_source` is a transport SIMULATION; the position is the
+        # test's to own, not ours.
+        if transport_advancing and _clock_source is None:
+            require_playhead_within(
+                context.run_on_main(
+                    lambda: float(
+                        getattr(context.song, "current_song_time", 0.0)
+                    )
+                ),
+                low=seek_to,
+                high=max(
+                    float(start_at_beat),
+                    seek_to + _RENDER_START_WINDOW_BEATS,
+                ),
+                target_beats=seek_to,
+                what=(
+                    f"render capture (locate method: {locate.method}"
+                    + (f", {locate.detail}" if locate.detail else "")
+                    + ")"
+                ),
+            )
         if not transport_advancing:
             # Clean up Live's transport before raising (mirror the no_frames path).
             def _stop_engine_off() -> None:
@@ -768,7 +814,7 @@ def render_handler(
 # long-polls the job registry. The long-poll window + the daemon-worker spawn
 # are shared with analyze's start/status, so they live in jobs.py
 # (DEFAULT_STATUS_LONG_POLL_S, spawn_daemon) — one knob, not two that drift. See
-# .prawduct/artifacts/plans/MCP-ASYNC-RENDER-ANALYZE/api-notes.md.
+# .prawduct/artifacts/plans/MCP-ASYNC-RENDER-ANALYZE/archive/api-notes.md.
 
 RENDER_POLL_INSTRUCTION = (
     "Render running in the background. Poll ableton_render(action='status', "

@@ -14,3 +14,4 @@ Tool names below assume the renamed surface from MCP Wave 1 (PRs A/C/D/G/H).
 A shim layer can map them onto the current pre-rename names in the meantime —
 see `sync.mcp_names`.
 """
+from __future__ import annotations

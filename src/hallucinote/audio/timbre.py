@@ -53,7 +53,29 @@ _FLATNESS_REL_FLOOR = 1e-10
 
 _NAN = float("nan")
 # The honest "no measurable timbre" sentinel — empty / too short / silent.
-_SILENT = TimbreMetrics(_NAN, _NAN, _NAN)
+_SILENT = TimbreMetrics(_NAN, _NAN, _NAN, _NAN)
+
+# Sharpness (the SHRILLNESS descriptor). Von Bismarck / Zwicker weighting over
+# the 24 Bark bands: unity up to 14 Bark, rising steeply above so energy in the
+# 2.5 kHz+ critical bands counts progressively more (Fastl & Zwicker,
+# *Psychoacoustics*, §9.1 — the polynomial form of g(z) for z > 14). The
+# leading 0.11 puts a 1 kHz narrow-band noise at 60 dB near 1 acum in the full
+# model; here it is a scale factor only — see `_band_sharpness`.
+_SHARPNESS_SCALE = 0.11
+# Stevens' power law exponent for specific loudness from band POWER (intensity):
+# N' ∝ I^0.23 (≈ the 0.3 sone/phon slope on intensity). A relative descriptor
+# only needs the compressive shape, not the full Zwicker loudness model.
+_SPECIFIC_LOUDNESS_EXPONENT = 0.23
+
+
+def _sharpness_weights(n_bands: int) -> np.ndarray:
+    """g(z)·z per Bark band, z = 1..n_bands (band centre index)."""
+    z = np.arange(1, n_bands + 1, dtype=np.float64)
+    g = np.where(
+        z <= 14.0, 1.0,
+        0.00012 * z**4 - 0.0056 * z**3 + 0.1 * z**2 - 0.81 * z + 3.51,
+    )
+    return g * z
 
 
 def measure_timbre(
@@ -94,12 +116,15 @@ def measure_timbre(
 
     centroid = (freqs[:, None] * power).sum(axis=0) / frame_total
     rolloff = _rolloff_hz(power, frame_total, freqs)
-    flatness = _band_flatness(aggregate_to_bands(power, bark_band_map(sr, n_fft)))
+    band_power = aggregate_to_bands(power, bark_band_map(sr, n_fft))
+    flatness = _band_flatness(band_power)
+    sharpness = _band_sharpness(band_power)
 
     return TimbreMetrics(
         spectral_centroid_hz=float(np.median(centroid)),
         spectral_flatness=float(np.median(flatness)),
         spectral_rolloff_hz=float(np.median(rolloff)),
+        sharpness_acum=float(np.median(sharpness)),
     )
 
 
@@ -112,14 +137,48 @@ def spectral_centroid_hz(mono: np.ndarray, sample_rate: int) -> float:
     before/after timbre delta (lifted here from ``automation.py`` so the centroid
     math lives in one place — AUD-8T3K). Distinct from :func:`measure_timbre`'s
     framed median, which is the standing per-surface descriptor.
+
+    :func:`spectral_centroid_stereo_hz` is the phase-robust sibling; both share
+    :func:`_centroid_from_spectrum`, so a change to the centroid definition
+    (windowing, DC handling, normalisation) cannot land on one and miss the other.
     """
     if mono.size == 0:
         return 0.0
-    spec = np.abs(np.fft.rfft(mono))
+    return _centroid_from_spectrum(
+        np.abs(np.fft.rfft(mono)), mono.size, sample_rate
+    )
+
+
+def spectral_centroid_stereo_hz(stereo: np.ndarray, sample_rate: int) -> float:
+    """Spectral centroid that phase cancellation cannot fake (STR-4C8N).
+
+    Averaging L and R in the TIME domain cancels an anti-phase pair to silence,
+    whose centroid reads 0 Hz — so a purely spatial change reports as a total
+    timbre collapse ("440→0 Hz, +100%"). Averaging the two channels' MAGNITUDE
+    spectra instead measures the brightness each channel actually carries, which
+    is what "did the timbre change" means.
+
+    ``0.0`` for an empty window. Lives beside :func:`spectral_centroid_hz` rather
+    than in the automation verifier that needs it, so the one-place rule this
+    module records (AUD-8T3K) holds for the stereo form too.
+    """
+    if stereo.size == 0:
+        return 0.0
+    spec = 0.5 * (
+        np.abs(np.fft.rfft(stereo[:, 0])) + np.abs(np.fft.rfft(stereo[:, 1]))
+    )
+    return _centroid_from_spectrum(spec, stereo.shape[0], sample_rate)
+
+
+def _centroid_from_spectrum(
+    spec: np.ndarray, n_samples: int, sample_rate: int
+) -> float:
+    """Frequency-weighted mean of one magnitude spectrum — the shared definition
+    both public centroid functions are thin wrappers over."""
     total = float(spec.sum())
     if total <= 0.0:
         return 0.0
-    freqs = np.fft.rfftfreq(mono.size, d=1.0 / sample_rate)
+    freqs = np.fft.rfftfreq(n_samples, d=1.0 / sample_rate)
     return float((freqs * spec).sum() / total)
 
 
@@ -152,3 +211,31 @@ def _band_flatness(band_power: np.ndarray) -> np.ndarray:
         arith = np.mean(floored, axis=0)
         flatness[ok] = geo / arith
     return flatness
+
+
+def _band_sharpness(band_power: np.ndarray) -> np.ndarray:
+    """Per-frame psychoacoustic sharpness over Bark band powers → ``[n_frames]``.
+
+    ``S = 0.11 · Σ N'(z)·g(z)·z / Σ N'(z)`` with ``N'(z) = P(z)^0.23`` (Stevens'
+    law on band power) and the von Bismarck / Zwicker weighting ``g(z)``. The
+    SHRILLNESS axis: it rises when a surface's loudness sits in the high
+    critical bands (a piercing lead reads higher than a warm pad at the same
+    centroid), and it is scale-invariant (the ratio cancels level).
+
+    Read it as a relative descriptor — ordering and A/B deltas are the
+    contract; the acum calibration is PROVISIONAL (the full model's excitation
+    spreading and thresholds are not applied). A frame with no in-Bark-range
+    energy reads 0.0, like flatness.
+    """
+    n_bands, n_frames = band_power.shape
+    weights = _sharpness_weights(n_bands)
+    specific = np.power(np.maximum(band_power, 0.0), _SPECIFIC_LOUDNESS_EXPONENT)
+    total = specific.sum(axis=0)                     # [n_frames]
+    out = np.zeros(n_frames, dtype=np.float64)
+    ok = total > 0.0
+    if np.any(ok):
+        out[ok] = (
+            _SHARPNESS_SCALE
+            * (weights[:, None] * specific[:, ok]).sum(axis=0) / total[ok]
+        )
+    return out

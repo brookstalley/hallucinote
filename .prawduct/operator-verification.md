@@ -15,6 +15,266 @@ pending entries when `operator_verification_required: true`.
 
 ---
 
+## PERFORM-START-POSITION — the cue jump moves Live's start playing position (issue #471, 2026-09-08) — **PERFORM PATH CONFIRMED LIVE 2026-09-08; render path still PENDING**
+
+### Result — run 2026-09-08 against Live 12.4.2, scratch set, driven over the Remote Script socket
+
+**The verification found a regression before it confirmed anything**, which is the
+argument for having run it. `song.record_mode = True` is Live's Record BUTTON and
+pressing Record STARTS the transport (measured: beat 0 → 2.768 at +1.0s → 8.402 at
++1.5s). The fix as first written located AFTER the record-mode settle, so it aimed
+at a moving playhead, could never place its cue, and degraded to `playhead_only`
+every time — inert, while reporting itself accurately. First live pass: 21 values
+written, `automation_state: 0`, read-back flat at 0.9000 across every beat. A stop
+is not the escape hatch either: a stop DISARMS record_mode. Reordered to
+locate-then-arm; see `learnings.md`.
+
+After the reorder, same set, steps 1-5 and 8 of the checks below:
+
+| check | result |
+|---|---|
+| handshake after re-vendor | passes, `0.1.0+902495017a53` |
+| pass 1 — virgin parameter | `temporary_cue`, `start_position_moved: true`, 21 writes, `outcome: recorded` |
+| pass 1 read-back (shape) | 0.3149 → 0.4341 → 0.5894 → 0.7431 → 0.8586 across 9-23 — a real ramp, flat 0.85 before the span and 0.90 after |
+| start position poisoned | located to bar 26, rolled, stopped — playhead left at 104.181 |
+| **pass 2 — parameter that ALREADY has a lane, from the poisoned position** | `temporary_cue`, `start_position_moved: true`, 21 writes, `outcome: recorded` |
+| **pass 2 read-back (shape)** | 0.8339 → 0.6930 → 0.5180 → 0.3456 → 0.2039 — DESCENDING, so pass 2 genuinely overwrote pass 1's ascent. This is the case that silently did nothing three times in one day. |
+| borrowed locator given back | `cue_count: 0` after every pass |
+| seek-then-play (check 8) | seek to beat 8 → play → rolled 8.000 → 11.188 |
+| past-the-extent refusal | raises naming beat 200, `last_event_time=128`, and what to do |
+| set left clean | not playing, `record_mode` disarmed, no `back_to_arranger` latch, no stray cues |
+
+### Multi-arc round — after the drift fix (`d168224`), same day
+
+Every pass above was single-arc, which is exactly why the Critic's drift finding
+survived the live run. Re-vendored at `0.1.0+48ad09639ba3` and re-ran with two
+arcs on STAGGERED spans, from a start position poisoned to beat 104.011:
+
+| | |
+|---|---|
+| locate | `temporary_cue`, `start_position_moved: true` |
+| `vol` — master volume, span 8-40 (32 beats) | **41 writes**, `outcome: recorded` |
+| `pan` — master pan, span 24-40 (16 beats) | **21 writes**, `outcome: recorded` |
+
+The write counts ARE the test. 41:21 tracks the 32:16 span ratio; an arc that
+opened early on a drifted playhead read would carry roughly the union-span count
+instead of its own.
+
+Read-back confirms independent windowing:
+
+- volume 0.85 before the span → 0.3372 (b10) → 0.5918 (b24) → 0.8749 (b39) → 0.90 after
+- pan **exactly +0.0000 through beat 24** → -0.4438 (b28) → +0.1862 (b34) → +0.6662 (b39) → +0.80 after
+
+Pan stamped nothing before its own span start, which is the live form of the
+drift defect. `cue_count: 0` after the pass.
+
+One honest note: pan's lane begins just AFTER beat 24 rather than exactly on it —
+the recorder lays down its first breakpoint on the tick following the span entry.
+That is the known ~0.21 beat/tick resolution (`--perform-slowdown` is the lever,
+ENV-2T9K), not a new defect, and it is the same limitation issue #471's ask 4
+raises about the session_clip route being finer.
+
+**Still PENDING, and not covered by the above:**
+
+- **Check 7, the render capture path.** Untested. It is the same defect and the
+  same fix, but it needs analyzers, OSC and written WAVs, and nothing here
+  exercised it. Do not read the perform result as covering it.
+- **Check 3 against `songs/alien`.** This ran on a scratch set. The mechanism is
+  confirmed; that the reported song now performs correctly is not.
+- The `existing_cue` path (operator's own locator already at the span start) —
+  every pass here took the `temporary_cue` branch.
+
+**Visual change:** no, but a locator briefly appears and disappears in the
+arrangement's locator strip during a perform, render or seek. That is the
+temporary cue the locate borrows; if one is ever left behind, say so.
+
+This branch changes `handlers/automation.py`, `handlers/render.py`,
+`handlers/session.py` and adds `handlers/_transport.py` — all inside
+`_FINGERPRINT_PATHS`, so **`__version__` flips and the Remote Script must be
+re-vendored with a full Live quit/reopen** before any of this is live.
+
+Everything here rests on one Live behaviour this session cannot exercise:
+`CuePoint.jump()` moves the start playing position while
+`song.current_song_time` does not. The reporter verified it directly (0
+`updates_written` before the jump, 27 after, same set and span minutes apart);
+these checks confirm the shipped code uses it correctly on a real set.
+
+1. **One-time setup:** `/ableton-mcp-install`, quit Live fully, reopen.
+   `ableton://server/info` → handshake passes, new fingerprint reported.
+
+2. **Make the start position stale — the condition the bug needs.** Open
+   `songs/alien`, click somewhere late in the arrangement (around bar 87) and
+   press play, then stop. This is the ordinary act that used to poison every
+   subsequent pass.
+
+3. **Perform against a parameter that ALREADY has a lane.** Re-author one of
+   the arcs from the report (`Reverb / Decay Time` on return 1, or the Human
+   Riff `send_level`) and `push_cli execute --only performed_automation`.
+   Expect: `updates_written > 0` for every arc, each arc's `outcome` reading
+   `recorded`, and the push report carrying a per-arc roll-up line naming all
+   of them. Before this fix the pass reported `ok` and wrote nothing.
+
+4. **Confirm by SHAPE, not by value** — the diagnostic the reporter had to
+   invent. Seek to two adjacent beats inside the gesture and read the parameter
+   at each. A recorded ramp is never flat across a beat; identical readings
+   mean an untouched older recording. Record both numbers here.
+
+5. **The locator is given back.** After the pass, check Live's locator strip:
+   no cue at the span start that you did not put there. If you HAD a locator
+   there already, confirm it survived — the locate is supposed to jump to it
+   rather than toggle it away, and a toggle would have deleted it.
+
+6. **The guard fires when the mechanism cannot.** Hard to stage deliberately;
+   if you ever see `PlayheadPositionError` naming a beat far from the span,
+   that is the intended behaviour — record the message rather than retrying
+   past it.
+
+7. **Render, from the same stale-start-position state.** `ableton_render` a
+   short window and confirm the WAVs contain the section you asked for, not
+   the one the playhead was parked in. This path had the identical defect and
+   its engine pre-flight could never see it: a transport in the wrong place
+   advances exactly as healthily as one in the right place.
+
+8. **`seek` reports honestly.** `ableton_session(action='seek', bar=N)` then
+   `play`. Expect playback to begin at bar N, and the seek result to carry
+   `start_position_moved: true` with `locate_method` naming `existing_cue` or
+   `temporary_cue`. A `playhead_only` method here means the strong path was
+   unavailable — record `locate_detail`, which says why.
+
+---
+
+## EFFORT-S-BURNDOWN — the fingerprint flip re-vendors, and the #264 fix works in real Live (2026-08-22) — PENDING
+
+This branch changed seven files inside `_FINGERPRINT_PATHS` (`dispatcher.py`,
+`actions/clip.py`, `handlers/arrangement.py`, `handlers/automation.py`,
+`handlers/clip.py`, `handlers/device.py`, `remote_script/dispatch.py`).
+`_compute_content_fingerprint`
+hashes file BYTES, so the comment-only pragma rewrites flip `__version__` just
+as the behavioral edits do.
+
+**Fingerprint flips → re-vendor the Remote Script + full Live quit/reopen
+required** before any of this reaches Live. Until that happens the vendored
+Remote Script fails the version handshake, and #264 — the branch's only
+Live-executed behavior change — is inert with nothing telling the operator why.
+
+**Check (Ableton open, one MIDI track with clips):**
+1. `/ableton-mcp-install`, then quit Live fully and reopen. `ableton://server/info`
+   → the handshake passes and reports the new fingerprint.
+2. Put a clip at 0..32 ("Scaffold") and a short clip starting at 20.0
+   ("Marker"). Duplicate a 4-beat session clip to arrangement at beat 16, so
+   Live's B-24 split emits its copy at 20.0 — the tied start.
+3. Expect: the **Marker survives**, the split copy is gone, and the response
+   carries `spurious_clips_removed` naming the copy. Marker disappearing is the
+   data-loss regression the identity resolution exists to prevent — report it
+   rather than working around it.
+4. Repeat with the two clips at 20.0 made identical in length and name. Expect
+   `spurious_clips_remaining` with a `reason`, and NOTHING deleted.
+
+## MST-LEAK — a master device load no longer leaks into the focused track (2026-08-07) — PENDING
+
+Field report (Live 12.4 Suite, 2026-08-07): with the view on `Detail/Clip` and
+track 3 selected, two `ableton_device(action='load')` calls addressing the MASTER
+put `Shifter` + `Limiter` on the master (correct, `ok`, `parent_kind: "master"`)
+AND appended both to track 3, which nobody addressed. `browser.load_item` takes
+no destination argument — Live aims it from view state, and the loader was moving
+only one half of that state (`song.view.selected_track`), leaving the Detail
+pane's device-chain binding on track 3.
+
+Fix (`handlers/device.py`): retarget the Detail pane at the destination's device
+chain as well, restore the caller's selection + Detail pane afterwards, and
+bracket the load with a FULL-SESSION device census so a device landing in an
+unaddressed chain is removed + reported (or raises) instead of returning `ok`.
+
+**Fingerprint flips** (`handlers/` is in `_FINGERPRINT_PATHS`) → **re-vendor the
+Remote Script + full Live quit/reopen required** before this check can run.
+
+**Check (Ableton open, a set with 3+ tracks and an empty master):**
+1. `ableton_session(action='set_view', view='detail')`, then select track 3 in
+   Live by hand and leave the Detail pane showing the CLIP.
+2. `ableton_device(action='load', node={'parent': {'kind': 'master'}, 'terminal': 'master'}, kind='Shifter')`
+   → expect `ok`, `parent_kind: "master"`, `device_index: 1`, and NO
+   `collateral_removed` key in the response.
+3. `ableton_device(action='list', track_index=3)` → expect track 3's chain
+   byte-for-byte what it was in step 1. Repeat 2-3 with `kind='Limiter'`.
+4. Confirm Live's selection is back on **track 3** and the Detail pane is back on
+   **Clip** (not the device chain) — the load must not move the composer's view.
+5. Collapse the Detail pane entirely, repeat step 2 with a third device →
+   expect the pane still collapsed afterwards.
+6. Repeat 2-4 with a RETURN destination (`{'kind': 'return', 'index': 1}`) — the
+   same aiming defect is latent there (a return is likewise not a member of
+   `song.tracks`), and the fix is destination-kind agnostic.
+
+**Why it can't be headless-verified:** the leak is Live's own load-aiming
+behaviour. The unit tests model the two-halves mechanism in a fake browser
+(`_LeakyBrowser` in `hallucinote_mcp/tests/unit/test_actions_device.py`) — per
+the NODE-ADDR learning, a fake that encodes how an EXTERNAL system responds
+proves nothing until an operator confirms it. The full-session census backstop
+(`_AlwaysLeakyBrowser`) is what protects the composer if the prevention half
+turns out not to be the whole mechanism.
+## PSH-4L6C — the perform_batch locate settle is real, not just modelled (2026-08-07) — **SUPERSEDED by PERFORM-START-POSITION (issue #471, 2026-09-08)**
+
+**Do not run these checks.** The fix they describe (`_wait_for_locate_on_worker`) no longer ships — its poll was retired into `handlers/_transport.py`'s shared settle — and the root-cause model below is the one #471 disproved: the settle-verify was never missing, it was polling `current_song_time` while `start_playing()` rolls from Live's separate start playing position. Check 2 (park at 0, perform an arc whose span starts far downstream) is the PERFORM-START-POSITION entry's own scenario and was verified live on 2026-09-08. Checks 3 and 4 went with the mechanism: the 1-beat locate tolerance and the settle-timeout message both belonged to the retired poll. Nothing here is still open; the entry is kept because it records the wrong model that a year of this bug was diagnosed against.
+
+`ableton_automation(action='perform_batch')` intermittently timed out on an
+8-beat arc (beats 96..104, 3.4 s at 140 BPM) against a 12.3 s budget, with
+`song.loop` False and `song.count_in_duration` 0 — both causes the old message
+named. The identical arc had succeeded minutes earlier in the same session, and
+the operator heard the transport roll with a start that sounded "a little weird".
+
+**Root cause (inferred, not Live-confirmed):** the handler set
+`song.current_song_time = union_start` and called `start_playing()` without
+waiting for the locate to land. Live applies a locate ASYNCHRONOUSLY — the same
+class of behaviour `record_mode` already has a settle-verify for (probe 10). When
+the record_mode settle happened to return immediately, the locate got no
+incidental cover and playback started from the old position: the ramp then had to
+travel 104 beats, not 8, and blew a budget sized for the span.
+
+**The fix is a settle-verify** (`_wait_for_locate_on_worker`) bounded by the
+existing `settle_timeout_ms`, plus a timeout message that reports the OBSERVED
+transport state instead of asserting causes.
+
+**What is proven and what is not.** The wait, the tolerance, the budget
+re-basing and the message are covered by 10 unit tests against the fake LOM, and
+all four locate tests fail without the wait. What CANNOT be verified without a
+live instance is the model of Live underneath:
+
+- that `current_song_time` is genuinely async on a locate (asserted by analogy
+  with `record_mode`, plus the symptom — never probed directly);
+- that an in-flight locate is LOST when `start_playing()` fires (the test fake
+  models this; the alternative — the locate lands late and the transport jumps —
+  would produce an audibly wrong start but not necessarily this timeout);
+- that `_PERFORM_LOCATE_TOLERANCE_BEATS = 1.0` is wide enough for whatever
+  snapping Live does to a locate. Too tight would turn the old intermittent
+  timeout into an intermittent hard failure at the settle boundary.
+
+**Fingerprint flip: YES.** `handlers/automation.py` and `actions/automation.py`
+are both inside `_FINGERPRINT_PATHS`, so the Remote Script vendored into Live's
+User Library is stale until re-vendored — Live keeps running the old code, and
+this fix does not take effect, silently.
+
+**Checks (Ableton open, a song with a master-chain device parameter arc):**
+
+1. **Re-vendor first.** `/ableton-mcp-install`, then quit Live completely and
+   reopen (Live caches Control Surface modules at launch), then `/mcp`. Confirm
+   `ableton://server/info`'s fingerprint matches the vendored copy.
+2. **The race is gone.** Park the playhead at 0, then perform an arc whose span
+   starts far downstream (the 96..104 master Shifter `Pitch Coarse` arc is the
+   exact repro). Run it 5+ times back to back, including immediately after a
+   manual `song.stop_playing()` — the case that failed twice in a row. Every pass
+   must report `1/1 ok`, and the audible start must be AT the span start, not a
+   run-up from the old position.
+3. **The tolerance is not too tight.** Watch for any `could not locate the
+   playhead` abort on a set where the transport is healthy. If that appears, the
+   1-beat tolerance is narrower than Live's locate behaviour and needs widening —
+   that would be this fix trading an intermittent timeout for an intermittent
+   hard failure, which is worse.
+4. **The message earns its keep.** Force a timeout (start a perform, then hold
+   the transport with a modal dialog) and read the error. It must name the
+   playhead beat, `transport rolling=`, `loop=`, and `count_in_duration=` as
+   OBSERVED values.
+
+---
+
 ## AUD-2D6T — automatic capture sweep fires on a real render (2026-08-03) — PENDING
 
 The CLI half is verified against this repo's real `songs/missing/captures/` (406 MB
@@ -49,7 +309,7 @@ Headless-verified (guard tests incl. the pull_cli-apply audit scenario + the
 nested-chain-delete contract test), but the full pull→refuse→bake→pass loop has
 not run against real Live. Engine-side only (`capture.py`, scaffold, docs) — **no
 fingerprint flip, no re-vendor needed**. Design + refuse/warn matrix:
-`.prawduct/artifacts/plans/BAK-7D2V/design.md`.
+`.prawduct/artifacts/plans/BAK-7D2V/archive/design.md`.
 
 **Check (any song with a stamped `captured_at` snapshot — re-capture first if
 the song's snapshot predates BAK-7D2V — Ableton open, linked session):**
@@ -82,8 +342,10 @@ the song's snapshot predates BAK-7D2V — Ableton open, linked session):**
    chain authored prop), leave it in place, and re-capture — `capture diff` exits
    0 even though the on-disk snapshot is stale. Accept the same offer → confirm
    `captured_session.json` now carries the PULLED value (not the old one) and the
-   next `build.py` preserves it. A bare `capture restamp` here would disarm the
-   guard over the stale value; confirm it prints its override warning.
+   next `build.py` preserves it. This case is exactly why there is no re-stamp
+   override to reach for: moving the stamp without re-capturing would disarm the
+   guard over the stale value, so the subcommand that did it was deleted
+   (2026-08-11) and the only exits are this bake and `--force-replay`.
 
 ## MCP-1V8K — device load focuses Session view before browser.load_item (2026-06-23) — PASSED (agent-run live, 2026-06-23)
 
@@ -309,7 +571,7 @@ Song state, so the runtime recording outcomes need a live transport pass. Checks
 
 Recipe: drive `ableton_automation(action='perform_batch', arcs=[...], slowdown_factor=N)`
 directly, or `push_cli plan performed_automation --perform-slowdown N`. Verify via the `.als`
-dump / seek-read approach in `.prawduct/artifacts/plans/ENV-9P4T/api-notes.md`.
+dump / seek-read approach in `.prawduct/artifacts/plans/ENV-9P4T/archive/api-notes.md`.
 
 ---
 
@@ -473,7 +735,7 @@ Remote Script `b0c3c347`) is gone. **No `.als` dump was needed** — seek-and-re
 of `DeviceParameter.value` plus each arc's `updates_written` settle the
 windowing without the LOM envelope read surface (full capture +
 method:
-`.prawduct/artifacts/plans/ENV-9P4T/api-notes.md`). **Visual change:** no.
+`.prawduct/artifacts/plans/ENV-9P4T/archive/api-notes.md`). **Visual change:** no.
 
 1. ~~**One-time setup (human):** `/ableton-mcp-install` + Live restart.~~
    **DONE** — bridge version-matched; clean calls confirm the handshake.
@@ -1543,3 +1805,154 @@ Checks:
    below the session root, `ableton_render` must write into that workspace's
    `captures/`, NOT into a `songs/<slug>/` tree at the repo root. The old
    behaviour created that tree silently and stranded ~290 MB in it.
+
+---
+
+## 2026-08-07 — PSH-DEVDUP: the devices phase must not double an FX chain (fix/devices-duplicate-chain)
+
+Visual change: no. Fingerprint flip: no (engine-side only — `src/hallucinote/sync/`;
+no `hallucinote_mcp` handler, schema or Remote Script file changed, so no
+re-vendor and no Live restart is needed).
+
+What shipped: `push_cli execute` now probes each linked parent's device chain
+(`ableton_device(action='list')`) once per push, reconciles the DB↔Live device
+links from it, refuses to emit a `load` onto a slot Live already occupies, and
+re-probes after the phase to assert no chain came out duplicated.
+
+**What cannot be proven without Live**, and is therefore queued here rather than
+claimed: the fix rests on a model of Live 12.4 in which (a) a device `load`
+always TAIL-APPENDS to the destination chain, and (b) `ableton_device(list)`
+reports `class_display_name` for a preset-loaded device identically to what
+`/song-snapshot` stored as the DB's `kind` (the `the-argument` evidence says it
+does — `Tension`, `Instrument Rack`, `Amp` all matched positionally when
+`probe-and-link` ran at 04:32 — but that is one set). If (b) is false for some
+device class, the reconcile won't bind it and the push will REFUSE rather than
+duplicate: safe, but it will look like a false halt. Checks 3 and 4 are what
+would surface that.
+
+Checks (run against the repaired `the-argument` set, or any song with a
+snapshot-loaded FX chain):
+
+1. **Idempotent re-push appends nothing.** With the set already carrying every
+   chain, run `push execute <session> --song <slug> --probe`. The devices phase
+   must report ok, dispatch **zero** `load` calls, and `ableton_device(list)` on
+   each track must show the same chain length as before. Repeat once more — the
+   second run must also be a no-op. (Before the fix, each run appended a full
+   copy of every post-instrument effect.)
+2. **A rebuilt DB still appends nothing.** Run `python songs/<slug>/build.py
+   --reset`, then re-push with `--probe`. Same expectation: zero loads, chain
+   lengths unchanged.
+3. **A genuinely missing device still loads.** Delete one effect from the end of
+   one track's chain in Live, re-push. That one device must load (and only that
+   one); the rest of the chain must be untouched.
+4. **A drifted slot refuses instead of doubling.** Replace one mid-chain effect
+   in Live with a different device class (e.g. swap an Overdrive for a Phaser),
+   re-push. The devices phase must HALT before dispatch with `REFUSING to load
+   …`, naming the track and the device it saw, and dispatch zero loads. Confirm
+   the recovery it names works: `push probe-and-link <session> --song <slug>
+   --probe` then re-push.
+5. **The integrity assert catches an already-doubled set.** On a set you have
+   deliberately doubled by hand (duplicate one effect on one track), re-push.
+   The phase must halt with `devices integrity: … DUPLICATE`, naming the track,
+   rather than reporting ok.
+6. **A trailing HallucinoteAnalyzer is invisible to all of the above.** Run a
+   render first (so every chain ends with the analyzer), then repeat check 1.
+   Still zero loads, still ok — the analyzer must neither be matched against an
+   authored slot nor counted as an extra device.
+
+## 2026-08-11 — TOUR C1+D1: the tour's evidence set and the rendered pages (feat/tour-evidence)
+
+Visual change: yes — committed screenshots, waveform stills, and two rendered
+markdown pages (README "See it" graft + the new `docs/tour.md`).
+
+What shipped: the C1 evidence set under `docs/assets/` (4 screenshots, 3 audio
+clips each with a waveform still, all produced by the A2/A3 tools or curated
+from the 2026-08-11 punk-fate session's tool-captured frames) and `docs/tour.md`
+grafted into the README. The freshness tests are machine-verified (adversarial
+red/green recorded in the D1 close); what needs eyes:
+
+1. **The audio is the right audio.** Play `docs/assets/tour-chapter1.mp3`
+   (the final render; renamed from `tour-full.mp3` when the chapter-2
+   listening session was planned), then the A/B pair `tour-chorus-before.mp3` /
+   `tour-chorus-after.mp3` (same verse→chorus passage, bars 21–36). Before
+   should audibly clip with a buried bass; after should hold together with the
+   bass carrying. If the pair sounds identical, the wrong capture round was
+   encoded.
+2. **The screenshots read at README/tour width.** On the pushed branch's
+   rendered pages (both GitHub themes): the off-grid MIDI shot must visibly
+   show notes ahead of gridlines; the arrangement shot must be legible as
+   eight sections; the drum-rack and session-render shots must not be
+   squinting material.
+3. **Every media link plays/downloads from the rendered page** (GitHub serves
+   committed mp3s as download links — the poster/waveform images must render
+   inline, the links must resolve).
+4. **The tour reads in ~15 minutes and the story holds** — beats 0→16, both
+   chapters, with no step that requires insider knowledge. Chapter 2's arc has
+   to land specifically: the ear-verdict ("not especially punk") → the measured
+   cause → the fix, four times over, ending on something deliberately NOT done.
+
+### Chapter 2 additions (v1.8.3 — first public release of the tour)
+
+The items above were written for chapter 1 and were only patched for the asset
+rename. These cover what chapter 2 added, none of which any operator has yet
+confirmed:
+
+5. **`tour-chapter2.mp3` is the hero render.** README and quickstart both play
+   it as *the* song, and it is the one audio item nobody has been asked to
+   confirm. It must be the post-tone-pass master: audibly dirtier and louder
+   than `tour-chapter1.mp3`, with the lead line reading as a *guitar*, not a
+   synth. If it sounds like chapter 1, the wrong capture was encoded.
+6. **Chapter 2's two screenshots read at tour width** (both GitHub themes):
+   `tour-garage-drums.png` must visibly show the ghost-note scatter along the
+   bottom of the velocity lane, and `tour-drum-saturation.png` must show the
+   Saturator's drive value legibly enough to read as ~11 dB — it is cited in
+   prose as evidence of a specific dialed parameter.
+7. **The A/B pair at beat 16 differs audibly**, chapter 1 vs chapter 2. This is
+   the release's central claim; if the two renders sound the same to an operator,
+   the chapter is not proven no matter what the flatness numbers say.
+
+---
+
+## 2026-09-01 — The collaboration turn model (COLLAB-TURN)
+
+This one is unlike every entry above it: nothing here needs Ableton. It needs a
+**person having a conversation**, because the whole intervention is prose that
+shapes how the agent behaves, and no test in this repo can judge a register.
+The build plan holds its own Requirements Confidence at *Medium on one axis* for
+exactly this reason, and this session is the acceptance test for that axis.
+
+**Why it is not optional.** A near-identical rewrite of these same surfaces
+shipped in August and decayed within one take — good on the opening turn, silent
+on everything after it. A green suite would have said nothing about that, and
+did not.
+
+1. **Start a song from a loaded prompt, in a songs workspace, with the merged
+   plugin.** *"Make me a rap song"*, or any prompt of your choosing that carries
+   more implications than words. A songs workspace, not this repo — the
+   governed-repo heads-up is itself one of the things being tested, and it fires
+   here.
+
+   Read the session against three things, each traceable to a recorded failure:
+
+   - **No build before a proposal turn you reacted to.** (CTM-01: an open,
+     hedged prompt that got scaffolded from a spec the agent wrote itself.)
+   - **Identity was not closed while you were still adding.** An answer of yours
+     that brought in a new dimension should have been read as *you have more*,
+     never as the last word. (CTM-09: *"That's identity resolved. Scaffolding
+     now"*, while the answers were still arriving.)
+   - **A hearing was offered at the first hearable unit, and not required.**
+     *"Keep going"* must be a real, zero-cost answer, and *"build it all, I'll
+     listen at the end"* must be remembered rather than re-asked at every unit.
+     (CTM-11: *"shouldn't I be hearing something?"* forty-five minutes in, with
+     zero notes taken. CTM-10: a whole song built in one pass and deleted
+     unheard.)
+
+   **And watch for the opposite failure**, which is equally real and which this
+   work could have reintroduced: if the session stops to summarize and ask
+   *"what next?"* at a procedural seam, that is CTM-12 and it is a defect, not
+   diligence.
+
+   **If the session shows the wall or the early close again, the finding is
+   against the prose lever itself** — the answer is not a seventh chunk of
+   prose, it is to bring the external eval framework in sooner, against the
+   corpus already seeded at `.prawduct/artifacts/collaboration-corpus/`.

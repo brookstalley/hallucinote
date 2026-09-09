@@ -1,11 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 970 300" width="970" height="300"
      role="img" aria-labelledby="lifecycleTitle lifecycleDesc">
   <title id="lifecycleTitle">How a Hallucinote song gets made</title>
-  <desc id="lifecycleDesc">A loop of four stages. A prompt states intent in words. That
-    becomes authored artifacts — build.py for what, decisions for why. Those are pushed to
-    Ableton Live, played, and captured. The capture is analysed by the mix, melody and
-    arrangement lenses, which return a producer's question rather than a verdict, starting
-    the loop again.</desc>
+  <desc id="lifecycleDesc">A loop of four stages. A prompt states intent in words. That becomes authored artifacts — build.py for what, decisions for why. Those are pushed to Ableton Live, played, and captured. The capture is analysed by the mix, melody and arrangement lenses, which return composition, mix and audio measurements, starting the loop again.</desc>
 
   <style>
     /* No external font or asset reference anywhere in this file: GitHub's
@@ -87,6 +83,6 @@
   <!-- the return: analysis feeds the next prompt -->
   <path class="flow" marker-end="url(#arrow)"
         d="M 854 146 V 214 Q 854 232 836 232 H 134 Q 116 232 116 214 V 150"/>
-  <rect class="pill" x="345" y="217" width="280" height="30" rx="15"/>
-  <text class="detail" x="485" y="237" font-size="12.5" text-anchor="middle">a question, not a verdict</text>
+  <rect class="pill" x="325" y="217" width="320" height="30" rx="15"/>
+  <text class="detail" x="485" y="237" font-size="12.5" text-anchor="middle">composition, mix, and audio measurements</text>
 </svg>

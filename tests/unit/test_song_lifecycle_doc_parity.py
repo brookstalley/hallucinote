@@ -93,6 +93,12 @@ _APPEND_ONLY = (
     ".prawduct/change-log.md",
     ".prawduct/release-notes.md",
     ".prawduct/reflections.md",
+    # The backlog cut over to GitHub Issues and its own header now reads
+    # "FROZEN HISTORY ... Preserve it verbatim" — it is the migration's source
+    # corpus, which `verify-migration` and any rollback read. Its references
+    # therefore cannot be repaired even when a heading they cite is renamed
+    # later, which is the same bind the entries above are exempted for.
+    ".prawduct/backlog.md",
 )
 _APPEND_ONLY_DIRS = ("archive", "reflections-archive")
 

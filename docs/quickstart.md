@@ -1,8 +1,14 @@
 # Quickstart — your first song in ~10 minutes
 
-This is the guided version of the README's install section: one path, one
-result. By the end you'll have composed a song from a single prompt and heard
-it play in Ableton Live.
+By the end of this you'll have composed a song from a single prompt and heard
+it play in Ableton Live. One path, one result — the guided version of the
+README's install section.
+
+**What ten minutes buys:** a real, arranged, sound-designed song playing in
+Live. Not a *finished* one. The worked example in [the tour](tour.md) took a
+forty-minute session to reach "finished," and most of that was the part this
+page skips — listening back, measuring the mix, and correcting it. Ten minutes
+to hear your song; the rest of the session is where it gets good.
 
 **Before you start**, finish the one-time setup in the
 [README](../README.md#install): install **uv** (the plugin launches its bundled
@@ -25,32 +31,24 @@ Surface in Live's Preferences. This quickstart assumes that's done.
 
 ---
 
-## 1. Open Live and Claude Code in your songs workspace
+## 1. Open Live, open Claude Code
 
 1. Open **Ableton Live** with an **empty set**. (Hallucinote should already be
    selected as a Control Surface from setup — Preferences → Link, Tempo & MIDI.)
-2. In a terminal, `cd` into your **song workspace** — a repo with a
-   `hallucinote.toml` marker at its root. Don't have one yet? Make an empty
-   folder, `cd` into it, and run `hallucinote init-workspace` — it writes the
-   marker, a `.gitignore` for the regenerable build artifacts (DB, captures,
-   analysis), and `git init`s for you. (Or clone your existing songs repo.) The
-   marker is just:
+2. In a terminal, `cd` to wherever you want your songs to live — your existing
+   songs repo if you have one, any empty folder if you don't — and start
+   `claude`.
 
-   ```toml
-   # hallucinote.toml
-   [workspace]
-   layout     = "monorepo"
-   songs_root = "songs"
-   ```
+That's it. Songs live in a **songs workspace** — a git repo with a
+`hallucinote.toml` marker — but you don't set that up by hand. Ask for a song
+outside one and Claude offers to create it: say yes, and it writes the marker, a
+`.gitignore` for the regenerable build artifacts, and `git init`s the folder
+before scaffolding your song there.
 
-   Then start Claude Code from the workspace:
-
-   ```bash
-   claude
-   ```
-
-   > New to all this? Run `/hallucinote:getting-started` instead — it detects a
-   > missing workspace and offers to create one before you make your first song.
+> Curious what got created? The marker is a three-line
+> `hallucinote.toml` telling the tools where songs live — nothing you need to
+> edit. Unsure about anything else? `/hallucinote:getting-started` checks your
+> whole setup and points you at the next step.
 
 ## 2. Compose a song from a prompt
 
@@ -61,13 +59,21 @@ name). For example:
 > of Beethoven's 5th into those 2 minutes. Four parts: drums, bass, lead guitar,
 > and vocals on a staccato synth. Call it punk-fate."**
 
+That prompt has been run for real — **[hear what it produced](assets/tour-chapter2.mp3)**
+(1:58, four tracks). The sessions that made it — composing it, then taking it
+back into the studio until it sounded punk — are documented beat by beat with
+the evidence in [the tour](tour.md); the finished source ships in this repo as
+[`examples/punk-fate/`](../examples/punk-fate/).
+
 Claude will:
 
-1. Come back **once** (`/hallucinote:song-brief`) with proposals for whatever the
-   prompt left open and load-bearing — here, the key Beethoven's progressions get
+1. Come back (`/hallucinote:song-brief`) with proposals for whatever the prompt
+   left open and load-bearing — here, the key Beethoven's progressions get
    condensed into and how the 2 minutes are budgeted across the four parts. Each
    comes with reasoning and a recommendation, so *"yep"* is a complete answer.
-   The result is written down as the song's brief.
+   This is a conversation, not a form: it runs until you hand off, and anything
+   you already pinned down is taken as read rather than asked back. The result is
+   written down as the song's brief.
 2. Scaffold `songs/punk-fate/` (`/hallucinote:song-new punk-fate`) — `build.py`,
    a snapshot, tests, and intent/decision folders — using the brief's values.
 3. Pick instrument **chains** per track (instrument + effects + send levels).
@@ -78,6 +84,11 @@ Claude will:
    ```
    tempo → meter → tracks → returns → scenes → clips → mix → devices → routing → device sidechain → envelopes → performed automation → arrangement → cues
    ```
+
+You won't wait until step 5 to hear anything. Claude composes the first
+section, pushes that, and offers to play it before writing the rest — *"keep
+going"* is a complete answer if you'd rather it kept building, and *"build it
+all, I'll listen at the end"* is too.
 
 **What you should see:** Live fills with named tracks (drums, bass, …), return
 tracks (reverbs/delays), clips in the Session view, and device chains on each
@@ -112,7 +123,11 @@ If you tweak faders, mutes, or sends directly in Live and want to keep them:
 > **"Pull my Ableton edits back into the DB."**
 
 `/hallucinote:ableton-pull` diffs Live against the DB and folds the changes in
-through the standard mutator path.
+through the standard mutator path. Mix-layer pulls then want one more step —
+*"snapshot the mix"* (`/hallucinote:song-snapshot`) — which bakes them into the
+git-tracked snapshot so the next build reproduces them. The build enforces
+this: pulled mix edits left unbaked make `build.py` refuse to run rather than
+silently revert your tweaks. The loop is **pull → bake → build**.
 
 ---
 

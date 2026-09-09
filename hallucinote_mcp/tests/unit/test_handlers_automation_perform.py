@@ -31,7 +31,9 @@ import pytest
 from hallucinote_mcp import schema
 from hallucinote_mcp.dispatcher import dispatch
 from hallucinote_mcp.handlers import automation as automation_handlers
+from hallucinote_mcp.handlers._transport import PlayheadPositionError
 from hallucinote_mcp.handlers.automation import (
+    _describe_perform_stall,
     _interp_performed_value,
     _require_parent,
     _resolve_send,
@@ -140,8 +142,9 @@ class FakePerformSong:
       while the transport plays (so the ramp loop terminates).
     """
 
-    def __init__(self, events: list[tuple]):
+    def __init__(self, events: list[tuple], clock: Any = None):
         self._events = events
+        self._clock = clock
         self._tempo = 120.0
         # PSH-3H8M: loop / punch transport flags the pre-perform reset clears and
         # the finally restores. Event-logged (like tempo) so a test can observe
@@ -169,6 +172,22 @@ class FakePerformSong:
         self._record_mode_reads_until_apply = 0
         self._song_time = 0.0
         self.re_enable_automation_calls = 0
+        # PSH-4L6C: `current_song_time = x` is an async LOCATE — the set is
+        # accepted but the playhead only ARRIVES `locate_apply_after_reads`
+        # reads later (the same async-apply shape record_mode already has).
+        # `locate_never_applies` simulates a locate Live silently drops;
+        # `locate_offset` simulates Live parking the playhead a fraction of a
+        # beat off the requested position.
+        self.locate_apply_after_reads = 0
+        self.locate_never_applies = False
+        self.locate_offset = 0.0
+        self._locate_pending: float | None = None
+        self._locate_reads_until_apply = 0
+        # Transport state the timeout diagnostics read (Live LOM surface).
+        self.count_in_duration = 0
+        # The playhead position observed at the moment start_playing() fired —
+        # the ramp must never begin sampling before the span start.
+        self.song_time_at_play: float | None = None
 
     # -- record_mode: async apply ------------------------------------
     @property
@@ -209,18 +228,38 @@ class FakePerformSong:
                 return
         self._sar = bool(v)
 
-    # -- current_song_time: advances while playing ---------------------
+    # -- current_song_time: async locate, advances while playing --------
     @property
     def current_song_time(self) -> float:
+        if self._locate_pending is not None:
+            if self._locate_reads_until_apply <= 0:
+                self._song_time = self._locate_pending + self.locate_offset
+                self._locate_pending = None
+            else:
+                self._locate_reads_until_apply -= 1
         t = self._song_time
         if self.is_playing:
             self._song_time += self.beats_per_read
+            if self._clock is not None and self.beats_per_read:
+                # Virtual realtime: playhead travel costs wall-clock at the
+                # current tempo, so a wall-clock budget maps onto beats.
+                self._clock.advance(
+                    self.beats_per_read / (self._tempo / 60.0)
+                )
         return t
 
     @current_song_time.setter
     def current_song_time(self, v: float) -> None:
         self._events.append(("seek", float(v)))
-        self._song_time = float(v)
+        if self.locate_never_applies:
+            self._locate_pending = None
+            return
+        if self.locate_apply_after_reads <= 0:
+            self._song_time = float(v) + self.locate_offset
+            self._locate_pending = None
+            return
+        self._locate_pending = float(v)
+        self._locate_reads_until_apply = self.locate_apply_after_reads
 
     # -- tempo: event-logged so ENV-2T9K's slow-down + restore is observable --
     @property
@@ -262,6 +301,16 @@ class FakePerformSong:
 
     def start_playing(self) -> None:
         self._events.append(("play",))
+        # PSH-4L6C: an in-flight locate is LOST once the transport starts —
+        # playback proceeds from wherever the playhead actually is. This is the
+        # modelled shape of the live failure (transport rolled, start sounded
+        # "weird", the span end was never reached in a budget 3.5x the span);
+        # whether Live drops the locate or the setter is ignored while arming
+        # is in flight, the observable is the same. See
+        # .prawduct/operator-verification.md — the mechanism is inferred from
+        # the symptom, not confirmed against a live instance.
+        self._locate_pending = None
+        self.song_time_at_play = self._song_time
         self.is_playing = True
 
     def stop_playing(self) -> None:
@@ -273,10 +322,32 @@ class FakePerformSong:
         self.re_enable_automation_calls += 1
 
 
+class _VirtualClock:
+    """A stand-in for the ``time`` module inside the handler (monkeypatched as
+    ``automation_handlers.time``) whose ``monotonic`` only advances when the
+    SIMULATED transport travels — see ``FakePerformSong.current_song_time``.
+
+    That makes the ramp's wall-clock budget a deterministic function of beats
+    travelled, so "did this pass fit in its budget?" is testable without real
+    sleeping."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += float(seconds)
+
+    def advance(self, seconds: float) -> None:
+        self.now += float(seconds)
+
+
 class FakeCtx:
-    def __init__(self):
+    def __init__(self, clock: Any = None):
         self.events: list[tuple] = []
-        self._song = FakePerformSong(self.events)
+        self._song = FakePerformSong(self.events, clock=clock)
         self._lock = threading.RLock()
         self.run_on_main_calls = 0
         # Real run_on_main marshals to Live's main thread and BLOCKS; calling
@@ -353,10 +424,18 @@ def test_perform_records_exact_gesture_sequence():
     )
 
     events = ctx.events
-    # Arm phase, in order: session record flag, record_mode on, seek.
-    assert events[0] == ("session_automation_record", True)
-    assert events[1] == ("record_mode", True)
-    assert events[2] == ("seek", 0.0)
+    # Setup phase, in order: POSITION, then arm, then open, then play.
+    #
+    # The locate precedes the arm, and that order is measured, not chosen:
+    # `song.record_mode = True` is Live's Record button and pressing Record
+    # STARTS THE TRANSPORT (Live 12.4 — armed at beat 0, the playhead reads 2.8
+    # a second later). Locating after the arm aims at a moving playhead, so the
+    # cue toggle cannot be placed and every locate silently degrades to
+    # playhead-only, which is the failure this whole path exists to remove.
+    # The earlier order here recorded the belief that arming was inert.
+    assert events[0] == ("seek", 0.0)
+    assert events[1] == ("session_automation_record", True)
+    assert events[2] == ("record_mode", True)
     assert events[3] == ("begin_gesture",)
     assert events[4] == ("play",)
 
@@ -418,9 +497,11 @@ def test_perform_stops_inflight_playback_before_arming():
         ctx, target_kind="mixer_volume", master=True,
         breakpoints=[_bp(0.0, 0.5), _bp(2.0, 0.9)],
     )
-    # The pre-arm stop comes before the arm writes.
+    # The pre-arm stop comes before everything — the locate included, since a
+    # locate against a rolling transport is the defect this ordering fixes.
     assert ctx.events[0] == ("stop",)
-    assert ctx.events[1] == ("session_automation_record", True)
+    assert ctx.events[1] == ("seek", 0.0)
+    assert ctx.events[2] == ("session_automation_record", True)
 
 
 # ---------------------------------------------------------------------------
@@ -485,13 +566,22 @@ def test_perform_batch_windows_overlapping_arcs():
     assert b_param.own[0] == ("begin",) and b_param.own[-1] == ("end",)
 
 
-def test_perform_batch_degenerate_window_reports_zero_writes():
+def test_perform_batch_degenerate_window_reports_zero_writes(monkeypatch):
     """A tiny window the playhead jumps in a single tick opens+closes with
     ZERO value writes — the handler reports updates_written==0 even though
     end_gesture flipped automation_state to 1. The apply layer treats that as
     a stale-lane non-verification (see test_push_perform); here we prove the
-    handler actually produces the degenerate datum."""
-    ctx = FakeCtx()
+    handler actually produces the degenerate datum.
+
+    The clock is virtual because the transport is: a playhead covering 60 beats
+    has, by physics, taken 30 seconds at this tempo, and the realized-position
+    check compares the playhead against the beats elapsed time can account for.
+    A coarse tick with a frozen wall clock is a transport travelling 600x
+    realtime — which is what a mis-positioned playhead looks like, and rightly
+    trips the check."""
+    clock = _VirtualClock()
+    monkeypatch.setattr(automation_handlers, "time", clock)
+    ctx = FakeCtx(clock=clock)
     ctx.song.beats_per_read = 60.0  # huge step jumps the tiny window whole
     result = perform_batch_handler(ctx, arcs=[
         {"arc_id": "driver", "target_kind": "mixer_volume", "master": True,
@@ -623,6 +713,217 @@ def test_perform_batch_ramp_deadline_raises_and_restores(monkeypatch):
     assert ("record_mode", False) in ctx.events
     assert ("session_automation_record", False) in ctx.events
     assert ctx.song.is_playing is False
+
+
+# ---------------------------------------------------------------------------
+# PSH-4L6C — the async LOCATE race (settle the seek before playing)
+# ---------------------------------------------------------------------------
+
+
+def _far_arc() -> dict[str, Any]:
+    """The motivating failure's arc: 8 beats at 96..104, parked far from a
+    playhead sitting at 0."""
+    return {
+        "target_kind": "mixer_volume", "master": True,
+        "breakpoints": [_bp(96.0, 0.2), _bp(104.0, 0.9)],
+    }
+
+
+def test_perform_batch_waits_for_late_locate_before_starting_transport():
+    """PSH-4L6C: ``current_song_time = x`` is an ASYNC locate. The transport
+    must not start — and so the ramp must not begin sampling — until the
+    playhead has ACTUALLY arrived at the span start. Otherwise the pass rolls
+    from the old position (audibly wrong at the start) and the ramp measures
+    from the wrong beat."""
+    ctx = FakeCtx()
+    song = ctx.song
+    song._song_time = 0.0            # playhead parked far from the span
+    song.locate_apply_after_reads = 4  # the locate lands 4 reads late
+
+    result = perform_batch_handler(ctx, arcs=[_far_arc()])
+
+    # The transport started only once the playhead had arrived at the span
+    # start — never from the stale position.
+    assert song.song_time_at_play == pytest.approx(96.0)
+    # And the initial gesture opened BEFORE play, which is only possible when
+    # the observed beat already reads >= the span start.
+    assert ctx.events.index(("begin_gesture",)) < ctx.events.index(("play",))
+    assert _arc0(result)["automation_state"] == 1
+
+
+def test_perform_batch_late_locate_does_not_spuriously_time_out(monkeypatch):
+    """The motivating live failure: an 8-beat arc at 96..104 (3.4 s of travel)
+    timing out against a budget ~3.5x that. Rolling from an un-located playhead
+    turns an 8-beat journey into a 104-beat one, which no span-proportional
+    budget can cover. Waiting for the locate keeps the pass inside its budget.
+
+    The clock is virtual and advances ONLY with playhead travel, so this asserts
+    beats-travelled, not real seconds."""
+    clock = _VirtualClock()
+    monkeypatch.setattr(automation_handlers, "time", clock)
+    ctx = FakeCtx(clock=clock)
+    ctx.song._song_time = 0.0
+    ctx.song.locate_apply_after_reads = 4
+
+    result = perform_batch_handler(ctx, arcs=[_far_arc()])
+
+    assert _arc0(result)["automation_state"] == 1
+    # 8 beats @120 BPM = 4 virtual seconds of transport travel. The budget is
+    # max(4 * 3.0, 10.0) + 2.0 settle = 14 s; rolling from beat 0 would have
+    # cost 52 s. Anything near the 8-beat cost proves the locate was honoured.
+    assert clock.now < 14.0
+
+
+def test_perform_batch_unsettled_locate_fails_clean_without_playing():
+    """A locate Live never applies aborts AT THE SETTLE BOUNDARY, naming the
+    playhead — instead of starting the transport from the wrong position and
+    burning the whole ramp budget on a journey nobody budgeted for. The
+    transport is never started, and the set is still disarmed + restored."""
+    ctx = FakeCtx()
+    ctx.song._song_time = 0.0
+    ctx.song.locate_never_applies = True
+
+    with pytest.raises(TimeoutError, match="could not locate the playhead"):
+        perform_batch_handler(
+            ctx, arcs=[_far_arc()], settle_timeout_ms=20
+        )
+
+    assert ("play",) not in ctx.events
+    assert ctx.song.is_playing is False
+    assert ("record_mode", False) in ctx.events
+    assert ("session_automation_record", False) in ctx.events
+
+
+def test_perform_batch_unsettled_locate_names_target_and_observed():
+    """The abort teaches: it names where the playhead was ASKED to go and where
+    it actually reads, so the operator is not left guessing."""
+    ctx = FakeCtx()
+    ctx.song._song_time = 12.0
+    ctx.song.locate_never_applies = True
+
+    with pytest.raises(TimeoutError) as exc:
+        perform_batch_handler(ctx, arcs=[_far_arc()], settle_timeout_ms=20)
+
+    msg = str(exc.value)
+    assert "beat 96" in msg
+    assert "12.000" in msg
+    assert "asynchronously" in msg
+
+
+def test_perform_batch_tolerates_sub_beat_locate_residual():
+    """Live need not park the playhead on the exact requested float. A SUB-BEAT
+    residual is harmless — the ramp is beat-space interpolated off the ACTUAL
+    playhead — so the settle gate must not reject it. The gate exists for a
+    locate that has not landed at all, not for grid snapping."""
+    ctx = FakeCtx()
+    ctx.song.locate_offset = 0.25  # Live parks a quarter-beat off
+
+    result = _one(
+        ctx, target_kind="mixer_volume", master=True,
+        breakpoints=[_bp(0.0, 0.5), _bp(8.0, 0.9)],
+    )
+
+    assert _arc0(result)["automation_state"] == 1
+    assert ctx.song.song_time_at_play == pytest.approx(0.25)
+
+
+# ---------------------------------------------------------------------------
+# PSH-4L6C — the ramp timeout reports what it OBSERVED
+# ---------------------------------------------------------------------------
+
+
+def test_ramp_timeout_reports_observed_transport_state(monkeypatch):
+    """The old message asserted "modal dialog, count-in" as the likely causes.
+    In the failure that motivated PSH-4L6C both were provably absent
+    (loop False, count_in_duration 0), so it sent the operator looking at the
+    wrong things. The message must now report what it actually READ."""
+    monkeypatch.setattr(automation_handlers, "_PERFORM_WALL_CLOCK_FLOOR_S", 0.0)
+    monkeypatch.setattr(automation_handlers, "_PERFORM_WALL_CLOCK_FACTOR", 0.0)
+    ctx = FakeCtx()
+    ctx.song.beats_per_read = 0.0  # rolling but never advancing
+
+    with pytest.raises(TimeoutError) as exc:
+        _one(
+            ctx, target_kind="mixer_volume", master=True,
+            breakpoints=[_bp(0.0, 0.5), _bp(8.0, 0.9)], settle_timeout_ms=20,
+        )
+
+    msg = str(exc.value)
+    assert "observed at give-up" in msg
+    assert "playhead beat" in msg
+    assert "transport rolling=True" in msg
+    assert "loop=False" in msg
+    assert "count_in_duration=0" in msg
+    # No longer asserts causes it did not observe.
+    assert "blocked (modal dialog, count-in)" not in msg
+
+
+def test_ramp_timeout_diagnostics_survive_an_unreadable_song(monkeypatch):
+    """A diagnostic read that blows up must never mask the timeout it was
+    called to describe."""
+    monkeypatch.setattr(automation_handlers, "_PERFORM_WALL_CLOCK_FLOOR_S", 0.0)
+    monkeypatch.setattr(automation_handlers, "_PERFORM_WALL_CLOCK_FACTOR", 0.0)
+    ctx = FakeCtx()
+    ctx.song.beats_per_read = 0.0
+    calls = {"n": 0}
+    real_run = ctx.run_on_main
+
+    def _explode_on_diagnostics(fn, **kw):
+        # The diagnostics bout is the one taken after the deadline trips.
+        if getattr(fn, "__name__", "") == "_read":
+            calls["n"] += 1
+            raise RuntimeError("Live went away")
+        return real_run(fn, **kw)
+
+    monkeypatch.setattr(ctx, "run_on_main", _explode_on_diagnostics)
+
+    with pytest.raises(TimeoutError, match="union span end"):
+        _one(
+            ctx, target_kind="mixer_volume", master=True,
+            breakpoints=[_bp(0.0, 0.5), _bp(8.0, 0.9)], settle_timeout_ms=20,
+        )
+    assert calls["n"] == 1
+
+
+@pytest.mark.parametrize("diag,expected", [
+    (
+        {"beat": 3.0, "is_playing": True, "loop": False,
+         "count_in_duration": 0, "tempo": 140.0},
+        "BEHIND the span start",
+    ),
+    (
+        {"beat": 99.0, "is_playing": False, "loop": False,
+         "count_in_duration": 0, "tempo": 140.0},
+        "NOT rolling",
+    ),
+    (
+        {"beat": 99.0, "is_playing": True, "loop": True,
+         "count_in_duration": 0, "tempo": 140.0},
+        "ACTIVE loop",
+    ),
+    (
+        {"beat": 99.0, "is_playing": True, "loop": False,
+         "count_in_duration": 2, "tempo": 140.0},
+        "count-in",
+    ),
+    (
+        {"beat": 99.0, "is_playing": True, "loop": False,
+         "count_in_duration": 0, "tempo": 140.0},
+        "just too",
+    ),
+    (
+        {"beat": None, "is_playing": True, "loop": None,
+         "count_in_duration": None, "tempo": None},
+        "could not be read",
+    ),
+])
+def test_describe_perform_stall_reads_the_evidence(diag, expected):
+    """Each observed transport state yields the ONE reading that follows from
+    it — never a list of causes the evidence rules out."""
+    text = _describe_perform_stall(diag, union_start=96.0, union_end=104.0)
+    assert expected in text
+    # Always carries the raw observation alongside the interpretation.
+    assert "observed at give-up" in text
 
 
 # ---------------------------------------------------------------------------
@@ -1271,3 +1572,345 @@ def test_resolve_send_resolves_and_bounds_check():
         _resolve_send(track, track_index=2, return_index=2)
     with pytest.raises(IndexError, match="out of range"):
         _resolve_send(track, track_index=2, return_index=0)
+
+
+# ---------------------------------------------------------------------------
+# #471 — the START PLAYING POSITION is not the playhead
+# ---------------------------------------------------------------------------
+
+
+class _JumpableCue:
+    """A Live CuePoint. ``jump()`` is the only surface that moves the start
+    playing position, which is the whole reason a locate is a cue jump."""
+
+    def __init__(self, song: "FakeStartPositionSong", time_: float):
+        self._song = song
+        self.time = float(time_)
+        self.name = ""
+
+    def jump(self) -> None:
+        self._song.cue_events.append(("cue_jump", round(self.time, 6)))
+        self._song._start_position = self.time
+        self._song._song_time = self.time
+
+
+class FakeStartPositionSong(FakePerformSong):
+    """``FakePerformSong`` with Live's ACTUAL transport shape: the playhead and
+    the start playing position are separate fields, and ``start_playing()``
+    rolls from the second.
+
+    The base fake models a single position, which was the belief that let #471
+    hide — a seek that reads back correctly and playback that begins somewhere
+    else are indistinguishable when there is only one field. Cue bookkeeping
+    lands in ``cue_events`` rather than the shared ``events`` timeline, which
+    stays the gesture/arm ordering log the rest of this module asserts against.
+    """
+
+    def __init__(self, events, clock=None, *, start_position: float = 0.0,
+                 has_cue_api: bool = True):
+        super().__init__(events, clock=clock)
+        self._start_position = float(start_position)
+        self.cue_events: list[tuple] = []
+        self.last_event_time = 4096.0
+        self.cue_points: list[Any] = []
+        if not has_cue_api:
+            # A Live with no cue-toggle surface. The handler probes by
+            # ``getattr(..., None)``, so shadowing the method is exactly what
+            # absence looks like from where it stands.
+            self.set_or_delete_cue = None  # type: ignore[assignment]
+
+    def set_or_delete_cue(self) -> None:
+        at = self._song_time
+        self.cue_events.append(("toggle", round(at, 6)))
+        for i, cue in enumerate(self.cue_points):
+            if abs(cue.time - at) < 1e-6:
+                del self.cue_points[i]
+                return
+        self.cue_points.append(_JumpableCue(self, at))
+        self.cue_points.sort(key=lambda c: c.time)
+
+    #: Reads to keep returning the PRE-PLAY position after the transport has
+    #: actually started — Live's playhead mirror lagging the audio thread.
+    mirror_lag_reads = 0
+
+    def start_playing(self) -> None:
+        self._events.append(("play",))
+        self._locate_pending = None
+        self._rolled_to = self._start_position
+        if self.mirror_lag_reads <= 0:
+            self._song_time = self._start_position
+        self.song_time_at_play = self._song_time
+        self.is_playing = True
+
+    @property
+    def current_song_time(self) -> float:
+        if self.is_playing and self.mirror_lag_reads > 0:
+            # Hand back the PRE-PLAY position, then catch up. Returning the
+            # rolled position here would be a mirror that never lagged.
+            stale = self._song_time
+            self.mirror_lag_reads -= 1
+            if self.mirror_lag_reads == 0:
+                self._song_time = self._rolled_to
+            return stale
+        return FakePerformSong.current_song_time.fget(self)  # type: ignore[attr-defined]
+
+    @current_song_time.setter
+    def current_song_time(self, v: float) -> None:
+        FakePerformSong.current_song_time.fset(self, v)  # type: ignore[attr-defined]
+
+
+class ArmRollsTransportSong(FakeStartPositionSong):
+    """A Song where ARMING rolls the transport, which is what Live does.
+
+    `song.record_mode = True` is Live's Record button; pressing Record starts
+    playback (measured on 12.4: beat 0 -> 2.768 at +1.0s). Every other fake in
+    this module models `record_mode` as an inert async flag, which is the belief
+    that let the locate be ordered after the arm — so nothing here could see the
+    transport drift that ordering introduced.
+    """
+
+    #: Beats the transport covers between the arm and the settle landing.
+    arm_drift_beats = 0.0
+
+    @property
+    def record_mode(self) -> bool:
+        return FakePerformSong.record_mode.fget(self)  # type: ignore[attr-defined]
+
+    @record_mode.setter
+    def record_mode(self, v: bool) -> None:
+        FakePerformSong.record_mode.fset(self, v)  # type: ignore[attr-defined]
+        if v and self.arm_drift_beats:
+            self._song_time += float(self.arm_drift_beats)
+
+
+class StartPositionCtx(FakeCtx):
+    def __init__(self, clock=None, **song_kwargs):
+        super().__init__(clock=clock)
+        self._song = FakeStartPositionSong(self.events, clock=clock,
+                                           **song_kwargs)
+
+
+def test_a_stale_start_position_no_longer_silently_records_nothing():
+    """#471, end to end. The set has been listened to, so Live's start playing
+    position sits at 351 while the arc lives at 96..104. Before the fix the
+    seek read back as 96.0 — honestly — the transport rolled from 351, the ramp
+    loop's first tick was already past the span end, and the pass returned a
+    clean result having written nothing."""
+    ctx = StartPositionCtx(start_position=351.3)
+
+    result = perform_batch_handler(ctx, arcs=[_far_arc()])
+
+    arc = _arc0(result)
+    assert arc["updates_written"] > 0
+    assert arc["outcome"] == "recorded"
+    assert ctx.song.song_time_at_play == pytest.approx(96.0)
+
+
+def test_the_locate_gives_back_the_cue_it_borrowed():
+    ctx = StartPositionCtx(start_position=351.3)
+
+    perform_batch_handler(ctx, arcs=[_far_arc()])
+
+    assert [c.time for c in ctx.song.cue_points] == []
+    # Created, jumped, removed — in that order, at the span start.
+    assert ctx.song.cue_events == [
+        ("toggle", 96.0), ("cue_jump", 96.0), ("toggle", 96.0),
+    ]
+
+
+def test_an_operators_own_cue_at_the_span_start_is_used_not_toggled():
+    ctx = StartPositionCtx(start_position=351.3)
+    ctx.song.cue_points = [_JumpableCue(ctx.song, 96.0)]
+
+    perform_batch_handler(ctx, arcs=[_far_arc()])
+
+    assert [c.time for c in ctx.song.cue_points] == [96.0]
+    assert ctx.song.cue_events == [("cue_jump", 96.0)]
+
+
+def test_a_transport_rolling_past_the_span_aborts_instead_of_reporting_ok():
+    """The mechanism-independent guard. With no cue API the locate can only
+    move the playhead, so the transport still rolls from the stale start
+    position — and the pass must say so rather than close its gestures on a
+    beat past the span and return a clean result."""
+    ctx = StartPositionCtx(start_position=351.3, has_cue_api=False)
+
+    with pytest.raises(PlayheadPositionError) as exc:
+        perform_batch_handler(ctx, arcs=[_far_arc()])
+
+    err = exc.value
+    assert err.observed_beats == pytest.approx(351.3)
+    assert err.target_beats == 96.0
+    assert "START PLAYING POSITION" in str(err)
+    # The set is left disarmed and restored, as on every other failure path.
+    assert ctx.song.is_playing is False
+    assert ("record_mode", False) in ctx.events
+    assert ("session_automation_record", False) in ctx.events
+
+
+def test_the_abort_names_the_degraded_locate_that_led_to_it():
+    ctx = StartPositionCtx(start_position=351.3, has_cue_api=False)
+
+    with pytest.raises(PlayheadPositionError) as exc:
+        perform_batch_handler(ctx, arcs=[_far_arc()])
+
+    assert "playhead_only" in str(exc.value)
+    assert "set_or_delete_cue" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# Per-arc outcomes — automation_state alone cannot carry this
+# ---------------------------------------------------------------------------
+
+
+def test_a_ramped_arc_reports_recorded_with_no_reason_to_explain():
+    ctx = FakeCtx()
+    arc = _arc0(_one(
+        ctx, target_kind="mixer_volume", master=True,
+        breakpoints=[_bp(0.0, 0.5), _bp(4.0, 0.9)],
+    ))
+
+    assert arc["outcome"] == "recorded"
+    assert "outcome_reason" not in arc
+
+
+def test_a_zero_write_arc_is_unverified_however_confident_live_sounds():
+    """The damaging case: a parameter that already carries a lane from an
+    earlier session reports ``automation_state == 1`` unconditionally, so a
+    pass that wrote nothing is indistinguishable from one that wrote correctly
+    — unless the count this pass is actually entitled to claim is consulted.
+
+    The second arc's window is narrower than the gap between two ramp ticks, so
+    the playhead crosses it whole: the gesture opens and closes having written
+    nothing, while the parameter's earlier lane keeps answering 1."""
+    ctx = FakeCtx()
+    ctx.song.beats_per_read = 2.0
+
+    result = perform_batch_handler(ctx, arcs=[
+        {"target_kind": "mixer_volume", "master": True,
+         "breakpoints": [_bp(0.0, 0.2), _bp(8.0, 0.9)]},
+        {"target_kind": "mixer_pan", "master": True,
+         "breakpoints": [_bp(1.0, 0.1), _bp(1.2, 0.4)]},
+    ])
+
+    ramped, skipped = result["arcs"]
+    assert ramped["outcome"] == "recorded"
+    assert skipped["updates_written"] == 0
+    assert skipped["automation_state"] == 1
+    assert skipped["outcome"] == "unverified"
+    assert "reflects a lane from an earlier pass" in skipped["outcome_reason"]
+
+
+def test_an_unconfirmed_lane_is_unverified_and_says_which_check_failed():
+    ctx = FakeCtx()
+    ctx.song.master_track.mixer_device.volume.verify_state = 0
+
+    arc = _arc0(_one(
+        ctx, target_kind="mixer_volume", master=True,
+        breakpoints=[_bp(0.0, 0.5), _bp(4.0, 0.9)],
+        settle_timeout_ms=20,
+    ))
+
+    assert arc["updates_written"] > 0
+    assert arc["outcome"] == "unverified"
+    assert "automation_state=0" in arc["outcome_reason"]
+
+
+def test_a_lagging_playhead_mirror_cannot_launder_a_wrong_position(monkeypatch):
+    """Live's mirror lags the audio thread, so the first read after play can
+    still show the pre-play position — which is exactly where the locate parked
+    it. Judged once, there, the check would pass at the one moment it must
+    fail, and the tick would WRITE a value at the span start; the arc then
+    comes back `recorded` while the lane it actually stamped is three hundred
+    bars away. Zero writes is not the only shape this failure takes."""
+    clock = _VirtualClock()
+    monkeypatch.setattr(automation_handlers, "time", clock)
+    ctx = StartPositionCtx(clock=clock, start_position=351.3, has_cue_api=False)
+    ctx.song.mirror_lag_reads = 1
+
+    with pytest.raises(PlayheadPositionError) as exc:
+        perform_batch_handler(ctx, arcs=[_far_arc()])
+
+    assert exc.value.observed_beats == pytest.approx(351.3)
+    assert ctx.song.is_playing is False
+    assert ("record_mode", False) in ctx.events
+
+
+def test_the_transport_is_positioned_before_record_is_armed():
+    """Live's Record button starts the transport. Measured on 12.4: arm at beat
+    0 and the playhead reads 2.8 a second later, 8.4 after ninety — which is
+    exactly the beat a real perform reported having "parked" at when the locate
+    ran second. A locate against a rolling playhead cannot place its cue, so
+    every locate degrades to playhead-only and the fix stops working while
+    still reporting success.
+
+    Stopping the transport between arm and locate is not the alternative: a
+    stop DISARMS record_mode (also measured). Position first, then arm."""
+    ctx = FakeCtx()
+    _one(
+        ctx, target_kind="mixer_volume", master=True,
+        breakpoints=[_bp(8.0, 0.3), _bp(16.0, 0.9)],
+    )
+
+    kinds = [e[0] for e in ctx.events]
+    assert "seek" in kinds and "record_mode" in kinds
+    assert kinds.index("seek") < kinds.index("record_mode"), (
+        f"the locate must precede the arm; got {kinds[:6]}"
+    )
+
+
+def test_the_arms_transport_drift_does_not_open_a_later_arc_early():
+    """Which arcs are active at the union start is a question about the UNION
+    START. Reading the live playhead was only ever a proxy for it, and arming
+    invalidates that proxy: the transport has been rolling since the arm, so a
+    read taken here is `union_start` plus however far the settle let it travel.
+
+    An arc whose span begins inside that drift then opens before play, and
+    `start_playing()` re-asserts union_start a line later — so the ramp writes
+    that arc's first breakpoint value across beats it was never authored over,
+    and inflates its write count. Single-arc passes cannot show this, which is
+    why the live verification did not."""
+    clock = _VirtualClock()
+    ctx = FakeCtx(clock=clock)
+    ctx._song = ArmRollsTransportSong(ctx.events, clock=clock)
+    ctx.song.arm_drift_beats = 5.0   # the arm rolls the transport past beat 12
+
+    perform_batch_handler(ctx, arcs=[
+        {"arc_id": "early", "target_kind": "mixer_volume", "master": True,
+         "breakpoints": [_bp(8.0, 0.2), _bp(24.0, 0.9)]},
+        {"arc_id": "later", "target_kind": "mixer_pan", "master": True,
+         "breakpoints": [_bp(12.0, 0.1), _bp(24.0, 0.8)]},
+    ])
+
+    events = ctx.events
+    play_at = events.index(("play",))
+    opened_before_play = [e for e in events[:play_at] if e == ("begin_gesture",)]
+    assert len(opened_before_play) == 1, (
+        "only the arc active AT the union start may open before play; the "
+        f"later arc opened early on a drifted read ({len(opened_before_play)} "
+        "gestures opened)"
+    )
+
+
+def test_a_stale_first_read_after_play_does_not_retire_the_position_check():
+    """The movement gate's baseline must be the beat read just BEFORE play, not
+    the one the locate settled at. Since arming rolls the transport, those are
+    different: the locate settles at the union start and the arm carries the
+    playhead past it. Live's mirror can hand back that drifted pre-play position
+    on the first read after `start_playing()` — and against a settle-based
+    baseline it looks like movement, retiring the position check on the read
+    that proves the least."""
+    clock = _VirtualClock()
+    ctx = FakeCtx(clock=clock)
+    # No cue API, so the locate degrades and cannot move the start position —
+    # which is what leaves the transport rolling from somewhere else.
+    ctx._song = ArmRollsTransportSong(ctx.events, clock=clock, has_cue_api=False)
+    song = ctx.song
+    song.arm_drift_beats = 2.0     # the arm carries the playhead off the locate
+    song.mirror_lag_reads = 1      # one read still shows the pre-play position
+    song._start_position = 400.0   # ...but the transport is really out here
+
+    with pytest.raises(PlayheadPositionError) as exc:
+        perform_batch_handler(ctx, arcs=[_far_arc()])
+
+    assert exc.value.observed_beats == pytest.approx(400.0)

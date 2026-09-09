@@ -35,6 +35,7 @@ _SUBCOMMANDS: dict[str, tuple[str, str]] = {
     "recurrence": ("hallucinote.tools.recurrence_lens", "main"),
     "reindex": ("hallucinote.tools.reindex_markdown", "main"),
     "scaffold": ("hallucinote.tools.scaffold_song", "main"),
+    "overview-drift": ("hallucinote.tools.overview_drift", "main"),
     "init-workspace": ("hallucinote.tools.init_workspace", "main"),
     "inventory": ("hallucinote.inventory", "_main"),
 }
@@ -53,6 +54,7 @@ _SUMMARY: dict[str, str] = {
     "recurrence": "symbolic recurrence lens (motif reuse, form)",
     "reindex": "rebuild a song's markdown FTS index",
     "scaffold": "scaffold a new song directory from templates",
+    "overview-drift": "report a <slug>.md Structure table or build.py docstring layout that has drifted from the form",
     "init-workspace": "create a hallucinote.toml songs-workspace marker (+ git init)",
     "inventory": "refresh the offline browser/instrument cache",
 }

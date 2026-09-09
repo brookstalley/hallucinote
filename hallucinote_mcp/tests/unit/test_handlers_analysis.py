@@ -258,6 +258,16 @@ def test_analyze_handler_writes_nothing_publishable_into_the_tracked_tree(
                 "analysis/ is checked in, so this ships with the repo"
             )
 
+    # WSP-3R7K reversal, pinned. `analysis/` must NOT get a blanket `*`
+    # .gitignore. It was briefly given one, which quietly made the very reports
+    # this test asserts are publishable uncommittable — and nothing asserted its
+    # absence, which is how that could land silently. A future whole-directory
+    # self-ignore sweep would otherwise re-add the call and the suite stay green.
+    assert not (song_dir / "analysis" / ".gitignore").exists(), (
+        "analysis/ is tracked on purpose — a directory-local `*` here beats the "
+        "root .gitignore and drops committed MixReports out of git"
+    )
+
 
 def test_analyze_handler_writes_status_json_error_on_failure(
     synthetic_song: Path, monkeypatch,
@@ -1242,17 +1252,21 @@ def test_extract_returns_full_nested_structure(populated_song: str):
     assert extract["returns"][0]["devices"] == []
 
 
-def test_extract_flattens_top_level_chain_only_excludes_nested_rack(
-    tmp_path: Path, monkeypatch
-):
-    """DEV-4X2N: pin the documented top-level-only exclusion. The extract walks
-    devices via get_devices_for_track/_return, which DON'T recurse into nested
-    rack chains (gap #17b / DEV-7K4H). A song using an Audio Effect Rack reports
-    the rack CONTAINER but not the devices inside it. This test fails the day a
-    regression starts dropping (or starts flattening) rack containers — the
-    _seed_full_song fixture has only a top-level chain, so the exclusion was
-    previously unpinned. When nested-rack pull lands, this test is the one to
-    flip (and the handler docstring's caveat with it).
+def test_extract_flattens_nested_rack_devices(tmp_path: Path, monkeypatch):
+    """DEV-4X2N: the extract now descends into nested rack chains.
+
+    FLIPPED 2026-08-11, as this test's earlier version said to do ("when
+    nested-rack pull lands, this test is the one to flip"). It previously pinned
+    the top-level-only exclusion, which was correct while the DB modelled only
+    one rack level. DEEP-RACK-ADDR since made `device_chains` a real recursive
+    tree (`parent_rack_device_id` self-referencing through `devices`), so the
+    exclusion stopped being a limitation and became a silent omission: a song
+    built on Instrument or Audio Effect Racks reported its rack containers and
+    none of the signal path inside them, while the extract looked complete.
+
+    The rack container is still reported — flattening reaches the contents, it
+    does not replace them — and nested entries carry `rack_depth`, which is what
+    tells them from top-level siblings (`chain_id` is NOT NULL on every row).
     """
     slug = "nested-rack-song"
     song_dir = tmp_path / "songs" / slug
@@ -1288,8 +1302,103 @@ def test_extract_flattens_top_level_chain_only_excludes_nested_rack(
     result = analysis_handlers.extract_structure_handler(None, song_slug=slug)
     devices = result["extract"]["tracks"][0]["devices"]
     names = [d["display_name"] for d in devices]
-    assert names == ["Audio Effect Rack"]  # container reported
-    assert "Inner Reverb" not in names     # inner device excluded (top-level only)
+    assert names == ["Audio Effect Rack", "Inner Reverb"], (
+        "the rack container must still be reported AND its contents reached"
+    )
+
+    inner = next(d for d in devices if d["display_name"] == "Inner Reverb")
+    assert inner["rack_depth"] == 1, "a nested device must stay distinguishable"
+    assert inner["chain_id"] == nested_chain
+    container = next(d for d in devices if d["display_name"] == "Audio Effect Rack")
+    assert "rack_depth" not in container, "top-level devices carry no depth marker"
+
+
+def test_extract_flattens_racks_nested_more_than_one_level(
+    tmp_path: Path, monkeypatch
+):
+    """The recursion is the point: a rack inside a rack.
+
+    One level of nesting would pass against a one-level-only implementation —
+    which is exactly what `get_device_chains_for_rack_device` gives you if you
+    call it without recursing. This pins the descent itself.
+    """
+    slug = "deep-rack-song"
+    song_dir = tmp_path / "songs" / slug
+    song_dir.mkdir(parents=True)
+    db_path = song_dir / f"{slug}.db"
+    conn = init_db(db_path)
+    try:
+        song_id = M.create_song(conn, name=slug, title="Deep Rack")
+        track_id = M.create_track(conn, song_id=song_id, track_index=1, name="Lead")
+        top_chain = M.create_device_chain(conn, parent_track_id=track_id, position=0)
+        outer = M.create_device(
+            conn, chain_id=top_chain, position=1,
+            kind="Audio Effect Rack", display_name="Outer Rack",
+        )
+        mid_chain = M.create_device_chain(
+            conn, parent_rack_device_id=outer, position=0
+        )
+        inner_rack = M.create_device(
+            conn, chain_id=mid_chain, position=1,
+            kind="Audio Effect Rack", display_name="Inner Rack",
+        )
+        deep_chain = M.create_device_chain(
+            conn, parent_rack_device_id=inner_rack, position=0
+        )
+        M.create_device(
+            conn, chain_id=deep_chain, position=1,
+            kind="Reverb", display_name="Deep Reverb",
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    monkeypatch.setattr(
+        analysis_handlers, "resolve_db_path", lambda s, **_: db_path
+    )
+    result = analysis_handlers.extract_structure_handler(None, song_slug=slug)
+    devices = result["extract"]["tracks"][0]["devices"]
+    by_name = {d["display_name"]: d for d in devices}
+
+    assert set(by_name) == {"Outer Rack", "Inner Rack", "Deep Reverb"}
+    assert by_name["Inner Rack"]["rack_depth"] == 1
+    assert by_name["Deep Reverb"]["rack_depth"] == 2, (
+        "a device two racks deep must be reached, and its depth reported"
+    )
+
+
+def test_extract_flattens_nested_devices_on_returns_too(tmp_path: Path, monkeypatch):
+    """A width control or reverb inside a rack on a RETURN bus is an ordinary
+    move; collecting only track racks would make it invisible rather than
+    skipped — a silent drop that reads as "nothing there"."""
+    slug = "return-rack-song"
+    song_dir = tmp_path / "songs" / slug
+    song_dir.mkdir(parents=True)
+    db_path = song_dir / f"{slug}.db"
+    conn = init_db(db_path)
+    try:
+        song_id = M.create_song(conn, name=slug, title="Return Rack")
+        ret_id = M.create_return(conn, song_id=song_id, position=1, name="Verb")
+        chain = M.create_device_chain(conn, parent_return_id=ret_id, position=0)
+        rack = M.create_device(
+            conn, chain_id=chain, position=1,
+            kind="Audio Effect Rack", display_name="Bus Rack",
+        )
+        nested = M.create_device_chain(conn, parent_rack_device_id=rack, position=0)
+        M.create_device(
+            conn, chain_id=nested, position=1,
+            kind="Reverb", display_name="Bus Reverb",
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    monkeypatch.setattr(
+        analysis_handlers, "resolve_db_path", lambda s, **_: db_path
+    )
+    result = analysis_handlers.extract_structure_handler(None, song_slug=slug)
+    names = [d["display_name"] for d in result["extract"]["returns"][0]["devices"]]
+    assert names == ["Bus Rack", "Bus Reverb"]
 
 
 def test_extract_includes_exact_note_timings(populated_song: str):
@@ -1400,6 +1509,9 @@ def test_analyze_handler_compare_to_seq_end_to_end(synthetic_song: Path):
     assert result["summary"]["compare_to"] == {
         "baseline_ref": baseline_result["report_path"],
         "significant_delta_count": 0,
+        # counted separately from the surface-level number so a many-sectioned
+        # song's routine churn can't swamp the headline
+        "significant_section_delta_count": 0,
         "overshoot_delta": 0,
         "added_surfaces": [],
         "missing_surfaces": [],
@@ -1485,21 +1597,35 @@ def _clean_workspace_env(monkeypatch):
     monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
 
 
+@pytest.fixture
+def proj(tmp_path):
+    """An isolated project dir, one level inside `tmp_path`.
+
+    Resolution consults the project dir's SIBLINGS (the two-repo topology rung),
+    and pytest's `tmp_path` siblings are other tests' `tmp_path`s — several of
+    which plant workspace markers and build songs. Nesting one level gives each
+    test its own neighbourhood so no test can be steered by another's fixtures.
+    """
+    d = tmp_path / "proj"
+    d.mkdir()
+    return d
+
+
 def test_missing_db_message_names_the_workspace_it_searched(
-    tmp_path, monkeypatch, _clean_workspace_env,
+    proj, monkeypatch, _clean_workspace_env,
 ):
     """"Found a workspace; the song isn't in it" — name the workspace and the
     songs it does have, instead of a bare "doesn't name a built song"."""
-    ws = tmp_path / "examples"
+    ws = proj / "examples"
     ws.mkdir()
     (ws / "hallucinote.toml").write_text(
         '[workspace]\nlayout = "monorepo"\nsongs_root = "."\n'
     )
-    _make_song_dir(ws.parent, "unused")  # keeps tmp_path/songs/ realistic
+    _make_song_dir(ws.parent, "unused")  # keeps proj/songs/ realistic
     built = ws / "real-song"
     built.mkdir()
     (built / "build.py").write_text("# built\n")
-    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj))
 
     with pytest.raises(analysis_handlers._AnalysisError) as exc:
         analysis_handlers._existing_db_path("typo-song")
@@ -1510,21 +1636,28 @@ def test_missing_db_message_names_the_workspace_it_searched(
 
 
 def test_missing_db_message_does_not_advise_rebuilding_a_song_built_elsewhere(
-    tmp_path, monkeypatch, _clean_workspace_env,
+    proj, monkeypatch, _clean_workspace_env,
 ):
     """The exact misdirection: never send an operator to `build.py --reset` for
-    a song that exists somewhere the resolver simply didn't look."""
+    a song that exists somewhere the resolver simply didn't look.
+
+    Staged as two workspaces that BOTH hold `demo`, which is what "the resolver
+    didn't look there" now means: a single holder is resolved outright (that is
+    the slug-aware rung), so only a genuine ambiguity still declines — and the
+    advice must name where the song is rather than offer to make another one.
+    """
     for name in ("one", "two"):
-        d = tmp_path / name
+        d = proj / name
         d.mkdir()
         (d / "hallucinote.toml").write_text(
             '[workspace]\nlayout = "monorepo"\nsongs_root = "."\n'
         )
-    built = tmp_path / "two" / "demo"          # two workspaces below ⇒ ambiguous
-    built.mkdir()                              # ⇒ resolution falls back to legacy
-    (built / "build.py").write_text("# built\n")
-    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
-    monkeypatch.chdir(tmp_path)
+        song = d / "demo"                  # both hold `demo` ⇒ ambiguous
+        song.mkdir()                       # ⇒ resolution falls back to legacy
+        (song / "build.py").write_text("# built\n")
+    built = proj / "two" / "demo"
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj))
+    monkeypatch.chdir(proj)
 
     with pytest.raises(analysis_handlers._AnalysisError) as exc:
         analysis_handlers._existing_db_path("demo")
@@ -1534,10 +1667,10 @@ def test_missing_db_message_does_not_advise_rebuilding_a_song_built_elsewhere(
 
 
 def test_missing_db_message_distinguishes_no_marker_from_wrong_workspace(
-    tmp_path, monkeypatch, _clean_workspace_env,
+    proj, monkeypatch, _clean_workspace_env,
 ):
     """No marker anywhere is a third, differently-remediated diagnosis."""
-    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj))
 
     with pytest.raises(analysis_handlers._AnalysisError) as exc:
         analysis_handlers._existing_db_path("nowhere")
@@ -1547,11 +1680,11 @@ def test_missing_db_message_distinguishes_no_marker_from_wrong_workspace(
 
 
 def test_analysis_resolves_a_song_in_a_workspace_below_the_project_dir(
-    tmp_path, monkeypatch, _clean_workspace_env,
+    proj, monkeypatch, _clean_workspace_env,
 ):
     """The defect end-to-end at the analysis boundary: project dir above,
     workspace below, song built. It must resolve — not report it unbuilt."""
-    ws = tmp_path / "examples"
+    ws = proj / "examples"
     ws.mkdir()
     (ws / "hallucinote.toml").write_text(
         '[workspace]\nlayout = "monorepo"\nsongs_root = "."\n'
@@ -1562,7 +1695,77 @@ def test_analysis_resolves_a_song_in_a_workspace_below_the_project_dir(
     conn.execute("INSERT INTO songs (id, name) VALUES (?, ?)", ("song-demo", "demo"))
     conn.commit()
     conn.close()
-    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj))
 
     resolved = analysis_handlers._existing_db_path("demo")
     assert resolved.parent == song_dir.resolve()
+
+
+def _built_song_db(song_dir: Path, slug: str) -> None:
+    song_dir.mkdir(parents=True, exist_ok=True)
+    (song_dir / "build.py").write_text("# built\n")
+    conn = init_db(song_dir / f"{slug}.db")
+    conn.execute("INSERT INTO songs (id, name) VALUES (?, ?)", (f"song-{slug}", slug))
+    conn.commit()
+    conn.close()
+
+
+def test_analysis_resolves_a_song_in_the_sibling_songs_repo(
+    proj, monkeypatch, _clean_workspace_env,
+):
+    """THE REPORTED FAILURE, at the boundary where it had no workaround.
+
+    Session rooted at the framework repo (which ships a demo workspace at
+    `examples/`), song living in the sibling songs repo — the supported two-repo
+    topology. The nested demo workspace used to capture the slug, and
+    `ableton_analysis` — unlike `ableton_render`, which can be steered with an
+    explicit `output_dir` — hard-failed with "no song DB at .../examples/<slug>".
+    """
+    demo_ws = proj / "examples"
+    demo_ws.mkdir()
+    (demo_ws / "hallucinote.toml").write_text(
+        '[workspace]\nlayout = "monorepo"\nsongs_root = "."\n'
+    )
+    _built_song_db(demo_ws / "b-natural", "b-natural")
+
+    songs_repo = proj.parent / "songs-repo"
+    songs_repo.mkdir()
+    (songs_repo / "hallucinote.toml").write_text(
+        '[workspace]\nlayout = "monorepo"\nsongs_root = "songs"\n'
+    )
+    _built_song_db(songs_repo / "songs" / "the-argument", "the-argument")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj))
+
+    resolved = analysis_handlers._existing_db_path("the-argument")
+    assert resolved.parent == (songs_repo / "songs" / "the-argument").resolve()
+    # …and the demo workspace still answers for the song it does hold.
+    assert analysis_handlers._existing_db_path("b-natural").parent == (
+        (demo_ws / "b-natural").resolve()
+    )
+
+
+def test_analysis_names_both_workspaces_when_two_hold_the_song(
+    proj, monkeypatch, _clean_workspace_env,
+):
+    """Genuinely ambiguous ⇒ a teaching error naming the candidates, never a
+    silent pick of one of two real songs."""
+    roots = []
+    for name in ("repo-a", "repo-b"):
+        root = proj.parent / name
+        root.mkdir()
+        (root / "hallucinote.toml").write_text(
+            '[workspace]\nlayout = "monorepo"\nsongs_root = "songs"\n'
+        )
+        _built_song_db(root / "songs" / "demo", "demo")
+        roots.append(root)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj))
+    monkeypatch.chdir(proj)
+
+    with pytest.raises(analysis_handlers._AnalysisError) as exc:
+        analysis_handlers._existing_db_path("demo")
+    msg = str(exc.value)
+    assert "ambiguous" in msg, msg
+    for root in roots:
+        assert str(root.resolve()) in msg, msg
+    assert "HALLUCINOTE_SONGS_ROOT" in msg, msg
+    assert "--reset" not in msg, msg

@@ -59,6 +59,7 @@ try:
     from hallucinote.audio import (
         DeclaredEnvelope,
         DeclaredReverbSend,
+        DeclaredWidthControl,
         SectionEnergy,
         SectionWindow,
         TempoSegment,
@@ -96,6 +97,7 @@ except ImportError:  # pragma: no cover - exercised in Live's vendored env
     # to a type") on top of [assignment] for the None fallbacks.
     DeclaredEnvelope = None  # type: ignore[assignment, misc]
     DeclaredReverbSend = None  # type: ignore[assignment, misc]
+    DeclaredWidthControl = None  # type: ignore[assignment, misc]
     SectionEnergy = None  # type: ignore[assignment, misc]
     SectionWindow = None  # type: ignore[assignment, misc]
     TempoSegment = None  # type: ignore[assignment, misc]
@@ -115,6 +117,9 @@ except ImportError:  # pragma: no cover - exercised in Live's vendored env
 # keeps the convention sweep-safe — if the surface-ID format ever
 # changes, the analyzer module is the single point of update.
 from ..analyzer.setup import track_id_for_surface  # noqa: E402
+# The nested-rack descent cap, shared with the wire-side resolver so the
+# extract and `device_path` cannot disagree about how deep a rack may go.
+from ..handlers.device import DEVICE_PATH_DEPTH_CAP  # noqa: E402
 
 
 class _AnalysisError(ValueError):
@@ -300,6 +305,86 @@ def _collect_declared_sends(
         )
         for row in rows
     ]
+
+
+# Device parameters that are stereo-WIDTH controls. Deliberately a small closed
+# set of exact names rather than a substring match: "Spread" on a Phaser-Flanger
+# spreads notch frequencies WITHIN a channel and is not a width control at all —
+# mistaking it for one is the exact confusion that made a wet flanger read as
+# stereo when the stem was bit-exact mono (STR-4C8N). Add names here only after
+# confirming the parameter moves the L/R image.
+_WIDTH_PARAMETER_NAMES = frozenset({"Stereo Width"})
+
+# Unity width — Live's Utility default. A pull writes a row for EVERY parameter
+# Live reports on a device, not only the ones an author touched, so presence in
+# the DB is not evidence of intent: without this filter every untouched Utility
+# in the song contributes a "declared 100 %" row, and a naturally wide stem
+# carrying one presents to /mix-review as `declared 100 % / measured -3 dB` — a
+# contradiction with an intent nobody expressed. The cost is the reverse case: a
+# width DELIBERATELY held at unity is indistinguishable from an untouched one and
+# is not listed. That asymmetry is the right way round — the lens exists to
+# surface contradictions with real intent, and a fabricated declaration
+# manufactures them.
+_UNITY_WIDTH_DISPLAYS = frozenset({"100 %", "100%", "100.0 %", "100.0%", "100"})
+
+
+def _collect_declared_width_controls(
+    conn: "sqlite3.Connection", song_id: str,
+) -> list["DeclaredWidthControl"]:
+    """Lift dialled stereo-width device params into ``DeclaredWidthControl``.
+
+    Mirrors ``_collect_declared_sends``: the DB is keyed by UUID, captures by
+    surface index, so the translation happens HERE and ``analyze_mix`` stays
+    DB-agnostic and joins on ``surface_id`` alone.
+
+    **Three known blind spots, disclosed rather than silent** — ``analyze.py``
+    attaches the recognition-scope note to EVERY report, not just the zero case,
+    so a partial list never reads as a complete one:
+
+    * Only names in :data:`_WIDTH_PARAMETER_NAMES` are recognised.
+    * Only TOP-LEVEL devices on tracks and returns are walked —
+      ``get_devices_for_track`` / ``get_devices_for_return`` do not recurse into a
+      rack's nested chains, so a Utility inside an Instrument or Audio Effect Rack
+      is invisible here. Widening this means a nested-chain walk; until then the
+      honest claim is the narrow one.
+    * A control at unity (:data:`_UNITY_WIDTH_DISPLAYS`) is not a declaration —
+      see that constant for why presence in the DB is not evidence of intent.
+    """
+    controls: list[DeclaredWidthControl] = []
+
+    def _collect(surface: "str | None", devices) -> None:
+        if surface is None:
+            return
+        for device in devices:
+            for param in Q.get_device_parameters(conn, device["id"]):
+                if param["name"] not in _WIDTH_PARAMETER_NAMES:
+                    continue
+                display = param["value_display"]
+                if display is None:
+                    continue
+                if str(display).strip() in _UNITY_WIDTH_DISPLAYS:
+                    continue
+                controls.append(DeclaredWidthControl(
+                    surface_id=surface,
+                    device_name=str(device["display_name"]),
+                    parameter_name=str(param["name"]),
+                    declared_display=str(display),
+                ))
+
+    for track in Q.get_tracks_for_song(conn, song_id):
+        _collect(
+            _track_surface(conn, track["id"]),
+            Q.get_devices_for_track(conn, track["id"]),
+        )
+    # Returns too: a width control on a reverb/delay bus is an ordinary move, and
+    # collecting only tracks would make it INVISIBLE rather than skipped — a
+    # silent drop, which reads to the caller as "nothing declared".
+    for ret in Q.get_returns_for_song(conn, song_id):
+        _collect(
+            _return_surface(conn, ret["id"]),
+            Q.get_devices_for_return(conn, ret["id"]),
+        )
+    return controls
 
 
 def _collect_declared_envelopes(
@@ -517,7 +602,8 @@ def _collect_tempo_map(
 
     Caveat: this feeds the analyzer the *declared* tempo_map. It assumes the
     render honored it. Today the push layer materializes only the bar-1 tempo
-    (the non-bar-1-tempo gap in ``.prawduct/backlog.md``), so a song that
+    (the non-bar-1-tempo gap — tracker ids ``TMP-7B3X`` / ``TMP-4J6Q`` /
+    ``TMP-5K1R``), so a song that
     declares variable tempo currently renders at one tempo — for that song the
     declared changes aren't in the audio and ``BeatSampleMap`` documents how
     that can be less accurate than the linear fallback. Harmless for the
@@ -589,6 +675,7 @@ def analyze_handler(
         song_id = song["id"] if song is not None else None
         declared_sends = _collect_declared_sends(conn, song_id) if song_id else []
         declared_envelopes = _collect_declared_envelopes(conn, song_id) if song_id else []
+        declared_widths = _collect_declared_width_controls(conn, song_id) if song_id else []
         sections = _collect_sections(conn, song_id) if song_id else []
         declared_energy = _collect_declared_energy(conn, song_id) if song_id else []
         tempo_map = _collect_tempo_map(conn, song_id) if song_id else []
@@ -606,6 +693,17 @@ def analyze_handler(
     # (potentially long) analyze_mix call (BUG3). The report write below
     # reuses it.
     analysis_dir.mkdir(parents=True, exist_ok=True)
+    # WSP-3R7K deliberately does NOT self-ignore this directory, unlike
+    # `captures/`. Two records say MixReports here are meant to be COMMITTED —
+    # the root `.gitignore` ("the small MixReport JSONs in analysis/ ARE checked
+    # in") and `hallucinote.paths`, whose `portable_path` exists precisely
+    # because they land in git and must not carry an author's home directory.
+    # A directory-local `*` would beat the root file's silence and quietly make
+    # a tracked artifact class uncommittable.
+    #
+    # `init_workspace.GITIGNORE_BLOCK` carries `**/analysis/`, which contradicts
+    # both. That conflict predates this branch and is the owner's to settle; it
+    # is named here rather than resolved by whichever writer ran last.
 
     # Heartbeat=running before analyze_mix — analyze_mix has no progress
     # callback (and the spec is not to plumb one in), so the pre/post writes
@@ -617,6 +715,7 @@ def analyze_handler(
             captures_path,
             declared_reverb_sends=declared_sends,
             declared_envelopes=declared_envelopes,
+            declared_width_controls=declared_widths,
             sections=sections,
             declared_energy=declared_energy,
             tempo_map=tempo_map,
@@ -637,6 +736,26 @@ def analyze_handler(
             # declared sections; level-blind. Composes with timing: the timing
             # pass's swing read feeds cross-rhythm's swing-deference internally.
             analyze_cross_rhythm=bool(sections),
+            # Per-part low-band hit SHAPE (rise / ring / sub-vs-thud-vs-click
+            # balance of the kick-class hits) — the "is the kick a thud or a
+            # punch?" read. Level-blind in its differences. Like the three
+            # flags above this is an OPT-IN, not a gate: the engine reads it
+            # only inside the per-section loop, which cannot run without
+            # sections; ``bool(sections)`` just states the policy in one place.
+            analyze_transients=bool(sections),
+            # Render integrity, phase relationships and stem-sum reconciliation.
+            # Unlike the four flags above this one does NOT depend on sections —
+            # it describes the capture, not any span inside it — so it runs on
+            # every analysis. It is the most expensive pass here (onset detection
+            # per surface, every stem pair compared), and it earns that: it is
+            # upstream of the musical lenses, which silently report damage as
+            # music. A click becomes an onset, a dropout becomes a level move,
+            # and an uncompensated plugin delay becomes laid-back feel.
+            analyze_integrity=True,
+            # Soundstage, per surface AND per section. Its own flag because it is
+            # the one lens here that also runs inside the section loop, so its
+            # cost scales with the arrangement rather than with the capture.
+            analyze_imaging=True,
             # Mix-level reconstruction (F1): scale each pre-fader stem by its
             # static fader gain so masking sees mix balance, not source level.
             # Fader curve is Live-12-calibrated (see audio/levels.py).
@@ -733,6 +852,15 @@ def analyze_handler(
                 sum(1 for d in diff["deltas"] if d["significant"])
                 + (1 if diff["overshoot_count"]["significant"] else 0)
             ),
+            # Counted separately, not folded into the line above: there is one
+            # section_delta row per surface per family per section, so folding
+            # them in would let a many-sectioned song's routine churn swamp the
+            # surface-level headline this summary exists to carry. Zero here
+            # while the count above is nonzero means the change did not land
+            # where it was made.
+            "significant_section_delta_count": sum(
+                1 for d in diff["section_deltas"] if d["significant"]
+            ),
             "overshoot_delta": diff["overshoot_count"]["delta"],
             "added_surfaces": diff["added_surfaces"],
             "missing_surfaces": diff["missing_surfaces"],
@@ -757,7 +885,7 @@ def analyze_handler(
 # immediately; `status` long-polls the registry. The synchronous `analyze`
 # stays as the one-call fast path for a quick few-surface capture — the action
 # help documents when to use which. See
-# .prawduct/artifacts/plans/MCP-ASYNC-RENDER-ANALYZE/api-notes.md.
+# .prawduct/artifacts/plans/MCP-ASYNC-RENDER-ANALYZE/archive/api-notes.md.
 
 ANALYZE_POLL_INSTRUCTION = (
     "Analysis running in the background. Poll ableton_analysis(action='status', "
@@ -933,6 +1061,63 @@ def get_latest_report_handler(
     }
 
 
+def _devices_with_nested(
+    conn: "sqlite3.Connection", devices, *, _depth: int = 0,
+) -> list[dict[str, Any]]:
+    """Flatten a device list, descending into nested rack chains (DEV-4X2N).
+
+    `get_devices_for_track` / `get_devices_for_return` walk only the top-level
+    chain, so a song built on Instrument or Audio Effect Racks reported its rack
+    CONTAINERS and nothing inside them — an extract that looks complete while
+    omitting most of the signal path.
+
+    The DB has carried the full tree since DEEP-RACK-ADDR: `device_chains`
+    self-references through `devices` via `parent_rack_device_id`, and
+    `get_device_chains_for_rack_device` reads one level of it. Recursing that
+    query IS the flatten; no Live probe and no new schema are involved. (The old
+    caveat cited "recursive racks not modeled" — that was true when written and
+    stopped being true when the deep-addressing work landed.)
+
+    Nested devices carry `rack_depth` so a consumer can still tell a rack's
+    contents from its top-level siblings — flattening is for reachability, not
+    for pretending the tree was flat. (`chain_id` is NOT the discriminator: it is
+    `NOT NULL` on every device row, so a top-level device has one too. Depth is
+    what distinguishes them.)
+
+    Depth reuses `handlers/device.py`'s cap rather than declaring a second one —
+    Live racks cannot nest cyclically, so a runaway depth means malformed data,
+    and an extract is not the place to hang on it. One cap, one definition.
+    """
+    out: list[dict[str, Any]] = []
+    if _depth > DEVICE_PATH_DEPTH_CAP:
+        # Reachable only on malformed data (a `parent_rack_device_id` cycle),
+        # but a silent return hands the eval judge a truncated extract that
+        # reads as complete — the same "looks whole while omitting the signal
+        # path" failure the nested-rack walk exists to fix, one level up.
+        logger.warning(
+            "device extract truncated at depth %d (cap %d) — a malformed "
+            "parent_rack_device_id cycle is the only way to reach this",
+            _depth, DEVICE_PATH_DEPTH_CAP,
+        )
+        return out
+    for device in devices:
+        device_d = dict(device)
+        device_d["parameters"] = [
+            dict(p) for p in Q.get_device_parameters(conn, device["id"])
+        ]
+        if _depth:
+            device_d["rack_depth"] = _depth
+        out.append(device_d)
+        for chain in Q.get_device_chains_for_rack_device(conn, device["id"]):
+            nested = _devices_with_nested(
+                conn,
+                Q.get_devices_for_chain(conn, chain["id"]),
+                _depth=_depth + 1,
+            )
+            out.extend(nested)
+    return out
+
+
 def _extract_song_structure(conn: "sqlite3.Connection", song_id: str) -> dict[str, Any]:
     """Assemble a raw structural dump of a song from the DB.
 
@@ -949,13 +1134,12 @@ def _extract_song_structure(conn: "sqlite3.Connection", song_id: str) -> dict[st
     Every ``sqlite3.Row`` is materialized to a plain dict so the result is
     JSON-serializable; ``get_notes_for_clip`` already returns dicts.
 
-    Device caveat: ``get_devices_for_track`` / ``get_devices_for_return``
-    walk only the top-level chain — nested rack chains (one level deep via
-    ``get_device_chains_for_rack_device``, recursive racks not modeled at
-    all) are not flattened in. A song using Instrument/Audio-Effect Racks
-    therefore reports its rack containers but not the devices inside them.
-    Acceptable for the eval-judge tier (which reasons about structure /
-    phase, not exhaustive device trees) until nested-rack pull lands.
+    Devices are flattened across nested rack chains to arbitrary depth
+    (DEV-4X2N, via :func:`_devices_with_nested`), so a song built on Instrument
+    or Audio Effect Racks reports the devices INSIDE its racks and not just the
+    rack containers. Nested entries carry ``rack_depth``, which is what
+    distinguishes them from top-level siblings (``chain_id`` is NOT NULL on
+    every device row, so it does not).
     """
     song_row = Q.get_song(conn, song_id)
     song = dict(song_row) if song_row is not None else {"id": song_id}
@@ -969,13 +1153,9 @@ def _extract_song_structure(conn: "sqlite3.Connection", song_id: str) -> dict[st
             # get_notes_for_clip already returns dicts (tags deserialized).
             clip_d["notes"] = Q.get_notes_for_clip(conn, clip["id"])
             clips.append(clip_d)
-        devices: list[dict[str, Any]] = []
-        for device in Q.get_devices_for_track(conn, track_id):
-            device_d = dict(device)
-            device_d["parameters"] = [
-                dict(p) for p in Q.get_device_parameters(conn, device["id"])
-            ]
-            devices.append(device_d)
+        devices = _devices_with_nested(
+            conn, Q.get_devices_for_track(conn, track_id),
+        )
         track_d = dict(track)
         track_d["clips"] = clips
         track_d["arrangement_clips"] = [
@@ -988,14 +1168,9 @@ def _extract_song_structure(conn: "sqlite3.Connection", song_id: str) -> dict[st
     returns: list[dict[str, Any]] = []
     for ret in Q.get_returns_for_song(conn, song_id):
         ret_d = dict(ret)
-        ret_devices: list[dict[str, Any]] = []
-        for device in Q.get_devices_for_return(conn, ret["id"]):
-            device_d = dict(device)
-            device_d["parameters"] = [
-                dict(p) for p in Q.get_device_parameters(conn, device["id"])
-            ]
-            ret_devices.append(device_d)
-        ret_d["devices"] = ret_devices
+        ret_d["devices"] = _devices_with_nested(
+            conn, Q.get_devices_for_return(conn, ret["id"]),
+        )
         returns.append(ret_d)
 
     return {

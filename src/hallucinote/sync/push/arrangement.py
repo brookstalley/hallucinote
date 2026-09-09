@@ -141,6 +141,14 @@ def plan_push_arrangement(
     never PLANS a half-materialization (apply-time failures still fail loud via
     the executor halt + the Chunk-3 integrity assert).
 
+    Skip severity (PSH-ARRPROBE). A track skipped because its state could not be
+    DETERMINED — lane absent from the probe, track not linked, envelope-bearing
+    source clip not linked, placement referencing a missing clip — is recorded
+    via :meth:`PushPlan.blocked`, so the executor reports the phase INCOMPLETE
+    with a non-zero exit instead of the "skipped (idempotent)" clean OK that hid
+    an empty timeline. A DELIBERATE no-op (audio track, CLP-AUD2) stays a
+    :meth:`PushPlan.warn` — nothing was asked for and nothing is owed.
+
     Each ``create`` / ``duplicate`` call is keyed ``arrangement_clip:{db_id}`` so
     :func:`apply_push_results` records the binding from ``arrangement_clip_index``;
     each ``delete`` is keyed ``arrangement_clip_clear:{track}:{idx}`` (ack-only —
@@ -202,7 +210,7 @@ def plan_push_arrangement(
             conn, session_id=session_id, db_kind="track", db_id=track_id,
         )
         if track_at is None:
-            plan.alert(
+            plan.blocked(
                 f"arrangement: track {track_id!r} not linked in session "
                 f"{session_id!r}; skipping all {len(rows)} placement(s) on it. "
                 "Run the tracks phase + apply_push_results first."
@@ -216,11 +224,22 @@ def plan_push_arrangement(
         # The lane's state is unknown, so create+fill could STACK onto unprobed
         # clips — the exact failure the projection prevents. Skip + alert rather
         # than guess the timeline is clear.
+        #
+        # ARR-ORPHAN2: skipping is correct, but it used to be SILENT — an alert
+        # is drained into the executor's benign "push still OK" channel, so the
+        # run exited 0 over a track that kept its stale clips and got none of its
+        # placements. The loudness now comes from the post-phase integrity assert:
+        # verify_song_arrangement re-probes the same lane and, when that probe
+        # fails again, records `lane_probe_failed` — which IS corruption, so the
+        # phase HALTS instead of reporting ok. (If the re-probe succeeds, the
+        # unbuilt placements read `missing_clip` and the surviving orphan lands in
+        # extra_live_clips — both already halting.) Either way the "could not
+        # clear this lane, proceeded anyway, reported OK" path is closed.
         if (
             live_arrangement_clips_by_track is not None
             and track_at not in live_arrangement_clips_by_track
         ):
-            plan.alert(
+            plan.blocked(
                 f"arrangement: no Live arrangement probe for track {track_id!r} "
                 f"(Live index {track_at}) — the per-track probe failed, so the "
                 "lane state is unknown; skipping to avoid create+fill stacking "
@@ -315,13 +334,27 @@ def plan_push_arrangement(
                 f"rebuild) — {skip_reason}. The clear is destructive, so a track "
                 "is materialized only when it can be fully rebuilt (§6a)."
             )
-            (plan.warn if skip_is_known_scope else plan.alert)(msg)
+            # Known scope (audio / CLP-AUD2) is a DELIBERATE no-op → a
+            # diagnostic note. A real gap (missing clip row, unlinked
+            # envelope-bearing source) is work the song asked for that this push
+            # could not determine how to do → `blocked`, so the run reports
+            # INCOMPLETE instead of a clean OK over a silently-unbuilt track.
+            (plan.warn if skip_is_known_scope else plan.blocked)(msg)
             skipped_tracks += 1
             continue
 
         # CLEAR (descending index) — committed only now that the track is fully
         # rebuildable. Emitted BEFORE the placement calls so deletes dispatch
         # first (dispatch preserves add-order).
+        #
+        # ARR-ORPHAN2: the clear is UNCONDITIONAL over the probed lane — every
+        # clip the probe listed is deleted, whether or not it corresponds to a DB
+        # placement or carries an ableton_link. There is no "delete only what I
+        # can map back" filter, which is why a probed orphan (an unlinked clip, a
+        # hand edit, a full-song-length leftover at beat 0) is always removed and
+        # can never block the creates that follow. The projection's blind spot is
+        # not the clear's selectivity — it is a lane the probe never reported;
+        # see the ARR-ORPHAN2 note on the absent-lane skip above.
         track_calls: list[ToolCall] = []
         if live_arrangement_clips_by_track is not None:
             live_clips = live_arrangement_clips_by_track.get(track_at, [])

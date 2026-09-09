@@ -111,7 +111,11 @@ def _resolve_device(parent: Any, device_index: int) -> Any:
 # Defensive cap on device_path depth. Live racks can't nest cyclically, so
 # this is a backstop against pathological wire input, not a real capability
 # ceiling — real device trees are a handful of levels deep at most.
-_DEVICE_PATH_DEPTH_CAP = 16
+#
+# PUBLIC (no underscore) because it is shared: the analysis extract's nested-rack
+# walk imports it so the extract and `device_path` cannot disagree about how deep
+# a rack may go.
+DEVICE_PATH_DEPTH_CAP = 16
 
 
 def _nth_device(chain: Any, device_position: int) -> Any:
@@ -140,10 +144,10 @@ def _validate_device_path(device_path: Any) -> list[dict[str, int]]:
             "device_path must be a list of {chain_index, device_position} "
             f"steps, got {type(device_path).__name__}"
         )
-    if len(device_path) > _DEVICE_PATH_DEPTH_CAP:
+    if len(device_path) > DEVICE_PATH_DEPTH_CAP:
         raise ValueError(
             f"device_path depth {len(device_path)} exceeds the cap of "
-            f"{_DEVICE_PATH_DEPTH_CAP} — Live racks don't nest this deeply; "
+            f"{DEVICE_PATH_DEPTH_CAP} — Live racks don't nest this deeply; "
             "rebuild the path from ableton_device(action='get_device_chains')."
         )
     steps: list[dict[str, int]] = []
@@ -968,6 +972,7 @@ def _raise_silent_noop(
     parent_kind: str,
     parent_idx: int,
     chain_after: list[Any],
+    collateral: list[str] | None = None,
 ) -> NoReturn:
     """A2-resid: surface what's actually on the parent so the caller can
     diagnose without a separate ableton_device(action='list') probe.
@@ -978,6 +983,11 @@ def _raise_silent_noop(
     loadable on this parent kind (instrument on a return). Listing the
     existing chain disambiguates: if a same-class device already sits at
     the expected position, that's (a).
+
+    MST-LEAK adds a third cause worth naming when the full-session census saw
+    it: the load landed in a chain nobody addressed. ``collateral`` carries
+    those chains so the error points at the device that actually appeared
+    instead of only reporting the absence here.
     """
     existing = [
         f"{i + 1}:{getattr(d, 'class_name', '?')}"
@@ -989,6 +999,12 @@ def _raise_silent_noop(
         if parent_kind == "return"
         else ""
     )
+    if collateral:
+        suffix += (
+            "; (3) the load landed on a chain it was not aimed at — these "
+            "chains changed across the load and hold the device you asked "
+            f"for: {'; '.join(collateral)}"
+        )
     raise RuntimeError(
         f"load: Live did not append a device on {parent_kind} "
         f"{parent_idx} after browser.load_item. Existing chain: "
@@ -1020,6 +1036,260 @@ def _focus_session_view_for_load(context: LiveContext) -> None:
         context.application.view.show_view("Session")
     except (AttributeError, RuntimeError):
         pass
+
+
+# The two Detail sub-views. `browser.load_item` takes no destination argument —
+# Live resolves the target from VIEW state, and the Detail pane's device-chain
+# binding is half of that state (the Session/Arranger selection is the other
+# half). MST-LEAK: retargeting only `song.view.selected_track` while the Detail
+# pane is still bound to the previously focused track's chain leaves the two
+# halves disagreeing, and the load can materialize in BOTH chains.
+_DETAIL_DEVICE_VIEW = "Detail/DeviceChain"
+_DETAIL_CLIP_VIEW = "Detail/Clip"
+_DETAIL_VIEW = "Detail"
+
+
+def _focus_device_chain_view(context: LiveContext) -> None:
+    """Bind Live's Detail pane to the SELECTED track's device chain (MST-LEAK).
+
+    Called after ``song.view.selected_track`` is retargeted and before
+    ``browser.load_item``, so both halves of Live's load-target state name the
+    same chain. Without it, a session whose Detail pane was showing Clip for
+    track N keeps track N as the device-chain target while the Session
+    selection has moved to the load destination — the state in which a master
+    load landed on the master AND appended to the previously focused track
+    (observed on Live 12.4, 2026-08-07).
+
+    Best-effort, exactly like :func:`_focus_session_view_for_load`: an
+    unreachable ``Application.View`` must not block the load. The full-session
+    census diff around the load is the backstop that catches a leak anyway.
+    """
+    try:
+        context.application.view.show_view(_DETAIL_DEVICE_VIEW)
+    except (AttributeError, RuntimeError):
+        pass
+
+
+def _capture_detail_view(context: LiveContext) -> tuple[str | None, bool | None]:
+    """The Detail pane's state as ``(sub_view, pane_was_open)``.
+
+    Recorded before the loader re-points the Detail pane at the device chain so
+    the caller's pane can be put back — a load must not permanently rearrange
+    the user's screen, and ``show_view`` also OPENS a pane the composer had
+    collapsed. Either element is ``None`` when Live wouldn't tell us, in which
+    case the restore leaves that axis alone rather than guessing.
+    """
+    try:
+        is_visible = context.application.view.is_view_visible
+    except (AttributeError, RuntimeError):
+        return None, None
+    def _visible(name: str) -> bool | None:
+        try:
+            return bool(is_visible(name))
+        except (AttributeError, RuntimeError, TypeError):
+            return None
+    sub_view: str | None = None
+    for name in (_DETAIL_DEVICE_VIEW, _DETAIL_CLIP_VIEW):
+        if _visible(name):
+            sub_view = name
+            break
+    return sub_view, _visible(_DETAIL_VIEW)
+
+
+def _restore_detail_view(
+    context: LiveContext, captured: tuple[str | None, bool | None]
+) -> None:
+    """Put the Detail pane back where the caller had it. Best-effort.
+
+    Sub-view first, then openness: re-collapsing a pane the composer had closed
+    is the last step, because ``show_view`` on a sub-view would re-open it.
+    """
+    sub_view, was_open = captured
+    try:
+        view = context.application.view
+    except (AttributeError, RuntimeError):
+        return
+    if sub_view is not None and sub_view != _DETAIL_DEVICE_VIEW:
+        try:
+            view.show_view(sub_view)
+        except (AttributeError, RuntimeError):
+            pass
+    if was_open is False:
+        try:
+            view.hide_view(_DETAIL_VIEW)
+        except (AttributeError, RuntimeError):
+            pass
+
+
+def _restore_selection(view: Any, prior: Any) -> None:
+    """Put ``song.view.selected_track`` back to what the caller had selected.
+
+    A device load is a chain mutation, not a navigation command: moving the
+    composer's selection (and leaving it moved) is a side effect they never
+    asked for, and it is what makes the NEXT load inherit a surprising target.
+    ``None`` means we could not read a prior selection — leave Live alone
+    rather than clearing it.
+    """
+    if prior is None:
+        return
+    try:
+        view.selected_track = prior
+    except (AttributeError, RuntimeError):
+        pass
+
+
+def _surface_iter(context: LiveContext) -> list[tuple[str, int, Any]]:
+    """Every top-level device-chain surface in the set, as (kind, index, obj).
+
+    ``index`` is 1-based for track / return and ``_MASTER_SENTINEL_INDEX`` for
+    the master — the same addressing ``_resolve_parent`` / ``_parent_address``
+    use, so a census key round-trips into a delete call without translation.
+    """
+    song = context.song
+    surfaces: list[tuple[str, int, Any]] = []
+    for i, track in enumerate(getattr(song, "tracks", ()) or (), start=1):
+        surfaces.append(("track", i, track))
+    for i, ret in enumerate(getattr(song, "return_tracks", ()) or (), start=1):
+        surfaces.append(("return", i, ret))
+    master = getattr(song, "master_track", None)
+    if master is not None:
+        surfaces.append(("master", _MASTER_SENTINEL_INDEX, master))
+    return surfaces
+
+
+def _chain_census(context: LiveContext) -> dict[tuple[str, int], list[str]]:
+    """Class names of every top-level device on every surface in the set.
+
+    The pre/post pair brackets ``browser.load_item`` so the loader can assert
+    the invariant a load actually has — *exactly one chain changes* — instead
+    of the far weaker "the chain I aimed at grew". A device that lands in a
+    chain nobody addressed is the failure mode this census exists to see.
+    """
+    return {
+        (kind, idx): [
+            _canonical_class_name(d) for d in (getattr(obj, "devices", ()) or ())
+        ]
+        for kind, idx, obj in _surface_iter(context)
+    }
+
+
+def _address_label(kind: str, index: int) -> str:
+    return kind if kind == "master" else f"{kind} {index}"
+
+
+def _collateral_surfaces(
+    before: dict[tuple[str, int], list[str]],
+    after: dict[tuple[str, int], list[str]],
+    *,
+    target: tuple[str, int],
+) -> list[tuple[str, int]]:
+    """Surfaces OTHER than the load target whose chain changed across the load.
+
+    Keys present in only one census (a track added/removed concurrently) are
+    ignored — this guard is about devices appearing where they weren't asked
+    for, not about set topology changing under us.
+    """
+    changed: list[tuple[str, int]] = []
+    for key, before_classes in before.items():
+        if key == target or key not in after:
+            continue
+        if after[key] != before_classes:
+            changed.append(key)
+    return changed
+
+
+def _strip_collateral_device(
+    context: LiveContext,
+    *,
+    key: tuple[str, int],
+    before_classes: list[str],
+    after_classes: list[str],
+    loaded_class: str,
+) -> dict[str, Any] | None:
+    """Undo ONE collateral append, or return ``None`` if it isn't safely ours.
+
+    Safe to undo means: the chain grew by exactly one device, that device sits
+    at the tail, everything before it is untouched, and its class is the class
+    we just loaded. Anything else (a shrink, a mid-chain change, a class we
+    didn't load) is NOT attributable to this load, so we leave Live alone and
+    let the caller raise — removing a device we cannot prove we created would
+    be a worse bug than the one we're fixing.
+    """
+    if len(after_classes) != len(before_classes) + 1:
+        return None
+    if after_classes[:-1] != before_classes:
+        return None
+    if not loaded_class or after_classes[-1] != loaded_class:
+        return None
+    kind, index = key
+    parent = _refresh_parent(context, parent_kind=kind, parent_idx=index)
+    delete_fn = getattr(parent, "delete_device", None)
+    if delete_fn is None:
+        return None
+    delete_fn(len(after_classes) - 1)  # Live's delete_device is 0-based
+    verify = _refresh_parent(context, parent_kind=kind, parent_idx=index)
+    verify_classes = [_canonical_class_name(d) for d in verify.devices]
+    if verify_classes != before_classes:
+        return None
+    return {
+        "parent_kind": kind,
+        "index": None if kind == "master" else index,
+        "device_index": len(after_classes),
+        "class_name": loaded_class,
+    }
+
+
+def _reconcile_collateral(
+    context: LiveContext,
+    *,
+    before: dict[tuple[str, int], list[str]],
+    after: dict[tuple[str, int], list[str]],
+    target: tuple[str, int],
+    loaded_class: str,
+) -> list[dict[str, Any]]:
+    """Detect + undo devices this load left in chains nobody addressed.
+
+    MST-LEAK. ``browser.load_item`` has no destination argument, so a load can
+    only be aimed by view state; when that state is inconsistent Live can
+    materialize the device in a second chain (empirically: a master load also
+    appending to the previously focused track). Reporting ``ok`` because the
+    intended chain grew is measure-and-lie — the composer's track silently
+    gains a device they never asked for, and the next ``/song-snapshot`` bakes
+    it into the authored set.
+
+    Returns one entry per removal (surfaced on the response so the event is
+    never silent). Raises when a collateral change cannot be attributed to this
+    load and undone — a load that corrupted a chain it can't repair must fail
+    loudly, not return ``ok``.
+    """
+    removed: list[dict[str, Any]] = []
+    unresolved: list[str] = []
+    for key in _collateral_surfaces(before, after, target=target):
+        entry = _strip_collateral_device(
+            context,
+            key=key,
+            before_classes=before[key],
+            after_classes=after[key],
+            loaded_class=loaded_class,
+        )
+        if entry is None:
+            unresolved.append(
+                f"{_address_label(*key)}: "
+                f"[{', '.join(c or '?' for c in before[key])}] -> "
+                f"[{', '.join(c or '?' for c in after[key])}]"
+            )
+        else:
+            removed.append(entry)
+    if unresolved:
+        raise RuntimeError(
+            "load: browser.load_item changed device chains it was not aimed "
+            f"at (target {_address_label(*target)}), and the change could not "
+            "be attributed to this load, so it was left in place: "
+            + "; ".join(unresolved)
+            + ". Inspect those chains with ableton_device(action='list') and "
+            "remove any device you did not author."
+        )
+    return removed
 
 
 _PRESET_FILE_SUFFIXES: tuple[str, ...] = (".adg", ".adv")
@@ -1130,8 +1400,14 @@ def load_handler(
     manufacturers — the W13-A "Case A: same plugin, different catalog
     id" cross-machine portability problem.
 
-    Selects the destination via ``song.view.selected_track = parent`` and
-    calls ``application.browser.load_item(item)``. The new device usually
+    Selects the destination via ``song.view.selected_track = parent``, points
+    Live's Detail pane at that selection's device chain (MST-LEAK — a browser
+    load is aimed by view state, and both halves of that state must name the
+    same chain), calls ``application.browser.load_item(item)``, then restores
+    the caller's selection and Detail pane. The load is bracketed by a
+    full-session device census, so a device that lands in a chain nobody
+    addressed is removed and reported instead of returning a false ``ok``.
+    The new device usually
     appears at the tail of the destination's top-level device chain;
     Live 12.4 exposes no public re-ordering API, so the position is
     fixed. Some load combinations (empirically observed: Drum Rack onto a
@@ -1329,12 +1605,38 @@ def load_handler(
             "browser.load_item"
         )
 
-    chain_before_classes = [_canonical_class_name(d) for d in parent.devices]
-    # browser.load_item silently no-ops when Live's focused view is Arranger
-    # (the state a render leaves behind) — focus Session first (MCP-1V8K).
+    # MST-LEAK: census EVERY surface, not just the destination. `load_item`
+    # takes no destination argument, so the only post-condition worth asserting
+    # is "exactly one chain changed" — see `_reconcile_collateral`.
+    census_before = _chain_census(context)
+    target_key = (parent_kind, parent_idx)
+    # The census is built from the same surface walk `_resolve_parent` uses, so
+    # the target is always in it; the fallback keeps an exotic embedding (a Song
+    # that doesn't expose one of the collections) on the pre-census behaviour
+    # rather than failing the load with a KeyError.
+    chain_before_classes = census_before.get(
+        target_key, [_canonical_class_name(d) for d in parent.devices]
+    )
+    # Live's load target is view state, and it has TWO halves. (a) The focused
+    # main view: browser.load_item silently no-ops when it's Arranger — the
+    # state a render leaves behind — so focus Session first (MCP-1V8K). (b) The
+    # Detail pane's device-chain binding: leaving it on the previously focused
+    # track while the selection moves elsewhere is what let a master load also
+    # append to that track (MST-LEAK). Retarget the selection, then point the
+    # Detail pane at it, so both halves name the same chain.
+    prior_selection = getattr(view, "selected_track", None)
+    prior_detail_view = _capture_detail_view(context)
     _focus_session_view_for_load(context)
     view.selected_track = parent
-    browser.load_item(item)
+    _focus_device_chain_view(context)
+    try:
+        browser.load_item(item)
+    finally:
+        # A load is a chain mutation, not a navigation command — hand the
+        # composer's selection and Detail pane back exactly as we found them,
+        # including when the load raises.
+        _restore_selection(view, prior_selection)
+        _restore_detail_view(context, prior_detail_view)
 
     # Re-resolve the parent — Live re-wraps Track objects on every property
     # access, and `browser.load_item` may invalidate the captured wrapper.
@@ -1343,6 +1645,10 @@ def load_handler(
     )
     chain_after = list(fresh_parent.devices)
     chain_after_classes = [_canonical_class_name(d) for d in chain_after]
+    census_after = _chain_census(context)
+    collateral_keys = _collateral_surfaces(
+        census_before, census_after, target=target_key
+    )
     if len(chain_after) > len(chain_before_classes):
         # Append case (the common shape): Live grew the chain by N >= 1.
         new_index = len(chain_after)
@@ -1366,6 +1672,11 @@ def load_handler(
                 parent_kind=parent_kind,
                 parent_idx=parent_idx,
                 chain_after=chain_after,
+                collateral=[
+                    f"{_address_label(*key)}: "
+                    f"[{', '.join(c or '?' for c in census_after[key])}]"
+                    for key in collateral_keys
+                ],
             )
         else:
             existing = [
@@ -1397,6 +1708,18 @@ def load_handler(
     # as the pre/post chain snapshots above so the response field and
     # the post-condition detection agree on identity.
     loaded_class_name = _canonical_class_name(new_device)
+    # MST-LEAK: the intended chain grew — but `browser.load_item` is aimed by
+    # view state, not by an argument, so "the chain I aimed at grew" does not
+    # imply "only that chain grew". Undo (and report) any device this load left
+    # in a chain nobody addressed; raise rather than return `ok` if it can't be
+    # attributed and undone.
+    collateral_removed = _reconcile_collateral(
+        context,
+        before=census_before,
+        after=census_after,
+        target=target_key,
+        loaded_class=loaded_class_name,
+    ) if collateral_keys else []
     result: dict[str, Any] = {
         "device_index": new_index,
         "kind": kind,
@@ -1436,6 +1759,28 @@ def load_handler(
             f"the browser walk. If you need an actual {kind}, delete this device "
             f"and load by preset_uri (from ableton_browser(action='at_path')) "
             f"for an unambiguous resolution."
+        )
+    # MST-LEAK: never silent. The load succeeded on the addressed chain, but it
+    # also touched a chain the caller never named and we undid that — say so, so
+    # the agent can re-verify the affected chain rather than discover the churn
+    # in a later /song-snapshot diff.
+    if collateral_removed:
+        result["collateral_removed"] = collateral_removed
+        note = (
+            "browser.load_item also appended this device to "
+            + ", ".join(
+                _address_label(
+                    e["parent_kind"],
+                    e["index"] if e["index"] is not None else 0,
+                )
+                for e in collateral_removed
+            )
+            + " — Live aims a browser load by view state, and a stale Detail-pane "
+            "binding can land it in a second chain. The stray copy was removed; "
+            "verify that chain with ableton_device(action='list')."
+        )
+        result["warning"] = (
+            f"{result['warning']} {note}" if "warning" in result else note
         )
     return result
 

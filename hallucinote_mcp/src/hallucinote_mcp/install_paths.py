@@ -302,14 +302,18 @@ def max_for_live_available(live_version: str | None = None) -> bool | None:
     """Best-effort probe for whether Max for Live (M4L) is available.
 
     The HallucinoteAnalyzer is an M4L device; without an M4L runtime
-    Live can't load it. M4L ships only with Live Suite — the install
-    skill warns / refuses if Live isn't Suite.
+    Live can't load it. M4L is bundled with Live Suite AND sold as a paid
+    add-on for Standard, so the question is whether M4L is present — NOT
+    which edition is installed. A Standard owner with the add-on has it;
+    inferring "no M4L" from "not Suite" tells them their purchase doesn't
+    count. The install skill asks about M4L directly for that reason.
 
     Returns:
       - ``True``  — strong evidence M4L is installed (Live Suite preference
         file present, or platform-specific Max install detected).
-      - ``False`` — strong evidence M4L is NOT installed (Live edition
-        is detected and isn't Suite).
+      - ``False`` — strong evidence M4L is NOT installed. Note that a
+        detected non-Suite edition is NOT by itself such evidence, per the
+        add-on case above.
       - ``None``  — can't tell. Surface as "ask the user" in the skill;
         many setups (custom installs, Wine, etc.) defeat the heuristics.
 

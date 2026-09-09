@@ -15,11 +15,74 @@ from .clips import plan_push_clips
 from .devices import plan_push_devices, plan_push_device_sidechain
 from .envelopes import plan_push_envelopes
 from .mix import plan_push_mix
-from .perform import plan_push_performed_automation, record_perform_result
+from .perform import (
+    PERFORM_OUTCOME_RECORDED,
+    plan_push_performed_automation,
+    record_perform_result,
+)
 from .routing import plan_push_routing
 from .scenes import plan_push_scenes
 from .tempo import plan_push_tempo_map, plan_push_time_signature_map
 from .tracks import plan_push_song_returns, plan_push_song_tracks
+
+
+# PSH-ARRPROBE: the arrangement probe map is either an already-materialized
+# ``{track_index: [clip, ...]}`` dict (tests / non-execute callers) or a
+# ZERO-ARG THUNK the arrangement phase calls at PLAN time. The thunk form is the
+# one the execute path uses, and it is load-bearing: the probe must run AFTER
+# the `tracks` phase, because a first push CREATES the song's Live tracks and a
+# map probed before that names entirely different track indices (see
+# :func:`plan_push_song`). ``None`` (either directly, or returned by the thunk)
+# keeps the pre-existing "no probe → no clear, loud alert" contract.
+LiveArrangementProbe = (
+    dict[int, list[dict[str, Any]]]
+    | Callable[[], dict[int, list[dict[str, Any]]] | None]
+    | None
+)
+
+
+# PSH-DEVDUP: the device-chain probe is either an already-materialized
+# ``{(parent_kind, parent_index): [live device, ...]}`` dict (tests / callers
+# that probed themselves) or a ZERO-ARG THUNK the devices phase calls at PLAN
+# time. The thunk form is what the execute path passes, and the laziness is
+# load-bearing: the map is keyed by the Live indices recorded in
+# ``ableton_links``, and on a FIRST push those don't exist until the `tracks` /
+# `returns` phases have run. ``None`` (directly, or returned by the thunk) keeps
+# the pre-PSH-DEVDUP "no Live truth → load on faith" contract for pure-planner
+# callers.
+LiveDeviceProbe = (
+    dict[tuple[str, int], list[dict[str, Any]]]
+    | Callable[[], dict[tuple[str, int], list[dict[str, Any]]] | None]
+    | None
+)
+
+
+def resolve_live_arrangement_probe(
+    probe: LiveArrangementProbe,
+) -> dict[int, list[dict[str, Any]]] | None:
+    """Materialize an arrangement probe map, calling it if it's a thunk.
+
+    Called from inside the arrangement phase's ``plan_fn``, i.e. once the
+    `tracks` phase has created + linked every track, so the probe map is keyed
+    by the SAME Live indices the planner resolves from ``ableton_links``.
+    """
+    if probe is None or isinstance(probe, dict):
+        return probe
+    return probe()
+
+
+def resolve_live_device_probe(
+    probe: LiveDeviceProbe,
+) -> dict[tuple[str, int], list[dict[str, Any]]] | None:
+    """Materialize a device-chain probe map, calling it if it's a thunk.
+
+    Called from inside the devices phase's ``plan_fn``, i.e. once `tracks` and
+    `returns` have created + linked every parent, so the probe map is keyed by
+    the SAME Live indices the planner resolves from ``ableton_links``.
+    """
+    if probe is None or isinstance(probe, dict):
+        return probe
+    return probe()
 
 
 @dataclass(frozen=True)
@@ -195,7 +258,8 @@ def plan_push_song(
     song_id: str,
     session_id: str,
     perform_slowdown_factor: float = 1.0,
-    live_arrangement_clips_by_track: dict[int, list[dict]] | None = None,
+    live_arrangement_clips_by_track: LiveArrangementProbe = None,
+    live_device_chains: LiveDeviceProbe = None,
 ) -> list[PushPhase]:
     """Master orchestration: return the fourteen phases of a full song push, in order.
 
@@ -213,6 +277,26 @@ def plan_push_song(
     phase's full boundary contract -- what it ASSUMES from prior phases vs
     what it RE-PROBES from Live, and its failure/halt policy -- lives in
     ``.prawduct/artifacts/sync-boundary-contract.md``.
+
+    ``live_arrangement_clips_by_track`` (PSH-ARRPROBE) may be a dict OR a
+    zero-arg thunk (:data:`LiveArrangementProbe`). The execute path passes a
+    THUNK, and that laziness is a correctness requirement, not an optimization:
+    the arrangement projection matches probe keys against the Live track indices
+    recorded in ``ableton_links``, and on a FIRST push those indices don't exist
+    until the `tracks` phase has run. A map probed before the phase loop
+    (the pre-fix behavior) described a different set — a fresh song pushed into
+    a Live set holding the 4 default scaffold tracks probed lanes 1-4 while the
+    song's tracks landed at 5-13, so EVERY track read as "probe failed" and the
+    whole arrangement silently no-op'd. Resolving the thunk inside the
+    arrangement ``plan_fn`` probes after tracks exist. (It also stops non-
+    arrangement scoped runs, e.g. ``--only devices``, from paying for the probe
+    at all.)
+    ``live_device_chains`` (PSH-DEVDUP) may be a dict OR a zero-arg thunk
+    (:data:`LiveDeviceProbe`), resolved inside the devices ``plan_fn``. It is
+    what lets the devices planner tell a device that is MISSING from Live apart
+    from one that is PRESENT but unlinked. Without it the planner treated both
+    as "load", and since Live 12.4 tail-appends, a push onto a set that already
+    carried the chain silently doubled every effect.
 
     Sections (``plan_push_sections``) is NOT a phase: it emits no
     canonical calls (Live has no section-marker concept distinct from
@@ -275,6 +359,13 @@ def plan_push_song(
             name="devices",
             plan_fn=lambda: plan_push_devices(
                 conn, song_id=song_id, session_id=session_id,
+                # PSH-DEVDUP: resolved HERE (inside the thunk), not at
+                # plan_push_song time — the probe must see the parents the
+                # `tracks` / `returns` phases created, and its result is what
+                # tells the planner "already present" from "genuinely missing".
+                live_devices_by_parent=resolve_live_device_probe(
+                    live_device_chains,
+                ),
             ),
             description="Load instruments+effects and set parameters on tracks/returns.",
         ),
@@ -314,7 +405,11 @@ def plan_push_song(
             name="arrangement",
             plan_fn=lambda: plan_push_arrangement(
                 conn, song_id=song_id, session_id=session_id,
-                live_arrangement_clips_by_track=live_arrangement_clips_by_track,
+                # Resolved HERE (inside the thunk), not at plan_push_song time —
+                # the probe must see the tracks the `tracks` phase created.
+                live_arrangement_clips_by_track=resolve_live_arrangement_probe(
+                    live_arrangement_clips_by_track,
+                ),
             ),
             description="Project the DB onto the arrangement: clear each track then create+fill (envelope-bearing clips duplicate onto the cleared region) — ARR-PROJ.",
         ),
@@ -482,6 +577,36 @@ KNOWN_RESULT_KEY_KINDS: frozenset[str] = (
 )
 
 
+def _describe_arc_outcome(arc: dict[str, Any], *, fingerprinted: bool) -> str:
+    """One perform arc, as a line an author can act on: which envelope, over
+    which beats, what happened to it, and how many values the pass actually
+    wrote. The write count is there because it is the number that separates a
+    real recording from a stale lane answering for one.
+
+    The verdict comes from the handler's own ``outcome`` where it is present,
+    not from whether a warning came back. Those two answer different questions:
+    an envelope deleted mid-cycle also produces a warning, and printing
+    UNVERIFIED for it would send the reader hunting a recording fault that
+    never happened. ``fingerprinted`` is the fallback for a server predating
+    the field, and is named for what it actually observed.
+    """
+    span = arc.get("span_beats") or []
+    where = (
+        f"[{float(span[0]):g}-{float(span[1]):g}] " if len(span) == 2 else ""
+    )
+    outcome = arc.get("outcome")
+    if outcome is None:
+        verdict = "recorded" if fingerprinted else "UNVERIFIED"
+    elif outcome == PERFORM_OUTCOME_RECORDED:
+        verdict = "recorded" if fingerprinted else "recorded, NOT FINGERPRINTED"
+    else:
+        verdict = str(outcome).upper()
+    return (
+        f"{arc.get('arc_id')} {where}{verdict} "
+        f"({arc.get('updates_written')} value writes)"
+    )
+
+
 def apply_push_results(
     conn: sqlite3.Connection,
     results: list[dict[str, Any]],
@@ -490,6 +615,7 @@ def apply_push_results(
     actor: str = "sync",
     request_id: str | None = None,
     reason: str | None = None,
+    notes_sink: Callable[[str], None] | None = None,
 ) -> list[str]:
     """After the agent runs the plan, feed structured results back here so the
     DB knows what's now in Ableton. Bindings are recorded in `ableton_links`
@@ -512,12 +638,22 @@ def apply_push_results(
     Failed results (`ok=False`) are skipped — the agent layer is the source
     of truth for tool-side errors; hallucinote records nothing for them.
 
+    ``notes_sink`` receives operator-facing lines that are NOT problems — the
+    perform phase's per-arc roll-up, which is worth reading precisely when
+    nothing went wrong. The returned warnings ride the errors file, so a clean
+    push must not put anything there; without a second channel the choice is
+    between an accurate report that looks failed and a phase that spends
+    minutes of realtime and says only "ok (1 call)". The caller supplies the
+    benign channel it already has.
+
     Returns apply-layer warnings (empty when everything recorded cleanly).
-    Today these come from the `perform_batch` branch — for any arc whose
-    handler could NOT verify the write (`automation_state != 1`) the apply
-    layer records nothing for that arc and the warning says so (never a
-    silent skip; the next push retries just that arc). Callers must surface
-    them.
+    Today these come from the `perform_batch` branch: for any arc the handler
+    could not confirm it recorded, the apply layer records nothing for that
+    arc and the warning says so (never a silent skip; the next push retries
+    just that arc). `record_perform_result` states the gate that decides
+    that — restating it here is how this paragraph went stale once already.
+    A degraded locate is warned about on the same channel. Callers must
+    surface them.
     """
     warnings: list[str] = []
     with transaction(conn):
@@ -554,6 +690,7 @@ def apply_push_results(
                         "or the playhead moved; check record_mode in Live."
                     )
                 processed = 0
+                outcomes: list[str] = []
                 for arc in res.get("arcs", []):
                     arc_eid = arc.get("arc_id")
                     if not arc_eid:
@@ -572,7 +709,40 @@ def apply_push_results(
                     )
                     if perform_warning is not None:
                         warnings.append(perform_warning)
+                    outcomes.append(
+                        _describe_arc_outcome(
+                            arc, fingerprinted=perform_warning is None
+                        )
+                    )
                     processed += 1
+                # A realtime phase that spends minutes of wall clock and
+                # reports "ok (1 call)" gives the author nothing to act on —
+                # the divergence this names was found by ear, three passes
+                # late. Say what happened to every arc, not just the ones that
+                # failed, and say it on the benign channel so a clean push
+                # still reads as clean.
+                if outcomes and notes_sink is not None:
+                    notes_sink(
+                        "performed-automation: " + "; ".join(outcomes)
+                    )
+                # How the transport was positioned. A pass that ran on a
+                # degraded locate recorded against a start position nothing
+                # moved — it may well be right, and a per-arc verdict cannot
+                # say. The handler logs it, but that log is in Live; this is
+                # where the author looks.
+                if res.get("start_position_moved") is False:
+                    warnings.append(
+                        "perform_batch: the transport was positioned by "
+                        f"{res.get('locate_method')!r}, which moves the "
+                        "playhead but NOT Live's start playing position — "
+                        "playback was not guaranteed to begin at the span. "
+                        + (
+                            f"Reason: {res['locate_detail']} "
+                            if res.get("locate_detail") else ""
+                        )
+                        + "The arcs above recorded, but check the lanes "
+                        "landed where you authored them."
+                    )
                 # ENV-8K2R #4: planned-vs-returned cross-check. The handler
                 # reports `arc_count` = how many arcs it prepared (== the
                 # planner's queued count on the success path). If fewer per-arc

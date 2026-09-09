@@ -149,15 +149,17 @@ interface with librosa as the default, and only adds Rubber Band if the A/B is a
 `[ASSUMPTION: librosa-first is acceptable for wave 3's first cut | MED impact | user can
 override — say so and wave 3 prices in the binary dependency up front]`
 
-**D5 — Acquisition takes a local media file and a timespan; Hallucinote does not fetch
-from the internet.** `ffmpeg` (already used by `tools/make_demo_media.py` and
-`tools/capture_live_shot.py`, and carrying a learnings entry about its failure modes)
-extracts `[in, out]` from a file the user already has into `assets/sources/`. Where the
-media came from is the user's business and stays outside the tool; building a downloader
-into the product would be a different and worse decision. Note plainly, once, in the docs
-this touches: movie dialogue is somebody's copyright — personal and creative use is one
-thing, distributing a released track built on it is another, and clearance is the user's
-call, not the tool's.
+**D5 — The entry point is an already-cut clip the user drops in; Hallucinote does not
+extract from media and does not fetch from the internet.** *(User ruling, 2026-09-09 — the
+earlier assumption was ffmpeg extraction from a local media file with a timespan.)* What
+"acquire" reduces to is therefore: **normalize** (any sample rate, any channel count, WAV
+or MP3 → the analysis-ready form, and a canonical WAV under `assets/sources/` if the drop
+was lossy) and **record provenance** — what the line is, what it is from, and a checksum.
+The `ffmpeg` decode path stays (MP3 in, and `soundfile` alone will not read it), but the
+in/out-timecode cutter does not get built. Note plainly, once, in the docs this touches:
+movie dialogue is somebody's copyright — personal and creative use is one thing,
+distributing a released track built on it is another, and clearance is the user's call,
+not the tool's.
 
 **D6 — Reverse goes through a derived asset or the sampler, never a clip property.**
 Follows from stale claim 2 once the probe confirms it. This changes `clips.reverse`'s
@@ -192,7 +194,8 @@ seconds, three beats at 92."* **Exit:** hand it a movie line, get a musical read
 compose against. New backlog item. Not Live-gated. ~1–2 sessions.
 
 ### Wave 3 — Transform, as reproducible derived assets
-Asset store + manifest (D1), the recipe model in `build.py` (D2), and the transform set:
+Asset store + manifest (D1) — which under D5 is also the whole of "acquire": normalize a
+dropped clip and record its provenance. Then the recipe model in `build.py` (D2), and the transform set:
 trim, fade, normalize, reverse, pitch shift, time-stretch-to-N-bars, chop-at-onsets. This
 is "pitch or time correction in Hallucinote with new samples pushed up to Live" — the
 derived file is written to `assets/derived/` and referenced by an audio clip wave 1

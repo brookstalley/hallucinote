@@ -85,6 +85,7 @@ this wave exists to build has still never run against Live.
 
 
 - [ ] A song with one authored audio clip pushes into a real set — **session and arrangement**
+- [ ] The session clip carries its authored conform (warp/transpose/gain/markers). **The arrangement copy will NOT** — Live's direct arrangement-create takes no properties and the planner cannot address the copy until the call returns. Confirm the run *reports* that gap rather than staying silent about it
 - [ ] A **second push of the unchanged song plans no work** (the property a destructive reconcile most easily breaks)
 - [ ] A **missing sample file fails its clip loudly** — not a reported-OK push that plays silence
 - [ ] Changing the row's `audio_file` recreates the clip, and any envelope under it survives or is re-emitted per chunk 01's verdict

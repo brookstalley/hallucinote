@@ -37,7 +37,9 @@ class PlacementResult:
         extra/missing/mismatch).
       * ``missing_clip``    — no Live arrangement clip at this position (the
         whole placement was dropped).
-      * ``skipped_audio``   — audio placement (CLP-AUD2; no MIDI notes to check).
+      * ``skipped_audio``   — audio placement that IS present; only the note
+        comparison is skipped, because an audio clip has none. Absence is
+        ``missing_clip``, exactly as for MIDI.
       * ``track_unlinked``  — the placement's track isn't linked in the session.
       * ``probe_failed``    — Live's per-clip NOTE probe errored: the clip IS
         there at the right position, only its contents could not be read. A
@@ -235,11 +237,24 @@ def verify_song_arrangement(
             clip_row = Q.get_clip(conn, r["clip_id"])
             lc = _find_live_at(live_clips, start_b, eps_beats, matched_live_idx)
             if clip_row is not None and clip_row["kind"] == "audio":
-                if lc is not None:
-                    matched_live_idx.add(lc["arrangement_clip_index"])
+                # PRESENCE is checked for audio exactly as for MIDI; only the
+                # NOTE comparison is skipped, because an audio clip has none.
+                # These were once one branch, and that made `missing_clip`
+                # unreachable for audio: a placement the per-lane clear removed
+                # and the rebuild failed to restore reported `skipped_audio`, a
+                # _CLEAN status, so `faithful` stayed True and the push-time
+                # assert saw nothing. Audio placements now materialize through
+                # that same clear-then-rebuild projection, so the case is real.
+                if lc is None:
+                    report.results.append(PlacementResult(
+                        tname, r["clip_name"], start_b, status="missing_clip",
+                        detail="no Live arrangement clip at this position (dropped)",
+                    ))
+                    continue
+                matched_live_idx.add(lc["arrangement_clip_index"])
                 report.results.append(PlacementResult(
                     tname, r["clip_name"], start_b, status="skipped_audio",
-                    detail="audio placement (CLP-AUD2) — no MIDI notes to verify",
+                    detail="audio placement present — no MIDI notes to verify",
                 ))
                 continue
             if lc is None:

@@ -214,10 +214,19 @@ def _probe_live_session_clips_via_mcp(
     """Probe ``ableton_clip(action='list', location='session')`` per Live track.
 
     Returns a dict keyed by ``track_index`` with the POPULATED session clips
-    (``{clip_index, name, ...}`` — empty slots dropped) for clip-prune (B1b) to
-    reconcile against the DB. A per-track probe failure falls back to "no clips
-    known" for that track (it simply won't surface orphans there) rather than
-    aborting the whole prune.
+    (``{clip_index, name, ...}`` — empty slots dropped).
+
+    **Key presence is the signal, and consumers depend on it.** A track that
+    probed successfully is always present, with an empty list when it holds no
+    clips; a track whose probe FAILED is left ABSENT. Those mean different
+    things — "this track has no clips" versus "this track's state is unknown" —
+    and a consumer that flattens them with ``.get(idx, [])`` will answer an
+    unknown slot as an empty one. For the clips phase that means a
+    ``replace=True`` recreate against a clip the operator really has. Read
+    absence with :data:`hallucinote.sync.push.clips.PROBE_UNKNOWN` semantics,
+    never with a default.
+
+    A per-track failure degrades that one track rather than aborting the run.
     """
     if send_fn is None:
         from hallucinote_mcp import client as _client  # type: ignore[import-not-found]

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from hallucinote.db import queries as Q
-from hallucinote.paths import resolve_audio_path
+from hallucinote.paths import resolve_audio_path, same_file_path, song_dir_for_conn
 
 from ._core import PushPlan, ToolCall, _notes_for_mcp
 
@@ -23,7 +23,7 @@ from ._core import PushPlan, ToolCall, _notes_for_mcp
 # or Simpler's Reverse parameter) is an open verdict. A row that sets it is
 # refused loudly below rather than pushed as a forward-playing clip nobody
 # was told about.
-_AUDIO_CONFORM_PROPERTIES: tuple[tuple[str, str], ...] = (
+AUDIO_CONFORM_PROPERTIES: tuple[tuple[str, str], ...] = (
     ("audio_gain",   "gain"),
     ("pitch_coarse", "pitch_coarse"),
     ("pitch_fine",   "pitch_fine"),
@@ -51,32 +51,6 @@ _UNPROBED = (
 )
 
 
-def song_dir_for_conn(conn: sqlite3.Connection) -> Path | None:
-    """The directory a ``clips.audio_file`` reference resolves against.
-
-    A song's DB lives IN its song directory (``songs/<slug>/<slug>-<branch>.db``
-    — see ``db.connection.resolve_db_path``), so the directory holding the open
-    database file is the anchor ``paths.resolve_audio_path`` wants. That is the
-    same derivation the tuning pull CLI and the song-context reader use
-    (``song_dir = db_path.parent``); it is done from the connection here because
-    a planner is handed a ``conn``, never a path.
-
-    ``PRAGMA database_list`` is connection introspection, not a domain read —
-    it asks the sqlite3 handle where it is attached, and there is no mutator
-    surface for that question. Returns ``None`` for a database with no file on
-    disk (``:memory:``), where no relative reference can be resolved at all.
-    """
-    row = conn.execute("PRAGMA database_list").fetchone()
-    if row is None:
-        return None
-    # (seq, name, file) — index rather than key so a connection with the
-    # default row factory works the same as one yielding sqlite3.Row.
-    file_path = row[2]
-    if not file_path:
-        return None
-    return Path(file_path).parent
-
-
 def _conform_value(column: str, raw: Any) -> Any:
     """The DB value in the domain the wire declares for it."""
     if column in _BOOL_CONFORM_COLUMNS:
@@ -99,18 +73,36 @@ def _conform_is_current(authored: Any, live: Any) -> bool:
         return False
 
 
+# A track whose probe FAILED is absent from the probe map; a track that probed
+# successfully is present, with an empty list when it simply holds no clips.
+# Those two must never collapse: "unknown" answered as "empty" plans a
+# `replace=True` recreate, which deletes a clip the operator really has and
+# rebuilds it — losing exactly the un-modelled Live-side state (warp markers, a
+# clip envelope) whose survival across a recreate is the unknown the changed-file
+# branch refuses to act on. So the reader is tri-state, and this sentinel is the
+# third state rather than another `None` for a caller to remember to check.
+PROBE_UNKNOWN = object()
+
+
 def _live_session_entry(
     live_session_clips_by_track: dict[int, list[dict[str, Any]]] | None,
     *,
     track_at: int,
     clip_index: int,
-) -> dict[str, Any] | None:
-    """The probed Live session clip occupying ``clip_index`` on ``track_at``,
-    or ``None`` when there is no probe, the track's probe failed, or the slot
-    is empty. The three cases are distinguished by the caller."""
+) -> Any:
+    """The probed Live session clip occupying ``clip_index`` on ``track_at``.
+
+    Returns the entry when the slot holds one, ``None`` when the track probed
+    successfully and that slot is genuinely empty, and :data:`PROBE_UNKNOWN`
+    when this track's state is not known — either no probe was taken at all, or
+    this track's probe failed and left it out of the map.
+    """
     if live_session_clips_by_track is None:
-        return None
-    for entry in live_session_clips_by_track.get(track_at, []):
+        return PROBE_UNKNOWN
+    track_clips = live_session_clips_by_track.get(track_at)
+    if track_clips is None:
+        return PROBE_UNKNOWN
+    for entry in track_clips:
         if entry.get("clip_index") == clip_index:
             return entry
     return None
@@ -133,7 +125,7 @@ def _audio_conform_calls(
     nothing at all.
     """
     calls: list[ToolCall] = []
-    for column, prop in _AUDIO_CONFORM_PROPERTIES:
+    for column, prop in AUDIO_CONFORM_PROPERTIES:
         raw = clip[column]
         if raw is None:
             continue
@@ -275,19 +267,28 @@ def _plan_push_audio_clip(
         live_session_clips_by_track, track_at=track_at, clip_index=clip_at,
     )
 
-    if live_session_clips_by_track is None:
-        # No probe was taken, so which file Live holds is UNKNOWN. The conform
-        # properties are written anyway: they originate in the DB, a
-        # set_property is a pure overwrite, and withholding them would drop
-        # authored intent on every re-push. What is NOT done is anything
-        # destructive — no delete, no recreate — so a re-pointed audio_file
-        # goes undetected rather than acted on wrongly. `plan_push_clips`
-        # raises ONE alert for the song saying exactly that.
-        plan.warn(
-            f"{where}: no Live session-clip probe was supplied, so the file "
-            "Live actually holds was not verified; conform properties are "
-            "written in place and nothing is recreated."
-        )
+    if live_entry is PROBE_UNKNOWN:
+        # This track's state is UNKNOWN — either no probe at all, or this
+        # track's probe failed. Both mean the same thing here and get the same
+        # answer. The conform properties are written anyway: they originate in
+        # the DB, a set_property is a pure overwrite, and withholding them
+        # would drop authored intent on every re-push. What is NOT done is
+        # anything destructive — no delete, no recreate — so a re-pointed
+        # audio_file goes undetected rather than acted on wrongly.
+        if live_session_clips_by_track is None:
+            plan.warn(
+                f"{where}: no Live session-clip probe was supplied, so the "
+                "file Live actually holds was not verified; conform properties "
+                "are written in place and nothing is recreated."
+            )
+        else:
+            plan.warn(
+                f"{where}: the session-clip probe for track {track_at} FAILED, "
+                "so this slot's contents are unknown. Conform properties are "
+                "written in place and nothing is recreated — an unknown slot "
+                "is not an empty one, and answering it with a recreate would "
+                "delete a clip that is really there."
+            )
         for call in _audio_conform_calls(
             clip, clip_id=clip_id, track_at=track_at, clip_index=clip_at,
             live_entry=None,
@@ -296,9 +297,10 @@ def _plan_push_audio_clip(
         return
 
     if live_entry is None:
-        # Probed, and the linked slot is empty (or the track's probe failed and
-        # reported nothing for it). An empty slot is not a recreate: there is
-        # nothing to destroy, so create it.
+        # Probed successfully, and the linked slot is genuinely EMPTY. Only a
+        # successful probe reaches here — a failed one is PROBE_UNKNOWN and was
+        # handled above — and that distinction is the whole point: an empty slot
+        # is not a recreate, there is nothing to destroy, so create it.
         plan.warn(
             f"{where}: linked to Live slot {clip_at}, which the probe reports "
             "as empty — recreating it (nothing is destroyed by a create into "
@@ -351,7 +353,7 @@ def _plan_push_audio_clip(
         )
         return
 
-    if not _same_audio_file(live_file, resolved):
+    if not same_file_path(Path(live_file), resolved):
         plan.blocked(
             f"{where}: the row's audio_file CHANGED. Live's clip in slot "
             f"{clip_at} plays {live_file!r}; the row now authors "
@@ -373,23 +375,6 @@ def _plan_push_audio_clip(
         live_entry=live_entry,
     ):
         plan.add(call)
-
-
-def _same_audio_file(live_file: str, resolved: Path) -> bool:
-    """Whether Live's reported ``file_path`` names the file the row does.
-
-    Compared through the filesystem (``Path.resolve``) rather than textually:
-    a song directory reached through a symlink — ``/tmp`` → ``/private/tmp`` on
-    macOS is the everyday one — spells the same file two ways, and a textual
-    mismatch there would refuse a clip that never changed.
-    """
-    live_path = Path(live_file)
-    if live_path == resolved:
-        return True
-    try:
-        return live_path.resolve() == resolved.resolve()
-    except OSError:
-        return False
 
 
 def plan_push_clip(

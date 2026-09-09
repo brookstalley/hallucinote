@@ -3640,12 +3640,24 @@ def test_apply_session_clips_warns_when_live_and_db_disagree_on_kind(
     assert row["audio_file"] == "assets/gtr.wav"
 
 
-def test_apply_arrangement_clips_removes_audio_placement_absent_in_ableton(
+def test_apply_arrangement_clips_keeps_an_absent_audio_placement_and_says_why(
     conn, song, session
 ):
-    """SMP-6V2K ch05: the arrangement phase materializes kind='audio' now,
-    so an audio placement Live does not report is a real removal. The
-    CLP-AUD1 exemption would instead have pinned deleted state forever."""
+    """An absent audio placement is AMBIGUOUS, so pull must not delete it.
+
+    This test previously asserted the removal. That contract was wrong, and the
+    reason is the asymmetry between the two kinds: push always creates a MIDI
+    placement, so Live not having one means the user deleted it. Push
+    legitimately REFUSES some audio placements — one whose source clip hosts an
+    envelope, one whose sample file is missing — so Live not having an audio one
+    can equally mean push declined and said so. Pull cannot see push's refusals,
+    so reading absence as deletion erases authored intent the author never
+    touched. The row is kept and the ambiguity is reported.
+
+    The original concern the old contract protected against is still real and
+    still handled: the CLP-AUD1 exemption pinned deleted state forever *silently*.
+    A warning naming what to do is not silence.
+    """
     tid = M.create_track(
         conn, song_id=song, track_index=1, name="Stems", kind="audio",
     )
@@ -3664,9 +3676,15 @@ def test_apply_arrangement_clips_removes_audio_placement_absent_in_ableton(
         [_result(f"track_arrangement_clips:{tid}", _arr_payload())],
         song_id=song, session_id=session,
     )
-    assert out.mutations == 1
-    assert Q.get_arrangement_for_track(conn, tid) == []
-    assert any("removed" in d for d in out.details)
+    assert out.mutations == 0
+    # The placement survives — that is the whole point.
+    assert len(Q.get_arrangement_for_track(conn, tid)) == 1
+    # And the user is told, with the reason and the remedy, rather than the
+    # row silently persisting the way the CLP-AUD1 exemption made it.
+    assert any(
+        "NOT read as a deletion" in w and "build.py" in w
+        for w in out.warnings
+    ), out.warnings
 
 
 def test_apply_arrangement_clips_no_op_when_audio_placement_reported(
@@ -6257,3 +6275,73 @@ def test_pull_mixer_idempotent_after_steady_state(conn, song, session):
         song_id=song, session_id=session,
     )
     assert out.mutations == 0
+
+
+# ---------------------------------------------------------------------------
+# One bad reading costs one clip, not the whole pull (Critic R-13's resolution)
+# ---------------------------------------------------------------------------
+
+
+def test_out_of_domain_value_skips_that_clip_and_keeps_the_rest(conn, song, session):
+    """A value Live reports that the model rejects must fail THAT clip only.
+
+    The mutator validates Live's value domains, and failing on an out-of-domain
+    value is right — but an escaping ValueError aborts the pull transaction and
+    rolls back every other clip already read, so one unexpected reading would
+    cost the user the entire round trip. Same reasoning as the push side's
+    blocked-not-error choice.
+    """
+    tid = M.create_track(
+        conn, song_id=song, track_index=1, name="Stems", kind="audio",
+    )
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+
+    good = {"file_path": "/songs/s/assets/ok.wav", "warping": True, "warp_mode": 4}
+    # gain is LINEAR 0.0-1.0; 9.5 is outside what the model will hold.
+    bad = {"file_path": "/songs/s/assets/bad.wav", "gain": 9.5, "warping": True}
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_session_clips:{tid}",
+            _session_payload(
+                ("audio", 1, "ok", 8.0, good),
+                ("audio", 2, "bad", 8.0, bad),
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+
+    # The good clip landed; the bad one did not; the pull did not abort.
+    slots = {c["slot"] for c in Q.get_clips_for_track(conn, tid)}
+    assert slots == {1}, slots
+    assert any("NOT ingested" in w for w in out.warnings), out.warnings
+
+
+def test_out_of_domain_value_on_conform_skips_that_clip(conn, song, session):
+    """The update half of the same guard: an existing row that Live now
+    describes with an unacceptable value keeps its old state and reports it,
+    rather than rolling back the clips conformed before it."""
+    tid = M.create_track(
+        conn, song_id=song, track_index=1, name="Stems", kind="audio",
+    )
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    cid = M.create_audio_clip(
+        conn, track_id=tid, slot=1, length_beats=16.0,
+        audio_file="assets/gtr.wav", name="gtr",
+    )
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_session_clips:{tid}",
+            _session_payload(("audio", 1, "gtr", 16.0, {
+                "file_path": "/songs/s/assets/gtr.wav", "gain": 9.5,
+            })),
+        )],
+        song_id=song, session_id=session,
+    )
+
+    row = Q.get_clip(conn, cid)
+    assert row["audio_gain"] is None          # untouched
+    assert any("NOT conformed" in w for w in out.warnings), out.warnings

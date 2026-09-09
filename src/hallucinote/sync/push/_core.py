@@ -103,7 +103,8 @@ class PushPlan:
         Strictly stronger than :meth:`alert` (which it also records): a blocked
         reason makes the push report INCOMPLETE with a non-zero exit, because
         the song did not get something it asked for. Use :meth:`warn` for a
-        deliberate, known-scope no-op (e.g. audio tracks, CLP-AUD2) and
+        deliberate no-op the phase is entitled to make (e.g. an audio track
+        the DB holds no placements for) and
         :meth:`error` for authoring Live can NEVER materialize (that halts the
         phase before dispatch).
         """

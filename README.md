@@ -11,7 +11,7 @@ Say what you're going for, and it gets built into a running Live set — `build.
 Then listen, change your mind, explore new ideas.
 Because the song is code in a git directory, trying the half-time bridge or a key change costs a branch and a minute: keep it, or throw it away and try the next one.
 
-Round-trip to Ableton, recording MIDI events in Ableton to pull back and work on in Hallucinote (no audio round trip... yet).
+Round-trip to Ableton: record MIDI in Ableton and pull it back to work on in Hallucinote. Audio clips make the trip too — drop a sample into a slot and it becomes part of the song's source — though what Live *recorded* (a take) still can't be read back.
 
 ---
 

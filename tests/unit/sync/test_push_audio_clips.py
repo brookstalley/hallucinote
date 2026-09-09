@@ -714,3 +714,121 @@ def test_every_emitted_audio_call_validates_against_the_real_mcp_surface(
             f"{call.tool}({action}) rejected by the MCP dispatcher: "
             f"{getattr(resp, 'error', None)}"
         )
+
+
+# ---------------------------------------------------------------------------
+# An unknown slot is not an empty one (Critic R-1 / R-12)
+# ---------------------------------------------------------------------------
+
+
+def test_probe_records_a_track_only_on_success_so_failure_stays_absent():
+    """The probe's KEY PRESENCE is the signal consumers read.
+
+    A track that probed successfully must be present even when it holds no
+    clips; a track whose probe FAILED must be absent. Collapsing those is what
+    lets a consumer answer "unknown" with a destructive recreate, so the
+    encoding is pinned at the producer as well as the consumer.
+    """
+    from hallucinote.sync import push_cli
+
+    class _Resp:
+        def __init__(self, ok, result=None):
+            self.ok, self.result = ok, result
+
+    def send_fn(req):
+        idx = req.params["track_index"]
+        if idx == 2:
+            return _Resp(False)                       # this track's probe FAILED
+        if idx == 3:
+            return _Resp(True, {"clips": [{"clip_index": 1, "empty": True}]})
+        return _Resp(True, {"clips": [
+            {"clip_index": 1, "empty": False, "name": "a", "is_audio": True},
+        ]})
+
+    out = push_cli._probe_live_session_clips_via_mcp(
+        live_tracks=[{"track_index": 1}, {"track_index": 2}, {"track_index": 3}],
+        send_fn=send_fn,
+    )
+    assert 1 in out and len(out[1]) == 1      # populated
+    assert 3 in out and out[3] == []          # probed, genuinely empty
+    assert 2 not in out                       # FAILED — absent, not empty
+
+
+def test_live_session_entry_distinguishes_unknown_from_empty():
+    """The reader is tri-state, and this is the distinction that matters."""
+    from hallucinote.sync.push import clips as pc
+
+    probed = {5: [{"clip_index": 2, "is_audio": True}]}
+    # slot holds the clip
+    assert pc._live_session_entry(probed, track_at=5, clip_index=2) is not None
+    # track probed, slot genuinely empty
+    assert pc._live_session_entry(probed, track_at=5, clip_index=9) is None
+    # track absent from the map: its probe failed -> UNKNOWN, never "empty"
+    assert pc._live_session_entry(probed, track_at=6, clip_index=1) is pc.PROBE_UNKNOWN
+    # no probe at all -> also UNKNOWN
+    assert pc._live_session_entry(None, track_at=5, clip_index=2) is pc.PROBE_UNKNOWN
+
+
+def test_a_track_missing_from_the_probe_map_plans_nothing_destructive(
+    conn, song, session, audio_track, sample, song_dir,
+):
+    """The composed behaviour R-1 named, at planner level.
+
+    A probe was taken, but THIS track's per-track probe failed, so its key is
+    absent from the map. That is "unknown", not "empty" — and the difference is
+    a clip the operator still has. The phase must conform in place and plan no
+    create and no delete, exactly as it does when no probe was taken at all,
+    and it must say which of the two it is so the run is diagnosable.
+    """
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="line", gain=0.6,
+    )
+    _link_clip(conn, session=session, clip_id=cid, index=1)
+
+    # A map that PROBED (not None) but does not carry track 4 — its probe failed.
+    plan = push.plan_push_clips(
+        conn, song_id=song, session_id=session,
+        live_session_clips_by_track={9: []},
+    )
+
+    actions = {c.args["action"] for c in plan.calls}
+    assert actions <= {"set_property"}, (
+        f"an unknown slot must not be answered with a create/replace; got {actions}"
+    )
+    assert not any(c.args.get("replace") for c in plan.calls)
+    assert any("probe for track" in n and "FAILED" in n for n in plan.notes), plan.notes
+
+
+def test_extent_gap_is_reported_even_with_nothing_authored_and_does_not_block(
+    conn, song, session, audio_track, sample, song_dir,
+):
+    """The arrangement copy's EXTENT never travels, and that must be said even
+    when the row authors no conform columns at all.
+
+    `Track.create_audio_clip` takes a path and a position and no length, so the
+    copy plays the whole file however long the placement is. The notice used to
+    be gated on some conform column being authored, which hid the case with the
+    loudest symptom: a bare placement with an end_bar simply ran long, silently.
+
+    It is a WARNING, not a block, and that split is the point. Extent is true of
+    every audio placement ever planned; routing it as blocked would make every
+    song carrying a stem exit non-zero forever. An authored conform that did not
+    travel is a different fact — the song asked for something it did not get —
+    and that one does block.
+    """
+    cid = M.create_audio_clip(          # no gain / pitch / warp / markers
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="line",
+    )
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4,
+    )
+    _place(conn, song=song, track=audio_track, clip=cid, start_bar=3.0)
+
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track={4: []},
+    )
+    assert plan.blocked_reasons == [], plan.blocked_reasons
+    assert any("EXTENT did not travel" in n for n in plan.notes), plan.notes

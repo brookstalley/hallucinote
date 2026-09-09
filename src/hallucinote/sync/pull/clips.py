@@ -8,7 +8,11 @@ from pathlib import Path
 from typing import Any
 
 from hallucinote.db import mutations as M, queries as Q
-from hallucinote.paths import resolve_audio_path
+from hallucinote.paths import (
+    audio_file_ref as _audio_file_ref,
+    same_audio_file as _same_audio_file,
+    song_dir_for_conn as _song_dir_for_conn,
+)
 
 from ._core import (
     PullCall,
@@ -25,91 +29,6 @@ from ._core import (
 # ---------------------------------------------------------------------------
 # Audio-clip ingest: the path form, and the song anchor it is measured against
 # ---------------------------------------------------------------------------
-
-
-def _song_dir_for_conn(conn: sqlite3.Connection) -> Path | None:
-    """The directory holding this song's ``build.py``, DB and ``assets/``.
-
-    ``clips.audio_file`` is anchored to the song directory, but the pull apply
-    layer is handed a connection rather than a path — so the anchor is read off
-    the connection's own main database file (``songs/<slug>/<slug>.db`` ->
-    ``songs/<slug>/``), the same derivation ``tools/song_context.py`` uses.
-
-    Returns ``None`` for an in-memory database: there is then no anchor, and
-    every ingested reference is stored absolute rather than guessed at.
-    """
-    # PRAGMA database_list rows are (seq, name, file); indexed positionally so
-    # the read works under either row factory.
-    for row in conn.execute("PRAGMA database_list"):
-        if row[1] == "main":
-            return Path(row[2]).parent if row[2] else None
-    return None
-
-
-def _relative_to_or_none(path: Path, base: Path) -> str | None:
-    """``path`` under ``base`` as a POSIX string, or None when it is outside.
-
-    Tried as given and then with both filesystem-normalized, because the song
-    dir and Live's reported path can agree only through a symlink (macOS
-    resolves ``/tmp`` to ``/private/tmp``); a purely textual containment check
-    would miss the relation and store an absolute path for a file that does
-    live under the song directory. Same two-attempt shape, and the same
-    reason, as ``paths._relative_or_none``.
-    """
-    for candidate, anchor in ((path, base), (path.resolve(), base.resolve())):
-        try:
-            return candidate.relative_to(anchor).as_posix()
-        except ValueError:
-            continue
-    return None
-
-
-def _audio_file_ref(song_dir: Path | None, file_path: str) -> str:
-    """Render Live's absolute path into the form ``clips.audio_file`` carries.
-
-    Two forms, and only two: **song-relative POSIX** when the file lives under
-    the song directory (the canonical ``assets/...`` reference, which diffs
-    identically on every machine), **absolute** for anything else — a sample
-    dragged in from the user's own library keeps its absolute path.
-
-    Deliberately NOT :func:`hallucinote.paths.portable_path`. That helper's
-    middle form collapses an outside-the-base path to ``~/...``, and the
-    resolver this column is read back through — :func:`resolve_audio_path` —
-    does not expand ``~`` (only ``resolve_portable_path`` does). A
-    ``~``-collapsed reference stored here would resolve as a *relative* path
-    under the song directory and fail at the next push.
-    """
-    p = Path(file_path)
-    if song_dir is not None:
-        rel = _relative_to_or_none(p, song_dir)
-        if rel is not None:
-            return rel
-    return p.as_posix()
-
-
-def _same_audio_file(
-    song_dir: Path | None, db_ref: Any, live_path: str,
-) -> bool:
-    """Whether the DB reference and Live's absolute path name the same file.
-
-    Compared as PATHS, never as strings: the DB canonically stores
-    ``assets/line.wav`` while Live reports
-    ``/.../songs/<slug>/assets/line.wav``, and a textual compare would read
-    that as drift and rewrite the portable reference into a machine-absolute
-    one on every pull.
-    """
-    if not db_ref:
-        return False
-    live = Path(live_path)
-    if song_dir is None:
-        # No anchor: a relative reference cannot be resolved, so only an
-        # absolute one is comparable.
-        db_path = Path(str(db_ref))
-        if not db_path.is_absolute():
-            return False
-    else:
-        db_path = resolve_audio_path(song_dir, str(db_ref))
-    return db_path == live or db_path.resolve() == live.resolve()
 
 
 def _raw_floats_differ(new: Any, existing: Any) -> bool:
@@ -394,6 +313,25 @@ def _apply_arrangement_clips_for_track(
     # lets the user join the two halves manually).
     for k, row in db_by_pos.items():
         if k in seen:
+            continue
+        clip_row = Q.get_clip(conn, row["clip_id"]) if row["clip_id"] else None
+        if clip_row is not None and clip_row["kind"] == "audio":
+            # An absent MIDI placement means the user deleted it, because push
+            # always creates one. An absent AUDIO placement is ambiguous: the
+            # push side legitimately REFUSES some audio placements — one whose
+            # source clip hosts an envelope, one whose sample file is missing —
+            # so "Live does not have it" can equally mean "push declined to
+            # create it and said so". Deleting on that reading erases authored
+            # intent the author never touched, and pull cannot see push's
+            # refusals to tell the two apart. Warn instead; the row stays.
+            out.warnings.append(
+                f"track {track_row['name']!r}: audio arrangement placement at "
+                f"bar {row['start_bar']:g}..{row['end_bar']:g} "
+                f"({row['clip_name']!r}) is absent from Live, but push can "
+                "legitimately refuse to create an audio placement — so this is "
+                "NOT read as a deletion and the row is kept. If you did delete "
+                "it in Live, remove the placement in build.py."
+            )
             continue
         M.remove_arrangement_clip(
             conn, arrangement_clip_id=row["id"],
@@ -701,22 +639,36 @@ def _ingest_session_audio_clip(
             return
         ref = _audio_file_ref(song_dir, str(file_in))
         _unwarped_unit_note("length and markers")
-        cid = M.create_audio_clip(
-            conn,
-            track_id=track_row["id"],
-            slot=slot,
-            length_beats=float(length_in),
-            audio_file=ref,
-            name=name_in,
-            gain=None if gain_in is None else float(gain_in),
-            pitch_coarse=None if coarse_in is None else int(coarse_in),
-            pitch_fine=None if fine_in is None else float(fine_in),
-            warping=warping_in,
-            warp_mode=None if warp_mode_in is None else int(warp_mode_in),
-            start_marker=None if start_in is None else float(start_in),
-            end_marker=None if end_in is None else float(end_in),
-            actor=actor, request_id=request_id, reason=reason,
-        )
+        try:
+            cid = M.create_audio_clip(
+                conn,
+                track_id=track_row["id"],
+                slot=slot,
+                length_beats=float(length_in),
+                audio_file=ref,
+                name=name_in,
+                gain=None if gain_in is None else float(gain_in),
+                pitch_coarse=None if coarse_in is None else int(coarse_in),
+                pitch_fine=None if fine_in is None else float(fine_in),
+                warping=warping_in,
+                warp_mode=None if warp_mode_in is None else int(warp_mode_in),
+                start_marker=None if start_in is None else float(start_in),
+                end_marker=None if end_in is None else float(end_in),
+                actor=actor, request_id=request_id, reason=reason,
+            )
+        except ValueError as exc:
+            # The mutator validates Live's value domains. A value outside them
+            # is worth failing on — but this clip, not the whole pull: an
+            # aborted pull rolls back every OTHER clip already read, so one
+            # unexpected reading from Live would cost the user the entire
+            # round trip. Same reasoning as the push side's blocked-not-error.
+            out.warnings.append(
+                f"track {track_row['name']!r}: session slot {slot} audio clip "
+                f"{name_in!r} was NOT ingested — Live reported a value the "
+                f"model rejects ({exc}). Every other clip in this pull is "
+                "unaffected."
+            )
+            return
         out.mutations += 1
         out.details.append(
             f"track {track_row['name']!r}: session slot {slot} audio clip "
@@ -759,11 +711,21 @@ def _ingest_session_audio_clip(
         return
     if "length_beats" in changes:
         _unwarped_unit_note("length")
-    M.update_clip(
-        conn, clip_id=db_clip["id"],
-        actor=actor, request_id=request_id, reason=reason,
-        **changes,
-    )
+    try:
+        M.update_clip(
+            conn, clip_id=db_clip["id"],
+            actor=actor, request_id=request_id, reason=reason,
+            **changes,
+        )
+    except ValueError as exc:
+        # Per the create path above: one clip's out-of-domain reading must not
+        # roll back every other clip this pull already conformed.
+        out.warnings.append(
+            f"track {track_row['name']!r}: session slot {slot} audio clip was "
+            f"NOT conformed — Live reported a value the model rejects "
+            f"({exc}). Every other clip in this pull is unaffected."
+        )
+        return
     out.mutations += 1
     out.details.append(
         f"track {track_row['name']!r}: session slot {slot} audio clip "

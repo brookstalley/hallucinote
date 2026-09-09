@@ -15,7 +15,7 @@ from ._core import (
     _position_bar_to_beats,
     uniform_bar_math_divergences,
 )
-from .clips import _AUDIO_CONFORM_PROPERTIES, song_dir_for_conn
+from .clips import AUDIO_CONFORM_PROPERTIES, song_dir_for_conn
 from .envelopes import envelope_hosting_clip_ids
 
 
@@ -106,10 +106,10 @@ def _audio_placement_call(
     track_at: int,
     start_beats: float,
     hosts_envelope: bool,
-) -> tuple[ToolCall | None, str | None, str | None]:
+) -> tuple[ToolCall | None, str | None, tuple[str, str | None] | None]:
     """Materialize one ``kind='audio'`` placement, or say why it can't be (R1.1).
 
-    Returns ``(call, refusal, conform_gap)``. A ``refusal`` is a reason the
+    Returns ``(call, refusal, (extent_gap, conform_gap))``. A ``refusal`` is a reason the
     whole track must be skipped (§6a: the clear is destructive, so a track is
     materialized only when every placement on it can be rebuilt). A
     ``conform_gap`` is a placement that WAS planned but whose authored conform
@@ -205,9 +205,34 @@ def _audio_placement_call(
     )
 
     authored = [
-        prop for column, prop in _AUDIO_CONFORM_PROPERTIES
+        prop for column, prop in AUDIO_CONFORM_PROPERTIES
         if clip_row[column] is not None
     ]
+    # EXTENT is always in the gap, authored conform columns or not. The create
+    # takes a path and a position and NO length, so the arrangement copy plays
+    # the whole file regardless of the placement's end_bar. Gating the notice on
+    # `authored` hid exactly the case with the loudest symptom: a row with an
+    # end_bar and no gain/pitch/warp column got no notice at all and ran long.
+    # TWO gaps, two severities, because they are two different facts.
+    #
+    # EXTENT is universal: Track.create_audio_clip takes a path and a position
+    # and no length, so the copy plays the whole file however long the placement
+    # is. That is true of every audio placement ever planned, so it is a WARNING
+    # — routing it as blocked would make every song with a stem exit non-zero
+    # forever, which is the invariant `test_audio_track_is_not_blocked` protects.
+    # It must still be SAID: gating the notice on `authored` (as this first did)
+    # hid the case with the loudest symptom — a row with an end_bar and no
+    # gain/pitch/warp column got no notice at all and simply ran long.
+    #
+    # AUTHORED CONFORM is per-song: the song asked for a gain or a warp mode and
+    # did not get it on this copy. That is a run that must not read clean.
+    extent_gap = (
+        f"{where} was placed, but its EXTENT did not travel: Live's "
+        "Track.create_audio_clip takes a path and a position and no length, so "
+        "the arrangement copy plays the whole file regardless of the "
+        f"placement's end_bar ({row['end_bar']:g}). Trim it in Live, or wait "
+        "for the arrangement conform route (SMP-6V2K chunk 01)"
+    )
     conform_gap = None
     if authored:
         conform_gap = (
@@ -222,7 +247,7 @@ def _audio_placement_call(
             "Live and pull, or re-push once the arrangement copy's conform "
             "route is settled (SMP-6V2K chunk 01)"
         )
-    return call, None, conform_gap
+    return call, None, (extent_gap, conform_gap)
 
 
 def _divergence_bars(diverging: list[tuple[float, float, float]]) -> str:
@@ -416,6 +441,7 @@ def plan_push_arrangement(
         #     track is materializable (§6a — never clear what we can't rebuild).
         placement_calls: list[ToolCall] = []
         pending_gaps: list[str] = []
+        pending_extent_notes: list[str] = []
         skip_reason: str | None = None
         for row in rows:
             clip_row = Q.get_clip(conn, row["clip_id"])
@@ -446,8 +472,15 @@ def plan_push_arrangement(
                     )
                     break
                 placement_calls.append(audio_call)
+                # A planned placement always carries the extent note; the
+                # authored-conform half is present only when the row authored
+                # one. The guard keeps the pair's optionality honest rather than
+                # assuming the shape a successful return happens to have.
                 if conform_gap is not None:
-                    pending_gaps.append(conform_gap)
+                    extent_gap, authored_gap = conform_gap
+                    pending_extent_notes.append(extent_gap)
+                    if authored_gap is not None:
+                        pending_gaps.append(authored_gap)
                 placed_audio += 1
                 continue
 
@@ -566,6 +599,8 @@ def plan_push_arrangement(
         # of what the song authored for them, so the run must not read clean.
         for gap in pending_gaps:
             plan.blocked(f"arrangement: {gap}.")
+        for note in pending_extent_notes:
+            plan.warn(f"arrangement: {note}.")
 
     if cleared or created or duplicated or placed_audio:
         plan.warn(

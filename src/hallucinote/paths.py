@@ -26,8 +26,9 @@ sync layer carries no heavy deps).
 from __future__ import annotations
 
 import logging
+import sqlite3
 from pathlib import Path, PurePosixPath
-from typing import Iterable
+from typing import Any, Iterable
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ def resolve_audio_path(song_dir: str | Path, ref: str) -> Path:
     ``song_dir`` — the directory containing the song's ``build.py``;
     the helper takes it as an explicit argument so the policy stays
     caller-owned. Absolute refs pass through unchanged (stored
-    as-given; the push-time existence check is CLP-AUD2 scope).
+    as-given; the push-time existence check lives in the clips phase).
     """
     posix_ref = PurePosixPath(ref)
     if posix_ref.is_absolute() or Path(ref).is_absolute():
@@ -251,3 +252,121 @@ def self_ignore_files(directory: Path, filenames: Iterable[str]) -> None:
         target.write_text("\n".join(entries).rstrip("\n") + "\n")
     except OSError:
         logger.warning("could not update %s", target, exc_info=True)
+
+
+# ---------------------------------------------------------------------------
+# Audio-clip references — the ONE home for the `clips.audio_file` contract
+# ---------------------------------------------------------------------------
+#
+# Push writes this column and pull reads it back, so the two ends of one round
+# trip must agree byte for byte about what a reference means. They were written
+# separately and had already drifted: one derived the song directory from
+# `PRAGMA database_list`'s FIRST row, the other searched it for the row named
+# `main`. Those agree only because sqlite happens to list main first — correct
+# by accident on one side, correct by construction on the other. Anything that
+# both ends must agree on lives here, once.
+
+def song_dir_for_conn(conn: sqlite3.Connection) -> Path | None:
+    """The directory holding this song's ``build.py``, DB and ``assets/``.
+
+    ``clips.audio_file`` is anchored to the song directory, but the pull apply
+    layer is handed a connection rather than a path — so the anchor is read off
+    the connection's own main database file (``songs/<slug>/<slug>.db`` ->
+    ``songs/<slug>/``), the same derivation ``tools/song_context.py`` uses.
+
+    Returns ``None`` for an in-memory database: there is then no anchor, and
+    every ingested reference is stored absolute rather than guessed at.
+    """
+    # PRAGMA database_list rows are (seq, name, file); indexed positionally so
+    # the read works under either row factory.
+    for row in conn.execute("PRAGMA database_list"):
+        if row[1] == "main":
+            return Path(row[2]).parent if row[2] else None
+    return None
+
+
+def relative_to_or_none(path: Path, base: Path) -> str | None:
+    """``path`` under ``base`` as a POSIX string, or None when it is outside.
+
+    Tried as given and then with both filesystem-normalized, because the song
+    dir and Live's reported path can agree only through a symlink (macOS
+    resolves ``/tmp`` to ``/private/tmp``); a purely textual containment check
+    would miss the relation and store an absolute path for a file that does
+    live under the song directory. Same two-attempt shape, and the same
+    reason, as ``paths._relative_or_none``.
+    """
+    for candidate, anchor in ((path, base), (path.resolve(), base.resolve())):
+        try:
+            return candidate.relative_to(anchor).as_posix()
+        except ValueError:
+            continue
+    return None
+
+
+def audio_file_ref(song_dir: Path | None, file_path: str) -> str:
+    """Render Live's absolute path into the form ``clips.audio_file`` carries.
+
+    Two forms, and only two: **song-relative POSIX** when the file lives under
+    the song directory (the canonical ``assets/...`` reference, which diffs
+    identically on every machine), **absolute** for anything else — a sample
+    dragged in from the user's own library keeps its absolute path.
+
+    Deliberately NOT :func:`hallucinote.paths.portable_path`. That helper's
+    middle form collapses an outside-the-base path to ``~/...``, and the
+    resolver this column is read back through — :func:`resolve_audio_path` —
+    does not expand ``~`` (only ``resolve_portable_path`` does). A
+    ``~``-collapsed reference stored here would resolve as a *relative* path
+    under the song directory and fail at the next push.
+    """
+    p = Path(file_path)
+    if song_dir is not None:
+        rel = relative_to_or_none(p, song_dir)
+        if rel is not None:
+            return rel
+    return p.as_posix()
+
+
+def same_file_path(a: Path, b: Path) -> bool:
+    """Whether two concrete paths name the same file.
+
+    Compared through the filesystem rather than textually: a song directory
+    reached through a symlink — ``/tmp`` -> ``/private/tmp`` on macOS is the
+    everyday one — spells the same file two ways, and a textual mismatch there
+    would read an unchanged clip as a re-pointed one.
+
+    ``resolve()`` touches the filesystem and can raise, so the failure is
+    caught here rather than in each caller: the push side guarded it and the
+    pull side did not, which is the kind of drift that follows from two copies
+    of one comparison.
+    """
+    if a == b:
+        return True
+    try:
+        return a.resolve() == b.resolve()
+    except OSError:
+        return False
+
+
+def same_audio_file(
+    song_dir: Path | None, db_ref: Any, live_path: str,
+) -> bool:
+    """Whether the DB reference and Live's absolute path name the same file.
+
+    Compared as PATHS, never as strings: the DB canonically stores
+    ``assets/line.wav`` while Live reports
+    ``/.../songs/<slug>/assets/line.wav``, and a textual compare would read
+    that as drift and rewrite the portable reference into a machine-absolute
+    one on every pull.
+    """
+    if not db_ref:
+        return False
+    live = Path(live_path)
+    if song_dir is None:
+        # No anchor: a relative reference cannot be resolved, so only an
+        # absolute one is comparable.
+        db_path = Path(str(db_ref))
+        if not db_path.is_absolute():
+            return False
+    else:
+        db_path = resolve_audio_path(song_dir, str(db_ref))
+    return same_file_path(db_path, live)

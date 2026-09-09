@@ -47,8 +47,8 @@ ENV-9P4T: audio-track hosts are authorable. A clip-independent (e.g.
 song-spanning) ride routes to **perform** — a continuous arrangement lane,
 like a plain/group track (the mutator admits audio; the planner infers the
 route from the envelope's span: covered by one session clip → per-clip,
-else → perform). A per-clip ride that IS covered by a single audio session
-clip is still refused, pending the session-audio-clip push surface CLP-AUD2.
+else → perform). An audio host is NOT a special case: it routes exactly like
+a MIDI one, including the per-clip route under a covering audio session clip.
 
 ### Master / group / return envelopes — performed, not clip-hosted
 The master track cannot host clips, so there is no
@@ -84,12 +84,6 @@ unsupported in the API entirely.
 **Workaround:** (a) `ableton_session(action='set_tempo' / 'set_signature')` for
 the bar-1 value; (b) per-scene tempo / signature via `ableton_scene` — scenes
 carry their own values and trigger on launch.
-
-### Session-view audio clip creation
-`ableton_clip(action='create', location='session', kind='audio')` raises
-`NotImplementedError` — Live's `clip_slot.create_audio_clip` isn't exposed.
-**Workaround:** drag audio from Live's browser, or place audio in arrangement
-view (`location='arrangement'`).
 
 ## Partial gaps (works with restrictions)
 

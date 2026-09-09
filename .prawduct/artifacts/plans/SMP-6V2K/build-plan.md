@@ -449,7 +449,9 @@ because the choice of home is the work.
 ## Definition of done (the wave)
 
 A movie line copied into `songs/<slug>/assets/`, referenced from `build.py`, pushes into a
-Live set as a warped, transposed audio clip in both session and arrangement; a volume ride
+Live set as a warped, transposed audio clip in the session and as a placement in the
+arrangement (**the arrangement copy carries no conform** — see the gap in chunk 03; closing
+it needs the probe answer about `duplicate_clip_to_arrangement`); a volume ride
 authored under it pushes; a second line dragged in by hand in Live comes back on pull and
 survives a re-push; and `capability-truth.md` says exactly that and no more.
 

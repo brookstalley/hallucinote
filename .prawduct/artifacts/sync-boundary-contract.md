@@ -255,9 +255,12 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
   envelopes is unprobed and neither dropping a ride nor re-emitting one that
   survived is known-good. **Probe-less is the safe degradation** — conform in
   place, no create, no delete — and it announces itself with an alert rather
-  than acting on a guess. *The execute path does not supply the probe yet, so
-  today every audio re-push takes the probe-less branch and raises that alert;
-  wiring it is outstanding work, tracked in the wave's build plan.*
+  than acting on a guess. The execute path supplies it as a thunk resolved inside the
+  phase, so it sees the tracks the `tracks` phase created on a first push.
+  **A track whose probe FAILED is absent from the map, and absence is not
+  emptiness** — the reader is tri-state (`PROBE_UNKNOWN`), because answering an
+  unknown slot as an empty one plans a `replace=True` recreate against a clip
+  the operator really has.
 - **Re-probes:** nothing on its own; the session-clip probe above is supplied by
   the caller (dict or thunk), never taken by the phase.
 - **Failure/halt:** Per-call failure → boundary halt. `clip:` link

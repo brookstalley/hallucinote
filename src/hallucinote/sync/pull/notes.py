@@ -59,7 +59,7 @@ def plan_pull_notes_for_clips(
             continue
         if clip_row["kind"] == "audio":
             # CLP-AUD1 defense-in-depth: wave 1 never links audio clips
-            # (push refuses them), but CLP-AUD2's placement sync will —
+            # (an audio clip has no notes to read) —
             # and notes live on MIDI clips only, so a note probe against
             # an audio clip is never meaningful.
             plan.warn(

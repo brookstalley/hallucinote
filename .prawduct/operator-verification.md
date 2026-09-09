@@ -70,8 +70,18 @@ evidence no unit test could give: chunk 03 rewrote `push/clips.py`, which the MI
 shares, and the first real set it met did not notice. It says nothing about the audio path,
 which is what the unticked boxes below are for.
 
-*Arrangement (116 placements) pending in the same run — `push/arrangement.py` is the other
-rewritten module and had not yet had a live pass at the time of writing.*
+**Arrangement half PASSED too, same run.** 116/116 placements applied, cues 1/1, and
+`verify-arrangement` afterwards reported 58/58 placements faithful with **no orphan clips**.
+The perform pass in the same push recorded all six changed arcs with real write counts.
+
+That is the half worth having. `push/arrangement.py` is the *destructive* module — the
+arrangement-as-projection shape clears each track's lane before rebuilding it (ARR-PROJ) —
+so a regression there costs a user their timeline rather than returning an error, and no
+unit test reaches it. Both rewritten modules have now cleared a real set.
+
+**Still unverified, and this is what the boxes below are for:** every one of these results is
+from a **pure-MIDI** song. Nothing above exercised a `kind='audio'` row, so the audio path
+this wave exists to build has still never run against Live.
 
 
 - [ ] A song with one authored audio clip pushes into a real set — **session and arrangement**

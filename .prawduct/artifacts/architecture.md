@@ -137,7 +137,7 @@ adopted the projection model: `sync/pull/clips.py::plan_pull_arrangement_clips` 
 diffs arrangement placements positionally against `arrangement_clips` rows.
 
 The invariant that makes both safe: **every write goes through a mutator and emits an
-event in the same transaction.** No raw SQL in callers, ever. That discipline is what
+event in the same transaction.** No write SQL in callers. That discipline is what
 keeps the eventual event-store migration cheap (see [`authorship-model.md`](authorship-model.md)).
 
 ## Deployment topology

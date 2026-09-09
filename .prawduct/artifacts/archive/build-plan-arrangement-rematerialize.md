@@ -1,3 +1,12 @@
+---
+lifecycle: completed
+archived: 2026-09-08
+unbuilt_at_archive: "no readable `## Status` roster — completeness cannot be read, and an unreadable plan is not evidence of completion"
+maintained: false
+---
+
+> **Archived — no longer maintained.** This plan records what was built, not what will be. Do not edit it to reflect later changes; write those where they are true.
+
 # Build plan — SYN-4R7P: probe-and-link reconciles stale `arrangement_clip` links
 
 **Type:** Bugfix (medium). **Branch:** `fix/arrangement-rematerialize` (worktree, off `develop`).

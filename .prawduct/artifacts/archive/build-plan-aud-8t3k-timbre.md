@@ -1,3 +1,11 @@
+---
+lifecycle: completed
+archived: 2026-09-08
+maintained: false
+---
+
+> **Archived — no longer maintained.** This plan records what was built, not what will be. Do not edit it to reflect later changes; write those where they are true.
+
 # Build Plan — AUD-8T3K: Standing per-stem/per-section timbre metrics
 
 **Branch:** `feature/aud-8t3k-timbre` (worktree off `develop`)

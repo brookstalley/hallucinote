@@ -14,7 +14,7 @@ primitive.
 Kit (M1-C). Every helper takes a required ``kit: Kit`` kwarg. The kit
 provides the MIDI note for each canonical drum pad (``kit.kick``,
 ``kit.snare``, etc.) — capture probes Drum Racks and persists the
-mapping; ``Kit.from_device(conn, device_id)`` loads it. For tests and
+mapping; ``hallucinote.kits.load_kit(conn, device_id)`` loads it. For tests and
 for songs whose snapshot hasn't been captured, ``Kit.gm_default()``
 returns a standard General-MIDI pad layout. Composers express intent
 ("a kick pattern") and the kit decides which MIDI note that means on

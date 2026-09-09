@@ -41,9 +41,13 @@ behind it. Six TODO markers, all deliberate scaffold placeholders; every
 relative link across 26 docs resolving; no dead top-level modules; backlog
 groomed with 0 stale and 0 unstaged. What had accumulated was records, not rot.
 
-**Plans (Chunk 01).** `plans/` held 51 entries and had archived 4. Fifty were
-archived here — 39 completed, 11 superseded, each of the latter naming what
-absorbed it. Classification was per-plan because a mechanical read gets it wrong
+**Plans (Chunk 01).** `plans/` held 51 entries and had archived 4. Forty-seven
+were archived here (46 plan directories plus the EXECUTION-ORDER wave doc), and
+the Critic round added six finished `build-plan-*.md` at the artifacts root that
+sat outside the same lifecycle — 53 units in all. Eight were superseded, each
+naming what absorbed it; the rest completed. (An earlier draft of this entry
+said "50, 39 completed, 11 superseded" — the review caught it. The counts here
+were derived from the tree, not carried over from that draft.) Classification was per-plan because a mechanical read gets it wrong
 in both directions: NODE-ADDR's boxes are unticked while its text says DONE +
 LIVE-VERIFIED, and ENV-9P4T uses a `[~]` box no box-counting regex matches, for
 a chunk its own Live probe invalidated. Every superseded plan's open work was
@@ -79,7 +83,7 @@ the ruff churn decision, #488 the two worthwhile artifact templates.
 entry are stamped, so the next sweep reads a trend instead of measuring from
 zero. That absence is why this one existed.
 
-Suite: 5302 passed, 2 skipped. ruff clean, mypy clean (214 files).
+Suite green with no path argument at every chunk boundary and after the Critic round; ruff and mypy clean. Exact totals live in the evidence store, not in this prose, because a copied count drifts the moment a test is added.
 
 ## 2026-09-08 — The report learns to ask whether the audio is damaged
 

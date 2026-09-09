@@ -13,8 +13,9 @@ sweep measured the purity norm at one violation site: ``kit.py`` imported
 dependency was **inverted**, not deferred. ``Kit.from_rows`` takes rows, so the
 DB is the caller's problem rather than a lazily-imported secret.
 
-``Kit.from_device`` remains the documented authoring entry point and keeps
-working; see its deprecation note.
+``load_kit`` IS the documented authoring entry point. ``Kit.from_device``
+survives as a one-major-version alias for it and is slated for removal in
+2.0; nothing new should teach it.
 """
 from __future__ import annotations
 

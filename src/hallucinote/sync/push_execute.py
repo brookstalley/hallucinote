@@ -555,7 +555,7 @@ def _probe_pad_mappings_for_session(
     Best-effort by design. The push's primary purpose — materializing the
     song's structural state in Live — already succeeded for this phase
     when this helper runs. Pad probing is auxiliary metadata for the
-    composer (so ``Kit.from_device`` returns kit-specific notes instead of
+    composer (so ``hallucinote.kits.load_kit`` returns kit-specific notes instead of
     GM defaults next build cycle). A per-device failure (connection drop,
     handler error, mutator validation rejection) increments the failed
     counter and skips that device; the next push retries.

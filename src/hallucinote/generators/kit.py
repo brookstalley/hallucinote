@@ -50,9 +50,8 @@ from __future__ import annotations
 import sqlite3
 import warnings
 from collections.abc import Iterable
-from typing import Any, Protocol
 from dataclasses import dataclass, field
-
+from typing import Any, Protocol
 
 
 class _PadRow(Protocol):
@@ -200,7 +199,11 @@ class Kit:
         to be informative.
         """
         mappings = {int(r["midi_note"]): str(r["chain_name"]) for r in rows}
-        if name is None:
+        # `or`, not `is None`: an empty name falls through to the stub, which
+        # is what `from_device` did before the split. Tightening this to an
+        # identity check would silently give a Kit a blank name in warning
+        # text, for callers that pass "" meaning "I have no name for this".
+        if not name:
             name = f"device:{device_id[:8]}" if device_id else "rows"
         return cls(name=name, device_id=device_id, mappings_by_note=mappings)
 

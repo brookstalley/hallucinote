@@ -1,7 +1,7 @@
 """Per-surface stereo metrics — correlation and mono-sum loss (STR-4C8N).
 
 The motivating case is in the acceptance criteria of
-``.prawduct/artifacts/plans/STR-4C8N/build-plan.md``: a flanger declared to give
+``.prawduct/artifacts/plans/STR-4C8N/archive/build-plan.md``: a flanger declared to give
 a mono guitar chain stereo, whose automation verified as recorded AND playing
 while the rendered stem stayed bit-exact mono. These tests pin the measurement
 that catches it.

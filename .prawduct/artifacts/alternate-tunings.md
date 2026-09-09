@@ -3,7 +3,7 @@ artifact: requirements
 feature: alternate-tunings (MICROTUNE)
 status: ready
 discovery_date: 2026-06-16
-build_plan: .prawduct/artifacts/plans/MICROTUNE/build-plan.md
+build_plan: .prawduct/artifacts/plans/MICROTUNE/archive/build-plan.md
 ---
 
 # Requirements — Composing in alternate tuning systems (MICROTUNE)

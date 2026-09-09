@@ -1,3 +1,11 @@
+---
+lifecycle: completed
+archived: 2026-09-08
+maintained: false
+---
+
+> **Archived — no longer maintained.** This plan records what was built, not what will be. Do not edit it to reflect later changes; write those where they are true.
+
 # Build Plan — Incoming bugs triage 2026-06-20
 
 **Branch:** `fix/incoming-bugs-2026-06-20` (worktree `../hallucinote-wt-incoming-bugs`)

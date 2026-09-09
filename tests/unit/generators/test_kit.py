@@ -378,10 +378,13 @@ def test_generators_package_imports_no_database_code():
     import subprocess
     import sys
 
+    # EVERY generator module, not just kit. Importing one proves nothing about
+    # its six siblings, and the norm is about the package.
     probe = (
-        "import sys; import hallucinote.generators.kit as k;"
-        "assert k;"
-        "leaked = [m for m in sys.modules if m.startswith('hallucinote.db')];"
+        "import importlib, pkgutil, sys;"
+        "import hallucinote.generators as g;"
+        "[importlib.import_module(m.name) for m in pkgutil.iter_modules(g.__path__, g.__name__ + '.')];"
+        "leaked = sorted(m for m in sys.modules if m.startswith('hallucinote.db'));"
         "print(','.join(leaked))"
     )
     out = subprocess.run(
@@ -393,3 +396,33 @@ def test_generators_package_imports_no_database_code():
     assert out.stdout.strip() == "", (
         f"importing generators.kit pulled in DB modules: {out.stdout.strip()}"
     )
+
+
+def test_load_kit_reads_mappings_from_the_database(conn, device_with_mappings):
+    """`hallucinote.kits.load_kit` directly — not through the alias.
+
+    `Kit.from_device` is deprecated for removal in 2.0. Testing the loader only
+    through it would mean the surviving surface loses its coverage on the day
+    the alias goes, which is the wrong day to discover that.
+    """
+    from hallucinote.kits import load_kit
+
+    kit = load_kit(conn, device_with_mappings, name="Hot Rod Kit")
+    assert kit.name == "Hot Rod Kit"
+    assert kit.device_id == device_with_mappings
+    assert kit.pitch_of("kick") == Kit.from_device(
+        conn, device_with_mappings
+    ).pitch_of("kick")
+
+
+def test_from_rows_name_default_covers_both_branches():
+    """Both default branches, and the empty-name fall-through.
+
+    The extraction briefly changed `name or <stub>` into `name is None`, which
+    silently preserved an empty name where the pre-split `from_device` produced
+    a stub. Nothing caught it because neither branch had a test.
+    """
+    assert Kit.from_rows([], device_id="abcdef1234").name == "device:abcdef12"
+    assert Kit.from_rows([]).name == "rows"
+    assert Kit.from_rows([], name="", device_id="abcdef1234").name == "device:abcdef12"
+    assert Kit.from_rows([], name="Explicit").name == "Explicit"

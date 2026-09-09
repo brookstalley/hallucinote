@@ -270,9 +270,9 @@ technical_decisions:
       alternatives_considered: "Logging-style events outside the transaction (rejected — opens drift between state and audit log)."
       date: "2026-05-15"
     - decision: "Audio clips share the `clips` table via a `kind` discriminator (CLP-AUD1 wave 1)"
-      rationale: "Audio material is a clip row with kind='audio' + locked wave-1 audio columns; invariants live in mutators (not schema CHECKs); path resolution is caller-owned via stdlib-only `hallucinote.paths.resolve_audio_path`. Full column semantics + sync exemptions in .prawduct/artifacts/plans/CLP-AUD1/design.md."
+      rationale: "Audio material is a clip row with kind='audio' + locked wave-1 audio columns; invariants live in mutators (not schema CHECKs); path resolution is caller-owned via stdlib-only `hallucinote.paths.resolve_audio_path`. Full column semantics + sync exemptions in .prawduct/artifacts/plans/CLP-AUD1/archive/design.md."
       alternatives_considered: "Separate audio_clips table (duplicates every clip constraint); warp_mode as TEXT enum (drifts from LOM int domain); absolute-only paths (breaks portability)."
-      date: "2026-06-10 (CLP-AUD1 chunks 1-2; design at .prawduct/artifacts/plans/CLP-AUD1/design.md)"
+      date: "2026-06-10 (CLP-AUD1 chunks 1-2; design at .prawduct/artifacts/plans/CLP-AUD1/archive/design.md)"
     - decision: "ableton_sessions + ableton_links projection separation"
       rationale: "Bindings to Ableton don't live on core rows. Multiple sessions per song are intentional — one song can be bound to several Live sets without aliasing. `link_db_to_ableton(session_id, db_kind, db_id, ableton_index)` is the generic mutator that replaced three per-domain link_*_to_ableton functions."
       alternatives_considered: "Per-domain ableton_index columns on every entity row (rejected — coupled core schema to the rendering layer)."
@@ -515,7 +515,7 @@ artifact_manifest:
       version: 3
       depends_on: [project-preferences]
     - name: build-plan
-      file_path: .prawduct/artifacts/build-plan-highroi-sweep.md
+      file_path: .prawduct/artifacts/archive/build-plan-highroi-sweep.md
       version: 2
       depends_on: [project-preferences, boundary-patterns]
     - name: arrangement-model
@@ -584,16 +584,24 @@ build_state:
   source_root: "src/hallucinote/"
 
 # Active build plan pointer (.prawduct/-relative).
-# In-flight plans with pending Live-gated work (see each plan's Status section):
-#   SMP-7K2D — chunks 1-2 + no-Live 5 done; probe chunk 0 + push chunks 3-4 pending.
-#   ARR-PROJ — all 5 headless chunks built on plan/arr-proj-arrangement-materialization;
-#     cumulative-Critic PR gate + live e2e + ARR-9X4T/ARR-7H2N backlog close remain.
-#   TOUR — ALL CHUNKS COMPLETE and MERGED to develop (2026-08-11, PR #452,
-#     merge 258200f): punk-fate in examples/, C1 evidence + docs/tour.md +
-#     freshness tests, cumulative Critic 0 blocking, PR review 0 blocking.
-#     Gitflow: the plan stays LIVE until the develop→main release — the
-#     release checklist's plan-backfill archives it (change-log entry
-#     scope=tour is untagged, i.e. release-pending).
+# In-flight plans with pending Live-gated work: NONE as of 2026-09-08.
+# The JANITOR-2026-09 sweep archived every plan under artifacts/plans/ (46
+# directories plus the EXECUTION-ORDER wave doc), and six finished
+# build-plan-*.md at the artifacts root; 8 of the 53 were superseded, each
+# naming what absorbed it. The three this list
+# used to name are all resolved:
+#   SMP-7K2D — archived superseded; its unbuilt Live probe + push chunks are
+#     brookstalley/hallucinote#330.
+#   ARR-PROJ — archived completed; the residual live e2e is #306, and the two
+#     witness items it named are closed (#349) or subsumed.
+#   TOUR — was already archived on 2026-08-11 by the v1.8.3 release checklist's
+#     plan-backfill, so this entry described it as live for four weeks after the
+#     release that retired it. That is the failure this list invites: a
+#     hand-maintained roster of live plans drifts the moment one is archived by
+#     any other route.
+# The only live plan is the janitor sweep's own (artifacts/plans/JANITOR-2026-09/),
+# plus artifacts/build-plan.md, which is merged-but-unreleased and stays live per
+# gitflow until the develop->main release ships.
 # Shipped/stale plan history: the git history of this file (pre-2026-07-04,
 # PRC-5W2N trim) has the full narrative; a per-machine copy also sits in the
 # gitignored reflections archive where present.

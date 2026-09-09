@@ -5,6 +5,56 @@ Incident narratives and how-to-apply guidance for the rules in
 heading here matches one there (a rule with no narrative simply has no entry here).
 **Never delete an entry here** — this is the long-term memory the index points at.
 
+## A norm sweep must ask WHICH SIDE moved — the remedy for statement drift is the opposite of the remedy for code drift
+
+The first Norm Health sweep (2026-09-08) measured ten norms: six clean, four with
+distance, and the four split evenly by cause — which is the finding, because a sweep that
+assumes one cause gets half its remedies backwards.
+
+**Statement drift (2).** "No raw SQL in callers, EVER" — its own stated why is that a
+caller reaching around the mutators makes the event log a lie, which a `SELECT` cannot do.
+Seventeen read sites were violations of nothing; the wording had outgrown its
+justification. The `sync.*` row said the layer never invokes MCP while seven modules
+called `client.send` — and `sync-boundary-contract.md` had *already ratified* an Executor
+whose job is exactly that. The row was narrower than the design its own sibling artifact
+held.
+
+**Code drift (2).** `kit.py` imported `hallucinote.db.queries`, making the purity norm
+false at the point it was meant to pay. Five modules lacked the future import, on a row
+carrying an unacted-on "promote to a ruff rule" note.
+
+**How to apply.** Ask whether the norm's why reaches the sites it condemns. If it does not,
+the statement moved and the fix is an owner-ruled amendment citing its authority. If it
+does, the code moved and the fix is code. Then watch yourself: this same sweep's Critic
+caught it narrowing the future-import norm from "every module" to "every module that has
+code" to excuse two files a two-line fix would have closed — the amendment cited no ruling
+while every sibling amendment cited one, which is the signature. Being the one who wrote
+the rule above does not exempt you from it.
+
+## An archived record is not a live surface — path-shaped exemptions go stale the moment you archive
+
+`test_collaboration_norm_parity` exempted one plan by exact path
+(`plans/COLLAB-TURN/build-plan.md`, "carries the sweep's own target list") and exempted
+`.prawduct/artifacts/archive/` by prefix. Archiving that plan moved it to
+`plans/COLLAB-TURN/archive/build-plan.md`, matching neither, and the lock failed on a file
+stamped "archived — no longer maintained. Do not edit."
+
+Both exemptions were the same rule wearing two shapes. Stating it once as
+`"/archive/" in path` covers every archive location, including ones the archival tool has
+not invented yet.
+
+**The corollary, which cost a second mistake.** When the sweep then repointed ~130 dangling
+path citations, the same rule applied in reverse: citations inside *live* artifacts were
+fixed, citations inside archived records were left alone, and `backlog.md` and
+`change-log-archive.md` — both frozen history — had to be reverted after a first pass
+rewrote them. "Do not rewrite the record" binds the person tidying up as much as the person
+being tidied after.
+
+**Related mechanical trap.** `git ls-files --cached` lists the index, so a file moved but
+not yet staged appears at its old path and `read_text` raises `FileNotFoundError` — a scan
+that walks tracked files must skip paths with no file, or it crashes on any mid-rename
+tree instead of failing honestly.
+
 ## Threading a new param means making the test doubles faithful — not weakening tests
 
 ENV-8K2R #5 added `ToolCall.read_timeout` (forwarded to `client.send`) and ENV-2T9K added `plan_push_song(perform_slowdown_factor=...)`. Two 1-arg doubles broke — `_make_send_fn`'s `send(req)` and a `plan_without_scenes(conn, *, song_id, session_id)` monkeypatch. Both were resolved by widening the double to the real contract (`send(req, *, read_timeout=None)` recording the value; `plan_without_scenes(..., **kwargs)` forwarding through), and the `send` double additionally grew the `arc_count` field the real handler returns so the new apply-layer cross-check (#4) was exercised. The executor's own forwarding was written to pass the new kwarg ONLY when set, so the *non*-perform path still hits 1-arg doubles untouched — pick the conditional at the production boundary, the faithful-signature widening at the test boundary.

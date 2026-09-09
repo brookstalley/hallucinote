@@ -53,7 +53,7 @@ dev = [
 # --- uv workspace (INS-7V2D) ---------------------------------------------------
 # The plugin bundles BOTH the engine (this package) and the MCP server
 # (hallucinote_mcp) and runs the server with uv from a committed uv.lock into a
-# ${CLAUDE_PLUGIN_DATA} env (see .prawduct/artifacts/plans/INS-7V2D/design.md).
+# ${CLAUDE_PLUGIN_DATA} env (see .prawduct/artifacts/plans/INS-7V2D/archive/design.md).
 # Declaring the workspace lets `uv sync --all-packages` build ONE env containing
 # the server (mcp) + the engine (for the lazy-imported analysis path) — without
 # hallucinote_mcp hard-depending on hallucinote (the import-time isolation

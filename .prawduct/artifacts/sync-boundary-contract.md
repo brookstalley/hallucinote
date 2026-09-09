@@ -10,7 +10,7 @@ version: 1
 scope: SYN-8Q3F
 depends_on:
   - artifact: build-plan
-    path: .prawduct/artifacts/plans/SYN-8Q3F/build-plan.md
+    path: .prawduct/artifacts/plans/SYN-8Q3F/archive/build-plan.md
 last_validated: 2026-07-04
 ---
 

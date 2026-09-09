@@ -148,7 +148,13 @@ def _tracked_files() -> list[str]:
         text=True,
         check=True,
     ).stdout
-    return out.split()
+    # Drop index entries whose file is gone from disk. `--cached` lists the
+    # index, so a file MOVED but not yet staged appears at its old path and
+    # `read_text` raises FileNotFoundError -- the lock crashed instead of
+    # failing, on a tree that was merely mid-rename. Its new path arrives via
+    # `--others`, so nothing escapes the scan; a path with no file cannot
+    # carry a phrase.
+    return [rel for rel in out.split() if (_REPO / rel).is_file()]
 
 
 def _is_exempt(rel: str) -> bool:

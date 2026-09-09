@@ -455,9 +455,9 @@ Drum Rack pads are **kit-specific MIDI notes**. Late Nite Kit puts the kick at 3
 **Three resolution paths**, each suited to a different authoring intent:
 
 ```python
-from hallucinote.generators.kit import Kit
+from hallucinote.kits import load_kit
 
-kit = Kit.from_device(conn, drum_device_id, name="Hot Rod Kit")
+kit = load_kit(conn, drum_device_id, name="Hot Rod Kit")
 
 # Strict — the part fundamentally needs this pad. Raises on wrong-sound
 # substitution (Hot Rod Kit ride → GM 51 → cowbell). Use when the part
@@ -488,7 +488,7 @@ kit.assert_has("kick", "snare", "ride", "crash", strict=True)
 **Auto-population.** `push_cli execute` probes `pad_info` for every linked Drum Rack after the devices phase and persists the result via `M.replace_drum_pad_mappings`. Best-effort: per-Drum-Rack failures count but don't halt the push. So the typical flow is:
 
 1. First push of a song that loads a Drum Rack → devices phase succeeds → pad-probe writes the kit's actual pad-note layout to `drum_pad_mappings`.
-2. Next `build.py` run → `Kit.from_device(conn, drum_device_id)` returns kit-specific notes (kit's actual kick at whatever note Hot Rod Kit puts it on).
+2. Next `build.py` run → `load_kit(conn, drum_device_id)` returns kit-specific notes (kit's actual kick at whatever note Hot Rod Kit puts it on).
 3. Subsequent pushes — `replace_drum_pad_mappings` is idempotent, so re-probing on every push refreshes if the kit changes and no-ops otherwise.
 
 **Property shortcuts** (`kit.kick`, `kit.snare`, `kit.crash`, etc.) wrap `pitch_of`. Use them for kicks/snares/hats that every kit has; reach for `try_pitch_of` when a pad's presence is genre-dependent (rides, crashes, splashes, cowbells, tambourines).
@@ -609,7 +609,7 @@ Push materializes this in the `routing` phase (after `mix` and `devices` — an 
 
 **Monitor=In is load-bearing**, not optional polish: a summing bus that receives routed audio is silent until its monitor is `In` (the live-probed dependency). The `routing` push phase sets it from `monitoring_state='In'`.
 
-**Automation-fidelity caveat — read before claiming "master automation is solved."** The bus delivers **perform-fidelity** rides today (the lossy ~2.5 Hz gesture-record path described under "Master, group, and return envelopes" above) — adequate for slow master moves (volume rides, filter sweeps over many bars), not sample-accurate. **True-lossless** bus automation needs a hosting session clip the audio bus can't carry until **CLP-AUD2** lands. This convention delivers **routing** — it removes the master special-casing and makes the bus a first-class, normally-automatable track; it does **not** add a new automation fidelity. Full fidelity map + decisions: [RTE-1K9T design](../.prawduct/artifacts/plans/RTE-1K9T/design.md#automation-fidelity-caveat-read-before-claiming-master-automation-solved).
+**Automation-fidelity caveat — read before claiming "master automation is solved."** The bus delivers **perform-fidelity** rides today (the lossy ~2.5 Hz gesture-record path described under "Master, group, and return envelopes" above) — adequate for slow master moves (volume rides, filter sweeps over many bars), not sample-accurate. **True-lossless** bus automation needs a hosting session clip the audio bus can't carry until **CLP-AUD2** lands. This convention delivers **routing** — it removes the master special-casing and makes the bus a first-class, normally-automatable track; it does **not** add a new automation fidelity. Full fidelity map + decisions: [RTE-1K9T design](../.prawduct/artifacts/plans/RTE-1K9T/archive/design.md#automation-fidelity-caveat-read-before-claiming-master-automation-solved).
 
 > A `route_to_bus` convenience helper is deliberately **not** shipped yet — the pattern has no second user. Friction-driven, like the interplay primitives above: the first song to adopt the bus authors it from these mutators; a helper earns its place when a second one does.
 
@@ -690,7 +690,7 @@ Both print the new session_id; use it for the rest of the push cycle and reuse i
 
 - [`.prawduct/artifacts/arrangement-model.md`](../.prawduct/artifacts/arrangement-model.md) — the arrangement model + the **dimension taxonomy** (structure intents · realization layers · subsystems) these conventions sit within
 - [`.prawduct/artifacts/performance-model.md`](../.prawduct/artifacts/performance-model.md) — the performance realization layer (the formal model behind "microtiming is authorship")
-- [`.prawduct/artifacts/plans/RTE-1K9T/design.md`](../.prawduct/artifacts/plans/RTE-1K9T/design.md) — the routing model + the **automation-fidelity caveat** behind the PRE-MAIN submaster bus
+- [`.prawduct/artifacts/plans/RTE-1K9T/archive/design.md`](../.prawduct/artifacts/plans/RTE-1K9T/archive/design.md) — the routing model + the **automation-fidelity caveat** behind the PRE-MAIN submaster bus
 - [`.prawduct/artifacts/song-conventions.md`](../.prawduct/artifacts/song-conventions.md) — the **WHY** corpus: decisions/annotations, the frontmatter schema + controlled mix/groove **tag vocabulary** (the markdown companion to the `feel`-dict *WHAT* here)
 - `docs/snapshot-schema.md` — `captured_session.json` shape
 - `ableton://reference/node-feature-matrix` (MCP resource) — which features (routing, macros, chain mixer, choke groups, zones) are reachable on which node kind, tri-state with LOM evidence; read before authoring a node feature

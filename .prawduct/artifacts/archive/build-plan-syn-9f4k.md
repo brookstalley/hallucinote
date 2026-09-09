@@ -1,3 +1,11 @@
+---
+lifecycle: completed
+archived: 2026-09-08
+maintained: false
+---
+
+> **Archived — no longer maintained.** This plan records what was built, not what will be. Do not edit it to reflect later changes; write those where they are true.
+
 # Build Plan — SYN-9F4K: fail loud on empty-rack load (push devices phase)
 
 **Branch:** `fix/syn-9f4k-empty-rack-fail-loud` (worktree `../hallucinote-wt-syn9f4k`)

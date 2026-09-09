@@ -1123,10 +1123,9 @@ NOTE_EXPRESSION_AXES = frozenset({"pitch", "pressure", "timbre"})
 #   'master'/'group' -> perform route (gesture-recorded arrangement
 #                    automation at push time; probe-verified, see
 #                    docs/research/audio-first-class/lom-probe-results.md)
-#   'audio'       -> perform for a clip-independent continuous ride
-#                    (ENV-9P4T); a per-clip ride covered by an audio clip is
-#                    refused at PUSH time (session-audio-clip push is
-#                    CLP-AUD2). Authorable at create time either way.
+#   'audio'       -> the same partition as midi: session-clip route when a
+#                    covering audio session clip exists, else perform for a
+#                    clip-independent continuous ride
 # The fine per-clip-vs-continuous decision needs the song's clips, so it is
 # made by the planner (classify_envelope_route), not this create-time gate.
 _HOST_KIND_ROUTED_KINDS = frozenset({
@@ -1301,9 +1300,9 @@ def create_envelope(
     # ENV-7G4K eligibility (supersedes the W10-F blanket refusal), extended
     # by ENV-9P4T: midi hosts route through session clips (per-clip) OR
     # perform (clip-independent ride); master/group hosts are performed at
-    # push time; AUDIO hosts are now authorable too — perform gives an audio
-    # track a continuous arrangement ride (its per-clip session-audio-clip
-    # route stays CLP-AUD2, refused at PUSH time, not at create). The planner
+    # push time; audio hosts are authorable too and route exactly like midi —
+    # a covering audio session clip takes the per-clip route, an uncovered
+    # ride performs. The planner
     # partitions the same way (sync/push/envelopes.py
     # `classify_envelope_route` infer-from-span). This create-time gate is
     # only the coarse authorability check; the per-clip-vs-continuous routing

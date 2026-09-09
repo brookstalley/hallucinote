@@ -187,6 +187,14 @@ Questions, in the order a builder needs them:
 3. **Recreate semantics.** `create_audio_clip` into an **occupied** slot: error, replace, or
    silent no-op? Then delete-and-recreate a clip that hosts a mixer envelope — does the
    envelope survive, and if not, what does `automation_envelope` return afterwards?
+   **And, on the same clip: does `duplicate_clip_to_arrangement` carry an envelope off an
+   AUDIO session clip the way it does off a MIDI one?** Chunk 04 surfaced this: once an
+   audio clip can host an envelope, `envelope_hosting_clip_ids` returns audio clip ids, and
+   `push/arrangement.py` routes any placement in that set through duplicate-onto-cleared
+   precisely so the envelope travels with it. Chunk 03 otherwise places audio with
+   `Track.create_audio_clip(path, beats)` directly, which carries nothing. The two stories
+   collide on exactly one row — an audio placement whose source clip hosts a ride — and the
+   answer decides which one wins.
 4. **Path handling.** Confirm the absolute-path requirement and re-record the two error
    shapes from row 1c against this Live build.
 5. **Batched for wave 4** (#330 chunk 0, so the operator is asked once): how a sample
@@ -273,6 +281,17 @@ and warns rather than acting.**
   same file → update properties in place; different file → recreate; and if the probe
   showed envelopes do not survive, the recreate re-emits them rather than silently dropping
   a ride the author wrote.
+- **Envelope-hosting audio placements — the seam chunk 04 opened.** `envelope_hosting_clip_ids`
+  now returns audio clip ids, and `push/arrangement.py` routes a placement whose source clip
+  is in that set through **duplicate-onto-cleared** rather than create+fill, so the envelope
+  travels with the clip. Placing audio with the direct `Track.create_audio_clip(path, beats)`
+  call would carry no envelope. Decide this row explicitly against chunk 01's answer: if
+  `duplicate_clip_to_arrangement` carries envelopes off an audio session clip, an
+  envelope-hosting audio placement takes the duplicate path like a MIDI one and only the
+  envelope-free ones use the direct call; if it does not, the direct call is used throughout
+  and the envelope is re-emitted rather than silently dropped. Either way this is one branch
+  with a test, not an accident.
+
 - **Arrangement phase (`push/arrangement.py`, contract phase 13).** Today an audio placement
   skips the **whole track's** projection so that manually-placed clips are not wiped. Once
   audio placements materialize, an audio track becomes projectable like any other — but the

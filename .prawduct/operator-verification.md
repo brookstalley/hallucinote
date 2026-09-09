@@ -59,6 +59,21 @@ the column's materialization moves to wave 3/4.
 
 ### Chunk 03 — push materializes `kind='audio'`
 
+**Partial live result, 2026-09-09 — the MIDI-path regression half PASSED.** Reported by the
+concurrent `alien-song` session, which was pushing a pure-MIDI song through this branch's
+engine (handshake confirmed: server, Remote Script and package all `ad27853`). `push
+--only clips` planned and applied **58/58 clips with no refusals and no warnings** beyond
+the standing tuning note.
+
+That is **R6.4** — "nothing here regresses what exists" — for the clips phase, and it is
+evidence no unit test could give: chunk 03 rewrote `push/clips.py`, which the MIDI path
+shares, and the first real set it met did not notice. It says nothing about the audio path,
+which is what the unticked boxes below are for.
+
+*Arrangement (116 placements) pending in the same run — `push/arrangement.py` is the other
+rewritten module and had not yet had a live pass at the time of writing.*
+
+
 - [ ] A song with one authored audio clip pushes into a real set — **session and arrangement**
 - [ ] A **second push of the unchanged song plans no work** (the property a destructive reconcile most easily breaks)
 - [ ] A **missing sample file fails its clip loudly** — not a reported-OK push that plays silence

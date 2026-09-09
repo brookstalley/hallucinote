@@ -17,7 +17,15 @@ a limit).
 > **Living doc.** Keep this current with the code — it must never lag. When a
 > dimension's depth changes (e.g. melody matures, vocals arrive), edit the table
 > here and the handoff/elicitation surfaces inherit it automatically. Last
-> reviewed: **2026-08-11** (the Mix — authoring row's "any Live edition" narrowed
+> reviewed: **2026-09-09** (an *Audio material* row, which the table had never
+> carried at all — so the honest answer to "can you use samples?" was unwritten
+> while the code to place one landed. It ships at ◐ rather than ✓ on purpose:
+> the mechanism is built and unit-tested and its LOM calls are probe-confirmed,
+> but nothing has run end-to-end against a real set, and a doc whose whole job is
+> anti-confabulation must not be where that distinction goes missing. It becomes
+> ✓ when the operator verification in `.prawduct/operator-verification.md`
+> passes, and it gains transform / sampler / derivation language only as those
+> waves actually ship. Prior: **2026-08-11** (the Mix — authoring row's "any Live edition" narrowed
 > to Standard and Suite, matching the README: those are the editions actually
 > exercised, and an Intro user asking "what can you do?" was getting the
 > overclaim the rest of the corpus had already retired. Prior: 2026-06-17, split
@@ -43,7 +51,8 @@ a limit).
 | **Melody — line analysis** | ✓ read-side | the symbolic **melody lens** reads any monophonic line's contour, intervals, and harmony-fit and coaches it *against your declared intent* (`/hallucinote:compose-review`, `hallucinote.tools.melody_lens`) — including a topline you sketched in. It measures, it never invents the hook (that's yours). No universal "good melody" verdict. |
 | **Melody — lead-line *authoring*** | ◐ thinner | I won't write your finished hook — that's your art, by design (no melody generator, ever). A generated topline is a starting point, not the finished hook. *Sketch your line in Ableton and I'll arrange under it (round-trip) — and read whether it lands its intent (line analysis above).* |
 | **Vocal topline (synthesis)** | ✗ not yet | we don't synthesize a sung vocal. A sketched vocal *melody* (MIDI) round-trips in — and the line analysis above reads it. |
-| **Round-trip / sketch-input** | ✓ full | edit in Ableton, we ingest + build around it — `/hallucinote:ableton-pull` `clip-notes`, stable per-note IDs. |
+| **Round-trip / sketch-input** | ✓ full | edit in Ableton, we ingest + build around it — `/hallucinote:ableton-pull` `clip-notes`, stable per-note IDs. Audio clips ride this path too, at the maturity the row below states. |
+| **Audio material (samples)** | ◐ built, not yet live-verified | An audio file referenced from `build.py` places into a Live slot and into the arrangement with its warp mode, transpose, gain and markers; a clip you drag into Live by hand comes back into the song's source on pull, in a portable path form; a volume ride or send throw authored under an audio clip pushes. The LOM calls behind all of it were probe-confirmed on Live 12.4.1 and the paths are unit-tested — but the end-to-end has **not yet run against a real set**, so say "built, unverified", never "works". Two cases deliberately **refuse and say so** rather than guess: re-pointing a clip at a different file (a destructive recreate whose effect on envelopes is unprobed) and an arrangement placement whose clip hosts an envelope. **Not in this**: no acquisition or extraction from media, no offline transform (pitch shift, stretch, chop, reverse), no assigning a sample to Simpler/Sampler, and no feature extraction — you cannot yet derive a part from what a sample *sounds like*. Those are later waves of SMP-6V2K, and until they land the honest answer to "can you use samples?" is *place and conform, yes; transform or derive from, not yet.* |
 
 ## How to use this in conversation
 

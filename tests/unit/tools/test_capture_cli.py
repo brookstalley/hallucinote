@@ -269,8 +269,9 @@ def test_cmd_execute_writes_refresh_json_and_forwards_old(
 
     captured = {}
 
-    def fake_assemble(probe, *, old_snapshot=None):
+    def fake_assemble(probe, *, old_snapshot=None, song_dir=None):
         captured["old"] = old_snapshot
+        captured["song_dir"] = song_dir
         return {"snapshot_version": 1, "tracks": []}
 
     monkeypatch.setattr(cc, "_resolve_send_fn", lambda: (lambda req: _Resp(True, {})))
@@ -291,6 +292,9 @@ def test_cmd_execute_writes_refresh_json_and_forwards_old(
     }
     # The old snapshot is loaded + forwarded so browser_path is preserved.
     assert captured["old"] == {"snapshot_version": 1, "browser_path": {"a": "b"}}
+    # The song dir is the output's directory, so a captured sampler's sample
+    # path lands song-relative when the file lives under the song.
+    assert captured["song_dir"] == out.parent
 
 
 def test_cmd_execute_needs_song_or_output(capsys) -> None:

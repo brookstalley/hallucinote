@@ -327,6 +327,8 @@ def loaded_actions():
 _EXPECTED_DEVICE_ACTIONS = {
     "help", "list", "info", "load", "delete", "enable", "disable",
     "set_parameter", "get_parameters",
+    # A sampler's sample is assigned by its own re-callable action, not by load.
+    "assign_sample",
     # W6-E-2 capability-probing primitives + retained legacy-named actions:
     "capabilities", "set_input_routing", "get_input_routing",
     "set_sidechain", "get_routing",

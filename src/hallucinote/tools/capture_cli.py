@@ -143,7 +143,11 @@ def _cmd_execute(args: argparse.Namespace) -> int:
         old_snapshot = json.loads(old_path.read_text())
 
     probe = _make_probe(_resolve_send_fn())
-    snapshot = assemble_snapshot_via_probes(probe, old_snapshot=old_snapshot)
+    # song_dir makes a captured sampler's sample path song-relative when the
+    # file lives under the song; absolute otherwise (the clips.audio_file form).
+    snapshot = assemble_snapshot_via_probes(
+        probe, old_snapshot=old_snapshot, song_dir=out_path.parent,
+    )
 
     out_path.write_text(json.dumps(snapshot, indent=2) + "\n")
     print(

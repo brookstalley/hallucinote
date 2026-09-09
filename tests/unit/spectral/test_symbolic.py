@@ -160,22 +160,30 @@ def test_pitch_hz_in_12tet_and_under_a_tuning():
     assert pitch_hz(A4 + 1, bp) == pytest.approx(440.0 * 2 ** (1901.955 / 13 / 1200), rel=1e-6)
 
 
-def test_the_songs_tuning_moves_the_partials(tmp_path: Path):
+def test_a_tuned_song_needs_its_tuning_passed_in_and_it_moves_the_partials(tmp_path: Path):
+    """The core never imports the tuning bolt-on, so the caller hands the
+    song's TuningData in; a tuned song read without it refuses rather than
+    quietly sounding in 12-TET."""
     conn, sid = _song(tmp_path)
     tid, _ = _track(conn, sid, index=1, name="bp", notes=[_note(A4 + 13)])
     bp = _bohlen_pierce()
     M.set_song_tuning(conn, song_id=sid, tuning_ref="tunings/bp.ascl", tuning_data=bp.to_blob())
     freqs, times = symbolic_axes(RES, duration_s=0.5)
     sched = constant_schedule(0.0, 4.0, [("track", tid)])
+    with pytest.raises(ValueError, match=r"alternate tuning.*load_song_tuning"):
+        symbolic_field(conn, sched, _ConstantTempo(), freqs_hz=freqs, times_s=times,
+                       harmonic_depth=1, resolution=RES)
     tuned = symbolic_field(conn, sched, _ConstantTempo(), freqs_hz=freqs, times_s=times,
-                           harmonic_depth=1, resolution=RES)
+                           harmonic_depth=1, resolution=RES, tuning=bp)
     assert tuned.magnitude[_nearest(freqs, 1320.0), 0] == 1.0
     assert tuned.magnitude[_nearest(freqs, pitch_hz(A4 + 13)), 0] == 0.0
-    # An explicit tuning overrides the song's.
-    twelve = symbolic_field(conn, sched, _ConstantTempo(), freqs_hz=freqs, times_s=times,
-                            harmonic_depth=1, resolution=RES, tuning=None)
-    assert twelve.fingerprint == tuned.fingerprint  # None means "the song's"
-    assert twelve.magnitude[_nearest(freqs, 1320.0), 0] == 1.0
+    # The tuning is part of what was read, so it is in the fingerprint.
+    untuned_song, sid2 = _song(tmp_path, name="other")
+    tid2, _ = _track(untuned_song, sid2, index=1, name="bp", notes=[_note(A4 + 13)])
+    plain = symbolic_field(untuned_song, constant_schedule(0.0, 4.0, [("track", tid2)]),
+                           _ConstantTempo(), freqs_hz=freqs, times_s=times,
+                           harmonic_depth=1, resolution=RES)
+    assert plain.fingerprint != tuned.fingerprint
 
 
 def test_fingerprint_follows_notes_placements_schedule_and_nothing_else(tmp_path: Path):

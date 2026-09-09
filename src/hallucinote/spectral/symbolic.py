@@ -19,7 +19,7 @@ import hashlib
 import json
 import sqlite3
 from dataclasses import dataclass
-from typing import Callable
+from typing import Protocol, Callable
 
 import numpy as np
 
@@ -34,8 +34,23 @@ from hallucinote.spectral.types import (
 )
 from hallucinote.sync.geometry import _position_bar_to_beats
 from hallucinote.sync.push_notes import clip_fingerprint
-from hallucinote.tuning.model import TuningData
-from hallucinote.tuning.store import load_song_tuning
+
+
+class TuningLike(Protocol):
+    """What this module needs from an alternate tuning — structurally.
+
+    The core path never imports ``hallucinote.tuning`` (the isolation the
+    bolt-on is built on, grep-asserted in ``tests/unit/tuning``), so a tuned
+    song hands its ``TuningData`` in explicitly and this module reads only the
+    interval structure it needs. Nothing here deserializes a tuning.
+    """
+
+    step_count: int
+    period_cents: float
+    reference_note: int
+    step_cents: tuple[float, ...]
+
+    def to_blob(self) -> str: ...
 
 # Concert pitch: MIDI 69 sounds at 440 Hz in 12-TET, and an alternate tuning's
 # reference note is anchored to its own 12-TET frequency because the persisted
@@ -56,7 +71,7 @@ class SoundingNote:
     velocity: int
 
 
-def pitch_hz(pitch: int, tuning: TuningData | None = None) -> float:
+def pitch_hz(pitch: int, tuning: TuningLike | None = None) -> float:
     """The frequency a MIDI note sounds at, in 12-TET or the song's tuning.
 
     Under a tuning Live makes consecutive MIDI numbers consecutive scale
@@ -131,7 +146,7 @@ def symbolic_field(
     times_s: np.ndarray,
     harmonic_depth: int,
     resolution: ResolutionReport,
-    tuning: TuningData | None = None,
+    tuning: TuningLike | None = None,
     song_id: str | None = None,
 ) -> SpectralField:
     """Rasterize the schedule's sounding partials onto ``(freqs_hz, times_s)``.
@@ -141,7 +156,9 @@ def symbolic_field(
     ``resolution`` names the grid the field was placed on, so a consumer can
     ask what one bin is worth at a pitch; the symbolic field's own precision
     is exact, and this report is the honest limit of the raster. ``tuning``
-    defaults to the song's persisted tuning, 12-TET when it has none.
+    is the song's ``TuningData`` when the song carries one — passed in by the
+    caller, because this module never imports the tuning bolt-on — and a
+    tuned song read without it refuses rather than sounding in 12-TET.
     ``song_id`` is inferred when the DB holds one song.
     """
     depth = int(harmonic_depth)
@@ -156,7 +173,14 @@ def symbolic_field(
 
     sid = _resolve_song_id(conn, song_id)
     if tuning is None:
-        tuning = load_song_tuning(conn, sid)
+        row = Q.get_song_tuning(conn, sid)
+        if row is not None and row["tuning_ref"] is not None:
+            raise ValueError(
+                f"song {sid} carries the alternate tuning {row['tuning_ref']!r}, so its "
+                "partials cannot be placed in 12-TET. Pass "
+                "tuning=hallucinote.tuning.store.load_song_tuning(conn, song_id) — the "
+                "core never reads the tuning on its own (isolation invariant FR-6)."
+            )
     ts_points = Q.get_time_signature_map(conn, sid)
 
     beats = np.asarray([beat_map.seconds_to_beats(float(t)) for t in times], dtype=np.float64)
@@ -305,7 +329,7 @@ def _fingerprint(
     conn: sqlite3.Connection,
     schedule: ReferenceSchedule,
     song_id: str,
-    tuning: TuningData | None,
+    tuning: TuningLike | None,
 ) -> str:
     """What the field was built from: the notes of every placement the
     schedule can reach, where they were placed, the schedule and the tuning.

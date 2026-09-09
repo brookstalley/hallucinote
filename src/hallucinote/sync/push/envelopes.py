@@ -57,11 +57,12 @@ def plan_push_envelopes(
         (push-findings #12). Warn cites the MIDI control-change-note
         workaround for clip_cc; pitch_bend has no auto-encode path.
       - ``mixer_volume`` / ``mixer_pan`` / ``send_level`` /
-        ``device_parameter`` on midi hosts: routed through a session clip
-        on the target track (Live 12.4 LOM accepts these only on session
-        clips). When no arrangement_clip placement on the target track
-        covers the envelope's beat range, the envelope can't be hosted;
-        warn + skip.
+        ``device_parameter`` on midi or audio hosts: routed through a
+        session clip on the target track (Live 12.4 LOM accepts these
+        only on session clips — an ARRANGEMENT clip raises "Not a session
+        clip"). When no arrangement_clip placement on the target track
+        covers the envelope's beat range, the ride is clip-independent
+        and routes to perform instead (see below).
 
     Perform-routed (ENV-7G4K — `classify_envelope_route`): master/group
     hosts, return-side devices, and ``return_mixer_volume`` /
@@ -69,8 +70,10 @@ def plan_push_envelopes(
     push phase gesture-records them into arrangement automation. This
     phase notes the routing and moves on. ENV-9P4T extends this: a plain
     midi or audio track whose envelope no single session clip covers also
-    routes to perform (a continuous, clip-independent ride); an audio
-    per-clip ride that IS covered by a clip is refused pending CLP-AUD2.
+    routes to perform (a continuous, clip-independent ride). A covered
+    ride rides its session clip whether that clip is midi or AUDIO —
+    ``Clip.create_automation_envelope`` works on an audio session clip
+    (probe row 3: written and read back on a real one).
 
     Other skip-with-warn paths (legacy):
       - target/clip/device not linked in the session
@@ -168,11 +171,11 @@ def _track_kind_for_envelope(
 ) -> str | None:
     """Look up a track's `kind` column, or None when track_id is None / unknown.
 
-    W10-F planner-side safety net for D2/D3. The DB mutator now refuses to
-    create envelopes for session-clip-routed kinds (mixer / pan / send /
-    device_parameter) on non-MIDI tracks (master / audio / group). This
-    helper backs the parallel planner refusal, which catches legacy rows
-    that pre-date the mutator check or pulled state that bypassed it.
+    The host kind is what the route depends on (:func:`_route_for_host_kind`),
+    so the planner reads it for every track-hosted envelope. A kind outside
+    the canonical vocabulary — a legacy row, or pulled state that bypassed
+    the create-time gate — falls through to 'unroutable' and is warned about
+    rather than emitted as a guaranteed-fail wire call.
     """
     if track_id is None:
         return None
@@ -184,19 +187,21 @@ def _route_for_host_kind(host_kind: str | None) -> str:
     """Map a host track's kind to its PER-CLIP / no-inference push route.
 
     This is the covered-case map (ENV-7G4K eligibility): master/group are
-    always performed (they own no session clips to ride); a midi host's
-    per-clip ride routes through a covering session clip; an audio host's
-    per-clip ride is session-audio-clip scope (CLP-AUD2), refused here.
+    always performed (they own no session clips to ride); a midi OR audio
+    host's per-clip ride routes through a covering session clip, because
+    ``Clip.create_automation_envelope`` accepts an audio session clip just
+    as it does a midi one (probe row 3 wrote a track-volume envelope onto a
+    real audio session clip and read the value back). What Live refuses is
+    an ARRANGEMENT clip ("Not a session clip", probe row 2) — and no route
+    here ever addresses one: every emitter writes ``location='session'``.
     ENV-9P4T's ``_route_track_hosted`` wraps this with infer-from-span so a
     clip-INDEPENDENT (e.g. song-spanning) ride on a midi/audio host routes
     to ``perform`` instead.
     """
-    if host_kind == "midi":
+    if host_kind in ("midi", "audio"):
         return "session_clip"
     if host_kind in ("master", "group"):
         return "perform"
-    if host_kind == "audio":
-        return "refused_audio"
     return "unroutable"
 
 
@@ -228,12 +233,11 @@ def _route_track_hosted(
     session clip on the host track covers the envelope's beat span — a
     continuous, clip-independent arrangement ride (the 10+-track use case
     and the song-spanning send across tacet gaps). Otherwise the per-clip
-    route: ``session_clip`` for a midi host, ``refused_audio`` (CLP-AUD2)
-    for an audio host. A degenerate no-breakpoint envelope falls back to the
-    coarse host-kind route.
+    route, ``session_clip``, for a midi or an audio host alike. A degenerate
+    no-breakpoint envelope falls back to the coarse host-kind route.
     """
     base = _route_for_host_kind(host_kind)
-    if base not in ("session_clip", "refused_audio"):
+    if base != "session_clip":
         # master/group → perform; unknown/unresolved kind → unroutable. No
         # session-clip notion applies, so infer-from-span is a no-op.
         return base
@@ -258,19 +262,17 @@ def classify_envelope_route(
       'clip_scoped'    clip_cc / clip_pitch_bend / note_expression — hosted
                        by the authored clip itself; existing emitters own
                        their LOM-gap teaching.
-      'session_clip'   midi-track host whose envelope is COVERED by a single
-                       session clip — a per-clip ride routed through
-                       Clip.create_automation_envelope.
+      'session_clip'   midi- OR audio-track host whose envelope is COVERED
+                       by a single session clip — a per-clip ride routed
+                       through Clip.create_automation_envelope. The clip
+                       addressed is always a SESSION clip; Live refuses the
+                       call on an arrangement clip (probe row 2).
       'perform'        master/group host, return-side mixer or device, OR a
                        plain midi/audio track host whose envelope is NOT
                        covered by a single session clip (a continuous,
                        clip-independent arrangement ride — ENV-9P4T).
                        Gesture-recorded into arrangement automation by the
                        performed-automation push phase (write-only surface).
-      'refused_audio'  audio-track host whose envelope IS covered by a
-                       single (audio) session clip — a per-clip ride whose
-                       session-audio-clip push surface is CLP-AUD2; warn +
-                       skip with teaching. (An UNCOVERED audio ride performs.)
       'unroutable'     unresolvable host (missing device/chain), nested-rack
                        device (no addressable surface on either route), or
                        an unknown kind — caller warns with specifics.
@@ -400,15 +402,6 @@ def _warn_non_session_route(
             f"host kind={host_kind!r} routes to the performed-automation "
             "phase (gesture-recorded arrangement automation), not the "
             "session-clip envelope phase."
-        )
-    elif route == "refused_audio":
-        plan.warn(
-            f"envelope {envelope['id']} ({target_kind}): host track "
-            f"{host_track_id} is an audio track and this envelope is COVERED "
-            "by a single audio session clip — a per-clip ride whose "
-            "session-audio-clip push surface is CLP-AUD2 (not yet built). A "
-            "clip-INDEPENDENT (e.g. song-spanning) ride records continuously "
-            "via perform; author it to span beyond any single clip. Skipping."
         )
     else:
         plan.warn(
@@ -719,10 +712,10 @@ def _emit_device_parameter_envelope(
     breakpoints_mcp: list[dict[str, Any]],
 ) -> None:
     """device_parameter emission for the session-clip route — reached only
-    when classify_envelope_route returns 'session_clip' (a covered midi-host
-    device parameter; W4-A / W4-B). Master/group/return-side devices and
-    uncovered rides route to the performed-automation phase (ENV-7G4K /
-    ENV-9P4T); an audio host covered by a clip is refused pending CLP-AUD2."""
+    when classify_envelope_route returns 'session_clip' (a covered midi- or
+    audio-host device parameter; W4-A / W4-B). Master/group/return-side
+    devices and uncovered rides route to the performed-automation phase
+    (ENV-7G4K / ENV-9P4T)."""
     device_id = envelope["target_device_id"]
     chain_row = Q.get_device_parent_chain(conn, device_id)
     if chain_row is None:
@@ -734,9 +727,9 @@ def _emit_device_parameter_envelope(
     route = classify_envelope_route(conn, envelope, song_id=song_id)
     if route != "session_clip":
         # DEEP-RACK-ADDR: nested-rack params route to 'perform' (the perform
-        # phase rides them via device_path); master/return and uncovered/
-        # covered-audio rides also land here. The session-clip phase owns none
-        # of them, so note the real route and return.
+        # phase rides them via device_path); master/return hosts and
+        # clip-independent (uncovered) rides also land here. The session-clip
+        # phase owns none of them, so note the real route and return.
         if chain_row["parent_rack_device_id"] is not None:
             host_track_id = None
             host_kind = "nested-rack device"

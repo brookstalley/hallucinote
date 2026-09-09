@@ -158,3 +158,39 @@ and a `reverse=1` row. Every row below is a call and its literal response.
 | 28b | **Which surface owns `devices.audio_file` when `build.py` and the snapshot disagree?** | **`build.py` wins — by design, and it makes the hand-drop untestable in that shape** | The first attempt put the drop on a Simpler whose `build.py` authors `audio_file="assets/tone.wav"`; push reverted it to `tone.wav`. That is correct — push reconciles Live to the DB, and `build.py` had authored a competing value. The canonical shape (the scaffold template) replays the mix-half FIRST and does not author devices at all; the scratch song needed an `AUDIO_VERIFY_HANDDROP=1` switch to reach it. **A song whose samples are hand-managed must not also author `audio_file` in `build.py`** — worth saying in the conventions |
 | 28c | **Is the captured path the "portable path form"?** | **NO, and deliberately so — the operator-verification box's parenthetical is wrong** | Capture renders `devices.audio_file` through `paths.audio_file_ref`, whose docstring rejects `portable_path` explicitly: its `~`-collapsed middle form would be read back by `resolve_audio_path`, which does NOT expand `~`, so the ref would resolve as a *relative* path under the song dir and fail at the next push. Two forms only: song-relative, or absolute. The residual tension is real and unresolved — `captured_session.json` is git-tracked and now carries `/Users/<account>/…`, which is exactly what `portable_path` exists to prevent for MixReports. Resolving it means teaching `resolve_audio_path` to expand `~`, not changing the writer alone |
 | 29 | **Capture → replay of a set still holding Live's DEFAULT SCAFFOLD tracks** | **DEFECT — the link state does not converge** | The snapshot captured Live's four unused scaffold tracks (`1-MIDI`, `2-MIDI`, `3-Audio`, `4-Audio`); replay made them DB tracks, and the coherence check then refused every push with `mislinked_scaffold_track_links`, naming `probe-and-link --probe` as the recovery. Running that recovery and re-pushing reported a **different** index pair each time — `[8, 9]`, then `[3, 4]` — never resolving. The DB's replayed scaffold tracks and Live's real scaffold tracks share names and indices, so the linker cannot tell "DB track awaiting creation" from "Live scaffold track to bind". The error's second escape (`--auto-session`) was not taken, because minting a fresh session would recreate all seven DB tracks alongside the existing ones. Filed as **#514**. Root cause, read from the code rather than repro'd: `CANONICAL_DEFAULT_SCAFFOLD_TRACK_NAMES` lives in `sync/push/probe.py` with zero consumers outside it, and `capture.py` never consults it — so capture takes the scaffold in as song material. The W18-D classifier then keys off `unmatched_live_tracks`, so once replay has materialized the scaffold as DB tracks they MATCH on the next probe and the cleanup offer goes silent by construction |
+
+### Chunk 17 section 5 — the first hearing, and the note-expression gap (2026-09-09)
+
+| # | Question | Verdict | Evidence |
+|---|---|---|---|
+| 30 | **Does `note_expression` (MPE per-note bend) push on Live 12.4.5?** | **NO — the API does not exist. A whole advertised target kind is dead** | `write_envelope` failed all 5 calls: `AttributeError: 'Clip' object has no attribute 'envelope_for_note'`. Confirmed by direct introspection — `song.tracks[9].clip_slots[0].clip` lists 190 members and has **no** `envelope_for_note` and nothing note-scoped for envelopes. The assumption is load-bearing in three places: `handlers/automation.py:9` documents it as the mechanism, `:313` and `:1024` call it, and `generators/follow.py:386` describes its coordinate system. It is one of seven advertised `write_envelope` target kinds and cannot work at all on this build. **Compounding defect:** `clip_pitch_bend`'s own teaching error (`automation.py:461-467`) tells the user to *"use `target_kind='note_expression'` with `axis='pitch'`"* — the recovery advice routes into the wall, since all three clip-scoped kinds (`clip_cc`, `clip_pitch_bend`, `note_expression`) are unavailable |
+| 30b | **What DOES carry a pitch ride, then?** | **The perform route — `device_parameter` gesture-recorded into arrangement automation** | The operator's recollection ("in the past we've delivered bends with recording performances") was exactly right. A `device_parameter` envelope on Operator's `A Fine` was classified `perform` by `classify_envelope_route`, not `session_clip`, and `[performed_automation] 1/1 ok` recorded it; `parameters[14].automation_state` → `1`. Note `Clip.create_automation_envelope` is NOT broken in general — `_find_existing_envelope` documents it working against real Live 12.4 for device parameters; only the sentinel targets and note-scoped envelopes fail |
+| 30c | **Operator `A Fine` as a pitch carrier** | **Usable, but it is a RATIO tail and unipolar — both need correcting for** | Range `[0.0, 1000.0]` — a set of `-60` is refused, so there is no way to go flat from rest. And the audible interval is `1200*log2(Coarse + Fine/1000)`, so `Fine=100` is **+165 cents, not +100**. Carrying a −60..+90 ct contour therefore needs the notes authored one semitone flat and the ride biased +100 ct. `Pitch` (MidiPitcher) is not an alternative: its `Pitch` parameter is semitone-quantized (a set of `0.35` snapped to `0.0`), so it steps rather than glides |
+| 31 | **`ableton_device(action='load')` response when Live re-orders the chain** | **DEFECT — it reports the DISPLACED device, not the loaded one** | Loading `Pitch` (a MIDI effect) onto a track already holding Operator returned `device_index: 2`, `loaded_class_name: "Operator"`, `name: "Operator"` — while `resolved_path` correctly said `["midi_effects", "Pitch"]`. Live had inserted the MIDI effect at position 0 and pushed Operator to 1; `song.tracks[9].devices[0].class_name` → `MidiPitcher` confirms the load itself was correct. Only the response is wrong, and it is wrong in the way most likely to mislead — it names a real device that is not the one you loaded |
+
+### What section 5 settles — and what it does NOT
+
+**The pipeline works end to end.** A real line ingested with provenance and checksum
+(`asset add`), read by the lens (implied centre D#3, 1 phrase, 22 onsets, formants
+measured), tracked to an F0 contour, turned into a follower part, pushed to Live, given a
+pitch ride, and heard. Every stage ran on real material.
+
+**The musical result did not land.** The operator's verdict on the hearing: *"it does not
+really read as tracking."* That is the honest state of the acceptance and it should not be
+written up as a pass. Three measured reasons, none of them a plumbing failure:
+
+- **The source is near the pipeline's floor.** 15% voiced frames, median tracker
+  confidence 0.078, 8-bit 16 kHz. At the library default confidence floor (0.5) the
+  follower emits **2 notes from 3.88 s**; it took a floor of 0.15 to reach 7.
+- **The tracker makes octave errors the follower faithfully reproduces.** The emitted
+  contour is `54 52 51 51 62 51 50` — that `62` is +11 st above its neighbours on a line
+  whose total range is 5.9 st. The follower is not wrong (all 7 notes land within 0.5 st
+  of the contour they came from, mean 0.29 st); the CONTOUR is wrong there.
+- **7 notes against 22 onsets is a skeleton, not a trace.** Syllable rate is 6.0/s; the
+  follower samples roughly a third of it, with a 1.2-beat hole early.
+
+**What this implies for the next plan:** the follower's honesty is a feature until the
+contour is wrong, at which point it becomes a liability. An octave-jump guard (reject
+leaps beyond the line's own measured range as tracker artifacts) is the single highest-value
+addition, and it is a musical decision — the line's range is knowable from the lens, which
+already computes it.

@@ -153,11 +153,12 @@ questions batched in so the operator is asked once.
 
 **A ticked box here means the code is built, reviewed and green — it does NOT mean the
 wave is done.** Chunks 02-05 and 07 each carry a live "Done when" clause that only an
-operator at a running Live can discharge, and none of them has been. Chunk 01's tick is
+operator at a running Live can discharge; all of them were, on 2026-09-09 against Live 12.4.5
+(`.prawduct/operator-verification.md` → SMP-6V2K wave 1 — one box unreachable, one owed to the
+operator's ear, both named there). Chunk 01's tick is
 different in kind — it *was* the operator session, and its verdicts are on disk. Chunk 07's
-handler edit re-flips the wire fingerprint, so the re-vendor handshake is owed again before
-any live clause runs. The conditions still standing are named under *Definition of done*
-below, and `capability-truth.md` rates the capability accordingly.
+handler edit re-flipped the wire fingerprint; the re-vendor to `f2c750ef4069` landed the same day
+and the live clauses ran on it. `capability-truth.md` rates the capability live-verified.
 
 ---
 
@@ -524,7 +525,7 @@ at Live's defaults and the run says so); a volume ride
 authored under it pushes; a second line dragged in by hand in Live comes back on pull and
 survives a re-push; and `capability-truth.md` says exactly that and no more.
 
-**Not met yet, and these are the three things standing in the way:**
+**Met on 2026-09-09, with one seam still standing (item 2); the other two are struck through:**
 
 1. ~~**Chunk 01 has not run.**~~ It ran 2026-09-09 (Live 12.4.5). ~~The two paths that
    refused pending its verdicts still refuse~~ — **chunk 07** built the rule the same day:
@@ -536,8 +537,12 @@ survives a re-push; and `capability-truth.md` says exactly that and no more.
    cites chunk 01 as pending.
 2. **The link seam** above ([#507](https://github.com/brookstalley/hallucinote/issues/507))
    — "survives a re-push" is the clause it fails.
-3. **Nothing has been live-verified on the audio path.** The only live evidence this wave
-   has is a pure-MIDI regression check (a concurrent session's push: 58/58 clips, 116/116
-   placements, no orphans), which discharges R6.4 and says nothing about audio.
+3. ~~**Nothing has been live-verified on the audio path.**~~ It was, 2026-09-09 on Live
+   12.4.5 — session and arrangement placement, conform round-trips, the re-point recreate
+   with its ride, the missing-sample refusal and the pull round trip, box by box in
+   `.prawduct/operator-verification.md`. The run found the link seam's replace was silent
+   on the operator channel (the create's purpose never reaches `execute`'s output); it now
+   alerts whenever the probe shows the slot occupied.
 
-`capability-truth.md` reflects exactly this: the audio row ships at ◐, not ✓.
+`capability-truth.md` reflects exactly this: the audio row ships at ✓ with the link seam
+(#507) and the extent gap (#509) stated as its gaps.

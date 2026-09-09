@@ -391,7 +391,26 @@ def _plan_push_audio_clip(
         # deleted and rebuilt from the same file on every push, losing
         # hand-set warp markers — the DB models warp mode, not markers. Where
         # the link should be written is a design decision (#507), not a patch
-        # here; the cost is stated so it is not silent.
+        # here; the cost is said on the operator channel whenever the probe
+        # shows the slot occupied, because `replace=True` hides the delete
+        # inside the handler and nothing else in the run would name it.
+        occupant = _live_session_entry(
+            live_session_clips_by_track, track_at=track_at, clip_index=slot,
+        )
+        if occupant is not None and occupant is not PROBE_UNKNOWN:
+            held = occupant.get("name") or "an unnamed clip"
+            held_file = occupant.get("file_path")
+            playing = f" playing {Path(held_file).name}" if held_file else ""
+            plan.alert(
+                f"clip {clip_id} ('{clip['name']}', slot {slot}): the row has "
+                f"no link, but Live's slot {slot} on track {track_at} already "
+                f"holds '{held}'{playing} — a clip pull ingested without a "
+                "link (#507), or one placed by hand. That clip is DELETED and "
+                f"rebuilt from {resolved.name} (the create replaces the "
+                "slot), then conformed from the row. Un-modelled Live-side "
+                "state on the old clip — hand-placed warp markers — does not "
+                "survive."
+            )
         plan.add(_audio_create_call(
             clip=clip, clip_id=clip_id, track_at=track_at, clip_index=slot,
             resolved=resolved, replace=True,

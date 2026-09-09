@@ -32,6 +32,21 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-09-09 — The audio path ran against Live, and the one silent replace it found now speaks
+
+<!-- prawduct: type=bugfix | scope=SMP-6V2K -->
+
+SMP-6V2K wave 1's live clauses are discharged on Live 12.4.5 (`.prawduct/operator-verification.md`
+→ SMP-6V2K wave 1, box by box; `capability-truth.md`'s audio row now says live-verified). The
+run surfaced one defect, fixed here: an unlinked audio row pushed into a slot Live already holds
+a clip in — the seam a pull-ingested clip falls through, since pull writes no link (#507) —
+plans `create(replace=True)`, whose delete happens inside the handler, and said nothing about
+it. The code comment and `capability-truth.md` both claimed the cost was stated in the create's
+purpose; purposes never reach `execute`'s output. `plan_push_clip` now alerts on the operator
+channel whenever the probe shows the slot occupied, naming the clip Live holds, the file it is
+rebuilt from and the warp markers that do not survive; an empty or unprobed slot stays silent.
+Two planner tests pin both halves; the alert was seen on a live push.
+
 ## 2026-09-09 — Push acts on the probe's verdicts: a re-pointed sample is recreated with its ride, and an envelope-hosting audio placement duplicates
 
 <!-- prawduct: type=feature | scope=SMP-6V2K -->

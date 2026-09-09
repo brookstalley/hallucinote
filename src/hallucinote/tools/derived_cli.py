@@ -41,8 +41,13 @@ def _addressed_by_song(song_dir: Path, slug: str | None) -> list[str] | None:
     """
     if slug is None:
         return None
-    db_path = resolve_db_path(slug)
-    if not Path(db_path).exists():
+    # Take the branch-correct FILENAME from the resolver but anchor it in the
+    # directory we are actually pruning: with --song-dir given, resolving the
+    # slug through the workspace could read a same-slug song elsewhere and list
+    # this cache against that song's clips. `root=` alone would not do it —
+    # it appends the slug, so it only agrees when the dir is named for the song.
+    db_path = song_dir / resolve_db_path(slug, root=song_dir.parent).name
+    if not db_path.exists():
         legacy = song_dir / f"{slug}.db"
         if not legacy.exists():
             return None

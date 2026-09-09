@@ -266,21 +266,21 @@ Chunks 07, 14 and the #509 probe carry live "Done when" clauses only chunk 17 di
 against Live.
 
 - [x] Chunk 00: contracts, extras, the slot floor *(coordinator, before dispatch)* — built, reviewed (4 warnings fixed) 2026-09-09
-- [ ] Chunk 01: asset store — ingest, normalize, manifest *(wave A)*
-- [ ] Chunk 02: the second front door — a sample loader and its feature streams *(wave A)*
-- [ ] Chunk 03: spectral fields — symbolic from the score, measured from the capture set *(wave A)*
-- [ ] Chunk 04: one field, one mask, a polarity — carve and vocode on arrays *(wave A)*
-- [ ] Chunk 05: recipes — transforms and the content-addressed derived cache *(wave A)*
-- [ ] Chunk 06: intelligibility — the speech band over the bed, per turn, measured *(wave A)*
-- [ ] Chunk 07: a sampler gets its sample — `assign_sample`, push, capture (#330) *(wave A)*
-- [ ] Chunk 08: pull links what it ingests (#507) *(wave A)*
-- [ ] Chunk 09: the follower — an F0 contour becomes a part *(wave A)*
-- [ ] Chunk 10: feature events with musical gates *(wave A)*
-- [ ] Chunk 12: the stretch / pitch A/B harness for R6.2 *(wave A)*
-- [ ] Chunk 13: carve and vocode as recipes, with the reference in the address *(wave B)*
-- [ ] Chunk 14: `reverse=1` materializes through the derived cache (#237) *(wave B)*
-- [ ] Chunk 15: the sample lens — inspect a line against bars, and the skill that runs it *(wave B)*
-- [ ] Chunk 16: the docs say what is true, the contract artifacts track, the CLIs are wired *(coordinator; cumulative)*
+- [x] Chunk 01: asset store — ingest, normalize, manifest *(wave A)*
+- [x] Chunk 02: the second front door — a sample loader and its feature streams *(wave A)*
+- [x] Chunk 03: spectral fields — symbolic from the score, measured from the capture set *(wave A)*
+- [x] Chunk 04: one field, one mask, a polarity — carve and vocode on arrays *(wave A)*
+- [x] Chunk 05: recipes — transforms and the content-addressed derived cache *(wave A)*
+- [x] Chunk 06: intelligibility — the speech band over the bed, per turn, measured *(wave A)*
+- [x] Chunk 07: a sampler gets its sample — `assign_sample`, push, capture (#330) *(wave A)*
+- [x] Chunk 08: pull links what it ingests (#507) *(wave A)*
+- [x] Chunk 09: the follower — an F0 contour becomes a part *(wave A)*
+- [x] Chunk 10: feature events with musical gates *(wave A)*
+- [x] Chunk 12: the stretch / pitch A/B harness for R6.2 *(wave A)*
+- [x] Chunk 13: carve and vocode as recipes, with the reference in the address *(wave B)*
+- [x] Chunk 14: `reverse=1` materializes through the derived cache (#237) *(wave B)*
+- [x] Chunk 15: the sample lens — inspect a line against bars, and the skill that runs it *(wave B)*
+- [x] Chunk 16: the docs say what is true, the contract artifacts track, the CLIs are wired *(coordinator; cumulative)*
 - [ ] Chunk 17: the Live session — sampler live, reverse live, the #509 and Sampler probes *(operator-gated)*
 
 Context: plan drawn 2026-09-09 on the merged, unreleased wave 1 (develop `c86df39`); owner

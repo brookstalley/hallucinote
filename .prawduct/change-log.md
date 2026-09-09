@@ -61,6 +61,13 @@ same thing by every field it already knew. The bar for a bump is a change to wha
 existing field MEANS, because bumping makes every existing report un-diffable
 (`compare.ensure_comparable` refuses across versions).
 
+One-time cache churn to expect: a file derived through `derived.derive` or a
+`Recipe` before this landed was addressed without its reference fingerprint, so
+it now resolves to a different address and the old file becomes an orphan.
+`hallucinote derived prune` will list a long set the first time after this
+change — that is the fix working, not a defect, and every file in it is
+regenerable from its source and recipe.
+
 `hallucinote derived prune` reads what the song's clips and devices point at, which is a
 mixed set — a song references its ingested sources as well as its derived files — so an
 addressed path naming nothing in the cache keeps nothing rather than raising. It refuses

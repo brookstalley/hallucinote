@@ -65,3 +65,26 @@ def test_validate_audio_array_refuses_ambiguous_shapes():
         validate_audio_array(np.zeros(100))
     with pytest.raises(ValueError, match="axis 0"):
         validate_audio_array(np.zeros((2, 100)))
+
+
+def test_only_the_spectral_steps_are_score_dependent():
+    """`ScoreDependent` is a duck-check on `fingerprint()`, so pin who passes it.
+
+    Membership decides whether a step's reading enters the derived address. A
+    transform that grows a `fingerprint()` method for some unrelated reason
+    would join silently and move every address its chain produces — which is a
+    cache invalidation nobody asked for. If this test fails, the question is
+    whether the new step really is made against something outside its own
+    audio, not whether to update the list.
+    """
+    from hallucinote.assets import transforms, transforms_spectral
+    from hallucinote.assets.types import ScoreDependent
+
+    score_dependent = set()
+    for module in (transforms, transforms_spectral):
+        for name in dir(module):
+            obj = getattr(module, name)
+            if isinstance(obj, type) and issubclass(obj, ScoreDependent):
+                score_dependent.add(name)
+
+    assert score_dependent == {"_spectral_step", "carve", "vocode"}

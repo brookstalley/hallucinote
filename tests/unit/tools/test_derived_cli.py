@@ -146,3 +146,26 @@ def test_prune_reports_a_fully_referenced_cache_as_nothing_to_remove(song, capsy
 
     assert code == 0
     assert "nothing to remove" in capsys.readouterr().out
+
+
+def test_prune_reads_the_db_in_the_directory_it_is_pruning(song, tmp_path, capsys):
+    """--song-dir wins over wherever the workspace resolves the slug.
+
+    A same-slug song elsewhere must not decide what is an orphan here: the
+    cache being pruned and the clips deciding what it keeps have to be the
+    same song, or prune lists files the song is still using.
+    """
+    song_dir, src = song
+    keep = D.derive(src, [reverse()], song_dir=song_dir)
+    # The song being pruned keeps its derived file...
+    _song_db(song_dir, "rivers", [str(keep.path.relative_to(song_dir))])
+    # ...while a same-slug song elsewhere references nothing of the sort.
+    other = tmp_path.parent / "elsewhere"
+    other.mkdir(exist_ok=True)
+    _song_db(other, "rivers", ["assets/sources/unrelated.wav"])
+
+    code = derived_cli.main(["prune", "--song", "rivers", "--song-dir", str(song_dir)])
+
+    assert code == 0
+    assert "nothing to remove" in capsys.readouterr().out
+    assert keep.path.is_file()

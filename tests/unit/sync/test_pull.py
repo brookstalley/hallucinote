@@ -4,12 +4,14 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
 from hypothesis import given, settings, strategies as st
 
 from hallucinote.db import init_db, mutations as M, queries as Q
+from hallucinote.paths import resolve_audio_path
 from hallucinote.sync import pull
 
 
@@ -3433,10 +3435,18 @@ def test_pull_cli_arrangement_clips_domain_emits_plan(tmp_path):
 def _session_payload(*entries, track_index: int = 5) -> dict:
     """Build an `ableton_clip(action='list', location='session')` payload.
 
-    Each entry is either ``("empty", slot)`` for an empty slot or
-    ``("populated", slot, name, length)`` for a populated one. Mirrors
-    the `list_handler` session branch shape so apply tests exercise the
-    real wire shape.
+    Each entry is one of:
+      - ``("empty", slot)`` — an empty slot
+      - ``("populated", slot, name, length)`` — a MIDI clip
+      - ``("audio", slot, name, length, fields)`` — an audio clip, where
+        ``fields`` carries the conform surface (`file_path`, `gain`,
+        `pitch_coarse`, `pitch_fine`, `warping`, `warp_mode`,
+        `start_marker`, `end_marker`)
+
+    Mirrors the `list_handler` session branch shape so apply tests exercise
+    the real wire shape — including the discriminator `is_audio`, which a
+    MIDI clip carries as False while OMITTING the eight audio keys entirely
+    (absence means MIDI, never "audio whose file we could not determine").
     """
     clips: list[dict] = []
     for e in entries:
@@ -3447,6 +3457,15 @@ def _session_payload(*entries, track_index: int = 5) -> dict:
             clips.append({
                 "clip_index": slot, "empty": False,
                 "name": name, "length": float(length),
+                "is_audio": False,
+            })
+        elif e[0] == "audio":
+            _, slot, name, length, fields = e
+            clips.append({
+                "clip_index": slot, "empty": False,
+                "name": name, "length": float(length),
+                "is_audio": True,
+                **fields,
             })
         else:
             raise ValueError(f"unknown session entry kind: {e[0]!r}")
@@ -3563,13 +3582,13 @@ def test_apply_session_clips_deletes_db_clip_when_ableton_slot_empty(
     assert any("cleared in Ableton" in d for d in out.details)
 
 
-def test_apply_session_clips_leaves_audio_clip_rows_untouched(
+def test_apply_session_clips_deletes_audio_row_when_live_slot_empty(
     conn, song, session
 ):
-    """CLP-AUD1: audio-clip rows are authored but unsynced until CLP-AUD2,
-    so Live's slot state says nothing about them. An empty Live slot must
-    NOT delete the row, and a populated foreign clip in that slot must NOT
-    drift-update it — both exempt with a teaching warn."""
+    """SMP-6V2K ch05: audio clips are synced now, so an empty Live slot is
+    evidence of a real deletion, not of an unsynced row. The CLP-AUD1
+    exemption (which pinned a clip the user removed in Live into the song
+    forever) is gone: the row is deleted like any other."""
     tid = M.create_track(
         conn, song_id=song, track_index=1, name="Stems", kind="audio",
     )
@@ -3579,19 +3598,33 @@ def test_apply_session_clips_leaves_audio_clip_rows_untouched(
         audio_file="assets/gtr.wav", name="gtr", gain=0.8,
     )
 
-    # Pass 1: Live reports the slot empty (the truth until CLP-AUD2).
     out = pull.apply_pull_results(
         conn,
         [_result(f"track_session_clips:{tid}", _session_payload(("empty", 2)))],
         song_id=song, session_id=session,
     )
-    assert out.mutations == 0
-    assert Q.get_clip(conn, cid) is not None
-    assert any("CLP-AUD2" in w for w in out.warnings)
+    assert out.mutations == 1
+    assert Q.get_clip(conn, cid) is None
+    assert any("cleared in Ableton" in d for d in out.details)
 
-    # Pass 2: Live reports a foreign clip in that slot — must not be
-    # mis-ingested as a drift-update onto the audio row.
-    out2 = pull.apply_pull_results(
+
+def test_apply_session_clips_warns_when_live_and_db_disagree_on_kind(
+    conn, song, session
+):
+    """A MIDI clip in the slot where the DB holds an audio row (or the
+    reverse) is reported, never coerced: clip kind is immutable, so
+    converting is delete + create and doing it silently on a pull would
+    drop authored state."""
+    tid = M.create_track(
+        conn, song_id=song, track_index=1, name="Stems", kind="audio",
+    )
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    cid = M.create_audio_clip(
+        conn, track_id=tid, slot=2, length_beats=16.0,
+        audio_file="assets/gtr.wav", name="gtr", gain=0.8,
+    )
+
+    out = pull.apply_pull_results(
         conn,
         [_result(
             f"track_session_clips:{tid}",
@@ -3599,19 +3632,49 @@ def test_apply_session_clips_leaves_audio_clip_rows_untouched(
         )],
         song_id=song, session_id=session,
     )
-    assert out2.mutations == 0
+    assert out.mutations == 0
+    assert any("kind is immutable" in w for w in out.warnings)
     row = Q.get_clip(conn, cid)
     assert row["name"] == "gtr"
     assert row["length_beats"] == 16.0
     assert row["audio_file"] == "assets/gtr.wav"
 
 
-def test_apply_arrangement_clips_leaves_audio_placements_untouched(
+def test_apply_arrangement_clips_removes_audio_placement_absent_in_ableton(
     conn, song, session
 ):
-    """CLP-AUD1: an arrangement placement of an unsynced audio clip is
-    never reported by Live; the removal diff must exempt it (with a warn)
-    instead of deleting authored state on every pull."""
+    """SMP-6V2K ch05: the arrangement phase materializes kind='audio' now,
+    so an audio placement Live does not report is a real removal. The
+    CLP-AUD1 exemption would instead have pinned deleted state forever."""
+    tid = M.create_track(
+        conn, song_id=song, track_index=1, name="Stems", kind="audio",
+    )
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    cid = M.create_audio_clip(
+        conn, track_id=tid, slot=1, length_beats=16.0,
+        audio_file="assets/gtr.wav", name="gtr",
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=tid, clip_id=cid,
+        start_bar=1.0, end_bar=5.0,
+    )
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(f"track_arrangement_clips:{tid}", _arr_payload())],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 1
+    assert Q.get_arrangement_for_track(conn, tid) == []
+    assert any("removed" in d for d in out.details)
+
+
+def test_apply_arrangement_clips_no_op_when_audio_placement_reported(
+    conn, song, session
+):
+    """The other half of the same change: an audio placement Live DOES
+    report at the DB's position matches positionally like any other and is
+    left alone."""
     tid = M.create_track(
         conn, song_id=song, track_index=1, name="Stems", kind="audio",
     )
@@ -3627,13 +3690,15 @@ def test_apply_arrangement_clips_leaves_audio_placements_untouched(
 
     out = pull.apply_pull_results(
         conn,
-        [_result(f"track_arrangement_clips:{tid}", _arr_payload())],
+        [_result(
+            f"track_arrangement_clips:{tid}",
+            _arr_payload((0.0, 16.0, "gtr")),
+        )],
         song_id=song, session_id=session,
     )
     assert out.mutations == 0
-    remaining = [r["id"] for r in Q.get_arrangement_for_track(conn, tid)]
-    assert remaining == [arr_id]
-    assert any("CLP-AUD2" in w for w in out.warnings)
+    assert out.no_ops == 1
+    assert [r["id"] for r in Q.get_arrangement_for_track(conn, tid)] == [arr_id]
 
 
 def test_apply_session_clips_updates_name_when_drifted(conn, song, session):
@@ -3789,6 +3854,360 @@ def test_apply_session_clips_warns_on_missing_clips_field(conn, song, session):
     )
     assert out.mutations == 0
     assert any("missing 'clips'" in w for w in out.warnings)
+
+
+# ---------------------------------------------------------------------------
+# Audio-clip ingest (SMP-6V2K chunk 05 / R1.2) — a clip dragged into Live by
+# hand becomes part of the song's source instead of living only in the .als
+# ---------------------------------------------------------------------------
+
+
+def _audio_fields(
+    file_path,
+    *,
+    gain=0.5,
+    pitch_coarse=0,
+    pitch_fine=0.0,
+    warping=True,
+    warp_mode=0,
+    start_marker=0.0,
+    end_marker=16.0,
+):
+    """The eight conform keys `list_handler` adds to an audio clip entry."""
+    return {
+        "file_path": str(file_path),
+        "gain": gain,
+        "pitch_coarse": pitch_coarse,
+        "pitch_fine": pitch_fine,
+        "warping": warping,
+        "warp_mode": warp_mode,
+        "start_marker": start_marker,
+        "end_marker": end_marker,
+    }
+
+
+def _audio_track(conn, song, session, *, name="Stems", ableton_index=5):
+    tid = M.create_track(
+        conn, song_id=song, track_index=1, name=name, kind="audio",
+    )
+    _link_track(conn, session=session, db_id=tid, ableton_index=ableton_index)
+    return tid
+
+
+def test_apply_session_clips_ingests_hand_dragged_audio_clip(
+    conn, song, session, tmp_path
+):
+    """R1.2, the case the chunk exists for: Live holds an audio clip in a
+    slot the DB knows nothing about — the user dragged it in — so pull
+    CREATES the row through `create_audio_clip`, with the conform surface
+    Live reports and the song-relative path form `clips.audio_file` carries.
+    """
+    tid = _audio_track(conn, song, session)
+    sample = tmp_path / "assets" / "line.wav"
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_session_clips:{tid}",
+            _session_payload(("audio", 3, "line", 8.0, _audio_fields(
+                sample, gain=0.62, pitch_coarse=-3, pitch_fine=12.5,
+                warping=True, warp_mode=6,
+                start_marker=2.0, end_marker=10.0,
+            ))),
+        )],
+        song_id=song, session_id=session,
+    )
+
+    assert out.mutations == 1
+    rows = Q.get_clips_for_track(conn, tid)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["kind"] == "audio"
+    assert row["slot"] == 3
+    assert row["name"] == "line"
+    assert row["length_beats"] == 8.0
+    # Song-relative POSIX, because the file lives under the song dir.
+    assert row["audio_file"] == "assets/line.wav"
+    assert row["audio_gain"] == 0.62
+    assert row["pitch_coarse"] == -3
+    assert row["pitch_fine"] == 12.5
+    assert row["warping"] == 1
+    assert row["warp_mode"] == 6
+    assert row["start_marker"] == 2.0
+    assert row["end_marker"] == 10.0
+    assert any("ingested from Live" in d for d in out.details)
+
+
+def test_apply_session_clips_ingest_emits_clip_created_event(
+    conn, song, session, tmp_path
+):
+    """Mutator discipline: the ingest goes through `create_audio_clip` and
+    emits its event — no raw write SQL."""
+    tid = _audio_track(conn, song, session)
+
+    pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_session_clips:{tid}",
+            _session_payload(("audio", 1, "line", 8.0, _audio_fields(
+                tmp_path / "assets" / "line.wav",
+            ))),
+        )],
+        song_id=song, session_id=session, reason="test",
+    )
+
+    created = [
+        e for e in Q.get_events_for_song(conn, song)
+        if e["kind"] == "clip_created"
+    ]
+    assert created
+    assert created[-1]["actor"] == "sync"
+    assert created[-1]["reason"] == "test"
+
+
+def test_apply_session_clips_ingest_keeps_outside_song_dir_path_absolute(
+    conn, song, session, tmp_path
+):
+    """The `portable_path` trap, pinned. A sample outside the song dir is
+    stored ABSOLUTE — never `~`-collapsed. `resolve_audio_path` (the resolver
+    this column is read back through) does not expand `~`, so a `~` form
+    would resolve as a RELATIVE path under the song dir and fail at the next
+    push. Both outside cases are checked: under the user's home (the form
+    `portable_path` would collapse) and elsewhere on the filesystem.
+    """
+    tid = _audio_track(conn, song, session)
+    in_home = Path.home() / "Music" / "Samples" / "dialogue.wav"
+    elsewhere = tmp_path.parent / "smp_ch05_elsewhere" / "dialogue.wav"
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_session_clips:{tid}",
+            _session_payload(
+                ("audio", 1, "dialogue", 8.0, _audio_fields(in_home)),
+                ("audio", 2, "dialogue", 8.0, _audio_fields(elsewhere)),
+            ),
+        )],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 2
+
+    by_slot = {r["slot"]: r for r in Q.get_clips_for_track(conn, tid)}
+    for slot, sample in ((1, in_home), (2, elsewhere)):
+        ref = by_slot[slot]["audio_file"]
+        assert not ref.startswith("~"), f"slot {slot}: `~` form stored: {ref!r}"
+        assert Path(ref).is_absolute()
+        assert ref == sample.as_posix()
+        # And it round-trips through the resolver the column is read through.
+        assert resolve_audio_path(tmp_path, ref) == sample
+
+
+def test_apply_session_clips_conforms_linked_audio_slot_to_live(
+    conn, song, session, tmp_path
+):
+    """A slot the DB already links to an audio row: the conform properties
+    are updated in place through `update_clip`."""
+    tid = _audio_track(conn, song, session)
+    sample = tmp_path / "assets" / "line.wav"
+    cid = M.create_audio_clip(
+        conn, track_id=tid, slot=1, length_beats=8.0,
+        audio_file="assets/line.wav", name="line",
+        gain=0.8, pitch_coarse=0, pitch_fine=0.0,
+        warping=1, warp_mode=0, start_marker=0.0, end_marker=8.0,
+    )
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_session_clips:{tid}",
+            _session_payload(("audio", 1, "line", 8.0, _audio_fields(
+                sample, gain=0.35, pitch_coarse=-12, pitch_fine=-4.0,
+                warping=True, warp_mode=4,
+                start_marker=1.5, end_marker=7.5,
+            ))),
+        )],
+        song_id=song, session_id=session,
+    )
+
+    assert out.mutations == 1
+    row = Q.get_clip(conn, cid)
+    assert row["audio_gain"] == 0.35
+    assert row["pitch_coarse"] == -12
+    assert row["pitch_fine"] == -4.0
+    assert row["warp_mode"] == 4
+    assert row["start_marker"] == 1.5
+    assert row["end_marker"] == 7.5
+    # The portable reference survives a conform that didn't change the file.
+    assert row["audio_file"] == "assets/line.wav"
+    assert any("conformed to Live" in d for d in out.details)
+
+
+def test_apply_session_clips_audio_no_op_when_live_matches(
+    conn, song, session, tmp_path
+):
+    """No churn: the DB stores the song-relative reference and Live reports
+    the absolute one for the same file. Comparing them as PATHS (not as
+    strings) is what keeps pull from rewriting the portable form into a
+    machine-absolute one on every single pass."""
+    tid = _audio_track(conn, song, session)
+    M.create_audio_clip(
+        conn, track_id=tid, slot=1, length_beats=8.0,
+        audio_file="assets/line.wav", name="line",
+        gain=0.5, pitch_coarse=0, pitch_fine=0.0,
+        warping=1, warp_mode=0, start_marker=0.0, end_marker=16.0,
+    )
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_session_clips:{tid}",
+            _session_payload(("audio", 1, "line", 8.0, _audio_fields(
+                tmp_path / "assets" / "line.wav",
+            ))),
+        )],
+        song_id=song, session_id=session,
+    )
+
+    assert out.mutations == 0
+    assert out.no_ops == 1
+    assert Q.get_clips_for_track(conn, tid)[0]["audio_file"] == "assets/line.wav"
+
+
+def test_apply_session_clips_records_a_swapped_sample(
+    conn, song, session, tmp_path
+):
+    """The user pointed the slot at a different sample in Live. Leaving the
+    old reference would make the next push overwrite their choice with the
+    file they replaced."""
+    tid = _audio_track(conn, song, session)
+    M.create_audio_clip(
+        conn, track_id=tid, slot=1, length_beats=8.0,
+        audio_file="assets/line.wav", name="line",
+        gain=0.5, pitch_coarse=0, pitch_fine=0.0,
+        warping=1, warp_mode=0, start_marker=0.0, end_marker=16.0,
+    )
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_session_clips:{tid}",
+            _session_payload(("audio", 1, "line", 8.0, _audio_fields(
+                tmp_path / "assets" / "other-take.wav",
+            ))),
+        )],
+        song_id=song, session_id=session,
+    )
+
+    assert out.mutations == 1
+    assert Q.get_clips_for_track(conn, tid)[0]["audio_file"] == (
+        "assets/other-take.wav"
+    )
+
+
+def test_apply_session_clips_refuses_audio_ingest_onto_a_midi_track(
+    conn, song, session, tmp_path
+):
+    """Live hosts audio clips only on audio tracks, so an audio clip
+    reported on a track the DB models as MIDI means the two disagree about
+    what the track is. Warn rather than let the mutator's kind guard abort
+    the whole pull."""
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Drums")
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_session_clips:{tid}",
+            _session_payload(("audio", 1, "line", 8.0, _audio_fields(
+                tmp_path / "assets" / "line.wav",
+            ))),
+        )],
+        song_id=song, session_id=session,
+    )
+
+    assert out.mutations == 0
+    assert Q.get_clips_for_track(conn, tid) == []
+    assert any("only on audio tracks" in w for w in out.warnings)
+
+
+def test_apply_session_clips_warns_when_audio_entry_has_no_file_path(
+    conn, song, session
+):
+    """The row must answer 'what does this clip play?', so an audio entry
+    with no `file_path` is refused loudly rather than half-ingested."""
+    tid = _audio_track(conn, song, session)
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_session_clips:{tid}",
+            _session_payload(("audio", 1, "line", 8.0, {
+                "file_path": None, "gain": 0.5, "warping": True,
+            })),
+        )],
+        song_id=song, session_id=session,
+    )
+
+    assert out.mutations == 0
+    assert Q.get_clips_for_track(conn, tid) == []
+    assert any("no 'file_path'" in w for w in out.warnings)
+
+
+def test_apply_session_clips_ingest_flags_unwarped_dual_unit(
+    conn, song, session, tmp_path
+):
+    """Live's `length` and markers are BEATS when the clip is warped and
+    SECONDS when it is not. An unwarped clip is still ingested — with
+    `warping=0` on the row saying which unit it holds — but the unit is
+    called out rather than silently normalized."""
+    tid = _audio_track(conn, song, session)
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_session_clips:{tid}",
+            _session_payload(("audio", 1, "line", 3.2, _audio_fields(
+                tmp_path / "assets" / "line.wav", warping=False,
+            ))),
+        )],
+        song_id=song, session_id=session,
+    )
+
+    assert out.mutations == 1
+    row = Q.get_clips_for_track(conn, tid)[0]
+    assert row["warping"] == 0
+    assert row["length_beats"] == 3.2
+    assert any("SECONDS" in w for w in out.warnings)
+
+
+def test_apply_session_clips_entry_without_is_audio_reads_as_midi(
+    conn, song, session
+):
+    """A payload from a server that predates the audio read surface omits
+    `is_audio` entirely. Absence reads as MIDI — the same conservative
+    default the handler itself takes — so such an entry takes the
+    warn-and-skip path, never a half-populated audio ingest."""
+    tid = _audio_track(conn, song, session)
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(
+            f"track_session_clips:{tid}",
+            {
+                "track_index": 5,
+                "location": "session",
+                "clips": [{
+                    "clip_index": 1, "empty": False,
+                    "name": "line", "length": 8.0,
+                }],
+            },
+        )],
+        song_id=song, session_id=session,
+    )
+
+    assert out.mutations == 0
+    assert Q.get_clips_for_track(conn, tid) == []
+    assert any("V1 does not auto-add" in w for w in out.warnings)
 
 
 def test_pull_cli_session_clips_domain_emits_plan(tmp_path):

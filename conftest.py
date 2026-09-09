@@ -54,8 +54,15 @@ def _export_source_path_for_subprocesses() -> None:
 _export_source_path_for_subprocesses()
 
 # Test locations that load and exercise the native audio/DSP stack.
-_AUDIO_PATH_FRAGMENTS = ("/tests/unit/audio/",)
-_AUDIO_FILE_NAMES = ("test_handlers_analysis.py",)
+# The sampling packages (assets / features / spectral) load soundfile, librosa
+# and numpy exactly as tests/unit/audio does, so the same marker covers them.
+_AUDIO_PATH_FRAGMENTS = (
+    "/tests/unit/audio/",
+    "/tests/unit/assets/",
+    "/tests/unit/features/",
+    "/tests/unit/spectral/",
+)
+_AUDIO_FILE_NAMES = ("test_handlers_analysis.py", "test_stretch_ab.py")
 
 
 def _is_audio_item(item: pytest.Item) -> bool:

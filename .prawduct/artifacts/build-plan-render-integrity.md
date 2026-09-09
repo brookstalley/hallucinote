@@ -13,6 +13,16 @@ branch: feat/render-integrity
 **Worktree:** `~/source/hallucinote-wt-integrity`. The primary checkout `~/source/hallucinote` serves `--plugin-dir` to a live songs session and is deliberately untouched.
 **Origin:** owner ask (2026-09-08), after the sharpness/transient lenses merged. The question "are there other lenses we should add" was steered to a class the report has none of: *is the audio itself damaged* — clipping, clicks and pops, dropouts, phase and soundstage problems.
 
+## Why this plan is still live
+
+Its chunks are complete and the work merged (#483), but on gitflow a
+merged-but-unreleased plan stays in the live directory until its release ships,
+and `develop` is ahead of `main` with no release cut. Archive it when that
+release lands.
+
+Reviewed and left live during the JANITOR-2026-09 sweep (2026-09-08), which
+archived the six flat plans whose releases had already shipped.
+
 ## Confidence Check
 
 - **Problem:** every lens in the MixReport measures *musical realization against intent*. Nothing measures whether the captured audio is **defective**. Across all 23 modules in `audio/` there is no clipping detection, no DC offset, no discontinuity/click detection, no dropout detection, no polarity check and no stem-vs-master reconciliation; the only clip-adjacent number in the whole report is the master's delivered true peak. The string `click` appears only as a *musical* term (the kick beater's 2–6 kHz band in `transients.py`) and as a test fixture.

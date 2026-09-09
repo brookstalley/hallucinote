@@ -138,7 +138,7 @@ CREATE TABLE IF NOT EXISTS clips (
     -- family above is missing — ONE immutable audio_file, played reversed when
     -- set (NULL/0 = forward, 1 = reversed). Materialized at push as Live's clip
     -- reverse (a playback parameter, NOT a derived/committed file). See
-    -- .prawduct/artifacts/plans/SMP-7K2D/design.md.
+    -- .prawduct/artifacts/plans/SMP-7K2D/archive/design.md.
     reverse                 INTEGER,
     UNIQUE(track_id, slot)
 );
@@ -409,7 +409,7 @@ CREATE TABLE IF NOT EXISTS devices (
     -- (mirrors how clips.audio_file is NULL for MIDI clips). Window / reverse /
     -- pitch / gain are NOT columns here — they are device_parameters (static)
     -- or device_parameter envelopes (automated). See
-    -- .prawduct/artifacts/plans/SMP-7K2D/design.md.
+    -- .prawduct/artifacts/plans/SMP-7K2D/archive/design.md.
     audio_file      TEXT,
     -- SDC-7K3M: device sidechain SOURCE routing, symmetric with track-level
     -- input routing (tracks.input_routing_*). A SEMANTIC reference (FK to the

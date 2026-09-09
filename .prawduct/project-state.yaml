@@ -599,9 +599,12 @@ build_state:
 #     release that retired it. That is the failure this list invites: a
 #     hand-maintained roster of live plans drifts the moment one is archived by
 #     any other route.
-# The only live plan is the janitor sweep's own (artifacts/plans/JANITOR-2026-09/),
-# plus artifacts/build-plan.md, which is merged-but-unreleased and stays live per
-# gitflow until the develop->main release ships.
+# Live plans now: the janitor sweep's own (artifacts/plans/JANITOR-2026-09/), plus
+# THREE flat plans at the artifacts root that are merged-but-unreleased and stay
+# live per gitflow until the develop->main release ships — build-plan.md
+# (perform-start-position, #480), build-plan-render-integrity.md (#483) and
+# build-plan-aud-sharpness-transients.md (#470). Each says so in its own text;
+# this comment is a pointer, and if it disagrees with the tree the tree wins.
 # Shipped/stale plan history: the git history of this file (pre-2026-07-04,
 # PRC-5W2N trim) has the full narrative; a per-machine copy also sits in the
 # gitignored reflections archive where present.

@@ -367,7 +367,7 @@ def test_from_rows_needs_no_database():
 
 
 def test_generators_package_imports_no_database_code():
-    """Import-graph lock: nothing under `generators/` may pull in `db`.
+    """Import-graph lock: nothing under `generators/` may pull in `db` or MCP.
 
     Enforcing the norm on the import GRAPH rather than on the source text is
     what makes it hold — a lazily-imported `db` would pass a grep for
@@ -384,7 +384,8 @@ def test_generators_package_imports_no_database_code():
         "import importlib, pkgutil, sys;"
         "import hallucinote.generators as g;"
         "[importlib.import_module(m.name) for m in pkgutil.iter_modules(g.__path__, g.__name__ + '.')];"
-        "leaked = sorted(m for m in sys.modules if m.startswith('hallucinote.db'));"
+        "leaked = sorted(m for m in sys.modules"
+        " if m.startswith('hallucinote.db') or m.startswith('hallucinote_mcp'));"
         "print(','.join(leaked))"
     )
     out = subprocess.run(
@@ -394,7 +395,8 @@ def test_generators_package_imports_no_database_code():
         env={**os.environ, "PYTHONPATH": "src"},
     )
     assert out.stdout.strip() == "", (
-        f"importing generators.kit pulled in DB modules: {out.stdout.strip()}"
+        "importing the generators package pulled in DB or MCP modules: "
+        f"{out.stdout.strip()}"
     )
 
 

@@ -22,6 +22,11 @@ LIVE_WRONG_TRACK_ERROR = "Audio clips can only be created on audio tracks"
 LIVE_BAD_PATH_ERROR = (
     "The provided path does not appear to point to a valid audio file"
 )
+# The third shape, recorded on Live 12.4.5 (probe row 17): Live checks
+# absoluteness BEFORE existence, with its own string. The handler's own
+# pre-check normally refuses a relative path first, so the fake filesystem
+# never raises this — it is exercised directly against the mapper.
+LIVE_RELATIVE_PATH_ERROR = "Please provide an absolute path"
 
 # The one path the fake "filesystem" holds. Anything else refuses the way
 # Live refuses a missing or undecodable file.
@@ -2060,6 +2065,40 @@ def test_create_audio_clip_unloadable_path_teaches_both_causes(
     assert "/tmp/does-not-exist.wav" in err, err
     assert "exists" in err, err
     assert "decode" in err, err
+
+
+def test_live_relative_path_refusal_teaches_the_same_fix():
+    """Probe row 17: Live's own absoluteness check has a third error string,
+    raised before the file is looked at. When it arrives — Live's idea of
+    'absolute' stricter than os.path.isabs, a future build — it must teach
+    the same fix as the handler's pre-check, not surface as a bare ValueError
+    that reads like a corrupt file. Unknown strings still pass through
+    untouched."""
+    from hallucinote_mcp.handlers.clip import _create_audio_clip
+
+    def live_refuses(*_args):
+        raise ValueError(LIVE_RELATIVE_PATH_ERROR)
+
+    with pytest.raises(ValueError) as exc_info:
+        _create_audio_clip(
+            live_refuses, ("scratchpad/probe.wav",),
+            track_index=3, audio_path="scratchpad/probe.wav",
+        )
+    err = str(exc_info.value)
+    assert "absolute" in err.lower(), err
+    assert "resolve_audio_path" in err, err
+    assert LIVE_RELATIVE_PATH_ERROR in err, err
+    assert "decode" not in err.lower(), "must not be mislabelled as the bad-file refusal"
+
+    def live_says_something_new(*_args):
+        raise ValueError("some refusal this build never saw")
+
+    with pytest.raises(ValueError, match="never saw") as unknown:
+        _create_audio_clip(
+            live_says_something_new, ("/abs/x.wav",),
+            track_index=3, audio_path="/abs/x.wav",
+        )
+    assert "resolve_audio_path" not in str(unknown.value)
 
 
 def test_create_audio_clip_requires_an_absolute_path(loaded_actions):

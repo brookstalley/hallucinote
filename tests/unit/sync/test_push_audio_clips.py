@@ -1,15 +1,18 @@
-"""SMP-6V2K chunk 03 — the clips and arrangement phases materialize audio (R1.1).
+"""SMP-6V2K — the clips and arrangement phases materialize audio (R1.1).
 
 An authored ``kind='audio'`` row used to warn and skip in both phases. It now
 becomes a real Live clip in the session and in the arrangement, conformed as
-authored — except for two cases the planner REFUSES rather than guesses,
-because the operator-gated Live probe that would settle them has not run:
+authored. Two cases that once refused pending a Live probe are now settled by
+its recorded verdicts (``docs/research/audio-first-class/lom-probe-results.md``
+rows 16-16c):
 
-  * a linked row whose ``audio_file`` CHANGED (``Clip.file_path`` is read-only,
-    so that is a delete-and-recreate whose cost to the clip's envelopes is
-    unknown), and
-  * an audio placement whose source clip HOSTS an envelope (the duplicate route
-    that would carry the envelope is unprobed for audio).
+  * a linked row whose ``audio_file`` CHANGED, or whose linked slot holds a
+    MIDI clip, is a delete → create → conform → re-emit-envelopes sequence
+    (``Clip.file_path`` is read-only, create into an occupied slot is a hard
+    error, and a recreate drops every envelope the clip hosted), and
+  * an audio placement whose source clip HOSTS an envelope takes the duplicate
+    route, like a MIDI one (the duplicate carries the ride — and the conform —
+    off an audio session clip); envelope-free placements keep the direct create.
 
 Plus the two properties a destructive reconcile breaks first: a missing sample
 fails its clip BEFORE the call is planned, and a second push of an unchanged
@@ -201,14 +204,118 @@ def test_missing_sample_fails_the_clip_before_the_call_is_planned(
     assert set(plan.blocked_reasons) <= set(plan.alerts)
 
 
-def test_changed_audio_file_refuses_loudly_and_plans_nothing(
+def _host_a_ride(conn, *, song, track, clip, start_bar=1.0):
+    """Give ``clip`` a mixer_volume ride it HOSTS: a covering placement plus
+    an envelope whose span that placement covers (breakpoints in arrangement
+    time, so they sit under the placement wherever it starts; 4/4 assumed).
+    Returns the envelope id."""
+    _place(conn, song=song, track=track, clip=clip, start_bar=start_bar)
+    offset = (start_bar - 1.0) * 4.0
+    env = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume", target_track_id=track,
+    )
+    M.add_breakpoint(conn, envelope_id=env, time_beats=offset, value=0.5)
+    M.add_breakpoint(conn, envelope_id=env, time_beats=offset + 4.0, value=0.9)
+    from hallucinote.sync.push.envelopes import envelope_hosting_clip_ids
+    assert clip in envelope_hosting_clip_ids(conn, song), (
+        "fixture precondition: the clip must actually host the envelope"
+    )
+    return env
+
+
+def test_changed_audio_file_is_delete_create_conform_then_envelopes_in_order(
     conn, song, session, audio_track, sample, song_dir,
 ):
-    """REFUSAL (a). Live's ``Clip.file_path`` is read-only, so re-pointing a
-    clip at a different file is a delete-and-recreate — and whether a recreate
-    preserves the clip's envelopes is unprobed. The planner names chunk 01 and
-    invents nothing: no delete, no create, and no 're-emit the envelope just in
-    case' (which would double one that survived)."""
+    """THE reconcile rule (probe rows 16, 16b). ``Clip.file_path`` is
+    read-only and a create into an occupied slot is a hard error, so a
+    re-pointed row is an explicit delete, then a create, then the conform,
+    then every envelope the row hosts written again — because a recreate
+    drops them, and a ride the author wrote must not go missing because the
+    file under it changed. One planned sequence, in that order."""
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="line", gain=0.6, warp_mode=6,
+    )
+    _link_clip(conn, session=session, clip_id=cid, index=1)
+    env = _host_a_ride(conn, song=song, track=audio_track, clip=cid)
+    probe = {4: [_live_slot(1, str(song_dir / "assets" / "OTHER.wav"), gain=0.6)]}
+
+    plan = push.plan_push_clip(
+        conn, clip_id=cid, session_id=session,
+        live_session_clips_by_track=probe,
+    )
+
+    assert plan.blocked_reasons == [], plan.blocked_reasons
+    actions = [c.args["action"] for c in plan.calls]
+    assert actions == [
+        "delete", "create", "set_property", "set_property", "write_envelope",
+    ], actions
+
+    delete, create = plan.calls[0], plan.calls[1]
+    assert delete.key == f"clip_delete:{cid}"
+    assert delete.args == {
+        "action": "delete", "location": "session",
+        "track_index": 4, "clip_index": 1,
+    }
+    assert create.key == f"clip:{cid}"
+    assert create.args["kind"] == "audio"
+    assert create.args["clip_index"] == 1, "same slot, same link — no positional guess"
+    assert create.args["audio_path"] == str(song_dir / "assets" / "line.wav")
+    assert "replace" not in create.args, (
+        "the explicit delete is the one destructive step; a replace would hide a second"
+    )
+
+    # The conform is written in full — the new clip is at Live's defaults, so
+    # the probe's `gain=0.6` on the OLD clip must not suppress the write.
+    conform = {c.args["property"]: c.args["value"] for c in plan.calls[2:4]}
+    assert conform == {"gain": 0.6, "warp_mode": 6}
+
+    ride = plan.calls[4]
+    assert ride.key == f"envelope:{env}", (
+        "the re-emit IS an envelope write; its result carries the index the link layer records"
+    )
+    assert ride.tool == "ableton_automation"
+    assert ride.args["target_kind"] == "mixer_volume"
+    assert ride.args["location"] == "session"
+    assert ride.args["clip_index"] == 1
+    assert ride.args["track_index"] == 4
+
+    # Said where the operator will see it, because a clip they had was deleted.
+    assert any("CHANGED" in a and "DELETED" in a and "OTHER.wav" in a for a in plan.alerts)
+
+
+def test_changed_audio_file_re_emits_exactly_what_the_envelopes_phase_would(
+    conn, song, session, audio_track, sample, song_dir,
+):
+    """Reuse, not a copy: the re-emitted call is byte-for-byte the call the
+    envelopes phase plans for that envelope, so the two phases can never
+    disagree about a route, a clip-local translation, or a warning."""
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="line",
+    )
+    _link_clip(conn, session=session, clip_id=cid, index=1)
+    _host_a_ride(conn, song=song, track=audio_track, clip=cid, start_bar=3.0)
+    probe = {4: [_live_slot(1, str(song_dir / "assets" / "OTHER.wav"))]}
+
+    clips_plan = push.plan_push_clip(
+        conn, clip_id=cid, session_id=session,
+        live_session_clips_by_track=probe,
+    )
+    envelopes_plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+
+    reemitted = [c for c in clips_plan.calls if c.key.startswith("envelope:")]
+    assert len(reemitted) == 1
+    assert [(c.key, c.args) for c in reemitted] == [
+        (c.key, c.args) for c in envelopes_plan.calls
+    ]
+
+
+def test_changed_audio_file_with_no_hosted_envelope_re_emits_nothing(
+    conn, song, session, audio_track, sample, song_dir,
+):
+    """No envelope hosted → nothing to re-emit; the sequence is just
+    delete, create, conform. Nothing is written 'just in case'."""
     cid = M.create_audio_clip(
         conn, track_id=audio_track, slot=1, length_beats=8.0,
         audio_file=sample, name="line", gain=0.6,
@@ -220,21 +327,16 @@ def test_changed_audio_file_refuses_loudly_and_plans_nothing(
         conn, clip_id=cid, session_id=session,
         live_session_clips_by_track=probe,
     )
-
-    assert plan.calls == [], "no delete, no create, and no conform onto the wrong file"
-    assert len(plan.blocked_reasons) == 1
-    reason = plan.blocked_reasons[0]
-    assert "CHANGED" in reason
-    assert "read-only" in reason.lower()
-    assert "chunk 01" in reason
-    assert "OTHER.wav" in reason
+    assert [c.args["action"] for c in plan.calls] == ["delete", "create", "set_property"]
+    assert not any(c.key.startswith("envelope:") for c in plan.calls)
 
 
-def test_linked_slot_holding_a_non_audio_clip_refuses_loudly(
-    conn, song, session, audio_track, sample,
+def test_linked_slot_holding_a_non_audio_clip_is_recreated_as_audio(
+    conn, song, session, audio_track, sample, song_dir,
 ):
-    """Same family as a changed file: making that slot audio means destroying
-    what is there, and the recreate's cost is unprobed."""
+    """Same rule as a changed file: the DB says audio, Live's slot holds a
+    MIDI clip, and the DB is the projection's author — so the slot becomes
+    what the row says by the one route Live allows, delete then create."""
     cid = M.create_audio_clip(
         conn, track_id=audio_track, slot=1, length_beats=8.0,
         audio_file=sample, name="line",
@@ -246,8 +348,59 @@ def test_linked_slot_holding_a_non_audio_clip_refuses_loudly(
         conn, clip_id=cid, session_id=session,
         live_session_clips_by_track=probe,
     )
-    assert plan.calls == []
-    assert any("chunk 01" in b for b in plan.blocked_reasons)
+    assert plan.blocked_reasons == []
+    assert [c.args["action"] for c in plan.calls] == ["delete", "create"]
+    assert plan.calls[0].key == f"clip_delete:{cid}"
+    assert plan.calls[1].args["kind"] == "audio"
+    assert any("NOT audio" in a and "DELETED" in a for a in plan.alerts)
+
+
+def test_recreate_needs_a_successful_probe_so_the_unprobed_paths_stay_non_destructive(
+    conn, song, session, audio_track, sample,
+):
+    """The recreate is the ONE destructive branch, and only a successful probe
+    reaches it. Without a probe at all, and with a per-track probe failure,
+    nothing is deleted — the tri-state reader still guards the destruction."""
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="line", gain=0.6,
+    )
+    _link_clip(conn, session=session, clip_id=cid, index=1)
+    for probe in (None, {9: []}):
+        plan = push.plan_push_clip(
+            conn, clip_id=cid, session_id=session,
+            live_session_clips_by_track=probe,
+        )
+        assert not any(c.args["action"] in ("delete", "create") for c in plan.calls), probe
+
+
+def test_apply_accepts_the_clip_delete_key_and_the_create_relinks_the_slot(
+    conn, song, session, audio_track, sample,
+):
+    """The apply layer's key registry is a contract: an undeclared kind RAISES
+    and halts the phase mid-run. `clip_delete` is ack-only (a delete records
+    no binding) and the `clip:` create that follows re-records the link."""
+    from hallucinote.db import queries as Q
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="line",
+    )
+    _link_clip(conn, session=session, clip_id=cid, index=1)
+    push.apply_push_results(
+        conn,
+        results=[
+            {"key": f"clip_delete:{cid}", "ok": True, "tool": "ableton_clip",
+             "result": {"track_index": 4, "location": "session",
+                        "clip_index": 1, "deleted": True}},
+            {"key": f"clip:{cid}", "ok": True, "tool": "ableton_clip",
+             "result": {"track_index": 4, "location": "session",
+                        "clip_index": 1}},
+        ],
+        session_id=session,
+    )
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="clip", db_id=cid,
+    ) == 1
 
 
 def test_reverse_is_refused_loudly_but_the_clip_is_still_placed(
@@ -507,33 +660,24 @@ def test_audio_placement_materializes_into_the_arrangement(
     assert "notes" not in create.args
 
 
-def test_envelope_hosting_audio_placement_refuses_and_takes_its_track_with_it(
-    conn, song, session, audio_track, sample,
+def test_envelope_hosting_audio_placement_takes_the_duplicate_route(
+    conn, song, session, audio_track, sample, song_dir,
 ):
-    """REFUSAL (b). The projection routes an envelope-bearing placement through
-    duplicate-onto-cleared so the envelope travels with the clip; whether that
-    carries an envelope off an AUDIO session clip is unprobed, and the direct
-    create carries nothing. Neither route is known-good, so the whole track is
-    left alone — the clear is destructive (§6a) and must not run for a track
-    that cannot be fully rebuilt."""
+    """Probe row 16c: ``duplicate_clip_to_arrangement`` carries a ride off an
+    AUDIO session clip exactly as off a MIDI one. So an audio placement whose
+    source clip hosts an envelope duplicates onto the cleared region like a
+    MIDI one — the same call, the same key kind — and NOT the direct create,
+    which carries no envelope. The duplicate copies the CONFORMED session
+    clip, so the per-placement conform gap must not fire for it."""
     cid = M.create_audio_clip(
         conn, track_id=audio_track, slot=1, length_beats=8.0,
-        audio_file=sample, name="line",
+        audio_file=sample, name="line", gain=0.6, warp_mode=6,
     )
     _link_clip(conn, session=session, clip_id=cid, index=1)
-    # A mixer_volume ride whose span a session clip on this track covers —
-    # which is exactly what makes the clip an envelope HOST.
-    env = M.create_envelope(
-        conn, song_id=song, target_kind="mixer_volume",
-        target_track_id=audio_track,
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4,
     )
-    M.add_breakpoint(conn, envelope_id=env, time_beats=0.0, value=0.5)
-    M.add_breakpoint(conn, envelope_id=env, time_beats=4.0, value=0.9)
-    _place(conn, song=song, track=audio_track, clip=cid)
-    from hallucinote.sync.push.envelopes import envelope_hosting_clip_ids
-    assert cid in envelope_hosting_clip_ids(conn, song), (
-        "fixture precondition: the clip must actually host the envelope"
-    )
+    _host_a_ride(conn, song=song, track=audio_track, clip=cid, start_bar=3.0)
 
     live = {4: [{"arrangement_clip_index": 1, "start_beats": 0.0}]}
     plan = push.plan_push_arrangement(
@@ -541,11 +685,98 @@ def test_envelope_hosting_audio_placement_refuses_and_takes_its_track_with_it(
         live_arrangement_clips_by_track=live,
     )
 
-    assert plan.calls == [], "no clear and no rebuild for a track we cannot rebuild"
-    reason = "\n".join(plan.blocked_reasons)
-    assert "HOSTS a clip envelope" in reason
-    assert "chunk 01" in reason
-    assert set(plan.blocked_reasons) <= set(plan.alerts)
+    assert plan.blocked_reasons == [], plan.blocked_reasons
+    assert [c.args["action"] for c in plan.calls] == [
+        "delete", "duplicate_to_arrangement",
+    ], "clear first, then duplicate — never a direct audio create for this row"
+    dup = plan.calls[1]
+    assert dup.key.startswith("arrangement_clip:")
+    assert dup.args == {
+        "action": "duplicate_to_arrangement",
+        "track_index": 4,
+        "clip_index": 1,
+        "start_beats": 8.0,  # bar 3 in 4/4
+    }
+    assert "audio_path" not in dup.args
+    # The conform travelled with the duplicate — no gap is reported for it.
+    assert not any("did NOT travel" in b for b in plan.blocked_reasons)
+    assert not any("did NOT travel" in a for a in plan.alerts)
+    # The extent still did not (the duplicate is the session clip's length).
+    assert any("EXTENT did not" in n and "duplicate" in n for n in plan.notes), plan.notes
+    # The summary counts it as both a duplicate and an audio placement.
+    assert any("duplicated 1" in n and "placed 1 audio" in n for n in plan.notes), plan.notes
+
+
+def test_envelope_hosting_audio_placement_needs_its_source_clip_linked(
+    conn, song, session, audio_track, sample,
+):
+    """The duplicate route addresses the SESSION clip, so — exactly as for an
+    envelope-bearing MIDI placement — an unlinked source blocks the track
+    (§6a: never clear what cannot be fully rebuilt). This is the one way an
+    envelope-hosting audio placement differs from an envelope-free one, which
+    needs no session counterpart at all."""
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="line",
+    )
+    _host_a_ride(conn, song=song, track=audio_track, clip=cid)
+
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track={4: [{"arrangement_clip_index": 1, "start_beats": 0.0}]},
+    )
+    assert plan.calls == []
+    assert any("not linked" in b and "duplicate route" in b for b in plan.blocked_reasons)
+
+
+def test_envelope_free_audio_placement_keeps_the_direct_create_and_its_gap(
+    conn, song, session, audio_track, sample,
+):
+    """The verdict licenses the envelope case and nothing more: an audio
+    placement with no hosted envelope is still a direct
+    ``Track.create_audio_clip`` — its clip need not be linked — and the
+    authored-conform gap keeps firing for it, because the fresh clip is at
+    Live's defaults and the copy cannot be addressed in the same plan."""
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="line", gain=0.6,
+    )
+    _place(conn, song=song, track=audio_track, clip=cid)
+
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track={4: []},
+    )
+    assert [c.args["action"] for c in plan.calls] == ["create"]
+    assert plan.calls[0].args["kind"] == "audio"
+    assert any("did NOT travel" in b and "gain" in b for b in plan.blocked_reasons)
+
+
+def test_mixed_track_routes_each_audio_placement_by_whether_its_clip_hosts_a_ride(
+    conn, song, session, audio_track, sample,
+):
+    """Two audio placements on one track, one hosting a ride and one not: the
+    first duplicates, the second creates directly. Routing is per row."""
+    ride = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="ride",
+    )
+    _link_clip(conn, session=session, clip_id=ride, index=1)
+    plain = M.create_audio_clip(
+        conn, track_id=audio_track, slot=2, length_beats=8.0,
+        audio_file=sample, name="plain",
+    )
+    _host_a_ride(conn, song=song, track=audio_track, clip=ride, start_bar=1.0)
+    _place(conn, song=song, track=audio_track, clip=plain, start_bar=9.0)
+
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track={4: []},
+    )
+    assert plan.blocked_reasons == []
+    assert [c.args["action"] for c in plan.calls] == [
+        "duplicate_to_arrangement", "create",
+    ]
 
 
 def test_arrangement_missing_sample_blocks_the_track_without_clearing_it(

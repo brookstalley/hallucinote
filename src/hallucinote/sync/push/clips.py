@@ -9,6 +9,7 @@ from hallucinote.db import queries as Q
 from hallucinote.paths import resolve_audio_path, same_file_path, song_dir_for_conn
 
 from ._core import PushPlan, ToolCall, _notes_for_mcp
+from .envelopes import plan_push_envelopes_for_clip
 
 
 # The authored conform surface: DB column -> the `ableton_clip(set_property)`
@@ -18,11 +19,13 @@ from ._core import PushPlan, ToolCall, _notes_for_mcp
 # later mix pass.
 #
 # `reverse` is deliberately ABSENT. Live exposes no settable reverse on a
-# Clip — the wire carries no such property — so a row that sets it cannot be
-# materialized here, and the column's real materialization (a derived asset,
-# or Simpler's Reverse parameter) is an open verdict. A row that sets it is
-# refused loudly below rather than pushed as a forward-playing clip nobody
-# was told about.
+# Clip — probe-confirmed on a real audio clip: 49 properties, 142 methods, none
+# of them a reverse — so the wire carries no such property and a row that sets
+# it cannot be materialized here. Simpler has none either; its `reverse()` is a
+# destructive method that writes a derived file. Reverse therefore materializes
+# only as a pre-reversed derived asset, which is a later wave's transform. A
+# row that sets it is refused loudly below rather than pushed as a
+# forward-playing clip nobody was told about.
 AUDIO_CONFORM_PROPERTIES: tuple[tuple[str, str], ...] = (
     ("audio_gain",   "gain"),
     ("pitch_coarse", "pitch_coarse"),
@@ -42,13 +45,6 @@ _INT_CONFORM_COLUMNS = frozenset({"pitch_coarse", "warp_mode"})
 # Live reports gain and markers as floats it has already run through its own
 # domain, so an exact `==` would re-write an unchanged clip on every push.
 _CONFORM_EPS = 1e-6
-
-# Named in every refusal below so a reader can find the one thing that closes
-# it: the operator-gated Live session that settles the recreate semantics.
-_UNPROBED = (
-    "SMP-6V2K chunk 01 — the operator-gated Live session that settles this — "
-    "has not run"
-)
 
 
 def _conform_value(column: str, raw: Any) -> Any:
@@ -77,10 +73,11 @@ def _conform_is_current(authored: Any, live: Any) -> bool:
 # successfully is present, with an empty list when it simply holds no clips.
 # Those two must never collapse: "unknown" answered as "empty" plans a
 # `replace=True` recreate, which deletes a clip the operator really has and
-# rebuilds it — losing exactly the un-modelled Live-side state (warp markers, a
-# clip envelope) whose survival across a recreate is the unknown the changed-file
-# branch refuses to act on. So the reader is tri-state, and this sentinel is the
-# third state rather than another `None` for a caller to remember to check.
+# rebuilds it — losing the un-modelled Live-side state a recreate does not
+# carry (warp markers; and a recreate drops the clip's envelopes, which is why
+# the changed-file branch re-emits them). So the reader is tri-state, and this
+# sentinel is the third state rather than another `None` for a caller to
+# remember to check.
 PROBE_UNKNOWN = object()
 
 
@@ -158,25 +155,133 @@ def _audio_conform_calls(
     return calls
 
 
+def _recreate_audio_clip(
+    plan: PushPlan,
+    *,
+    conn: sqlite3.Connection,
+    clip: sqlite3.Row,
+    clip_id: str,
+    song_id: str,
+    session_id: str,
+    track_at: int,
+    clip_at: int,
+    resolved: Path,
+    why: str,
+) -> None:
+    """Plan the destructive reconcile of a linked audio slot, as one sequence:
+    ``delete`` → ``create`` → conform → re-emit every envelope the row hosts.
+
+    ``Clip.file_path`` is read-only and ``create_audio_clip`` into an occupied
+    slot is a hard error (``This clip slot already has a clip``), so a slot
+    that must play a different file — or must become audio at all — is emptied
+    first. The delete is its own planned call rather than a ``replace=True``
+    on the create, so the destruction is visible in the plan and ordered
+    before the create rather than hidden inside a handler.
+
+    A recreate drops every envelope the old clip hosted (probe-confirmed:
+    ``automation_envelope`` reads ``None`` after delete + create of the same
+    file), so the ride the author wrote is written again, through the
+    envelopes phase's own planner, onto the new clip — same slot, same link,
+    so the address is known at plan time and nothing positional is guessed.
+    The conform runs with no probe entry: the new clip is at Live's defaults
+    whatever the old one held.
+
+    Said on the operator channel as an alert, not buried in ``notes``: a clip
+    the operator had in Live was deleted and rebuilt, and that is theirs to
+    know even when it is exactly what the song asked for.
+    """
+    plan.alert(
+        f"{why} Live's clip in slot {clip_at} on track {track_at} is DELETED "
+        f"and recreated from {resolved.name}, then conformed and its "
+        "envelopes re-emitted (a recreate drops every envelope the old clip "
+        "hosted). Un-modelled Live-side state on the old clip — hand-placed "
+        "warp markers — does not survive."
+    )
+    plan.add(ToolCall(
+        tool="ableton_clip",
+        args={
+            "action": "delete",
+            "location": "session",
+            "track_index": track_at,
+            "clip_index": clip_at,
+        },
+        # Ack-only (`_ACK_ONLY_KINDS`): the delete records no binding; the
+        # create that follows re-records the clip's link under `clip:`.
+        key=f"clip_delete:{clip_id}",
+        purpose=(
+            f"delete the clip in slot {clip_at} on track {track_at} so it can "
+            f"be recreated from {resolved.name} (Clip.file_path is read-only)"
+        ),
+    ))
+    plan.add(ToolCall(
+        tool="ableton_clip",
+        args={
+            "action": "create",
+            "location": "session",
+            "kind": "audio",
+            "track_index": track_at,
+            "clip_index": clip_at,
+            "audio_path": str(resolved),
+            "name": clip["name"],
+            # No `replace`: the delete above is the one destructive step, and
+            # a slot found occupied here is a delete that did not take — Live
+            # should say so rather than silently delete twice.
+        },
+        key=f"clip:{clip_id}",
+        purpose=(
+            f"recreate session audio clip in slot {clip_at} on track "
+            f"{track_at} from {resolved.name}"
+        ),
+    ))
+    for call in _audio_conform_calls(
+        clip, clip_id=clip_id, track_at=track_at, clip_index=clip_at,
+        live_entry=None,
+    ):
+        plan.add(call)
+    envelopes = plan_push_envelopes_for_clip(
+        conn, song_id=song_id, session_id=session_id, clip_id=clip_id,
+    )
+    for call in envelopes.calls:
+        plan.add(call)
+    plan.notes.extend(envelopes.notes)
+    plan.errors.extend(envelopes.errors)
+    for reason in envelopes.blocked_reasons:
+        plan.blocked(reason)
+    plan.alerts.extend(
+        a for a in envelopes.alerts if a not in envelopes.blocked_reasons
+    )
+    if envelopes.calls:
+        plan.warn(
+            f"clip {clip_id}: re-emitted {len(envelopes.calls)} envelope(s) "
+            f"onto the recreated clip in slot {clip_at}"
+        )
+
+
 def _plan_push_audio_clip(
     plan: PushPlan,
     *,
     conn: sqlite3.Connection,
     clip: sqlite3.Row,
     clip_id: str,
+    song_id: str,
+    session_id: str,
     track_at: int,
     clip_at: int | None,
     live_session_clips_by_track: dict[int, list[dict[str, Any]]] | None,
 ) -> None:
     """Plan the materialization of one ``kind='audio'`` row (R1.1).
 
-    Three outcomes, and which one a row gets is decided here rather than at
+    Four outcomes, and which one a row gets is decided here rather than at
     dispatch:
 
     * **Not linked** → ``create(kind='audio', audio_path=<absolute>)`` plus
       every authored conform property.
     * **Linked and playing the file the row names** → the conform properties
       only, and (with a probe) only the ones Live does not already hold.
+    * **Linked, but Live's slot plays a different file or holds a MIDI clip**
+      → the destructive reconcile of :func:`_recreate_audio_clip`: delete,
+      create, conform, re-emit the envelopes the row hosts. Only a
+      successful probe reaches this — it is the one branch that destroys.
     * **Anything that cannot be materialized without guessing** → no calls and
       a :meth:`PushPlan.blocked` reason that says what is unknown.
 
@@ -226,10 +331,13 @@ def _plan_push_audio_clip(
         # and a run that says OK over that is the silent-wrong-audio failure.
         plan.blocked(
             f"{where} sets reverse=1, which push cannot materialize: Live "
-            "exposes no settable reverse on a Clip, so the wire carries no "
-            "such property. The clip is placed and conformed FORWARD. Reverse "
-            "belongs to a derived (pre-reversed) asset or to a sampler's own "
-            f"Reverse parameter, and {_UNPROBED} — it is what confirms which."
+            "exposes no settable reverse on a Clip (probe-confirmed on Live "
+            "12.4.5 — no such property or method), so the wire carries none, "
+            "and Simpler has no Reverse parameter either. The clip is placed "
+            "and conformed FORWARD. Reverse materializes only as a "
+            "pre-reversed derived asset, which is a later SMP-6V2K wave's "
+            "transform (#237); until then, reverse the file offline and "
+            "reference that."
         )
 
     if clip_at is None:
@@ -342,13 +450,19 @@ def _plan_push_audio_clip(
         return
 
     if not live_entry.get("is_audio"):
-        plan.blocked(
-            f"{where} is linked to Live slot {clip_at} on track {track_at}, "
-            "and the probe says that slot holds a clip that is NOT audio. "
-            "Making it audio means deleting what is there and creating in its "
-            f"place, and whether a recreate preserves the clip's envelopes is "
-            f"unknown: {_UNPROBED}. Nothing was planned for this clip. Clear "
-            "the slot in Live by hand and re-push, or run chunk 01."
+        # The DB says audio; Live's slot holds a MIDI clip. The DB is the
+        # projection's author, exactly as the MIDI path's `replace=True`
+        # already treats an occupied slot — so the slot becomes what the row
+        # says, by the one route Live allows.
+        _recreate_audio_clip(
+            plan, conn=conn, clip=clip, clip_id=clip_id, song_id=song_id,
+            session_id=session_id, track_at=track_at, clip_at=clip_at,
+            resolved=resolved,
+            why=(
+                f"{where} is linked to Live slot {clip_at} on track "
+                f"{track_at}, and the probe says that slot holds a clip that "
+                "is NOT audio."
+            ),
         )
         return
 
@@ -364,17 +478,15 @@ def _plan_push_audio_clip(
         return
 
     if not same_file_path(Path(live_file), resolved):
-        plan.blocked(
-            f"{where}: the row's audio_file CHANGED. Live's clip in slot "
-            f"{clip_at} plays {live_file!r}; the row now authors "
-            f"{str(resolved)!r}. Live's Clip.file_path is READ-ONLY, so "
-            "re-pointing a clip at a different file is a delete-and-recreate, "
-            "and whether a recreate preserves the clip's envelopes is "
-            f"unknown: {_UNPROBED}. Nothing was planned for this clip rather "
-            "than an invented ordering — a recreate could silently drop an "
-            "authored ride, and re-emitting the envelope 'just in case' could "
-            "double one that survived. Run chunk 01, or delete the clip in "
-            "Live by hand and re-push to recreate it."
+        _recreate_audio_clip(
+            plan, conn=conn, clip=clip, clip_id=clip_id, song_id=song_id,
+            session_id=session_id, track_at=track_at, clip_at=clip_at,
+            resolved=resolved,
+            why=(
+                f"{where}: the row's audio_file CHANGED — Live's clip plays "
+                f"{live_file!r}, the row now authors {str(resolved)!r}, and "
+                "Live's Clip.file_path is read-only."
+            ),
         )
         return
 
@@ -406,11 +518,12 @@ def plan_push_clip(
 
     Audio (R1.1) routes to :func:`_plan_push_audio_clip`: a create carrying
     the resolved ABSOLUTE sample path, plus the authored conform properties
-    (gain, transpose, warp / warp_mode, markers). Two things it refuses rather
-    than guesses, each with a :meth:`PushPlan.blocked` reason naming what is
-    unknown: a sample that is not on disk, and a linked clip whose file has
-    changed underneath the row (``Clip.file_path`` is read-only, so that is a
-    delete-and-recreate whose cost to the clip's envelopes is unprobed).
+    (gain, transpose, warp / warp_mode, markers). A linked clip whose file
+    has changed underneath the row is a delete-and-recreate that re-emits
+    the envelopes the row hosts (``Clip.file_path`` is read-only, and a
+    recreate drops them — :func:`_recreate_audio_clip`). One thing it
+    refuses rather than guesses, with a :meth:`PushPlan.blocked` reason: a
+    sample that is not on disk.
 
     ``live_session_clips_by_track`` is the per-track Live session-clip
     inventory (``{track_index: [{clip_index, is_audio, file_path, gain, …}]}``
@@ -418,8 +531,9 @@ def plan_push_clip(
     empty slots dropped; ``push_cli._probe_live_session_clips_via_mcp``
     produces it). It answers two questions no DB read can: which file a linked
     clip actually plays, and which conform values Live already holds. With it,
-    a second push of an unchanged song plans NOTHING. Without it the planner
-    still materializes and conforms — it just cannot detect a re-pointed
+    a second push of an unchanged song plans NOTHING, and a re-pointed
+    ``audio_file`` is detected and recreated. Without it the planner still
+    materializes and conforms — it just cannot detect a re-pointed
     ``audio_file``, and it plans nothing destructive; :func:`plan_push_clips`
     raises one alert per song saying so.
 
@@ -465,6 +579,8 @@ def plan_push_clip(
             conn=conn,
             clip=clip,
             clip_id=clip_id,
+            song_id=track_row["song_id"],
+            session_id=session_id,
             track_at=track_at,
             clip_at=clip_at,
             live_session_clips_by_track=live_session_clips_by_track,

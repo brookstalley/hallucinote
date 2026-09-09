@@ -605,6 +605,16 @@ _ACK_ONLY_KINDS: frozenset[str] = frozenset({
     # exactly like the mixer `track_volume` / `device_parameter` keys above.
     # The clip's own binding is recorded under `clip:` by the create.
     "clip_conform",
+    # SMP-6V2K (audio clips): the destructive reconcile of a linked session
+    # slot — a row whose `audio_file` changed, or whose slot Live reports as
+    # holding a MIDI clip — is planned as an explicit
+    # ableton_clip(action='delete', location='session') keyed
+    # `clip_delete:{clip_id}` BEFORE the recreate, because `Clip.file_path` is
+    # read-only and `create_audio_clip` into an occupied slot is a hard error
+    # (clips.py `_recreate_audio_clip`). Ack-only, the session-view twin of
+    # `arrangement_clip_clear`: a delete records no binding, and the create that
+    # follows re-records the clip's link under `clip:` at the same slot index.
+    "clip_delete",
 })
 
 

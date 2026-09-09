@@ -779,6 +779,59 @@ def test_send_level_routes_to_perform_when_no_arrangement_clip_covers(
 # ---------- apply_push_results dispatch ----------
 
 
+def test_plan_push_envelopes_for_clip_emits_only_that_clips_hosted_rides(
+    conn, song, session, linked_track, linked_clip, arr_clip, track,
+):
+    """The per-clip planner (the clips phase's re-emit after a destructive
+    recreate) emits exactly the envelopes the clip HOSTS, as exactly the calls
+    the song-wide planner would emit for them — and nothing for a clip that
+    hosts none. One route table, two entry points."""
+    hosted = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume", target_track_id=linked_track,
+    )
+    _add_one_breakpoint(conn, hosted)
+    # A second clip on the same track, placed where nothing covers it, hosts
+    # nothing — a control that the filter is by HOST, not by track.
+    other = M.create_clip(conn, track_id=track, slot=2, length_beats=4.0, name="other")
+
+    per_clip = push.plan_push_envelopes_for_clip(
+        conn, song_id=song, session_id=session, clip_id=linked_clip,
+    )
+    song_wide = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+
+    assert [(c.key, c.args) for c in per_clip.calls] == [
+        (c.key, c.args) for c in song_wide.calls
+    ]
+    assert [c.key for c in per_clip.calls] == [f"envelope:{hosted}"]
+
+    none = push.plan_push_envelopes_for_clip(
+        conn, song_id=song, session_id=session, clip_id=other,
+    )
+    assert none.calls == [] and none.notes == []
+
+
+def test_envelope_hosts_by_clip_maps_each_host_to_its_envelope_ids(
+    conn, song, session, linked_track, linked_clip, arr_clip,
+):
+    """The map the two consumers share: keys are the hosting clips (what the
+    arrangement planner routes by), values are the envelope ids (what the
+    clips phase re-emits)."""
+    from hallucinote.sync.push.envelopes import (
+        envelope_hosting_clip_ids, envelope_hosts_by_clip,
+    )
+    vol = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume", target_track_id=linked_track,
+    )
+    pan = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_pan", target_track_id=linked_track,
+    )
+    _add_one_breakpoint(conn, vol)
+    _add_one_breakpoint(conn, pan)
+    hosts = envelope_hosts_by_clip(conn, song)
+    assert hosts == {linked_clip: {vol, pan}}
+    assert envelope_hosting_clip_ids(conn, song) == set(hosts)
+
+
 def test_apply_push_results_records_envelope_link(
     conn, song, session, linked_track, linked_clip,
 ):

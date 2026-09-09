@@ -32,6 +32,30 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-09-09 — Push acts on the probe's verdicts: a re-pointed sample is recreated with its ride, and an envelope-hosting audio placement duplicates
+
+<!-- prawduct: type=feature | scope=SMP-6V2K -->
+
+The two `plan.blocked` refusals chunk 03 shipped pending the Live probe are gone, replaced by
+the rule its recorded verdicts license (`lom-probe-results.md` rows 16-17). In the clips phase
+a linked audio row whose `audio_file` changed — or whose slot Live reports as holding a MIDI
+clip — now plans one sequence: an explicit `delete` (new ack-only key `clip_delete:`), the
+`create` at the same slot, the full conform, then every envelope the row hosts written again,
+because `Clip.file_path` is read-only, a create into an occupied slot is a hard error, and a
+recreate drops the clip's envelopes. The re-emit reuses the envelopes phase's own planner
+through a new per-clip entry point (`plan_push_envelopes_for_clip`, over
+`envelope_hosts_by_clip`) rather than a copy, so the route table has one home; the recreate
+is announced as an alert. In the arrangement phase an audio placement whose source clip hosts
+an envelope takes the duplicate-onto-cleared route exactly as a MIDI one does — the duplicate
+carries the ride off an audio session clip, and the conformed session clip with it, so the
+per-placement conform gap stops firing for those rows and keeps firing for envelope-free
+direct creates. Only envelope-hosting rows duplicate: the extent gap is route-independent and
+filed as #509 rather than widened into here. The MCP handler's teaching-error mapping
+gains Live's third path shape (`Please provide an absolute path`), which flips the wire
+fingerprint — re-vendor before the live checks. `capability-truth.md`, the sync-boundary
+contract (phases 6 and 13) and `operator-verification.md` (chunk 03's live clause re-queued
+over the two new paths) track it; nothing in `sync/push` cites chunk 01 as pending.
+
 ## 2026-09-09 — The probe session settles the reverse contract and the recreate semantics
 
 <!-- prawduct: type=research | scope=SMP-6V2K -->

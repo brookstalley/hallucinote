@@ -361,6 +361,13 @@ def _inline_notes_warning(note_count: int) -> str | None:
 # wrong diagnosis.
 _LIVE_WRONG_TRACK_KIND = "can only be created on audio tracks"
 _LIVE_BAD_AUDIO_PATH = "valid audio file"
+# Live checks absoluteness BEFORE existence, with its own string (probe row 17:
+# `ValueError: Please provide an absolute path`). The handler refuses a
+# relative path itself before the call, so this arrives only when Live's idea
+# of "absolute" is stricter than `os.path.isabs` — a cross-platform path form,
+# a future Live build — and then it must teach the same fix, not surface as a
+# bare ValueError that reads like a corrupt file.
+_LIVE_RELATIVE_AUDIO_PATH = "provide an absolute path"
 
 
 def _create_audio_clip(
@@ -370,12 +377,14 @@ def _create_audio_clip(
     track_index: int,
     audio_path: str,
 ) -> Any:
-    """Call Live's ``create_audio_clip`` and teach its two refusals.
+    """Call Live's ``create_audio_clip`` and teach its three refusals.
 
     Live raises a bare ``RuntimeError`` for the wrong track kind and a bare
-    ``ValueError`` for a path it will not load; neither says what to do
-    next. Anything else propagates untouched — a message we do not
-    recognize must not be re-labelled as one we do.
+    ``ValueError`` for a path it will not load — and a different
+    ``ValueError`` for a path it does not consider absolute, checked before
+    the file is looked at. None of them says what to do next. Anything else
+    propagates untouched — a message we do not recognize must not be
+    re-labelled as one we do.
     """
     try:
         return create_fn(*args)
@@ -390,6 +399,13 @@ def _create_audio_clip(
             ) from exc
         raise
     except ValueError as exc:
+        if _LIVE_RELATIVE_AUDIO_PATH in str(exc).lower():
+            raise ValueError(
+                f"create: Live does not accept {audio_path!r} as an absolute "
+                f"path. Live resolves nothing — resolve a song-relative "
+                f"reference with hallucinote.paths.resolve_audio_path("
+                f"song_dir, ref) and pass the result. (Live said: {exc})"
+            ) from exc
         if _LIVE_BAD_AUDIO_PATH in str(exc).lower():
             raise ValueError(
                 f"create: Live will not load {audio_path!r}. It reports a "

@@ -149,14 +149,15 @@ questions batched in so the operator is asked once.
 - [x] Chunk 04: an audio-track session clip hosts envelopes (#268) *(wave A)*
 - [x] Chunk 05: pull ingests audio clips, including one dragged in by hand *(wave B)*
 - [x] Chunk 06: the docs say what is true, and the contract artifacts track *(coordinator)*
-- [ ] Chunk 07: the two refusals settle against chunk 01's verdicts *(wave B; planner tests, then the live "Done when" of chunk 03 applies to it)*
+- [x] Chunk 07: the two refusals settle against chunk 01's verdicts *(wave B; planner tests, then the live "Done when" of chunk 03 applies to it)* — built 2026-09-09
 
 **A ticked box here means the code is built, reviewed and green — it does NOT mean the
-wave is done.** Chunks 02-05 each carry a live "Done when" clause that only an operator at
-a running Live can discharge, and none of them has been. Chunk 01's tick is different in
-kind — it *was* the operator session, and its verdicts are on disk — but it surfaced chunk
-07, which is what those verdicts were for. The conditions still standing are named under
-*Definition of done* below, and `capability-truth.md` rates the capability accordingly.
+wave is done.** Chunks 02-05 and 07 each carry a live "Done when" clause that only an
+operator at a running Live can discharge, and none of them has been. Chunk 01's tick is
+different in kind — it *was* the operator session, and its verdicts are on disk. Chunk 07's
+handler edit re-flips the wire fingerprint, so the re-vendor handshake is owed again before
+any live clause runs. The conditions still standing are named under *Definition of done*
+below, and `capability-truth.md` rates the capability accordingly.
 
 ---
 
@@ -437,7 +438,8 @@ build and declines to — `capability-truth.md` already says so.
 session source should take the duplicate route so all of them arrive conformed. Not in this
 chunk — the duplicate carries the session clip's length, not the placement's, and the
 positional-link renumbering ARR-PROJ fixed was born in exactly that path; the extent gap is
-a separate item. `[DECISION: only envelope-hosting audio placements duplicate; the rest keep
+a separate item, [#509](https://github.com/brookstalley/hallucinote/issues/509).
+`[DECISION: only envelope-hosting audio placements duplicate; the rest keep
 the direct create | the verdict licenses the envelope case and nothing more, and the length
 mismatch is unprobed | user can override]`
 
@@ -512,17 +514,22 @@ because the choice of home is the work.
 
 A movie line copied into `songs/<slug>/assets/`, referenced from `build.py`, pushes into a
 Live set as a warped, transposed audio clip in the session and as a placement in the
-arrangement (**the arrangement copy carries no conform** — see the gap in chunk 03; chunk 01
-answered the `duplicate_clip_to_arrangement` question and chunk 07 acts on it); a volume ride
+arrangement (**the arrangement copy carries conform only when its clip hosts an envelope** —
+that placement duplicates the conformed session clip; an envelope-free one is a direct create
+at Live's defaults and the run says so); a volume ride
 authored under it pushes; a second line dragged in by hand in Live comes back on pull and
 survives a re-push; and `capability-truth.md` says exactly that and no more.
 
 **Not met yet, and these are the three things standing in the way:**
 
-1. ~~**Chunk 01 has not run.**~~ It ran 2026-09-09 (Live 12.4.5). The two paths that
-   refused pending its verdicts still refuse — the rule built on the verdicts is **chunk 07**,
-   unbuilt — and the arrangement conform gap now has its verdict (the duplicate route
-   carries conform; the direct create does not).
+1. ~~**Chunk 01 has not run.**~~ It ran 2026-09-09 (Live 12.4.5). ~~The two paths that
+   refused pending its verdicts still refuse~~ — **chunk 07** built the rule the same day:
+   a re-pointed (or MIDI-occupied) slot is delete → create → conform → re-emit envelopes, and
+   an envelope-hosting audio placement duplicates like a MIDI one, which also carries its
+   conform. Envelope-free placements keep the direct create and its conform gap; the
+   extent gap is route-independent and filed as
+   [#509](https://github.com/brookstalley/hallucinote/issues/509). Nothing in `sync/push`
+   cites chunk 01 as pending.
 2. **The link seam** above ([#507](https://github.com/brookstalley/hallucinote/issues/507))
    — "survives a re-push" is the clause it fails.
 3. **Nothing has been live-verified on the audio path.** The only live evidence this wave

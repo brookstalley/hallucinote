@@ -88,9 +88,19 @@ this wave exists to build has still never run against Live.
 - [ ] The session clip carries its authored conform (warp/transpose/gain/markers). **The arrangement copy will NOT** — Live's direct arrangement-create takes no properties and the planner cannot address the copy until the call returns. Confirm the run *reports* that gap rather than staying silent about it
 - [ ] A **second push of the unchanged song plans no work** (the property a destructive reconcile most easily breaks)
 - [ ] A **missing sample file fails its clip loudly** — not a reported-OK push that plays silence
-- [ ] Changing the row's `audio_file` recreates the clip, and any envelope under it survives or is re-emitted per chunk 01's verdict
+- [ ] Changing the row's `audio_file` recreates the clip: the plan shows `delete` → `create` → conform → `write_envelope` for a ride authored under it, the operator channel says the clip was DELETED and recreated, and the ride reads back on the new clip (a recreate drops envelopes — probe row 16b — so the re-emit is what keeps it)
+- [ ] A slot Live holds a **MIDI** clip in, linked to an audio row, is recreated as audio the same way
 - [ ] An audio track the DB has **no** placements for is still skipped, with its warning, and the report says which tracks were projected and which skipped
 - [ ] Name the sample file used
+
+**Chunk 07 re-queues chunk 03's live clause over the two paths it opened** (built 2026-09-09
+against probe rows 16-17; planner tests green; NOT live-run). The handler edit flips the wire
+fingerprint — re-vendor (`/hallucinote:ableton-mcp-install`) + Live restart before any of this:
+
+- [ ] **Re-pointed `audio_file`** — the sequence above, against a real set with a real ride: after the push, `automation_envelope` on the new clip is non-`None` and the arrangement lane still shows the ride
+- [ ] **Envelope-hosting audio placement** takes the duplicate route: the arrangement copy carries the session clip's gain/warp/markers AND the ride (`automation_state` flips on the track), and the run reports **no** conform gap for it — while an envelope-free audio placement on the same track still reports its conform gap and lands at Live's defaults
+- [ ] The **extent** warn fires for both routes (the copy plays the clip's length, not `end_bar`)
+- [ ] A second push of the unchanged song still plans nothing (no delete, no recreate, no re-emit)
 
 ### Chunk 04 — a ride under a dialogue line
 

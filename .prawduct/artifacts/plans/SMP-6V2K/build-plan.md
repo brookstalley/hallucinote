@@ -420,12 +420,29 @@ every push until something links it.
 
 This lands directly on the wave's definition of done ("a second line dragged in by hand
 comes back on pull and survives a re-push"), so it closes inside wave 1, not after it.
-**The fix belongs in `probe_and_link`**, as the symmetric other half of the clip pass it
-already runs: where a DB audio row and a Live session slot agree on track and slot and the
-clip plays the file the row names, establish the link. That keeps links push-owned, uses
-knowledge the probe already has, and needs no new source of truth. Settle it against what
-chunk 03 actually built before writing it — if chunk 03 already reconciles the unlinked
-case in the clips phase, one of the two is redundant and the redundant one does not ship.
+**Correction, after chunk 03 landed and the fix was actually attempted.** This section
+first said the fix belongs in `probe_and_link`. That was wrong, and the reason is worth
+keeping: **`probe_and_link` is a standalone `push_cli` subcommand and is not part of
+`execute_push`.** Putting the reconcile there would fix the seam only for someone who
+remembers to run a separate command, which is not the round trip the definition of done
+describes.
+
+**What actually happens today**, now that chunk 03 is readable rather than guessed at: an
+unlinked audio row whose file is present plans `create(..., replace=True)`. The slot's
+existing clip is deleted and rebuilt from the same file, then re-conformed from the DB. So
+this is **churn plus loss of un-modeled hand work** — warp *markers* are the concrete
+casualty, since the DB models warp mode but not individual markers — rather than loss of
+the sample. Bounded, real, and wrong.
+
+**Where it should go is a design decision, not a patch**, and there are three candidates
+with different owners: pull writes the link when it ingests (crosses the "links are
+push-owned" boundary, but pull is what actually observed the correspondence); the clips
+phase records it (planners produce plans and never write, so it would need the link to come
+back through `apply_push_results`); or `execute_push` gains a session-clip reconcile pass of
+its own. Deciding that at the end of a long wave, against a phase whose destructive
+reconcile is itself waiting on chunk 01's verdict, is how a considered fix becomes a
+regression. **Filed instead**, with this analysis, and named in the definition of done
+below so the wave cannot be called finished while it stands.
 
 ## Definition of done (the wave)
 
@@ -433,3 +450,14 @@ A movie line copied into `songs/<slug>/assets/`, referenced from `build.py`, pus
 Live set as a warped, transposed audio clip in both session and arrangement; a volume ride
 authored under it pushes; a second line dragged in by hand in Live comes back on pull and
 survives a re-push; and `capability-truth.md` says exactly that and no more.
+
+**Not met yet, and these are the three things standing in the way:**
+
+1. **Chunk 01 has not run.** It is operator-gated, and until it does, two paths refuse
+   loudly by design and the arrangement conform gap has no verdict.
+2. **The link seam** above — "survives a re-push" is the clause it fails.
+3. **Nothing has been live-verified on the audio path.** The only live evidence this wave
+   has is a pure-MIDI regression check (a concurrent session's push: 58/58 clips, 116/116
+   placements, no orphans), which discharges R6.4 and says nothing about audio.
+
+`capability-truth.md` reflects exactly this: the audio row ships at ◐, not ✓.

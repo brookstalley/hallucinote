@@ -219,6 +219,55 @@ def test_phase_plan_fn_reflects_current_db_state(conn, song, session):
 # ---------------------------------------------------------------------------
 
 
+def test_clips_phase_receives_the_session_clip_probe_and_resolves_it_lazily(
+    conn, song, session
+):
+    """The clips phase's audio reconcile is worthless unless the probe actually
+    reaches it, and the way it fails is silent: the planner accepts the map, the
+    orchestrator never passes one, and every audio re-push quietly takes the
+    probe-less branch while looking like it reconciled. This pins both halves —
+    that the map arrives, and that the thunk is called INSIDE the phase rather
+    than at ``plan_push_song`` time, which is what lets it see the Live tracks
+    the `tracks` phase creates on a first push.
+    """
+    calls: list[str] = []
+
+    def probe() -> dict[int, list[dict]]:
+        calls.append("probed")
+        return {1: [{"clip_index": 1, "name": "x", "is_audio": False}]}
+
+    phases = push.plan_push_song(
+        conn, song_id=song, session_id=session,
+        live_session_clips_by_track=probe,
+    )
+    # Building the phase list must NOT have probed.
+    assert calls == []
+
+    clips_phase = next(p for p in phases if p.name == "clips")
+    clips_phase.plan_fn()
+    assert calls == ["probed"]
+
+
+def test_session_clip_probe_accepts_a_plain_dict_too(conn, song, session):
+    """Tests and non-execute callers pass an already-materialized map; only the
+    execute path needs the thunk. Both must reach the planner identically."""
+    phases = push.plan_push_song(
+        conn, song_id=song, session_id=session,
+        live_session_clips_by_track={1: []},
+    )
+    clips_phase = next(p for p in phases if p.name == "clips")
+    clips_phase.plan_fn()  # must not raise
+
+
+def test_session_clip_probe_defaults_to_none(conn, song, session):
+    """No probe is the safe degradation for THIS phase — conform in place, no
+    create, no delete — unlike the arrangement probe, where an unknown lane must
+    block rather than be cleared. Callers that pass nothing get it."""
+    phases = push.plan_push_song(conn, song_id=song, session_id=session)
+    clips_phase = next(p for p in phases if p.name == "clips")
+    clips_phase.plan_fn()  # must not raise
+
+
 def test_empty_song_each_phase_plans_cleanly(conn, song, session):
     """Empty song: every phase's plan_fn runs without raising, each
     plan is either empty or carries an informational warn. Pin this so

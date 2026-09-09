@@ -177,7 +177,15 @@ def test_audio_clip_is_skipped_never_reported_pushed(
         linked_song["clip_a"], linked_song["clip_b"],
     }
     assert [s["clip_id"] for s in res.skipped] == [ac]
-    assert "CLP-AUD2" in res.skipped[0]["reason"]
+    # The reason must explain that an audio clip HAS no notes — a permanent
+    # fact — and must not promise a pending scope. It used to name CLP-AUD2,
+    # which has now shipped: the clip itself IS pushed, by the clips phase, so
+    # a reason saying "authored but not synced" would send a reader looking for
+    # a gap that closed.
+    reason = res.skipped[0]["reason"]
+    assert "no notes" in reason
+    assert "CLP-AUD2" not in reason
+    assert "not synced" not in reason
     # No wire call was dispatched for the audio clip (2 MIDI creates only).
     assert len(send.call_log) == 2
     assert all(c["action"] == "create" for c in send.call_log)

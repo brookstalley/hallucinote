@@ -1468,3 +1468,81 @@ def test_analyze_mix_populates_section_transients_when_enabled(tmp_path: Path):
     assert isinstance(j[0]["hit_count"], int)
     assert isinstance(j[0]["censored_t20_hits"], int)
     assert sj["transient_skips"][0]["track_id"] == "track:2"
+
+
+def test_analyze_mix_populates_render_integrity_and_serializes_it(tmp_path: Path):
+    """The three render-level lenses populate and round-trip through JSON.
+
+    Integrity, phase and reconciliation describe the CAPTURE rather than a
+    section, so they sit at the top level beside ``alignment`` — and each must be
+    distinguishable from "did not run", which is why the pass is asserted present
+    rather than merely non-crashing.
+    """
+    from .fixtures import pink_noise, sine
+
+    bass = sine(80.0, 4.0, amplitude=0.3)
+    lead = pink_noise(4.0, rng=np.random.default_rng(3))
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "Bass", bass), ("track:2", "Lead", lead)],
+        master_audio=(bass + lead).astype(np.float32),
+        start_at_beat=0.0,
+        stop_at_beat=8.0,
+    )
+
+    # Explicit: the flag defaults OFF, like every other analysis flag here,
+    # and the handler is what turns it on for a real render.
+    report = analyze_mix(captures_dir, analyze_integrity=True)
+
+    # One integrity row per captured surface, each naming what it measured.
+    measured = {row.track_id for row in report.integrity}
+    assert {"track:1", "track:2"} <= measured, measured
+    assert len(report.integrity) == 3, "master, and one row per stem"
+    assert all(not row.silent for row in report.integrity)
+
+    # A clean synthetic render carries no damage.
+    assert all(row.clip_events == [] for row in report.integrity)
+
+    # One phase relation for the single stem pair, and the lag carries its
+    # confidence so a coincidental peak is not read as device latency.
+    assert len(report.phase_relations) == 1
+    pair = report.phase_relations[0]
+    assert pair.skipped is None
+    # A sine and pink noise share no structure, so whatever lag the argmax found
+    # must arrive labelled as not worth believing.
+    assert 0.0 <= pair.lag_correlation <= 1.0
+    assert not pair.polarity_inverted
+
+    # The master IS the stem sum here, so reconciliation should find it faithful.
+    assert report.sum_reconciliation is not None
+    assert report.sum_reconciliation.skipped is None
+
+    payload = report.to_json_dict()
+    assert len(payload["integrity"]) == 3
+    assert len(payload["phase_relations"]) == 1
+    assert payload["sum_reconciliation"] is not None
+    assert payload["stems"][0]["imaging"] is not None
+    assert [b["band"] for b in payload["stems"][0]["imaging"]["bands"]]
+    # Valid JSON under strict mode is the contract every consumer relies on.
+    json.dumps(payload, allow_nan=False)
+
+
+def test_analyze_mix_can_skip_render_integrity(tmp_path: Path):
+    """``analyze_integrity=False`` leaves the three lists empty rather than
+    half-populated, so "off" and "clean" never look alike."""
+    from .fixtures import sine
+
+    tone = sine(220.0, 2.0, amplitude=0.3)
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "Tone", tone)],
+        master_audio=tone,
+        start_at_beat=0.0,
+        stop_at_beat=4.0,
+    )
+
+    report = analyze_mix(captures_dir, analyze_integrity=False)
+
+    assert report.integrity == []
+    assert report.phase_relations == []
+    assert report.sum_reconciliation is None

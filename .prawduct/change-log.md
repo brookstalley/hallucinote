@@ -32,6 +32,57 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-09-08 — The report learns to ask whether the audio is damaged
+
+<!-- prawduct: type=feat | scope=render-integrity -->
+
+Every lens in the mix report measured *musical realization against intent*.
+Nothing measured whether the captured audio was **defective**. Across 23 modules
+in `audio/` there was no clipping detection, no DC offset, no click or dropout
+detection, no polarity check and no stem-vs-master reconciliation; the only
+clip-adjacent number anywhere was the master's delivered true peak. The string
+`click` appeared only as a *musical* term — the kick beater's 2-6 kHz band.
+
+Four new lenses close that. `integrity.py` finds clipping, DC offset, dropouts,
+clicks and truncated decays per surface; `phase.py` finds polarity inversions,
+time offsets and per-band cancellation between surfaces; `imaging.py` gives
+per-band correlation, width and image position; `reconcile.py` asks whether the
+captured surfaces sum to the captured master.
+
+This family is exempt from the analyzer freeze, and the reason matters: the
+2026-08-10 owner ruling gates lenses whose thresholds *encode taste*, and a
+sample discontinuity has physical ground truth. It is also the only family that
+may name a defect as a defect rather than reporting against declared intent.
+
+**It is upstream of the rest of the report.** A click reads as an onset to
+`onsets.py`, so the timing and cross-rhythm lenses faithfully report a groove
+nobody played; a dropout reads as a written level move; a truncated capture
+reads as a short decay. `/mix-review` now reads integrity before any musical
+number and treats a damaged surface's musical readings as suspect.
+
+**Two false positives were found by running the lenses over a real render, and
+neither would have survived to a listening test.** The clipping detector keyed
+on amplitude — but captured stems are pre-fader float32, so a healthy part
+peaking at +6.30 dBFS spends most of every cycle above full scale without ever
+going flat, and it drew 7970 clip runs from undamaged audio. Clipping is a flat
+top, not a loud one, and keying on samples pinned to one value takes that to
+zero while still catching flat-topping at any level. Separately, a
+cross-correlation always peaks somewhere: every uncorrelated stem pair reported
+a confident-looking offset of tens of milliseconds at r ~ 0, which is two parts
+sharing a downbeat rather than a device delay. `lag_correlation` now carries how
+much of a lag reading to believe, because reporting coincidence as latency is
+worse than reporting no lag at all.
+
+Two delegates building different lenses independently reached for the same two
+private helpers rather than write a second definition of "energy in this band"
+and of the degenerate-correlation cases. Two arrivals at one seam is the signal
+that these were public in all but name, so `attribution.band_energy` and
+`stereo.channel_correlation` now say so.
+
+`cross_correlation_peak_lag` also came out of the test tree, where it had sat
+since the MVP behind a docstring promising a promotion that never happened,
+leaving `alignment.py` pointing at a function in `tests/`.
+
 ## 2026-09-08 — Live plays from a position `current_song_time` never moved
 
 <!-- prawduct: type=fix | scope=perform-start-position -->

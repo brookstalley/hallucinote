@@ -743,6 +743,15 @@ def analyze_handler(
             # only inside the per-section loop, which cannot run without
             # sections; ``bool(sections)`` just states the policy in one place.
             analyze_transients=bool(sections),
+            # Render integrity, phase relationships and stem-sum reconciliation.
+            # Unlike the four flags above this one does NOT depend on sections —
+            # it describes the capture, not any span inside it — so it runs on
+            # every analysis. It is the most expensive pass here (onset detection
+            # per surface, every stem pair compared), and it earns that: it is
+            # upstream of the musical lenses, which silently report damage as
+            # music. A click becomes an onset, a dropout becomes a level move,
+            # and an uncompensated plugin delay becomes laid-back feel.
+            analyze_integrity=True,
             # Mix-level reconstruction (F1): scale each pre-fader stem by its
             # static fader gain so masking sees mix balance, not source level.
             # Fader curve is Live-12-calibrated (see audio/levels.py).

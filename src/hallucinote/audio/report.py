@@ -32,7 +32,16 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:  # the lens modules import stereo.py, which imports this
+    # module — importing them at runtime would close that cycle. Annotations
+    # are lazy (`from __future__ import annotations`) and the serializers
+    # below read attributes, so the string form is all that is needed.
+    from .imaging import ImagingMetrics
+    from .integrity import SurfaceIntegrity
+    from .phase import PhaseRelation
+    from .reconcile import SumReconciliation
 
 SCHEMA_VERSION = "1"
 
@@ -178,6 +187,12 @@ class StemMetrics:
     # Standing stereo descriptors (STR-4C8N). Same optional-field pattern, same
     # reason: pre-stereo baselines and hand-built fixtures stay valid.
     stereo: "StereoMetrics | None" = None
+    # Where this surface sits across the stage and where its width lives, per
+    # band. Sibling to `stereo` rather than a replacement: `stereo` is the
+    # broadband correlation and mono-sum loss, and its own docstring names the
+    # case it cannot see — a comb filter in the top over a mono low end averages
+    # to something unremarkable. Same optional-field pattern as the two above.
+    imaging: "ImagingMetrics | None" = None
 
     def __post_init__(self) -> None:
         if self.surface_kind not in _VALID_SURFACE_KINDS:
@@ -811,6 +826,27 @@ class MixReport:
     # analysis so the correction is visible, not silent. None when analysis ran
     # without an alignment pass (e.g. a directly-constructed report in a test).
     alignment: dict[str, Any] | None = None
+    # Render integrity, one row per captured surface. This family answers "is
+    # this audio damaged" rather than "did it realize its intent", so unlike
+    # every other lens here it has physical ground truth and may legitimately
+    # emit blocking findings. It is also UPSTREAM of the rest: a click reads as
+    # an onset to the timing lens, a dropout reads as a dynamics move, so these
+    # rows are the precondition for believing the numbers beside them. Empty
+    # when the pass did not run — never silently absent.
+    integrity: list["SurfaceIntegrity"] = field(default_factory=list)
+    # Pairwise phase relationships between surfaces. The only lens that sees two
+    # surfaces destroying each other: `stereo` measures L/R within one surface
+    # and masking measures magnitude overlap, so a kick and a sub cancelling, a
+    # polarity-flipped stem, or an uncompensated plugin delay are invisible to
+    # both. Read `lag_samples` together with `lag_correlation` — a lag with low
+    # confidence is two parts sharing a downbeat, not a device delay.
+    phase_relations: list["PhaseRelation"] = field(default_factory=list)
+    # Do the captured stems, summed, reconstruct the captured master? The one
+    # check that validates the capture SET rather than its members: every other
+    # lens analyses the surfaces it was handed, and none asks whether that set
+    # was complete. A residual is diagnostic evidence, not a verdict — a
+    # nonlinear master chain produces one legitimately.
+    sum_reconciliation: "SumReconciliation | None" = None
     compare_to: dict[str, Any] | None = None
     # Song audit-log seq the analyzed capture reflects (copied from
     # manifest.db_seq — AUD-4W7K). The key ``compare.resolve_baseline``
@@ -897,6 +933,13 @@ class MixReport:
                 else None
             ),
             "alignment": self.alignment,
+            "integrity": [_integrity_to_dict(i) for i in self.integrity],
+            "phase_relations": [_phase_to_dict(p) for p in self.phase_relations],
+            "sum_reconciliation": (
+                _reconciliation_to_dict(self.sum_reconciliation)
+                if self.sum_reconciliation is not None
+                else None
+            ),
             "compare_to": self.compare_to,
         }
 
@@ -938,6 +981,119 @@ def _stem_to_dict(s: StemMetrics) -> dict[str, Any]:
             if s.stereo is not None
             else None
         ),
+        # Where the surface sits and where its width lives. Per-band rows are
+        # always present (a missing band cannot be told from an unmeasured one);
+        # an unmeasurable band carries null, the report's existing sentinel.
+        "imaging": (
+            {
+                "balance_db": _finite_or_none(s.imaging.balance_db),
+                "mid_side_ratio_db": _finite_or_none(s.imaging.mid_side_ratio_db),
+                "position": _finite_or_none(s.imaging.position),
+                "width": _finite_or_none(s.imaging.width),
+                "skipped": s.imaging.skipped,
+                "bands": [
+                    {
+                        "band": b.band,
+                        "correlation": _finite_or_none(b.correlation),
+                        "width": _finite_or_none(b.width),
+                    }
+                    for b in s.imaging.band_images
+                ],
+            }
+            if s.imaging is not None
+            else None
+        ),
+    }
+
+
+def _integrity_to_dict(i: "SurfaceIntegrity") -> dict[str, Any]:
+    """Serialize one surface's render-integrity row.
+
+    Event lists are capped upstream and the cap is recorded in ``checks_skipped``
+    rather than implied by a short list, so a clean surface and a badly damaged
+    one whose rows were truncated never look alike.
+    """
+    return {
+        "track_id": i.track_id,
+        "silent": i.silent,
+        "peak_dbfs": _finite_or_none(i.peak_dbfs),
+        "clipped_sample_fraction": _finite_or_none(i.clipped_sample_fraction),
+        "worst_clip_run_samples": i.worst_clip_run_samples,
+        "clip_events": [
+            {
+                "start_sample": c.start_sample,
+                "length_samples": c.length_samples,
+                "channel": c.channel,
+            }
+            for c in i.clip_events
+        ],
+        "dc_offset": [_finite_or_none(v) for v in i.dc_offset],
+        "dc_offset_dbfs": _finite_or_none(i.dc_offset_dbfs),
+        "dropouts": [
+            {
+                "start_sample": d.start_sample,
+                "length_samples": d.length_samples,
+                "kind": d.kind,
+            }
+            for d in i.dropouts
+        ],
+        "discontinuities": [
+            {
+                "sample": d.sample,
+                "channel": d.channel,
+                "magnitude": _finite_or_none(d.magnitude),
+            }
+            for d in i.discontinuities
+        ],
+        "tail_level_dbfs": _finite_or_none(i.tail_level_dbfs),
+        "checks_skipped": list(i.checks_skipped),
+    }
+
+
+def _phase_to_dict(p: "PhaseRelation") -> dict[str, Any]:
+    """Serialize one pairwise phase relationship.
+
+    ``lag_samples`` is meaningless without ``lag_correlation`` beside it — a
+    cross-correlation always peaks somewhere — so the two are emitted together
+    and documented as one reading.
+    """
+    return {
+        "track_id_a": p.track_id_a,
+        "track_id_b": p.track_id_b,
+        "correlation": _finite_or_none(p.correlation),
+        "polarity_inverted": p.polarity_inverted,
+        "lag_samples": p.lag_samples,
+        "lag_ms": _finite_or_none(p.lag_ms),
+        "lag_correlation": _finite_or_none(p.lag_correlation),
+        "broadband_cancellation_db": _finite_or_none(p.broadband_cancellation_db),
+        "band_cancellation": [
+            {"band": b.band, "sum_minus_parts_db": _finite_or_none(b.sum_minus_parts_db)}
+            for b in p.band_cancellation
+        ],
+        "skipped": p.skipped,
+    }
+
+
+def _reconciliation_to_dict(r: "SumReconciliation") -> dict[str, Any]:
+    """Serialize the stem-sum-vs-master reconciliation.
+
+    Band residuals share the broadband gain match, so a discrepancy large enough
+    to move that fit lifts every band by the same trim. They are therefore read
+    AGAINST EACH OTHER, never against an absolute floor — per-band gain matching
+    would absorb the very thing the band split exists to expose.
+    """
+    return {
+        "residual_db": _finite_or_none(r.residual_db),
+        "correlation": _finite_or_none(r.correlation),
+        "best_lag_samples": r.best_lag_samples,
+        "gain_offset_db": _finite_or_none(r.gain_offset_db),
+        "gains_assumed_unity": r.gains_assumed_unity,
+        "band_residuals": [
+            {"band": b.band, "residual_db": _finite_or_none(b.residual_db)}
+            for b in r.band_residuals
+        ],
+        "worst_offender": r.worst_offender,
+        "skipped": r.skipped,
     }
 
 

@@ -26,7 +26,7 @@ branch: feat/render-integrity
 **Why:** unlike the musical lenses, every quantity here has physical ground truth. A sample discontinuity, a zero-run, a polarity inversion and a cross-correlation lag are facts, not readings against a declared intent. There is no calibration campaign hiding behind these numbers.
 
 **Open assumptions / unknowns:**
-- [ASSUMPTION: detection floors that separate a real defect from ordinary program material (a click's derivative threshold, a dropout's minimum run length) can be set from first principles plus synthetic fixtures, without a jitter calibration set | MED impact | resolved by running the pass over a real Live capture — requested from the songs session]
+- ~~[ASSUMPTION: detection floors that separate a real defect from ordinary program material can be set from first principles plus synthetic fixtures]~~ **FALSIFIED and corrected 2026-09-08.** Run over two real `alien` captures, the floors held for dropouts, DC and truncation and FAILED for clipping and lag — both in the false-positive direction, and neither detectable synthetically because the synthetic corpus contained no pre-fader stem above full scale and no genuinely unrelated pair. Both fixed with regression tests; the general lesson is that a detector's *negative* control has to be real program material, not clean fixtures.
 - [ASSUMPTION: stems summed at their fader gains reconstruct the captured master closely enough that a residual is diagnostic | HIGH impact for Chunk 04 only | `masking.py`'s level reconstruction has known limits (backlog #253); Chunk 04 reports the residual and its band distribution rather than asserting a pass/fail]
 
 ## Design decisions
@@ -35,6 +35,9 @@ branch: feat/render-integrity
 2. **This class is exempt from the analyzer freeze, and may emit `blocking` findings.** `arrangement-model.md`'s 2026-08-10 owner ruling gates lenses whose thresholds *encode taste*. A sample discontinuity has physical ground truth, so no listening day is required — and unlike every musical lens, which may only inform, a defect lens may legitimately block. The line is drawn per lens in its module docstring: *what is a defect* is in scope, *how much of it is acceptable musically* is not.
 3. **Four independent DSP modules; the coordinator owns the wire.** Each chunk delivers one self-contained module in `src/hallucinote/audio/` with pure functions over `np.ndarray` plus module-local frozen result dataclasses — the precedent is `transients.TransientWindowResult`, which `report.py` names as living in its own module. `report.py`, `analyze.py`, `compare.py` and the skill docs are the coordinator's alone. **This is what makes the four chunks parallel-safe: file ownership is disjoint by construction, so there is no merge conflict to resolve.**
 4. **`cross_correlation_peak_lag` is promoted out of the test file, not reimplemented.** It has lived in `tests/unit/audio/test_pdc_alignment.py:48` since the MVP, with a docstring promising promotion to `alignment.py` "in Chunk 3" — a chunk that shipped without it, leaving `alignment.py:39` pointing at a function in the test tree. Chunk 02 promotes it and drops the stale plan reference (no "pre-existing" exception).
+
+5. **Imaging rides `StemMetrics`; the other three sit at the top level.** Design decision 1 placed all four at the top level, and that was right for the three *defect* lenses — integrity, phase and reconciliation answer "is this capture damaged", which is a property of the render, not of a section. Imaging is not a defect lens: it is a standing per-surface descriptor exactly like `timbre` and `stereo`, and putting it on `StemMetrics` beside them gives the per-section reading for free instead of duplicating the field. Amended after the delegates landed, when the shape was concrete rather than predicted.
+6. **`report.py` imports the lens result types under `TYPE_CHECKING` only.** `phase.py` and `imaging.py` import `stereo.py`, which imports `report.py` — a runtime import in `report.py` would close that cycle. The module already carries `from __future__ import annotations`, so the annotations stay strings and the serializers read attributes rather than types.
 
 **partition:** parallel, four delegates. The chunks are independent by construction (decision 3): disjoint modules, disjoint test files, no shared edits, and none consumes another's output. Integration and all governance stay with the coordinator.
 
@@ -70,12 +73,21 @@ branch: feat/render-integrity
 - **Done when:** full suite green (`python -m pytest`, no path arg); cumulative Critic via an independent Agent; artifacts current.
 
 ## Status
-- [ ] Chunk 01 — render integrity
-- [ ] Chunk 02 — phase and alignment
-- [ ] Chunk 03 — soundstage imaging
-- [ ] Chunk 04 — reconciliation
-- [ ] Chunk 05 — integration
+- [x] Chunk 01 — render integrity
+- [x] Chunk 02 — phase and alignment
+- [x] Chunk 03 — soundstage imaging
+- [x] Chunk 04 — reconciliation
+- [ ] Chunk 05 — integration (ticks after the cumulative Critic)
 
 ## Context
 
-Delegates dispatched 2026-09-08 into sibling worktrees (`hallucinote-wt-ri-{integrity,phase,imaging,reconcile}`), each branching `chunk/ri-*` off `feat/render-integrity`. Each carries its brief at `.prawduct/.delegate-brief.md`. The coordinator merges them into `feat/render-integrity` as they land and does Chunk 05 on top.
+All four delegates landed and merged into `feat/render-integrity` without a conflict — the disjoint-module partition held exactly as designed. Their worktrees (`hallucinote-wt-ri-{integrity,phase,imaging,reconcile}`) and `chunk/ri-*` branches are merged and ready to remove.
+
+**What the real-capture pass found, which synthetic fixtures could not.** Two lenses shipped a false positive that only real program material exposes, and both are fixed:
+
+- *Clipping keyed on amplitude.* Captured stems are pre-fader float32, so a healthy part peaking at +6.30 dBFS spends most of every cycle above full scale without ever going flat — 7970 phantom clip runs on undamaged audio, and it accused the loudest healthy stem in the song. Clipping is now a flat top (samples pinned to one value near the surface's own ceiling), which reads zero there and still catches genuine flat-topping at any level.
+- *Every lag was reported as if believable.* A cross-correlation always peaks somewhere, so all eight uncorrelated stem pairs reported offsets of tens of milliseconds at r ~ 0 — two parts sharing a downbeat, which `/mix-review` would have read as device latency. `lag_correlation` now carries how much of the reading to trust (0.001-0.043 on those pairs; >0.9 for a genuine delay).
+
+**Two delegates independently reached for the same private helpers** (`attribution._single_band_energy`, `stereo._correlation`) rather than duplicate a definition. That convergence is why both are now public as `band_energy` / `channel_correlation`.
+
+**Deferred, with reasons:** the staircase-ramp gesture request from the songs session (a finer-authored ramp currently produces MORE not-realized findings than a coarse one, inverting the signal) is a real defect in the *automation verifier*, not in any lens here — filed, not built, because a peer session cannot widen this plan's scope. `compare.py` significance floors for the new A/B-able quantities are also unbuilt: every threshold here would encode taste, which is the one thing this family is exempt from *because* it avoids.

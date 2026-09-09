@@ -47,6 +47,11 @@ from .attribution import (
 from .io import CaptureSet, Surface, load_capture
 from .levels import apply_stem_gains, live_fader_db
 from .loudness import MIN_LOUDNESS_DURATION_S, measure_loudness
+from .imaging import measure_imaging
+from .integrity import measure_integrity
+from .onsets import detect_onset_samples, to_mono
+from .phase import measure_phase_relations
+from .reconcile import reconcile_stem_sum
 from .stereo import measure_stereo
 from .timbre import measure_timbre
 from .cross_rhythm import (
@@ -185,6 +190,7 @@ def analyze_mix(
     analyze_timing: bool = False,
     analyze_cross_rhythm: bool = False,
     analyze_transients: bool = False,
+    analyze_integrity: bool = False,
     stem_gains: "Mapping[str, float] | None" = None,
     master_fader_volume: float | None = None,
     compare_to: int | Path | str | None = None,
@@ -301,6 +307,50 @@ def analyze_mix(
     stem_metrics = [_measure_surface(s) for s in capture.stems]
     return_metrics = [_measure_surface(r) for r in capture.returns]
 
+    # Render integrity runs FIRST among the render-level passes and its results
+    # sit beside the others rather than gating them. It is upstream in meaning,
+    # not in control flow: a click reads as an onset to the timing lens and a
+    # dropout reads as a dynamics move, so a reader who sees damage here knows
+    # to distrust the musical numbers — but suppressing those numbers would
+    # remove the evidence that makes the damage legible.
+    # Off by default, like every other analysis flag here: the pass runs onset
+    # detection on each surface and compares every stem pair, which is the most
+    # expensive thing in this function, and `analyze_mix` stays DB-agnostic while
+    # the handler decides what a given render is worth.
+    integrity_rows: list = []
+    phase_relations: list = []
+    sum_reconciliation = None
+    if analyze_integrity:
+        all_surfaces = [capture.master, *capture.stems, *capture.returns]
+        # Onsets are threaded in so a musical attack is not reported as a click.
+        # Without them every note lands in `discontinuities` — the detector says
+        # so itself via `checks_skipped`, but a report nobody can read is worse
+        # than the omission it warns about.
+        for surface in all_surfaces:
+            integrity_rows.append(
+                measure_integrity(
+                    surface.audio,
+                    sample_rate=surface.sample_rate,
+                    onset_samples=detect_onset_samples(
+                        to_mono(surface.audio), surface.sample_rate
+                    ),
+                    track_id=surface.track_id,
+                )
+            )
+        phase_relations = measure_phase_relations(
+            [(s.track_id, s.audio) for s in capture.stems],
+            sample_rate=capture.sample_rate,
+        )
+        # Returns are part of what reaches the master — a send is audible in the
+        # bus and absent from the dry stems — so excluding them would guarantee a
+        # residual that says nothing about whether the capture set is complete.
+        sum_reconciliation = reconcile_stem_sum(
+            [(s.track_id, s.audio) for s in (*capture.stems, *capture.returns)],
+            capture.master.audio,
+            sample_rate=capture.sample_rate,
+            stem_gains=stem_gains,
+        )
+
     # The master metrics are PRE master-fader — the HallucinoteAnalyzer taps the
     # master DEVICE CHAIN, before the master mixer volume. When the caller supplies
     # the master fader volume, surface the post-fader DELIVERED true-peak (bus TP +
@@ -386,6 +436,9 @@ def analyze_mix(
         skipped_analyses=skipped,
         energy_realization=energy_realization,
         alignment=alignment_report.to_json_dict(),
+        integrity=integrity_rows,
+        phase_relations=phase_relations,
+        sum_reconciliation=sum_reconciliation,
         db_seq=capture.db_seq,
         master_fader_volume=master_fader_volume,
         master_fader_db=master_fader_db,
@@ -409,6 +462,7 @@ def _measure_surface(surface) -> StemMetrics:
         loudness=loudness,
         timbre=measure_timbre(surface.audio, surface.sample_rate),
         stereo=measure_stereo(surface.audio),
+        imaging=measure_imaging(surface.audio, sample_rate=surface.sample_rate),
     )
 
 

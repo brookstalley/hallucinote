@@ -51,11 +51,14 @@ D/A converter can reproduce; ``/mix-review`` decides what that is worth.
   ``silent``             An entirely silent surface, reported as a fact — not as a
                          pile of NaNs that every downstream reader has to guess at.
 
-**Honest limits.** Sample-domain full scale is what the clip detector measures, so
-material deliberately normalized to peak AT 0 dBFS reports clip runs wherever it
-holds the ceiling for three samples — which low-frequency content does without
-ever being clipped. ``peak_dbfs`` beside the runs is what separates "sitting on
-the ceiling" from "driven through it"; the detector does not guess which.
+**Honest limits.** The clip detector keys on a FLAT TOP — samples pinned to one
+value near the surface's own ceiling — rather than on amplitude, because captured
+stems are pre-fader float32 and a healthy part routinely peaks well above 0 dBFS.
+The cost of that choice is at the other end: a limiter with any release at all
+curves as it recovers, so an over that is squashed but not perfectly squared can
+fall under the flatness test. This lens finds hard flat-topping, and reports
+``peak_dbfs`` beside it so a reader can see how hard a surface is running even
+when no run qualified.
 
 A musical rest is a hole too. The zero-run detector requires
 BIT-EXACT zeros bounded by an abrupt edge, which a decayed-into-a-rest passage
@@ -231,6 +234,11 @@ class SurfaceIntegrity:
     discontinuities: list[Discontinuity]
     tail_level_dbfs: float | None
     checks_skipped: list[str]
+    # Which surface this row describes. The measurement itself needs only audio,
+    # so the caller supplies the identity — but a row that cannot say what it
+    # measured is unusable in a report that carries one per surface, and the
+    # empty default keeps hand-built fixtures valid.
+    track_id: str = ""
 
 
 def measure_integrity(
@@ -239,6 +247,7 @@ def measure_integrity(
     sample_rate: int,
     onset_samples: Sequence[int] | None = None,
     max_events: int = 32,
+    track_id: str = "",
 ) -> SurfaceIntegrity:
     """Measure render defects over one whole captured surface.
 
@@ -277,7 +286,9 @@ def measure_integrity(
     cap = max(0, int(max_events))
 
     if n_samples == 0:
-        return _nothing_to_measure("empty_surface: the surface has no samples")
+        return _nothing_to_measure(
+            "empty_surface: the surface has no samples", track_id=track_id
+        )
 
     abs_data = np.abs(data)
     peak = float(np.max(abs_data))
@@ -287,6 +298,7 @@ def measure_integrity(
             f"silent_surface: peak {peak_dbfs:.1f} dBFS is below the "
             f"{_amplitude_dbfs(_SILENT_PEAK):.0f} dBFS signal floor, so there is "
             f"no audio to find defects in",
+            track_id=track_id,
             peak_dbfs=peak_dbfs,
             dc_offset=(float(np.mean(data[:, 0])), float(np.mean(data[:, 1]))),
         )
@@ -373,6 +385,7 @@ def measure_integrity(
         tail_level_dbfs = _rms_dbfs(data[-tail_n:, :])
 
     return SurfaceIntegrity(
+        track_id=track_id,
         silent=False,
         peak_dbfs=peak_dbfs,
         clip_events=clip_events,
@@ -390,6 +403,7 @@ def measure_integrity(
 def _nothing_to_measure(
     reason: str,
     *,
+    track_id: str = "",
     peak_dbfs: float = _SILENCE_FLOOR_DBFS,
     dc_offset: tuple[float, float] = (0.0, 0.0),
 ) -> SurfaceIntegrity:
@@ -402,6 +416,7 @@ def _nothing_to_measure(
     bill of health.
     """
     return SurfaceIntegrity(
+        track_id=track_id,
         silent=True,
         peak_dbfs=peak_dbfs,
         clip_events=[],

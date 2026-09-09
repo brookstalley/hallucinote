@@ -126,6 +126,42 @@ def _position_bar_to_beats(
     return beats + (bar_pos - current_bar) * current_bpb
 
 
+def uniform_bar_math_divergences(
+    bar_positions: list[float],
+    ts_points: list[sqlite3.Row],
+) -> list[tuple[float, float, float]]:
+    """Which bar positions land somewhere else than uniform-meter math expects.
+
+    Two bar rulers exist in this codebase. Push converts an authored bar
+    position through the meter map (:func:`_position_bar_to_beats`), while
+    ``hallucinote.arrangement`` accumulates whole bars against ONE uniform
+    ``beats_per_bar`` and never reads the map. They agree everywhere until a
+    meter change, and only for positions AFTER that change do they part —
+    so the mere existence of a non-bar-1 row says nothing, and a detector
+    that fires on it cannot tell a correct odd-meter song from a broken one.
+
+    The uniform baseline here is the bar-1 meter, which is what a
+    ``beats_per_bar``-style author would have used for the whole song.
+
+    Returns ``(bar_position, meter_map_beats, uniform_beats)`` for each
+    diverging position, in the order given. Empty means the two rulers agree
+    on every position passed — including the common case of a single-meter
+    song, and of a meter change that no placement sits after.
+    """
+    if not ts_points:
+        return []
+    uniform_bpb = _beats_per_bar(
+        ts_points[0]["numerator"], ts_points[0]["denominator"],
+    )
+    out: list[tuple[float, float, float]] = []
+    for bar_pos in bar_positions:
+        mapped = _position_bar_to_beats(bar_pos, ts_points)
+        uniform = (bar_pos - 1.0) * uniform_bpb
+        if abs(mapped - uniform) > 1e-9:
+            out.append((bar_pos, mapped, uniform))
+    return out
+
+
 def _join_bar_beat(
     bar: int,
     beat: float,

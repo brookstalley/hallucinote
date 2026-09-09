@@ -6,7 +6,13 @@ from typing import Any
 
 from hallucinote.db import queries as Q
 
-from ._core import PushPlan, ToolCall, _notes_for_mcp, _position_bar_to_beats
+from ._core import (
+    PushPlan,
+    ToolCall,
+    _notes_for_mcp,
+    _position_bar_to_beats,
+    uniform_bar_math_divergences,
+)
 from .envelopes import envelope_hosting_clip_ids
 
 
@@ -88,6 +94,28 @@ def plan_push_arrangement_clip_notes(
     return plan
 
 
+def _divergence_bars(diverging: list[tuple[float, float, float]]) -> str:
+    """Name the diverging bars, not just the first.
+
+    An operator told only a count and one bar number knows a repair is needed
+    but not where, and this alert is the only channel carrying it — there is no
+    logger on this path. Long runs are capped so one badly-authored song cannot
+    push the rest of the report out of view; the cap is stated in the text so
+    the reader knows the list was cut rather than complete.
+    """
+    # Deduped and sorted, because the input is per-PLACEMENT and a bar carries
+    # as many placements as it has tracks. A section boundary at bar 10 on eight
+    # tracks would otherwise fill the whole cap with `10, 10, 10, ...` and hide
+    # every other diverging bar behind repeats of one — worse on the ordinary
+    # song than on the pathological one. The opening clause still reports the
+    # per-placement count, so nothing is lost by collapsing them here.
+    bars = sorted({b for b, _, _ in diverging})
+    shown = [f"{b:g}" for b in bars[:8]]
+    if len(bars) <= 8:
+        return ", ".join(shown)
+    return ", ".join(shown) + f", and {len(bars) - 8} more"
+
+
 def plan_push_arrangement(
     conn: sqlite3.Connection,
     *,
@@ -158,6 +186,29 @@ def plan_push_arrangement(
     if not ts_points:
         plan.warn(
             "no time_signature_map; assuming 4/4 for arrangement bar→beats conversion"
+        )
+
+    # The two-ruler check belongs HERE, not in the meter phase: this is where
+    # authored bar positions actually become Live beats, and it is the phase
+    # `push execute --only arrangement` runs. It reports placements, not the
+    # mere presence of a meter change — a song whose every clip sits before
+    # the first change diverges nowhere and gets no alert.
+    diverging = uniform_bar_math_divergences(
+        [float(r["start_bar"]) for r in arr_rows], ts_points,
+    )
+    if diverging:
+        first_bar, mapped, uniform = diverging[0]
+        plan.alert(
+            f"{len(diverging)} of {len(arr_rows)} arrangement placements sit "
+            f"after a meter change, where this codebase's two bar rulers "
+            f"disagree: push resolves bar positions through the "
+            f"time_signature_map, while hallucinote.arrangement accumulates "
+            f"whole bars against one uniform beats_per_bar and never reads "
+            f"the map. Affected bars: {_divergence_bars(diverging)}. "
+            f"Bar {first_bar:g} goes to beat {mapped:g} here; "
+            f"uniform math would put it at {uniform:g}. If build.py computed "
+            f"these positions with a single beats_per_bar, they will land "
+            f"somewhere other than where it intended."
         )
 
     if live_arrangement_clips_by_track is None:
@@ -414,6 +465,24 @@ def plan_push_cue_points(
     if not ts_points:
         plan.warn(
             "no time_signature_map; assuming 4/4 for cue-point beat conversion"
+        )
+
+    # A cue's position resolves through the meter map below, so it diverges from
+    # uniform bar math for exactly the same reason an arrangement placement does
+    # (see plan_push_arrangement). Cues + placements are the whole surface:
+    # clip lengths come from length_beats, and plan_push_sections emits no calls.
+    diverging = uniform_bar_math_divergences(
+        [float(r["position_bar"]) for r in rows], ts_points,
+    )
+    if diverging:
+        first_bar, mapped, uniform = diverging[0]
+        plan.alert(
+            f"{len(diverging)} of {len(rows)} cue points sit after a meter "
+            f"change, where push's meter-map bar→beat translation and "
+            f"hallucinote.arrangement's uniform beats_per_bar disagree. "
+            f"Affected bars: {_divergence_bars(diverging)}. Bar "
+            f"{first_bar:g} goes to beat {mapped:g} here; uniform math would "
+            f"put it at {uniform:g}."
         )
 
     # SYN-6B4Q: partition cues against the DB's composed song length.

@@ -48,7 +48,9 @@ A push phase that reapplies unconditionally is a defect — it was a real one in
 
 **Requirement:** when a value cannot round-trip faithfully, **refuse or skip with a
 warning — never write the wrong value.** Device enums with no normalized wire form are
-skipped; a mid-song tempo change refuses at the call site. Silent data loss is never
+skipped; a mid-song tempo or meter change is stored faithfully and its skip is
+reported on the push report's operator channel, because the limit is Live's
+renderer, not the model. Silent data loss is never
 the fallback. This is a stated product value, not a limitation to be engineered away
 quietly.
 

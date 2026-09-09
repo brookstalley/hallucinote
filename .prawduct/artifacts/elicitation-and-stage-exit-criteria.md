@@ -217,25 +217,37 @@ the user to accommodate a downstream constraint, and never offer *"we'll fake it
 as a global 1/4"* as though it were a creative option. It isn't; it is a
 rendering detail the user should not have to hold.
 
-**Today the model cannot record the answer.** `M.add_time_signature_point`
-raises for any `start_bar > 1.0`:
+**Resolved 2026-08-07 — the model records the answer now.** The refusal described
+below was lifted by TMP-7B3X: `add_time_signature_point` /
+`update_time_signature_point` accept any `start_bar >= 1.0`, and the "cannot reach
+Live" statement moved to `plan_push_time_signature_map`, which pushes the bar-1
+row and raises a push-report alert about the rest. The `/song-new` exit criterion is satisfiable for a
+song with a within-song meter change, and the meter row resolves DECIDED rather
+than UNDECIDED-owned-by-the-engine. What remains open is the projection half
+(TMP-4J6Q — how a declared map materializes in Live) and the authoring half
+(ARR-4M3T — meter-aware `Arrangement.plan()` and lenses). The rest of this
+section is preserved as the reasoning that produced the ruling.
+
+**At the time of writing, the model could not record the answer.**
+`M.add_time_signature_point` raised for any `start_bar > 1.0`:
 
 > `refusing to author meter at start_bar=25.0 — Live 12.4's MCP has no
 > song_signature automation target_kind` — `src/hallucinote/db/mutations/score.py`
 
-That is a **projection limitation that has leaked into the model layer**, and it
-is a separate defect, sequenced by the owner. This design does not fix it and
-does not design around it as permanent. Consequence, stated plainly rather than
+That was a **projection limitation that had leaked into the model layer** — a
+separate defect, sequenced by the owner. This design did not fix it and did not
+design around it as permanent. The consequence was stated plainly rather than
 smoothed over: for a song with a genuine within-song meter change, the
-`/song-new` exit criterion below is **currently unsatisfiable** — the brief will
-carry the true meter map and the DB will refuse to hold it, so the row stays
-UNDECIDED with the *engine*, not the user, named as its owner. The criterion is
-the requirement; the code is what has to move.
+`/song-new` exit criterion below was **unsatisfiable** — the brief would carry
+the true meter map and the DB would refuse to hold it, so the row stayed
+UNDECIDED with the *engine*, not the user, named as its owner. Holding the
+criterion as the requirement, and naming the code as what had to move, is what
+produced the fix.
 
-(`docs/song-authoring-conventions.md` used to claim the time-signature map
-supported "per-section meter changes (between sections only)". The code refuses
-all of them, so that page was **corrected in this same change** — it now records
-the refusal and the projection framing. The stale claim is a small worked example
+(`docs/song-authoring-conventions.md` claimed the time-signature map supported
+"per-section meter changes (between sections only)" while the code refused all of
+them, so that page was corrected alongside this design — and corrected again when
+TMP-7B3X made the claim true. The original stale claim is a small worked example
 of the defect this design is about: prose that named a capability nobody built,
 which every later reader took as done.)
 

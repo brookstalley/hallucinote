@@ -360,6 +360,14 @@ the constant it iterated was `(regex, description)` pairs and the loop called
 verify the OVER-drop direction: a scan that flags legitimate fixtures gets deleted
 rather than fixed. (2026-08-07, TOUR B1)
 
+## A planted mutation proves nothing until you know WHERE it landed
+
+**When you plant the failure by text substitution, assert it landed in the intended FUNCTION — "the file changed" is not enough — and treat an unexpected survivor as a suspect harness before a suspect test, because a repeated anchor mutates the wrong call site and two same-size mutations of one module inside a single mtime tick reuse the first run's `.pyc`. (2026-08-07, TMP-7B3X — narrative in learnings-detail.md)**
+
+## Removing a guard means re-raising its signal on the channel that reaches a human
+
+**When you delete a refusal, re-raise its signal on the channel that actually reaches the operator and make the replacement DISCRIMINATE — in `sync/push` that means `plan.alert()` (drained into the push report) and never `plan.warn()` (writes `PushPlan.notes`, documented "NOT surfaced" and never drained), a condition on the affected cases rather than on the mere presence of the risky state, and an assertion on `plan.alerts`, because a test reading the plan object passes either way. (2026-08-07, TMP-7B3X Critic — narrative in learnings-detail.md)**
+
 ## Prose naming a mechanism reads as a decision — DESCRIBED-BUT-UNBUILT
 
 A docstring or design note that says how something works is indistinguishable from

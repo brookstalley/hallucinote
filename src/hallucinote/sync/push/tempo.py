@@ -13,14 +13,14 @@ def plan_push_tempo_map(
     *,
     song_id: str,
 ) -> PushPlan:
-    """Emit `ableton_session(set_tempo)` for the bar-1 row; warn for the rest.
+    """Emit `ableton_session(set_tempo)` for the bar-1 row; alert on the rest.
 
     Live exposes `Song.tempo` as a single global value (settable via
     `ableton_session(action='set_tempo')`). Per-bar tempo automation is a
     real MCP gap — `ableton_automation` has no `song_tempo` target_kind
     (see hallucinote_mcp/.../guides/gaps.md "Arrangement-level tempo /
     signature automation"). Any tempo_map row at start_bar != 1.0 is
-    therefore skipped with a warn.
+    therefore skipped with an alert.
     """
     plan = PushPlan()
     rows = Q.get_tempo_map(conn, song_id)
@@ -42,7 +42,10 @@ def plan_push_tempo_map(
         )
     non_bar_1 = [r for r in rows if float(r["start_bar"]) != 1.0]
     if non_bar_1:
-        plan.warn(
+        # alert, not warn: the operator authored these rows and they are not
+        # being pushed. `notes` is diagnostic-only and the executor drops it —
+        # reporting a skip there is the silent drop `alerts` exists to prevent.
+        plan.alert(
             f"per-bar tempo automation is an MCP gap on Live 12.4 — "
             f"ableton_automation has no 'song_tempo' target_kind "
             f"(see hallucinote_mcp/.../guides/gaps.md); "
@@ -56,13 +59,19 @@ def plan_push_time_signature_map(
     *,
     song_id: str,
 ) -> PushPlan:
-    """Emit `ableton_session(set_signature)` for the bar-1 row; warn the rest.
+    """Emit `ableton_session(set_signature)` for the bar-1 row; alert on the rest.
 
     Symmetric with `plan_push_tempo_map`. Live's `Song.signature_numerator` /
     `signature_denominator` are the global meter (settable via
     `ableton_session(action='set_signature')`). Per-bar meter automation
     is a real MCP gap — `ableton_automation` has no `song_signature`
     target_kind (see hallucinote_mcp/.../guides/gaps.md).
+
+    This is the ONE place that limit is enforced. The DB records the song's
+    true meter map — a within-song meter change is a property of the authored
+    work, and refusing to store it would make the model lie about what the
+    song is. Live is a lossy projection of that model, so the loss is reported
+    here, where the projection happens, rather than pre-empted at the mutator.
     """
     plan = PushPlan()
     rows = Q.get_time_signature_map(conn, song_id)
@@ -91,10 +100,25 @@ def plan_push_time_signature_map(
         )
     non_bar_1 = [r for r in rows if float(r["start_bar"]) != 1.0]
     if non_bar_1:
-        plan.warn(
+        meter_1 = (
+            f"{bar_1['numerator']}/{bar_1['denominator']}"
+            if bar_1 is not None else "whatever it already shows"
+        )
+        # alert, not warn: this is the one place the meter reach limit is
+        # stated, and `notes` is diagnostic-only — the executor drains
+        # `alerts` and drops `notes`, so a skip reported as a note is the
+        # silent drop `alerts` exists to prevent. The "no row at start_bar=1.0"
+        # warn above stays a note deliberately: it reports an authoring gap
+        # rather than a skipped write, and a map that lacks a bar-1 row always
+        # has non-bar-1 rows, so this alert already fires alongside it.
+        plan.alert(
             f"per-bar meter automation is an MCP gap on Live 12.4 — "
             f"ableton_automation has no 'song_signature' target_kind "
             f"(see hallucinote_mcp/.../guides/gaps.md); "
-            f"{len(non_bar_1)} non-bar-1 time_signature_map rows skipped"
+            f"{len(non_bar_1)} non-bar-1 time_signature_map rows skipped. "
+            f"The DB still holds the song's true meter — this is a "
+            f"projection loss, not a lost decision. Live's ruler will read "
+            f"{meter_1} for the whole song, so the felt meter has to live in "
+            f"note placement and accent."
         )
     return plan

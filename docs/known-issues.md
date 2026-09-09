@@ -63,10 +63,35 @@ performance is future work; today a synth carries it. (Writing the topline
 itself is yours by design — [`capability-truth.md`](capability-truth.md) has
 the reasoning, and the [FAQ](faq.md#what-about-the-melody) the workflow.)
 
-## Mid-song tempo / time-signature changes aren't supported
+## Mid-song tempo / time-signature changes don't reach Live
 
-Changes before bar 1 round-trip cleanly; a mid-song change surfaces a
-refuse-and-teach at the call site (a real MCP gap, never silent data loss).
+You can author them — the DB records the song's true tempo and meter maps — but
+Live 12's MCP exposes tempo and signature only as single global values, so push
+sets the bar-1 row and reports loudly that the rest were skipped (a real MCP
+gap, never silent data loss).
+
+The two halves have different workarounds, and only one of them is cheap. A
+**signature** marker placed by hand in Live is cosmetic for playback — beats are
+absolute, so the score and the set still agree on them, and the marker only
+fixes bar numbering and the metronome. A hand-drawn **tempo** change is not
+cosmetic: it moves the wall clock, which is the whole reason to author one.
+
+Draw it, though, and the rest of the pipeline is already correct — because the
+pipeline reads the tempo map you declared and *assumes* you drew it. The
+analyzer is handed the declared map (`_collect_tempo_map` -> `BeatSampleMap`,
+which integrates across its segments), and `_estimate_span_seconds` says the
+same thing out loud: a multi-segment map assumes the operator drew the matching
+automation in Live by hand. So the hand-drawn tempo curve is not a cosmetic
+patch over the gap — it is the thing that makes the assumption true. Skip it and
+every downstream wall-clock number is computed from a tempo the set is not
+playing.
+
+Push additionally alerts when arrangement placements or cue points sit *after* a
+meter change, because two bar rulers exist — push resolves bar positions through
+the meter map, while `hallucinote.arrangement` accumulates whole bars against one
+uniform `beats_per_bar` and never reads it. For a song with a within-song meter
+change, author those placements directly rather than relying on that class's bar
+arithmetic past the first change.
 
 ## A few device-parameter enums can't round-trip
 

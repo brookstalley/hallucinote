@@ -110,7 +110,7 @@ BPM range, swing/groove pocket, energy level. Often inferable from genre but wor
 
 ### 7. Time signature / meter
 
-4/4 default; flag and confirm anything else. Critical when the song wants meter changes — neon-feedback's 5/8 bridge-twist exposed Hallucinote's meter-ratchet refusal path. **The agent needs to know early whether to attempt non-4/4** (generators are 4/4-shaped within bars; non-4/4 sections need hand-authored patterns).
+4/4 default; flag and confirm anything else. Critical when the song wants meter changes — the DB records them, but only the bar-1 meter reaches Live, so the rest must be carried as felt groove (see `docs/song-authoring-conventions.md` → *Meter (4/4 vs. other)*). **The agent needs to know early whether to attempt non-4/4** (generators are 4/4-shaped within bars; non-4/4 sections need hand-authored patterns).
 
 ### 8. Harmonic strategy
 

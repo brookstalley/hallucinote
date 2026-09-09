@@ -33,24 +33,16 @@ def _ts_rows(conn, song_id) -> list:
     ).fetchall())
 
 
-def _ts_insert_raw(
+def _ts_point(
     conn, song_id, start_bar: float, numerator: int, denominator: int,
 ) -> str:
-    """Raw INSERT for time_signature_map — bypasses W10-H's mutator-layer
-    refusal on post-bar-1 rows. Used by these planner tests because the
-    PLANNER must keep handling multi-point maps correctly even though the
-    AUTHORING path is locked to bar 1 for v1 (mutator refuses; pre-W10-H
-    DBs may carry legacy rows; planner needs to read them either way).
-    Returns the new row id."""
-    import uuid as _uuid
-    pid = _uuid.uuid4().hex
-    conn.execute(
-        """INSERT INTO time_signature_map
-               (id, song_id, start_bar, numerator, denominator)
-           VALUES (?, ?, ?, ?, ?)""",
-        (pid, song_id, start_bar, numerator, denominator),
+    """Add a meter point through the mutator. Non-bar-1 rows are ordinary
+    authored state — the DB records the song's true meter and the planner
+    reports what Live cannot show — so these tests need no raw INSERT."""
+    return M.add_time_signature_point(
+        conn, song_id=song_id, start_bar=start_bar,
+        numerator=numerator, denominator=denominator,
     )
-    return pid
 
 
 def test_split_bar_empty_map_defaults_to_4_4():
@@ -90,7 +82,7 @@ def test_meter_at_bar_picks_active_meter(conn, song):
     M.add_time_signature_point(
         conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
     )
-    _ts_insert_raw(conn, song, 9.0, 3, 4)
+    _ts_point(conn, song, 9.0, 3, 4)
     points = _ts_rows(conn, song)
     assert push._meter_at_bar(1.0, points) == (4, 4)
     assert push._meter_at_bar(8.0, points) == (4, 4)
@@ -99,7 +91,7 @@ def test_meter_at_bar_picks_active_meter(conn, song):
 
 
 def test_meter_at_bar_before_first_point_uses_first(conn, song):
-    _ts_insert_raw(conn, song, 5.0, 6, 8)
+    _ts_point(conn, song, 5.0, 6, 8)
     points = _ts_rows(conn, song)
     assert push._meter_at_bar(1.0, points) == (6, 8)
     assert push._meter_at_bar(4.99, points) == (6, 8)
@@ -146,8 +138,8 @@ def test_plan_push_tempo_map_multi_point_emits_bar1_call_and_gap_warn(conn, song
     assert call.args == {"action": "set_tempo", "bpm": 132.0}
     assert call.key == f"tempo_point:{pid_1}"
     assert any(
-        "song_tempo" in n and "1 non-bar-1" in n for n in plan.notes
-    )
+        "song_tempo" in n and "1 non-bar-1" in n for n in plan.alerts
+    ), "the skipped rows must reach the operator channel, not diagnostic notes"
 
 
 def test_plan_push_tempo_map_no_bar1_row_warns_and_emits_no_calls(conn, song):
@@ -163,7 +155,7 @@ def test_plan_push_tempo_map_no_bar1_row_warns_and_emits_no_calls(conn, song):
     assert any(
         "no row at start_bar=1.0" in n for n in plan.notes
     )
-    assert any("song_tempo" in n for n in plan.notes)
+    assert any("song_tempo" in n for n in plan.alerts)
 
 
 # ---------- plan_push_time_signature_map ----------
@@ -200,7 +192,7 @@ def test_plan_push_time_signature_map_multi_point_emits_bar1_and_gap_warn(
     pid_1 = M.add_time_signature_point(
         conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
     )
-    _ts_insert_raw(conn, song, 9.0, 6, 8)
+    _ts_point(conn, song, 9.0, 6, 8)
     plan = push.plan_push_time_signature_map(conn, song_id=song)
     assert len(plan.calls) == 1
     call = plan.calls[0]
@@ -210,8 +202,27 @@ def test_plan_push_time_signature_map_multi_point_emits_bar1_and_gap_warn(
     }
     assert call.key == f"time_signature_point:{pid_1}"
     assert any(
-        "song_signature" in n and "1 non-bar-1" in n for n in plan.notes
+        "song_signature" in n and "1 non-bar-1" in n for n in plan.alerts
+    ), "the skipped rows must reach the operator channel, not diagnostic notes"
+
+
+def test_plan_push_time_signature_map_alert_names_the_projection(conn, song):
+    """The planner is the ONE place the Live reach limit is stated, so it has
+    to say what is lost and what is not: Live shows the bar-1 meter for the
+    whole song, and the DB still holds the authored map.
+
+    On `alerts`, not `notes` — the executor drains alerts into the push
+    report and discards notes as diagnostic noise, so a statement the operator
+    must read cannot live in `notes`.
+    """
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
     )
+    _ts_point(conn, song, 9.0, 7, 4)
+    plan = push.plan_push_time_signature_map(conn, song_id=song)
+    gap = next(n for n in plan.alerts if "song_signature" in n)
+    assert "true meter" in gap
+    assert "4/4 for the whole song" in gap
 
 
 def test_plan_push_time_signature_map_no_bar1_row_warns_no_calls(conn, song):
@@ -219,11 +230,11 @@ def test_plan_push_time_signature_map_no_bar1_row_warns_no_calls(conn, song):
     meter unaddressable; warn on both the missing anchor and the
     multi-bar MCP gap.
     """
-    _ts_insert_raw(conn, song, 5.0, 6, 8)
+    _ts_point(conn, song, 5.0, 6, 8)
     plan = push.plan_push_time_signature_map(conn, song_id=song)
     assert plan.calls == []
     assert any("no row at start_bar=1.0" in n for n in plan.notes)
-    assert any("song_signature" in n for n in plan.notes)
+    assert any("song_signature" in n for n in plan.alerts)
 
 
 # ---------- _position_bar_to_beats (W3-B inverse of _split_bar) ----------
@@ -271,7 +282,7 @@ def test_position_bar_to_beats_across_meter_change(conn, song):
     M.add_time_signature_point(
         conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
     )
-    _ts_insert_raw(conn, song, 5.0, 6, 8)
+    _ts_point(conn, song, 5.0, 6, 8)
     points = _ts_rows(conn, song)
     assert push._position_bar_to_beats(5.0, points) == 16.0  # boundary
     assert push._position_bar_to_beats(7.0, points) == 22.0  # 16 + 2×3
@@ -282,7 +293,7 @@ def test_position_bar_to_beats_before_first_ts_point_uses_first_meter(conn, song
     """Bars before ts_points[0].start_bar use ts_points[0]'s meter (matches
     _meter_at_bar fallback). Mirrors the J-6 invariant: songs SHOULD have a
     bar-1 point, but if they don't we don't blow up."""
-    _ts_insert_raw(conn, song, 5.0, 6, 8)
+    _ts_point(conn, song, 5.0, 6, 8)
     points = _ts_rows(conn, song)
     # Bar 3 in 6/8 (from the first point's meter, even though it starts at bar 5):
     # 2 bars × 3 beats = 6 beats.
@@ -321,6 +332,47 @@ def test_plan_push_cue_points_emits_single_batched_call(conn, song):
         {"position_beats": 124.0, "name": "chorus"},
     ]
     assert call.key == f"cue_batch:{song}"
+
+
+def test_plan_push_cue_points_alerts_on_cues_past_a_meter_change(conn, song):
+    """A cue's position resolves through the meter map exactly as an
+    arrangement placement's does, so it diverges from uniform bar math the same
+    way and needs the same alert. Cues before the change must stay quiet."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    _ts_point(conn, song, 9.0, 7, 4)
+    M.add_cue_point(conn, song_id=song, position_bar=5.0, name="early")
+    plan = push.plan_push_cue_points(conn, song_id=song)
+    assert not any("cue points sit after" in a for a in plan.alerts)
+
+    M.add_cue_point(conn, song_id=song, position_bar=13.0, name="late")
+    plan = push.plan_push_cue_points(conn, song_id=song)
+    hit = next(a for a in plan.alerts if "cue points sit after" in a)
+    assert "1 of 2 cue points" in hit
+    assert "beat 60" in hit and "48" in hit
+    assert "Affected bars: 13" in hit
+
+
+def test_plan_push_cue_points_alert_enumerates_every_diverging_bar(conn, song):
+    """Same contract as the arrangement alert: name every diverging cue, and
+    when the list is cut past the cap, say that it was cut."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    _ts_point(conn, song, 9.0, 7, 4)
+    for bar in range(10, 15):
+        M.add_cue_point(conn, song_id=song, position_bar=float(bar), name=f"c{bar}")
+    plan = push.plan_push_cue_points(conn, song_id=song)
+    hit = next(a for a in plan.alerts if "cue points sit after" in a)
+    assert "Affected bars: 10, 11, 12, 13, 14" in hit
+    assert "more" not in hit
+
+    for bar in range(15, 19):
+        M.add_cue_point(conn, song_id=song, position_bar=float(bar), name=f"c{bar}")
+    plan = push.plan_push_cue_points(conn, song_id=song)
+    hit = next(a for a in plan.alerts if "cue points sit after" in a)
+    assert "Affected bars: 10, 11, 12, 13, 14, 15, 16, 17, and 1 more" in hit
 
 
 def test_plan_push_cue_points_sets_if_exists_skip(conn, song):
@@ -423,7 +475,7 @@ def test_plan_push_cue_points_respects_meter_change(conn, song):
     M.add_time_signature_point(
         conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
     )
-    _ts_insert_raw(conn, song, 5.0, 6, 8)
+    _ts_point(conn, song, 5.0, 6, 8)
     M.add_cue_point(conn, song_id=song, position_bar=7.0, name="post-change")
     plan = push.plan_push_cue_points(conn, song_id=song)
     cues = plan.calls[0].args["cues"]

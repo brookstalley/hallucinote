@@ -554,13 +554,17 @@ For non-4/4 sections:
 - Use the library generators with `beats_per_bar=N` if the within-bar 4/4 shape is musically acceptable for the section (e.g. 6/4 — a longer bar with the same downbeat-snare-snare frame).
 - Hand-author or compose a meter-specific primitive when the within-bar shape matters (e.g. 7/8 with grouping 2+2+3). The `odd-meter-experimental/build.py` example is a worked example for 7/8 + polyrhythm authoring.
 - Name `BEATS_PER_BAR_7_8 = 3.5` (etc.) as a constant in `build.py` and pass it through.
-- Use the time-signature map (`M.add_time_signature_point`) for **the global meter** — one row at `start_bar=1.0`.
+- Use the time-signature map (`M.add_time_signature_point`) to record **the song's true meter**, including within-song changes: one row per meter change, at the bar it starts on. `start_bar` is a float and rows below 1.0 are refused (bars are 1-based), but there is no ceiling and no one-row limit.
 
-> **A within-song meter change cannot be recorded today.** `add_time_signature_point` raises for *any* `start_bar > 1.0`, per-section changes included: Live 12.4's MCP has no `song_signature` automation target, so the ratchet can't reach Live, and the refusal is dual-layered at the mutator and the planner. (Earlier revisions of this page said per-section changes were supported. They are not — the code refuses them.)
+> **The DB records the meter; Live shows a flat ruler.** Live 12.4's MCP has no `song_signature` automation target, so only the bar-1 row reaches Live — `plan_push_time_signature_map` pushes it and raises a push-report *alert* (not a diagnostic note) saying the rest were skipped. That alert is the one place the limit is stated: the song's meter is a property of the authored work, Live's ability to render it is a materialization detail, and the projection is where a projection loss belongs. Author the true meter map regardless.
 >
-> **This is a projection limitation, not a modelling one.** The song's meter is a property of the authored work; Live's ability to represent it is a materialization detail. Author the true meter into the brief regardless, mark the row open with **the engine** as its owner (see [*A stage may not emit an unresolved gap*](#a-stage-may-not-emit-an-unresolved-gap)), and realize the meter *as felt groove* — bar-scaled generators via `beats_per_bar`, plus hand-authored within-bar accent groupings — over the single global ruler. Never present that workaround to the user as a creative option; it isn't one.
+> **Realize the meter as felt groove, because the ruler won't carry it.** Bar-scaled generators via `beats_per_bar`, plus hand-authored within-bar accent groupings. Never present that to the user as a creative option — it isn't one; it's what the renderer forces.
 >
-> **Who owns moving this.** `TMP-7B3X` is the source-of-truth half — lift the policy refusal out of the mutator so the DB can record what the song *is*. `TMP-4J6Q` is the projection half — how a declared meter map actually materializes in Live. Neither closes the other.
+> **Two bar rulers, and they diverge after the first meter change.** Push translates bar positions through the meter map (`_split_bar` / `_position_bar_to_beats`), while `hallucinote.arrangement` accumulates whole bars against one uniform `beats_per_bar` and never reads the map. `Arrangement(beats_per_bar=...)` is a single value, so there is no setting that makes them agree for a multi-meter song — in a 4/4 song that turns 7/4 at bar 9, bar 13 is beat 48 to the arrangement layer and beat 60 to push (push gains the extra beats every bar after the change adds). The arrangement push phase detects this and alerts, naming the placements affected; it cannot repair them.
+>
+> Two ways through, both real: **author the placements after the change directly** — `M.add_arrangement_clip` / `M.create_section` take float bars and push resolves them through the map, so `Arrangement` is simply not the tool past that point — or **keep the song single-meter in the DB** and carry the odd groupings as accent alone. Making `Arrangement.plan()` meter-aware is `ARR-4M3T`.
+>
+> **What is still open.** `TMP-4J6Q` is the projection half — how a declared meter map actually materializes in Live (per-bar arrangement clips, or the per-scene mechanism `TMP-5K1R` proposes). `ARR-4M3T` is the authoring half — a meter-aware `Arrangement.plan()` and meter-aware read-side lenses. Neither closes the other.
 
 ---
 
@@ -575,6 +579,8 @@ What that means when you author one:
 - **Fingerprint-gated.** Unchanged arcs are skipped (and listed as skipped) — a data-safety feature as much as a speed one: an arc you didn't change is never re-recorded, so a hand edit to that lane survives. An edited arc re-performs (in the next pass, alongside any other changed arcs), replacing its prior recording over the same span.
 - **Write-only.** Recorded arrangement automation has no LOM read surface. Push verifies `automation_state == 1` per arc; shape verification is your ears/eyes (or a `.als` dump).
 - **Nested-rack device parameters ARE reachable** on this route (unlike session clips): perform addresses the `Parameter` object directly, so the arc carries the top-level device's link plus a positional `device_path` to the nested param (DEEP-RACK-ADDR / NODE-ADDR). The session-clip route still can't address them — Live 12.4 `Clip.create_automation_envelope` has no nested surface.
+
+---
 
 ## Audio-track + song-spanning envelopes (ENV-9P4T: now performed)
 

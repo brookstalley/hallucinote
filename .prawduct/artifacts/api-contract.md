@@ -78,8 +78,9 @@ layer the dispatcher validates against — one source of truth, so help can't dr
 behavior.
 
 **Refuse-and-teach over silent wrong behavior** is the governing rule at every
-boundary. Concretely: a mid-song tempo change surfaces a refusal at the call site
-rather than corrupting timing; a device enum with no normalized wire form is **skipped
+boundary. Concretely: a mid-song tempo or meter change is recorded faithfully in the DB and
+reported as skipped where it cannot reach Live, rather than corrupting timing or
+being quietly dropped; a device enum with no normalized wire form is **skipped
 with a warning** rather than set to the wrong value. Silent data loss is never the
 fallback.
 
@@ -194,8 +195,10 @@ Ratified 2026-08-10. These bind future work; the narrative above describes it.
   wrong value.
   Why: silent data loss in an authoring tool destroys work the user cannot know to
   re-check, which is strictly worse than a refusal they can see and route around. A
-  mid-song tempo change refuses rather than corrupting timing; a device enum with no
-  normalized wire form is skipped rather than set wrong. This is a stated product value,
+  mid-song tempo change is authored into the DB and then alerted on at push — the
+  same value one layer out: the score records what the song is, and the projection
+  says loudly what it could not carry; a device enum with no normalized wire form
+  is skipped rather than set wrong. This is a stated product value,
   not a limitation to engineer away quietly.
 
 - **No compatibility shims for consumers that cannot exist; one-major-version aliases

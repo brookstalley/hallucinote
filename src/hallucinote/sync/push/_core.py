@@ -20,6 +20,7 @@ from ..geometry import (
     _meter_at_bar as _meter_at_bar,
     _split_bar as _split_bar,
     _position_bar_to_beats as _position_bar_to_beats,
+    uniform_bar_math_divergences as uniform_bar_math_divergences,
 )
 
 

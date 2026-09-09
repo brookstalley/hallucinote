@@ -115,6 +115,22 @@ class Arrangement:
     range sequentially. A section's ``layers`` map ``track name -> notes``
     (0-based within the section); a track absent from the map simply doesn't
     play that section (e.g. organ tacet in the metal sections).
+
+    **Single meter only.** Bar arithmetic here multiplies by ONE
+    ``beats_per_bar`` for the whole arrangement. The DB, meanwhile, records a
+    song's real ``time_signature_map`` and push converts bar positions through
+    it, so for a song with a within-song meter change the two disagree at every
+    position after the change: push's number gains the extra beats that every bar
+    after the change adds. In a 4/4 song that turns 7/4 at bar 9, this class puts
+    bar 13 at beat 48 and push puts it at 60. Push detects and reports the
+    divergence when it materializes the arrangement, but cannot repair it.
+
+    So: for a multi-meter song, do not rely on this class's bar accumulation
+    past the first meter change. Author those placements directly (the
+    ``add_arrangement_clip`` / ``create_section`` mutators take float bars and
+    push resolves them through the map), or keep the song single-meter and
+    carry the odd groupings as accent instead. Making this class meter-aware
+    is tracked as ARR-4M3T.
     """
 
     def __init__(self, *, beats_per_bar: float = 4.0) -> None:

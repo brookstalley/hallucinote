@@ -13,7 +13,7 @@ from ._core import (
     _position_bar_to_beats,
     uniform_bar_math_divergences,
 )
-from .clips import AUDIO_CONFORM_PROPERTIES, resolve_authored_sample
+from .clips import AUDIO_CONFORM_PROPERTIES, resolve_authored_sample, resolve_reversed_sample
 from .envelopes import envelope_hosting_clip_ids
 
 
@@ -150,6 +150,16 @@ def _audio_placement_call(
             f"{refusal} Placing it would put a clip in the arrangement that "
             "plays silence"
         ), None
+    if clip_row["reverse"]:
+        # The same derived file the session clip plays: an arrangement copy
+        # that ran the line forward while the session clip ran it backwards
+        # would be two truths about one row.
+        resolved, refusal = resolve_reversed_sample(conn, resolved, where=where)
+        if resolved is None:
+            return None, (
+                f"{refusal} Placing it would put a clip in the arrangement "
+                "playing the line forward"
+            ), None
 
     call = ToolCall(
         tool="ableton_clip",

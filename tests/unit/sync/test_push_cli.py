@@ -342,7 +342,7 @@ def test_probe_and_link_cascades_stale_clip_link_when_parent_track_dropped(
     halting the clips phase. Reconciliation must cascade: when the parent track
     link is dropped, drop its clip links too."""
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
-    cid = M.create_clip(conn, track_id=tid, slot=0, length_beats=4.0, name="Drums A")
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=4.0, name="Drums A")
     M.link_db_to_ableton(
         conn, session_id=session, db_kind="track", db_id=tid, ableton_index=5,
     )
@@ -377,7 +377,7 @@ def test_probe_and_link_unlinks_stale_clip_link_when_clip_row_deleted(
     The track stays present (matched by name), so ONLY the clip-row-gone
     condition drives the cascade — isolating the exact FK trigger."""
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
-    cid = M.create_clip(conn, track_id=tid, slot=0, length_beats=4.0, name="Drums A")
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=4.0, name="Drums A")
     M.link_db_to_ableton(
         conn, session_id=session, db_kind="track", db_id=tid, ableton_index=1,
     )
@@ -408,7 +408,7 @@ def test_probe_and_link_keeps_clip_link_when_parent_track_survives(
     (matched by name, link rewritten to its new index), its clip link is still
     valid and must be left intact."""
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
-    cid = M.create_clip(conn, track_id=tid, slot=0, length_beats=4.0, name="Drums A")
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=4.0, name="Drums A")
     M.link_db_to_ableton(
         conn, session_id=session, db_kind="track", db_id=tid, ableton_index=5,
     )
@@ -435,7 +435,7 @@ def test_clips_planner_emits_create_after_stale_clip_link_cascade(
     the clips planner emits `create` (not the empty-slot `replace_notes` that
     raised IndexError on every clip), so the clips phase completes."""
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
-    cid = M.create_clip(conn, track_id=tid, slot=0, length_beats=4.0, name="Drums A")
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=4.0, name="Drums A")
     M.link_db_to_ableton(
         conn, session_id=session, db_kind="track", db_id=tid, ableton_index=5,
     )
@@ -759,7 +759,7 @@ def test_probe_and_link_cascade_covers_clip_and_device_on_stale_parent(
     SYN-3C8K clip-row-gone cascade. envelope/note aren't persisted as
     ableton_links; they re-establish via the next push's own create-call path."""
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
-    cid = M.create_clip(conn, track_id=tid, slot=0, length_beats=4.0)
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=4.0)
     M.link_db_to_ableton(
         conn, session_id=session, db_kind="track", db_id=tid, ableton_index=5,
     )
@@ -830,7 +830,7 @@ def test_arrangement_planner_rematerializes_after_live_side_delete(
     M.link_db_to_ableton(
         conn, session_id=session, db_kind="track", db_id=tid, ableton_index=1,
     )
-    cid = M.create_clip(conn, track_id=tid, slot=0, length_beats=16.0, name="A")
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=16.0, name="A")
     aid = M.add_arrangement_clip(
         conn, song_id=song, track_id=tid, clip_id=cid, start_bar=1.0, end_bar=5.0,
     )
@@ -862,7 +862,7 @@ def test_probe_and_link_no_longer_reconciles_arrangement_clip_links(
     M.link_db_to_ableton(
         conn, session_id=session, db_kind="track", db_id=tid, ableton_index=5,
     )
-    cid = M.create_clip(conn, track_id=tid, slot=0, length_beats=16.0, name="A")
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=16.0, name="A")
     aid = M.add_arrangement_clip(
         conn, song_id=song, track_id=tid, clip_id=cid, start_bar=1.0, end_bar=5.0,
     )

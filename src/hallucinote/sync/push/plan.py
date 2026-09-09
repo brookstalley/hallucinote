@@ -551,6 +551,7 @@ _ACK_ONLY_KINDS: frozenset[str] = frozenset({
     # Ack-only — same rationale as the track-routing keys (state originates from
     # the DB FK; no Live-side index to record back).
     "device_sidechain",
+    "device_sample",         # ableton_device(assign_sample) — re-callable, diffed against the probed sample path; nothing to bind
     # Chunk 4a (devices)
     "device_parameter",      # ableton_device(action='set_parameter') for tracks + returns (Wave M-4)
     # Nested preset param override (DEV-4P7R `param_overrides`, e.g. a `value_raw`

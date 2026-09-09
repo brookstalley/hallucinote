@@ -73,6 +73,20 @@ def _validate_audio_fields(fields: dict[str, Any]) -> None:
         )
 
 
+def _require_slot_floor(slot: int) -> None:
+    """Live's clip slots are 1-based (`clip_index` minimum 1).
+
+    Refuse here, where the author is, rather than mid-way through the clips
+    push phase after every earlier clip was already created — the sibling of
+    `_require_bar_floor` on arrangement bars.
+    """
+    if slot < 1:
+        raise ValueError(
+            f"slot must be >= 1 (got {slot}): Live's clip slots are 1-based. "
+            "If you are enumerating sections, use enumerate(..., start=1)."
+        )
+
+
 @_atomic
 def create_clip(
     conn: sqlite3.Connection,
@@ -88,6 +102,7 @@ def create_clip(
     reason: str | None = None,
 ) -> str:
     gen_json = json.dumps(generator_call, separators=(",", ":")) if generator_call else None
+    _require_slot_floor(slot)
     actor, request_id = _resolve_actor_and_request(actor, request_id)
     song_row = conn.execute(
         "SELECT t.song_id, t.kind FROM tracks t WHERE t.id = ?", (track_id,)
@@ -211,6 +226,7 @@ def create_audio_clip(
             "'what does this clip play?'. Pass a song-relative POSIX path "
             "(canonically under assets/) or an absolute path."
         )
+    _require_slot_floor(slot)
     actor, request_id = _resolve_actor_and_request(actor, request_id)
     track_row = conn.execute(
         "SELECT t.song_id, t.kind FROM tracks t WHERE t.id = ?", (track_id,)

@@ -71,6 +71,7 @@ are the same.)
 | `/hallucinote:song-context` | Query a song's composer intent + decision rationale (markdown-primary, FTS5-indexed) before non-trivial composition work. |
 | `/hallucinote:decisions` | Query a song's compose-time audit log for prior LLM prompts and decision rationale. Complementary to `/hallucinote:song-context`. |
 | `/hallucinote:song-attempts` | Query a song's attempt ledger — what was tried on a part/section and how it turned out (including reverted dead ends) — *before* re-trying something. The compositional/mix sibling of `/song-context`. |
+| `/hallucinote:sample-lens` | Read a sample before composing to it — pitch centre and its relation to the key, phrases in beats, syllable rate, and where a named detector *would* fire, against bars. Readings, never verdicts. |
 
 ## Contributing & project health
 

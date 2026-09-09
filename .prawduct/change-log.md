@@ -32,6 +32,65 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-09-09 — A sample is now something the music can be derived from
+<!-- prawduct: type=feature | scope=SMP-6V2K-W2 -->
+
+SMP-6V2K wave 2, built by eleven parallel delegates on a file-disjoint partition and three
+more in a second wave, integrated on `plan/smp-6v2k-w2`. What a song can now do with a
+sample beyond placing it: **keep it** — `hallucinote asset add` normalizes a file under
+`assets/sources/` and records its provenance in `assets/manifest.json`; `derive(line, ...)`
+in `build.py` runs a recipe (trim, fade, normalize, reverse, pitch shift, stretch-to-bars,
+chop-at-onsets, carve / vocode against a symbolic or measured reference) into a
+content-addressed cache under `assets/derived/`, so a `reverse=1` row places the reversed
+file in the session and the arrangement; **hear it** — a second audio front door
+(`audio/sample_io.py`) and feature streams in seconds mapped to beats through the clip's
+placement (F0, formants, energy and spectral descriptors, onsets and phrases), detectors
+with musical gates, a follower generator that turns a contour into a part with the key as
+a parameter, and `hallucinote sample-lens` / `/sample-lens` rendering the reading against
+bars; **play it** — a Simpler row's `audio_file` is assigned on push (`assign_sample`, a
+new `ableton_device` action; the wire fingerprint flipped) and captured back; and the mix
+report can carry a per-turn speech-over-bed measurement (`speech_track=`), numbers only
+under the 2026-08-10 analyzer-freeze ruling. Wave-1 leftovers closed: pull links the
+audio clip it ingests (#507), the clip mutators refuse slot 0 (#473). Deferred at
+dispatch: source separation (#266). The Live session (sampler, reverse, the #509 and
+Sampler probes, the first hearing) RAN on 2026-09-09 against Live 12.4.5 —
+`operator-verification.md` has it box by box and `lom-probe-results.md` rows
+21-31 hold each verdict with its literal response. Sampler assignment and its
+idempotence, the hand-drop capture round trip, and reverse in both the session
+and the arrangement all passed. Two things did not and are recorded as open:
+the symbolic carve was never pushed, and the first hearing's musical result was
+not accepted by the operator ("it does not really read as tracking") — the
+pipeline ran end to end on real material, the music did not land. R6.2 was
+decided by ear: **Rubber Band**, which commits the R4.3 path to a non-Python
+binary dependency. The CLIs shipped are `asset`, `derived`, `sample-lens` and
+`stretch-ab`.
+
+`SCHEMA_VERSION` does not move (D17): `SectionReport.intelligibility` defaults to `None`,
+so a reader written against `"1"` still loads a report that carries it and still means the
+same thing by every field it already knew. The bar for a bump is a change to what an
+existing field MEANS, because bumping makes every existing report un-diffable
+(`compare.ensure_comparable` refuses across versions).
+
+One-time cache churn to expect: a file derived through `derived.derive` or a
+`Recipe` before this landed was addressed without its reference fingerprint, so
+it now resolves to a different address and the old file becomes an orphan.
+`hallucinote derived prune` will list a long set the first time after this
+change — that is the fix working, not a defect, and every file in it is
+regenerable from its source and recipe.
+
+`hallucinote derived prune` reads what the song's clips and devices point at, which is a
+mixed set — a song references its ingested sources as well as its derived files — so an
+addressed path naming nothing in the cache keeps nothing rather than raising. It refuses
+outright when it cannot read the song's DB at all: an empty reference set is
+indistinguishable from a complete one at the point where it would condemn every file in
+the cache, and only one of those is an answer.
+
+Tests consolidated: `test_reverse_is_refused_loudly_but_the_clip_is_still_placed` into
+`tests/unit/sync/test_push_clips_reverse.py`, which pins the contract that replaced it;
+three fixtures that used `slot=0` incidentally now use 1. `recipes.prune`'s contract
+changed deliberately: it raised on an addressed path that named no derived file, which
+contradicted its own docstring and made the CLI traceback on any song with a source.
+
 ## 2026-09-09 — The audio path ran against Live, and the one silent replace it found now speaks
 
 <!-- prawduct: type=bugfix | scope=SMP-6V2K -->

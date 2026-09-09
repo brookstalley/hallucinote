@@ -403,25 +403,6 @@ def test_apply_accepts_the_clip_delete_key_and_the_create_relinks_the_slot(
     ) == 1
 
 
-def test_reverse_is_refused_loudly_but_the_clip_is_still_placed(
-    conn, song, session, audio_track, sample,
-):
-    """Live exposes no settable reverse on a Clip, so the wire carries none.
-    The sample still belongs in the set — but a run that reported OK while
-    playing it FORWARD would be exactly the silent-wrong-audio failure."""
-    cid = M.create_audio_clip(
-        conn, track_id=audio_track, slot=1, length_beats=8.0,
-        audio_file=sample, name="line", reverse=1,
-    )
-    plan = push.plan_push_clip(conn, clip_id=cid, session_id=session)
-
-    assert any(c.args.get("action") == "create" for c in plan.calls)
-    assert any("reverse" in b for b in plan.blocked_reasons)
-    assert not any(
-        c.args.get("property") == "reverse" for c in plan.calls
-    ), "there is no reverse property on the wire; never invent one"
-
-
 def test_an_in_memory_db_cannot_resolve_a_relative_reference():
     """The song dir is the directory holding the DB file. With no file there is
     no anchor — say so rather than resolving against the process cwd."""
@@ -1138,7 +1119,7 @@ def test_unlinked_row_into_an_occupied_slot_alerts_the_operator(
     alert = next(a for a in plan.alerts if "DELETED" in a)
     assert "slot 3" in alert and "track 4" in alert
     assert "dragged.wav" in alert and "line.wav" in alert
-    assert "#507" in alert and "warp markers" in alert
+    assert "never pulled" in alert and "warp markers" in alert
 
 
 def test_unlinked_row_into_an_empty_or_unprobed_slot_is_silent(

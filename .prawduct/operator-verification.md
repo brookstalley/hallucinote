@@ -15,6 +15,46 @@ pending entries when `operator_verification_required: true`.
 
 ---
 
+## SMP-6V2K wave 2 — hear it, keep it, play it (2026-09-09) — **PARTLY DISCHARGED 2026-09-09 on Live 12.4.5.** Every probe box answered and R6.2 decided; the first hearing RAN and its music was not accepted, and the symbolic carve was never pushed. Both named below
+
+Plan: `.prawduct/artifacts/plans/SMP-6V2K-W2/build-plan.md`, chunk 17. Backlog **#330**, **#237**,
+**#510**, **#511**; probes land on **#509**. Needs Live 12.4.x open, the Remote Script
+**re-vendored** (`/hallucinote:ableton-mcp-install` — chunk 07 edited `actions/device.py` and
+`handlers/device.py`, so the wire fingerprint flipped) and Live restarted, a human at the
+machine, and the scratch song `hallucinote-songs/songs/audio-verify/` (untracked) extended
+with a Simpler track and a `reverse=1` row. One sitting, batched.
+
+**Run record (2026-09-09, Live 12.4.5, handshake `0.1.0+6283768de096` both ends).** Remote
+Script re-vendored first (the stale copy was `0.1.0+f2c750ef4069` — chunk 07's flip), Live
+restarted onto a fresh default set. The scratch song gained a Simpler row carrying
+`audio_file`, a MIDI clip to play it, and a `reverse=1` row (`AUDIO_VERIFY_FORWARD=1` flips
+that row forward, for the re-point check). Every probe verdict is a row in
+`docs/research/audio-first-class/lom-probe-results.md` → SMP-6V2K-W2 chunk 17, rows 21-27,
+each with its literal response. One incidental confirmation: the coherence check refused the
+first push on stale `ableton_links` rows (tracks 5-6 from the wave-1 set, gone after the
+restart) and named `probe-and-link --probe` as the recovery, which worked.
+
+### Sampler assignment (chunk 07)
+- [x] A `build.py` with a Simpler row carrying `audio_file` pushes; `ableton_device(info)` reads the path back; a second push emits no `assign_sample` — **PASSED** (row 21, 22): `sample_file_path` round-trips the authored path resolved absolute; the second push reports `[devices] skipped (nothing to push)`
+- [x] Does `replace_sample` reset device parameters? — **ANSWERED: NO** (row 23). `Filter Freq` 500 Hz and `Transpose` +7 st both survived a sample swap. The emitter's ordering is therefore not load-bearing for correctness; it stays for a different reason (the sample defines what the params act on)
+- [x] A sample dropped onto a Simpler by hand survives `capture execute` → replay → push — **PASSED in two halves, not as one continuous run** (rows 28, 28b, 28c). Operator dropped `bargain_not.wav`; capture wrote it to the snapshot and `replay_capture` carried it into `devices.audio_file`; push-assigns-from-DB is rows 21-22. Two corrections the box earned: **(a)** its "(portable path form)" parenthetical is WRONG — `paths.audio_file_ref` deliberately refuses `portable_path` because `resolve_audio_path` cannot expand `~`, so absolute is the correct form here (the tracked-file-carries-$HOME tension is real and unresolved — see row 28c); **(b)** a song whose samples are hand-managed must not ALSO author `audio_file` in `build.py`, or push correctly reverts the drop. The continuous run was blocked by row 29 (filed as **#514**)
+- [x] **Sampler (`MultiSampler`) probe** — **ANSWERED: NO `replace_sample`, and the "only Simpler" teaching error STANDS** (row 24). Live's Sampler surfaces as a bare `Device`: `song.tracks[0].devices[0].sample` → `AttributeError`, against a real `Sample` object on the Simpler beside it. Dated verdict — a future Live build could change it
+
+### Reverse via the derived cache (chunk 14)
+- [x] A `reverse=1` clip places (the create's `audio_path` is under `assets/derived/`); flipping to 0 re-points it at the source — **PASSED** (rows 25, 26). The re-point announced its full cost on the operator channel before acting. *Audibility* — that it plays backwards — is the operator's ears; the set is currently left in the `reverse=1` state, clip on track 5 slot 3 / arrangement bar 13
+- [x] The arrangement copy of that row plays the same derived file — **PASSED** (row 25): both `clip_slots[2].clip.file_path` and `arrangement_clips[2].file_path` resolve to the same content-addressed derived file
+
+### #509 probe (arrangement extent)
+- [x] On an arrangement audio clip: is `end_marker` / a length writable after `duplicate_clip_to_arrangement`? after a direct create? — **ANSWERED, and it re-scopes the item** (row 27). `end_marker` and `loop_end` are writable on BOTH routes; `end_time` has no setter and does not follow either. The arrangement block is fixed at placement time, so #509's assumed build ("trim the copy to `end_bar`") is unreachable — what is reachable is setting the playable region at placement time so the copy PLAYS the authored region. Re-scope #509 to that
+
+### R6.2 listening (chunk 12)
+- [x] `hallucinote stretch-ab <real line> --rate 0.9 --semitones -4`: both files render — **RENDERED 2026-09-09; the LISTENING is still the operator's.** rubberband 4.0.0 installed; the CLI flags (`-t`, `-p`, `-F`) ran against the real binary for the first time and both files came out. Source `bargain_not.wav` (16 kHz mono, 3.88 s, 8-bit PCM — real dialogue-rip quality), `--rate 0.9 --semitones -4`. Source centroid 1474 Hz; librosa 1174 (−301), rubberband+formant 1165 (−309) — the two backends land within 9 Hz of each other, so **the centroid proxy does not separate them and the decision is entirely by ear**. Files: `hallucinote-songs/stretch-ab/librosa-rate0.9-pitch-4.wav` and `…/rubberband-rate0.9-pitch-4-formant.wav`. **R6.2 DECIDED 2026-09-09 by the operator: Rubber Band — "the rubberband one sounds much better".** The centroid proxy could not separate them (9 Hz apart), so this was decided entirely by ear, which is what the harness was built for. **The consequence is a real cost the repo now takes on: a non-Python binary dependency** (`rubberband`, installed via `brew install rubberband`) on the R4.3 path — the exact trade design.md's D-entry flagged as open. R4.3 (formant-preserving grain-scatter) is now buildable, and its build must carry the missing-binary teaching error
+
+### A first hearing (the plan's acceptance)
+- [~] One real line ingested, its lens read, one symbolic carve pushed, one follower part pushed — and heard — **RAN 2026-09-09 and was HEARD; the pipeline passed and the MUSIC did not.** Song `hallucinote-songs/songs/audio-hearing`. Ingest, lens, F0, follower and a pitch ride all ran on a real dialogue line and were audible in Live. Two shortfalls, both recorded rather than papered over:
+  - **The carve was never pushed.** The pad is placed but uncarved — the one piece of section 5 still owed. `field='symbolic'` carve-as-recipe is unexercised against Live.
+  - **The follower did not read as tracking.** Operator's verdict: *"it does not really read as tracking."* Not a plumbing failure — all 7 notes land within 0.5 st of the contour (mean 0.29 st). The causes are measured in `lom-probe-results.md` rows 30-31 + "What section 5 settles": a source at the pipeline's floor (15% voiced, median confidence 0.078), a tracker octave error the follower faithfully reproduces (`62` amid `50-54`), and 7 notes against 22 onsets. **The acceptance is therefore PARTIAL** — the plan's machinery is verified end to end on real material; its musical output on this material is not accepted
+
 ## SMP-6V2K wave 1 — an authored sample lands in Live, and a dragged-in one comes back (2026-09-09) — **DISCHARGED 2026-09-09 on Live 12.4.5** (one box unreachable on 12.4.x, named below; every other box including audibility is confirmed)
 
 Plan: `.prawduct/artifacts/plans/SMP-6V2K/build-plan.md`. Backlog **#284**, **#268**;

@@ -9,7 +9,14 @@ track / return / master (validated by ``_resolve_parent``), and its ``path`` +
 rack paragraph below). A few shallow, top-level-only ops (``list`` / ``info`` /
 ``delete``) still take the flat ``track_index`` / ``return_index`` / ``master``
 root directly — they never address into a chain, so a structured ``node`` would
-be ceremony.
+be ceremony. ``assign_sample`` takes the flat root plus ``device_index`` /
+``device_path`` and re-expresses it as a NodeAddr internally: it does descend
+racks, but its caller (the devices push phase) already holds the flat parts.
+
+A sampler's assigned file rides the ``list`` and ``info`` reads as
+``sample_file_path`` — present (possibly ``None``) exactly when the device has
+a sample slot at all, so the same read answers both "what is loaded?" and "can
+this device hold a sample?" (see ``_sample_surface``).
 
 set_parameter handles both continuous and enum values via ``value_type``.
 Live's DeviceParameter has ``value`` (always a float — for enum params it
@@ -32,6 +39,7 @@ of nested params is tracked as NODE-ADDR Chunk B.
 """
 from __future__ import annotations
 
+import os
 from typing import Any, NoReturn
 
 from .. import device_names
@@ -511,6 +519,36 @@ def _parent_address(kind: str, index: int) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Sampler surface
+# ---------------------------------------------------------------------------
+
+
+def _sample_surface(device: Any) -> dict[str, Any]:
+    """The ``sample_file_path`` fragment for one device, or ``{}``.
+
+    Two states, and the caller must be able to tell them apart:
+
+    * the device HAS a sample slot — it answers ``.sample`` (a Simpler does so
+      before anything is loaded into it, where the value is ``None``). The
+      fragment carries ``sample_file_path``, whose value is the assigned file
+      or ``None`` for an empty slot.
+    * the device has NO sample slot (a Compressor, an Operator, a plugin). The
+      fragment is empty, so the key is ABSENT.
+
+    Key-present-with-``None`` versus key-absent is therefore the capability
+    signal the push planner reads: it is what lets a plan refuse
+    ``devices.audio_file`` on a device that could never play it, without
+    whitelisting device classes.
+    """
+    try:
+        sample = device.sample
+    except (AttributeError, RuntimeError):
+        return {}
+    file_path = getattr(sample, "file_path", None) if sample is not None else None
+    return {"sample_file_path": str(file_path) if file_path else None}
+
+
+# ---------------------------------------------------------------------------
 # list / info / get_parameters
 # ---------------------------------------------------------------------------
 
@@ -542,13 +580,19 @@ def list_handler(
     )
     devices_out: list[dict[str, Any]] = []
     for i, dev in enumerate(parent.devices, start=1):
-        devices_out.append({
+        entry: dict[str, Any] = {
             "device_index": i,
             "name": getattr(dev, "name", ""),
             "class_name": getattr(dev, "class_name", ""),
             "class_display_name": getattr(dev, "class_display_name", None),
             "is_active": bool(getattr(dev, "is_active", True)),
-        })
+        }
+        # The chain listing is the probe the push devices phase diffs against,
+        # so a sampler's assigned file rides the same read rather than costing
+        # a second round trip per device (see `_sample_surface` for what the
+        # key's presence means).
+        entry.update(_sample_surface(dev))
+        devices_out.append(entry)
     result: dict[str, Any] = {"parent_kind": kind, "devices": devices_out}
     result.update(_parent_address(kind, idx))
     return result
@@ -580,6 +624,7 @@ def info_handler(
         "can_have_chains": bool(getattr(dev, "can_have_chains", False)),
         "parent_kind": kind,
     }
+    result.update(_sample_surface(dev))
     result.update(_parent_address(kind, idx))
     return result
 
@@ -1814,6 +1859,125 @@ def delete_handler(
 
 
 # ---------------------------------------------------------------------------
+# assign_sample
+# ---------------------------------------------------------------------------
+
+
+def _validated_sample_path(sample_path: Any) -> str:
+    """The absolute, on-disk path ``replace_sample`` will accept, or a refusal.
+
+    Checked here rather than left to Live because Live's own refusals arrive as
+    two different exception types with two different strings, and one of them
+    ("does not appear to point to a valid audio file") is returned for a path
+    that is simply not there — which reads as "your file is corrupt" when the
+    real fix is "that file is somewhere else". Checking first lets each cause
+    say its own name.
+    """
+    if not isinstance(sample_path, str) or not sample_path:
+        raise ValueError(
+            "assign_sample needs sample_path — the audio file the sampler "
+            "should play, as an absolute path on the machine running Live."
+        )
+    if not os.path.isabs(sample_path):
+        raise ValueError(
+            f"assign_sample: sample_path must be ABSOLUTE, got {sample_path!r}. "
+            "Live resolves nothing relative to a working directory; pass the "
+            "full path (a song-relative reference is resolved by the push "
+            "planner before it reaches the wire)."
+        )
+    if not os.path.isfile(sample_path):
+        raise ValueError(
+            f"assign_sample: there is no file at {sample_path!r}. The sampler "
+            "was left as it was. Check the path, or render / ingest the asset "
+            "before assigning it."
+        )
+    return sample_path
+
+
+def assign_sample_handler(
+    context: LiveContext,
+    *,
+    device_index: int,
+    sample_path: str,
+    track_index: int | None = None,
+    return_index: int | None = None,
+    master: bool | None = None,
+    device_path: list[dict[str, int]] | None = None,
+) -> dict[str, Any]:
+    """Point a sampler instrument at an audio file.
+
+    Re-callable by construction: ``replace_sample`` REPLACES whatever the
+    device carried, so a push that runs twice leaves one sample assigned, not
+    two — which is what lets the devices phase emit this without tracking
+    whether it already ran.
+
+    ``device_path`` reaches a sampler nested inside a rack, at any depth; the
+    address is the same one ``get_device_chains`` reports.
+    """
+    _, kind, idx = _resolve_parent(
+        context, track_index=track_index, return_index=return_index, master=master,
+    )
+    # The flat address is re-expressed as a NodeAddr so the descent into a rack
+    # — and every teaching error along it — comes from the one resolver every
+    # other device surface uses, rather than a second implementation of it.
+    node = build_node_addr(
+        _parent_address(kind, idx), device_index=device_index, path=device_path,
+    )
+    dev, kind, idx, spec = _resolve_device_node(
+        context, node, action="assign_sample"
+    )
+    path = _validated_sample_path(sample_path)
+    replace_sample = getattr(dev, "replace_sample", None)
+    if not callable(replace_sample):
+        raise ValueError(
+            f"assign_sample: the device at device_index={device_index} on "
+            f"{kind} {idx} is "
+            f"{_canonical_class_name(dev) or '(unknown class)'!r} "
+            f"({getattr(dev, 'name', '')!r}), which has no sample slot — only "
+            "a sampler instrument takes one (Simpler, and Live's Sampler). "
+            "Load a Simpler at that position, or drop the sample from this "
+            "device's authoring."
+        )
+    try:
+        replace_sample(path)
+    except (RuntimeError, ValueError) as exc:
+        raise ValueError(
+            f"assign_sample: Live refused {path!r} for the sampler at "
+            f"device_index={device_index} on {kind} {idx}: {exc}. The file "
+            "exists, so the likely cause is a format Live cannot decode — "
+            "convert it to WAV or AIFF and assign that."
+        ) from None
+    assigned = _sample_surface(dev).get("sample_file_path")
+    if not assigned:
+        raise RuntimeError(
+            f"assign_sample: replace_sample returned without error but the "
+            f"sampler at device_index={device_index} on {kind} {idx} still "
+            f"reports no sample. Nothing was assigned; {path!r} may be an "
+            "audio file Live opened and then discarded."
+        )
+    if os.path.realpath(str(assigned)) != os.path.realpath(path):
+        # A sampler that already held a sample answers `.sample` either way;
+        # only the read-back path says whether THIS file landed.
+        raise RuntimeError(
+            f"assign_sample: replace_sample returned without error but the "
+            f"sampler at device_index={device_index} on {kind} {idx} reports "
+            f"{assigned!r}, not {path!r}. Live kept the previous sample; the "
+            "file may be one it opened and then discarded."
+        )
+    result: dict[str, Any] = {
+        "device_index": spec["device_index"],
+        "parent_kind": kind,
+        "name": getattr(dev, "name", ""),
+        "class_name": getattr(dev, "class_name", ""),
+        "sample_file_path": assigned,
+    }
+    if spec.get("path"):
+        result["device_path"] = spec["path"]
+    result.update(_parent_address(kind, idx))
+    return result
+
+
+# ---------------------------------------------------------------------------
 # enable / disable / set_parameter
 # ---------------------------------------------------------------------------
 
@@ -3005,6 +3169,7 @@ __all__ = [
     "get_parameters_handler",
     "load_handler",
     "delete_handler",
+    "assign_sample_handler",
     "enable_handler",
     "disable_handler",
     "set_parameter_handler",

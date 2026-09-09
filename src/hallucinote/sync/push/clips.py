@@ -20,12 +20,11 @@ from .envelopes import plan_push_envelopes_for_clip
 #
 # `reverse` is deliberately ABSENT. Live exposes no settable reverse on a
 # Clip — probe-confirmed on a real audio clip: 49 properties, 142 methods, none
-# of them a reverse — so the wire carries no such property and a row that sets
-# it cannot be materialized here. Simpler has none either; its `reverse()` is a
-# destructive method that writes a derived file. Reverse therefore materializes
-# only as a pre-reversed derived asset, which is a later wave's transform. A
-# row that sets it is refused loudly below rather than pushed as a
-# forward-playing clip nobody was told about.
+# of them a reverse — so the wire carries no such property. Simpler has none
+# either; its `reverse()` is a destructive method that writes a derived file.
+# Reverse is materialized one step earlier instead, as a pre-reversed DERIVED
+# ASSET the clip is pointed at (:func:`resolve_reversed_sample`): the flag
+# changes which FILE the clip plays, never a property on the wire.
 AUDIO_CONFORM_PROPERTIES: tuple[tuple[str, str], ...] = (
     ("audio_gain",   "gain"),
     ("pitch_coarse", "pitch_coarse"),
@@ -204,6 +203,79 @@ def resolve_authored_sample(
     return resolved, None
 
 
+def resolve_reversed_sample(
+    conn: sqlite3.Connection,
+    resolved: Path,
+    *,
+    where: str,
+) -> tuple[Path | None, str | None]:
+    """Resolve the file a ``reverse=1`` row actually plays: the pre-reversed
+    derived asset for ``resolved``, or say why there is none.
+
+    Returns ``(path, None)`` or ``(None, reason)``, the same shape
+    :func:`resolve_authored_sample` answers in, because a caller treats the two
+    identically — a row it cannot determine the file for is a row it refuses.
+
+    Neither Live nor Simpler carries a reverse the wire could set, so the flag
+    is materialized one step earlier: the sample is run through the ``reverse``
+    transform and filed in the song's content-addressed derived cache, and the
+    clip is created from THAT file. The address is a hash over the source's
+    checksum and the chain, so the flag and the file cannot disagree — flip the
+    flag and the path changes, which the ordinary re-pointed-``audio_file``
+    reconcile below then acts on. A source the manifest does not record is
+    still derivable: it is wrapped as an unmanifested source whose checksum is
+    computed here, so a sample referenced straight out of ``assets/`` addresses
+    exactly as an ingested one does.
+
+    The render happens at PLAN time so the create carries a path that already
+    exists — the same discipline the authored-sample resolve enforces — and the
+    cache makes every push after the first a lookup. Nothing is sent to Live
+    from here; the derived cache is local, regenerable and checked in.
+    """
+    song_dir = song_dir_for_conn(conn)
+    if song_dir is None:
+        return None, (
+            f"{where} sets reverse=1, but this connection has no database file "
+            "on disk, so there is no song directory to hold the derived cache "
+            "the reversed file lives in. Open the song's DB through "
+            "init_db(<song dir>/<slug>.db) and re-plan."
+        )
+    # Imported here rather than at module scope: reverse is the only thing in
+    # this phase that needs the DSP stack, and a MIDI-only push should not pay
+    # to import soundfile and numpy to plan notes.
+    import soundfile as sf
+
+    from hallucinote.assets import derived as derived_cache
+    from hallucinote.assets import store, transforms
+    from hallucinote.assets.types import Source
+
+    try:
+        source: Source | None = None
+        for candidate in store.sources(song_dir):
+            if same_file_path(candidate.path, resolved):
+                source = candidate
+                break
+        if source is None:
+            info = sf.info(str(resolved))
+            source = Source(
+                name=resolved.stem,
+                path=resolved,
+                checksum=store.file_checksum(resolved),
+                sample_rate=int(info.samplerate),
+                channels=int(info.channels),
+                duration_s=float(info.duration),
+            )
+        derived = derived_cache.derive(
+            source, (transforms.reverse(),), song_dir=song_dir,
+        )
+    except (OSError, ValueError, sf.SoundFileError) as exc:
+        return None, (
+            f"{where} sets reverse=1, and the reversed file could not be "
+            f"derived from {resolved}: {exc}"
+        )
+    return derived.path, None
+
+
 def _audio_create_call(
     *,
     clip: sqlite3.Row,
@@ -354,6 +426,10 @@ def _plan_push_audio_clip(
     pushes and then plays silence is a phase reporting OK without having
     determined its state, which is precisely what the sync boundary contract
     forbids.
+
+    A ``reverse=1`` row is resolved to its pre-reversed derived file first
+    (:func:`resolve_reversed_sample`), so every outcome above is decided
+    against the file the clip really plays.
     """
     slot = clip["slot"]
     where = f"clip {clip_id} ({clip['name']!r}, slot {slot})"
@@ -369,31 +445,32 @@ def _plan_push_audio_clip(
         return
 
     if clip["reverse"]:
-        # Not fatal to the placement — the sample still belongs in the set —
-        # but the author asked for reversed playback and it does not happen,
-        # and a run that says OK over that is the silent-wrong-audio failure.
-        plan.blocked(
-            f"{where} sets reverse=1, which push cannot materialize: Live "
-            "exposes no settable reverse on a Clip (probe-confirmed on Live "
-            "12.4.5 — no such property or method), so the wire carries none, "
-            "and Simpler has no Reverse parameter either. The clip is placed "
-            "and conformed FORWARD. Reverse materializes only as a "
-            "pre-reversed derived asset, which is a later SMP-6V2K wave's "
-            "transform (#237); until then, reverse the file offline and "
-            "reference that."
-        )
+        # From here on `resolved` is the reversed file, so every branch below
+        # — create, conform, the changed-file recreate — works on the file the
+        # clip really plays. A row whose reversed file cannot be derived is
+        # refused rather than placed forward: a clip that pushes clean and then
+        # plays the line the wrong way round is the silent-wrong-audio failure.
+        resolved, refusal = resolve_reversed_sample(conn, resolved, where=where)
+        if resolved is None:
+            plan.blocked(
+                f"{refusal} NO create was planned — placing it FORWARD would "
+                "report OK over audio the author did not write. Fix the source "
+                "(a manifest checksum that no longer matches its file is the "
+                "usual cause), then re-push."
+            )
+            return
 
     if clip_at is None:
         # The slot may hold a scaffold clip; replace makes the create
-        # state-independent, the same posture the MIDI create takes. It is
-        # also the seam a pull-ingested clip falls through: pull writes no
-        # link, so a clip the user dragged in reaches here unlinked and is
-        # deleted and rebuilt from the same file on every push, losing
-        # hand-set warp markers — the DB models warp mode, not markers. Where
-        # the link should be written is a design decision (#507), not a patch
-        # here; the cost is said on the operator channel whenever the probe
-        # shows the slot occupied, because `replace=True` hides the delete
-        # inside the handler and nothing else in the run would name it.
+        # state-independent, the same posture the MIDI create takes. Pull now
+        # writes the link for every clip it ingests, so an unlinked row whose
+        # slot is nevertheless occupied means one of two things: the clip in
+        # Live was placed by hand and never pulled, or the link that once
+        # bound them is gone. Either way the row wins and the slot is rebuilt
+        # from it, losing hand-set warp markers — the DB models warp mode, not
+        # markers. That cost is said on the operator channel whenever the
+        # probe shows the slot occupied, because `replace=True` hides the
+        # delete inside the handler and nothing else in the run would name it.
         occupant = _live_session_entry(
             live_session_clips_by_track, track_at=track_at, clip_index=slot,
         )
@@ -404,12 +481,13 @@ def _plan_push_audio_clip(
             plan.alert(
                 f"clip {clip_id} ('{clip['name']}', slot {slot}): the row has "
                 f"no link, but Live's slot {slot} on track {track_at} already "
-                f"holds '{held}'{playing} — a clip pull ingested without a "
-                "link (#507), or one placed by hand. That clip is DELETED and "
-                f"rebuilt from {resolved.name} (the create replaces the "
-                "slot), then conformed from the row. Un-modelled Live-side "
-                "state on the old clip — hand-placed warp markers — does not "
-                "survive."
+                f"holds '{held}'{playing} — a clip placed by hand and never "
+                "pulled (pull links what it ingests), or a link that has gone "
+                "stale. That clip is DELETED and rebuilt from "
+                f"{resolved.name} (the create replaces the slot), then "
+                "conformed from the row. Un-modelled Live-side state on the "
+                "old clip — hand-placed warp markers — does not survive. Pull "
+                "the set first if that clip is the one you meant to keep."
             )
         plan.add(_audio_create_call(
             clip=clip, clip_id=clip_id, track_at=track_at, clip_index=slot,
@@ -567,9 +645,10 @@ def plan_push_clip(
     (gain, transpose, warp / warp_mode, markers). A linked clip whose file
     has changed underneath the row is a delete-and-recreate that re-emits
     the envelopes the row hosts (``Clip.file_path`` is read-only, and a
-    recreate drops them — :func:`_recreate_audio_clip`). One thing it
-    refuses rather than guesses, with a :meth:`PushPlan.blocked` reason: a
-    sample that is not on disk.
+    recreate drops them — :func:`_recreate_audio_clip`). Two things it
+    refuses rather than guesses, each with a :meth:`PushPlan.blocked` reason:
+    a sample that is not on disk, and a ``reverse=1`` row whose reversed file
+    cannot be derived.
 
     ``live_session_clips_by_track`` is the per-track Live session-clip
     inventory (``{track_index: [{clip_index, is_audio, file_path, gain, …}]}``

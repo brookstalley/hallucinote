@@ -126,7 +126,9 @@ fork the user hasn't directed, **propose and read their reaction** (the third
 register). Three recall surfaces, one per question: prior *intent* → `/song-context`;
 the audit trail of compose-time decisions → `/decisions`; **what you already tried on a
 part and how it turned out** (incl. reverted dead ends) → `/song-attempts`, before you
-re-touch a part you've worked before.
+re-touch a part you've worked before. A song built on a sample has a fourth: what the
+line *is* — its pitch centre, phrases and where a detector would fire, against bars —
+→ `/sample-lens`, before composing to it.
 
 ### 2 — Pick the instrument chains (sound design *is* composition)
 `/song-pick-instruments` picks a *chain* per track — instrument **plus**

@@ -490,7 +490,7 @@ def _make_arrangement_clip(conn, song_id: str, start_bar: float, end_bar: float)
     tid = M.create_track(conn, song_id=song_id, track_index=1, name="t1")
     # length_beats covers the full placement span at 4 beats/bar (test default).
     cid = M.create_clip(
-        conn, track_id=tid, name="c1", slot=0,
+        conn, track_id=tid, name="c1", slot=1,
         length_beats=(end_bar - start_bar) * 4.0,
     )
     M.add_arrangement_clip(

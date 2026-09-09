@@ -156,12 +156,14 @@ clip places into a slot and the arrangement, and a clip dropped in by hand is st
 into the DB on pull — materialized state, folded into `build.py` to become source, the
 same lane a clip-notes pull uses. So placement is not the open half.
 
-What is still open is **ergonomics** — where the asset store lives, how a song
-references a source, and what a derived file has to record to stay regenerable. That
-is SMP-6V2K wave 3's, and the requirements for it are written (R1.6 provenance, R1.7
-recipe-regenerability): sources immutable under `assets/sources/`, every derived file
-the output of a recorded recipe, because a song that only has the WAV has lost its
-source.
+**Closed 2026-09-09 (SMP-6V2K wave 2).** The ergonomics have a home: sources are
+ingested immutable under `assets/sources/` with their provenance in
+`assets/manifest.json` (`hallucinote asset add`); a song references one by name
+(`source(SONG_DIR, "rivers-01")`); every derived file is the output of a recipe written
+in `build.py` (`derive(line, trim(...), reverse())`) and cached under `assets/derived/`
+at an address hashed from its source, its chain and — for a carve — the notes it was
+carved against, so nothing can reference a stale file by a current name. The recorded
+asset is the third leg exactly as this document says: retained, and regenerable.
 
 ### 3. Parametric / computed mix authoring (the `build.py` mix hook)
 There is no path today to compute mix state in code (a rule across chains,

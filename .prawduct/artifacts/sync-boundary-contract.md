@@ -26,6 +26,15 @@ carried ~70 of them and a single bundle invalidated a third. Every reference
 here names the module and the function, which a grep resolves and a refactor
 carries with it.
 
+**One bounded write a planner may make (2026-09-09, SMP-6V2K wave 2).** The clips and
+arrangement planners render a `reverse=1` row's derived file into the song's
+`assets/derived/` at plan time (dry-run included), so the create they plan names a file
+that already exists — the same discipline `resolve_authored_sample` enforces for a source.
+The write is deterministic, content-addressed and idempotent (a second plan finds the
+file), it never touches Live, and the plan stays inspectable without Live running, which
+is the property the purity norm protects. It is the only such write; a planner that
+writes anything else is still a violation.
+
 **The trust chain in one paragraph.** Planners are pure DB→plan functions: they
 read the song DB + `ableton_links` and *never* talk to Live
 (`push/plan.py` — the thunk contract). All Live truth enters through three

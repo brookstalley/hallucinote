@@ -376,7 +376,7 @@ def _apply_session_clips_for_track(
          note pull would let us fill in content, but distinguishing a
          brand-new session clip from a moved-into-this-slot existing
          clip is the same identity problem as the arrangement case)
-      - slot populated in Ableton only, AUDIO                      -> `create_audio_clip`
+      - slot populated in Ableton only, AUDIO                      -> `create_audio_clip` + `link_db_to_ableton`
       - slot populated in both, but the two disagree on kind       -> warn + skip
 
     **An audio clip in Live is ingested (R1.2).** MIDI cannot be
@@ -388,7 +388,10 @@ def _apply_session_clips_for_track(
     source: like a `clip-notes` pull, this is the STAGING lane — the row is
     what you read to fold the clip into `build.py`, and a `build.py --reset`
     drops it until you do. Its file reference is stored in the two forms
-    `clips.audio_file` is defined to carry (see :func:`hallucinote.paths.audio_file_ref`).
+    `clips.audio_file` is defined to carry (see :func:`hallucinote.paths.audio_file_ref`),
+    and the new row is linked to the slot it was found in so the next push
+    conforms it in place instead of rebuilding it from the file
+    (see :func:`_ingest_session_audio_clip`).
 
     Kind is immutable on a clip row, so a slot where Live and the DB disagree
     on kind is reported, never coerced: converting is delete + create, and
@@ -521,7 +524,8 @@ def _apply_session_clips_for_track(
         if is_audio:
             _ingest_session_audio_clip(
                 conn, track_row=track_row, slot=slot, entry=entry,
-                db_clip=db_clip, song_dir=song_dir, out=out,
+                db_clip=db_clip, song_dir=song_dir, session_id=session_id,
+                out=out,
                 actor=actor, request_id=request_id, reason=reason,
             )
             continue
@@ -587,6 +591,7 @@ def _ingest_session_audio_clip(
     entry: dict[str, Any],
     db_clip: sqlite3.Row | None,
     song_dir: Path | None,
+    session_id: str,
     out: ApplyResult,
     actor: str,
     request_id: str | None,
@@ -599,6 +604,22 @@ def _ingest_session_audio_clip(
     into the DB (materialized state — fold it into `build.py` to keep it,
     as with a `clip-notes` pull) instead of living only in the `.als`.
     Otherwise it conforms the existing audio row to what Live now holds.
+
+    A created row is also LINKED to the slot Live reported it in, through the
+    same `link_db_to_ableton` mutator the push side records its bindings with.
+    Links are truthful to Live, and a row created *from* an observed Live clip
+    carries the strongest evidence of where that clip lives that any writer
+    will ever hold. The link is what lets the next push find the clip at
+    `clip_at` and conform it in place; an unlinked row reaches push's
+    create-into-the-slot branch instead and is rebuilt from the file on every
+    push, losing Live-side state the DB does not model (hand-placed warp
+    markers). The link write shares the create's transaction, so a dry-run
+    rolls both back together and neither is staged without the other.
+
+    An EXISTING row's link is left alone. Pull observed the clip's contents,
+    not the history of the binding, and reconciling a link that is already
+    there — against a slot the row may have been moved off — is push's
+    `probe_and_link` pass.
 
     `reverse` is never written: Live exposes no reverse property on a Clip at
     all, so the wire reports none and pull would be inventing state.
@@ -691,11 +712,27 @@ def _ingest_session_audio_clip(
                 "unaffected."
             )
             return
+        M.link_db_to_ableton(
+            conn,
+            session_id=session_id,
+            db_kind="clip",
+            db_id=cid,
+            # Live's `clip_index` and the DB's `clips.slot` are the same
+            # 1-based slot number — the identity this whole diff is matched
+            # on — and `clip_index` is exactly the field `apply_push_results`
+            # records for a `clip:` result, so the two writers agree on what a
+            # clip link means.
+            ableton_index=slot,
+            actor=actor, request_id=request_id, reason=reason,
+        )
+        # One ingested clip is one mutation. The link is part of ingesting it,
+        # not a second diff the user could have applied on its own, and
+        # counting it separately would report two changes for one slot.
         out.mutations += 1
         out.details.append(
             f"track {track_row['name']!r}: session slot {slot} audio clip "
             f"{name_in!r} ingested from Live (clip_id={cid[:8]}, "
-            f"audio_file={ref!r})"
+            f"audio_file={ref!r}, linked to clip_index {slot})"
         )
         return
 

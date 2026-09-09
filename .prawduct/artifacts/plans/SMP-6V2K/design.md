@@ -168,10 +168,13 @@ movie dialogue is somebody's copyright — personal and creative use is one thin
 distributing a released track built on it is another, and clearance is the user's call,
 not the tool's.
 
-**D6 — Reverse goes through a derived asset or the sampler, never a clip property.**
-Follows from stale claim 2 once the probe confirms it. This changes `clips.reverse`'s
-contract from "push sets a Live property" to "push selects a reversed derived asset (wave
-3) or sets Simpler's Reverse parameter (wave 4)" — and the schema comment has to say so.
+**D6 — Reverse goes through a derived asset, never a clip property or a sampler switch.**
+Follows from stale claim 2, which the chunk 01 probe confirmed on Live 12.4.5
+(`lom-probe-results.md` rows 14 and 19): no Clip reverse, and Simpler has no Reverse
+*parameter* either — its `reverse()` is a destructive method that writes a derived file.
+This changes `clips.reverse`'s contract from "push sets a Live property" to "push selects a
+reversed derived asset (wave 3), which the sampler route loads via `replace_sample` (wave
+4)" — and the schema comment says so.
 
 **D7 — Sample analysis is a second front door, not a widening of the capture loader.**
 `audio/io.py` refuses anything that isn't the analyzer's float32 stereo because the mix

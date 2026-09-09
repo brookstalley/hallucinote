@@ -21,6 +21,10 @@ from ._core import (
 # Live's Clip.warp_mode enum ints (LOM value domain, stored directly so the
 # column never drifts from Live). 'rex' is Live's legacy REX-file mode —
 # readable on old clips, not a sensible authoring target.
+# Live's Clip.warp_mode ints. Verified against a running Live 12.4.5: a WAV
+# clip's available_warp_modes is [0, 1, 2, 3, 4, 6] and Live refuses 5 on it
+# ("Invalid warp mode") — REX is the one file-type-gated algorithm, which pins
+# the map (docs/research/audio-first-class/lom-probe-results.md row 15).
 WARP_MODES = {
     "beats": 0,
     "tones": 1,

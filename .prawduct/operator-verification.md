@@ -28,7 +28,7 @@ stale Remote Script fails the handshake rather than misbehaving quietly.
 **Have a real audio file ready** — any short WAV, absolute path. The probe pass writes into
 a scratch set, not a song.
 
-### Chunk 01 — the probe session (does NOT need the re-vendor; the probe bridge is shipped)
+### Chunk 01 — the probe session (does NOT need the re-vendor; the probe bridge is shipped) — **DISCHARGED 2026-09-09** on Live 12.4.5; verdicts in `docs/research/audio-first-class/lom-probe-results.md` rows 14-20
 
 One pass, five questions, batched so the operator is asked once. Append the answers to
 `docs/research/audio-first-class/lom-probe-results.md` as a dated section — that file is the

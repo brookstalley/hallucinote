@@ -137,12 +137,16 @@ CREATE TABLE IF NOT EXISTS clips (
     -- AUD-7R3M: ONE immutable audio_file, played reversed when set
     -- (NULL/0 = forward, 1 = reversed).
     -- NOT MATERIALIZED AT PUSH, and this comment used to say it was. A Live
-    -- Clip exposes no settable reverse at all — the property is absent from
-    -- the installed 12.4.1 LomTypes gate table — so the wire carries no
-    -- `reverse` and the clips phase refuses a row that sets it rather than
-    -- silently pushing a clip that plays forward. The column stays because
-    -- the INTENT is real; it will materialize as a reversed derived asset or
-    -- a sampler's own Reverse parameter (#237).
+    -- Clip exposes no settable reverse at all — absent from the 12.4.1
+    -- LomTypes gate table AND from a live `describe` of a real audio clip on
+    -- 12.4.5 (docs/research/audio-first-class/lom-probe-results.md row 14) —
+    -- so the wire carries no `reverse` and the clips phase refuses a row that
+    -- sets it rather than silently pushing a clip that plays forward. The
+    -- column stays because the INTENT is real; it materializes only as a
+    -- reversed DERIVED ASSET — a clip pointed at the reversed file, or a
+    -- sampler whose sample is the reversed file. Simpler has no Reverse
+    -- parameter either: its reverse() is a destructive method that writes a
+    -- derived file (row 19), so the derived asset is the whole story (#237).
     reverse                 INTEGER,
     UNIQUE(track_id, slot)
 );

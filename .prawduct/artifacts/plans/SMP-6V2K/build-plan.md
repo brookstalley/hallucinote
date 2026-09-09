@@ -143,18 +143,20 @@ questions batched in so the operator is asked once.
 
 ## Status
 
-- [ ] Chunk 01: the Live session that settles the reverse contract and the recreate semantics *(operator-gated; gates only 03's reconcile rule)*
+- [x] Chunk 01: the Live session that settles the reverse contract and the recreate semantics *(operator-gated; gates only 03's reconcile rule)* — ran 2026-09-09 on Live 12.4.5
 - [x] Chunk 02: `ableton_clip` creates a real audio clip, and the audio property surface is complete *(wave A)*
 - [x] Chunk 03: the clips and arrangement phases materialize `kind='audio'` *(wave B)*
 - [x] Chunk 04: an audio-track session clip hosts envelopes (#268) *(wave A)*
 - [x] Chunk 05: pull ingests audio clips, including one dragged in by hand *(wave B)*
 - [x] Chunk 06: the docs say what is true, and the contract artifacts track *(coordinator)*
+- [ ] Chunk 07: the two refusals settle against chunk 01's verdicts *(wave B; planner tests, then the live "Done when" of chunk 03 applies to it)*
 
 **A ticked box here means the code is built, reviewed and green — it does NOT mean the
 wave is done.** Chunks 02-05 each carry a live "Done when" clause that only an operator at
-a running Live can discharge, and none of them has been. The three conditions still
-standing are named under *Definition of done* below, and `capability-truth.md` rates the
-capability accordingly.
+a running Live can discharge, and none of them has been. Chunk 01's tick is different in
+kind — it *was* the operator session, and its verdicts are on disk — but it surfaced chunk
+07, which is what those verdicts were for. The conditions still standing are named under
+*Definition of done* below, and `capability-truth.md` rates the capability accordingly.
 
 ---
 
@@ -397,6 +399,60 @@ with it — including the three stale claims the audit found (design.md § "Thre
 **Done when:** every surface above is edited or explicitly ruled inapplicable; the backlog
 reflects reality.
 
+### Chunk 07: the two refusals settle against chunk 01's verdicts
+
+**Type:** code · **Foreign API:** Live Object Model (Live 12.4.x) · **Visual change:** no
+· **Operator-gated:** no for the build (planner tests carry it), yes for the live
+"Done when" (it is chunk 03's live clause, re-run over the two paths this chunk opens).
+
+**Why it exists.** Chunk 03 shipped two `plan.blocked` refusals whose reasons say "run chunk
+01": a linked clip whose `audio_file` changed (`sync/push/clips.py`) and an arrangement
+placement whose source audio clip hosts an envelope (`sync/push/arrangement.py`). Chunk 01
+has run, and `docs/research/audio-first-class/lom-probe-results.md` rows 16-16c hold the
+answers. Leaving the refusals in place now would be a capability the project knows how to
+build and declines to — `capability-truth.md` already says so.
+
+**Spec.** Against the recorded verdicts, in the same modules chunk 03 owns:
+
+1. **Re-pointed `audio_file` → delete-and-recreate that re-emits the ride** (rows 16, 16b).
+   `create_audio_clip` into an occupied slot is a hard error, and a recreate drops every
+   envelope the clip hosted, so the plan is `delete_clip` → `create` (with the conform
+   properties the create already carries) → re-emit each envelope the row hosts, in that
+   order, as one planned sequence. The envelope re-emit reuses the envelopes phase's own
+   planner, not a copy. A second push of the unchanged song still plans nothing.
+2. **Envelope-hosting audio placement → the duplicate route** (row 16c).
+   `duplicate_clip_to_arrangement` carries a ride off an audio session clip exactly as off a
+   MIDI one, so an audio placement whose source clip is in `envelope_hosting_clip_ids` takes
+   the duplicate-onto-cleared path MIDI already takes; envelope-free audio placements keep
+   the direct `Track.create_audio_clip(path, beats)` call. The duplicate copies the
+   *conformed* session clip, which closes the arrangement conform gap for those rows — the
+   run's per-placement conform warning must stop firing for them and keep firing for the
+   direct-create ones.
+3. **Path error shapes** (row 17): the chunk-02 teaching-error mapping gains the third source
+   string, `ValueError: Please provide an absolute path`.
+4. `capability-truth.md`'s audio row drops the two "still refuse" sentences and says what
+   the push now does; the arrangement-conform caveat narrows to envelope-free placements.
+
+**Open, decided here rather than downstream:** whether *every* audio placement with a
+session source should take the duplicate route so all of them arrive conformed. Not in this
+chunk — the duplicate carries the session clip's length, not the placement's, and the
+positional-link renumbering ARR-PROJ fixed was born in exactly that path; the extent gap is
+a separate item. `[DECISION: only envelope-hosting audio placements duplicate; the rest keep
+the direct create | the verdict licenses the envelope case and nothing more, and the length
+mismatch is unprobed | user can override]`
+
+**Tests.** Planner tests (no Live): changed path → delete, create, conform, envelope
+re-emit in that order; unchanged row → no-op; envelope-hosting audio placement → duplicate
+call and no conform warning; envelope-free → direct create and the warning; the new error
+string maps to the teaching shape.
+
+**Done when:** (0) the two `_UNPROBED` refusals are gone and nothing else in `sync/push`
+cites chunk 01 as pending; (1) planner tests above green; (2) `capability-truth.md` updated;
+(3) chunk 03's live "Done when" re-queued in `operator-verification.md` naming the two new
+paths.
+
+---
+
 ### Found and deferred, filed rather than carried
 
 Three things this wave surfaced, cited and filed rather than fixed inside it:
@@ -456,15 +512,17 @@ because the choice of home is the work.
 
 A movie line copied into `songs/<slug>/assets/`, referenced from `build.py`, pushes into a
 Live set as a warped, transposed audio clip in the session and as a placement in the
-arrangement (**the arrangement copy carries no conform** — see the gap in chunk 03; closing
-it needs the probe answer about `duplicate_clip_to_arrangement`); a volume ride
+arrangement (**the arrangement copy carries no conform** — see the gap in chunk 03; chunk 01
+answered the `duplicate_clip_to_arrangement` question and chunk 07 acts on it); a volume ride
 authored under it pushes; a second line dragged in by hand in Live comes back on pull and
 survives a re-push; and `capability-truth.md` says exactly that and no more.
 
 **Not met yet, and these are the three things standing in the way:**
 
-1. **Chunk 01 has not run.** It is operator-gated, and until it does, two paths refuse
-   loudly by design and the arrangement conform gap has no verdict.
+1. ~~**Chunk 01 has not run.**~~ It ran 2026-09-09 (Live 12.4.5). The two paths that
+   refused pending its verdicts still refuse — the rule built on the verdicts is **chunk 07**,
+   unbuilt — and the arrangement conform gap now has its verdict (the duplicate route
+   carries conform; the direct create does not).
 2. **The link seam** above ([#507](https://github.com/brookstalley/hallucinote/issues/507))
    — "survives a re-push" is the clause it fails.
 3. **Nothing has been live-verified on the audio path.** The only live evidence this wave

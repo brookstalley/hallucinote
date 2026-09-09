@@ -32,6 +32,29 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-09-09 — The probe session settles the reverse contract and the recreate semantics
+
+<!-- prawduct: type=research | scope=SMP-6V2K -->
+
+SMP-6V2K chunk 01 ran against Live 12.4.5 through the shipped `ableton_probe` bridge, and
+every question the wave had left open now has a recorded call and a literal response
+(`docs/research/audio-first-class/lom-probe-results.md` rows 14-20, raw records in the
+JSONL). A Live `Clip` has no reverse, and neither does Simpler — its `reverse()` is a
+destructive method that writes a derived file — so `clips.reverse` materializes only as a
+reversed derived asset, which the schema comment and design D6 now say. The warp-mode map is
+pinned by the one gap Live leaves (REX refused on a WAV). Creating into an occupied slot is a
+hard error, a delete-and-recreate drops the clip's envelopes, and `duplicate_clip_to_arrangement`
+carries a ride off an audio session clip exactly as off a MIDI one — a control duplicate
+without an envelope was run so the `automation_state` flip could be trusted. Live also
+checks path absoluteness before existence, a third error shape row 1c never saw.
+
+Two things fell out of running the write path instead of reading about it. Simpler's sample
+assignment via `replace_sample` and its `Sample` surface are recorded for wave 4 (#330), and
+`ableton_probe(set)` turned out unable to write an int from this client — its untyped
+`value` arrives as a string — which is backlogged as #508 with a repro. The two push refusals that
+cited this chunk are now **chunk 07** in the plan; they stay in force until it is built, and
+`capability-truth.md` says exactly that.
+
 ## 2026-09-09 — A sample is song material: audio clips place, conform and round-trip
 
 <!-- prawduct: type=feature | scope=SMP-6V2K -->

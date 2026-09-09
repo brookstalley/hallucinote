@@ -36,9 +36,11 @@ _KIND_ENUM = ("midi", "audio")
 # shipped spellings; ``pitch_coarse`` and ``warping`` are the same two
 # properties under the names the read surface (``list``) reports them by, so
 # a reader can write back exactly the name it read. Reverse is deliberately
-# absent: Live exposes no settable reverse on a Clip
-# (`lom-audio-clip-surface.md` §4), so a sample plays backwards by way of a
-# derived asset or a sampler parameter, never a clip property.
+# absent: Live exposes no settable reverse on a Clip, and Simpler has no
+# Reverse parameter either — its `reverse()` is a destructive method that
+# writes a derived file (`lom-probe-results.md` rows 14 and 19) — so a sample
+# plays backwards only by way of a pre-reversed derived asset, never a
+# property anywhere.
 _CLIP_PROPERTIES = (
     "gain", "pitch", "pitch_coarse", "pitch_fine", "warp", "warping",
     "warp_mode", "start_marker", "end_marker", "loop_start", "loop_end",
@@ -359,8 +361,9 @@ register(
             "action='list' reads back off an audio clip, so a conform "
             "round-trips.",
             "There is no 'reverse' property — Live exposes no settable "
-            "reverse on a Clip. Play a sample backwards through a reversed "
-            "derived asset or a sampler's own Reverse parameter.",
+            "reverse on a Clip, and Simpler has no Reverse parameter either "
+            "(its reverse() writes a derived file). Play a sample backwards "
+            "by pointing the clip at a pre-reversed derived asset.",
         ),
     )
 )

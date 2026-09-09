@@ -3582,13 +3582,13 @@ def test_apply_session_clips_deletes_db_clip_when_ableton_slot_empty(
     assert any("cleared in Ableton" in d for d in out.details)
 
 
-def test_apply_session_clips_deletes_audio_row_when_live_slot_empty(
+def test_apply_session_clips_deletes_a_linked_audio_row_when_live_slot_empty(
     conn, song, session
 ):
-    """SMP-6V2K ch05: audio clips are synced now, so an empty Live slot is
-    evidence of a real deletion, not of an unsynced row. The CLP-AUD1
-    exemption (which pinned a clip the user removed in Live into the song
-    forever) is gone: the row is deleted like any other."""
+    """SMP-6V2K: audio clips are synced now, and a LINKED audio row was in
+    Live — push recorded the link when the create landed — so its empty slot
+    is a real clear, deleted like a MIDI one. The CLP-AUD1 exemption (which
+    pinned a clip the user removed in Live into the song forever) is gone."""
     tid = M.create_track(
         conn, song_id=song, track_index=1, name="Stems", kind="audio",
     )
@@ -3596,6 +3596,9 @@ def test_apply_session_clips_deletes_audio_row_when_live_slot_empty(
     cid = M.create_audio_clip(
         conn, track_id=tid, slot=2, length_beats=16.0,
         audio_file="assets/gtr.wav", name="gtr", gain=0.8,
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="clip", db_id=cid, ableton_index=2,
     )
 
     out = pull.apply_pull_results(
@@ -3606,6 +3609,40 @@ def test_apply_session_clips_deletes_audio_row_when_live_slot_empty(
     assert out.mutations == 1
     assert Q.get_clip(conn, cid) is None
     assert any("cleared in Ableton" in d for d in out.details)
+
+
+def test_apply_session_clips_keeps_an_unlinked_audio_row_when_live_slot_empty(
+    conn, song, session
+):
+    """The discriminator is the LINK, not the kind. The clips phase plans no
+    create for an audio row whose sample is not yet on disk (blocked, and
+    said) — so after a refused push the slot is empty because push declined,
+    not because the user cleared it. Reading that as a deletion would erase
+    the row and cascade its placements. An unlinked audio row is kept and the
+    ambiguity reported; the arrangement pass rules its placements the same way."""
+    tid = M.create_track(
+        conn, song_id=song, track_index=1, name="Stems", kind="audio",
+    )
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    cid = M.create_audio_clip(
+        conn, track_id=tid, slot=2, length_beats=16.0,
+        audio_file="assets/not-copied-in-yet.wav", name="gtr",
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=tid, clip_id=cid, start_bar=1.0, end_bar=5.0,
+    )
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(f"track_session_clips:{tid}", _session_payload(("empty", 2)))],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 0
+    assert Q.get_clip(conn, cid) is not None
+    assert len(Q.get_arrangement_for_track(conn, tid)) == 1, "no cascade"
+    assert any(
+        "never pushed" in w and "NOT read as a deletion" in w for w in out.warnings
+    ), out.warnings
 
 
 def test_apply_session_clips_warns_when_live_and_db_disagree_on_kind(
@@ -3640,23 +3677,19 @@ def test_apply_session_clips_warns_when_live_and_db_disagree_on_kind(
     assert row["audio_file"] == "assets/gtr.wav"
 
 
-def test_apply_arrangement_clips_keeps_an_absent_audio_placement_and_says_why(
+def test_apply_arrangement_clips_keeps_an_absent_unlinked_audio_placement_and_says_why(
     conn, song, session
 ):
-    """An absent audio placement is AMBIGUOUS, so pull must not delete it.
+    """An absent UNLINKED audio placement is AMBIGUOUS, so pull must not
+    delete it.
 
-    This test previously asserted the removal. That contract was wrong, and the
-    reason is the asymmetry between the two kinds: push always creates a MIDI
-    placement, so Live not having one means the user deleted it. Push
-    legitimately REFUSES some audio placements — one whose source clip hosts an
-    envelope, one whose sample file is missing — so Live not having an audio one
-    can equally mean push declined and said so. Pull cannot see push's refusals,
-    so reading absence as deletion erases authored intent the author never
-    touched. The row is kept and the ambiguity is reported.
-
-    The original concern the old contract protected against is still real and
-    still handled: the CLP-AUD1 exemption pinned deleted state forever *silently*.
-    A warning naming what to do is not silence.
+    Push always creates a MIDI placement, so Live not having one means the
+    user deleted it. Push legitimately REFUSES an audio placement whose sample
+    file is missing, so Live not having an audio one can equally mean push
+    declined and said so. Pull cannot see push's refusals — but it can see the
+    LINK push records when a placement lands, and this one has none. The row
+    is kept and the ambiguity is reported; a warning naming what to do is not
+    the silent pinning the old CLP-AUD1 exemption did.
     """
     tid = M.create_track(
         conn, song_id=song, track_index=1, name="Stems", kind="audio",
@@ -3685,6 +3718,39 @@ def test_apply_arrangement_clips_keeps_an_absent_audio_placement_and_says_why(
         "NOT read as a deletion" in w and "build.py" in w
         for w in out.warnings
     ), out.warnings
+
+
+def test_apply_arrangement_clips_removes_an_absent_linked_audio_placement(
+    conn, song, session
+):
+    """The other half of the link rule: a LINKED audio placement was in Live
+    (push recorded the binding when it landed), so its absence is a real
+    deletion, removed exactly like a MIDI one."""
+    tid = M.create_track(
+        conn, song_id=song, track_index=1, name="Stems", kind="audio",
+    )
+    _link_track(conn, session=session, db_id=tid, ableton_index=5)
+    cid = M.create_audio_clip(
+        conn, track_id=tid, slot=1, length_beats=16.0,
+        audio_file="assets/gtr.wav", name="gtr",
+    )
+    aid = M.add_arrangement_clip(
+        conn, song_id=song, track_id=tid, clip_id=cid,
+        start_bar=1.0, end_bar=5.0,
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="arrangement_clip", db_id=aid,
+        ableton_index=1,
+    )
+
+    out = pull.apply_pull_results(
+        conn,
+        [_result(f"track_arrangement_clips:{tid}", _arr_payload())],
+        song_id=song, session_id=session,
+    )
+    assert out.mutations == 1
+    assert Q.get_arrangement_for_track(conn, tid) == []
+    assert not any("NOT read as a deletion" in w for w in out.warnings)
 
 
 def test_apply_arrangement_clips_no_op_when_audio_placement_reported(

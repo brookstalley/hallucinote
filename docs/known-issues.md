@@ -32,9 +32,12 @@ A ten-second play check before any perform or render after a break is cheaper th
 
 ## A recorded take can't be read back through the bridge — but a dragged-in clip can
 
-An audio *clip* now round-trips: drop a WAV into a slot in Live and pull brings it into
-the song's source as a real row, with the file it plays and its warp, transpose, gain and
-marker settings. That is the sketching loop, and it works.
+An audio *clip* is built to round-trip: drop a WAV into a slot in Live and pull stages it
+into the song's DB as a real row, with the file it plays and its warp, transpose, gain and
+marker settings — the same staging lane a `clip-notes` pull uses, which you then fold into
+`build.py` (the DB is regenerable; `build.py --reset` drops what you did not fold). That is
+the sketching loop. It is unit-tested and not yet verified against a real set — the honest
+rating is in `docs/capability-truth.md`, which wins over this paragraph.
 
 What still lives only in the `.als` is anything Live *recorded* or a human *performed*: a
 vocal take captured into a slot, and a hand-ridden fader-automation lane. Recording and

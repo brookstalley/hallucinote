@@ -265,7 +265,14 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
   re-emit. The recreate is announced with an alert (a clip the operator had was
   deleted). **Probe-less is the safe degradation** — conform in place, no
   create, no delete — and it announces itself with an alert rather than acting
-  on a guess. Only a SUCCESSFUL probe reaches the destructive branch. The execute path supplies it as a thunk resolved inside the
+  on a guess. Only a SUCCESSFUL probe reaches the destructive branch.
+  **The not-linked branch is itself destructive for one class of row** (#507):
+  pull never writes a `clip` link, so an audio clip ingested from Live reaches the
+  clips phase unlinked and plans `create(..., replace=True)` — the handler deletes
+  the clip Live has and rebuilds it from the same file, re-conformed from the DB.
+  Sample kept, churn plus loss of un-modelled hand work (warp markers; the DB
+  models warp mode, not markers). Where the link gets written is a design
+  decision with three candidate homes, filed rather than patched here. The execute path supplies it as a thunk resolved inside the
   phase, so it sees the tracks the `tracks` phase created on a first push.
   **A track whose probe FAILED is absent from the map, and absence is not
   emptiness** — the reader is tri-state (`PROBE_UNKNOWN`), because answering an
@@ -404,8 +411,9 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
   the timeline (projection: clear then rebuild, ARR-PROJ).
 - **Audio placements project like any other** (SMP-6V2K). The whole-track audio
   skip is gone: a track the DB has placements for is projected, and a track it
-  has none for is still left untouched — that distinction is now *named in the
-  report* rather than being an unexplained absence. The route is decided by
+  has none for is still left untouched — that distinction is *named in the
+  report* (an `alert`, so it reaches the operator) rather than being an
+  unexplained absence. The route is decided by
   whether the source clip **hosts an envelope**, exactly as for MIDI: an
   envelope-hosting audio placement takes `duplicate_to_arrangement` onto the
   cleared region (needs the session clip linked), because the duplicate carries
@@ -423,8 +431,12 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
   placement with authored conform is planned and then reports (`blocked`) what
   did not land; a duplicated one has no such gap, since the duplicate copies the
   conformed session clip. The EXTENT gap is route-independent — neither the
-  direct create nor the duplicate takes the placement's `end_bar` — and is a
-  `warn` per audio placement on both routes.
+  direct create nor the duplicate takes the placement's `end_bar` — and is said
+  ONCE per phase as an `alert` naming each placement (capped, cap stated): an
+  alert because `notes` is the channel the executor discards and the operator
+  has to act on it (trim in Live); one per phase because one per placement
+  would bury a stem-heavy song's report. The untouched-audio-track summary is
+  an `alert` for the same reason.
 - **Re-probes:** the arrangement probe (resolved at THIS phase, not before the
   loop — §Gates) supplies each track's current Live clips for the clear; a lane
   ABSENT from the probe map → `blocked` + skip that track (unknown state must

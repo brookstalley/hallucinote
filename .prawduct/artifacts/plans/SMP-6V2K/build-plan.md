@@ -448,8 +448,11 @@ re-emit in that order; unchanged row → no-op; envelope-hosting audio placement
 call and no conform warning; envelope-free → direct create and the warning; the new error
 string maps to the teaching shape.
 
-**Done when:** (0) the two `_UNPROBED` refusals are gone and nothing else in `sync/push`
-cites chunk 01 as pending; (1) planner tests above green; (2) `capability-truth.md` updated;
+**Done when:** (0) `verify-api` — the recorded responses in probe rows 16, 16b, 16c and 17
+(`docs/research/audio-first-class/lom-probe-results.md`, Live 12.4.5) are the contract the
+sequence and the routing are built against, not the design prose; (0b) the two `_UNPROBED`
+refusals are gone and nothing else in `sync/push` cites chunk 01 as pending; (1) planner
+tests above green; (2) `capability-truth.md` updated;
 (3) chunk 03's live "Done when" re-queued in `operator-verification.md` naming the two new
 paths.
 
@@ -457,13 +460,14 @@ paths.
 
 ### Found and deferred, filed rather than carried
 
-Three things this wave surfaced, cited and filed rather than fixed inside it:
+Three things this wave surfaced and filed. One was then fixed inside the wave after all:
 
 - **[#504](https://github.com/brookstalley/hallucinote/issues/504)** — the arrangement
-  integrity assert cannot see a *dropped* audio placement: a missing audio clip reports
-  `skipped_audio` (a `_CLEAN` member) rather than `missing_clip`, so the assert that makes a
-  silent drop loud is blind to exactly the case the destructive clear-then-rebuild phase can
-  cause.
+  integrity assert could not see a *dropped* audio placement: a missing audio clip reported
+  `skipped_audio` (a `_CLEAN` member) rather than `missing_clip`. **Fixed in this wave**
+  (`sync/arrangement_verify.py` checks presence for audio before skipping the note
+  comparison; two tests), because chunk 03 made the clear-then-rebuild path destructive for
+  audio and an assert blind to the drop it can cause was not deferrable. Close at merge.
 - **[#505](https://github.com/brookstalley/hallucinote/issues/505)** — `replace=True`
   deletes a clip before Live can refuse the create. Mitigated here (the error names the
   emptied slot and points at undo), not prevented; prevention needs the fake LOM to model

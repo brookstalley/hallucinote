@@ -37,7 +37,7 @@ WARP_MODES = {
 
 
 def _validate_audio_fields(fields: dict[str, Any]) -> None:
-    """Teach LOM value domains at authoring time, not at CLP-AUD2 push time.
+    """Teach LOM value domains at authoring time, not at push time.
 
     Domains per `lom-audio-clip-surface.md` (gain is LINEAR 0-1, not dB).
     Only validates keys present with non-None values — partial updates pass

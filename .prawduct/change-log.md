@@ -56,6 +56,20 @@ fingerprint — re-vendor before the live checks. `capability-truth.md`, the syn
 contract (phases 6 and 13) and `operator-verification.md` (chunk 03's live clause re-queued
 over the two new paths) track it; nothing in `sync/push` cites chunk 01 as pending.
 
+The cumulative review's fixes landed as one batch. Pull now rules an absent audio clip or
+placement on its **link**, not its kind: a linked one was in Live and is a real deletion, an
+unlinked one may be a push refusal (sample not on disk) and is kept and reported — the
+session and arrangement passes had reasoned in opposite directions. The arrangement phase's
+extent gap and untouched-audio-track summary moved from `notes` (the channel the executor
+discards) to one `alert` per phase, so the operator actually sees what the records claimed
+they did. The sample-resolution chain, the audio create call and the sub-plan merge each got
+one home (`resolve_authored_sample`, `_audio_create_call`, `PushPlan.absorb`); a duplicated
+path helper was deleted; the set_property tip stopped offering a Simpler Reverse parameter
+the probe found does not exist; README, known-issues and the pull skill stopped claiming a
+working round trip the capability table rates ◐, and now say a pulled-in clip is *staged*
+into the regenerable DB rather than made source. #504's in-wave fix is recorded as such;
+wave 2 and wave 3 are filed as #511 and #510.
+
 ## 2026-09-09 — The probe session settles the reverse contract and the recreate semantics
 
 <!-- prawduct: type=research | scope=SMP-6V2K -->

@@ -58,10 +58,8 @@ def plan_pull_notes_for_clips(
             )
             continue
         if clip_row["kind"] == "audio":
-            # CLP-AUD1 defense-in-depth: wave 1 never links audio clips
-            # (an audio clip has no notes to read) —
-            # and notes live on MIDI clips only, so a note probe against
-            # an audio clip is never meaningful.
+            # Notes live on MIDI clips only, so a note probe against an
+            # audio clip is never meaningful.
             plan.warn(
                 f"clip {clip_id} ({clip_row['name']!r}) is kind='audio' "
                 "— notes live on MIDI clips only; skipping the note "

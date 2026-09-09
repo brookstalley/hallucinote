@@ -152,8 +152,9 @@ asset leg: host the recording, build around it.
 **The stated blocker is refuted.** This used to say Live won't let us create session
 audio clips. `ClipSlot.create_audio_clip` and `Track.create_audio_clip` landed in the
 12.2 cycle, were probe-confirmed on 12.4.1, and the bridge now uses both: an authored
-clip places into a slot and the arrangement, and a clip dropped in by hand comes back
-on pull. So placement is not the open half.
+clip places into a slot and the arrangement, and a clip dropped in by hand is staged
+into the DB on pull — materialized state, folded into `build.py` to become source, the
+same lane a clip-notes pull uses. So placement is not the open half.
 
 What is still open is **ergonomics** — where the asset store lives, how a song
 references a source, and what a derived file has to record to stay regenerable. That

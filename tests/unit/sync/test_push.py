@@ -981,7 +981,9 @@ def test_plan_push_arrangement_audio_track_without_placements_untouched(
     assert not any(
         c.args["track_index"] == 3 for c in plan.calls
     ), "no DB placements → nothing to project on that lane, and nothing to clear"
-    assert any("Vox" in n and "UNTOUCHED" in n for n in plan.notes)
+    # On the operator channel (alerts), not `notes` — the executor shows the
+    # operator alerts only, and "untouched" must not read as "forgotten".
+    assert any("Vox" in a and "UNTOUCHED" in a for a in plan.alerts)
 
 
 def test_plan_push_arrangement_sibling_track_unaffected_by_skip(

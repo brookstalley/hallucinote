@@ -136,7 +136,7 @@ CREATE TABLE IF NOT EXISTS clips (
     end_marker              REAL,
     -- AUD-7R3M: ONE immutable audio_file, played reversed when set
     -- (NULL/0 = forward, 1 = reversed).
-    -- NOT MATERIALIZED AT PUSH, and this comment used to say it was. A Live
+    -- NOT MATERIALIZED AT PUSH. A Live
     -- Clip exposes no settable reverse at all — absent from the 12.4.1
     -- LomTypes gate table AND from a live `describe` of a real audio clip on
     -- 12.4.5 (docs/research/audio-first-class/lom-probe-results.md row 14) —

@@ -144,8 +144,8 @@ def get_arrangement_for_song(conn: sqlite3.Connection, song_id: str) -> list[sql
 
     Also joins ``c.kind AS clip_kind`` (matching `get_arrangement_for_track` /
     `get_arrangement_for_clip`) so the push planner can exempt audio-clip
-    placements (no notes; CLP-AUD2 scope) from note propagation without a second
-    query per row.
+    placements (an audio clip has no notes) from note propagation without a
+    second query per row.
 
     Ordering: `(track_id, start_bar, id)` — the trailing `id` tiebreaker
     makes the result deterministic when two placements share a position
@@ -174,9 +174,9 @@ def get_arrangement_for_track(conn: sqlite3.Connection, track_id: str) -> list[s
     keeper, but the choice must be stable across runs to keep tests +
     debugging tractable).
 
-    Also joins ``c.kind AS clip_kind`` (CLP-AUD1) so the pull-side apply
-    can exempt audio-clip placements (authored but unsynced until
-    CLP-AUD2) from its removal diff without a second query per row."""
+    Also joins ``c.kind AS clip_kind`` so the pull-side apply can rule an
+    absent audio-clip placement on its link rather than deleting it outright
+    (push may have refused it) without a second query per row."""
     return conn.execute(
         """SELECT a.*, c.name AS clip_name, c.kind AS clip_kind
            FROM arrangement_clips a
@@ -196,7 +196,7 @@ def get_arrangement_for_clip(conn: sqlite3.Connection, clip_id: str) -> list[sql
     change, each linked arrangement copy must be re-synced.
 
     Joins ``c.kind AS clip_kind`` so the caller can exempt audio-clip
-    placements (no notes to push; CLP-AUD2 scope) without a second query.
+    placements (no notes to push) without a second query.
     Ordering ``(track_id, start_bar, id)`` mirrors ``get_arrangement_for_song``
     for deterministic per-DB results."""
     return conn.execute(

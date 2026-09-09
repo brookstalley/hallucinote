@@ -701,8 +701,10 @@ def test_envelope_hosting_audio_placement_takes_the_duplicate_route(
     # The conform travelled with the duplicate — no gap is reported for it.
     assert not any("did NOT travel" in b for b in plan.blocked_reasons)
     assert not any("did NOT travel" in a for a in plan.alerts)
-    # The extent still did not (the duplicate is the session clip's length).
-    assert any("EXTENT did not" in n and "duplicate" in n for n in plan.notes), plan.notes
+    # The extent still did not (the duplicate is the session clip's length) —
+    # said on the operator channel, once for the phase, naming the placement.
+    extent = [a for a in plan.alerts if "EXTENT" in a]
+    assert len(extent) == 1 and "duplicate" in extent[0], plan.alerts
     # The summary counts it as both a duplicate and an audio placement.
     assert any("duplicated 1" in n and "placed 1 audio" in n for n in plan.notes), plan.notes
 
@@ -872,7 +874,10 @@ def test_an_audio_track_with_no_db_placements_is_left_untouched_and_named(
         c.args["action"] == "delete" and c.args["track_index"] == 5
         for c in plan.calls
     ), "never clear a lane the DB has no placements for"
-    assert any("HandDropped" in n and "UNTOUCHED" in n for n in plan.notes)
+    # On the operator channel: "untouched" and "forgotten" read the same in a
+    # report that does not mention it, and the executor shows alerts only.
+    assert any("HandDropped" in a and "UNTOUCHED" in a for a in plan.alerts)
+    assert not any(a in plan.blocked_reasons for a in plan.alerts if "UNTOUCHED" in a)
 
 
 def test_arrangement_projection_is_the_same_plan_every_push(
@@ -1050,11 +1055,13 @@ def test_extent_gap_is_reported_even_with_nothing_authored_and_does_not_block(
     be gated on some conform column being authored, which hid the case with the
     loudest symptom: a bare placement with an end_bar simply ran long, silently.
 
-    It is a WARNING, not a block, and that split is the point. Extent is true of
+    It is an ALERT, not a block, and that split is the point. Extent is true of
     every audio placement ever planned; routing it as blocked would make every
     song carrying a stem exit non-zero forever. An authored conform that did not
     travel is a different fact — the song asked for something it did not get —
-    and that one does block.
+    and that one does block. And it is an alert rather than a note because
+    `notes` is the channel the executor discards: a fact the operator must act
+    on (trim in Live) that never reaches them is the silent-drop failure.
     """
     cid = M.create_audio_clip(          # no gain / pitch / warp / markers
         conn, track_id=audio_track, slot=1, length_beats=8.0,
@@ -1070,4 +1077,30 @@ def test_extent_gap_is_reported_even_with_nothing_authored_and_does_not_block(
         live_arrangement_clips_by_track={4: []},
     )
     assert plan.blocked_reasons == [], plan.blocked_reasons
-    assert any("EXTENT did not travel" in n for n in plan.notes), plan.notes
+    extent = [a for a in plan.alerts if "EXTENT" in a]
+    assert len(extent) == 1, plan.alerts
+    assert "end_bar (7)" in extent[0], extent[0]
+    assert not any("EXTENT" in n for n in plan.notes), "operator channel, not notes"
+
+
+def test_extent_alert_is_one_per_phase_not_one_per_placement(
+    conn, song, session, audio_track, sample,
+):
+    """A stem-heavy song must not bury its report under one alert per
+    placement: the extent gap is said ONCE for the phase, naming each
+    placement (capped, with the cap stated)."""
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="line",
+    )
+    for bar in (1.0, 5.0, 9.0, 13.0, 17.0, 21.0, 25.0, 29.0, 33.0, 37.0):
+        _place(conn, song=song, track=audio_track, clip=cid, start_bar=bar)
+
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track={4: []},
+    )
+    extent = [a for a in plan.alerts if "EXTENT" in a]
+    assert len(extent) == 1, plan.alerts
+    assert "10 audio placement(s)" in extent[0]
+    assert "and 2 more" in extent[0]

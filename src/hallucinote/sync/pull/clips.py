@@ -8,11 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from hallucinote.db import mutations as M, queries as Q
-from hallucinote.paths import (
-    audio_file_ref as _audio_file_ref,
-    same_audio_file as _same_audio_file,
-    song_dir_for_conn as _song_dir_for_conn,
-)
+from hallucinote.paths import audio_file_ref, same_audio_file, song_dir_for_conn
 
 from ._core import (
     PullCall,
@@ -254,12 +250,9 @@ def _apply_arrangement_clips_for_track(
     # for the common case.
     db_by_pos: dict[tuple[float, float], sqlite3.Row] = {}
     for r in db_rows:
-        # Audio placements are diffed like any other. They were exempted
-        # while audio push did not exist — Live never reported them, so the
-        # removal pass would have deleted authored state on every pull — but
-        # the clips and arrangement phases materialize kind='audio' now, so a
-        # DB placement Live does not report is a real removal, not an
-        # unknown, and the exemption would instead pin deleted state forever.
+        # Audio placements enter the diff like any other; whether an ABSENT
+        # one is a deletion is decided in the removal pass below, on the
+        # placement's link rather than its kind.
         k = (_pos_key(r["start_bar"]), _pos_key(r["end_bar"]))
         if k in db_by_pos:
             kept = db_by_pos[k]
@@ -315,22 +308,31 @@ def _apply_arrangement_clips_for_track(
         if k in seen:
             continue
         clip_row = Q.get_clip(conn, row["clip_id"]) if row["clip_id"] else None
-        if clip_row is not None and clip_row["kind"] == "audio":
+        if (
+            clip_row is not None
+            and clip_row["kind"] == "audio"
+            and Q.get_ableton_link(
+                conn, session_id=session_id, db_kind="arrangement_clip",
+                db_id=row["id"],
+            ) is None
+        ):
             # An absent MIDI placement means the user deleted it, because push
-            # always creates one. An absent AUDIO placement is ambiguous: the
-            # push side legitimately REFUSES some audio placements — one whose
-            # source clip hosts an envelope, one whose sample file is missing —
-            # so "Live does not have it" can equally mean "push declined to
-            # create it and said so". Deleting on that reading erases authored
-            # intent the author never touched, and pull cannot see push's
-            # refusals to tell the two apart. Warn instead; the row stays.
+            # always creates one. An absent AUDIO placement is ambiguous only
+            # while it is UNLINKED: push legitimately refuses to create an
+            # audio placement whose sample is not on disk (and says so), so
+            # "Live does not have it" can mean "push declined". The link is
+            # what tells the two apart — push records one when the placement
+            # lands, so a LINKED absent placement was in Live and is gone, a
+            # real deletion diffed like any other. Pull cannot see push's
+            # refusals, so an unlinked one is kept and reported.
             out.warnings.append(
                 f"track {track_row['name']!r}: audio arrangement placement at "
                 f"bar {row['start_bar']:g}..{row['end_bar']:g} "
-                f"({row['clip_name']!r}) is absent from Live, but push can "
-                "legitimately refuse to create an audio placement — so this is "
-                "NOT read as a deletion and the row is kept. If you did delete "
-                "it in Live, remove the placement in build.py."
+                f"({row['clip_name']!r}) is absent from Live and was never "
+                "pushed (no link) — push can legitimately refuse to create an "
+                "audio placement, so this is NOT read as a deletion and the "
+                "row is kept. If you did delete it in Live, remove the "
+                "placement in build.py."
             )
             continue
         M.remove_arrangement_clip(
@@ -377,14 +379,16 @@ def _apply_session_clips_for_track(
       - slot populated in Ableton only, AUDIO                      -> `create_audio_clip`
       - slot populated in both, but the two disagree on kind       -> warn + skip
 
-    **An audio clip in Live becomes source (R1.2).** MIDI cannot be
+    **An audio clip in Live is ingested (R1.2).** MIDI cannot be
     auto-created because the wire carries no note content, but an audio clip
     is fully described by what it plays and how it is conformed — file, gain,
     transpose, warp, markers — and every one of those travels on the `list`
     payload. So a line the user dragged into Live by hand is ingested rather
-    than warned about: it becomes part of the song's source instead of living
-    only in the `.als`. Its file reference is stored in the two forms
-    `clips.audio_file` is defined to carry (see :func:`_audio_file_ref`).
+    than warned about. It lands in the DB, which is materialized state, not
+    source: like a `clip-notes` pull, this is the STAGING lane — the row is
+    what you read to fold the clip into `build.py`, and a `build.py --reset`
+    drops it until you do. Its file reference is stored in the two forms
+    `clips.audio_file` is defined to carry (see :func:`hallucinote.paths.audio_file_ref`).
 
     Kind is immutable on a clip row, so a slot where Live and the DB disagree
     on kind is reported, never coerced: converting is delete + create, and
@@ -422,16 +426,13 @@ def _apply_session_clips_for_track(
         )
         return
 
-    # Audio rows are in the diff like any other. They were exempted while
-    # audio push did not exist — Live's slot state said nothing about them,
-    # so an empty slot was not evidence of a deletion — but the clips phase
-    # materializes kind='audio' now. An audio row whose Live slot is empty is
-    # therefore a real delete, and keeping the exemption would pin a clip the
-    # user removed in Live into the song forever.
+    # Audio rows are in the diff like any other. Whether an EMPTY slot under
+    # an audio row is a deletion is decided on the row's link, not its kind —
+    # see the empty branch below.
     db_by_slot: dict[int, sqlite3.Row] = {
         int(c["slot"]): c for c in Q.get_clips_for_track(conn, track_id)
     }
-    song_dir = _song_dir_for_conn(conn)
+    song_dir = song_dir_for_conn(conn)
     seen: set[int] = set()
 
     for entry in clips_in:
@@ -448,15 +449,35 @@ def _apply_session_clips_for_track(
         db_clip = db_by_slot.get(slot)
 
         if empty:
-            # Ableton slot empty; if DB has a clip, delete it.
-            if db_clip is not None:
-                _delete_session_clip_observing_cascade(
-                    conn, track_row=track_row, slot=slot, db_clip=db_clip,
-                    out=out, actor=actor, request_id=request_id, reason=reason,
-                    cause="cleared in Ableton",
-                )
-            else:
+            if db_clip is None:
                 out.no_ops += 1
+                continue
+            if db_clip["kind"] == "audio" and Q.get_ableton_link(
+                conn, session_id=session_id, db_kind="clip", db_id=db_clip["id"],
+            ) is None:
+                # An empty slot under a MIDI row is a deletion, because push
+                # always creates a MIDI clip. Under an UNLINKED audio row it is
+                # ambiguous: the clips phase legitimately plans no create for
+                # an audio row whose sample is not yet on disk (blocked, and
+                # said), so the slot is empty because push declined, not
+                # because the user cleared it. Deleting on that reading erases
+                # the row AND cascades its placements. A linked audio row was
+                # in Live, so its empty slot is a real clear — the arrangement
+                # pass above rules its absent placements the same way.
+                out.warnings.append(
+                    f"track {track_row['name']!r}: session slot {slot} is empty "
+                    f"in Live but the DB's audio clip {db_clip['name']!r} there "
+                    "was never pushed (no link) — push can legitimately refuse "
+                    "to create an audio clip (sample not on disk), so this is "
+                    "NOT read as a deletion and the row is kept. If you did "
+                    "clear it in Live, remove the clip in build.py."
+                )
+                continue
+            _delete_session_clip_observing_cascade(
+                conn, track_row=track_row, slot=slot, db_clip=db_clip,
+                out=out, actor=actor, request_id=request_id, reason=reason,
+                cause="cleared in Ableton",
+            )
             continue
 
         # Ableton slot populated. SYN-9K5T parity: the arrangement-clip
@@ -574,9 +595,10 @@ def _ingest_session_audio_clip(
     """Ingest one audio clip Live reports in a session slot (R1.2).
 
     Creates the `clips` row when the DB has nothing at this slot — **the case
-    this exists for**: a line the user dragged into Live by hand becomes part
-    of the song's source instead of living only in the `.als`. Otherwise it
-    conforms the existing audio row to what Live now holds.
+    this exists for**: a line the user dragged into Live by hand is staged
+    into the DB (materialized state — fold it into `build.py` to keep it,
+    as with a `clip-notes` pull) instead of living only in the `.als`.
+    Otherwise it conforms the existing audio row to what Live now holds.
 
     `reverse` is never written: Live exposes no reverse property on a Clip at
     all, so the wire reports none and pull would be inventing state.
@@ -637,7 +659,7 @@ def _ingest_session_audio_clip(
                 "clip with no extent; skipping."
             )
             return
-        ref = _audio_file_ref(song_dir, str(file_in))
+        ref = audio_file_ref(song_dir, str(file_in))
         _unwarped_unit_note("length and markers")
         try:
             cid = M.create_audio_clip(
@@ -686,11 +708,11 @@ def _ingest_session_audio_clip(
     # also what the `_*_differ` helpers' None asymmetry already encodes.
     if length_in is not None and _floats_differ(length_in, db_clip["length_beats"]):
         changes["length_beats"] = float(length_in)
-    if file_in and not _same_audio_file(song_dir, db_clip["audio_file"], str(file_in)):
+    if file_in and not same_audio_file(song_dir, db_clip["audio_file"], str(file_in)):
         # The user pointed the slot at a different sample in Live. Leaving
         # the old reference would make the next push overwrite their choice
         # with the file they replaced.
-        changes["audio_file"] = _audio_file_ref(song_dir, str(file_in))
+        changes["audio_file"] = audio_file_ref(song_dir, str(file_in))
     if gain_in is not None and _floats_differ(gain_in, db_clip["audio_gain"]):
         changes["audio_gain"] = float(gain_in)
     if coarse_in is not None and _ints_differ(coarse_in, db_clip["pitch_coarse"]):

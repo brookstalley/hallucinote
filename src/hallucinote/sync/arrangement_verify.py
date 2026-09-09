@@ -239,12 +239,12 @@ def verify_song_arrangement(
             if clip_row is not None and clip_row["kind"] == "audio":
                 # PRESENCE is checked for audio exactly as for MIDI; only the
                 # NOTE comparison is skipped, because an audio clip has none.
-                # These were once one branch, and that made `missing_clip`
-                # unreachable for audio: a placement the per-lane clear removed
-                # and the rebuild failed to restore reported `skipped_audio`, a
-                # _CLEAN status, so `faithful` stayed True and the push-time
-                # assert saw nothing. Audio placements now materialize through
-                # that same clear-then-rebuild projection, so the case is real.
+                # The two must stay separate branches: audio placements
+                # materialize through the same clear-then-rebuild projection,
+                # so a placement the clear removed and the rebuild failed to
+                # restore has to read `missing_clip` (halting), never the
+                # _CLEAN `skipped_audio`, or the push-time assert is blind to
+                # exactly the drop the destructive phase can cause.
                 if lc is None:
                     report.results.append(PlacementResult(
                         tname, r["clip_name"], start_b, status="missing_clip",

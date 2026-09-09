@@ -6,8 +6,6 @@ from typing import Any
 
 from hallucinote.db import queries as Q
 
-from hallucinote.paths import resolve_audio_path
-
 from ._core import (
     PushPlan,
     ToolCall,
@@ -15,9 +13,7 @@ from ._core import (
     _position_bar_to_beats,
     uniform_bar_math_divergences,
 )
-from hallucinote.paths import song_dir_for_conn
-
-from .clips import AUDIO_CONFORM_PROPERTIES
+from .clips import AUDIO_CONFORM_PROPERTIES, resolve_authored_sample
 from .envelopes import envelope_hosting_clip_ids
 
 
@@ -143,32 +139,16 @@ def _audio_placement_call(
     reported, never guessed at.
     """
     row_id = row["id"]
-    ref = clip_row["audio_file"]
     where = (
         f"placement {row_id!r} (clip {clip_row['name']!r} @ bar "
         f"{row['start_bar']:g})"
     )
 
-    if not ref:
+    resolved, refusal = resolve_authored_sample(conn, clip_row, where=where)
+    if resolved is None:
         return None, (
-            f"{where} is kind='audio' with no audio_file — the row does not "
-            "say what it plays"
-        ), None
-
-    song_dir = song_dir_for_conn(conn)
-    if song_dir is None:
-        return None, (
-            f"{where} references {ref!r}, but this connection has no database "
-            "file on disk, so there is no song directory to resolve a "
-            "song-relative reference against"
-        ), None
-
-    resolved = resolve_audio_path(song_dir, ref)
-    if not resolved.is_file():
-        return None, (
-            f"{where} names a sample that is not on disk: audio_file={ref!r} "
-            f"resolves to {resolved} against song directory {song_dir}. "
-            "Placing it would put a clip in the arrangement that plays silence"
+            f"{refusal} Placing it would put a clip in the arrangement that "
+            "plays silence"
         ), None
 
     call = ToolCall(
@@ -198,12 +178,12 @@ def _audio_placement_call(
     #
     # EXTENT is universal: Track.create_audio_clip takes a path and a position
     # and no length, so the copy plays the whole file however long the placement
-    # is. That is true of every audio placement ever planned, so it is a WARNING
-    # — routing it as blocked would make every song with a stem exit non-zero
-    # forever, which is the invariant `test_audio_track_is_not_blocked` protects.
-    # It must still be SAID: gating the notice on `authored` (as this first did)
-    # hid the case with the loudest symptom — a row with an end_bar and no
-    # gain/pitch/warp column got no notice at all and simply ran long.
+    # is. That is true of every audio placement ever planned, so it is an ALERT
+    # — operator-visible and non-fatal; routing it as blocked would make every
+    # song with a stem exit non-zero forever, which is the invariant
+    # `test_audio_track_is_not_blocked` protects. It is said for EVERY audio
+    # placement, not only rows with an authored conform column: the loudest
+    # symptom is a bare placement with an end_bar that simply runs long.
     #
     # AUTHORED CONFORM is per-song: the song asked for a gain or a warp mode and
     # did not get it on this copy. That is a run that must not read clean.
@@ -211,7 +191,7 @@ def _audio_placement_call(
         f"{where} was placed, but its EXTENT did not travel: Live's "
         "Track.create_audio_clip takes a path and a position and no length, so "
         "the arrangement copy plays the whole file regardless of the "
-        f"placement's end_bar ({row['end_bar']:g}). Trim it in Live"
+        f"placement's end_bar ({row['end_bar']:g})"
     )
     conform_gap = None
     if authored:
@@ -383,6 +363,12 @@ def plan_push_arrangement(
         rows_by_track.setdefault(row["track_id"], []).append(row)
 
     created = duplicated = cleared = skipped_tracks = placed_audio = 0
+    # Per-placement extent gaps, collected across tracks and said ONCE per
+    # phase below — on the operator channel, because `notes` is the channel
+    # the executor discards and a fact the operator has to act on (trim in
+    # Live) must reach them; one alert per placement would bury the rest of
+    # the report under a stem-heavy song.
+    extent_notes: list[str] = []
 
     for track_id, rows in rows_by_track.items():
         track_at = Q.get_ableton_link(
@@ -522,8 +508,7 @@ def plan_push_arrangement(
                         "of its conformed session clip (its envelope and "
                         "conform travel with it), but its EXTENT did not: the "
                         "duplicate is the session clip's length, not the "
-                        f"placement's end_bar ({row['end_bar']:g}). Trim it in "
-                        "Live"
+                        f"placement's end_bar ({row['end_bar']:g})"
                     )
             else:
                 # Note-only → create+fill a FRESH arrangement clip from DB notes.
@@ -611,8 +596,19 @@ def plan_push_arrangement(
         # of what the song authored for them, so the run must not read clean.
         for gap in pending_gaps:
             plan.blocked(f"arrangement: {gap}.")
-        for note in pending_extent_notes:
-            plan.warn(f"arrangement: {note}.")
+        extent_notes.extend(pending_extent_notes)
+
+    if extent_notes:
+        shown = extent_notes[:8]
+        more = len(extent_notes) - len(shown)
+        plan.alert(
+            f"arrangement: {len(extent_notes)} audio placement(s) landed "
+            "without their EXTENT — neither Live's direct arrangement-create "
+            "nor the duplicate route takes the placement's end_bar, so each "
+            "copy plays its clip's length. Trim in Live. Placements: "
+            + " | ".join(shown)
+            + (f" | and {more} more" if more > 0 else "")
+        )
 
     if cleared or created or duplicated or placed_audio:
         plan.warn(
@@ -632,7 +628,10 @@ def plan_push_arrangement(
         if t["kind"] == "audio" and t["id"] not in rows_by_track
     ]
     if untouched_audio:
-        plan.warn(
+        # Operator channel, not `notes`: "untouched" and "forgotten" read the
+        # same in a report that does not mention it, and the executor shows
+        # the operator alerts only.
+        plan.alert(
             f"arrangement: {len(untouched_audio)} audio track(s) have no DB "
             f"placements and were left UNTOUCHED (no clear, no rebuild) so "
             f"anything placed in them by hand survives: "

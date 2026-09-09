@@ -5,7 +5,7 @@ written down portably.** ``clips.audio_file`` stores the reference
 exactly as authored — a song-relative POSIX path (canonically under
 ``assets/``, where AUD-9R3V's recorded takes will also land) or an
 absolute path — and :func:`resolve_audio_path` is the single
-resolution point (push (CLP-AUD2) and analysis ingest resolve through
+resolution point (the push planners and analysis ingest resolve through
 it), so the DB never stores a resolved path and the private songs repo
 stays portable across machines and collaborators.
 
@@ -285,24 +285,6 @@ def song_dir_for_conn(conn: sqlite3.Connection) -> Path | None:
     return None
 
 
-def relative_to_or_none(path: Path, base: Path) -> str | None:
-    """``path`` under ``base`` as a POSIX string, or None when it is outside.
-
-    Tried as given and then with both filesystem-normalized, because the song
-    dir and Live's reported path can agree only through a symlink (macOS
-    resolves ``/tmp`` to ``/private/tmp``); a purely textual containment check
-    would miss the relation and store an absolute path for a file that does
-    live under the song directory. Same two-attempt shape, and the same
-    reason, as ``paths._relative_or_none``.
-    """
-    for candidate, anchor in ((path, base), (path.resolve(), base.resolve())):
-        try:
-            return candidate.relative_to(anchor).as_posix()
-        except ValueError:
-            continue
-    return None
-
-
 def audio_file_ref(song_dir: Path | None, file_path: str) -> str:
     """Render Live's absolute path into the form ``clips.audio_file`` carries.
 
@@ -320,7 +302,10 @@ def audio_file_ref(song_dir: Path | None, file_path: str) -> str:
     """
     p = Path(file_path)
     if song_dir is not None:
-        rel = relative_to_or_none(p, song_dir)
+        # The song dir and Live's reported path can agree only through a
+        # symlink (macOS resolves /tmp to /private/tmp), which is why the
+        # containment check is the two-attempt one and not a textual prefix.
+        rel = _relative_or_none(p, song_dir)
         if rel is not None:
             return rel
     return p.as_posix()

@@ -111,6 +111,29 @@ class PushPlan:
         self.blocked_reasons.append(msg)
         self.alerts.append(msg)
 
+    def absorb(self, sub: "PushPlan", *, note_prefix: str | None = None) -> None:
+        """Merge a sub-plan into this one, channel by channel, without
+        double-counting.
+
+        Blocked reasons are re-recorded through :meth:`blocked` so each lands
+        on BOTH channels the way the sub-plan wrote it, and ``alerts`` then
+        carries only the sub-plan's own alerts — a blocked reason copied twice
+        would read as two. Notes take an optional prefix so a merged plan stays
+        diagnosable per source; alerts, errors and blocked reasons ride up
+        unprefixed, since they already name what they are about and a reason
+        that did not reach the parent would be a push reporting OK over work
+        it did not do.
+        """
+        self.calls.extend(sub.calls)
+        if note_prefix is None:
+            self.notes.extend(sub.notes)
+        else:
+            self.notes.extend(f"{note_prefix} {n}" for n in sub.notes)
+        self.errors.extend(sub.errors)
+        for reason in sub.blocked_reasons:
+            self.blocked(reason)
+        self.alerts.extend(a for a in sub.alerts if a not in sub.blocked_reasons)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "calls": [asdict(c) for c in self.calls],

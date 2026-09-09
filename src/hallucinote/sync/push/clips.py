@@ -155,6 +155,90 @@ def _audio_conform_calls(
     return calls
 
 
+def resolve_authored_sample(
+    conn: sqlite3.Connection,
+    clip: sqlite3.Row,
+    *,
+    where: str,
+) -> tuple[Path | None, str | None]:
+    """Resolve a ``kind='audio'`` row's ``audio_file`` to the ABSOLUTE path a
+    Live call takes, or say why it cannot be.
+
+    Returns ``(path, None)`` or ``(None, reason)``. The one home for the rule
+    both push phases share — **the file's existence is checked before any
+    call is planned** — so a later tightening (readability, a format check)
+    lands once. Three refusals, each determinable and unmaterializable:
+
+    * no ``audio_file`` at all (the mutator requires one, so the row got here
+      some other way);
+    * a connection with no database file on disk, so a song-relative
+      reference has no directory to resolve against;
+    * a sample that is not on disk. A clip that pushes and then plays
+      silence is a phase reporting OK without having determined its state,
+      which is precisely what the sync boundary contract forbids.
+
+    ``where`` names the row for the reason text; callers append their own
+    consequence.
+    """
+    ref = clip["audio_file"]
+    if not ref:
+        return None, (
+            f"{where} is kind='audio' with no audio_file: the row does not say "
+            "what it plays, so nothing can be created for it."
+        )
+    song_dir = song_dir_for_conn(conn)
+    if song_dir is None:
+        return None, (
+            f"{where} is kind='audio' and references {ref!r}, but this "
+            "connection has no database file on disk, so there is no song "
+            "directory to resolve a song-relative reference against. Open the "
+            "song's DB through init_db(<song dir>/<slug>.db) and re-plan."
+        )
+    resolved = resolve_audio_path(song_dir, ref)
+    if not resolved.is_file():
+        return None, (
+            f"{where} is kind='audio' but its sample is not on disk: "
+            f"audio_file={ref!r} resolves to {resolved} against song directory "
+            f"{song_dir}."
+        )
+    return resolved, None
+
+
+def _audio_create_call(
+    *,
+    clip: sqlite3.Row,
+    clip_id: str,
+    track_at: int,
+    clip_index: int,
+    resolved: Path,
+    replace: bool,
+    purpose: str,
+) -> ToolCall:
+    """The session ``create(kind='audio')`` call, built one way for every
+    branch that plans one.
+
+    ``replace`` is the caller's decision about the slot: ``True`` where the
+    slot's state is unknown or a scaffold clip may sit there (the MIDI
+    create's posture), ``False`` where an explicit delete already emptied it
+    and a slot found occupied is a delete that did not take — Live should say
+    so rather than silently delete twice.
+    """
+    args: dict[str, Any] = {
+        "action": "create",
+        "location": "session",
+        "kind": "audio",
+        "track_index": track_at,
+        "clip_index": clip_index,
+        # ABSOLUTE by contract — Live resolves nothing, and the wire refuses
+        # a relative path.
+        "audio_path": str(resolved),
+        "name": clip["name"],
+    }
+    if replace:
+        args["replace"] = True
+    return ToolCall(tool="ableton_clip", args=args, key=f"clip:{clip_id}", purpose=purpose)
+
+
 def _recreate_audio_clip(
     plan: PushPlan,
     *,
@@ -213,21 +297,10 @@ def _recreate_audio_clip(
             f"be recreated from {resolved.name} (Clip.file_path is read-only)"
         ),
     ))
-    plan.add(ToolCall(
-        tool="ableton_clip",
-        args={
-            "action": "create",
-            "location": "session",
-            "kind": "audio",
-            "track_index": track_at,
-            "clip_index": clip_at,
-            "audio_path": str(resolved),
-            "name": clip["name"],
-            # No `replace`: the delete above is the one destructive step, and
-            # a slot found occupied here is a delete that did not take — Live
-            # should say so rather than silently delete twice.
-        },
-        key=f"clip:{clip_id}",
+    # No `replace`: the delete above is the one destructive step.
+    plan.add(_audio_create_call(
+        clip=clip, clip_id=clip_id, track_at=track_at, clip_index=clip_at,
+        resolved=resolved, replace=False,
         purpose=(
             f"recreate session audio clip in slot {clip_at} on track "
             f"{track_at} from {resolved.name}"
@@ -241,15 +314,7 @@ def _recreate_audio_clip(
     envelopes = plan_push_envelopes_for_clip(
         conn, song_id=song_id, session_id=session_id, clip_id=clip_id,
     )
-    for call in envelopes.calls:
-        plan.add(call)
-    plan.notes.extend(envelopes.notes)
-    plan.errors.extend(envelopes.errors)
-    for reason in envelopes.blocked_reasons:
-        plan.blocked(reason)
-    plan.alerts.extend(
-        a for a in envelopes.alerts if a not in envelopes.blocked_reasons
-    )
+    plan.absorb(envelopes)
     if envelopes.calls:
         plan.warn(
             f"clip {clip_id}: re-emitted {len(envelopes.calls)} envelope(s) "
@@ -290,36 +355,14 @@ def _plan_push_audio_clip(
     determined its state, which is precisely what the sync boundary contract
     forbids.
     """
-    ref = clip["audio_file"]
     slot = clip["slot"]
     where = f"clip {clip_id} ({clip['name']!r}, slot {slot})"
 
-    if not ref:
-        # The mutator requires audio_file, so this is a row that got here some
-        # other way. Determinable and unmaterializable — say so.
+    resolved, refusal = resolve_authored_sample(conn, clip, where=where)
+    if resolved is None:
         plan.blocked(
-            f"{where} is kind='audio' with no audio_file: the row does not say "
-            "what it plays, so nothing can be created for it."
-        )
-        return
-
-    song_dir = song_dir_for_conn(conn)
-    if song_dir is None:
-        plan.blocked(
-            f"{where} is kind='audio' and references {ref!r}, but this "
-            "connection has no database file on disk, so there is no song "
-            "directory to resolve a song-relative reference against. Open the "
-            "song's DB through init_db(<song dir>/<slug>.db) and re-plan."
-        )
-        return
-
-    resolved = resolve_audio_path(song_dir, ref)
-    if not resolved.is_file():
-        plan.blocked(
-            f"{where} is kind='audio' but its sample is not on disk: "
-            f"audio_file={ref!r} resolves to {resolved} against song directory "
-            f"{song_dir}. NO create was planned — pushing it would put a clip "
-            "in Live that plays silence, which is a phase reporting OK without "
+            f"{refusal} NO create was planned — pushing it would put a clip in "
+            "Live that plays silence, which is a phase reporting OK without "
             "having determined its state. Put the file there (canonically "
             "under assets/) or fix the reference, then re-push."
         )
@@ -341,23 +384,17 @@ def _plan_push_audio_clip(
         )
 
     if clip_at is None:
-        plan.add(ToolCall(
-            tool="ableton_clip",
-            args={
-                "action": "create",
-                "location": "session",
-                "kind": "audio",
-                "track_index": track_at,
-                "clip_index": slot,
-                # ABSOLUTE by contract — Live resolves nothing, and the wire
-                # refuses a relative path.
-                "audio_path": str(resolved),
-                "name": clip["name"],
-                # The slot may hold a scaffold clip; replace makes the create
-                # state-independent, the same posture the MIDI create takes.
-                "replace": True,
-            },
-            key=f"clip:{clip_id}",
+        # The slot may hold a scaffold clip; replace makes the create
+        # state-independent, the same posture the MIDI create takes. It is
+        # also the seam a pull-ingested clip falls through: pull writes no
+        # link, so a clip the user dragged in reaches here unlinked and is
+        # deleted and rebuilt from the same file on every push, losing
+        # hand-set warp markers — the DB models warp mode, not markers. Where
+        # the link should be written is a design decision (#507), not a patch
+        # here; the cost is stated so it is not silent.
+        plan.add(_audio_create_call(
+            clip=clip, clip_id=clip_id, track_at=track_at, clip_index=slot,
+            resolved=resolved, replace=True,
             purpose=(
                 f"create session audio clip in slot {slot} on track "
                 f"{track_at} from {resolved.name}"
@@ -424,19 +461,9 @@ def _plan_push_audio_clip(
             "as empty — recreating it (nothing is destroyed by a create into "
             "an empty slot)."
         )
-        plan.add(ToolCall(
-            tool="ableton_clip",
-            args={
-                "action": "create",
-                "location": "session",
-                "kind": "audio",
-                "track_index": track_at,
-                "clip_index": clip_at,
-                "audio_path": str(resolved),
-                "name": clip["name"],
-                "replace": True,
-            },
-            key=f"clip:{clip_id}",
+        plan.add(_audio_create_call(
+            clip=clip, clip_id=clip_id, track_at=track_at, clip_index=clip_at,
+            resolved=resolved, replace=True,
             purpose=(
                 f"recreate session audio clip in empty linked slot {clip_at} "
                 f"on track {track_at} from {resolved.name}"
@@ -671,17 +698,7 @@ def plan_push_clips(
             conn, clip_id=c["id"], session_id=session_id,
             live_session_clips_by_track=live_session_clips_by_track,
         )
-        plan.calls.extend(sub.calls)
-        plan.notes.extend(f"[{c['name']}] {n}" for n in sub.notes)
-        plan.errors.extend(sub.errors)
-        # Re-record through `blocked` so each reason lands on BOTH channels,
-        # the way the sub-plan wrote it. `alerts` then carries the sub-plan's
-        # own alerts only — a blocked reason copied twice would read as two.
-        for reason in sub.blocked_reasons:
-            plan.blocked(reason)
-        plan.alerts.extend(
-            a for a in sub.alerts if a not in sub.blocked_reasons
-        )
+        plan.absorb(sub, note_prefix=f"[{c['name']}]")
         if (
             c["kind"] == "audio"
             and live_session_clips_by_track is None

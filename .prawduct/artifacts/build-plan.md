@@ -92,6 +92,18 @@ poisoned start position, then multi-arc with staggered spans whose write counts
 capture path and `songs/alien` itself remain unverified; both are queued in
 `operator-verification.md` and neither is covered by the above.
 
+## Why this plan is still live
+
+All five chunks are ticked and the work merged as #480, but this plan is **deliberately not
+archived**: on gitflow a merged-but-unreleased plan stays in the live directory until its
+release ships, and `develop` is currently 101 commits ahead of `main` with no release cut.
+Archive it when that release lands.
+
+Reviewed and left live during the JANITOR-2026-09 sweep (2026-09-08), which archived the
+other 50 plans. The session-briefing "stale build plan" advisory fires on the ticked-boxes
+check alone and cannot see the release state, so it will keep naming this plan until the
+release ships — that is the advisory being coarse, not this plan being stale.
+
 ## Verification Strategy
 
 Unit tests drive fake `Song` objects that model the defect directly: a fake whose

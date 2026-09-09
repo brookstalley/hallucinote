@@ -30,11 +30,15 @@ In the session where this was observed the set was then found at the slowed reco
 Restore the engine in Live, then set the tempo, seek to bar 1, confirm the playhead advances, and re-run the pass.
 A ten-second play check before any perform or render after a break is cheaper than the abort.
 
-## Human audio can't be read back through the bridge
+## A recorded take can't be read back through the bridge — but a dragged-in clip can
 
-MIDI and the mix are what Hallucinote builds; a recorded vocal take or a hand-ridden
-fader-automation lane lives only in the `.als` — the bridge can't pull it into a
-song's source. Audio recording is a boundary, not a feature, today.
+An audio *clip* now round-trips: drop a WAV into a slot in Live and pull brings it into
+the song's source as a real row, with the file it plays and its warp, transpose, gain and
+marker settings. That is the sketching loop, and it works.
+
+What still lives only in the `.als` is anything Live *recorded* or a human *performed*: a
+vocal take captured into a slot, and a hand-ridden fader-automation lane. Recording and
+automation ingest are boundaries, not features, today.
 
 ## Measured mix review needs Max for Live (Live Suite, or the M4L add-on)
 

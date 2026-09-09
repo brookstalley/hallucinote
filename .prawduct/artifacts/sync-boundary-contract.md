@@ -313,6 +313,15 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
   `ValueError`** (schema-belt; same plan_fn-raise surface as V2).
   Per-call failure → boundary halt. `envelope:` link kind (handler returns
   `envelope_index`).
+- **Host kind does not change the route.** An audio-track host partitions exactly
+  like a MIDI one — `session_clip` when a single session clip covers the span,
+  `perform` when none does — because `Clip.create_automation_envelope` is
+  parameter-keyed and clip-type-agnostic, probe-confirmed end-to-end on a real
+  audio session clip (write, `insert_step`, read back). There is no audio refusal
+  in the classifier. **Arrangement clips remain impossible hosts**, and that is
+  structural rather than a branch: every emitter addresses `location='session'`
+  and resolves `clip_index` from the source session clip's own link, never from a
+  placement.
 
 ### 12. `performed_automation` (`push/perform.py`)
 - **Assumes:** tracks/returns/devices linked (per-arc warn + "arc pending, next

@@ -465,7 +465,7 @@ Three things this wave surfaced and filed. One was then fixed inside the wave af
 - **[#504](https://github.com/brookstalley/hallucinote/issues/504)** — the arrangement
   integrity assert could not see a *dropped* audio placement: a missing audio clip reported
   `skipped_audio` (a `_CLEAN` member) rather than `missing_clip`. **Fixed in this wave**
-  (`sync/arrangement_verify.py` checks presence for audio before skipping the note
+  (`src/hallucinote/sync/arrangement_verify.py` checks presence for audio before skipping the note
   comparison; two tests), because chunk 03 made the clear-then-rebuild path destructive for
   audio and an assert blind to the drop it can cause was not deferrable. Close at merge.
 - **[#505](https://github.com/brookstalley/hallucinote/issues/505)** — `replace=True`

@@ -234,16 +234,57 @@ def test_span_refuses_without_tempo_evidence():
     would manufacture a finding on every song not at 120 — the whole reason
     declared_span_seconds refuses rather than reusing BeatSampleMap's fallback."""
     capture = _span_capture(declared_beats=515.0, captured_seconds=249.19)
-    assert measure_capture_span(capture, [])[0] is None
-    assert measure_capture_span(capture, [TempoSegment(0.0, 0.0)])[0] is None
+    for segments in ([], [TempoSegment(0.0, 0.0)]):
+        span, skip = measure_capture_span(capture, segments)
+        assert span is None
+        assert skip is not None
+        assert "no tempo_map rows" in skip
 
 
 def test_span_refuses_when_the_capture_predates_the_first_tempo_point():
     """A span reaching back before the first tempo point has no evidence for its
     leading beats. Refusing is the honest answer; integrating them at a default
-    would compare real audio against a partly-invented duration."""
+    would compare real audio against a partly-invented duration.
+
+    Nothing requires a song's first tempo row to be at bar 1, so this is a
+    reachable state and not a theoretical one — and it must NOT be reported as a
+    missing tempo map, because the map is present and usable."""
     capture = _span_capture(declared_beats=515.0, captured_seconds=249.19)
-    assert measure_capture_span(capture, [TempoSegment(16.0, ALIEN_BPM)])[0] is None
+    span, skip = measure_capture_span(capture, [TempoSegment(16.0, ALIEN_BPM)])
+    assert span is None
+    assert skip is not None
+    assert "before the song's first tempo point" in skip
+    assert "no tempo_map rows" not in skip
+
+
+def test_span_refuses_on_a_malformed_manifest_and_says_so():
+    """A manifest declaring stop <= start has no duration to check against. That
+    is a broken manifest, not a missing tempo map, and an operator sent to look
+    for the wrong one loses the trail."""
+    capture = _span_capture(declared_beats=515.0, captured_seconds=249.19)
+    capture = dataclasses.replace(capture, start_at_beat=600.0, stop_at_beat=500.0)
+    span, skip = measure_capture_span(capture, [TempoSegment(0.0, ALIEN_BPM)])
+    assert span is None
+    assert skip is not None
+    assert "non-positive span" in skip
+
+
+def test_span_decline_reasons_are_all_distinct():
+    """Four declines, four messages. The entry exists to end a silence; naming
+    one cause for four different problems would replace it with a wrong answer,
+    which is worse."""
+    ok = _span_capture(declared_beats=515.0, captured_seconds=249.19)
+    malformed = dataclasses.replace(ok, start_at_beat=600.0, stop_at_beat=500.0)
+    reasons = {
+        measure_capture_span(malformed, [TempoSegment(0.0, ALIEN_BPM)])[1],
+        measure_capture_span(ok, [])[1],
+        measure_capture_span(ok, [TempoSegment(16.0, ALIEN_BPM)])[1],
+        measure_capture_span(
+            ok, [TempoSegment(0.0, 120.0), TempoSegment(60.0, 60.0)]
+        )[1],
+    }
+    assert len(reasons) == 4
+    assert None not in reasons
 
 
 def test_span_declines_when_the_song_declares_a_tempo_change():
@@ -261,7 +302,7 @@ def test_span_declines_when_the_song_declares_a_tempo_change():
     )
     assert span is None
     assert skip is not None
-    assert "push layer materializes only the bar-1 tempo" in skip
+    assert "push materializes only the bar-1 row" in skip
 
 
 def test_span_declines_on_a_declared_tempo_ramp():
@@ -312,3 +353,99 @@ def test_span_human_summary_states_what_it_cannot_know():
     summary = span.human_summary
     assert "1.06 beats longer" in summary
     assert "head or the tail" in summary
+
+
+def test_span_declines_when_the_span_would_be_read_at_a_tempo_push_never_played():
+    """The case that makes this a RENDER question, not a score question.
+
+    A song declaring 90 bpm at bar 1 and 124 from beat 8, rendered from beat 16,
+    has a declared tempo that is perfectly constant across the captured span —
+    124. But push sets Live's one global tempo from the bar-1 row and skips the
+    rest, so the audio was played at 90 throughout. Integrating at 124 would
+    compare real audio against a duration nobody performed and hand the operator
+    a `capture_span_mismatch` — in the one lens the mix-review skill instructs
+    the reader never to hedge.
+
+    An earlier predicate asked only whether the DECLARED tempo was constant and
+    accepted exactly this."""
+    declared = 40.0
+    capture = _span_capture(
+        declared_beats=declared, captured_seconds=declared * 60 / 90.0
+    )
+    capture = dataclasses.replace(
+        capture, start_at_beat=16.0, stop_at_beat=16.0 + declared
+    )
+    span, skip = measure_capture_span(
+        capture, [TempoSegment(0.0, 90.0), TempoSegment(8.0, 124.0)]
+    )
+    assert span is None
+    assert skip is not None
+    assert "bar-1 tempo (90 bpm)" in skip
+
+
+def test_span_runs_when_an_earlier_row_restates_the_same_tempo():
+    """The safe half of the same shape: a tempo row before the span that does not
+    CHANGE the tempo leaves the render and the score agreeing, so the check still
+    answers. Declining here would silence it on any song rendered from a later
+    section than bar 1."""
+    declared = 40.0
+    capture = _span_capture(
+        declared_beats=declared, captured_seconds=declared * 60 / ALIEN_BPM
+    )
+    capture = dataclasses.replace(
+        capture, start_at_beat=16.0, stop_at_beat=16.0 + declared
+    )
+    span, skip = measure_capture_span(
+        capture, [TempoSegment(0.0, ALIEN_BPM), TempoSegment(8.0, ALIEN_BPM)]
+    )
+    assert skip is None
+    assert span is not None
+    assert span.within_tolerance
+
+
+def test_span_declines_when_no_row_sits_at_bar_one():
+    """With no bar-1 row push sets no global tempo at all and says so in a warn,
+    so what Live played is genuinely unknown — not assumable from the earliest
+    row that happens to exist."""
+    declared = 40.0
+    capture = _span_capture(
+        declared_beats=declared, captured_seconds=declared * 60 / ALIEN_BPM
+    )
+    capture = dataclasses.replace(
+        capture, start_at_beat=8.0, stop_at_beat=8.0 + declared
+    )
+    span, skip = measure_capture_span(capture, [TempoSegment(4.0, ALIEN_BPM)])
+    assert span is None
+    assert skip is not None
+    assert "no bar-1 row" in skip
+
+
+def test_span_runs_on_a_trailing_linear_segment():
+    """A `linear` ramp on the LAST segment has no successor to glide toward, so
+    it holds — the same reading BeatSampleMap documents."""
+    declared = 40.0
+    capture = _span_capture(
+        declared_beats=declared, captured_seconds=declared * 60 / ALIEN_BPM
+    )
+    span, skip = measure_capture_span(
+        capture, [TempoSegment(0.0, ALIEN_BPM, "linear")]
+    )
+    assert skip is None
+    assert span is not None
+    assert span.within_tolerance
+
+
+def test_span_flags_a_capture_SHORTER_than_its_declared_span():
+    """A truncated render is the same defect from the other end, and at least as
+    likely as an overrun. `excess_beats` is signed and the tolerance symmetric,
+    so this path exists — but a sign or wording inversion would reach an operator
+    as a summary naming the wrong direction while the numbers say the opposite."""
+    declared = 515.0
+    short_s = declared * 60 / ALIEN_BPM - 60 / ALIEN_BPM  # one beat short
+    capture = _span_capture(declared_beats=declared, captured_seconds=short_s)
+    span, skip = measure_capture_span(capture, [TempoSegment(0.0, ALIEN_BPM)])
+    assert skip is None
+    assert span is not None
+    assert span.excess_beats == pytest.approx(-1.0, abs=0.01)
+    assert not span.within_tolerance
+    assert "1.00 beats shorter than" in span.human_summary

@@ -25,6 +25,7 @@ CLAUDE.md "Never silently drop a requirement."
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 from collections import Counter
 from dataclasses import dataclass, replace
@@ -199,18 +200,25 @@ def analyze_mix(
 ) -> MixReport:
     """Run the audio-analysis MVP pipeline against a captures directory.
 
-    Four passes:
+    The MVP passes, which the optional lenses below have since been added
+    alongside rather than folded into — so this is the spine, not an inventory
+    (a count here restales every time a lens lands, and has):
 
-      1. Per-surface loudness — master, every stem, every return.
-      2. Master-bus overshoot detection + per-stem contribution
-         attribution.
-      3. Per return with a declared send: measure RT60 from the return's
-         own captured ring-out (Schroeder decay-tail, dry-source-free),
-         compare to declared. If none declared, emit a
-         ``skipped_analyses`` entry.
-      4. Per-section loudness — the pass-1 metrics scoped to each named
-         section window. If no sections are declared, emit a
-         ``skipped_analyses`` entry.
+      * Per-surface loudness — master, every stem, every return.
+      * Master-bus overshoot detection + per-stem contribution
+        attribution.
+      * Per return with a declared send: measure RT60 from the return's
+        own captured ring-out (Schroeder decay-tail, dry-source-free),
+        compare to declared. If none declared, emit a
+        ``skipped_analyses`` entry.
+      * Per-section loudness — the metrics above scoped to each named
+        section window. If no sections are declared, emit a
+        ``skipped_analyses`` entry.
+
+    Every ``analyze_*`` flag in the signature is one further lens, each one
+    emitting a ``skipped_analyses`` entry when it is off or cannot run — that
+    convention, not this list, is what tells a reader what did and did not
+    happen for a given report.
 
     DB intent extraction is the handler's job: it walks
     ``sends.intended_rt60_s`` rows (for ``declared_reverb_sends``) and the
@@ -294,6 +302,13 @@ def analyze_mix(
     # apart from audio of the wrong length). Needs real tempo evidence, so it can
     # decline — the caller names the decline rather than staying quiet.
     capture_span, capture_span_skip = measure_capture_span(capture, tempo_map)
+    # Recorded on the PASSING path too: a check that only speaks when it fails is
+    # indistinguishable from one that never ran. AlignmentReport owns the whole
+    # `alignment` wire block, so it carries the result rather than the call site
+    # splicing it in.
+    alignment_report = dataclasses.replace(
+        alignment_report, capture_span=capture_span
+    )
 
     # One beat↔sample map for the whole capture, shared by overshoot rebeat-ing
     # and section windowing. Variable-tempo accurate when a tempo_map is
@@ -479,14 +494,7 @@ def analyze_mix(
         findings=findings,
         skipped_analyses=skipped,
         energy_realization=energy_realization,
-        alignment={
-            **alignment_report.to_json_dict(),
-            # Recorded on the PASSING path too: a check that only speaks when it
-            # fails is indistinguishable from one that never ran.
-            "capture_span": (
-                capture_span.to_json_dict() if capture_span is not None else None
-            ),
-        },
+        alignment=alignment_report.to_json_dict(),
         integrity=integrity_rows,
         phase_relations=phase_relations,
         sum_reconciliation=sum_reconciliation,

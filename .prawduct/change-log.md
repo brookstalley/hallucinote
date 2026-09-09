@@ -67,14 +67,38 @@ that disarmed late produce the same number, so it never says "started early",
 though that is what the evidence in the report suggests.
 
 **Where it declines, and why that is not timidity.** The comparison is against
-the *declared* tempo, and push materializes only the bar-1 tempo today, so on a
-song declaring a tempo change the declared duration is not what was rendered. The
-check refuses there and names the push gap, rather than reporting it as a bad
-capture. It refuses on a missing tempo map too, and on a span reaching back
-before the first tempo point — `declared_span_seconds` will not reuse
-`BeatSampleMap`'s constant fallback, which cancels in a rescale but would be a
-fabricated duration here and would manufacture a finding on every song not at
-that constant. Both refusals are named in `skipped_analyses`.
+the *declared* tempo, and push materializes only the bar-1 row today — Live plays
+the whole song at that one value — so wherever the declared tempo differs from
+it, the declared duration is not what was rendered. The check refuses there and
+names the push gap, rather than reporting it as a bad capture.
+
+That gate asks about the **render**, not the score, and it took a round to get
+right. A first version asked whether the declared tempo was constant across the
+captured span, which accepts a song declaring 90 bpm at bar 1 and 124 from beat 8
+rendered from beat 16: declared-constant at 124, actually played at 90. It would
+have compared real audio against a duration nobody performed and reported the
+push gap as a broken capture — in the one lens the mix-review skill tells the
+reader never to hedge. The predicate now takes the bar-1 bpm and requires
+the declared tempo to agree with it from beat 0 through the span's end —
+stricter than the span alone needs, and deliberately so, because the error it
+gives up is a false decline and the one it refuses is a false alarm.
+
+It also refuses on a missing tempo map, on a malformed manifest whose
+declared span is non-positive, and on a capture starting before the song's first
+tempo point — `declared_span_seconds` will not reuse `BeatSampleMap`'s constant
+fallback, which cancels in a rescale but would be a fabricated duration here and
+would manufacture a finding on every song not at that constant. **Each of the
+four declines carries its own reason** in `skipped_analyses`: they send an
+operator to four different places, and a shared message would replace the silence
+this work removes with a wrong answer, which is worse.
+
+**One refusal will go stale, and saying so is the point.** The variable-tempo
+guard reads the DECLARED tempo, not what the renderer can honour, so it does NOT
+retire itself when variable-tempo rendering lands — every such song would keep
+declining and keep blaming a gap that no longer exists. An earlier draft of this
+entry called it self-healing; the review caught that the code does not do that.
+The obligation to delete the guard is written where whoever lands that capability
+will meet it, rather than asserted as automatic.
 
 The beats-to-seconds integration is now shared by the map and the check, because
 two integrators disagreeing about how long 515 beats is would produce a finding
@@ -82,9 +106,20 @@ that contradicted the section windows in the same report.
 
 Verified against the reported capture itself, not only fixtures: it produces the
 finding at 1.06 beats and the healthy capture beside it produces none.
-`SCHEMA_VERSION` does not move — a new `Finding.kind` extends no enumeration and
-the `alignment` block gains a key, both additive; bumping it would make every
-existing report un-diffable for no consumer's benefit.
+`SCHEMA_VERSION` does not move, and three things shipped under that call rather
+than the two an earlier draft of this entry counted. Two are plainly additive: a
+new `Finding.kind` extends no enumeration, and the `alignment` block gains a key.
+The third — re-keying the `skipped_analyses` entries below — is **not** additive,
+and was held to the same version deliberately after checking what could read it:
+`compare.py` never touches the field, the MCP handler never emitted the old key,
+and no checked-in report carries it. Bumping the version would make every
+existing report un-diffable (`compare.ensure_comparable` refuses across versions)
+for no consumer's benefit.
+
+One seam that call leaves open, worth knowing before reading an old report:
+`capture_span: null` means the check declined and `skipped_analyses` says why,
+while the key being **absent** means the report predates the check entirely. Same
+schema version, different meanings — the skip entry is what tells them apart.
 
 **One thing found on the way.** Skip entries are selected by `kind`, and
 consumers index it unguarded — but the render-integrity and imaging skips were

@@ -1724,7 +1724,7 @@ def test_analyze_mix_names_the_span_check_it_could_not_run(tmp_path: Path):
         s for s in report.skipped_analyses if s["kind"] == "capture_span"
     ]
     assert len(skips) == 1
-    assert "tempo map" in skips[0]["reason"]
+    assert "no tempo_map rows" in skips[0]["reason"]
 
 
 def test_analyze_mix_names_the_push_gap_rather_than_blaming_the_capture(
@@ -1773,3 +1773,46 @@ def test_every_skipped_analysis_entry_is_keyed_the_same_way(tmp_path: Path):
     assert {"render_integrity", "imaging", "capture_span"} <= {
         e["kind"] for e in report.skipped_analyses
     }
+
+
+def test_analyze_mix_flags_a_capture_shorter_than_its_declared_span(tmp_path: Path):
+    """The other end of the same defect, pinned end-to-end so the finding's
+    observed < expected ordering is held, not just the measurement's sign."""
+    declared_beats = 40.0
+    captured_s = (declared_beats - 1.0) * 60 / ALIEN_BPM
+    captures_dir = _span_capture_dir(
+        tmp_path, declared_beats=declared_beats, captured_seconds=captured_s
+    )
+
+    report = analyze_mix(captures_dir, tempo_map=[TempoSegment(0.0, ALIEN_BPM)])
+
+    mismatches = [f for f in report.findings if f.kind == "capture_span_mismatch"]
+    assert len(mismatches) == 1
+    assert mismatches[0].observed < mismatches[0].expected
+    assert report.alignment["capture_span"]["excess_beats"] == pytest.approx(
+        -1.0, abs=0.01
+    )
+
+
+def test_analyze_mix_distinguishes_a_missing_tempo_map_from_a_late_first_point(
+    tmp_path: Path,
+):
+    """Two declines an operator would act on differently must not read the same.
+    A song whose first tempo row is not at bar 1 HAS a usable map; telling the
+    operator it is missing sends them to the wrong place."""
+    captures_dir = _span_capture_dir(
+        tmp_path, declared_beats=40.0, captured_seconds=40 * 60 / ALIEN_BPM
+    )
+
+    absent = analyze_mix(captures_dir)
+    late = analyze_mix(captures_dir, tempo_map=[TempoSegment(16.0, ALIEN_BPM)])
+
+    def _reason(report):
+        entries = [
+            s for s in report.skipped_analyses if s["kind"] == "capture_span"
+        ]
+        assert len(entries) == 1
+        return entries[0]["reason"]
+
+    assert "no tempo_map rows" in _reason(absent)
+    assert "before the song's first tempo point" in _reason(late)

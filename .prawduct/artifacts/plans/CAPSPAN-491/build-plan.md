@@ -64,11 +64,35 @@ duration and the rendered audio disagree for a reason that is **not** a capture
 defect, and a span check that fired there would be measuring-and-lying — the
 failure this codebase names by that phrase.
 
-So the check answers only where it can: **when the declared tempo is effectively
-constant across the captured span**, which is every song push can render today.
-Otherwise it declines and names the push gap as the reason. The refusal is
-self-healing — it stops applying the moment variable-tempo rendering lands, with
-no threshold to revisit.
+So the check answers only where it can: **when the declared tempo agrees with
+what the render actually played**, which is the bar-1 row and nothing else.
+Otherwise it declines and names the push gap as the reason.
+
+**That gate is about the render, not the score, and the distinction is load-
+bearing.** A first attempt asked whether the *declared* tempo was constant across
+the captured span — which accepts a song declaring 90 bpm at bar 1 and 124 from
+beat 8, rendered from beat 16: declared-constant at 124, actually played at 90
+throughout, because `plan_push_tempo_map` sets Live's one global tempo from the
+bar-1 row and warns-and-skips the rest. That would have compared real audio
+against a duration nobody performed and reported the push gap as a broken
+capture, in the one lens the mix-review skill tells the reader never to hedge.
+The Critic caught it; the predicate now asks for the bar-1 bpm and requires the
+declared tempo to agree with it **from beat 0 through the span's end**, not merely
+across the span. That is stricter than strictly necessary — a departure restored
+before the window begins would integrate correctly and is declined anyway — and
+deliberately so: the error it forgoes is a false decline, the one it refuses to
+risk is a false alarm.
+
+**The refusal does not retire itself.** An earlier draft of this plan claimed it
+was "self-healing — it stops applying the moment variable-tempo rendering lands";
+the Critic caught that the code does not do it. The predicate reads the DECLARED
+tempo, not what the renderer can honour, so after variable-tempo rendering ships
+every variable-tempo song still declines and still blames a gap that is gone.
+That is the shape `learnings.md` already records as *newly enabling a capability
+doesn't update the guards that predated it*, so the obligation is written where
+whoever lands that capability will meet it — the docstring says the guard must be
+deleted, and the tracking item carries it — rather than asserted as automatic
+here.
 
 **Open assumptions / unknowns:**
 
@@ -105,7 +129,7 @@ no threshold to revisit.
 ## Status
 
 - [x] Chunk 01: one integrator, and a capture-span measurement built on it
-- [ ] Chunk 02: the finding, the report block, and the regression that reproduces #491
+- [x] Chunk 02: the finding, the report block, and the regression that reproduces #491
 
 ---
 

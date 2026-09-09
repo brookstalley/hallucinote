@@ -133,6 +133,14 @@ class AlignmentReport:
     max_drift_samples: int
     max_drift_ms: float
     surfaces: tuple[SurfaceTrim, ...] = ()
+    # The OTHER length question (see the module docstring): whether the capture,
+    # as a set, covers the span the manifest declared. Attached by the caller
+    # after :func:`measure_capture_span` runs, because that needs the song's
+    # tempo map and the trim does not. ``None`` when the check declined — the
+    # caller records why in ``skipped_analyses``. It lives here so this report
+    # remains the ONE owner of the ``alignment`` wire block; assembling it at the
+    # call site would define the shape half here and half there.
+    capture_span: "CaptureSpan | None" = None
 
     def to_json_dict(self) -> dict[str, Any]:
         return {
@@ -141,6 +149,10 @@ class AlignmentReport:
             "sample_rate": self.sample_rate,
             "max_drift_samples": self.max_drift_samples,
             "max_drift_ms": self.max_drift_ms,
+            "capture_span": (
+                self.capture_span.to_json_dict()
+                if self.capture_span is not None else None
+            ),
             "surfaces": [
                 {
                     "track_id": s.track_id,
@@ -283,28 +295,82 @@ class CaptureSpan:
         )
 
 
-def _declared_tempo_is_constant(
-    start_beat: float,
+def _bpm_the_render_actually_played(
     stop_beat: float,
     tempo_segments: Sequence[TempoSegment],
-) -> bool:
-    """Does the declared tempo hold one value across ``[start_beat, stop_beat]``?
+) -> float | None:
+    """The one bpm the audio was rendered at up to ``stop_beat``, or ``None``
+    when that cannot be known.
 
-    Any ramp, or any change inside the span, means no.
+    Takes no span START on purpose: what Live played is decided by the bar-1 row
+    regardless of where the render window begins, and the agreement this checks
+    runs from beat 0 rather than from the window's start (see the second bullet).
+
+    **This asks about the RENDER, not the score, and the difference is the whole
+    point.** ``plan_push_tempo_map`` sets Live's single global ``Song.tempo``
+    from the bar-1 row and warns-and-skips every other row (per-bar tempo
+    automation is an MCP gap), so Live plays the WHOLE song at the bar-1 tempo no
+    matter what the rest of the tempo map declares. A span whose declared tempo
+    differs from the bar-1 value — whether the change falls inside the span or
+    before it — was still played at the bar-1 value, so integrating the declared
+    tempo would compare real audio against a duration that was never performed
+    and report the push gap as a broken capture.
+
+    So the answer is the bar-1 bpm, and only when the declared tempo agrees with
+    it across the span:
+
+    * no row at beat 0 → push sets no tempo at all and warns, so what Live played
+      is genuinely unknown;
+    * any row starting before the span's end declaring a different bpm → the
+      score departs from the bar-1 value somewhere in the song at or before this
+      window. That is stricter than it strictly needs to be: a departure that is
+      restored before the span begins (120 at bar 1, 90 at beat 8, 120 at beat
+      16, rendered from beat 16) would integrate correctly and is declined
+      anyway. Deliberate — the error it forgoes is a false decline, and the one
+      it refuses to risk is a false alarm in a lens the mix-review skill tells
+      the reader never to hedge;
+    * a ``linear`` row gliding toward a successor at a different bpm → the score
+      varies inside the window even though the render did not.
+
+    An earlier version of this predicate asked whether the DECLARED tempo was
+    constant across the span, which accepted a song declaring 90 at bar 1 and 124
+    at beat 8 rendered from beat 16 — declared-constant at 124, actually played
+    at 90.
     """
-    inside = [
-        s for s in tempo_segments
-        if s.bpm > 0 and s.start_beat < stop_beat
-    ]
-    if not inside:
-        return False
-    if any(str(s.ramp) == "linear" for s in inside):
-        return False
-    # A change strictly inside the span, or differing tempi among the segments
-    # that cover it, both mean the span is not one constant tempo.
-    if any(start_beat < s.start_beat < stop_beat for s in inside):
-        return False
-    return len({float(s.bpm) for s in inside}) == 1
+    usable = [s for s in tempo_segments if s.bpm > 0]
+    if not usable:
+        return None
+    ordered = sorted(usable, key=lambda s: float(s.start_beat))
+    if float(ordered[0].start_beat) != 0.0:
+        return None
+    rendered_bpm = float(ordered[0].bpm)
+
+    affecting = [s for s in ordered if float(s.start_beat) < stop_beat]
+    if not affecting:
+        # Unreachable today: the beat-0 row qualifies whenever `stop_beat > 0`,
+        # and the caller has already refused both a non-positive declared span
+        # and a capture starting before the song's first tempo point — it takes
+        # both refusals to exclude a negative `start_at_beat`. Stated rather than
+        # assumed: an empty list here would otherwise index `ordered[-1]` below
+        # and return a confident bpm derived from the wrong row.
+        return None
+    if any(float(s.bpm) != rendered_bpm for s in affecting):
+        return None
+    # All of `affecting` share one bpm, so a ramp between them is flat. The one
+    # remaining way the score varies inside the window is the last of them
+    # gliding toward a successor that starts after the window and differs.
+    # Index by position, not by value: `ordered.index()` matches on dataclass
+    # equality, so two identical tempo rows would resolve to the first and read
+    # the wrong successor for the glide test below.
+    idx = len(affecting) - 1
+    last = ordered[idx]
+    if (
+        str(last.ramp) == "linear"
+        and idx + 1 < len(ordered)
+        and float(ordered[idx + 1].bpm) != rendered_bpm
+    ):
+        return None
+    return rendered_bpm
 
 
 def measure_capture_span(
@@ -326,33 +392,81 @@ def measure_capture_span(
     (the stop-length ramp this module's docstring describes), so a per-surface
     comparison flags every capture ever made.
 
-    **This compares audio against the DECLARED tempo, so it answers only where
-    the declared tempo is one constant across the span.** The push layer
-    materializes only the bar-1 tempo today (the non-bar-1-tempo gap), so a song
-    declaring variable tempo renders at a single tempo and its declared duration
-    is not what was played — a mismatch there would say nothing about the
-    capture. Declining is self-healing: it stops applying once variable-tempo
-    rendering lands, and there is no threshold to revisit.
+    **It answers only where the declared tempo matches what the render played** —
+    see :func:`_bpm_the_render_actually_played`. Push materializes only the bar-1
+    row, so anything else in the tempo map is declared but not performed, and
+    comparing against it would report the push gap as a broken capture.
+
+    **This refusal does NOT retire itself, and the reason it gives will go stale.**
+    It is keyed on today's bar-1-only materialization. When variable-tempo
+    rendering lands (`#321`, `#259`, both annotated with this obligation), the
+    predicate will keep declining on every variable-tempo song and keep citing a
+    push gap that no longer exists — a report naming a retired limitation as why
+    it stayed quiet. Whoever lands that capability has to come back and delete
+    this guard; nothing here will prompt them.
     """
     stop_beat = capture.stop_at_beat + capture.ring_out_beats
     declared_beats = stop_beat - capture.start_at_beat
+
+    # Each decline gets its OWN reason. They are genuinely different problems —
+    # a malformed manifest, a song with no tempo rows, a capture starting before
+    # the song's first tempo point, and a tempo change push cannot render are
+    # four different things for an operator to do next — and collapsing them
+    # into one message would make the entry that exists to end silence
+    # misleading instead.
+    usable = [s for s in tempo_segments if s.bpm > 0]
+    if declared_beats <= 0:
+        return None, (
+            f"the manifest declares a non-positive span "
+            f"(start_at_beat={capture.start_at_beat}, "
+            f"stop_at_beat={capture.stop_at_beat}, "
+            f"ring_out_beats={capture.ring_out_beats}) — there is no duration to "
+            f"check the captured audio against, and the manifest itself is what "
+            f"needs looking at"
+        )
+    if not usable:
+        return None, (
+            "the song has no tempo_map rows with a positive bpm, so the "
+            "wall-clock duration the declared beat span SHOULD take is unknown "
+            "and the captured audio cannot be checked against it"
+        )
+    if all(float(s.start_beat) > capture.start_at_beat for s in usable):
+        return None, (
+            f"the capture starts at beat {capture.start_at_beat:g}, before the "
+            f"song's first tempo point at beat "
+            f"{min(float(s.start_beat) for s in usable):g} — the tempo of the "
+            f"leading beats is undeclared, so their duration would have to be "
+            f"invented to check the span"
+        )
+    rendered_bpm = _bpm_the_render_actually_played(stop_beat, tempo_segments)
+    if rendered_bpm is None:
+        bar_one = next(
+            (float(s.bpm) for s in usable if float(s.start_beat) == 0.0), None
+        )
+        played = (
+            f"Live played the whole song at the bar-1 tempo ({bar_one:g} bpm)"
+            if bar_one is not None
+            else "push set no global tempo at all (no bar-1 row), so what Live "
+                 "played is unknown"
+        )
+        return None, (
+            f"the song's declared tempo across this span is not what was "
+            f"rendered: push materializes only the bar-1 row, so {played}. "
+            f"Comparing the declared duration against the audio would measure "
+            f"that push gap and report it as a broken capture"
+        )
+
     declared_seconds = declared_span_seconds(
         capture.start_at_beat, stop_beat, tempo_segments,
     )
     if declared_seconds is None or declared_seconds <= 0:
+        # Every known refusal is named above, so reaching here means
+        # declared_span_seconds grew one this function does not model. Say that,
+        # rather than attributing it to a cause that was already ruled out.
         return None, (
-            "no usable tempo map was supplied, so the wall-clock duration the "
-            "declared beat span SHOULD take is unknown and the captured audio "
-            "cannot be checked against it"
-        )
-    if not _declared_tempo_is_constant(
-        capture.start_at_beat, stop_beat, tempo_segments
-    ):
-        return None, (
-            "the song declares a tempo change across the captured span, and the "
-            "push layer materializes only the bar-1 tempo, so the declared "
-            "duration is not what was rendered — a span comparison here would "
-            "measure the push gap, not the capture"
+            "the declared span's duration could not be computed from the song's "
+            "tempo map, for a reason this check does not model — the capture may "
+            "be fine; it has not been checked"
         )
 
     captured_seconds = capture.master.audio.shape[0] / capture.master.sample_rate

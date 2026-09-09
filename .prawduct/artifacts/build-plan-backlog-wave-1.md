@@ -22,165 +22,135 @@ address before the agent is inside it.
 
 ---
 
+## The integrator's job (the coordinator — one session, never a delegate)
+
+**Everything in this section is mine. No delegate does any of it.**
+
+1. **Phase 0, before dispatching anyone** — land the two mechanical changes that would
+   otherwise conflict with every open branch. Delegates then branch from a base that already
+   contains them, and those conflicts never exist.
+2. **Create every worktree** — `git worktree add -b <branch> ../hallucinote-<slug>
+   integration/backlog-wave-1`, and write the brief into it at `.prawduct/.delegate-brief.md`
+   so an abandoned worktree is visible at a later session start. Never the harness's own
+   isolation, which hands back a tree you cannot name until the agent is already inside it.
+3. **Merge each delegate branch** with `git merge --no-ff`. Never squash.
+4. **Apply every registration request** — the delegate reports the line; I write it.
+5. **Run the full no-path suite** after each merge (or each pair, when two land close
+   together), and tick the chunk's Status box only once that run is green.
+6. **All governance**: Critic, `project-state.yaml`, the change-log, backlog `status=shipped`
+   with `closed-by`, the PR.
+7. **Remove worktrees** after merge.
+
 ## The integration contract
 
 **Delegates never govern.** No Critic, no Status boxes, no `project-state.yaml`, no
-change-log entry, no PR, no merge. A delegate returns a branch and a report. Everything
-in this paragraph is the coordinator's.
+change-log entry, no PR, no merge, no backlog write. A delegate returns a branch and a report.
 
-**Delegates never run the full suite.** The verification bar for a delegate is *the
-narrowest run that covers its own diff* — normally the one or two test files it touched,
-plus a targeted grep or a real CLI invocation for anything prose- or contract-shaped.
-This is a cost bound, not a rigor discount, and what it prevents fails **silently**:
-several whole-suite runs contending on one machine each report a different total, none
-complete, and all exit 0. A green you cannot attribute to a known set of tests is not
-evidence. The full no-path `python -m pytest` run is the **coordinator's**, once, at
-integration.
+**Delegates never run heavy tests.** The bar is *the narrowest run that covers its own diff* —
+normally the one or two test files it touched, plus a targeted grep or one real CLI
+invocation for anything prose- or contract-shaped. **Explicitly forbidden**: a bare
+`python -m pytest`, `pytest tests/`, anything marked `audio` or `ableton`, and any render,
+capture or analysis run. This is a cost bound *and* a correctness one: several whole-suite
+runs contending on one machine each report a different total, none complete, and all exit 0 —
+a green nobody can attribute to a known set of tests is not evidence. The full run is mine,
+at integration.
 
-**Delegates report, in this order**: what they changed, the exact command they ran and
-its result, what they assumed, any wording they decided rather than took from the issue
-(marked `proposed`), and any **registration request** (below).
-
-**The coordinator** merges each delegate branch into `integration/backlog-wave-1` with
-`git merge --no-ff`, resolves registry conflicts, runs the full suite after each merge
-(or after each pair, if merges land close together), and only then ticks the chunk's
-Status box.
+**Delegates report, in this order**: what changed; the exact command run and its result;
+assumptions made; any wording decided rather than taken from the issue, marked `proposed`;
+and any registration request.
 
 ---
 
-## File ownership
+## How the parallelism is bought
 
-Ownership is disjoint by construction except for four **shared registries**, which are
-append-only and are called out here rather than pretended away.
+Three things serialize work here. Two dissolve if the integrator spends ten minutes up front,
+which is what Phase 0 is for.
 
-**Coordinator-owned — no delegate commits to these:**
+**1. Tree-wide mechanical churn.** #487 (ruff `I001` + `UP` — 250 and 216 hits across 284
+files) conflicts with every open branch if it lands late, and with **nothing** if it lands
+first, because every delegate then branches from already-formatted code. So it moves from
+"last, solo" to **first, solo**. It flips the MCP fingerprint, but that only bites when Live
+next loads the code, so it costs nothing now and is absorbed by the operator sitting.
 
-- `.prawduct/**` — all governance, this plan included
-- `pyproject.toml`
-- `docs/capability-truth.md` — one shared table, one writer
+**2. Shared schema and event registries.** `db/schema.sql` + `_ADDED_COLUMNS` and
+`db/events.py` are what force #243, #496 and #237-A to serialize. But **an unused column and
+an unused event constant break nothing** — so the integrator pre-lands all of them in one
+commit, and those chunks then run in parallel, each touching only its own mutators and
+planners. This is the single largest wall-clock win in the plan.
 
-**Shared registries — a delegate MAY append, under one convention:** add a single
-contiguous block at the position the file's existing ordering implies, never reformat or
-re-sort a neighbour, and name the addition in your report as a *registration request* so
-the coordinator can expect the conflict.
+**3. `src/hallucinote/cli.py`.** Cannot be pre-landed: a subcommand whose module does not
+exist yet breaks the CLI at import. So it stays **coordinator-owned**. A delegate needing a
+subcommand writes its module and tests, exercises it by calling the entry point directly, and
+reports the exact registration line. Four chunks need one line each — four one-line edits by
+one writer, not a four-way conflict.
 
-- `src/hallucinote/cli.py` — subcommand registry
-- `src/hallucinote/db/events.py` — event-name constants
-- `src/hallucinote/db/schema.sql` and its `_ADDED_COLUMNS` migration list
+Genuinely un-parallelizable: **#486** (17 raw-SQL read sites spread across the tree) runs
+**last, solo**, after every feature branch has merged. Early it conflicts with most chunks;
+last it conflicts with none.
 
-Everything else is owned by exactly one chunk per wave, listed below.
+### Phase 0 — integrator, solo, before any dispatch
+
+- [ ] **#487** — one mechanical, behaviour-free commit from `ruff check --fix` at a pinned
+  version. The 3 non-autofixable sites get reasoned `noqa`, never an ignore widening. Keep it
+  clear of every behaviour change.
+- [ ] **Registry pre-land**, one commit: the `bar_ruler` provenance column on
+  `arrangement_clips` / `cue_points` / `sections` and their `_ADDED_COLUMNS` entries (#496);
+  whatever column #237-A needs; the `BREAKPOINTS_REPLACED_IN_SPAN` event constant (#243); the
+  SCHEMA_VERSION bump shared by #253 and #261. Columns land nullable and unused — no reader,
+  no writer, no behaviour change.
 
 ---
 
-## Wave 1 — six chunks, fully parallel
+## Phase 1 — twelve chunks, all parallel
 
-Already merged ahead of the wave: **#498** capture-arm-order fix
-(`fix/rnd-capture-arm-order`). It is the only wave-1 change to
-`hallucinote_mcp/.../handlers/render.py`, so that file is out of every delegate's diff.
+Merged ahead of the phase: **#498** capture-arm-order fix, so
+`hallucinote_mcp/.../handlers/render.py` is out of every delegate's diff.
+
+Ownership is **disjoint by construction** — every path appears in exactly one row, verified
+against the tree rather than assumed. A delegate that finds it needs a file owned by another
+row stops and reports instead of editing it.
+
+| Chunk | Items | Owns (exclusive) |
+|---|---|---|
+| C1 | #325 #481 | `src/hallucinote/audio/automation.py` + tests; `curve_kind` threading in `hallucinote_mcp/.../server_side/analysis.py` |
+| C2 | #220 | new `src/hallucinote/tools/prose_drift.py` + test + committed fixture |
+| C3 | #258 | new `src/hallucinote/kit_library.py`; `src/hallucinote/kits.py`; the `drum_pads` write site in `src/hallucinote/capture.py` |
+| C4 | #310 #311 #312 | install CLI + preflight; the install skill; `docs/known-issues.md`; new `switch-status` |
+| C5 | #250 #259 | `src/hallucinote/sync/pull/mix.py`; `ApplyResult.notes`; the scenes-phase planner |
+| C6 | #455 | `src/hallucinote/takes.py` + test |
+| C7 | #499 | `src/hallucinote/melody/lens.py`; `src/hallucinote/melody/profile.py` + tests |
+| C8 | #502 #503 | `src/hallucinote/audio/bark.py`; band labels in `src/hallucinote/audio/levels.py`; `src/hallucinote/markdown_refs.py` |
+| C9 | #292 A | the imaging control pair — Chunk A only; Chunk B stays frozen |
+| C10 | #239 | new `src/hallucinote/constraint/` package |
+| C11 | #243 | the envelope mutator under `src/hallucinote/db/mutations/`; the `BuildSession` collision guard |
+| C12 | #496 #237A | the bar-ruler planners; the reverse refusal under `src/hallucinote/sync/push/` |
+
+**C11 and C12 are parallel only because Phase 0 pre-landed their registry entries.** Skip
+Phase 0 and they collide on `schema.sql` and `events.py` — then they must be serialized.
+
+**Dispatch #479 first, ahead of all twelve.** It is a live silent-wrong-output bug:
+`_write_breakpoints_as_steps` collapses a two-point linear ramp into one flat step, and when
+that value matches the parameter's static value Live discards the envelope while the push
+still reports `ok` — on the very route we are about to start preferring. Owns new
+`src/hallucinote/sync/envelope_curve.py` plus the push emitter and the pull comparator;
+disjoint from all twelve rows.
+
+**Sequenced on a predecessor, not on a wave:** #501 after #222 (which sets the enumerated
+status vocabulary it mirrors) · #478 after #479 (which shrinks the perform population and so
+changes #478's cost case) · #261 after #502 (same Bark grid; different ceilings silently
+compare different spans) · #283 R5–R6 and #308 after Phase 1 settles.
+
+Suggested concurrency: **six delegates at once**, refilling as each merges. The binding
+constraint is disk and integrator attention, not correctness.
 
 ### Status
 
-- [ ] C1 — automation verification: window span + staircase gestures (#325, #481)
-- [ ] C2 — `build.py` prose-drift checker (#220)
-- [ ] C3 — cross-song drum-kit seeding (#258)
-- [ ] C4 — install boundary trio (#310, #311, #312)
-- [ ] C5 — pull-side small wins (#250, #259)
-- [ ] C6 — evidence-tree retention lifecycle (#455)
-
-### C1 — automation verification (#325 + #481)
-
-**Why one chunk**: both rewrite the same window logic. #325 replaces the fixed
-2-beats-back window with one bounded by the transition interval; #481 groups
-consecutive same-direction changes into one gesture. Shipped separately, the second
-rewrites the first.
-**Owns**: the automation-verification module and its test file; the `curve_kind`
-threading through `server_side/analysis.py` into `DeclaredEnvelope`.
-**Verify**: that module's test file only.
-
-### C2 — prose-drift checker (#220)
-
-**Owns**: new `src/hallucinote/tools/prose_drift.py`, its new test file, and a committed
-fixture. **Registration request expected**: one `cli.py` subcommand line.
-**Note the corrected acceptance**: `97816e1` is the commit that *fixed* the phantom
-Shifter; the phantom state is its parent `02be0ec`, and `examples/angle-of-the-light` no
-longer exists in the tree — so the acceptance case ships as a committed fixture, not a
-working-tree path. Model the module on the existing `overview_drift.py` (detect fn +
-non-raising build-close hook + 0/1/2 CLI).
-**Verify**: its own test file, plus one real CLI invocation against the fixture.
-
-### C3 — cross-song drum-kit seeding (#258)
-
-**Owns**: new `src/hallucinote/kit_library.py`, `src/hallucinote/kits.py`, the
-`drum_pads` write site in `src/hallucinote/capture.py`, new tests.
-**Registration request expected**: one `cli.py` subcommand line.
-**Hard constraint**: `drum_pad_mappings` keeps its per-song `device_id` FK. The cache
-SEEDS through the existing `replace_drum_pad_mappings` mutator — mutator + event, never
-raw SQL — and never overwrites a mapping a song already carries.
-**Verify**: its own two or three test files.
-
-### C4 — install boundary trio (#310, #311, #312)
-
-**Why one chunk**: all three touch preflight and the install skill; splitting them
-guarantees an intra-wave conflict.
-**Owns**: the install CLI and preflight surface, the install skill, `docs/known-issues.md`,
-the new `switch-status` subcommand and its skill.
-**Carries a measurement already taken** (#311): with Live 12.4.5 running and the control
-surface serving, `lsof` showed zero open descriptors under the User Library, and the
-Live-side tree is imported eagerly at instantiation — so the macOS refusal becomes
-warn-and-proceed. **Keep the refusal on Windows**; nobody has measured it there.
-**#310 is wider than its title**: eleven entries sit outside `_FINGERPRINT_PATHS`, not
-just `analyzer/`, and `server_side/` is excluded deliberately — hence a uniform ADVISORY
-content fingerprint, never "add analyzer/ to the tuple".
-**Verify**: the install/preflight test files only.
-
-### C5 — pull-side small wins (#250, #259)
-
-**Why one chunk**: both touch the pull/apply result surface.
-**Owns**: `src/hallucinote/sync/pull/mix.py`, the `ApplyResult.notes` channel, and the
-scenes-phase planner.
-**Hard constraint** (#259): do **not** retire the capture-span guard. Scene tempo applies
-only on scene launch in session view; render drives the arrangement transport. The guard
-is about what the render played, so it survives — `audio/alignment.py`'s docstring should
-drop the `#259` reference and keep `#321`.
-**Verify**: the pull and planner test files only.
-
-### C6 — evidence-tree retention (#455)
-
-**Owns**: `src/hallucinote/takes.py`, a new `hallucinote evidence` subcommand, new tests.
-**Registration request expected**: one `cli.py` subcommand line.
-**Hard constraint**: a superseded run is promoted to `measurements/`, never deleted; only
-*working* evidence is swept.
-**Verify**: its own test file, plus one real CLI invocation.
-
----
-
-## Wave 2 — serialized after wave 1 merges
-
-These conflict with wave 1 or with each other and must not run beside it.
-
-- **#479** session_clip ramp (new `sync/envelope_curve.py` + push emitter + pull
-  comparator). Conflicts with C5's pull work. **This is a live silent-wrong-output bug**:
-  `_write_breakpoints_as_steps` collapses a 2-point linear ramp into one flat step, and
-  if that value matches the parameter's static value Live discards the envelope while the
-  push reports `ok`. Sequence **#479 before #478**.
-- **#243** span-scoped envelope writes (new `replace_breakpoints_in_span` mutator + event
-  + `BuildSession` collision guard). Touches the events registry.
-- **#496** `bar_ruler` provenance (additive schema column + `_ADDED_COLUMNS` + planners).
-  Touches the schema registry; serialize with #243 rather than beside it.
-- **#237 chunk A** — correct the false `clips.reverse` contract at `db/schema.sql:137-142`
-  (the LOM research confirms Live exposes no `reversed` property) and refuse `reverse=1`
-  loudly. Schema registry again; land it with #496.
-
-## Wave 3 — solo, whole-tree, one at a time
-
-- **#487** ruff `I001` + `UP` in one mechanical, behaviour-free commit. Re-measured
-  2026-09-09 at ruff 0.15.20: I001 250, UP 216, 284 files. **33 of those files sit under
-  `_FINGERPRINT_PATHS`, so this commit flips the MCP fingerprint and forces a Remote
-  Script re-vendor** — schedule it where a re-vendor is already happening.
-- **#486** consolidate the 17 raw-SQL read sites into `db/queries`. Run last: it touches
-  call sites all over the tree. One of the 17 is a latent correctness difference, not
-  style — `tools/song_context.py:197` omits the `song_id` scope that `Q.tracks_by_name`
-  carries.
+- [ ] Phase 0 — #487 · registry pre-land
+- [ ] #479 (dispatch first)
+- [ ] C1 · [ ] C2 · [ ] C3 · [ ] C4 · [ ] C5 · [ ] C6
+- [ ] C7 · [ ] C8 · [ ] C9 · [ ] C10 · [ ] C11 · [ ] C12
+- [ ] #478 (after #479) · [ ] #501 (after #222) · [ ] #261 (after #502)
+- [ ] Phase 2 — #486, solo, last
 
 ---
 

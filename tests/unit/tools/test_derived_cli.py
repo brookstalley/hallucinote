@@ -17,7 +17,7 @@ import soundfile as sf
 from hallucinote.assets import derived as D
 from hallucinote.assets.transforms import normalize, reverse
 from hallucinote.assets.types import Source
-from hallucinote.db.connection import init_db
+from hallucinote.db.connection import init_db, resolve_db_path
 from hallucinote.tools import derived_cli
 from tests.unit.audio.fixtures import SAMPLE_RATE, sine
 
@@ -39,9 +39,12 @@ def song(tmp_path: Path) -> tuple[Path, Source]:
     return tmp_path, _write_source(tmp_path, "rivers-01", sine(220.0, 1.0))
 
 
-def _song_db(song_dir: Path, slug: str, audio_files: list[str]) -> Path:
+def _song_db(
+    song_dir: Path, slug: str, audio_files: list[str], *, db_path: Path | None = None
+) -> Path:
     """A minimal song DB whose clips point at `audio_files` — what prune reads."""
-    db_path = song_dir / f"{slug}.db"
+    db_path = db_path if db_path is not None else song_dir / f"{slug}.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = init_db(db_path)
     try:
         conn.execute("INSERT INTO songs (id, name) VALUES ('s1', ?)", (slug,))
@@ -148,24 +151,41 @@ def test_prune_reports_a_fully_referenced_cache_as_nothing_to_remove(song, capsy
     assert "nothing to remove" in capsys.readouterr().out
 
 
-def test_prune_reads_the_db_in_the_directory_it_is_pruning(song, tmp_path, capsys):
-    """--song-dir wins over wherever the workspace resolves the slug.
+def test_prune_reads_the_db_in_the_directory_it_is_pruning(song, tmp_path, monkeypatch):
+    """--song-dir decides WHICH database says what is still referenced.
 
-    A same-slug song elsewhere must not decide what is an orphan here: the
-    cache being pruned and the clips deciding what it keeps have to be the
-    same song, or prune lists files the song is still using.
+    The condition has to be built deliberately, and an earlier version of this
+    test did not build it: a decoy in a directory the workspace resolver could
+    never return meant both the old and new code read the same file, and the
+    test passed on the bug. Here the decoy is reachable — it sits under
+    HALLUCINOTE_SONGS_ROOT at the slug's own name — so resolving the slug
+    through the workspace lands on it, while anchoring in the pruned directory
+    lands on the real song. The two disagree about the keep file, so only the
+    correct resolution reports nothing to remove.
     """
     song_dir, src = song
     keep = D.derive(src, [reverse()], song_dir=song_dir)
-    # The song being pruned keeps its derived file...
-    _song_db(song_dir, "rivers", [str(keep.path.relative_to(song_dir))])
-    # ...while a same-slug song elsewhere references nothing of the sort.
-    other = tmp_path.parent / "elsewhere"
-    other.mkdir(exist_ok=True)
-    _song_db(other, "rivers", ["assets/sources/unrelated.wav"])
+
+    # A rival song of the same slug, reachable through the workspace resolver.
+    # The env var goes up FIRST so each DB is planted under the exact name its
+    # own resolution would pick — otherwise the old path misses the decoy on a
+    # filename mismatch and the test proves less than it looks like it does.
+    decoy_root = tmp_path / "workspace"
+    (decoy_root / "rivers").mkdir(parents=True)
+    monkeypatch.setenv("HALLUCINOTE_SONGS_ROOT", str(decoy_root))
+
+    decoy_db = resolve_db_path("rivers")                          # what OLD code reads
+    anchored_db = song_dir / resolve_db_path("rivers", root=song_dir.parent).name
+
+    _song_db(song_dir, "rivers", [str(keep.path.relative_to(song_dir))],
+             db_path=anchored_db)
+    _song_db(decoy_root / "rivers", "rivers", ["assets/sources/unrelated.wav"],
+             db_path=decoy_db)
+    assert decoy_db != anchored_db, "the two resolutions must actually differ"
 
     code = derived_cli.main(["prune", "--song", "rivers", "--song-dir", str(song_dir)])
 
     assert code == 0
-    assert "nothing to remove" in capsys.readouterr().out
     assert keep.path.is_file()
+    # Reading the decoy would have called the keep file an orphan and listed it.
+    assert derived_cli._addressed_by_song(song_dir, "rivers") == [str(keep.path)]

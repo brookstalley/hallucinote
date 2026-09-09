@@ -408,7 +408,7 @@ Three things this wave surfaced, cited and filed rather than fixed inside it:
   summary credits tracks that were later skipped. Pre-existing; the new `placed_audio`
   counter follows the existing pattern on purpose so all three are fixed together.
 
-### The link seam — found at chunk 05 integration, owner: coordinator
+### The link seam — found at chunk 05 integration, filed as [#507](https://github.com/brookstalley/hallucinote/issues/507)
 
 A pull-ingested audio clip arrives **unlinked**. Pull never writes an `ableton_link` —
 verified, not assumed: `link_db_to_ableton` has exactly two callers, `push/probe.py` and
@@ -442,7 +442,9 @@ back through `apply_push_results`); or `execute_push` gains a session-clip recon
 its own. Deciding that at the end of a long wave, against a phase whose destructive
 reconcile is itself waiting on chunk 01's verdict, is how a considered fix becomes a
 regression. **Filed instead**, with this analysis, and named in the definition of done
-below so the wave cannot be called finished while it stands.
+below so the wave cannot be called finished while it stands. It is
+[#507](https://github.com/brookstalley/hallucinote/issues/507), at `stage: requirements`
+because the choice of home is the work.
 
 ## Definition of done (the wave)
 
@@ -455,7 +457,8 @@ survives a re-push; and `capability-truth.md` says exactly that and no more.
 
 1. **Chunk 01 has not run.** It is operator-gated, and until it does, two paths refuse
    loudly by design and the arrangement conform gap has no verdict.
-2. **The link seam** above — "survives a re-push" is the clause it fails.
+2. **The link seam** above ([#507](https://github.com/brookstalley/hallucinote/issues/507))
+   — "survives a re-push" is the clause it fails.
 3. **Nothing has been live-verified on the audio path.** The only live evidence this wave
    has is a pure-MIDI regression check (a concurrent session's push: 58/58 clips, 116/116
    placements, no orphans), which discharges R6.4 and says nothing about audio.

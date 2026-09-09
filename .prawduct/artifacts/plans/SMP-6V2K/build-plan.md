@@ -144,11 +144,17 @@ questions batched in so the operator is asked once.
 ## Status
 
 - [ ] Chunk 01: the Live session that settles the reverse contract and the recreate semantics *(operator-gated; gates only 03's reconcile rule)*
-- [ ] Chunk 02: `ableton_clip` creates a real audio clip, and the audio property surface is complete *(wave A)*
-- [ ] Chunk 03: the clips and arrangement phases materialize `kind='audio'` *(wave B)*
-- [ ] Chunk 04: an audio-track session clip hosts envelopes (#268) *(wave A)*
-- [ ] Chunk 05: pull ingests audio clips, including one dragged in by hand *(wave B)*
-- [ ] Chunk 06: the docs say what is true, and the contract artifacts track *(coordinator)*
+- [x] Chunk 02: `ableton_clip` creates a real audio clip, and the audio property surface is complete *(wave A)*
+- [x] Chunk 03: the clips and arrangement phases materialize `kind='audio'` *(wave B)*
+- [x] Chunk 04: an audio-track session clip hosts envelopes (#268) *(wave A)*
+- [x] Chunk 05: pull ingests audio clips, including one dragged in by hand *(wave B)*
+- [x] Chunk 06: the docs say what is true, and the contract artifacts track *(coordinator)*
+
+**A ticked box here means the code is built, reviewed and green — it does NOT mean the
+wave is done.** Chunks 02-05 each carry a live "Done when" clause that only an operator at
+a running Live can discharge, and none of them has been. The three conditions still
+standing are named under *Definition of done* below, and `capability-truth.md` rates the
+capability accordingly.
 
 ---
 

@@ -152,6 +152,25 @@ unless the marketplace copy is disabled via `/plugin`. On a development machine,
 two worktrees and drop the marketplace install — the rationale is in
 [`docs/dev-vs-use-coexistence.md`](../../docs/dev-vs-use-coexistence.md).
 
+## Altitude — what this artifact is, and what indexes the code
+
+This document models **runtimes, boundaries, failure independence and data flow**. It
+deliberately does **not** inventory modules: the source tree is the module index, and a
+second list here would drift every time a package is added or renamed, with nothing
+mechanical keeping it honest (the repo's own "link, don't summarize" learning).
+
+The ten packages under `src/hallucinote/` are `audio/`, `db/`, `generators/`, `melody/`,
+`performance/`, `recurrence/`, `sync/`, `theory/`, `tools/` and `tuning/`. They are named
+so a reader knows what exists and where to look; what each one *does* is read from the
+package itself, never restated here. The absence of a description for any of them is the
+intended altitude, not drift.
+
+Owner ruling 2026-09-08 (JANITOR-2026-09 R5). The bare names are here for a second reason
+worth stating: the session-briefing staleness probe tests whether each package name
+appears in this file as a substring, with no way to declare an artifact
+deliberately module-free — so a doc at this altitude either names them or reports stale
+forever. That gap is filed upstream; the enumeration above is truthful either way.
+
 ## What is deliberately not modeled
 
 - **Three nested-rack corners** — *not* nesting in general, which capture, replay and
@@ -208,10 +227,9 @@ Ratified 2026-08-10. These bind future work; the narrative above describes it.
   one in `devices`. Arrangement is the exception because incremental reconciliation against
   Live's positional, renumbering clip model produced years of whack-a-mole bugs.
   Status: steady-state — re-affirmed 2026-08-20 on the decay fork (the why cited work that has
-  since shipped). **AGENT-PROPOSED, PENDING OWNER VETO** — unlike the 2026-08-10 batch above,
-  no owner ruled on this one; it was decided during a chore session clearing the decay
-  advisory, and the Statement is byte-identical to the ratified text, so a veto costs only
-  this Status line. The rationale no longer *rests on* tracked work: the projection rewrite
+  since shipped), and **owner-ratified 2026-09-08** (JANITOR-2026-09 R4), which closed the
+  agent-proposed standing the re-affirmation had carried unruled for 19 days. The rationale
+  no longer *rests on* tracked work: the projection rewrite
   landed, `duplicate_to_arrangement` survives only inside the narrow envelope-bearing exception
   the statement already carves out, and the positional reconcile subsystem is gone — so this is
   settled experience, not a pending migration. Residual cleanup is verification, not

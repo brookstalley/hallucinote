@@ -86,9 +86,8 @@ import numpy as np
 # The band edges and the zero-phase filter that measures energy inside them are
 # one thing, and attribution.py is where it lives — importing the measurement
 # alongside the edges keeps a single definition of "energy in this band" rather
-# than two that can drift apart. A public band-RMS accessor there would be the
-# tidier home for it.
-from .attribution import BANDS, _single_band_energy
+# than two that can drift apart.
+from .attribution import BANDS, band_energy
 from .levels import apply_stem_gains, live_fader_gain
 from .onsets import to_mono
 
@@ -312,11 +311,11 @@ def _band_residuals(
     floor = master_broadband * 10.0 ** (-_BAND_ENERGY_FLOOR_DB / 20.0)
     out: list[BandResidual] = []
     for band_name, lo_hz, hi_hz in BANDS:
-        master_band = _single_band_energy(master_seg, sample_rate, lo_hz, hi_hz)
+        master_band = band_energy(master_seg, sample_rate, lo_hz, hi_hz)
         if master_band <= floor:
             out.append(BandResidual(band=band_name, residual_db=float("nan")))
             continue
-        residual_band = _single_band_energy(residual, sample_rate, lo_hz, hi_hz)
+        residual_band = band_energy(residual, sample_rate, lo_hz, hi_hz)
         out.append(
             BandResidual(
                 band=band_name,

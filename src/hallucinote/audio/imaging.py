@@ -86,7 +86,7 @@ from .attribution import BANDS
 # and is 0) are settled once in the broadband lens. Re-deriving them here would
 # let two lenses disagree about the same signal, which is precisely the drift a
 # per-band extension is most likely to introduce.
-from .stereo import QUIET_RMS, _correlation
+from .stereo import QUIET_RMS, channel_correlation
 
 # Both dB readings here are ratios of two channel-energies, and either
 # denominator can be exactly zero (a hard pan, a bit-exact mono pair). -inf is
@@ -237,7 +237,7 @@ def _width(
     decided rather than left to Pearson (see the module docstring)."""
     if min(left_rms, right_rms) <= QUIET_RMS:
         return 0.0
-    return max(0.0, min(1.0, 1.0 - _correlation(left, right)))
+    return max(0.0, min(1.0, 1.0 - channel_correlation(left, right)))
 
 
 def _band_images(
@@ -270,7 +270,7 @@ def _band_images(
             images.append(BandImage(band=name, correlation=_NAN, width=0.0))
             continue
 
-        correlation = _correlation(band_left, band_right)
+        correlation = channel_correlation(band_left, band_right)
         images.append(
             BandImage(
                 band=name,

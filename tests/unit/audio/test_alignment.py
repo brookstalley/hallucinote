@@ -11,12 +11,18 @@ per AUD-6R2M) — still recovers correctly from the trimmed return.
 """
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 
 import numpy as np
+import pytest
 
-from hallucinote.audio.alignment import trim_to_common_length
+from hallucinote.audio.alignment import (
+    measure_capture_span,
+    trim_to_common_length,
+)
 from hallucinote.audio.io import CaptureSet, Surface
+from hallucinote.audio.section import TempoSegment
 from hallucinote.audio.reverb import REVERB_TOLERANCE_FLOOR_S, measure_return_rt60
 from tests.unit.audio import fixtures
 
@@ -154,3 +160,127 @@ def test_reverb_rt60_measured_from_trimmed_return_ringout():
     assert np.isfinite(result.measured_rt60_s)
     assert abs(result.measured_rt60_s - 0.6) <= REVERB_TOLERANCE_FLOOR_S
     assert result.within_tolerance
+
+
+# --- capture span: is the audio as long as the manifest declares? (#491) ------
+#
+# The numbers below are measurements, not invented fixtures. Three real captures
+# of `songs/alien` (124 BPM, 48 kHz) were measured on 2026-09-09: the capture the
+# incoming report named ran 1.06 beats past its declared span, and the two
+# healthy ones sat inside 0.05 beats. Both ends of that separation are pinned
+# here, because a threshold justified by a measurement is only honest while the
+# measurement is still in the test.
+
+ALIEN_BPM = 124.0
+
+
+def _span_capture(
+    *,
+    declared_beats: float,
+    captured_seconds: float,
+    sample_rate: int = SR,
+) -> CaptureSet:
+    """A capture whose master holds exactly ``captured_seconds`` of audio while
+    the manifest declares ``declared_beats``."""
+    frames = int(round(captured_seconds * sample_rate))
+    master = Surface(
+        track_id="master",
+        surface_kind="master",  # type: ignore[arg-type]
+        surface_name="master",
+        audio=np.zeros((frames, 2), dtype=np.float32),
+        sample_rate=sample_rate,
+    )
+    return CaptureSet(
+        song_slug="alien",
+        captured_at="20260908T233753Z",
+        analyzer_signature="hallucinote-analyzer-v1",
+        captures_dir=Path("/tmp/x"),
+        manifest_path=Path("/tmp/x/manifest.json"),
+        sample_rate=sample_rate,
+        start_at_beat=0.0,
+        stop_at_beat=declared_beats,
+        ring_out_beats=0.0,
+        master=master,
+        stems=[],
+        returns=[],
+    )
+
+
+def test_span_reproduces_the_reported_defective_capture():
+    """20260908T233753Z: 515 declared beats at 124 BPM is 249.19 s; the master
+    held 11985920 frames = 249.71 s. That is the excess the report saw as a ~1.1-beat shift, and
+    it must land outside tolerance."""
+    capture = _span_capture(declared_beats=515.0, captured_seconds=11985920 / SR)
+    span = measure_capture_span(capture, [TempoSegment(0.0, ALIEN_BPM)])
+    assert span is not None
+    assert span.excess_beats == pytest.approx(1.06, abs=0.005)
+    assert not span.within_tolerance
+
+
+def test_span_accepts_the_two_healthy_captures():
+    """20260909T041123Z and 20260909T043509Z: 523 declared beats = 253.06 s
+    against 12146688 and 12146176 frames. Both sit inside a twentieth of a beat,
+    which is what makes a quarter-beat tolerance a bright line and not a knob."""
+    for frames in (12146688, 12146176):
+        capture = _span_capture(declared_beats=523.0, captured_seconds=frames / SR)
+        span = measure_capture_span(capture, [TempoSegment(0.0, ALIEN_BPM)])
+        assert span is not None
+        assert abs(span.excess_beats) < 0.05
+        assert span.within_tolerance
+
+
+def test_span_refuses_without_tempo_evidence():
+    """No tempo map means no answer. Returning a 120-BPM-derived duration here
+    would manufacture a finding on every song not at 120 — the whole reason
+    declared_span_seconds refuses rather than reusing BeatSampleMap's fallback."""
+    capture = _span_capture(declared_beats=515.0, captured_seconds=249.19)
+    assert measure_capture_span(capture, []) is None
+    assert measure_capture_span(capture, [TempoSegment(0.0, 0.0)]) is None
+
+
+def test_span_refuses_when_the_capture_predates_the_first_tempo_point():
+    """A span reaching back before the first tempo point has no evidence for its
+    leading beats. Refusing is the honest answer; integrating them at a default
+    would compare real audio against a partly-invented duration."""
+    capture = _span_capture(declared_beats=515.0, captured_seconds=249.19)
+    assert measure_capture_span(capture, [TempoSegment(16.0, ALIEN_BPM)]) is None
+
+
+def test_span_is_variable_tempo_accurate():
+    """Half the span at 120 and half at 60 takes 30 s + 60 s = 90 s. A naive
+    constant-BPM read of the first tempo point would expect 60 s and report a
+    60-beat excess on a capture that is exactly right."""
+    capture = _span_capture(declared_beats=120.0, captured_seconds=90.0)
+    span = measure_capture_span(
+        capture, [TempoSegment(0.0, 120.0), TempoSegment(60.0, 60.0)]
+    )
+    assert span is not None
+    assert span.declared_seconds == pytest.approx(90.0)
+    assert span.excess_beats == pytest.approx(0.0, abs=1e-9)
+    assert span.within_tolerance
+
+
+def test_span_measures_the_master_not_the_longest_surface():
+    """Returns finalize up to a third of a beat after the master on a HEALTHY
+    capture (the stop-length ramp above). Measuring anything but the common
+    length would flag every capture ever made."""
+    capture = _span_capture(declared_beats=523.0, captured_seconds=12146176 / SR)
+    late_return = _surface(
+        "return-01", "return",
+        np.zeros((12154880, 2), dtype=np.float32),  # +0.34 beats, real number
+    )
+    capture = dataclasses.replace(capture, returns=[late_return])
+    span = measure_capture_span(capture, [TempoSegment(0.0, ALIEN_BPM)])
+    assert span is not None
+    assert span.within_tolerance
+
+
+def test_span_human_summary_states_what_it_cannot_know():
+    """The summary must not claim the capture 'started early' — length alone
+    cannot tell a head offset from a tail overrun."""
+    capture = _span_capture(declared_beats=515.0, captured_seconds=11985920 / SR)
+    span = measure_capture_span(capture, [TempoSegment(0.0, ALIEN_BPM)])
+    assert span is not None
+    summary = span.human_summary
+    assert "1.06 beats longer" in summary
+    assert "head or the tail" in summary

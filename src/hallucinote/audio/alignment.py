@@ -28,6 +28,12 @@ the offset is a pure stop-length ramp; recovering and removing a per-surface
 would carry fragilities (narrowband sources, self-reverberant stems) for no
 benefit.
 
+**Two different length questions live here.** :func:`trim_to_common_length`
+reconciles the surfaces against *each other*; :func:`measure_capture_span`
+reconciles the whole capture against the span the manifest DECLARED. A capture
+can pass the first and fail the second — every surface equal length, and the set
+covering a different stretch of the song than the render asked for.
+
 **Honest limit of this approach.** It corrects LENGTH drift only, and ASSUMES
 the heads are sample-aligned — it does NOT verify that. The assumption is
 calibration-proven for the current pipeline (δ=0), and :class:`AlignmentReport`
@@ -44,11 +50,12 @@ from __future__ import annotations
 
 import dataclasses
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Sequence
 
 import numpy as np
 
 from .io import CaptureSet, Surface
+from .section import TempoSegment, declared_span_seconds
 
 # How far a stem's content may sit from the master's before the two are no
 # longer usefully called aligned: 64 samples, ~1.3 ms at 48 kHz. That is inside
@@ -210,10 +217,121 @@ def _trim(surface: Surface, n: int) -> Surface:
     return dataclasses.replace(surface, audio=surface.audio[:n])
 
 
+# How far the captured audio may run from the span the manifest declares before
+# the capture is no longer describing itself. A quarter beat: three real captures
+# of the same song were measured (2026-09-09), and the two healthy ones sat inside
+# 0.05 beats of their declared span while the defective one ran 1.06 beats long.
+# A quarter beat is an order of magnitude clear of both, so this is a bright line
+# rather than a tuned threshold, and it stays meaningful if the healthy spread
+# doubles.
+DEFAULT_SPAN_TOLERANCE_BEATS = 0.25
+
+
+@dataclass(frozen=True)
+class CaptureSpan:
+    """Whether the captured audio is as long as the manifest says it is.
+
+    :func:`trim_to_common_length` reconciles the surfaces against *each other*;
+    this reconciles the whole capture against what the render *declared*. The two
+    are independent failures: the surfaces can agree perfectly among themselves
+    and still, together, cover a different stretch of the song than
+    ``[start_at_beat, stop_at_beat + ring_out_beats]``.
+
+    ``excess_beats`` is signed — positive means more audio than declared. It is
+    a LENGTH statement and nothing more: a capture that armed early and one that
+    disarmed late produce the same number, and telling them apart needs the
+    authored onsets, which this module does not have.
+    """
+
+    declared_beats: float
+    declared_seconds: float
+    captured_seconds: float
+    excess_beats: float
+    tolerance_beats: float
+
+    @property
+    def within_tolerance(self) -> bool:
+        return abs(self.excess_beats) <= self.tolerance_beats
+
+    def to_json_dict(self) -> dict[str, Any]:
+        return {
+            "declared_beats": self.declared_beats,
+            "declared_seconds": self.declared_seconds,
+            "captured_seconds": self.captured_seconds,
+            "excess_beats": self.excess_beats,
+            "tolerance_beats": self.tolerance_beats,
+            "within_tolerance": self.within_tolerance,
+        }
+
+    @property
+    def human_summary(self) -> str:
+        """One-line, user-facing description, shaped for the mix-review surface."""
+        if self.within_tolerance:
+            return (
+                f"Captured audio spans the declared "
+                f"{self.declared_beats:.0f} beats (within "
+                f"{self.tolerance_beats:.2f} beat)."
+            )
+        direction = "longer than" if self.excess_beats > 0 else "shorter than"
+        return (
+            f"Captured audio is {abs(self.excess_beats):.2f} beats {direction} "
+            f"the {self.declared_beats:.0f} beats the manifest declares. Every "
+            f"beat and section window in this report is computed on that "
+            f"stretched span, so the numbers are offset by up to that much. "
+            f"Whether the extra audio is at the head or the tail is not "
+            f"measurable from length alone."
+        )
+
+
+def measure_capture_span(
+    capture: CaptureSet,
+    tempo_segments: Sequence[TempoSegment] = (),
+    *,
+    tolerance_beats: float = DEFAULT_SPAN_TOLERANCE_BEATS,
+) -> CaptureSpan | None:
+    """Compare the captured audio's duration against the manifest's declared span.
+
+    Measures the MASTER, which after :func:`trim_to_common_length` carries the
+    common length. Per-surface lengths must not be used: the returns routinely
+    finalize a third of a beat after the master on a perfectly healthy capture
+    (the stop-length ramp this module's docstring describes), so a per-surface
+    comparison flags every capture ever made.
+
+    ``None`` when :func:`declared_span_seconds` has no tempo evidence to answer
+    with — the caller reports that as a skipped analysis rather than silence.
+    """
+    declared_beats = (
+        capture.stop_at_beat + capture.ring_out_beats - capture.start_at_beat
+    )
+    declared_seconds = declared_span_seconds(
+        capture.start_at_beat,
+        capture.stop_at_beat + capture.ring_out_beats,
+        tempo_segments,
+    )
+    if declared_seconds is None or declared_seconds <= 0:
+        return None
+
+    captured_seconds = capture.master.audio.shape[0] / capture.master.sample_rate
+    # Convert the excess to beats at the span's own average rate rather than a
+    # nominal bpm, so a variable-tempo song reports an excess in the beats it
+    # actually has.
+    beats_per_second = declared_beats / declared_seconds
+    return CaptureSpan(
+        declared_beats=declared_beats,
+        declared_seconds=declared_seconds,
+        captured_seconds=captured_seconds,
+        excess_beats=(captured_seconds - declared_seconds) * beats_per_second,
+        tolerance_beats=tolerance_beats,
+    )
+
+
 __all__ = [
+    "DEFAULT_SPAN_TOLERANCE_BEATS",
     "PDC_TOLERANCE_SAMPLES",
     "AlignmentReport",
+    "CaptureSpan",
     "SurfaceTrim",
     "cross_correlation_peak_lag",
+    "measure_capture_span",
     "trim_to_common_length",
 ]

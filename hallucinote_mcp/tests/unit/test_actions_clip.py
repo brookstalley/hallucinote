@@ -2295,6 +2295,8 @@ def test_set_property_markers_are_not_audio_only(loaded_actions, property_name):
     ("pitch_fine", -51.0),
     ("warp_mode", 7),
     ("warp_mode", -1),
+    ("gain", -0.5),
+    ("gain", 1.5),
 ])
 def test_set_property_conform_bounds_are_enforced(
     loaded_actions, property_name, value
@@ -2545,3 +2547,54 @@ def test_set_property_enum_matches_the_handler_property_table(loaded_actions):
     action = schema.get("ableton_clip", "set_property")
     declared = set(next(p for p in action.params if p.name == "property").enum or ())
     assert declared == set(handler_table)
+
+
+def test_set_property_gain_domain_matches_live_and_the_db(loaded_actions):
+    """Live clip gain is LINEAR 0.0-1.0, not dB (lom-audio-clip-surface.md §4,
+    cross-checked against the installed 12.4.1 LomTypes gate table), and
+    `db/mutations/clips.py` `_validate_audio_fields` enforces exactly that
+    range. A wire that accepted a negative gain would take a value neither
+    Live nor the DB can hold and would diverge the two authoring surfaces.
+    """
+    ctx = FakeCtx()
+    ctx.song.tracks[1].clip_slots[0].clip = FakeClip(kind="audio")
+    for value in (0.0, 1.0):
+        resp = dispatch(
+            Request(
+                tool="ableton_clip", action="set_property",
+                params={
+                    "track_index": 2, "location": "session", "clip_index": 1,
+                    "property": "gain", "value": value,
+                },
+            ),
+            context=ctx,
+        )
+        assert resp.ok is True, (value, resp.error)
+
+
+def test_replace_that_fails_to_recreate_says_the_slot_is_now_empty(loaded_actions):
+    """A slot holds one clip, so replace=True deletes before it creates, and
+    Live only refuses a wrong-kind create after that point. The old clip is
+    gone either way; what the caller must not get is an error that reads like
+    a rejected call which changed nothing.
+    """
+    ctx = FakeCtx()
+    midi_track = ctx.song.tracks[0]
+    slot = midi_track.clip_slots[0]
+    slot.clip = FakeClip(kind="midi")
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="create",
+            params={
+                "track_index": 1, "location": "session", "clip_index": 1,
+                "kind": "audio", "audio_path": "/tmp/line.wav",
+                "replace": True,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "now EMPTY" in err, err
+    assert "audio track" in err, err
+    assert slot.clip is None

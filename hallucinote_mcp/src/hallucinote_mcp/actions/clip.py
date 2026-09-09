@@ -333,7 +333,8 @@ register(
                 name="value",
                 type="float",
                 description=(
-                    "gain: -1.0..1.0 (audio only). pitch / pitch_coarse: "
+                    "gain: 0.0..1.0 LINEAR, not dB (audio only). "
+                    "pitch / pitch_coarse: "
                     "-48..48 semitones (audio only). pitch_fine: -50.0..50.0 "
                     "cents (audio only). warp / warping: 0/1 truthy (audio "
                     "only). "

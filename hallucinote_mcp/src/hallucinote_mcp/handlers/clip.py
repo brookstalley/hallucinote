@@ -549,6 +549,7 @@ def create_handler(
                 f"for session view of track {track_index}"
             )
         slot = slots[clip_index - 1]
+        replaced_existing = False
         if slot.clip is not None:
             if not replace:
                 raise ValueError(
@@ -557,24 +558,42 @@ def create_handler(
                     f"recreate atomically"
                 )
             slot.delete_clip()
-        if kind == "audio":
-            create_fn = getattr(slot, "create_audio_clip", None)
-            if create_fn is None:
-                raise NotImplementedError(
-                    f"the clip slot at (track={track_index}, session, "
-                    f"{clip_index}) does not expose create_audio_clip. That "
-                    f"call landed in Live 12.2 and Live 12.4 is this "
-                    f"project's floor — upgrade Live, or drag the file into "
-                    f"the slot from Live's browser by hand."
+            replaced_existing = True
+        # A slot holds at most one clip, so replace=True must delete BEFORE it
+        # creates — and Live only refuses a wrong-kind or bad-path create after
+        # that point. The old clip is then already gone. Nothing here can give
+        # it back, so the one thing owed is that the caller LEARNS it: a bare
+        # "audio clips can only be created on audio tracks" reads like a
+        # rejected call that changed nothing, which is the reported-OK-without-
+        # determining-state failure wearing an error's clothes.
+        try:
+            if kind == "audio":
+                create_fn = getattr(slot, "create_audio_clip", None)
+                if create_fn is None:
+                    raise NotImplementedError(
+                        f"the clip slot at (track={track_index}, session, "
+                        f"{clip_index}) does not expose create_audio_clip. That "
+                        f"call landed in Live 12.2 and Live 12.4 is this "
+                        f"project's floor — upgrade Live, or drag the file into "
+                        f"the slot from Live's browser by hand."
+                    )
+                _create_audio_clip(
+                    create_fn,
+                    (abs_audio_path,),
+                    track_index=track_index,
+                    audio_path=abs_audio_path,
                 )
-            _create_audio_clip(
-                create_fn,
-                (abs_audio_path,),
-                track_index=track_index,
-                audio_path=abs_audio_path,
-            )
-        else:
-            slot.create_clip(midi_length)
+            else:
+                slot.create_clip(midi_length)
+        except Exception as exc:
+            if not replaced_existing:
+                raise
+            raise type(exc)(
+                f"{exc} — NOTE: replace=True had already deleted the clip that "
+                f"was in session slot {clip_index} on track {track_index}, so "
+                f"that slot is now EMPTY. The previous clip is not recoverable "
+                f"through this bridge; undo in Live restores it."
+            ) from exc
         clip = slot.clip
         if clip is None:
             raise RuntimeError(
@@ -861,7 +880,7 @@ _CLIP_PROPERTIES: dict[str, tuple[str, Any, tuple[float, float] | None]] = {
     # loop points are: the ceiling is the clip's own extent.
     #
     # No ``reverse``: Live exposes no settable reverse on a Clip.
-    "gain":         ("gain",         _coerce_float, (-1.0, 1.0)),
+    "gain":         ("gain",         _coerce_float, (0.0, 1.0)),
     "pitch":        ("pitch_coarse", _coerce_int,   (-48, 48)),
     "pitch_coarse": ("pitch_coarse", _coerce_int,   (-48, 48)),
     "pitch_fine":   ("pitch_fine",   _coerce_float, (-50.0, 50.0)),

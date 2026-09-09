@@ -52,6 +52,8 @@ put any narrative there.
 
 **For any analyzer whose input is *detected* (onset detection, pitch tracking, beat tracking) rather than given, run real/representative cases through the actual pipeline and read the numbers BEFORE writing test assertions. The detection stage has latency and failure modes that abstract reasoning misses, and a fixture chosen for convenience can hide them.**
 
+**Sharpened for DEFECT detectors: the negative control has to be real program material, not clean fixtures — a synthetic corpus is structurally incapable of containing the case that breaks you.** A detector's dangerous failure is the false positive, and a hand-built corpus contains only the shapes its author already imagined. Two lenses shipped one each, both accusing healthy audio, and neither was reachable synthetically: clipping keyed on amplitude when captured stems are pre-fader float32 (a healthy part peaking at +6.30 dBFS drew 7970 phantom clip runs — clipping is a FLAT TOP, not a loud one), and every uncorrelated stem pair reported a confident lag because a cross-correlation always peaks somewhere. Ask for a real capture, then ask again for a known-CLEAN one; proving the detector stays SILENT is the harder and more valuable half.
+
 ## A staleness/version signature must be content-derived, never hand-bumped
 
 **When you surface a "version" or "signature" so a consumer can tell whether loaded code is stale, derive it from the content (hash the source), not a hand-maintained string. Forgetting to bump a manual version is the exact failure mode the signature exists to catch — a manual bump and the stale-reload it's meant to detect are indistinguishable.**

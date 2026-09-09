@@ -1468,3 +1468,164 @@ def test_analyze_mix_populates_section_transients_when_enabled(tmp_path: Path):
     assert isinstance(j[0]["hit_count"], int)
     assert isinstance(j[0]["censored_t20_hits"], int)
     assert sj["transient_skips"][0]["track_id"] == "track:2"
+
+
+def test_analyze_mix_populates_render_integrity_and_serializes_it(tmp_path: Path):
+    """The three render-level lenses populate and round-trip through JSON.
+
+    Integrity, phase and reconciliation describe the CAPTURE rather than a
+    section, so they sit at the top level beside ``alignment`` — and each must be
+    distinguishable from "did not run", which is why the pass is asserted present
+    rather than merely non-crashing.
+    """
+    from .fixtures import pink_noise, sine
+
+    bass = sine(80.0, 4.0, amplitude=0.3)
+    lead = pink_noise(4.0, rng=np.random.default_rng(3))
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "Bass", bass), ("track:2", "Lead", lead)],
+        master_audio=(bass + lead).astype(np.float32),
+        start_at_beat=0.0,
+        stop_at_beat=8.0,
+    )
+
+    # Explicit: the flag defaults OFF, like every other analysis flag here,
+    # and the handler is what turns it on for a real render.
+    report = analyze_mix(
+        captures_dir, analyze_integrity=True, analyze_imaging=True
+    )
+
+    # One integrity row per captured surface, each naming what it measured.
+    measured = {row.track_id for row in report.integrity}
+    assert {"track:1", "track:2"} <= measured, measured
+    assert len(report.integrity) == 3, "master, and one row per stem"
+    assert all(not row.silent for row in report.integrity)
+
+    # A clean synthetic render carries no damage.
+    assert all(row.clip_events == [] for row in report.integrity)
+
+    # One phase relation for the single stem pair, and the lag carries its
+    # confidence so a coincidental peak is not read as device latency.
+    assert len(report.phase_relations) == 1
+    pair = report.phase_relations[0]
+    assert pair.skipped is None
+    # A sine and pink noise share no structure, so whatever lag the argmax found
+    # must arrive labelled as not worth believing.
+    assert 0.0 <= pair.lag_correlation <= 1.0
+    assert not pair.polarity_inverted
+
+    # The master IS the stem sum here, so reconciliation should find it faithful.
+    assert report.sum_reconciliation is not None
+    assert report.sum_reconciliation.skipped is None
+
+    payload = report.to_json_dict()
+    assert len(payload["integrity"]) == 3
+    assert len(payload["phase_relations"]) == 1
+    assert payload["sum_reconciliation"] is not None
+    assert payload["stems"][0]["imaging"] is not None
+    assert [b["band"] for b in payload["stems"][0]["imaging"]["bands"]]
+    # Valid JSON under strict mode is the contract every consumer relies on.
+    json.dumps(payload, allow_nan=False)
+
+
+def test_analyze_mix_can_skip_render_integrity(tmp_path: Path):
+    """``analyze_integrity=False`` leaves the three lists empty rather than
+    half-populated, so "off" and "clean" never look alike."""
+    from .fixtures import sine
+
+    tone = sine(220.0, 2.0, amplitude=0.3)
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "Tone", tone)],
+        master_audio=tone,
+        start_at_beat=0.0,
+        stop_at_beat=4.0,
+    )
+
+    report = analyze_mix(captures_dir, analyze_integrity=False)
+
+    assert report.integrity == []
+    assert report.phase_relations == []
+    assert report.sum_reconciliation is None
+
+
+def test_per_section_stems_carry_imaging(tmp_path: Path):
+    """Imaging is measured per SECTION, not only whole-capture.
+
+    "The chorus goes wide and the verse is narrow" is the soundstage question
+    people actually ask, and a whole-capture average is precisely the reading
+    that cannot answer it. This pins that the section path populates the field
+    rather than leaving it None — the failure mode is silent, because a None
+    reads as "not measured" and nobody notices the sections never had one.
+    """
+    from .fixtures import sine
+
+    tone = sine(300.0, 8.0, amplitude=0.3)
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "Tone", tone)],
+        master_audio=tone,
+        start_at_beat=0.0,
+        stop_at_beat=16.0,
+    )
+    sections = [
+        SectionWindow(name="verse", start_beat=0.0, end_beat=8.0),
+        SectionWindow(name="chorus", start_beat=8.0, end_beat=16.0),
+    ]
+
+    report = analyze_mix(captures_dir, sections=sections, analyze_imaging=True)
+
+    assert len(report.per_section) == 2
+    for section in report.per_section:
+        assert section.master.imaging is not None, section.section_name
+        for stem in section.stems:
+            assert stem.imaging is not None, (section.section_name, stem.track_id)
+
+    payload = report.to_json_dict()
+    assert payload["per_section"][0]["stems"][0]["imaging"] is not None
+
+
+def test_analyze_mix_passes_stem_gains_as_linear_gains(tmp_path: Path):
+    """The gain UNIT is a seam, and a seam is what nobody owns by default.
+
+    ``stem_gains`` carries LINEAR gains — the handler converts Live's normalized
+    fader value through the calibrated curve exactly once. A second conversion
+    inside the reconciliation mis-levelled a unity fader by +6 dB and a -14 dB
+    fader by -20 dB, and did it while ``gains_assumed_unity`` reported ``False``,
+    so the report asserted the levels were modelled while they were wrong.
+
+    Neither side's own tests could see it: the module's tests were
+    self-consistent in its own convention, and the analyze-level test passed no
+    gains at all. This one exercises the PRODUCTION argument shape — a non-unity
+    linear gain map — which is the only place the mismatch is visible.
+    """
+    from .fixtures import pink_noise, sine
+
+    bass = sine(80.0, 4.0, amplitude=0.4)
+    lead = pink_noise(4.0, rng=np.random.default_rng(9))
+    half = 10.0 ** (-6.0 / 20.0)
+    # The master is what Live would produce: each stem at its LINEAR gain.
+    master = (bass * half + lead).astype(np.float32)
+
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "Bass", bass), ("track:2", "Lead", lead)],
+        master_audio=master,
+        start_at_beat=0.0,
+        stop_at_beat=8.0,
+    )
+
+    report = analyze_mix(
+        captures_dir,
+        analyze_integrity=True,
+        stem_gains={"track:1": half, "track:2": 1.0},
+    )
+
+    recon = report.sum_reconciliation
+    assert recon is not None
+    assert recon.gains_assumed_unity is False
+    # Interpreting these as normalized fader values instead would scale track:1
+    # by live_fader_gain(0.501) and blow the residual apart.
+    assert recon.residual_db < -20.0, recon
+    assert recon.gain_offset_db == pytest.approx(0.0, abs=1.0), recon

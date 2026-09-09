@@ -32,6 +32,89 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-09-08 — The report learns to ask whether the audio is damaged
+
+<!-- prawduct: type=feat | scope=render-integrity -->
+
+Every lens in the mix report measured *musical realization against intent*.
+Nothing measured whether the captured audio was **defective**. Across 23 modules
+in `audio/` there was no clipping detection, no DC offset, no click or dropout
+detection, no polarity check and no stem-vs-master reconciliation; the only
+clip-adjacent number anywhere was the master's delivered true peak. The string
+`click` appeared only as a *musical* term — the kick beater's 2-6 kHz band.
+
+Four new lenses close that. `integrity.py` finds clipping, DC offset, dropouts,
+clicks and truncated decays per surface; `phase.py` finds polarity inversions,
+time offsets and per-band cancellation between surfaces; `imaging.py` gives
+per-band correlation, width and image position; `reconcile.py` asks whether the
+captured surfaces sum to the captured master.
+
+This family is exempt from the analyzer freeze, and the reason matters: the
+2026-08-10 owner ruling gates lenses whose thresholds *encode taste*, and a
+sample discontinuity has physical ground truth. It is also the only family that
+may name a defect as a defect rather than reporting against declared intent.
+
+**It is upstream of the rest of the report.** A click reads as an onset to
+`onsets.py`, so the timing and cross-rhythm lenses faithfully report a groove
+nobody played; a dropout reads as a written level move; a truncated capture
+reads as a short decay. `/mix-review` now reads integrity before any musical
+number and treats a damaged surface's musical readings as suspect.
+
+**Two false positives were found by running the lenses over a real render, and
+neither would have survived to a listening test.** The clipping detector keyed
+on amplitude — but captured stems are pre-fader float32, so a healthy part
+peaking at +6.30 dBFS spends most of every cycle above full scale without ever
+going flat, and it drew 7970 clip runs from undamaged audio. Clipping is a flat
+top, not a loud one, and keying on samples pinned to one value takes that to
+zero while still catching flat-topping at any level. Separately, a
+cross-correlation always peaks somewhere: every uncorrelated stem pair reported
+a confident-looking offset of tens of milliseconds at r ~ 0, which is two parts
+sharing a downbeat rather than a device delay. `lag_correlation` now carries how
+much of a lag reading to believe, because reporting coincidence as latency is
+worse than reporting no lag at all.
+
+Two delegates building different lenses independently reached for the same two
+private helpers rather than write a second definition of "energy in this band"
+and of the degenerate-correlation cases. Two arrivals at one seam is the signal
+that these were public in all but name, so `attribution.band_energy` and
+`stereo.channel_correlation` now say so. The unification is only partial and
+deliberately so: `phase` and `reconcile` keep their own correlation conventions
+because they answer different degenerate cases, and consolidating them would be
+a behaviour change wearing a refactor's clothes.
+
+**An independent review then found four blocking defects, three of them the same
+shape as the two above — a threshold that is physically grounded but wrong for
+real material.** `stem_gains` was being run through Live's fader curve a second
+time, mis-levelling a unity fader by +6 dB and a −14 dB one by −20 dB while the
+report asserted the levels were modelled. The discontinuity detector derived one
+global sigma over a non-stationary signal, so any percussive part read as tens of
+thousands of clicks — 32,752 against 31 real onsets on drum-like material; it is
+now computed per 25 ms window. The new flat-top clipping rule had picked up a
+false positive at the *opposite* end of the range from the one it fixed, because
+its tolerance was absolute while a crest's flatness scales with amplitude — a
+clean 20 Hz sine at −12 dBFS drew 32 phantom runs. And a zero-run gap was
+accepted if *either* edge was abrupt, which made every musical rest a dropout.
+
+Running the fixed detectors back over the finished song then found the last one,
+which no synthetic fixture would have posed: a heavily-processed vocal produced
+42,578 flagged steps inside 660 windows — about 65 per window, which is very
+nearly every sample in those spans. That is one *region* of step-rich material,
+not 65 defects, and distortion, bitcrushing and granular processing produce it
+because it is the sound. Events now collapse to one region per window, which took
+the drum stem from 638,099 to 4 and the vocal to 1,296 regions over 6.5% of its
+length. No threshold separates "a splice" from "a texture" — that decision needs
+the song's intent, so the lens reports the count and `/mix-review` reads it,
+exactly as every other lens here works.
+
+The lesson the plan recorded after the first real-capture pass generalized further
+than it was written: being *exempt from the analyzer freeze* is not the same as
+being *calibrated*. Physical ground truth belongs to the quantity, not to the
+threshold placed on it.
+
+`cross_correlation_peak_lag` also came out of the test tree, where it had sat
+since the MVP behind a docstring promising a promotion that never happened,
+leaving `alignment.py` pointing at a function in `tests/`.
+
 ## 2026-09-08 — Live plays from a position `current_song_time` never moved
 
 <!-- prawduct: type=fix | scope=perform-start-position -->

@@ -1,6 +1,6 @@
 ---
 name: mix-review
-description: Holistic, intent-aware mix review for a song. Recalls the song's declared composer intent, reads the whole MixReport (masking + bed buildup + loudness + attribution + reverb + stereo image / mono compatibility + per-part timing/feel + cross-rhythm) per section, and interprets the measurements AGAINST intent — surfacing only the collisions that hurt the element meant to win each section, framed as a producer's question, never a verdict. The single read-side surface over all audio analyses; masking is its richest input. Learns revealed intent back as a markdown annotation so it never re-flags. Use after an analysis pass, or when the user asks "how's the mix?", "is anything masking the vocal?", "is the groove tight?", "will this survive mono?", "is that width control doing anything?", "review the chorus", etc. Uses Max for Live (Live Suite, or the M4L add-on) — it reads rendered audio; without Max for Live use /compose-review (symbolic) instead.
+description: Holistic, intent-aware mix review for a song. Recalls the song's declared composer intent, reads the whole MixReport (render integrity: clipping / dropouts / clicks / phase and polarity / stem-sum reconciliation, then masking + bed buildup + loudness + attribution + reverb + stereo image / soundstage per band / mono compatibility + per-part timing/feel + cross-rhythm) per section, and interprets the measurements AGAINST intent — surfacing only the collisions that hurt the element meant to win each section, framed as a producer's question, never a verdict. The single read-side surface over all audio analyses; masking is its richest input. Learns revealed intent back as a markdown annotation so it never re-flags. Use after an analysis pass, or when the user asks "how's the mix?", "is anything masking the vocal?", "is the groove tight?", "will this survive mono?", "is that width control doing anything?", "is anything clipping?", "are there clicks or dropouts?", "is anything out of phase?", "where does each part sit in the stereo field?", "review the chorus", etc. Uses Max for Live (Live Suite, or the M4L add-on) — it reads rendered audio; without Max for Live use /compose-review (symbolic) instead.
 argument-hint: <song-slug> [section] [--focus masking|loudness|reverb|all]
 user-invocable: true
 disable-model-invocation: false
@@ -80,8 +80,66 @@ loosely and **ask** before treating a finding as a problem.
 
 ### 2. MEASURE — read the whole MixReport
 
+**Read `integrity` FIRST, before any musical number.** It is the only family in
+the report that asks whether the audio is *damaged* rather than whether it
+realized its intent, and it is upstream of everything else: a click reads as an
+onset to the timing lens, so a groove that was never played gets reported
+faithfully; a dropout reads as a written level move; a truncated capture reads as
+a short decay. If a surface shows damage, say so and treat that surface's
+musical readings as suspect until it is re-rendered — do not open a feel
+conversation about a part whose capture has a hole in it.
+
+This family is also the only one that may state a defect **as a defect**. Every
+musical lens here reports against declared intent and never grades; a sample
+discontinuity has physical ground truth, so it is named plainly.
+
 Read the latest report JSON under `songs/<slug>/analysis/` (or run the analysis
-first — see "Refreshing the analysis"). For each section, you have:
+first — see "Refreshing the analysis"). At the **top level**, describing the
+render rather than any section:
+
+- `integrity[]` — one row per captured surface (`track_id`). `clip_events` +
+  `worst_clip_run_samples` (flat-topping, which is *not* the same as loud — a
+  pre-fader stem legitimately peaks above 0 dBFS and `peak_dbfs` beside the runs
+  is how you tell), `dropouts` (buffer holes — `kind` separates a bit-exact
+  `zero_run` from an `rms_collapse`), `discontinuities` (clicks and pops),
+  `dc_offset_dbfs`, `tail_level_dbfs` (signal still running at the last sample =
+  the capture cut a decay), `silent`. **`checks_skipped` is load-bearing**: an
+  empty event list means "clean" only when nothing is skipped, and a truncated
+  list says so there. Known false positive: a hard-gated part rendered without
+  reverb reads its digital-silence rests as dropouts.
+- `phase_relations[]` — pairwise, the only lens that sees two surfaces
+  *destroying each other* (masking says B is buried under A; this says A and B
+  cancelled). `broadband_cancellation_db` and per-band `band_cancellation`:
+  **-3 dB is the healthy reading for uncorrelated parts, not damage** — 0 dB is
+  coherent, and it is a *negative* excursion beyond -3 that means energy
+  disappeared. `polarity_inverted` is a one-bit fault worth fixing on sight.
+  **Never report `lag_samples` without reading `lag_correlation` beside it**: a
+  cross-correlation always peaks somewhere, so unrelated parts always yield a
+  lag, and on a real song every uncorrelated pair shows tens of milliseconds at
+  near-zero confidence. Below ~0.5 the lag is two parts sharing a downbeat; a
+  genuine uncompensated plugin delay sits above 0.9 and IS worth chasing,
+  because the timing lens will otherwise report it as laid-back feel.
+- `sum_reconciliation` — do the captured surfaces sum to the captured master?
+  The one check that validates the capture *set* rather than its members. A
+  non-zero `residual_db` is **not** by itself a fault: a nonlinear master chain
+  produces one legitimately, and `gains_assumed_unity` tells you whether fader
+  volumes were modelled at all. Read `band_residuals` **against each other**,
+  never against an absolute floor — they share one broadband gain match, so a
+  large discrepancy lifts every band by the same trim. `worst_offender` names
+  the surface whose exclusion most reduces the residual; a high residual with
+  `worst_offender: null` is the signature of a surface that was never captured.
+
+Per-surface, beside `timbre` and `stereo`:
+
+- `imaging` — where the part sits and where its width lives. `balance_db` and
+  `position` catch a pan bug outright; `width` is 0 for mono and approaches 1 as
+  the channels decorrelate; `bands[]` gives correlation and width per band,
+  which is the case broadband `stereo` explicitly cannot see (a comb filter in
+  the top over a mono low end averages to something unremarkable). A hard-panned
+  point source reads `position` ±1 with `width` 0 — that is correct, not a bug:
+  any ordinary pan law keeps L and R perfectly correlated.
+
+For each section, you have:
 
 - `masking` — ranked ordered pairs `masker → maskee`, `masked_fraction` (0–1),
   `dominant_band` (musical region). "Drums masks Bass 0.61 in lows." Each entry

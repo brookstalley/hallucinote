@@ -179,7 +179,7 @@ def master_bus_attribution(
                 stem_band_energies.append((stem.track_id, 0.0))
                 continue
             mono = _to_mono(seg)
-            energy = _single_band_energy(
+            energy = band_energy(
                 mono, sample_rate, BANDS[dominant_idx][1], BANDS[dominant_idx][2]
             )
             stem_band_energies.append((stem.track_id, float(energy)))
@@ -239,7 +239,7 @@ def band_attribution(
             if mono.shape[0] == 0:
                 energies.append((tid, 0.0))
                 continue
-            energies.append((tid, _single_band_energy(mono, sample_rate, lo, hi)))
+            energies.append((tid, band_energy(mono, sample_rate, lo, hi)))
         total = sum(e for _, e in energies)
         if total <= 0:
             ranked: list[tuple[str, float]] = []
@@ -261,11 +261,11 @@ def _band_energies(mono: np.ndarray, sr: int) -> np.ndarray:
     """RMS energy per band (one value per band in BANDS order)."""
     energies = np.zeros(len(BANDS), dtype=np.float64)
     for i, (_, lo, hi) in enumerate(BANDS):
-        energies[i] = _single_band_energy(mono, sr, lo, hi)
+        energies[i] = band_energy(mono, sr, lo, hi)
     return energies
 
 
-def _single_band_energy(mono: np.ndarray, sr: int, lo_hz: float, hi_hz: float) -> float:
+def band_energy(mono: np.ndarray, sr: int, lo_hz: float, hi_hz: float) -> float:
     """Bandpass-filter then return RMS energy in the band.
 
     Uses a Butterworth bandpass (order 4) via filtfilt for zero-phase
@@ -317,6 +317,7 @@ def _merge_close_runs(
 
 __all__ = [
     "BANDS",
+    "band_energy",
     "OvershootWindow",
     "find_master_overshoots",
     "master_bus_attribution",

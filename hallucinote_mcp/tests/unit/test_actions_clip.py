@@ -2598,3 +2598,42 @@ def test_replace_that_fails_to_recreate_says_the_slot_is_now_empty(loaded_action
     assert "now EMPTY" in err, err
     assert "audio track" in err, err
     assert slot.clip is None
+
+
+def test_replace_failure_disclosure_survives_an_awkward_exception_type(loaded_actions):
+    """The disclosure is built by re-raising the original exception's TYPE with a
+    new message, which assumes a constructor that takes one string. Not every
+    exception has one, and this is the worst possible path for a raise inside the
+    handler: the clip is already deleted, so losing the disclosure would leave a
+    caller with a TypeError and no idea their slot was emptied.
+    """
+    class AwkwardError(Exception):
+        def __init__(self, a, b):  # noqa: D107 - deliberately not single-arg
+            super().__init__(a, b)
+            self.a, self.b = a, b
+
+    ctx = FakeCtx()
+    track = ctx.song.tracks[1]
+    slot = track.clip_slots[0]
+    slot.clip = FakeClip(kind="audio")
+
+    def _boom(_path):
+        raise AwkwardError("live blew up", 42)
+
+    slot.create_audio_clip = _boom
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="create",
+            params={
+                "track_index": 2, "location": "session", "clip_index": 1,
+                "kind": "audio", "audio_path": "/tmp/line.wav",
+                "replace": True,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "now EMPTY" in err, err
+    assert "live blew up" in err, err
+    assert slot.clip is None

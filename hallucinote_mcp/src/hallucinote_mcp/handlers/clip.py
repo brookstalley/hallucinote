@@ -588,12 +588,23 @@ def create_handler(
         except Exception as exc:
             if not replaced_existing:
                 raise
-            raise type(exc)(
+            message = (
                 f"{exc} — NOTE: replace=True had already deleted the clip that "
                 f"was in session slot {clip_index} on track {track_index}, so "
                 f"that slot is now EMPTY. The previous clip is not recoverable "
                 f"through this bridge; undo in Live restores it."
-            ) from exc
+            )
+            # Preserve the original type where it can carry a plain message, so
+            # a caller catching ValueError still catches one. Not every
+            # exception's __init__ takes a single string, though, and this is
+            # the ONE path where a raise-inside-the-handler would be worst: the
+            # user's clip is already deleted, and a TypeError here would lose
+            # both the original error and the disclosure. So the fallback is
+            # unconditional rather than a type whitelist.
+            try:
+                raise type(exc)(message) from exc
+            except TypeError:
+                raise RuntimeError(message) from exc
         clip = slot.clip
         if clip is None:
             raise RuntimeError(

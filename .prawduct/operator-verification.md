@@ -15,7 +15,7 @@ pending entries when `operator_verification_required: true`.
 
 ---
 
-## SMP-6V2K wave 1 — an authored sample lands in Live, and a dragged-in one comes back (2026-09-09) — **DISCHARGED 2026-09-09 on Live 12.4.5** (one box owed to the operator's ear, one unreachable — both named below)
+## SMP-6V2K wave 1 — an authored sample lands in Live, and a dragged-in one comes back (2026-09-09) — **DISCHARGED 2026-09-09 on Live 12.4.5** (one box unreachable on 12.4.x, named below; every other box including audibility is confirmed)
 
 Plan: `.prawduct/artifacts/plans/SMP-6V2K/build-plan.md`. Backlog **#284**, **#268**;
 verdicts land on **#237** and **#330**. Needs Live 12.4.x open with a set loaded, the
@@ -119,7 +119,7 @@ fingerprint — re-vendor (`/hallucinote:ableton-mcp-install`) + Live restart be
 
 ### Chunk 04 — a ride under a dialogue line
 
-- [x] A volume ride authored under an audio session clip pushes and is **audible** in the set — pushed (`[envelopes] ok (1 call(s))`) and reads back `exists: true`, flat 0.5 from beat 0.25 across the clip (the writer's insert-step semantics; the 0.9 endpoint at beat 8 sits at the sampled range's edge). **Audibility is the operator's ear** — the set is open; press play on Sample slot 1
+- [x] A volume ride authored under an audio session clip pushes and is **audible** in the set — pushed (`[envelopes] ok (1 call(s))`) and reads back `exists: true`, flat 0.5 from beat 0.25 across the clip (the writer's insert-step semantics; the 0.9 endpoint at beat 8 sits at the sampled range's edge). **Audible — confirmed by the operator 2026-09-09** (Sample slot 1, the pulsed tone drops under the ride)
 - [x] An arrangement-clip envelope on an audio host is still refused (probe row 2 is definitive) — the read side refuses identically: `read_envelope target_kind='mixer_volume' on an arrangement clip is not supported by Live 12.4's LOM (same constraint as write_envelope)`; the write refusal is probe row 2 and was not re-run
 
 ### Chunk 05 — the round trip that makes sketching work

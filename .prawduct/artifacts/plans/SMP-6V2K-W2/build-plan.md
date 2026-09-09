@@ -244,7 +244,7 @@ Chunks 07, 14 and the #509 probe carry live "Done when" clauses only chunk 17 di
 `capability-truth.md` is updated by chunk 16 to say exactly what has and has not run
 against Live.
 
-- [ ] Chunk 00: contracts, extras, the slot floor *(coordinator, before dispatch)*
+- [x] Chunk 00: contracts, extras, the slot floor *(coordinator, before dispatch)* — built, reviewed (4 warnings fixed) 2026-09-09
 - [ ] Chunk 01: asset store — ingest, normalize, manifest *(wave A)*
 - [ ] Chunk 02: the second front door — a sample loader and its feature streams *(wave A)*
 - [ ] Chunk 03: spectral fields — symbolic from the score, measured from the capture set *(wave A)*
@@ -265,7 +265,7 @@ against Live.
 Context: plan drawn 2026-09-09 on the merged, unreleased wave 1 (develop `c86df39`); owner
 handed off the same day ("go using as much fanout as will be efficient"). Chunk 11 deferred
 at dispatch. The wave-1 plan stays live until the develop→main release; this plan declares
-its own branch so both resolve. Next: wave A dispatched from the chunk-00 commit.
+its own branch so both resolve. Wave A dispatched from the chunk-00 commit; eleven delegates out. Merged so far: 01, 08, 09, 10, 12 (unticked until their review). Next: reap 02–07, then the wave-A cross-delegate read, then wave B.
 
 ---
 

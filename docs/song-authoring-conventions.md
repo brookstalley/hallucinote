@@ -584,9 +584,48 @@ What that means when you author one:
 
 ## Audio-track + song-spanning envelopes (ENV-9P4T: now performed)
 
-**Mixer / pan / send / device envelopes on audio tracks** are authorable. An audio track has no MIDI session clip to host a per-clip envelope, so a clip-independent (e.g. song-spanning) ride routes to **perform** — a continuous arrangement lane, exactly like a plain or group track. (A per-clip ride that *is* covered by a single audio session clip is still refused, pending the session-audio-clip push surface CLP-AUD2.)
+**Mixer / pan / send / device envelopes on audio tracks** are authorable, and route exactly like a MIDI host's: covered by a single session clip → that clip carries the ride; covered by none → **perform**, a continuous arrangement lane, like a plain or group track. An audio *session clip* hosts an envelope perfectly well — `Clip.create_automation_envelope` is parameter-keyed and clip-type-agnostic — so a volume ride or send throw under a dialogue line is just an envelope. Arrangement clips host none, on any track kind; that is Live's limit, not ours.
 
 **Long envelopes that no single session clip covers** — midi OR audio hosts — also perform. The planner infers the route from the envelope's span: covered by one session clip → per-clip (session-clip route); not covered → perform (continuous ride). So a song-spanning volume/pan/send ride needs no hand-partitioning; it's span-bounded, not clip-bounded. A within-one-clip envelope still rides that clip.
+
+---
+
+## Referencing a sample (audio clips)
+
+A sample is song material, so it lives with the song and is referenced from
+`build.py` like anything else:
+
+```
+songs/<slug>/
+  assets/                        # audio the song is built from
+```
+
+**The path form is load-bearing.** `clips.audio_file` carries **song-relative
+POSIX** when the file lives under the song dir (`assets/line-01.wav`) and an
+**absolute** path when it does not. Those are the only two forms. Do not
+hand-write a `~`-prefixed path: the resolver this column is read back through
+does not expand `~`, so a `~` form resolves as a *relative* path under the song
+dir and fails at the next push. Pull writes the right form for you when it
+ingests a clip you dragged into Live.
+
+**Conform in Live first; commit a derived asset when you can hear why.** Live's
+warp (Complex Pro for speech), `pitch_coarse`/`pitch_fine`, clip gain and the
+start/end markers are non-destructive, modeled in the DB, and cost one push.
+They are the first reach. An offline transform is higher quality, costs a file
+somebody has to be able to regenerate, and earns its place for formant-sensitive
+work and for chopping — not by default. The producer-practice guardrail holds
+underneath: cut-and-slide before time-stretch, because stretch smears formants.
+
+**What is not there yet.** Placing and conforming is built; acquiring,
+transforming and deriving are not. There is no extraction from a media file, no
+pitch shift or stretch or chop that Hallucinote performs itself, no assigning a
+sample to a Simpler or Sampler, and no way yet to read a sample's features and
+compose *from* them. `capability-truth.md`'s audio row is the current answer;
+believe it over this paragraph if the two ever drift.
+
+Movie dialogue and commercial recordings are somebody's copyright. Personal and
+creative use is one thing and distributing a released track built on it is
+another; clearance is yours to judge, not the tool's.
 
 ---
 

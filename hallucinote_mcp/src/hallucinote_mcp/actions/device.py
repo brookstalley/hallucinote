@@ -3,7 +3,7 @@
 Actions covering devices on tracks and return tracks:
 
   - **Read**: list, info, get_parameters
-  - **Lifecycle**: load, delete
+  - **Lifecycle**: load, delete, assign_sample (hand a sampler its file)
   - **Activation**: enable, disable
   - **Parameters**: set_parameter (continuous via raw ``value`` or display-unit
     ``value_display``; enum via ``value_type``)
@@ -317,6 +317,50 @@ register(
             "node={parent, device_index (the rack), chain_index (the "
             "destination chain), terminal: 'chain'} — plus path to reach a "
             "deeper rack. Returns nested_device_position.",
+        ),
+    )
+)
+
+register(
+    Action(
+        tool="ableton_device",
+        name="assign_sample",
+        description=(
+            "Point a sampler instrument (Simpler / Sampler) at an audio file "
+            "on disk. Replaces whatever sample the device carried, so calling "
+            "it again with the same path is a no-op in effect — the push "
+            "devices phase emits it without tracking whether it already ran. "
+            "Refuses a device with no sample slot, a relative path, and a path "
+            "with no file at it, each with its own reason."
+        ),
+        params=(
+            *_parent_addressing_specs(),
+            ParamSpec(name="device_index", type="int", minimum=1),
+            _device_path_spec(),
+            ParamSpec(
+                name="sample_path",
+                type="str",
+                description=(
+                    "ABSOLUTE path to the audio file, on the machine running "
+                    "Live. Live resolves nothing relative to a working "
+                    "directory."
+                ),
+            ),
+        ),
+        handler=device_handlers.assign_sample_handler,
+        example=(
+            "ableton_device(action='assign_sample', track_index=2, "
+            "device_index=1, sample_path='/Users/me/songs/x/assets/vox.wav')"
+        ),
+        tips=(
+            "Returns sample_file_path read back off the device — compare it "
+            "with what you sent to confirm the assignment landed.",
+            "For a sampler nested in a rack, pass device_path (the same "
+            "address ableton_device(action='get_device_chains') reports) "
+            "alongside the rack's device_index.",
+            "action='list' and action='info' report sample_file_path for any "
+            "device that has a sample slot; the key is absent entirely on a "
+            "device that cannot hold one.",
         ),
     )
 )

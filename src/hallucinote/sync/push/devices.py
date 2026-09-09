@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from pathlib import Path
 
 from hallucinote.analyzer_identity import is_analyzer_device
 from hallucinote.db import queries as Q
+from hallucinote.paths import resolve_audio_path, same_file_path, song_dir_for_conn
 
 from ._core import PushPlan, ToolCall, build_node_addr
 
@@ -83,6 +85,159 @@ def classify_load_target(
     return _LOAD_TARGET_ABSENT, None
 
 
+def live_device_at(
+    live_devices_by_parent: dict[tuple[str, int], list[dict]] | None,
+    *,
+    parent_kind: str,
+    parent_index: int | None,
+    position: int,
+) -> dict | None:
+    """The probed Live device sitting at ``position``, or ``None`` for "no
+    probe data about it".
+
+    ``None`` is deliberately the answer to every uncertainty — no probe was
+    supplied, the parent was not in it, the chain does not run that deep. The
+    sample diff reads it as "cannot compare", which emits the assignment; the
+    alternative (treating absence as "no sample there") would silently skip a
+    device whose chain simply was not readable.
+
+    Separate from :func:`classify_load_target`, which walks the same list to
+    answer a different question and must keep its three verdicts apart: there,
+    "cannot determine" REFUSES, because a load that guesses wrong doubles the
+    signal chain. Here a re-assignment is harmless, so uncertainty collapses to
+    one answer.
+    """
+    if live_devices_by_parent is None or parent_index is None:
+        return None
+    live_devices = live_devices_by_parent.get((parent_kind, parent_index))
+    if live_devices is None:
+        return None
+    for d in live_devices:
+        if is_analyzer_device(d):
+            continue
+        if d.get("device_index") == position:
+            return d
+    return None
+
+
+def _resolve_device_sample(
+    conn: sqlite3.Connection, ref: str, *, where: str,
+) -> tuple[Path | None, str | None]:
+    """Resolve a ``devices.audio_file`` reference to the absolute path the wire
+    takes, or say why it cannot be — ``(path, None)`` or ``(None, reason)``.
+
+    The sampler sibling of the clips phase's audio resolution, and refusing on
+    the same two grounds: a connection with no database file on disk (so a
+    song-relative reference has no anchor), and a file that is not there. A
+    sampler pushed with nothing to play is a phase reporting OK on a track that
+    will be silent, which is what the sync boundary contract exists to prevent.
+    """
+    song_dir = song_dir_for_conn(conn)
+    if song_dir is None:
+        return None, (
+            f"{where}: audio_file={ref!r} names a sample, but this connection "
+            "has no database file on disk, so there is no song directory to "
+            "resolve a song-relative reference against. Open the song's DB "
+            "through init_db(<song dir>/<slug>.db) and re-plan."
+        )
+    resolved = resolve_audio_path(song_dir, ref)
+    if not resolved.is_file():
+        return None, (
+            f"{where}: its sample is not on disk — audio_file={ref!r} resolves "
+            f"to {resolved} against song directory {song_dir}. The device was "
+            "NOT pushed (a sampler with nothing loaded plays silence)."
+        )
+    return resolved, None
+
+
+def _emit_sample_assignment(
+    plan: PushPlan,
+    conn: sqlite3.Connection,
+    *,
+    device: sqlite3.Row,
+    parent_kv: dict[str, object],
+    device_index: int,
+    device_path: list[dict[str, int]] | None,
+    parent_kind: str,
+    parent_name: str,
+    live_device: dict | None,
+) -> bool:
+    """Emit `assign_sample` for a device whose row names one, diffing against
+    what Live already plays. Returns False when the device is BLOCKED and the
+    caller should emit nothing further for it.
+
+    Ordered BEFORE the parameter writes: probe row 18 recorded that
+    ``replace_sample`` assigns the file, not whether it resets the device's
+    parameters, so the assignment goes first — which is correct either way,
+    where the reverse would silently undo a dialed `S Start` if it does.
+
+    Two refusals, both of them the DB describing something Live cannot
+    materialize, and both :meth:`PushPlan.blocked` so the push report says the
+    song did not get what it asked for:
+
+    * the probe says this device has no sample slot (no ``sample_file_path``
+      key at all — see the MCP handler's ``_sample_surface``). Capability comes
+      from the probe rather than a list of sampler class names, so a sampler
+      nobody enumerated still works;
+    * the file is not resolvable or not on disk.
+
+    Without probe data the assignment is emitted unconditionally: it is
+    re-callable, so re-assigning a sample Live already carries costs a call and
+    changes nothing, while skipping one it does not carry leaves the track
+    silent.
+    """
+    keys = device.keys()
+    ref = device["audio_file"] if "audio_file" in keys else None
+    if not ref:
+        return True
+    nested_note = f" (nested depth {len(device_path)})" if device_path else ""
+    where = (
+        f"devices: {device['display_name']!r}{nested_note} on {parent_kind} "
+        f"{parent_name!r}"
+    )
+    if live_device is not None and "sample_file_path" not in live_device:
+        live_class = (
+            live_device.get("class_display_name")
+            or live_device.get("class_name")
+            or "?"
+        )
+        plan.blocked(
+            f"{where}: the DB assigns the sample {ref!r}, but the device at "
+            f"that position in Live is {live_class!r}, which has no sample "
+            "slot. Only a sampler instrument takes one (Simpler, and Live's "
+            "Sampler). Nothing was pushed for this device. Fix: author a "
+            "Simpler at this position, or drop audio_file from the device row."
+        )
+        return False
+    resolved, reason = _resolve_device_sample(conn, str(ref), where=where)
+    if resolved is None:
+        plan.blocked(reason or f"{where}: sample could not be resolved")
+        return False
+    live_path = (live_device or {}).get("sample_file_path")
+    if live_path and same_file_path(resolved, Path(str(live_path))):
+        return True
+    args: dict[str, object] = {
+        "action": "assign_sample",
+        **parent_kv,
+        "device_index": device_index,
+        # ABSOLUTE by contract — the wire refuses a relative path, and Live
+        # resolves nothing against a working directory.
+        "sample_path": str(resolved),
+    }
+    if device_path:
+        args["device_path"] = device_path
+    plan.add(ToolCall(
+        tool="ableton_device",
+        args=args,
+        key=f"device_sample:{device['id']}",
+        purpose=(
+            f"{parent_name} / {device['display_name']}{nested_note} "
+            f"plays {ref}"
+        ),
+    ))
+    return True
+
+
 def plan_push_devices(
     conn: sqlite3.Connection,
     *,
@@ -102,7 +257,11 @@ def plan_push_devices(
          diagnostic note — parameter writes for that device wait for the
          executor's same-pass convergence re-plan (SYN-9F2L), which re-runs
          this planner once the link has landed.
-      3. For each linked device, emit
+      3. For each linked device whose row carries `audio_file`, emit
+         `ableton_device(action='assign_sample', ...)` BEFORE that device's
+         parameter writes — a sampler is handed its file first, then dialed.
+         See `_emit_sample_assignment` for the diff and the two refusals.
+      4. For each linked device, emit
          `ableton_device(action='set_parameter', ...)` per dialed param,
          choosing the wire form by what the DB stored (SYN-9F2L):
            * captured enum items → `value_type='enum'` with the display string
@@ -118,7 +277,7 @@ def plan_push_devices(
          A refused display write is retried once by the executor (as enum, or
          with the DB's normalized value) — see push_execute's set_parameter
          fallback.
-      4. DEEP-RACK-ADDR: for each linked top-level RACK device, recurse its
+      5. DEEP-RACK-ADDR: for each linked top-level RACK device, recurse its
          nested chains and emit `set_parameter` with the canonical `device_path`
          for every nested device's dialed params (to arbitrary depth). Nested
          devices are NOT loaded — they arrive with the rack preset — so push
@@ -430,6 +589,25 @@ def _emit_device_calls(
         )
         return
 
+    # SMP-6V2K: the sample comes before the params — see `_emit_sample_assignment`
+    # for why the order is load-bearing. A blocked assignment stops this device
+    # entirely: dialing `S Start` on a sampler holding nothing is dialing air.
+    if not _emit_sample_assignment(
+        plan, conn,
+        device=device,
+        parent_kv=parent_kv,
+        device_index=device_at,
+        device_path=None,
+        parent_kind=parent_kind,
+        parent_name=parent_name,
+        live_device=live_device_at(
+            live_devices_by_parent,
+            parent_kind=parent_kind,
+            parent_index=0 if parent_kind == "master" else parent_at,
+            position=device["position"],
+        ),
+    ):
+        return
     _emit_param_writes(
         plan, conn,
         device=device,
@@ -679,6 +857,21 @@ def _emit_nested_param_writes(
             if nested["kind"] == "placeholder" or is_analyzer_device(nested):
                 continue
             device_path = Q.get_device_nesting_path(conn, nested["id"])
+            # A sampler inside a rack gets its file the same way a top-level one
+            # does, addressed by its device_path. `live_device=None` because the
+            # chain probe reads only top-level devices: nothing about a nested
+            # device is known, so the assignment is emitted rather than diffed.
+            if not _emit_sample_assignment(
+                plan, conn,
+                device=nested,
+                parent_kv=parent_kv,
+                device_index=top_device_index,
+                device_path=device_path,
+                parent_kind=parent_kind,
+                parent_name=parent_name,
+                live_device=None,
+            ):
+                continue
             _emit_param_writes(
                 plan, conn,
                 device=nested,

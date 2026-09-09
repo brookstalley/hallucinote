@@ -391,6 +391,25 @@ with it — including the three stale claims the audit found (design.md § "Thre
 **Done when:** every surface above is edited or explicitly ruled inapplicable; the backlog
 reflects reality.
 
+### The link seam — found at chunk 05 integration, owner: coordinator
+
+A pull-ingested audio clip arrives **unlinked**. Pull never writes an `ableton_link` —
+verified, not assumed: `link_db_to_ableton` has exactly two callers, `push/probe.py` and
+`push/plan.py`, both push-side, and `probe_and_link`'s clip pass only *drops* stale links
+(the SYN-3C8K cascade), never establishes one. So the clips phase sees `clip_at is None`
+for a clip that demonstrably exists in Live, and plans a create into an occupied slot —
+which needs `replace=True`, which deletes the user's dragged-in clip and rebuilds it on
+every push until something links it.
+
+This lands directly on the wave's definition of done ("a second line dragged in by hand
+comes back on pull and survives a re-push"), so it closes inside wave 1, not after it.
+**The fix belongs in `probe_and_link`**, as the symmetric other half of the clip pass it
+already runs: where a DB audio row and a Live session slot agree on track and slot and the
+clip plays the file the row names, establish the link. That keeps links push-owned, uses
+knowledge the probe already has, and needs no new source of truth. Settle it against what
+chunk 03 actually built before writing it — if chunk 03 already reconciles the unlinked
+case in the clips phase, one of the two is redundant and the redundant one does not ship.
+
 ## Definition of done (the wave)
 
 A movie line copied into `songs/<slug>/assets/`, referenced from `build.py`, pushes into a

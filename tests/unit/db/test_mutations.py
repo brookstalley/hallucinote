@@ -2837,7 +2837,7 @@ def test_create_enum_envelope_idempotent_on_replay(conn, amp_device):
 
 def test_audio_field_domains_validated_at_authoring_time(conn):
     """CLP-AUD1 cumulative-Critic W3: LOM value domains teach at the mutator,
-    not at CLP-AUD2 push time inside Live."""
+    not at push time inside Live."""
     sid = M.create_song(conn, name="s")
     tid = M.create_track(conn, song_id=sid, track_index=1, name="Vox",
                          kind="audio")

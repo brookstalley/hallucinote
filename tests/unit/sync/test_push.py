@@ -1098,7 +1098,7 @@ def test_plan_push_arrangement_clip_notes_skips_audio_source(
     conn, song, session
 ):
     """An audio source clip has no notes — its arrangement copy is not
-    refreshed (audio-clip sync is CLP-AUD2 scope)."""
+    refreshed by the notes phase; the clips and arrangement phases own it."""
     atrack = M.create_track(
         conn, song_id=song, track_index=2, name="Stems", kind="audio",
     )

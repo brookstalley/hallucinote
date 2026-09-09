@@ -4369,8 +4369,7 @@ def test_plan_pull_notes_emits_per_linked_clip(conn, song, session):
 
 def test_plan_pull_notes_skips_audio_clip_with_warning(conn, song, session):
     """CLP-AUD1 defense-in-depth: notes live on MIDI clips only, so a
-    linked audio clip (CLP-AUD2 will create these links) must not get a
-    note probe."""
+    linked audio clip must not get a note probe."""
     tid = M.create_track(
         conn, song_id=song, track_index=1, name="Stems", kind="audio",
     )

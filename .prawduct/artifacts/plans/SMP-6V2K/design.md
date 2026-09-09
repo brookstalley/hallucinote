@@ -19,6 +19,13 @@ lifecycle: active
 
 # SMP-6V2K — Sampling as compositional material
 
+> **`requirements.md` (2026-09-09) is authoritative on scope**, and it is wider than this
+> file: elicitation after this was written added feature-driven derivation (the sample
+> generates the score) and the spectral-operation family (carve / vocode against an
+> addressable reference). What survives here unchanged and is still the reason to read it:
+> the **capability audit**, the **three stale claims**, decisions **D1–D7**, and **wave 1**.
+> The wave map below is superseded where it disagrees with the requirements.
+
 **The song that asked for it.** Movie dialogue pulled into Live and arranged as a
 conversation, with music built around it, and the samples pitch- or time-corrected
 either as Live clip settings or as new audio Hallucinote makes and pushes up.

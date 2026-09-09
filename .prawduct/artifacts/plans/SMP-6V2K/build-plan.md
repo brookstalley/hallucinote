@@ -37,6 +37,12 @@ critic_mode: null
 
 # Build plan — SMP-6V2K wave 1: an authored sample lands in Live, and a dragged-in one comes back
 
+> **Written before `requirements.md`, and not yet reconciled against it.** Do not build
+> from this plan until it has been: the requirements pass confirmed R1.1–R1.5 (this plan's
+> whole scope) and added obligations this plan does not carry — R1.6 provenance, R1.7
+> recipe-regenerability, R3.6 alignment. The chunks below are believed still correct; the
+> word to trust is `requirements.md`.
+
 Backlog: **#284** (CLP-AUD2 — session-view audio clip creation and push/pull surface),
 **#268** (ENV-8H1T — mixer envelopes on audio tracks via the audio-clip model).
 Design: `.prawduct/artifacts/plans/SMP-6V2K/design.md`.

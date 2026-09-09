@@ -67,6 +67,7 @@ try:
         is_stale,
         loaded_signature,
     )
+    from hallucinote.audio.analyze import DeclaredSpeech
     from hallucinote.audio.levels import live_fader_gain
     from hallucinote.db import queries as Q
     from hallucinote.db.connection import init_db, resolve_db_path
@@ -97,6 +98,7 @@ except ImportError:  # pragma: no cover - exercised in Live's vendored env
     # to a type") on top of [assignment] for the None fallbacks.
     DeclaredEnvelope = None  # type: ignore[assignment, misc]
     DeclaredReverbSend = None  # type: ignore[assignment, misc]
+    DeclaredSpeech = None  # type: ignore[assignment, misc]
     DeclaredWidthControl = None  # type: ignore[assignment, misc]
     SectionEnergy = None  # type: ignore[assignment, misc]
     SectionWindow = None  # type: ignore[assignment, misc]
@@ -622,12 +624,69 @@ def _collect_tempo_map(
     ]
 
 
+def _collect_declared_speech(
+    conn: "sqlite3.Connection", song_id: str, speech_track: str,
+) -> "DeclaredSpeech":
+    """Lift the named dialogue track and its audio placements into a
+    ``DeclaredSpeech`` for ``analyze_mix``, using an already-open connection.
+
+    The caller names the track by its exact name — the one thing about a
+    song a person knows without opening the DB. Each AUDIO placement on that
+    track's arrangement is one spoken turn, its bar span converted to
+    song-absolute beats through the same meter walk the section windows use
+    so a turn and the section it sits in cannot disagree about where a bar
+    is. MIDI placements are not lines and are not turns.
+
+    Every miss is a teaching error rather than an empty declaration: a caller
+    who asked for this measurement by name wants numbers, and an analysis
+    that quietly wrote ``null`` would read as "measured, nothing to say".
+    """
+    tracks = Q.get_tracks_for_song(conn, song_id)
+    named = [t for t in tracks if t["name"] == speech_track]
+    if not named:
+        raise _AnalysisError(
+            f"speech_track {speech_track!r} names no track in this song "
+            f"(tracks: {[t['name'] for t in tracks]}) — pass the exact name "
+            "of the track that carries the dialogue clips"
+        )
+    if len(named) > 1:
+        raise _AnalysisError(
+            f"speech_track {speech_track!r} names {len(named)} tracks in this "
+            "song — rename the dialogue track so the name is unique, or "
+            "merge the duplicates"
+        )
+    track = named[0]
+    ts_points = Q.get_time_signature_map(conn, song_id)
+    placements = Q.get_arrangement_for_track(conn, track["id"])
+    turns = tuple(
+        (
+            _position_bar_to_beats(float(row["start_bar"]), ts_points),
+            _position_bar_to_beats(float(row["end_bar"]), ts_points),
+        )
+        for row in placements
+        if row["clip_kind"] == "audio"
+    )
+    if not turns:
+        raise _AnalysisError(
+            f"speech_track {speech_track!r} has no audio-clip placements in "
+            f"the arrangement ({len(placements)} placement(s), none audio) — "
+            "each spoken turn is one audio clip placed on the dialogue "
+            "track (create_audio_clip + add_arrangement_clip in build.py); "
+            "place the lines, rebuild and push, then analyze again"
+        )
+    return DeclaredSpeech(
+        surface_id=track_id_for_surface("track", int(track["track_index"])),
+        turns_beats=turns,
+    )
+
+
 def analyze_handler(
     _context: LiveContext,
     *,
     song_slug: str,
     captures_dir: str | None = None,
     compare_to: int | None = None,
+    speech_track: str | None = None,
 ) -> dict[str, Any]:
     """Run analyze_mix against a captures dir; write the report; return path.
 
@@ -636,6 +695,12 @@ def analyze_handler(
     loudness deltas + significance flags in ``report.compare_to`` —
     neutral evidence, no findings derived). Captures record their seq in
     ``manifest.db_seq`` at render time.
+
+    ``speech_track`` names the dialogue track by its exact name; with it, every
+    section of the report carries the speech band over the bed per spoken turn
+    (one turn per audio placement on that track — see
+    :func:`_collect_declared_speech`). Without it the field is ``null`` and
+    ``skipped_analyses`` says how to declare one.
 
     Returns: ``{report_path, schema_version, finding_count, summary}``
     where summary names the master peak, overshoot count, any
@@ -683,6 +748,16 @@ def analyze_handler(
         master_fader_volume = (
             _collect_master_fader_volume(conn, song_id) if song_id else None
         )
+        declared_speech = None
+        if speech_track is not None:
+            if not song_id:
+                raise _AnalysisError(
+                    f"speech_track={speech_track!r} was given but {db_path} "
+                    f"has no song row named {song_slug!r} to look the track "
+                    "up in — `python3 build.py --reset` in the song dir "
+                    "populates it"
+                )
+            declared_speech = _collect_declared_speech(conn, song_id, speech_track)
     finally:
         conn.close()
 
@@ -718,6 +793,10 @@ def analyze_handler(
             declared_width_controls=declared_widths,
             sections=sections,
             declared_energy=declared_energy,
+            # The dialogue track and its turns, when the caller named one. The
+            # only lens keyed to a track rather than a flag; per-section like
+            # masking, and mix-level like masking (stem_gains below applies).
+            declared_speech=declared_speech,
             tempo_map=tempo_map,
             # Masking is per-section evidence; enable it whenever the song declares
             # sections (the handler already gated section work on that). It is
@@ -901,6 +980,7 @@ def analyze_start_handler(
     song_slug: str,
     captures_dir: str | None = None,
     compare_to: int | None = None,
+    speech_track: str | None = None,
     _registry: JobRegistry | None = None,
     _analyze_fn: Callable[..., dict[str, Any]] | None = None,
     _spawn: Callable[[Callable[[], None]], None] | None = None,
@@ -967,6 +1047,13 @@ def analyze_start_handler(
     # for analyze (``progress: {stage, ...} (coarse)``).
     registry.update_progress(job.job_id, {"stage": "analyzing"})
 
+    # Options the caller left unset are not forwarded: the analyze seam's
+    # contract is the three fields every analysis has, and an absent option
+    # must reach the handler exactly as the synchronous call's default does.
+    options: dict[str, Any] = {}
+    if speech_track is not None:
+        options["speech_track"] = speech_track
+
     def _worker() -> None:
         try:
             result = analyze_fn(
@@ -974,6 +1061,7 @@ def analyze_start_handler(
                 song_slug=song_slug,
                 captures_dir=captures_dir,
                 compare_to=compare_to,
+                **options,
             )
             # Map analyze_handler's return into the locked-in {report,
             # report_path} status shape (api-notes): ``report`` is the same

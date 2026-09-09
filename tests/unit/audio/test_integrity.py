@@ -553,3 +553,40 @@ def test_an_empty_onset_list_names_itself_like_a_missing_one() -> None:
         result = _measure(audio, onset_samples=onsets)
         tokens = [entry.split(":")[0] for entry in result.checks_skipped]
         assert "discontinuities_unsuppressed" in tokens
+
+
+class TestStepBurstsCollapseToRegions:
+    """A burst of step-rich material is one region, not one defect per sample.
+
+    Measured on a finished song: a heavily-processed vocal produced 42,578
+    flagged steps inside 660 windows — about 65 per window, which is very nearly
+    every sample in those spans. Counting that per sample turns a processed
+    passage into a catastrophe in the report.
+    """
+
+    def test_a_dense_burst_reports_far_fewer_events_than_stepping_samples(
+        self,
+    ) -> None:
+        rng = np.random.default_rng(4)
+        audio = sine(220.0, 1.0, amplitude=0.3).copy()
+        # A 30 ms span where every sample jumps: what a bitcrusher or a granular
+        # burst actually produces.
+        start = SAMPLE_RATE // 2
+        span = int(SAMPLE_RATE * 0.03)
+        audio[start:start + span] = rng.choice(
+            np.array([-0.6, 0.6], dtype=np.float32), size=(span, 2)
+        )
+        result = _measure(audio, onset_samples=[])
+        assert result.discontinuities, "the burst is real and must be reported"
+        # One or two windows' worth per channel, not hundreds of samples.
+        assert len(result.discontinuities) <= 8, len(result.discontinuities)
+
+    def test_two_separated_splices_stay_two_events(self) -> None:
+        # Collapsing must not merge genuinely distinct defects.
+        audio = sine(220.0, 1.0, amplitude=0.3).copy()
+        for at in (int(SAMPLE_RATE * 0.25), int(SAMPLE_RATE * 0.75)):
+            audio[at] = 0.95
+            audio[at + 1] = -0.95
+        result = _measure(audio, onset_samples=[])
+        positions = sorted({d.sample for d in result.discontinuities})
+        assert len(positions) >= 2, positions

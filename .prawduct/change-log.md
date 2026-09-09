@@ -95,6 +95,17 @@ its tolerance was absolute while a crest's flatness scales with amplitude — a
 clean 20 Hz sine at −12 dBFS drew 32 phantom runs. And a zero-run gap was
 accepted if *either* edge was abrupt, which made every musical rest a dropout.
 
+Running the fixed detectors back over the finished song then found the last one,
+which no synthetic fixture would have posed: a heavily-processed vocal produced
+42,578 flagged steps inside 660 windows — about 65 per window, which is very
+nearly every sample in those spans. That is one *region* of step-rich material,
+not 65 defects, and distortion, bitcrushing and granular processing produce it
+because it is the sound. Events now collapse to one region per window, which took
+the drum stem from 638,099 to 4 and the vocal to 1,296 regions over 6.5% of its
+length. No threshold separates "a splice" from "a texture" — that decision needs
+the song's intent, so the lens reports the count and `/mix-review` reads it,
+exactly as every other lens here works.
+
 The lesson the plan recorded after the first real-capture pass generalized further
 than it was written: being *exempt from the analyzer freeze* is not the same as
 being *calibrated*. Physical ground truth belongs to the quantity, not to the

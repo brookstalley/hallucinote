@@ -66,7 +66,13 @@ does not produce, but a hard-gated part rendered without reverb can — such a p
 will read its rests as dropouts, and that is a false positive this lens cannot
 resolve from the audio alone. The RMS-collapse detector reads a fixed frame grid,
 so a hole shorter than one frame is diluted below the collapse threshold and only
-the zero-run detector will see it. Neither of those is silent: what could not be
+the zero-run detector will see it. And the discontinuity count separates a splice from a
+sound only by its SIZE, not by any test this module applies: a few isolated
+regions is the splice signature, while hundreds mean the material steps
+everywhere because it is distorted, bitcrushed or granular. Deciding which is a
+defect requires the song's intent, which is the reader's, not this module's.
+
+Neither of those is silent: what could not be
 checked is named in ``checks_skipped``, which is also where a truncated event list
 says so, so an empty list always means "clean", never "gave up".
 """
@@ -217,6 +223,33 @@ _DISCONTINUITY_WINDOW_S = 0.025
 # the guard does not apply to it.
 _ONSET_GUARD_EXEMPTION = 4.0
 
+# One reported event per window per channel, not one per stepping sample.
+#
+# Step-rich audio does not arrive as isolated samples: on a finished song the
+# vocal produced 42,578 flagged steps inside 660 windows — about 65 per window,
+# which is very nearly every sample in those spans. That is one REGION of
+# step-rich material, not 65 defects, and counting it per sample turns a
+# processed passage into a catastrophe in the report. Collapsing to the largest
+# step per window makes the count mean "how many spans of this surface step",
+# which is the number a reader can act on.
+_DISCONTINUITY_ONE_PER_WINDOW = True
+
+# Above this share of windows carrying a flagged step, the surface is not damaged
+# — it is MADE of steps, and the per-event reading stops meaning anything.
+#
+# A defect is rare and local: a splice, a dropped buffer, a clip boundary. What
+# distortion, bitcrushing, hard sync and granular processing produce is
+# pervasive — genuine sample-to-sample steps everywhere, because that is the
+# sound. No per-event test can separate one authored step from one accidental
+# one; the DISTRIBUTION separates them, and it is the only thing that can.
+#
+# Measured on a finished song: six surfaces sat at 0-18 events, and three
+# heavily-processed ones ran to 8,700-42,600 — the vocal at 296 events per
+# detected onset. Reporting those as clicks would tell the author their vocal is
+# destroyed, which is the same false accusation this lens family has already had
+# to fix twice. Naming the material instead is the honest reading.
+_DISCONTINUITY_PERVASIVE_FRAC = 0.20
+
 # How close to a known onset a discontinuity is presumed to BE that onset. Two
 # things have to fit inside it: the spectral-flux front end that supplies the
 # onsets reads a 512-sample hop (10.7 ms at 48 kHz), so the reported position
@@ -271,7 +304,8 @@ class SurfaceIntegrity:
     not run or could not report everything it found, so an empty event list always
     means the detector looked and found nothing. The tokens are
     ``empty_surface``, ``silent_surface``, ``discontinuities_unsuppressed``,
-    ``dropouts_window_too_short``, ``tail_window_too_short``, and
+    ``discontinuities_pervasive``, ``dropouts_window_too_short``,
+    ``tail_window_too_short``, and
     ``{clip_events,dropouts,discontinuities}_truncated``.
     """
 
@@ -433,6 +467,12 @@ def measure_integrity(
             "attack is reported as a discontinuity"
         )
     discontinuities = _find_discontinuities(data, peak, sample_rate, onset_samples)
+    discontinuities = _collapse_per_window(discontinuities, sample_rate)
+    discontinuities, pervasive = _drop_if_pervasive(
+        discontinuities, data.shape[0], sample_rate
+    )
+    if pervasive is not None:
+        skipped.append(pervasive)
     discontinuities = _truncate(discontinuities, cap, "discontinuities", skipped)
 
     # --- truncated decay --------------------------------------------------------
@@ -691,6 +731,51 @@ def _local_step_threshold(
     floor = _DISCONTINUITY_FLOOR_REL * _widen(loc_peak)
     per_window = np.maximum(_DISCONTINUITY_SIGMA * sigma, floor)
     return np.repeat(per_window, win)[:n]
+
+
+def _collapse_per_window(
+    found: list[Discontinuity], sample_rate: int
+) -> list[Discontinuity]:
+    """Keep the largest step per window per channel.
+
+    A burst of step-rich material flags nearly every sample in its span; those
+    are one region, not one defect each. See ``_DISCONTINUITY_ONE_PER_WINDOW``.
+    """
+    if not found or not _DISCONTINUITY_ONE_PER_WINDOW:
+        return found
+    win = max(1, int(round(_DISCONTINUITY_WINDOW_S * sample_rate)))
+    best: dict[tuple[int, int], Discontinuity] = {}
+    for d in found:
+        key = (d.channel, d.sample // win)
+        if key not in best or d.magnitude > best[key].magnitude:
+            best[key] = d
+    return sorted(best.values(), key=lambda d: (d.sample, d.channel))
+
+
+def _drop_if_pervasive(
+    found: list[Discontinuity], n_samples: int, sample_rate: int
+) -> tuple[list[Discontinuity], str | None]:
+    """Characterise a step-rich surface instead of listing its every step.
+
+    Returns the events unchanged, or an empty list plus a skip token when the
+    steps are spread over enough of the surface that they describe its material
+    rather than a defect in it. See ``_DISCONTINUITY_PERVASIVE_FRAC`` for why the
+    distribution is the only thing that can make this call.
+    """
+    if not found:
+        return found, None
+    win = max(1, int(round(_DISCONTINUITY_WINDOW_S * sample_rate)))
+    total = max(1, int(np.ceil(n_samples / win)))
+    touched = len({d.sample // win for d in found})
+    share = touched / total
+    if share < _DISCONTINUITY_PERVASIVE_FRAC:
+        return found, None
+    return [], (
+        f"discontinuities_pervasive: steps appear in {share:.0%} of this "
+        f"surface's {_DISCONTINUITY_WINDOW_S * 1000:.0f} ms windows, so they "
+        f"characterise the material (distortion, bitcrushing, granular "
+        f"processing) rather than marking a defect in it"
+    )
 
 
 def _find_discontinuities(

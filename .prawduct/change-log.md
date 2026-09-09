@@ -32,6 +32,108 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## CAPSPAN-491 — a capture that does not span what it declares now says so
+
+<!-- prawduct: type=fix | scope=CAPSPAN-491 -->
+
+A peer session reported that one render of `songs/alien` came out with every
+stem shifted about a beat, and that nothing in the analysis pipeline noticed:
+the manifest said `status: ok`, and the mix report attributed a reverb peak to
+the beat *after* the one it landed on.
+
+**Why nothing noticed, which is the interesting half.** `BeatSampleMap` maps the
+declared beat span onto whatever sample count it is handed and rescales. That is
+deliberate — its docstring says the rescale exists so "a global tempo offset
+between the DB `tempo_map` and what the render actually played can't shift
+boundaries". It is a good property against a tempo mismatch and an
+indistinguishable one against audio of the wrong length. The map is not the bug
+and is unchanged; the excess is now measured before the rescale absorbs it.
+
+`measure_capture_span` compares the captured duration against the span the
+manifest declared, and a mismatch beyond a quarter beat emits a
+`capture_span_mismatch` finding. The numbers land in the report's `alignment`
+block on the passing path too — a check that only speaks when it fails cannot be
+told apart from one that never ran, which is the failure being fixed.
+
+**Three things measurement decided that a reading of the report would not have.**
+Three real captures of the same song were measured first: the defective one ran
+1.06 beats long and the two healthy ones sat inside 0.05, which is what makes a
+quarter beat a bright line rather than a tuned threshold. Within *every* capture,
+healthy ones included, the returns run up to 0.38 beats longer than the master —
+the known independent-`sfrecord~` tail spread — so the check reads the common
+(post-trim) length and a per-surface check would have flagged all three. And the
+finding claims only what length can support: a capture that armed early and one
+that disarmed late produce the same number, so it never says "started early",
+though that is what the evidence in the report suggests.
+
+**Where it declines, and why that is not timidity.** The comparison is against
+the *declared* tempo, and push materializes only the bar-1 row today — Live plays
+the whole song at that one value — so wherever the declared tempo differs from
+it, the declared duration is not what was rendered. The check refuses there and
+names the push gap, rather than reporting it as a bad capture.
+
+That gate asks about the **render**, not the score, and it took a round to get
+right. A first version asked whether the declared tempo was constant across the
+captured span, which accepts a song declaring 90 bpm at bar 1 and 124 from beat 8
+rendered from beat 16: declared-constant at 124, actually played at 90. It would
+have compared real audio against a duration nobody performed and reported the
+push gap as a broken capture — in the one lens the mix-review skill tells the
+reader never to hedge. The predicate now takes the bar-1 bpm and requires
+the declared tempo to agree with it from beat 0 through the span's end —
+stricter than the span alone needs, and deliberately so, because the error it
+gives up is a false decline and the one it refuses is a false alarm.
+
+It also refuses on a missing tempo map, on a malformed manifest whose
+declared span is non-positive, and on a capture starting before the song's first
+tempo point — `declared_span_seconds` will not reuse `BeatSampleMap`'s constant
+fallback, which cancels in a rescale but would be a fabricated duration here and
+would manufacture a finding on every song not at that constant. **Each of the
+four declines carries its own reason** in `skipped_analyses`: they send an
+operator to four different places, and a shared message would replace the silence
+this work removes with a wrong answer, which is worse.
+
+**One refusal will go stale, and saying so is the point.** The variable-tempo
+guard reads the DECLARED tempo, not what the renderer can honour, so it does NOT
+retire itself when variable-tempo rendering lands — every such song would keep
+declining and keep blaming a gap that no longer exists. An earlier draft of this
+entry called it self-healing; the review caught that the code does not do that.
+The obligation to delete the guard is written where whoever lands that capability
+will meet it, rather than asserted as automatic.
+
+The beats-to-seconds integration is now shared by the map and the check, because
+two integrators disagreeing about how long 515 beats is would produce a finding
+that contradicted the section windows in the same report.
+
+Verified against the reported capture itself, not only fixtures: it produces the
+finding at 1.06 beats and the healthy capture beside it produces none.
+`SCHEMA_VERSION` does not move, and three things shipped under that call rather
+than the two an earlier draft of this entry counted. Two are plainly additive: a
+new `Finding.kind` extends no enumeration, and the `alignment` block gains a key.
+The third — re-keying the `skipped_analyses` entries below — is **not** additive,
+and was held to the same version deliberately after checking what could read it:
+`compare.py` never touches the field, the MCP handler never emitted the old key,
+and no checked-in report carries it. Bumping the version would make every
+existing report un-diffable (`compare.ensure_comparable` refuses across versions)
+for no consumer's benefit.
+
+One seam that call leaves open, worth knowing before reading an old report:
+`capture_span: null` means the check declined and `skipped_analyses` says why,
+while the key being **absent** means the report predates the check entirely. Same
+schema version, different meanings — the skip entry is what tells them apart.
+
+**One thing found on the way.** Skip entries are selected by `kind`, and
+consumers index it unguarded — but the render-integrity and imaging skips were
+keyed `analysis` instead. They never reached a real report only because the MCP
+handler happens to enable both lenses, so the inconsistency sat one default away
+from a `KeyError` in every reader of a report produced by a direct
+`analyze_mix` call. Copying the wrong key for the new entry is what exposed it.
+All three are `kind` now, and a test walks every skip the pipeline can emit
+rather than the few any one test happens to trigger.
+
+Detection only. Correcting the offset, and the Live-side reason `sfrecord~` armed
+early, stay open on #491 — both live in the fingerprint-bearing render handler
+and would force a re-vendor.
+
 ## JANITOR-2026-09 — first Norm Health sweep, and the bookkeeping that had fallen behind the work
 
 <!-- prawduct: type=chore | scope=JANITOR-2026-09 -->

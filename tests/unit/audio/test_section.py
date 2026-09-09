@@ -14,6 +14,7 @@ from hallucinote.audio.section import (
     BeatSampleMap,
     SectionWindow,
     TempoSegment,
+    declared_span_seconds,
     intersect_window,
     slice_audio,
 )
@@ -276,3 +277,38 @@ def test_intersect_window_uses_beat_map_when_supplied():
     assert sl_map.covered and sl_linear.covered
     # The 120-bpm second half is compressed into fewer samples than linear.
     assert sl_map.start_sample > sl_linear.start_sample
+
+
+# --- declared_span_seconds: the one beats->seconds integrator (#491) ----------
+
+
+def test_declared_span_seconds_matches_constant_tempo_arithmetic():
+    assert declared_span_seconds(0.0, 515.0, [TempoSegment(0.0, 124.0)]) == pytest.approx(
+        515 * 60 / 124.0
+    )
+
+
+def test_declared_span_seconds_integrates_a_tempo_change():
+    """60 beats at 120 (30 s) then 60 beats at 60 (60 s)."""
+    segs = [TempoSegment(0.0, 120.0), TempoSegment(60.0, 60.0)]
+    assert declared_span_seconds(0.0, 120.0, segs) == pytest.approx(90.0)
+
+
+def test_declared_span_seconds_refuses_without_evidence():
+    """Empty, all-zero-bpm, non-positive span, and a span reaching back before
+    the first tempo point all return None rather than a fabricated duration."""
+    assert declared_span_seconds(0.0, 515.0, []) is None
+    assert declared_span_seconds(0.0, 515.0, [TempoSegment(0.0, 0.0)]) is None
+    assert declared_span_seconds(10.0, 10.0, [TempoSegment(0.0, 120.0)]) is None
+    assert declared_span_seconds(0.0, 515.0, [TempoSegment(16.0, 124.0)]) is None
+
+
+def test_beat_sample_map_still_rescales_without_tempo_evidence():
+    """The map keeps its fallback where declared_span_seconds refuses: it divides
+    by its own total, so the constant cancels. This is the asymmetry the two
+    callers exist to keep straight — behavior identical to a single-segment map."""
+    n = 48000
+    without = BeatSampleMap(0.0, 100.0, n)
+    with_one = BeatSampleMap(0.0, 100.0, n, [TempoSegment(0.0, 137.3)])
+    for beat in (0.0, 12.5, 50.0, 99.9, 100.0):
+        assert without.beat_to_sample(beat) == with_one.beat_to_sample(beat)

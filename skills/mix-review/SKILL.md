@@ -80,24 +80,56 @@ loosely and **ask** before treating a finding as a problem.
 
 ### 2. MEASURE — read the whole MixReport
 
-**Read `integrity` FIRST, before any musical number.** It is the only family in
-the report that asks whether the audio is *damaged* rather than whether it
-realized its intent, and it is upstream of everything else: a click reads as an
-onset to the timing lens, so a groove that was never played gets reported
-faithfully; a dropout reads as a written level move; a truncated capture reads as
-a short decay. If a surface shows damage, say so and treat that surface's
-musical readings as suspect until it is re-rendered — do not open a feel
-conversation about a part whose capture has a hole in it.
+**Read the two ground-truth lenses FIRST, before any musical number, in this
+order: `alignment.capture_span`, then `integrity`.** They ask whether the audio
+is *wrong* rather than whether it realized its intent, and they are upstream of
+everything else — but they are upstream of different things, which is why the
+order matters. `capture_span` asks whether the report's beat grid corresponds to
+the song at all; if it does not, every beat and section reference below is
+offset, `integrity` included, so reading it second means reading it knowing
+where its events actually landed. `integrity` then asks whether the audio inside
+that grid is damaged: a click reads as an onset to the timing lens, so a groove
+that was never played gets reported faithfully; a dropout reads as a written
+level move; a truncated capture reads as a short decay.
 
-This family is also the only one that may state a defect **as a defect**. Every
+If the span mismatches, say so first and treat every beat reference in the report
+as offset by roughly the excess. If a surface shows damage, say so and treat that
+surface's musical readings as suspect until it is re-rendered — do not open a
+feel conversation about a part whose capture has a hole in it.
+
+These two are also the only lenses that may state a defect **as a defect**. Every
 musical lens here reports against declared intent and never grades; a sample
-discontinuity has physical ground truth, so it is named plainly.
+discontinuity and a capture that is not the length it claims both have physical
+ground truth, so they are named plainly. Do not intent-relativize or hedge a
+`capture_span_mismatch` — its whole purpose is to stop the rest of the report
+being believed.
 
 Read the latest report JSON under `songs/<slug>/analysis/` (or run the analysis
 first — see "Refreshing the analysis"). At the **top level**, describing the
 render rather than any section:
 
-- `integrity[]` — one row per captured surface (`track_id`). `clip_events` +
+- `alignment.capture_span` — the first of the two ground-truth lenses above. It
+  answers whether the captured audio actually covers the span the render
+  declared (`declared_beats` vs `excess_beats`, signed, against
+  `tolerance_beats`). When `within_tolerance` is false a
+  `capture_span_mismatch` finding fires, and it conditions everything else in
+  the report: every section window and every beat reference is computed by
+  stretching the declared span onto the audio that exists, so they are all
+  offset by roughly the excess. A capture that ran a beat long once had a reverb
+  peak read as landing a beat *after* the moment it actually landed. Length
+  alone cannot say whether the extra audio is at the head or the tail, and the
+  finding does not pretend otherwise. `null` here means the check declined —
+  look for the `capture_span` entry in `skipped_analyses`, which says why, and
+  each cause reads differently (no tempo rows; a capture starting before the
+  song's first tempo point; a malformed manifest; or a declared tempo that is
+  not what was rendered — push sets Live's one global tempo from the bar-1 row
+  and skips the rest, so anything else in the tempo map was declared but never
+  played). **The key being ABSENT is a
+  different thing from `null`**: the report predates this check, so the span was
+  never examined — which is what you will see on any older report a `compare_to`
+  baseline resolves to.
+- `integrity[]` — the second ground-truth lens: whether the audio INSIDE that
+  grid is damaged. One row per captured surface (`track_id`). `clip_events` +
   `worst_clip_run_samples` (flat-topping, which is *not* the same as loud — a
   pre-fader stem legitimately peaks above 0 dBFS and `peak_dbfs` beside the runs
   is how you tell), `dropouts` (buffer holes — `kind` separates a bit-exact

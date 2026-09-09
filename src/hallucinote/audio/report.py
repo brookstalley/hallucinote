@@ -822,9 +822,17 @@ class MixReport:
     # needs >= 2 ranks) — recorded with a skipped_analyses entry, never a
     # fabricated ρ. A ruler: ranked intensity vs intent + inversions, no verdict.
     energy_realization: "EnergyRealization | None" = None
-    # Capture-alignment audit (AUD-1C7K): per-surface trim applied before
-    # analysis so the correction is visible, not silent. None when analysis ran
-    # without an alignment pass (e.g. a directly-constructed report in a test).
+    # Capture-length audit, BOTH questions, serialized by AlignmentReport alone:
+    # `method`/`common_length`/`max_drift_*`/`surfaces` are the per-surface trim
+    # applied before analysis so the correction is visible, not silent
+    # (AUD-1C7K); `capture_span` is whether the capture covers the beat span the
+    # manifest DECLARED, which conditions every beat this report cites. Those are
+    # independent failures — surfaces can agree perfectly with each other and
+    # still, together, span the wrong stretch of the song. `capture_span` is null
+    # when that check declined (`skipped_analyses` says why) and ABSENT on a
+    # report written before the check existed; the two are not the same and only
+    # the skip entry distinguishes them. None here when analysis ran without an
+    # alignment pass (e.g. a directly-constructed report in a test).
     alignment: dict[str, Any] | None = None
     # Render integrity, one row per captured surface. This family answers "is
     # this audio damaged" rather than "did it realize its intent", so unlike

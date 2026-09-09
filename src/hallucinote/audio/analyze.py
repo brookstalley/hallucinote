@@ -25,6 +25,7 @@ CLAUDE.md "Never silently drop a requirement."
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 from collections import Counter
 from dataclasses import dataclass, replace
@@ -37,7 +38,7 @@ if TYPE_CHECKING:
     import numpy as np
 
 from ..paths import portable_path
-from .alignment import trim_to_common_length
+from .alignment import CaptureSpan, measure_capture_span, trim_to_common_length
 from .compare import diff_reports, ensure_comparable, resolve_baseline
 from .attribution import (
     band_attribution,
@@ -199,18 +200,25 @@ def analyze_mix(
 ) -> MixReport:
     """Run the audio-analysis MVP pipeline against a captures directory.
 
-    Four passes:
+    The MVP passes, which the optional lenses below have since been added
+    alongside rather than folded into — so this is the spine, not an inventory
+    (a count here restales every time a lens lands, and has):
 
-      1. Per-surface loudness — master, every stem, every return.
-      2. Master-bus overshoot detection + per-stem contribution
-         attribution.
-      3. Per return with a declared send: measure RT60 from the return's
-         own captured ring-out (Schroeder decay-tail, dry-source-free),
-         compare to declared. If none declared, emit a
-         ``skipped_analyses`` entry.
-      4. Per-section loudness — the pass-1 metrics scoped to each named
-         section window. If no sections are declared, emit a
-         ``skipped_analyses`` entry.
+      * Per-surface loudness — master, every stem, every return.
+      * Master-bus overshoot detection + per-stem contribution
+        attribution.
+      * Per return with a declared send: measure RT60 from the return's
+        own captured ring-out (Schroeder decay-tail, dry-source-free),
+        compare to declared. If none declared, emit a
+        ``skipped_analyses`` entry.
+      * Per-section loudness — the metrics above scoped to each named
+        section window. If no sections are declared, emit a
+        ``skipped_analyses`` entry.
+
+    Every ``analyze_*`` flag in the signature is one further lens, each one
+    emitting a ``skipped_analyses`` entry when it is off or cannot run — that
+    convention, not this list, is what tells a reader what did and did not
+    happen for a given report.
 
     DB intent extraction is the handler's job: it walks
     ``sends.intended_rt60_s`` rows (for ``declared_reverb_sends``) and the
@@ -286,6 +294,22 @@ def analyze_mix(
     # No-op on already-equal-length synthetic fixtures.
     capture, alignment_report = trim_to_common_length(capture)
 
+    # Does the capture cover the span it CLAIMS to? The trim above reconciles the
+    # surfaces against each other; this reconciles the set against the manifest.
+    # It must run before BeatSampleMap, because the map's rescale is precisely
+    # what makes a length defect invisible (see its docstring: the rescale exists
+    # so a global tempo offset can't shift boundaries, and it cannot tell that
+    # apart from audio of the wrong length). Needs real tempo evidence, so it can
+    # decline — the caller names the decline rather than staying quiet.
+    capture_span, capture_span_skip = measure_capture_span(capture, tempo_map)
+    # Recorded on the PASSING path too: a check that only speaks when it fails is
+    # indistinguishable from one that never ran. AlignmentReport owns the whole
+    # `alignment` wire block, so it carries the result rather than the call site
+    # splicing it in.
+    alignment_report = dataclasses.replace(
+        alignment_report, capture_span=capture_span
+    )
+
     # One beat↔sample map for the whole capture, shared by overshoot rebeat-ing
     # and section windowing. Variable-tempo accurate when a tempo_map is
     # supplied; degenerates to the constant-tempo linear map otherwise.
@@ -331,13 +355,13 @@ def analyze_mix(
     integrity_skips: list[dict] = []
     if not analyze_integrity:
         integrity_skips.append({
-            "analysis": "render_integrity",
+            "kind": "render_integrity",
             "reason": "analyze_integrity=False — no defect, phase or "
                       "reconciliation pass was run for this capture",
         })
     if not analyze_imaging:
         integrity_skips.append({
-            "analysis": "imaging",
+            "kind": "imaging",
             "reason": "analyze_imaging=False — no per-surface or per-section "
                       "soundstage reading was measured",
         })
@@ -433,6 +457,15 @@ def analyze_mix(
     )
     skipped.extend(width_skips)
 
+    if capture_span_skip is not None:
+        # An empty list IS silently absent unless something names it — this
+        # module's convention, and exactly the silence #491 was: the capture was
+        # a beat long and the report said nothing at all.
+        skipped.append({
+            "kind": "capture_span",
+            "reason": capture_span_skip,
+        })
+
     findings = _derive_findings(
         integrity=integrity_rows,
         phase_relations=phase_relations,
@@ -442,6 +475,7 @@ def analyze_mix(
         reverbs=reverb_verifications,
         automation=automation_verifications,
         sections=sections,
+        capture_span=capture_span,
     )
 
     report = MixReport(
@@ -1145,6 +1179,7 @@ def _derive_findings(
     sections: Sequence[SectionWindow] = (),
     integrity: Sequence[SurfaceIntegrity] = (),
     phase_relations: Sequence[PhaseRelation] = (),
+    capture_span: CaptureSpan | None = None,
 ) -> list[Finding]:
     """Translate raw metrics into structured findings.
 
@@ -1156,6 +1191,9 @@ def _derive_findings(
         whose measured RT60 falls outside tolerance.
       - ``master_clipping_risk`` (info) — when master true-peak ≥ -0.1 dBTP
         but no overshoots crossed 0.
+      - ``capture_span_mismatch`` (warning) — the captured audio does not
+        cover the beat span the manifest declares, so every beat this report
+        cites is computed on a stretched map.
 
     When ``sections`` are declared, each ``master_overshoot`` finding's
     ``db_reference`` names the section the overshoot lands in
@@ -1168,6 +1206,20 @@ def _derive_findings(
     mutation proposals (the "fix" side) are P2 backlog.
     """
     findings: list[Finding] = []
+
+    # First, because it conditions how every other finding below should be read:
+    # if the capture does not cover the span it claims, the beat references those
+    # findings carry are offset by the excess.
+    if capture_span is not None and not capture_span.within_tolerance:
+        findings.append(Finding(
+            kind="capture_span_mismatch",
+            severity="warning",
+            subject="capture",
+            metric="span_beats",
+            observed=capture_span.declared_beats + capture_span.excess_beats,
+            expected=capture_span.declared_beats,
+            db_reference=capture_span.human_summary,
+        ))
 
     for o in overshoots:
         section_name = _section_name_for_beat(o.start_beat, sections)

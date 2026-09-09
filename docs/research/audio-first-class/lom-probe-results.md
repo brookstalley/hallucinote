@@ -114,3 +114,38 @@ this section wins.
   arrangement conform gap for those rows.
 - **Path error shapes** (row 17): the chunk-02 teaching-error mapping gains a third source string
   (relative path).
+
+## SMP-6V2K-W2 chunk 17 — the sampler is Simpler-only, and an arrangement clip's extent is fixed at placement (2026-09-09)
+
+Live 12.4.5, handshake `0.1.0+6283768de096` both ends, driven from the scratch song
+`hallucinote-songs/songs/audio-verify/` extended with a Simpler row carrying `audio_file`
+and a `reverse=1` row. Every row below is a call and its literal response.
+
+| # | Question | Verdict | Evidence |
+|---|---|---|---|
+| 21 | **`assign_sample` end-to-end (#330)** — does a `devices.audio_file` row reach Live, and does the device read it back? | **YES — CONFIRMED** | Push `devices` phase ran 2 calls; `ableton_device(action='info', track_index=7, device_index=1)` → `sample_file_path` `…/songs/audio-verify/assets/tone.wav` — the authored song-relative path resolved absolute. Live also **renames the instance to the sample's stem** (`name` `"Simpler"` → `"tone"`), which is `replace_sample`'s own behaviour, not ours |
+| 22 | **Assignment idempotence** — does a second push re-emit `assign_sample`? | **NO — CONFIRMED** | Second `push_cli execute --probe` over an unchanged DB: `[devices] skipped (nothing to push)`. The emitter's diff against what Live reports holds; the read-back comparison added for review R-18 is what makes this true rather than lucky |
+| 23 | **Does `replace_sample` reset device parameters?** (the question chunk 07 deferred) | **NO — CONFIRMED** | Set `Filter Freq` → `500 Hz` (raw 0.4265) and `Transpose` → `+7 st` on the Simpler, then `assign_sample(sample_path=…/tone-b.wav)` → ok. Re-read: `Filter Freq` **still `500 Hz`**, `Transpose` **still `+7 st`**; only `name` (`tone` → `tone-b`) and `sample_file_path` moved. So the emitter's assignment-before-param-writes ordering is **not** load-bearing for correctness — it stays because the sample defines what the params act on, not because a swap would clobber them |
+| 24 | **Sampler (`MultiSampler`) probe** — does it expose `replace_sample` or an equivalent? | **NO — CONFIRMED; the "only Simpler" teaching error STANDS** | `ableton_device(action='load', kind='Sampler')` → `loaded_class_name` `"Sampler"`, `class_name` **`"MultiSampler"`**. `ableton_probe(describe)` on it returns class **`Device`** — the generic surface only: no `sample`, no `sample_file_path`, no `replace_sample`, no `sample_slots`. Direct contrast on the same set: `song.tracks[6].devices[0].sample` (Simpler) → a `Sample` object; `song.tracks[0].devices[0].sample` (Sampler) → **`AttributeError: … (Device) has no attribute 'sample'`**. Sampler cannot be assigned through the LOM on this build |
+| 25 | **`reverse=1` materializes through the derived cache (#237)** | **YES — CONFIRMED, session and arrangement** | Push derived the file at plan time: `assets/derived/5a99f3d2…-tone-reverse.wav` + its `.json` record (Live wrote an `.asd` beside it, so Live loaded it). `song.tracks[4].clip_slots[2].clip.file_path` and `song.tracks[4].arrangement_clips[2].file_path` **both** → that derived path. The arrangement copy plays the same derived file, not the source |
+| 26 | **Flipping `reverse` back to 0 re-points the clip** | **YES — CONFIRMED, and the cost is announced** | Rebuild with `reverse=0`, push → `clips` 3 calls; `clip_slots[2].clip.file_path` → `…/assets/tone.wav`. The operator channel named the whole cost before doing it: "the row's `audio_file` CHANGED … Live's `Clip.file_path` is read-only. Live's clip in slot 3 on track 5 is DELETED and recreated … Un-modelled Live-side state on the old clip — hand-placed warp markers — does not survive" |
+| 27 | **#509 — is an arrangement audio clip's extent writable after placement?** | **PARTLY — the playable region yes, the extent NO** | Writable on **both** routes (duplicate-of-session and direct create): `arrangement_clips[0].end_marker` 8.0 → 4.0 ok (duplicate route), `arrangement_clips[2].end_marker` 8.0 → 4.0 ok (direct create), `arrangement_clips[2].loop_end` 8.0 → 4.0 ok. But `arrangement_clips[2].end_time` → **`AttributeError: property of 'Clip' object has no setter`**, and it stayed `56.0` after both the `end_marker` and the `loop_end` write (clip is `looping=true`). So the block a clip occupies in the arrangement is **fixed at placement time** and no LOM write moves it |
+
+### What this settles downstream
+
+- **#330 closes on the sampler question** (rows 21-23): assignment works, is idempotent, and
+  survives a param-carrying device. The deferred "does `replace_sample` reset params?" is
+  answered NO, so chunk 07's ordering comment should say *why* it orders assignment first (the
+  sample defines what the params act on) rather than implying a clobber it now knows does not
+  happen.
+- **The "only Simpler" teaching error is correct as written** (row 24) — do NOT lift it. A
+  future Live build could change this; the verdict is dated, per the standing learning that a
+  shipped "can't" is a dated snapshot.
+- **#237 closes** (rows 25-26): reverse-via-derived is live in both the session and the
+  arrangement, and the re-point path announces its cost on the operator channel.
+- **#509's build is now drawable, and it is not the one the item assumed** (row 27): the
+  arrangement extent cannot be set, so "trim the copy to `end_bar`" is unreachable through the
+  LOM. What IS reachable is the clip's playable region — setting `end_marker` / `loop_end` at
+  placement time would make the copy *play* only the authored region even though its arrangement
+  block stays the file's length. That is a partial mitigation of the standing "extent did not
+  travel" warning, and it is what #509 should be re-scoped to.

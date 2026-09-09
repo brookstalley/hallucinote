@@ -204,6 +204,31 @@ Update `.prawduct/change-log.md` with what this sweep changed. Capture in
 
 **Done when.** The next sweep can read a baseline instead of measuring from zero.
 
+## Review record
+
+Three Critic rounds, and the first two both landed on this sweep's own work
+rather than on the codebase it was cleaning.
+
+- **Cumulative** `rev-20260909T035940Z-43142400` — 1 blocking, 14 warnings, 9 notes.
+  The blocker: Chunk 03 had narrowed the future-annotations norm from "every
+  module" to "every module that has code" to excuse two files a two-line fix
+  closed, citing no ruling while every sibling amendment cited one. It also
+  caught three published counts wrong (archive tally, sender list, in-flight
+  roster) and a silent behavior change in `from_rows`.
+- **verify-resolutions** `rev-20260909T042807Z-69b755e2` — 2 blocking. The
+  replacement sender enumeration was wrong in both directions (named a
+  non-sender, dropped the sender the prior round had pointed at), and the R1
+  narrowing had been prepended to a bullet whose absolute clause was left
+  standing beneath it.
+- **verify-resolutions** `rev-20260909T043939Z-ac33c79d` — **0 blocking, 0
+  findings. Review closed.** Both prior blockers verified fixed against the
+  tree rather than the diff.
+
+The pattern across the first two rounds is worth keeping: a maintenance sweep
+edits the records that describe it, so its own claims are unusually easy to get
+wrong and unusually hard to notice — every count this plan published was
+checked by someone else before it was right.
+
 ## Verification Strategy
 
 Chunks 01, 02, 04 and 05 touch no source, so the suite is a regression guard, not

@@ -91,6 +91,21 @@ class Transform(Protocol):
     ) -> np.ndarray | list[np.ndarray]: ...
 
 
+@runtime_checkable
+class ScoreDependent(Protocol):
+    """A transform whose output depends on something outside its own audio.
+
+    A carve or vocode is made against the arrangement (or a capture) as it
+    stood, and that reading has to enter the derived address or the file
+    outlives the notes it was made from. ``fingerprint()`` is that reading.
+    Declaring it as a protocol is what lets the address be computed at the one
+    place every derive route passes through, without the cache module having
+    to import the spectral transforms it would otherwise depend on.
+    """
+
+    def fingerprint(self) -> str: ...
+
+
 @dataclass(frozen=True)
 class Derived:
     """A derived file the cache holds, and the recipe that made it.

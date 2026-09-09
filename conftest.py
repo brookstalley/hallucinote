@@ -68,6 +68,7 @@ _AUDIO_FILE_NAMES = (
     "test_sample_lens.py",
     "test_push_clips_reverse.py",
     "test_push_arrangement_reverse.py",
+    "test_derived_cli.py",
 )
 
 

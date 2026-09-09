@@ -55,9 +55,24 @@ audio clip it ingests (#507), the clip mutators refuse slot 0 (#473). Deferred a
 dispatch: source separation (#266). The Live session (sampler, reverse, the #509 and
 Sampler probes, the first hearing) is queued in `operator-verification.md`.
 
+`SCHEMA_VERSION` does not move (D17): `SectionReport.intelligibility` defaults to `None`,
+so a reader written against `"1"` still loads a report that carries it and still means the
+same thing by every field it already knew. The bar for a bump is a change to what an
+existing field MEANS, because bumping makes every existing report un-diffable
+(`compare.ensure_comparable` refuses across versions).
+
+`hallucinote derived prune` reads what the song's clips and devices point at, which is a
+mixed set — a song references its ingested sources as well as its derived files — so an
+addressed path naming nothing in the cache keeps nothing rather than raising. It refuses
+outright when it cannot read the song's DB at all: an empty reference set is
+indistinguishable from a complete one at the point where it would condemn every file in
+the cache, and only one of those is an answer.
+
 Tests consolidated: `test_reverse_is_refused_loudly_but_the_clip_is_still_placed` into
 `tests/unit/sync/test_push_clips_reverse.py`, which pins the contract that replaced it;
-three fixtures that used `slot=0` incidentally now use 1.
+three fixtures that used `slot=0` incidentally now use 1. `recipes.prune`'s contract
+changed deliberately: it raised on an addressed path that named no derived file, which
+contradicted its own docstring and made the CLI traceback on any song with a source.
 
 ## 2026-09-09 — The audio path ran against Live, and the one silent replace it found now speaks
 

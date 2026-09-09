@@ -247,6 +247,17 @@ path that does not exist yet, the exact silence-reporting-OK failure the sync co
 forbids | user can veto]` Recorded in `sync-boundary-contract.md` and
 `boundary-patterns.md`.
 
+**D17 — Chunk 06's report field does not move `SCHEMA_VERSION` (recorded after the
+cumulative review).** `SectionReport.intelligibility` is additive and defaults to `None`,
+so every reader written against schema `"1"` still loads a report that carries it and
+still means the same thing by every field it already knew. `[DECISION: hold
+SCHEMA_VERSION at "1" for wave 2 | the precedent is AUD-PORTPATH, recorded in
+`audio/report.py`'s `MixReport` docstring: a bump makes every existing report
+un-diffable because `compare.ensure_comparable` refuses across versions, and that cost
+is only worth paying for a change that alters what an existing field MEANS | user can
+veto]` A future field that re-types or re-scopes an existing one is the case that bumps
+it; this is not that.
+
 ## Status
 
 **A ticked box means the code is built, reviewed on the integration branch and green.**

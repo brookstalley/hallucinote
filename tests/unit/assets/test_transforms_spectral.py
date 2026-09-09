@@ -162,6 +162,32 @@ def test_the_derived_record_says_what_the_file_was_carved_against(scored):
     assert explicit.reference_fingerprint == "mine" and explicit.address != d.address
 
 
+def test_every_derive_route_names_the_same_file_for_the_same_carve(scored):
+    """The facade, a Recipe and the cache module must agree on the address.
+
+    The reference fingerprint is what a carve was made against, and it enters
+    the address. It used to be inferred in the `assets` facade alone, so a
+    Recipe carrying the same carve derived a SECOND file for identical
+    content, with a record that said it was carved against nothing.
+    """
+    from hallucinote.assets import derived as D
+    from hallucinote.assets.recipes import Recipe
+
+    step = carve(scored["schedule"], _params("carve"), conn=scored["conn"], beat_map=scored["clock"])
+    src, song_dir = scored["src"], scored["song_dir"]
+    recipe = Recipe(src.name, [step])
+
+    facade = derive(src, step, song_dir=song_dir)
+    low = D.derive(src, [step], song_dir=song_dir)
+    from_recipe = recipe.derive(src, song_dir=song_dir)
+
+    assert recipe.address(src) == facade.address
+    assert low.address == from_recipe.address == facade.address
+    for d in (low, from_recipe):
+        assert d.reference_fingerprint == step.fingerprint()
+        assert d.path == facade.path, "one address, therefore one file"
+
+
 def test_changing_a_note_in_the_referenced_clip_changes_the_address(scored):
     conn, src = scored["conn"], scored["src"]
     step = carve(scored["schedule"], _params("carve"), conn=conn, beat_map=scored["clock"])

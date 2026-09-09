@@ -36,7 +36,14 @@ from typing import Any, Sequence
 import numpy as np
 import soundfile as sf
 
-from hallucinote.assets.types import Derived, Source, Transform, TransformContext, validate_audio_array
+from hallucinote.assets.types import (
+    Derived,
+    ScoreDependent,
+    Source,
+    Transform,
+    TransformContext,
+    validate_audio_array,
+)
 
 BACKEND = "librosa"
 RECORD_VERSION = 1
@@ -98,6 +105,19 @@ def canonical_json(payload: Any) -> bytes:
         ) from exc
 
 
+REFERENCE_JOIN = "+"
+
+
+def reference_of(chain: Sequence[Transform]) -> str | None:
+    """The reference fingerprint a chain's score-dependent steps carry, or None.
+
+    The derived record has one field for what a file was made against; a
+    chain with no score-dependent step in it was made against nothing.
+    """
+    prints = [step.fingerprint() for step in chain if isinstance(step, ScoreDependent)]
+    return REFERENCE_JOIN.join(prints) if prints else None
+
+
 def address(
     source: Source,
     chain: Sequence[Transform],
@@ -111,8 +131,18 @@ def address(
     ``backend_version_override`` lets a verifier recompute the address a
     record was made under; a caller deriving new audio leaves it unset and
     gets the running version.
+
+    ``reference_fingerprint`` is INFERRED from the chain when not given, here
+    rather than in any one caller, because three routes reach an address —
+    the ``assets`` facade, ``Recipe.address``/``Recipe.derive``, and this
+    module's own ``derive`` — and a route that skipped the inference would
+    name a second file for identical content and record nothing about what it
+    was carved against. An explicit value still wins, for a caller that
+    resolved the reference itself.
     """
     version = backend_version_override if backend_version_override is not None else backend_version(backend)
+    if reference_fingerprint is None:
+        reference_fingerprint = reference_of(chain)
     payload = {
         "source_checksum": source.checksum,
         "chain": chain_spec(chain),
@@ -392,8 +422,18 @@ def derive(
     record with a modified or missing output is a miss and is re-rendered
     over. The returned ``Derived.chain`` is the caller's transforms, so the
     recipe travels with the file it names.
+
+    ``reference_fingerprint`` is inferred from the chain when not given, so
+    the record says what the file was carved against whichever route reached
+    here — the ``assets`` facade, a ``Recipe``, or this function directly.
     """
     chain = tuple(chain)
+    # Resolve once, then pass it explicitly: a score-dependent step reads the
+    # DB afresh on every fingerprint() call, so letting address() infer it a
+    # second time would both cost a re-read and risk two different answers
+    # naming the record and the file.
+    if reference_fingerprint is None:
+        reference_fingerprint = reference_of(chain)
     addr = address(source, chain, reference_fingerprint, backend)
     directory = derived_dir(song_dir)
     directory.mkdir(parents=True, exist_ok=True)

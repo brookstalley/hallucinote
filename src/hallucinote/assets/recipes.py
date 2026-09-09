@@ -187,19 +187,19 @@ def verify(song_dir: Path) -> list[VerifyResult]:
     return results
 
 
-def _address_of(item: str | Path | Derived) -> str:
+def _address_of(item: str | Path | Derived) -> str | None:
+    """The derived address an item names, or None if it names no derived file.
+
+    None is not an error: ``prune``'s input is everything a song points at,
+    and a song points at its sources as well as its derived files. A path
+    outside the cache keeps nothing in the cache, which is what None means.
+    """
     if isinstance(item, Derived):
         return item.address
     name = item.name if isinstance(item, Path) else item
     if _ADDRESS_RE.match(name):
         return name
-    addr = address_of_filename(Path(name).name)
-    if addr is None:
-        raise ValueError(
-            f"{item!r} is neither a derived address nor a derived file path "
-            f"(<address>-<slug>.wav); pass what derive() returned, or its .path"
-        )
-    return addr
+    return address_of_filename(Path(name).name)
 
 
 def prune(song_dir: Path, addressed: Iterable[str | Path | Derived]) -> list[Path]:
@@ -207,14 +207,16 @@ def prune(song_dir: Path, addressed: Iterable[str | Path | Derived]) -> list[Pat
 
     ``addressed`` is what the song's recipes resolve to today — the
     ``Derived`` values (or their addresses or paths) the current build
-    produced, or the audio paths its clips reference. Everything else in the
-    directory, records included, is an orphan; a stray file with no address
-    in its name is one too. Nothing is deleted.
+    produced, or the audio paths its clips reference. Those clip paths are a
+    mixed set by nature: a song references its ingested sources as well as its
+    derived files, and an item naming no derived file simply keeps nothing.
+    Everything else in the directory, records included, is an orphan; a stray
+    file with no address in its name is one too. Nothing is deleted.
     """
     directory = derived_dir(song_dir)
     if not directory.is_dir():
         return []
-    keep = {_address_of(item) for item in addressed}
+    keep = {addr for addr in map(_address_of, addressed) if addr is not None}
     orphans: list[Path] = []
     for entry in sorted(directory.iterdir()):
         if entry.name.startswith(".") or not entry.is_file():

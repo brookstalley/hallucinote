@@ -32,7 +32,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Sequence
 
-from hallucinote.assets.derived import BACKEND
+from hallucinote.assets.derived import BACKEND, reference_of
 from hallucinote.assets.derived import derive as _derive_chain
 from hallucinote.assets.store import ASSETS_DIRNAME, SOURCES_DIRNAME, source, sources
 from hallucinote.assets.transforms import (
@@ -53,11 +53,6 @@ from hallucinote.spectral.schedule import (
     schedule_from_spans,
 )
 from hallucinote.spectral.types import MaskParams, ReferenceSchedule
-
-# Several score-dependent steps in one recipe record one reference: their
-# fingerprints joined in chain order, so any of them moving moves the record.
-_REFERENCE_JOIN = "+"
-
 
 def song_dir_of(source: Source) -> Path:
     """The song directory a store-issued ``Source`` belongs to.
@@ -84,16 +79,6 @@ def _steps(chain: tuple[Transform | Sequence[Transform], ...]) -> tuple[Transfor
     return tuple(chain)  # type: ignore[arg-type]
 
 
-def reference_of(chain: Sequence[Transform]) -> str | None:
-    """The reference fingerprint a chain's score-dependent steps carry, or None.
-
-    The derived record has one field for what a file was made against; a
-    chain with no carve or vocode in it was made against nothing.
-    """
-    prints = [step.fingerprint() for step in chain if isinstance(step, (carve, vocode))]
-    return _REFERENCE_JOIN.join(prints) if prints else None
-
-
 def derive(
     source: Source,
     *chain: Transform | Sequence[Transform],
@@ -105,14 +90,13 @@ def derive(
 
     ``song_dir`` is inferred from a store-issued source; pass it for a source
     built by hand. ``reference_fingerprint`` is filled from the chain's
-    ``carve`` / ``vocode`` steps when not given, so the record says what the
-    file was carved against without the author restating it; an explicit
-    value wins, for a caller that resolved the reference itself.
+    ``carve`` / ``vocode`` steps when not given — by ``address`` itself, so
+    this facade, ``Recipe`` and ``derived.derive`` all name the same file for
+    the same content; an explicit value wins, for a caller that resolved the
+    reference itself.
     """
     steps = _steps(chain)
     directory = Path(song_dir) if song_dir is not None else song_dir_of(source)
-    if reference_fingerprint is None:
-        reference_fingerprint = reference_of(steps)
     return _derive_chain(
         source,
         steps,

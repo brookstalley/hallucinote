@@ -165,5 +165,24 @@ def test_prune_accepts_addresses_and_paths_as_well_as_derived_values(song):
     assert R.prune(song_dir, [keep.path]) == expected
     assert R.prune(song_dir, [str(keep.path)]) == expected
     assert R.prune(song_dir, [keep, orphan]) == []
-    with pytest.raises(ValueError, match="neither a derived address nor"):
-        R.prune(song_dir, ["some-clip.wav"])
+
+
+def test_prune_ignores_addressed_items_that_name_no_derived_file(song):
+    """A song points at its sources as well as its derived files.
+
+    `prune`'s input is every audio path a song references, so a source path is
+    ordinary input, not a mistake: it names nothing in the cache and therefore
+    keeps nothing. This replaced an earlier contract that raised on such a
+    path — that contract contradicted `prune`'s own docstring and made
+    `hallucinote derived prune` traceback on any song with an ingested source.
+    """
+    song_dir, src = song
+    keep = D.derive(src, [reverse()], song_dir=song_dir)
+    orphan = D.derive(src, [normalize()], song_dir=song_dir)
+    addressed = ["assets/sources/rivers-01.wav", "/tmp/hand-dropped.wav", keep]
+    assert R.prune(song_dir, addressed) == [orphan.path, orphan.record_path]
+    # Nothing addressed at all still condemns the whole cache — that is the
+    # caller's question to get right, and derived_cli refuses to ask it blind.
+    assert R.prune(song_dir, ["assets/sources/rivers-01.wav"]) == sorted(
+        [keep.path, keep.record_path, orphan.path, orphan.record_path]
+    )

@@ -103,10 +103,17 @@ def _divergence_bars(diverging: list[tuple[float, float, float]]) -> str:
     push the rest of the report out of view; the cap is stated in the text so
     the reader knows the list was cut rather than complete.
     """
-    bars = [f"{b:g}" for b, _, _ in diverging]
+    # Deduped and sorted, because the input is per-PLACEMENT and a bar carries
+    # as many placements as it has tracks. A section boundary at bar 10 on eight
+    # tracks would otherwise fill the whole cap with `10, 10, 10, ...` and hide
+    # every other diverging bar behind repeats of one — worse on the ordinary
+    # song than on the pathological one. The opening clause still reports the
+    # per-placement count, so nothing is lost by collapsing them here.
+    bars = sorted({b for b, _, _ in diverging})
+    shown = [f"{b:g}" for b in bars[:8]]
     if len(bars) <= 8:
-        return ", ".join(bars)
-    return ", ".join(bars[:8]) + f", and {len(bars) - 8} more"
+        return ", ".join(shown)
+    return ", ".join(shown) + f", and {len(bars) - 8} more"
 
 
 def plan_push_arrangement(

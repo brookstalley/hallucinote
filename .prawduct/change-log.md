@@ -77,7 +77,11 @@ deliberately module-free.
 
 **Deferred, not dropped (Chunk 04).** #484/#485 the two cold branches carrying
 real unmerged work, #486 whether the 17 raw-SQL reads should consolidate, #487
-the ruff churn decision, #488 the two worthwhile artifact templates.
+the ruff churn decision, #488 the two worthwhile artifact templates. #489 was
+added at the PR-review gate: Chunk 04 also specified filing two findings upstream
+to prawduct and neither was sent, so the reports are descoped to that item —
+they cross an owner boundary, which makes sending them the owner's call and not
+the sweep's. The chunk's own done-when is satisfied by the id, not by the tick.
 
 **Baseline (Chunk 05).** `norm_health_last_run` and the first `norm_health:`
 entry are stamped, so the next sweep reads a trend instead of measuring from

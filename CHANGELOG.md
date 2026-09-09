@@ -20,6 +20,10 @@ the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `hallucinote.kits` — a new public module holding `load_kit(conn, device_id)`,
+  the database-backed way to build a `Kit`. It exists so that importing a
+  generator pulls in no database code; see the Deprecated note below for the
+  `Kit.from_device` it replaces.
 - `Kit.from_rows(rows, *, name, device_id)` — build a `Kit` from
   `drum_pad_mappings`-shaped rows with no database connection, for songs that
   measure a kit by hand or construct one in a test.

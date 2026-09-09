@@ -49,7 +49,8 @@ every judgment call was ruled by the owner before this plan was written (R1-R7 p
 - **R7 (narrow `verify-resolutions`) is not built here.** It is entirely plugin-owned
   (`prawduct-hook`, `methodology/building.md`, `methodology/planning.md`,
   `agents/critic-reviewer.md`); this repo has no configuration surface for it. The owner's
-  ruling is carried upstream as a prawduct report in Chunk 04, not implemented locally.
+  ruling leaves this repo as a prawduct report rather than being implemented locally;
+  Chunk 04 records why that report is owner-gated and where it is tracked.
 - **`capture.py` (2,740 lines) is not split.** Already scoped as #304; renovation, not
   cleaning.
 - **No release.** `develop` is 101 ahead of `main`; the owner deferred that separately.
@@ -60,7 +61,7 @@ every judgment call was ruled by the owner before this plan was written (R1-R7 p
 - [x] Chunk 01: version-control and plan-directory hygiene
 - [x] Chunk 02: norm statements reconciled to the owner's R1/R3/R4/R5 rulings
 - [x] Chunk 03: `Kit` dependency inversion (loader module + alias) and the ruff `required-imports` gate
-- [x] Chunk 04: findings that leave this repo — backlog items and the upstream report
+- [x] Chunk 04: findings that leave this repo — backlog items (upstream report descoped to #489)
 - [x] Chunk 05: sweep baseline, change-log, learnings
 
 ---
@@ -174,9 +175,15 @@ standing indefinitely.
 
 Each item names a verifiable signal, per the preferences row requiring it.
 
-File upstream via `/prawduct:report-bug`: R7, carrying the `review-stats` evidence —
-`verify-resolutions` at 84 reviews / 6.1h / 30% actionable / 0.81 findings per review,
-against `cumulative` at 81% and 12.15.
+**Descoped 2026-09-09, at the PR-review gate.** The spec also said: file upstream via
+`/prawduct:report-bug` R7, carrying the `review-stats` evidence — `verify-resolutions`
+at 84 reviews / 6.1h / 30% actionable / 0.81 findings per review, against `cumulative`
+at 81% and 12.15 — plus R5, the briefing staleness probe's missing opt-out. Neither was
+sent, and the box was ticked anyway; the independent PR reviewer caught it. Both reports
+leave this repo, which makes sending them an owner-approved egress rather than an agent
+action, so they are **descoped from this chunk and tracked at #489** — carrying both
+findings and their evidence — instead of being filed here. The chunk's own done-when is
+what makes this a descope and not a drop: the findings have an id.
 
 **Done when.** Every deferred finding has an id; nothing from the survey exists only in
 conversation.

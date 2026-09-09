@@ -602,8 +602,10 @@ build_state:
 # Live plans now: the janitor sweep's own (artifacts/plans/JANITOR-2026-09/), plus
 # THREE flat plans at the artifacts root that are merged-but-unreleased and stay
 # live per gitflow until the develop->main release ships — build-plan.md
-# (perform-start-position, #480), build-plan-render-integrity.md (#483) and
-# build-plan-aud-sharpness-transients.md (#470). Each says so in its own text;
+# (perform-start-position, PR #480), build-plan-render-integrity.md (PR #483) and
+# build-plan-aud-sharpness-transients.md (PR #470) — those are the merged pull
+# requests, not backlog issues, and `backlog resolve` will not find them.
+# Each says so in its own text;
 # this comment is a pointer, and if it disagrees with the tree the tree wins.
 # Shipped/stale plan history: the git history of this file (pre-2026-07-04,
 # PRC-5W2N trim) has the full narrative; a per-machine copy also sits in the

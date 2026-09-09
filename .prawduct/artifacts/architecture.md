@@ -169,7 +169,9 @@ Owner ruling 2026-09-08 (JANITOR-2026-09 R5). The bare names are here for a seco
 worth stating: the session-briefing staleness probe tests whether each package name
 appears in this file as a substring, with no way to declare an artifact
 deliberately module-free — so a doc at this altitude either names them or reports stale
-forever. That gap is filed upstream; the enumeration above is truthful either way.
+forever. That gap is drafted as an upstream report but not yet sent — filing it crosses
+an owner boundary, so it is tracked at #489 until the owner rules. The enumeration above
+is truthful either way.
 
 ## What is deliberately not modeled
 

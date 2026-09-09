@@ -1546,3 +1546,39 @@ def test_analyze_mix_can_skip_render_integrity(tmp_path: Path):
     assert report.integrity == []
     assert report.phase_relations == []
     assert report.sum_reconciliation is None
+
+
+def test_per_section_stems_carry_imaging(tmp_path: Path):
+    """Imaging is measured per SECTION, not only whole-capture.
+
+    "The chorus goes wide and the verse is narrow" is the soundstage question
+    people actually ask, and a whole-capture average is precisely the reading
+    that cannot answer it. This pins that the section path populates the field
+    rather than leaving it None — the failure mode is silent, because a None
+    reads as "not measured" and nobody notices the sections never had one.
+    """
+    from .fixtures import sine
+
+    tone = sine(300.0, 8.0, amplitude=0.3)
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "Tone", tone)],
+        master_audio=tone,
+        start_at_beat=0.0,
+        stop_at_beat=16.0,
+    )
+    sections = [
+        SectionWindow(name="verse", start_beat=0.0, end_beat=8.0),
+        SectionWindow(name="chorus", start_beat=8.0, end_beat=16.0),
+    ]
+
+    report = analyze_mix(captures_dir, sections=sections)
+
+    assert len(report.per_section) == 2
+    for section in report.per_section:
+        assert section.master.imaging is not None, section.section_name
+        for stem in section.stems:
+            assert stem.imaging is not None, (section.section_name, stem.track_id)
+
+    payload = report.to_json_dict()
+    assert payload["per_section"][0]["stems"][0]["imaging"] is not None

@@ -1071,6 +1071,10 @@ def _measure_window(surface: Surface, window_slice: WindowSlice) -> StemMetrics:
         loudness=loudness,
         timbre=measure_timbre(sliced, surface.sample_rate),
         stereo=measure_stereo(sliced),
+        # Per-section too, like the two above: "the chorus goes wide and the
+        # verse is narrow" is the soundstage question people actually ask, and a
+        # whole-capture average is exactly the reading that cannot answer it.
+        imaging=measure_imaging(sliced, sample_rate=surface.sample_rate),
     )
 
 

@@ -30,18 +30,47 @@ governed_by:
     dispositions:
       - "the MCP server is stdlib-only at import time → conforms: no new imports in the server or Remote Script; path resolution already lives in stdlib-only `paths.py`"
       - "no shims to unshipped consumers → conforms: the deferred `audio_path` no-op is replaced, not wrapped"
-partition: serial — 02, 03 and 05 move the same audio-clip contract across one wire and would collide on the schema and the apply layer; 03 and 04 both edit the push planner
+partition: |
+  Parallel in two waves, on a file-disjoint partition. The plan-time "serial" reading
+  located the collision in the wrong place: the four refuse-loudly sites live in four
+  separate modules — `hallucinote_mcp/.../{actions,handlers}/clip.py` (02),
+  `sync/push/clips.py` + `sync/push/arrangement.py` (03), `sync/push/envelopes.py` (04),
+  `sync/pull/clips.py` (05) — so nothing collides on files. What is genuinely ordered is
+  the WIRE CONTRACT, and only chunk 02 moves it.
+  .
+  Wave A, in parallel: **02** (the wire — create, the conform properties, and the audio
+  read surface) and **04** (envelope routing — planner-side only; the envelope wire
+  already exists and probe row 3 confirmed it end-to-end on a real audio session clip).
+  .
+  Wave B, in parallel once 02 has landed and the Remote Script is re-vendored: **03**
+  (push clips + arrangement) and **05** (pull ingest). 03 additionally needs chunk 01's
+  recreate verdict before its reconcile rule is written.
+  .
+  Then **06** (docs), coordinator-owned.
+  .
+  Each delegate owns its modules and its own test files and touches nothing else. The
+  coordinator owns the wire contract, the combined suite, the re-vendor handshake, the
+  operator-verification entries, and all governance.
 last_validated: 2026-09-09
 critic_mode: null
 ---
 
 # Build plan — SMP-6V2K wave 1: an authored sample lands in Live, and a dragged-in one comes back
 
-> **Written before `requirements.md`, and not yet reconciled against it.** Do not build
-> from this plan until it has been: the requirements pass confirmed R1.1–R1.5 (this plan's
-> whole scope) and added obligations this plan does not carry — R1.6 provenance, R1.7
-> recipe-regenerability, R3.6 alignment. The chunks below are believed still correct; the
-> word to trust is `requirements.md`.
+> **Reconciled against `requirements.md` on 2026-09-09; buildable.** Wave 1 carries
+> **R1.1** (place and conform), **R1.2** (round-trip), **R1.4** (automation on audio
+> hosts) and the *verdict* half of **R1.5** (reverse) — and nothing else. **R1.6** (asset
+> store, normalization, provenance) and **R1.7** (derived audio is regenerable) are wave
+> 3's; **R3.6** (sample-accurate alignment) belongs to the spectral family and has no
+> wave-1 surface. All three are named in "Scope boundary" below rather than silently
+> dropped.
+>
+> The reconciliation found one real gap, folded into chunk 02: **R1.2 needs a *read*
+> surface on the wire, and there is none.** `list_handler` reports `name` and `length` for
+> a session clip and nothing else (`hallucinote_mcp/src/hallucinote_mcp/handlers/clip.py`
+> — the session branch of the slot loop); no `file_path`, no gain, no warp state, not even
+> a flag saying the clip is audio. Pull cannot ingest what the wire will not report. Chunk
+> 02 therefore grows the read half as well as the write half, and chunk 05 depends on it.
 
 Backlog: **#284** (CLP-AUD2 — session-view audio clip creation and push/pull surface),
 **#268** (ENV-8H1T — mixer envelopes on audio tracks via the audio-clip model).
@@ -114,18 +143,36 @@ questions batched in so the operator is asked once.
 
 ## Status
 
-- [ ] Chunk 01: the Live session that settles the reverse contract and the recreate semantics
-- [ ] Chunk 02: `ableton_clip` creates a real audio clip, and the audio property surface is complete
-- [ ] Chunk 03: the clips and arrangement phases materialize `kind='audio'`
-- [ ] Chunk 04: an audio-track session clip hosts envelopes (#268)
-- [ ] Chunk 05: pull ingests audio clips, including one dragged in by hand
-- [ ] Chunk 06: the docs say what is true, and the contract artifacts track
+- [ ] Chunk 01: the Live session that settles the reverse contract and the recreate semantics *(operator-gated; gates only 03's reconcile rule)*
+- [ ] Chunk 02: `ableton_clip` creates a real audio clip, and the audio property surface is complete *(wave A)*
+- [ ] Chunk 03: the clips and arrangement phases materialize `kind='audio'` *(wave B)*
+- [ ] Chunk 04: an audio-track session clip hosts envelopes (#268) *(wave A)*
+- [ ] Chunk 05: pull ingests audio clips, including one dragged in by hand *(wave B)*
+- [ ] Chunk 06: the docs say what is true, and the contract artifacts track *(coordinator)*
 
 ---
 
 ### Chunk 01: the Live session that settles the reverse contract and the recreate semantics
 
 **Type:** code · **Foreign API:** Live Object Model (Live 12.4.x) · **Visual change:** no
+· **Operator-gated:** yes — needs a running Ableton Live, the Hallucinote plugin loaded so
+`ableton_probe` is on the wire, and a human at the machine.
+
+**It does not gate wave A.** Rows 1a, 1b and 1c of
+`docs/research/audio-first-class/lom-probe-results.md` are recorded responses from a real
+Live 12.4.1 (2026-06-10), which is what the chunk-02 "verify-api" step asks for: creation
+in both locations and both error shapes are already contract-grade. Chunk 02 is built
+against those rows, and chunk 04 against row 3, before this chunk runs.
+`[DECISION: wave A builds against the 2026-06-10 probe record rather than waiting on a
+fresh session | the "verify-api" bar is *recorded responses from a running Live*, and rows
+1a-1c/3 are exactly that; blocking two chunks on operator availability buys no new fact |
+user can override]`
+
+**What is still genuinely open**, and therefore what this chunk owes downstream: the
+**reverse** verdict (a possible small addition to chunk 02 and the schema comment), the
+**warp-mode int map** (validation only — the wire passes the int through and Live refuses a
+bad one either way), and the **recreate semantics**, which chunk 03 needs before it writes
+its reconcile rule. Chunk 05 and chunk 04 need nothing from here.
 
 **Spec.** A probe pass through the shipped `ableton_probe` bridge, appended to
 `docs/research/audio-first-class/lom-probe-results.md` as a dated section (that file is
@@ -179,6 +226,16 @@ unshipped consumers):
   if chunk 01 found it.
 - Update the action's `tips`, which today tell the reader session audio creation is
   unsupported and to drag from the browser.
+- **The read half — the reconciliation gap.** `list_handler` reports a session clip as
+  `{clip_index, empty, name, length}` and an arrangement clip with `note_count` (already
+  `None` for audio). Nothing on that wire says a clip *is* audio, let alone what file it
+  plays. Add, for both locations: a discriminator (`is_audio`, read off `clip.is_audio_clip`
+  — the mirror of the `is_midi_clip` guard the arrangement branch already uses), and, when
+  it is audio, `file_path`, `gain`, `pitch_coarse`, `pitch_fine`, `warping`, `warp_mode`,
+  `start_marker`, `end_marker`. Absent for MIDI clips rather than null-filled, so a reader
+  cannot mistake "MIDI" for "audio with no file". This is the surface **R1.2** round-trips
+  through and the one chunk 05 plans against; it is the wire's half of the contract, so it
+  ships here rather than being discovered in chunk 05.
 
 **Re-vendor.** `actions/clip.py` and `handlers/clip.py` are both in `_FINGERPRINT_PATHS`, so
 this chunk flips the wire fingerprint: the Remote Script must be re-vendored
@@ -186,8 +243,10 @@ this chunk flips the wire fingerprint: the Remote Script must be re-vendored
 Every later chunk in this wave depends on that handshake.
 
 **Tests.** Handler unit tests against the fake LOM in `hallucinote_mcp/tests/` covering both
-locations, both error mappings, and each new property; a wire/schema test that the new
-params are declared; the version-fingerprint test will flip and is expected to.
+locations, both error mappings, and each new property; **read-surface tests asserting an
+audio clip reports its discriminator and its properties and that a MIDI clip omits them
+entirely**; a wire/schema test that the new params are declared; the version-fingerprint
+test will flip and is expected to.
 
 **Done when:** (0) `verify-api` — chunk 01's recorded responses are the contract the fakes
 are built against, not the docs; (1) tests green; (2) a real audio clip created in both

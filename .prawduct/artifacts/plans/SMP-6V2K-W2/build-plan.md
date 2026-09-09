@@ -65,8 +65,8 @@ partition: |
   consumes, the two optional-extras groups, and the slot-floor fix — the contract half
   that must exist before any brief is written.
   .
-  Wave A, in parallel: **twelve delegates, twelve isolated worktrees** (01–12), each
-  owning new modules plus its own new test files. The only edits to EXISTING modules are
+  Wave A, in parallel: **eleven delegates, eleven isolated worktrees** (01–10 and 12;
+  11 is deferred — see Scope boundary), each owning new modules plus its own new test files. The only edits to EXISTING modules are
   07 (`hallucinote_mcp/src/hallucinote_mcp/actions/device.py`, `hallucinote_mcp/src/hallucinote_mcp/handlers/device.py`, `src/hallucinote/sync/push/devices.py`, `src/hallucinote/capture.py`),
   08 (`src/hallucinote/sync/pull/clips.py`) and 06 (`src/hallucinote/audio/report.py`, `src/hallucinote/audio/analyze.py`), and no two
   delegates share one — ownership is in the Delegation table. `src/hallucinote/cli.py`, `pyproject.toml`,
@@ -152,6 +152,10 @@ is right. The R6.2 listen (chunk 12's harness) settles the one dependency decisi
   **measurement** (speech-band-over-bed per turn, neutral numbers, no findings); the
   `/mix-review` framing that turns it into a producer's question waits for the listening
   day and is filed there.
+- **R2.4 separation (#266), chunk 11.** Deferred at dispatch (owner: "as much fanout as will
+  be efficient", 2026-09-09): it would lock `torch` for a requirement whose place on the critical
+  path depends on open question 1, and its tests cannot verify a real run. The chunk section stays
+  below as the spec to dispatch when Q1 is answered; #266 stays open.
 - **#509 (arrangement extent) build.** Chunk 17 runs its probe; the build is drawn on
   #509 after the verdict, because both of its design questions turn on what Live exposes.
 - **Feature caching on disk.** Extraction on a seconds-long line is fast; streams are
@@ -251,7 +255,6 @@ against Live.
 - [ ] Chunk 08: pull links what it ingests (#507) *(wave A)*
 - [ ] Chunk 09: the follower — an F0 contour becomes a part *(wave A)*
 - [ ] Chunk 10: feature events with musical gates *(wave A)*
-- [ ] Chunk 11: separation behind an extra (#266) *(wave A — cut-first candidate)*
 - [ ] Chunk 12: the stretch / pitch A/B harness for R6.2 *(wave A)*
 - [ ] Chunk 13: carve and vocode as recipes, with the reference in the address *(wave B)*
 - [ ] Chunk 14: `reverse=1` materializes through the derived cache (#237) *(wave B)*
@@ -259,9 +262,10 @@ against Live.
 - [ ] Chunk 16: the docs say what is true, the contract artifacts track, the CLIs are wired *(coordinator; cumulative)*
 - [ ] Chunk 17: the Live session — sampler live, reverse live, the #509 and Sampler probes *(operator-gated)*
 
-Context: plan drawn 2026-09-09 on the merged, unreleased wave 1 (develop `c86df39`). The
-wave-1 plan stays live until the develop→main release; this plan declares its own branch
-so both resolve. Next: chunk 00, then dispatch wave A, on a "go".
+Context: plan drawn 2026-09-09 on the merged, unreleased wave 1 (develop `c86df39`); owner
+handed off the same day ("go using as much fanout as will be efficient"). Chunk 11 deferred
+at dispatch. The wave-1 plan stays live until the develop→main release; this plan declares
+its own branch so both resolve. Next: wave A dispatched from the chunk-00 commit.
 
 ---
 
@@ -270,8 +274,8 @@ so both resolve. Next: chunk 00, then dispatch wave A, on a "go".
 **The owner asked for this plan to be built by parallel subagents, as wide as the
 partition allows** — that is the standing approval; `project-preferences.md` records
 delegation as pre-approved on this shape. Precedent: COLLAB-TURN ran four delegates;
-this plan runs **twelve in wave A and three in wave B**, materially wider. The reason it
-is safe to be wider is that eleven of the twelve create only new modules — the partition
+this plan runs **eleven in wave A and three in wave B**, materially wider. The reason it
+is safe to be wider is that eight of the eleven create only new modules — the partition
 is disjoint by construction, not by care — and each delegate's verification is capped at
 its own new test files, so twelve delegates put roughly twelve narrow pytest runs on the
 box rather than twelve full suites.
@@ -301,7 +305,7 @@ or any existing test file it does not own.
 | 08 | `src/hallucinote/sync/pull/clips.py`; new `tests/unit/sync/test_pull_clips_link.py` | `src/hallucinote/sync/push/clips.py` (14's, wave B), `src/hallucinote/db/mutations/links.py` (reuse) |
 | 09 | new `src/hallucinote/generators/follow.py`; new `tests/unit/generators/test_follow.py` | `src/hallucinote/generators/__init__.py` (16 exports it), everything under `src/hallucinote/features/` |
 | 10 | new `src/hallucinote/features/events.py`; new `tests/unit/features/test_events.py` | every other `src/hallucinote/features/` module |
-| 11 | new `src/hallucinote/audio/separation.py`; new `tests/unit/audio/test_separation.py` | `pyproject.toml` (00 added the extra) |
+| 11 *(deferred)* | new `src/hallucinote/audio/separation.py`; new `tests/unit/audio/test_separation.py` | `pyproject.toml` (the coordinator adds the extra when it is dispatched) |
 | 12 | new `src/hallucinote/tools/stretch_ab.py`; new `tests/unit/tools/test_stretch_ab.py` | `pyproject.toml`, `src/hallucinote/assets/transforms.py` (05 owns the production stretch; 12 is a listening harness and may duplicate a call rather than import 05's unfinished module) |
 
 **Ownership — wave B.**
@@ -316,8 +320,8 @@ or any existing test file it does not own.
 5.1 where the result is materially better for it. **Fable — 02, 03, 04, 05, 06, 09, 10,
 13, 15**: DSP where the wrong default is inaudible until the song is wrong, a persisted
 format, a generator whose musical judgment must stay out of it (R4.6), and the lens prose a
-cold agent reads. **Opus — 01, 07, 08, 11, 12, 14**: bounded wiring against recorded
-contracts, with tests.
+cold agent reads. **Opus — 01, 07, 08, 12, 14** (and 11 when dispatched): bounded wiring
+against recorded contracts, with tests.
 
 **What each delegate returns:** its branch name, a diff summary, the exact verification it
 ran (its ceiling, below), every default or wording it had to *decide* rather than take
@@ -372,8 +376,8 @@ edit a shared file:
   resolver 03 uses); `MaskParams(polarity: 'carve' | 'vocode', harmonic_depth: int,
   notch_width_cents: float, depth_db: float (validated ≤ 40 — never to silence, R3.4),
   smoothing_s: float)`; `ResolutionReport(n_fft, hop, bin_hz, achieved_cents_at_hz(...))`.
-- `pyproject.toml` — optional extras `audio-separation = ["demucs>=4", "torch>=2"]` and
-  `audio-stretch-ab = ["pyrubberband>=0.4"]`; one `uv lock`. `--all-packages` does not
+- `pyproject.toml` — optional extra `audio-stretch-ab = ["pyrubberband>=0.4"]`; one
+  `uv lock`. (The `audio-separation` extra lands with chunk 11 when it is dispatched.) `--all-packages` does not
   install extras, so the plugin's cold sync and `mcp_config.py`'s timeout are untouched.
 - **#473, the slot floor.** `src/hallucinote/db/mutations/clips.py` refuses `slot < 1` with a teaching
   error (Live's `clip_index` is 1-based on this wire); `src/hallucinote/db/schema.sql` adds
@@ -718,7 +722,7 @@ spacing suppresses a double fire; unvoiced frames never fire under `voiced_only`
 
 ---
 
-### Chunk 11: separation behind an extra (#266) — cut-first candidate
+### Chunk 11: separation behind an extra (#266) — DEFERRED, not dispatched
 
 **Type:** code · **Foreign API:** demucs · **Visual change:** no
 

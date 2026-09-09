@@ -1163,7 +1163,7 @@ def _seed_full_song(db_path: Path, slug: str) -> None:
             conn, song_id=song_id, track_index=1, name="Lead"
         )
         clip_id = M.create_clip(
-            conn, track_id=track_id, slot=0, length_beats=4.0, name="riff"
+            conn, track_id=track_id, slot=1, length_beats=4.0, name="riff"
         )
         M.insert_notes(
             conn,

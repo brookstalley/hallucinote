@@ -104,7 +104,11 @@ CREATE INDEX IF NOT EXISTS idx_tracks_song ON tracks(song_id);
 CREATE TABLE IF NOT EXISTS clips (
     id                      TEXT PRIMARY KEY,
     track_id                TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
-    slot                    INTEGER NOT NULL,
+    -- Live's clip slots are 1-based (clip_index minimum 1); a 0 halts the
+    -- clips push phase mid-way. The mutator teaches the floor; the CHECK holds
+    -- it on a fresh DB (SQLite cannot ALTER a CHECK in, so a migrated DB relies
+    -- on the mutator alone — see connection.py beside _ADDED_COLUMNS).
+    slot                    INTEGER NOT NULL CHECK (slot >= 1),
     length_beats            REAL NOT NULL,
     name                    TEXT,
     section_role            TEXT,

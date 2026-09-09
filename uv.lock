@@ -527,6 +527,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+audio-stretch-ab = [
+    { name = "pyrubberband" },
+]
 dev = [
     { name = "hypothesis" },
     { name = "mypy" },
@@ -543,6 +546,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.26" },
     { name = "pyloudnorm", specifier = ">=0.2" },
     { name = "pyroomacoustics", specifier = ">=0.7" },
+    { name = "pyrubberband", marker = "extra == 'audio-stretch-ab'", specifier = ">=0.4" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-xdist", marker = "extra == 'dev'", specifier = ">=3.6" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15" },
@@ -550,7 +554,7 @@ requires-dist = [
     { name = "soundfile", specifier = ">=0.12" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["dev", "audio-stretch-ab"]
 
 [[package]]
 name = "hallucinote-mcp"
@@ -1467,6 +1471,20 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ee/24/1881600551e7d01aced3b1b048b2790667210e07f9a962a242f88bdea2ef/pyroomacoustics-0.10.1-cp314-cp314-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:b8f13eeb593e4394b724e71b7302dcce77f3727bbb204b966a54c999cee32078", size = 1244143, upload-time = "2026-05-01T13:35:36.942Z" },
     { url = "https://files.pythonhosted.org/packages/a9/1b/fceb2596b9d511eef464bab56c950f7280af2e83e8254a922e1ba33d2387/pyroomacoustics-0.10.1-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:ef6d038374cc205c567d47203eda1fd745d7e34c06f3fb89a13289f065807ead", size = 1277224, upload-time = "2026-05-01T13:35:38.609Z" },
     { url = "https://files.pythonhosted.org/packages/70/e5/14c6055896cd94e98cdd2fb74559a77cc2567fe2b2f89c42d3be407cb194/pyroomacoustics-0.10.1-cp314-cp314-win_amd64.whl", hash = "sha256:ce6743905c967c9362f546883f57f5e4e0a508c44222c0efb947074b9d0d39fe", size = 718676, upload-time = "2026-05-01T13:35:40.146Z" },
+]
+
+[[package]]
+name = "pyrubberband"
+version = "0.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "soundfile" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b4/5f/e4e737a216c9327931cdee8ca2194c916ee8a1748a8c7c80d5d5a8368d81/pyrubberband-0.4.0.tar.gz", hash = "sha256:74707ec8ca6c6234e84ad2d9a4aa5c08a62fcfd83da011d535d41f4388ac49f7", size = 6416, upload-time = "2024-09-30T17:53:00.796Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d8/88/238aa67e353012d8dd999372aedada3f627bc9895d5d2a5305e7ffb1affd/pyrubberband-0.4.0-py3-none-any.whl", hash = "sha256:0a803191f38debbbdfd9135939c1f75999e98511f19867d357b84e191f139ca9", size = 4798, upload-time = "2024-09-30T17:52:59.621Z" },
 ]
 
 [[package]]

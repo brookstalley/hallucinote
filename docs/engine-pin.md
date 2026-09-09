@@ -40,4 +40,4 @@ python -m hallucinote_mcp.cli version
 
 For the **Live** side, the Remote-Script ↔ server version handshake guards drift
 (see the README troubleshooting *"version handshake missing"*). See
-`.prawduct/artifacts/plans/INS-7V2D/design.md` §6 for the env design rationale.
+`.prawduct/artifacts/plans/INS-7V2D/archive/design.md` §6 for the env design rationale.

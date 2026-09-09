@@ -8,7 +8,7 @@ holds events from a `requests.kind='pull'` request, of a kind replay
 re-asserts, NEWER than the snapshot's `captured_at` stamp.
 
 Refuse/warn matrix under test (design:
-.prawduct/artifacts/plans/BAK-7D2V/design.md):
+.prawduct/artifacts/plans/BAK-7D2V/archive/design.md):
 
   * stamped snapshot + newer pulled mix edits  -> REFUSE, nothing reverted
   * allow_stale_snapshot=True                  -> proceed + warn, revert happens

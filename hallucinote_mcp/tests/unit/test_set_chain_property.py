@@ -6,6 +6,7 @@ grammar), re-probes via hasattr, and teaches on a plain instrument-rack Chain â€
 never whitelists a class, never crashes. Validation + the probe run before any
 write, so a refusal never half-applies.
 """
+from __future__ import annotations
 import pytest
 
 from hallucinote_mcp.handlers.device import set_chain_property_handler

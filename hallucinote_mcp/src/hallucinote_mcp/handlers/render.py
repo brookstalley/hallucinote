@@ -814,7 +814,7 @@ def render_handler(
 # long-polls the job registry. The long-poll window + the daemon-worker spawn
 # are shared with analyze's start/status, so they live in jobs.py
 # (DEFAULT_STATUS_LONG_POLL_S, spawn_daemon) — one knob, not two that drift. See
-# .prawduct/artifacts/plans/MCP-ASYNC-RENDER-ANALYZE/api-notes.md.
+# .prawduct/artifacts/plans/MCP-ASYNC-RENDER-ANALYZE/archive/api-notes.md.
 
 RENDER_POLL_INSTRUCTION = (
     "Render running in the background. Poll ableton_render(action='status', "

@@ -298,7 +298,7 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # authored and resolved at push via paths.resolve_audio_path (the SAME
     # resolver clips.audio_file uses). NULL for every non-sampler device. Window
     # / reverse / pitch / gain stay device_parameters + envelopes, not columns.
-    # See .prawduct/artifacts/plans/SMP-7K2D/design.md.
+    # See .prawduct/artifacts/plans/SMP-7K2D/archive/design.md.
     ("devices", "audio_file", "TEXT"),
     # SDC-7K3M: device sidechain SOURCE routing (symmetric with track input
     # routing) — a semantic FK to the source track + the input channel. Existing

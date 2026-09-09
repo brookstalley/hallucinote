@@ -12,6 +12,16 @@ branch: feature/aud-sharpness-transient-lenses
 **Critic mode:** cumulative (run via an independent Agent from the songs workspace session — the framework checkout is not this session's primary repo, so the Stop-hook gate is blind to it; same posture as `build-plan-aud-8t3k-timbre.md`)
 **Origin:** dogfooding `alien` (hallucinote-songs, 2026-09-08). Two by-ear complaints — "the higher-pitched elements come across as a bit shrill" and "the kick is a thud, muffled, muddy with other instruments" — had no number in the MixReport to reason over, so both were measured with throw-away scripts against the captured stems. Those scripts are the spec.
 
+## Why this plan is still live
+
+Its chunks are complete and the work merged (#470), but on gitflow a
+merged-but-unreleased plan stays in the live directory until its release ships,
+and `develop` is ahead of `main` with no release cut. Archive it when that
+release lands.
+
+Reviewed and left live during the JANITOR-2026-09 sweep (2026-09-08), which
+archived the six flat plans whose releases had already shipped.
+
 ## Confidence Check
 
 - **Problem:** the MixReport's timbre lens (centroid / flatness / rolloff) cannot say whether a surface is *shrill* — a bright-but-pleasant pad and a piercing lead can share a centroid — and nothing in the report describes the *shape of a drum hit* (how fast it rises, how long it rings, whether its attack is sub weight, low-mid thud, or click). A "make it less shrill" or "make the kick punchier" edit could only be judged by ear.

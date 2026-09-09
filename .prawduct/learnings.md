@@ -12,6 +12,14 @@ put any narrative there.
 
 **Reading a rule is not applying it.** The failure mode of a learnings file is not absence, it is assent: a rule arrives at the right moment, is read, is agreed with, and changes nothing, because nothing made you recognize the case in hand as an instance of it. So for any rule you read here, name the decision you are about to make and say what the rule changes about it — or say that it does not apply, which is also an answer.
 
+## A norm sweep must ask WHICH SIDE moved — the remedy for statement drift is the opposite of the remedy for code drift
+
+**When a norm and the code disagree, decide WHICH SIDE moved before reaching for a fix — the two remedies are opposite and both are always available. The tell for statement drift is that the norm's why does not reach the sites it condemns; the tell for code drift is that the why reaches them exactly. Amending a norm to match your own code, and refactoring code to satisfy wording nobody would write today, are both failures.**
+
+## An archived record is not a live surface — path-shaped exemptions go stale the moment you archive
+
+**A lock that scans "every live surface" must express its exemption as a RULE (`"/archive/" in path`), never a path list — the first archival moves a file out from under an exact-path exemption and the lock fails on a record whose own banner says do not edit it. Rewriting an archived record to satisfy a live-surface check falsifies the record, which is the thing the check exists to protect.**
+
 ## Newly enabling a capability doesn't update the guards that predated it — grep for stale exclusions
 
 **When a change makes a previously-impossible thing possible (DEV-6M2K made master device chains pushable; the earlier premise that Live can't load onto the master was refuted), the exclusions/guards/skips written under the old invariant don't auto-update — they silently become bugs. The push probe's master-exclusion ("master has no pushable devices, reached via ableton_session not a track index") was a correct invariant that became the analyzer-aware-reconciliation gap once master devices were real. After enabling a capability, grep for every guard keyed on the old "can't" (skips, `if kind != 'master'`, detect-only carve-outs, "still-open piece" comments) and audit whether it's now stale.**

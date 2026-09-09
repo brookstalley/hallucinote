@@ -885,7 +885,7 @@ def analyze_handler(
 # immediately; `status` long-polls the registry. The synchronous `analyze`
 # stays as the one-call fast path for a quick few-surface capture — the action
 # help documents when to use which. See
-# .prawduct/artifacts/plans/MCP-ASYNC-RENDER-ANALYZE/api-notes.md.
+# .prawduct/artifacts/plans/MCP-ASYNC-RENDER-ANALYZE/archive/api-notes.md.
 
 ANALYZE_POLL_INSTRUCTION = (
     "Analysis running in the background. Poll ableton_analysis(action='status', "

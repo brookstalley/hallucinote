@@ -6,7 +6,7 @@ needed the install skill's abs-path-override hack). It runs the BUNDLED server
 with uv from a committed `uv.lock` into a `${CLAUDE_PLUGIN_DATA}` env, so the
 server code AND its full dependency closure match the installed plugin version.
 
-These assertions are the contract; see `.prawduct/artifacts/plans/INS-7V2D/design.md`.
+These assertions are the contract; see `.prawduct/artifacts/plans/INS-7V2D/archive/design.md`.
 """
 from __future__ import annotations
 

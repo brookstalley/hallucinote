@@ -22,6 +22,7 @@ Canonical shapes:
   NoteDict:     {pitch, start_beats, duration_beats, velocity, tags?}
   EnvelopeDict: {target_kind, target_*_id (one+), parameter_path?, breakpoints: [...]}
 """
+from __future__ import annotations
 from hallucinote.generators.output import (
     EnvelopeDict,
     GeneratorOutput,

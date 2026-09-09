@@ -87,7 +87,6 @@ _EXEMPT_FILES = {
     # Documents whose subject IS the retired phrase.
     ".prawduct/artifacts/collaboration-turn-model.md": "names the phrases it retires",
     ".prawduct/artifacts/elicitation-and-stage-exit-criteria.md": "quotes the superseded text it is superseded by",
-    ".prawduct/artifacts/plans/COLLAB-TURN/build-plan.md": "carries the sweep's own target list",
 }
 
 _EXEMPT_PREFIXES = (
@@ -149,11 +148,34 @@ def _tracked_files() -> list[str]:
         text=True,
         check=True,
     ).stdout
-    return out.split()
+    # Drop index entries whose file is gone from disk. `--cached` lists the
+    # index, so a file MOVED but not yet staged appears at its old path and
+    # `read_text` raises FileNotFoundError -- the lock crashed instead of
+    # failing, on a tree that was merely mid-rename. Its new path arrives via
+    # `--others`, so nothing escapes the scan; a path with no file cannot
+    # carry a phrase.
+    return [rel for rel in out.split() if (_REPO / rel).is_file()]
 
 
 def _is_exempt(rel: str) -> bool:
-    return rel in _EXEMPT_FILES or rel.startswith(_EXEMPT_PREFIXES)
+    return rel in _EXEMPT_FILES or rel.startswith(_EXEMPT_PREFIXES) or _is_archived(rel)
+
+
+def _is_archived(rel: str) -> bool:
+    """True for a plan the `archive-plan` hook has retired.
+
+    `_EXEMPT_PREFIXES` covers `.prawduct/artifacts/archive/`, where a
+    root-level plan lands. A plan that lived in its own directory is archived
+    in place instead — `plans/<ID>/build-plan.md` becomes
+    `plans/<ID>/archive/build-plan.md` — so the prefix rule never saw it, and
+    the COLLAB-TURN plan was exempted by exact path until the JANITOR-2026-09
+    sweep archived it and the path went stale. Both shapes are the same thing:
+    a record of what was built, carrying an "archived — no longer maintained,
+    do not edit" banner. Rewriting one to satisfy a live-surface lock would
+    falsify the record, which is why every other record in `_EXEMPT_FILES` is
+    exempt for that same stated reason.
+    """
+    return rel.startswith(".prawduct/artifacts/plans/") and "/archive/" in rel
 
 
 def _frontmatter_description(skill: Path) -> str:

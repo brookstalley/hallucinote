@@ -18,6 +18,7 @@ Tombstone protection for `device_sidechain_set` is already registered in
 guards the distinct claim that the snapshot value persists across an idempotent
 re-replay (the build.py rebuild loop).
 """
+from __future__ import annotations
 
 import pytest
 

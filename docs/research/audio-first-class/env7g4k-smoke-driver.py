@@ -10,7 +10,7 @@ in a single transport pass with per-parameter windowing) → apply_push_results
 → re-plan (all-skip) → edit one arc → re-plan (only it, still batched) →
 execute → final all-skip. This doubles as the ENV-9P4T batched-perform live
 smoke (the two-overlapping-window probe in
-.prawduct/artifacts/plans/ENV-9P4T/api-notes.md is the focused complement).
+.prawduct/artifacts/plans/ENV-9P4T/archive/api-notes.md is the focused complement).
 """
 from __future__ import annotations
 

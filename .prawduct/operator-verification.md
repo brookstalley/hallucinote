@@ -309,7 +309,7 @@ Headless-verified (guard tests incl. the pull_cli-apply audit scenario + the
 nested-chain-delete contract test), but the full pull→refuse→bake→pass loop has
 not run against real Live. Engine-side only (`capture.py`, scaffold, docs) — **no
 fingerprint flip, no re-vendor needed**. Design + refuse/warn matrix:
-`.prawduct/artifacts/plans/BAK-7D2V/design.md`.
+`.prawduct/artifacts/plans/BAK-7D2V/archive/design.md`.
 
 **Check (any song with a stamped `captured_at` snapshot — re-capture first if
 the song's snapshot predates BAK-7D2V — Ableton open, linked session):**
@@ -571,7 +571,7 @@ Song state, so the runtime recording outcomes need a live transport pass. Checks
 
 Recipe: drive `ableton_automation(action='perform_batch', arcs=[...], slowdown_factor=N)`
 directly, or `push_cli plan performed_automation --perform-slowdown N`. Verify via the `.als`
-dump / seek-read approach in `.prawduct/artifacts/plans/ENV-9P4T/api-notes.md`.
+dump / seek-read approach in `.prawduct/artifacts/plans/ENV-9P4T/archive/api-notes.md`.
 
 ---
 
@@ -735,7 +735,7 @@ Remote Script `b0c3c347`) is gone. **No `.als` dump was needed** — seek-and-re
 of `DeviceParameter.value` plus each arc's `updates_written` settle the
 windowing without the LOM envelope read surface (full capture +
 method:
-`.prawduct/artifacts/plans/ENV-9P4T/api-notes.md`). **Visual change:** no.
+`.prawduct/artifacts/plans/ENV-9P4T/archive/api-notes.md`). **Visual change:** no.
 
 1. ~~**One-time setup (human):** `/ableton-mcp-install` + Live restart.~~
    **DONE** — bridge version-matched; clean calls confirm the handshake.

@@ -108,7 +108,7 @@ _VALID_TRACK_TYPES = frozenset({"midi", "audio", "group"})
 # `requests.kind='pull'` row and every event they emit carries that
 # request_id + song_id + ts. `replay_capture` refuses (StaleSnapshotError)
 # when such events are NEWER than the snapshot's `captured_at` stamp.
-# Design + refuse/warn matrix: .prawduct/artifacts/plans/BAK-7D2V/design.md.
+# Design + refuse/warn matrix: .prawduct/artifacts/plans/BAK-7D2V/archive/design.md.
 
 # Event kinds for state replay_capture re-asserts from the snapshot. A pulled
 # event OUTSIDE this set (clip-notes, envelopes, tempo/cue, routing, tuning,
@@ -116,7 +116,7 @@ _VALID_TRACK_TYPES = frozenset({"midi", "audio", "group"})
 # what keeps ordinary build.py-staging pulls from tripping it.
 #
 # Coverage contract (audited 2026-07-04; method + full table in
-# .prawduct/artifacts/plans/BAK-7D2V/design.md §"Kind-set audit"): for EVERY
+# .prawduct/artifacts/plans/BAK-7D2V/archive/design.md §"Kind-set audit"): for EVERY
 # mutator any pull apply handler calls (grep `M\.` over sync/pull/), the event
 # kind(s) it emits are either in this tuple (replay re-asserts that state) or
 # provably outside replay's write surface. Cascade-deleting mutators matter
@@ -690,7 +690,7 @@ def _replay_devices(
         # `drum_pads` array captured via `ableton_device(action='pad_info')`:
         # ``[{chain_name: str, midi_note: int}, ...]``. Replay persists into
         # `drum_pad_mappings` so the song's generators can resolve
-        # ``Kit.from_device(...).kick`` to the kit's actual MIDI note.
+        # ``load_kit(...).kick`` to the kit's actual MIDI note.
         # Arc 4 / D4: identity check uses the browser display name
         # ``"Drum Rack"`` (post-D4 ``snapshot.class`` semantics).
         pads = d.get("drum_pads")
@@ -1184,7 +1184,7 @@ def capture_plan() -> list[dict[str, str]]:
                     "field on the snapshot: ``[{midi_note: int, chain_name: "
                     "str}, ...]``. Replay persists into `drum_pad_mappings` "
                     "so songs can "
-                    "use `Kit.from_device(conn, device_id)` to author kit-"
+                    "use `hallucinote.kits.load_kit(conn, device_id)` to author kit-"
                     "portable drum patterns instead of GM-assumed MIDI notes."},
     ]
 

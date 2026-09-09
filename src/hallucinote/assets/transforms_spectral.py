@@ -97,6 +97,11 @@ class _spectral_step:
     tempo_segments: Sequence[TempoSegment] = ()
     n_fft: int = DEFAULT_N_FFT
     hop: int = DEFAULT_HOP
+    # A tuned song's TuningData (the core never imports the tuning bolt-on, so
+    # the author passes it in). Not a parameter of the mask: what it changes is
+    # which frequencies the reference sounds at, and that is what `fingerprint`
+    # digests.
+    tuning: Any = None
     kind: str = dc_field(default="", init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -207,31 +212,13 @@ class _spectral_step:
         ]
 
     def _probe_symbolic_fingerprint(self) -> str:
-        """The symbolic fingerprint through a one-cell raster.
+        """The symbolic digest, read from the score without rasterizing a field."""
+        from hallucinote.spectral.symbolic import symbolic_fingerprint
 
-        The digest is a property of the score the schedule reaches, not of
-        the grid it is drawn on, and the builder exposes it only on a built
-        field — so the cheapest honest way to ask is a field with one bin
-        and one frame, which reads the same notes and places nothing.
-        """
-        from hallucinote.spectral.symbolic import symbolic_field
-
-        assert self.conn is not None and self.beat_map is not None
-        probe = ResolutionReport(n_fft=self.n_fft, hop=self.hop, sample_rate=self.n_fft)
-        return symbolic_field(
-            self.conn,
-            self.schedule,
-            self.beat_map,
-            freqs_hz=np.zeros(1),
-            times_s=np.zeros(1),
-            harmonic_depth=1,
-            resolution=probe,
-            song_id=self.song_id,
-        ).fingerprint
-
-    # ------------------------------------------------------------------ #
-    # the field
-    # ------------------------------------------------------------------ #
+        assert self.conn is not None
+        return symbolic_fingerprint(
+            self.conn, self.schedule, song_id=self.song_id, tuning=self.tuning,
+        )
 
     @cached_property
     def _measured_field(self) -> SpectralField:
@@ -266,6 +253,7 @@ class _spectral_step:
             harmonic_depth=self.mask.harmonic_depth,
             resolution=resolution,
             song_id=self.song_id,
+            tuning=self.tuning,
         )
 
     def field_for(self, n_samples: int, sample_rate: int) -> SpectralField:

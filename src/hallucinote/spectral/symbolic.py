@@ -325,6 +325,32 @@ def _nearest_bin(freqs: np.ndarray, hz: float) -> int | None:
     return i if abs(freqs[i] - hz) < abs(freqs[i - 1] - hz) else i - 1
 
 
+def symbolic_fingerprint(
+    conn: sqlite3.Connection,
+    schedule: ReferenceSchedule,
+    *,
+    song_id: str | None = None,
+    tuning: TuningLike | None = None,
+) -> str:
+    """The digest a symbolic field over ``schedule`` would carry, without rasterizing.
+
+    A recipe's address needs to know what the reference *is* before any field
+    is drawn; this reads exactly what ``symbolic_field`` reads and nothing
+    more. A tuned song still needs its tuning passed in (the core never
+    imports the bolt-on) — the same gate as the field builder's.
+    """
+    sid = _resolve_song_id(conn, song_id)
+    if tuning is None:
+        row = Q.get_song_tuning(conn, sid)
+        if row is not None and row["tuning_ref"] is not None:
+            raise ValueError(
+                f"song {sid} carries the alternate tuning {row['tuning_ref']!r}; pass "
+                "tuning=hallucinote.tuning.store.load_song_tuning(conn, song_id) — the core "
+                "never reads the tuning on its own (isolation invariant FR-6)."
+            )
+    return _fingerprint(conn, schedule, sid, tuning)
+
+
 def _fingerprint(
     conn: sqlite3.Connection,
     schedule: ReferenceSchedule,

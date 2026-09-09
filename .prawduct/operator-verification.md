@@ -15,6 +15,34 @@ pending entries when `operator_verification_required: true`.
 
 ---
 
+## SMP-6V2K wave 2 — hear it, keep it, play it (2026-09-09) — **PENDING**
+
+Plan: `.prawduct/artifacts/plans/SMP-6V2K-W2/build-plan.md`, chunk 17. Backlog **#330**, **#237**,
+**#510**, **#511**; probes land on **#509**. Needs Live 12.4.x open, the Remote Script
+**re-vendored** (`/hallucinote:ableton-mcp-install` — chunk 07 edited `actions/device.py` and
+`handlers/device.py`, so the wire fingerprint flipped) and Live restarted, a human at the
+machine, and the scratch song `hallucinote-songs/songs/audio-verify/` (untracked) extended
+with a Simpler track and a `reverse=1` row. One sitting, batched.
+
+### Sampler assignment (chunk 07)
+- [ ] A `build.py` with a Simpler row carrying `audio_file` pushes; `ableton_device(info)` reads the path back; a second push emits no `assign_sample`
+- [ ] Does `replace_sample` reset device parameters? (record it; the emitter orders assignment before the param writes either way)
+- [ ] A sample dropped onto a Simpler by hand survives `capture execute` → replay → push (portable path form)
+- [ ] **Sampler (`MultiSampler`) probe** — does it expose `replace_sample` or an equivalent? The verdict rewrites or lifts the "only Simpler" teaching error
+
+### Reverse via the derived cache (chunk 14)
+- [ ] A `reverse=1` clip places and plays backwards (the create's `audio_path` is under `assets/derived/`); flipping to 0 re-points it at the source
+- [ ] The arrangement copy of that row plays the same derived file
+
+### #509 probe (arrangement extent)
+- [ ] On an arrangement audio clip: is `end_marker` / a length writable after `duplicate_clip_to_arrangement`? after a direct create? Recorded on #509
+
+### R6.2 listening (chunk 12)
+- [ ] `hallucinote stretch-ab <real line> --rate 0.9 --semitones -4` with the `rubberband` binary installed (`brew install rubberband`): both files render; the operator listens and records which backend keeps the actor. This is the first real run of the CLI flags (`-t`, `-p`, `-F`)
+
+### A first hearing (the plan's acceptance)
+- [ ] One real line ingested (`hallucinote asset add`), its lens read (`hallucinote sample-lens`), one symbolic carve pushed, one follower part pushed — and heard
+
 ## SMP-6V2K wave 1 — an authored sample lands in Live, and a dragged-in one comes back (2026-09-09) — **DISCHARGED 2026-09-09 on Live 12.4.5** (one box unreachable on 12.4.x, named below; every other box including audibility is confirmed)
 
 Plan: `.prawduct/artifacts/plans/SMP-6V2K/build-plan.md`. Backlog **#284**, **#268**;

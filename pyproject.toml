@@ -47,12 +47,6 @@ dev = [
     "ruff>=0.15",
     "mypy>=1.19",
 ]
-# Optional: a second stretch/pitch backend for the R6.2 listening A/B
-# (`hallucinote stretch-ab`). Needs the `rubberband` CLI on PATH as well; the
-# harness reports it absent otherwise. Never required by the engine.
-audio-stretch-ab = [
-    "pyrubberband>=0.4",
-]
 # (The vestigial `[live]` extra was dropped 2026-07-02 with a uv.lock re-lock —
 # the `[tool.uv.workspace]` below is what builds the one env with both packages.)
 

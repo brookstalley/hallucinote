@@ -39,6 +39,10 @@ To run a song's `build.py` (it imports `hallucinote`), run it with the same inte
 | `context …`     | `python -m hallucinote.tools.song_context …` |
 | `decisions …`   | `python -m hallucinote.tools.decisions_cli …` |
 | `melody …` / `recurrence …` | the symbolic lenses (`tools.melody_lens` / `tools.recurrence_lens`) |
+| `asset add|list|verify …` | a song's audio sources and their provenance manifest (`tools.asset_ingest`) |
+| `derived verify|prune …` | the derived-audio cache under `assets/derived/` (`tools.derived_cli`) |
+| `sample-lens …` | read a line against bars before composing to it (`tools.sample_lens`) |
+| `stretch-ab …` | render one stretch/pitch move through every backend, to listen to (`tools.stretch_ab`) |
 | `reindex …` / `scaffold …` / `inventory …` | `tools.reindex_markdown` / `tools.scaffold_song` / `hallucinote.inventory` |
 | `init-workspace` | scaffold a songs workspace (`hallucinote.toml`, `.gitignore`, `git init`) in the cwd |
 | `overview-drift <slug>` | report a `<slug>.md` Structure table or `build.py` docstring layout that has drifted from the form the DB carries (reports only; never rewrites). Songs scaffolded from 2026-08-11 run this at their build close automatically — this is the on-demand path for older ones. |

@@ -34,6 +34,8 @@ from __future__ import annotations
 
 import argparse
 import shutil
+import subprocess
+import tempfile
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,16 +45,15 @@ import soundfile as sf
 
 from hallucinote.audio.timbre import spectral_centroid_hz
 
-# The optional backend's two halves. Both must be present: the package is a thin
-# wrapper that shells out, so an installed package with no binary fails at
-# render time rather than import time — checking both up front is what lets the
-# table name the missing half instead of raising mid-render.
-_RUBBERBAND_PACKAGE = "pyrubberband"
+# The optional backend is the `rubberband` command-line tool, driven directly:
+# every flag it takes is on its own usage screen, and driving the binary means
+# the formant switch is a real argument rather than a value smuggled through a
+# wrapper. Flags used, from `rubberband --help` (Rubber Band Library 3.x CLI;
+# the binary was not installed on the machine this was written on, so the
+# shapes are from the documented usage and chunk 17's listening session is
+# the first real run): `-t <X>` time ratio (output length / input length),
+# `-p <N>` pitch shift in semitones, `-F` formant preservation, `-q` quiet.
 _RUBBERBAND_BINARY = "rubberband"
-
-# Rubber Band's formant-preservation switch, passed through pyrubberband's
-# `rbargs` (its documented shape for a valueless CLI flag is an empty value).
-_FORMANT_FLAG = {"-F": ""}
 
 # Float WAV: no quantisation and no clipping, so what the listener hears is the
 # backend's output and nothing else.
@@ -118,39 +119,41 @@ def render_rubberband(
     semitones: float,
     formant: bool,
 ) -> np.ndarray:
-    """The same move through Rubber Band, optionally preserving formants.
+    """The same move through the Rubber Band CLI, optionally preserving formants.
 
-    Imported here rather than at module scope: the package is an optional extra,
-    and the engine must import this module whether or not it is installed.
+    One invocation carries both the stretch and the shift. ``rate`` follows
+    librosa's convention (``> 1`` shortens), so the CLI's time ratio is its
+    inverse. Files go through a temporary directory; the binary reads and
+    writes WAV only, which is why the source is handed over as float WAV.
     """
-    import pyrubberband  # type: ignore[import-not-found]
-
-    rbargs = dict(_FORMANT_FLAG) if formant else None
-    out = mono
-    if rate != 1.0:
-        out = pyrubberband.time_stretch(out, sample_rate, rate, rbargs=rbargs)
-    if semitones != 0.0:
-        out = pyrubberband.pitch_shift(
-            out, sample_rate, semitones, rbargs=rbargs
-        )
-    return np.asarray(out, dtype=np.float32)
+    binary = shutil.which(_RUBBERBAND_BINARY)
+    if binary is None:
+        raise RuntimeError(f"the {_RUBBERBAND_BINARY} binary is not on PATH")
+    with tempfile.TemporaryDirectory(prefix="stretch-ab-") as tmp:
+        src = Path(tmp) / "in.wav"
+        dst = Path(tmp) / "out.wav"
+        sf.write(str(src), mono, sample_rate, subtype=_OUTPUT_SUBTYPE)
+        args = [binary, "-q"]
+        if rate != 1.0:
+            args += ["-t", f"{1.0 / rate:g}"]
+        if semitones != 0.0:
+            args += ["-p", f"{semitones:g}"]
+        if formant:
+            args.append("-F")
+        args += [str(src), str(dst)]
+        proc = subprocess.run(args, capture_output=True, text=True)
+        if proc.returncode != 0 or not dst.exists():
+            raise RuntimeError(
+                f"{_RUBBERBAND_BINARY} exited {proc.returncode}: {proc.stderr.strip()}"
+            )
+        out, _ = sf.read(str(dst), dtype="float32")
+    return np.asarray(out, dtype=np.float32).reshape(-1) if np.ndim(out) == 1 else np.asarray(out, dtype=np.float32).mean(axis=1)
 
 
 def rubberband_absence() -> str | None:
-    """The reason Rubber Band cannot run, or ``None`` when it can. Names the one
-    missing half so the reader knows whether to install a package or a binary."""
-    try:
-        __import__(_RUBBERBAND_PACKAGE)
-    except ImportError:
-        return (
-            f"{_RUBBERBAND_PACKAGE} is not installed — "
-            f"uv sync --extra audio-stretch-ab"
-        )
+    """The reason Rubber Band cannot run, or ``None`` when it can."""
     if shutil.which(_RUBBERBAND_BINARY) is None:
-        return (
-            f"the {_RUBBERBAND_BINARY} binary is not on PATH — "
-            f"brew install rubberband"
-        )
+        return f"the {_RUBBERBAND_BINARY} binary is not on PATH — brew install rubberband"
     return None
 
 

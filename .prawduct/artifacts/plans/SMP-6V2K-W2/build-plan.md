@@ -237,6 +237,16 @@ links) rather than its roster of who writes them | user can veto]`
 **D15 — Intelligibility ships as measurement, framed later.** Per #279's ruling (Scope
 boundary). Neutral numbers in the report; no `Finding`, no threshold, no grade.
 
+**D16 — A planner may render into the derived cache, and nothing else (recorded after
+the cumulative review).** The clips and arrangement planners derive a `reverse=1` row's
+file at plan time so the create they plan names a file that exists — deterministic,
+content-addressed, idempotent, never Live. `[DECISION: one bounded write inside a planner
+| the purity norm's why is that a plan stays inspectable and testable without Live, which
+this preserves; the alternative — deriving at apply time — would plan a create against a
+path that does not exist yet, the exact silence-reporting-OK failure the sync contract
+forbids | user can veto]` Recorded in `sync-boundary-contract.md` and
+`boundary-patterns.md`.
+
 ## Status
 
 **A ticked box means the code is built, reviewed on the integration branch and green.**

@@ -10,11 +10,9 @@ either would be a test that never runs.
 from __future__ import annotations
 
 import shutil
-import sys
-import types
+import subprocess
 from pathlib import Path
 
-import numpy as np
 import pytest
 import soundfile as sf
 
@@ -43,28 +41,12 @@ def _write_source(tmp_path: Path) -> Path:
     return path
 
 
-def _fake_pyrubberband(calls: list[dict[str, object]]) -> types.ModuleType:
-    """A stand-in that records how it was called and returns the input pitched
-    nowhere — the identity keeps its centroid distinguishable from librosa's."""
-    module = types.ModuleType("pyrubberband")
-
-    def time_stretch(y, sr, rate, rbargs=None):
-        calls.append({"op": "time_stretch", "rate": rate, "rbargs": rbargs})
-        return np.asarray(y, dtype=np.float32)
-
-    def pitch_shift(y, sr, n_steps, rbargs=None):
-        calls.append({"op": "pitch_shift", "n_steps": n_steps, "rbargs": rbargs})
-        return np.asarray(y, dtype=np.float32)
-
-    module.time_stretch = time_stretch
-    module.pitch_shift = pitch_shift
-    return module
-
-
 def _install_fake_rubberband(
     monkeypatch: pytest.MonkeyPatch, calls: list[dict[str, object]]
 ) -> None:
-    monkeypatch.setitem(sys.modules, "pyrubberband", _fake_pyrubberband(calls))
+    """A binary on PATH and a ``subprocess.run`` that records its argv and
+    copies the input to the output — the identity keeps its centroid
+    distinguishable from librosa's."""
     real_which = shutil.which
     monkeypatch.setattr(
         shutil,
@@ -76,11 +58,20 @@ def _install_fake_rubberband(
         ),
     )
 
+    def fake_run(args, **kwargs):
+        calls.append({"args": list(args)})
+        shutil.copyfile(args[-2], args[-1])
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
 
 def _absent_rubberband(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A ``None`` entry in ``sys.modules`` makes the import raise ImportError,
-    so the absent branch is exercised on a box where the extra IS installed."""
-    monkeypatch.setitem(sys.modules, "pyrubberband", None)
+    real_which = shutil.which
+    monkeypatch.setattr(
+        shutil, "which",
+        lambda name, *a, **kw: None if name == "rubberband" else real_which(name, *a, **kw),
+    )
 
 
 def test_librosa_alone_renders_one_file_and_reports_rubberband_absent(
@@ -102,8 +93,8 @@ def test_librosa_alone_renders_one_file_and_reports_rubberband_absent(
     assert librosa_row.centroid_hz is not None
     assert rubberband_row.path is None
     # The absence names WHICH half is missing, so the reader knows what to do.
-    assert "pyrubberband is not installed" in (rubberband_row.absent_reason or "")
-    assert "audio-stretch-ab" in (rubberband_row.absent_reason or "")
+    assert "rubberband binary is not on PATH" in (rubberband_row.absent_reason or "")
+    assert "brew install rubberband" in (rubberband_row.absent_reason or "")
 
 
 def test_a_present_rubberband_renders_a_second_file_with_formants_preserved(
@@ -122,8 +113,11 @@ def test_a_present_rubberband_renders_a_second_file_with_formants_preserved(
         f"rubberband-{slug}-formant.wav",
     ]
     assert all(row.path is not None for row in rows)
-    assert [call["op"] for call in calls] == ["time_stretch", "pitch_shift"]
-    assert all(call["rbargs"] == {"-F": ""} for call in calls)
+    assert len(calls) == 1, "one invocation carries both the stretch and the shift"
+    args = calls[0]["args"]
+    assert "-F" in args and "-t" in args and "-p" in args
+    assert args[args.index("-t") + 1] == f"{1.0 / 0.8:g}"
+    assert args[args.index("-p") + 1] == "2"
 
 
 def test_no_formant_drops_the_flag_and_the_filename_says_so(
@@ -139,7 +133,7 @@ def test_no_formant_drops_the_flag_and_the_filename_says_so(
     slug = params_slug(rate=1.0, semitones=5.0)
     assert (out / f"rubberband-{slug}.wav").is_file()
     assert not (out / f"rubberband-{slug}-formant.wav").exists()
-    assert all(call["rbargs"] is None for call in calls)
+    assert all("-F" not in call["args"] for call in calls)
 
 
 def test_an_identity_parameter_costs_no_backend_pass(tmp_path, monkeypatch):
@@ -153,7 +147,7 @@ def test_an_identity_parameter_costs_no_backend_pass(tmp_path, monkeypatch):
         formant=True,
     )
     # rate 1.0 is the identity, so only the pitch half runs.
-    assert [call["op"] for call in calls] == ["pitch_shift"]
+    assert len(calls) == 1 and "-p" in calls[0]["args"] and "-t" not in calls[0]["args"]
 
 
 def test_the_table_lists_exactly_the_files_written(tmp_path, monkeypatch):
@@ -191,15 +185,12 @@ def test_the_table_carries_the_absence_and_no_verdict(tmp_path, monkeypatch):
         source, source_centroid, rows, rate=1.0, semitones=-4.0
     )
 
-    assert "absent: pyrubberband is not installed" in table
+    assert "absent: the rubberband binary is not on PATH" in table
     # The centroid is framed as a hint to read across backends, never a threshold.
     assert "not against zero" in table
 
 
-def test_rubberband_absence_names_a_missing_binary_when_the_package_is_there(
-    monkeypatch,
-):
-    monkeypatch.setitem(sys.modules, "pyrubberband", _fake_pyrubberband([]))
+def test_rubberband_absence_names_the_missing_binary(monkeypatch):
     monkeypatch.setattr(shutil, "which", lambda name, *a, **kw: None)
     reason = rubberband_absence()
     assert reason is not None

@@ -32,6 +32,33 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-09-09 — A sample is now something the music can be derived from
+<!-- prawduct: type=feature | scope=SMP-6V2K-W2 -->
+
+SMP-6V2K wave 2, built by eleven parallel delegates on a file-disjoint partition and three
+more in a second wave, integrated on `plan/smp-6v2k-w2`. What a song can now do with a
+sample beyond placing it: **keep it** — `hallucinote asset add` normalizes a file under
+`assets/sources/` and records its provenance in `assets/manifest.json`; `derive(line, ...)`
+in `build.py` runs a recipe (trim, fade, normalize, reverse, pitch shift, stretch-to-bars,
+chop-at-onsets, carve / vocode against a symbolic or measured reference) into a
+content-addressed cache under `assets/derived/`, so a `reverse=1` row places the reversed
+file in the session and the arrangement; **hear it** — a second audio front door
+(`audio/sample_io.py`) and feature streams in seconds mapped to beats through the clip's
+placement (F0, formants, energy and spectral descriptors, onsets and phrases), detectors
+with musical gates, a follower generator that turns a contour into a part with the key as
+a parameter, and `hallucinote sample-lens` / `/sample-lens` rendering the reading against
+bars; **play it** — a Simpler row's `audio_file` is assigned on push (`assign_sample`, a
+new `ableton_device` action; the wire fingerprint flipped) and captured back; and the mix
+report can carry a per-turn speech-over-bed measurement (`speech_track=`), numbers only
+under the 2026-08-10 analyzer-freeze ruling. Wave-1 leftovers closed: pull links the
+audio clip it ingests (#507), the clip mutators refuse slot 0 (#473). Deferred at
+dispatch: source separation (#266). The Live session (sampler, reverse, the #509 and
+Sampler probes, the first hearing) is queued in `operator-verification.md`.
+
+Tests consolidated: `test_reverse_is_refused_loudly_but_the_clip_is_still_placed` into
+`tests/unit/sync/test_push_clips_reverse.py`, which pins the contract that replaced it;
+three fixtures that used `slot=0` incidentally now use 1.
+
 ## 2026-09-09 — The audio path ran against Live, and the one silent replace it found now speaks
 
 <!-- prawduct: type=bugfix | scope=SMP-6V2K -->

@@ -74,6 +74,9 @@ When changing this surface:
 When changing this surface:
 - Any signature change breaks the agent integration. Document in the build
   plan + chunk handoff.
+- A planner may render into the song's derived-audio cache (`assets/derived/`, content-
+  addressed, idempotent, never Live) so a planned create names an existing file — the
+  one bounded exception to planner purity, recorded in `sync-boundary-contract.md`.
 - New result kinds need both a planner emitter and an `apply_push_results`
   branch.
 - MCP result fields a planner relies on (e.g. `cue_create_batch`'s

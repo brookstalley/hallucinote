@@ -265,10 +265,6 @@ def resolve_reversed_sample(
                 channels=int(info.channels),
                 duration_s=float(info.duration),
             )
-        # The transforms are frozen dataclasses, so their `kind` is read-only
-        # while the `Transform` protocol declares it settable; mypy therefore
-        # rejects any concrete transform where the protocol is expected. The
-        # runtime check `derive` itself makes is structural and passes.
         derived = derived_cache.derive(
             source, (transforms.reverse(),), song_dir=song_dir,
         )

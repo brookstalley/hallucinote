@@ -78,6 +78,16 @@ class FakeDeadSimpler(FakeSimpler):
         self.replace_calls.append(path)
 
 
+class FakeStaleSimpler(FakeSimpler):
+    """Accepts the call and keeps the sample it already had — the other silent
+    no-op, invisible to a presence check."""
+
+    def replace_sample(self, path: str) -> None:
+        self.replace_calls.append(path)
+        if self.sample is None:
+            self.sample = FakeSample("/somewhere/previous.wav")
+
+
 class FakeChain:
     def __init__(self, name: str, devices: list[Any] | None = None):
         self.name = name
@@ -280,6 +290,18 @@ def test_assign_sample_refuses_a_silent_no_op(loaded_actions, wav):
     assert resp.ok is False
     assert "still" in (resp.error or "")
     assert "no sample" in (resp.error or "")
+
+
+def test_assign_sample_refuses_a_sampler_that_kept_its_old_sample(loaded_actions, wav):
+    """The call returned, the device answers ``.sample`` — but with the file it
+    already had. A presence check would call that an assignment."""
+    ctx = FakeCtx(FakeSong([FakeTrack("Vox", devices=[FakeStaleSimpler()])]))
+
+    resp = _assign(ctx, track_index=1, device_index=1, sample_path=wav)
+
+    assert resp.ok is False
+    assert "previous.wav" in (resp.error or "")
+    assert "kept the previous sample" in (resp.error or "")
 
 
 def test_assign_sample_needs_exactly_one_parent(loaded_actions, wav):

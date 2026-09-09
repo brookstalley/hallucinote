@@ -616,12 +616,60 @@ somebody has to be able to regenerate, and earns its place for formant-sensitive
 work and for chopping — not by default. The producer-practice guardrail holds
 underneath: cut-and-slide before time-stretch, because stretch smears formants.
 
-**What is not there yet.** Placing and conforming is built; acquiring,
-transforming and deriving are not. There is no extraction from a media file, no
-pitch shift or stretch or chop that Hallucinote performs itself, no assigning a
-sample to a Simpler or Sampler, and no way yet to read a sample's features and
-compose *from* them. `capability-truth.md`'s audio row is the current answer;
-believe it over this paragraph if the two ever drift.
+**Sources, recipes and the derived cache.** A sample enters the song through
+`hallucinote asset add <file> --name <name> --note "<what the line is>" --origin
+"<title / medium / scene>"`: the file is normalized to WAV under
+`assets/sources/<name>.wav` (MP3 and the like decoded through `ffmpeg`), never
+edited again, and recorded in `assets/manifest.json` with its checksum, rate,
+channels, duration and provenance — for film material the note is the only
+record of what the sample *is*. `hallucinote asset list|verify` read the manifest
+back. In `build.py` the source is looked up by name and transformed by a recipe:
+
+```python
+from hallucinote.assets import source, derive, trim, normalize, reverse
+
+line = source(SONG_DIR, "rivers-01")
+hit = derive(line, trim(0.4, 2.1), normalize(peak_dbfs=-1.0))
+create_audio_clip(conn, ..., audio_file=str(hit.path))
+```
+
+`derive` returns a file under `assets/derived/` named by the hash of its source,
+its chain and every parameter (and, for a carve, the notes it was carved
+against), beside a JSON record of what made it. Commit both directories: the
+derived file is a cache — regenerable from source + recipe, kept so opening the
+song never requires a re-render — and the recipe in `build.py` is the authored
+thing. Change the source or the recipe and the address changes; nothing can
+reference a stale file by a current name. `hallucinote derived verify|prune`
+checks the cache and lists what no clip or device references any more. The
+transforms: `trim`, `fade`, `normalize`, `reverse`, `pitch_shift`,
+`stretch_to_bars`, `chop_at_onsets`, and the score-dependent `carve` / `vocode`
+(a reference schedule of nodes plus `MaskParams`; `field='symbolic'` reads the
+score, `field='measured'` reads a capture — never substituted for each other).
+A clip row with `reverse=1` needs none of this spelled out: push derives the
+reversed file itself and points the clip at it, in the session and the
+arrangement alike.
+
+**Reading a line before composing to it.** `hallucinote sample-lens <slug>
+<source>` (`/sample-lens`) renders the line's pitch centre and its relation to
+the song's key, its phrases in beats at the song's tempo, syllable rate, and
+where a named detector *would* fire, against bars — readings, never verdicts.
+The follower generator (`generators.follow_pitch`) turns an F0 stream into a
+tagged part; the key constraint is a parameter, and `None` keeps the line's own
+pitch classes — whether the music leads is the author's call, never a default.
+
+**A sampler.** A `devices` row for a Simpler carries `audio_file`; push assigns
+the sample (`assign_sample`, re-callable, diffed against what Live reports) and
+capture writes a hand-dropped sample back in the same portable form. Window,
+pitch and gain are ordinary device parameters and envelopes.
+
+**What is not there yet.** Formant-preserving grain-scatter (R4.3) waits on the
+`hallucinote stretch-ab` listening decision; an arrangement copy still plays the
+file's extent, not the placement's `end_bar` (#509); source separation for a
+dirty line (#266); a sampler nested inside a rack is pushed but not captured
+back; and a sampler's reverse has no intent column to read from. The sampler
+assignment and reverse-via-derived paths are unit-tested and await their Live
+session. `capability-truth.md`'s audio row is the current answer; believe it
+over this paragraph if the two ever drift.
 
 Movie dialogue and commercial recordings are somebody's copyright. Personal and
 creative use is one thing and distributing a released track built on it is

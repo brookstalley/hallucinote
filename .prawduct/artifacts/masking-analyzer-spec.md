@@ -245,3 +245,11 @@ masker never *decreases* the maskee's masked fraction.
   is the spike's stated validation path ("+ a synthetic test corpus to validate").
 - **No clip-schedule DB read for MVP correctness** — the windowed audio already
   encodes co-play; the schedule is a perf prune, deferred.
+
+## Re-used by the intelligibility measurement (2026-09-09)
+
+`audio/intelligibility.py` runs this spec's tile rule, spreading matrix, energy gate
+and masking offset over one speech surface against the bed of every other stem, per
+spoken turn and per Bark band inside 300–3400 Hz — the same maths, one element against
+everything else. It emits numbers only (no `Finding`, no threshold) under the 2026-08-10
+analyzer-freeze ruling; a refinement to this spec's level model should land in both.

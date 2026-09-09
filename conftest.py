@@ -62,7 +62,13 @@ _AUDIO_PATH_FRAGMENTS = (
     "/tests/unit/features/",
     "/tests/unit/spectral/",
 )
-_AUDIO_FILE_NAMES = ("test_handlers_analysis.py", "test_stretch_ab.py")
+_AUDIO_FILE_NAMES = (
+    "test_handlers_analysis.py",
+    "test_stretch_ab.py",
+    "test_sample_lens.py",
+    "test_push_clips_reverse.py",
+    "test_push_arrangement_reverse.py",
+)
 
 
 def _is_audio_item(item: pytest.Item) -> bool:

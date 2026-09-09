@@ -27,7 +27,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import librosa
 import numpy as np
 from scipy.ndimage import convolve1d
 from scipy.signal.windows import hann
@@ -306,6 +305,7 @@ def _resample(mask: Mask, freqs_hz: np.ndarray, times_s: np.ndarray) -> np.ndarr
 
 def _filter_stft(mono: np.ndarray, sr: int, mask: Mask, n_fft: int, hop: int) -> np.ndarray:
     """One channel through one window: magnitudes scaled, phase kept."""
+    import librosa  # lazy: keeps `import hallucinote.assets` free of the DSP stack
     spec = librosa.stft(mono, n_fft=n_fft, hop_length=hop, window="hann", center=True)
     freqs = librosa.fft_frequencies(sr=sr, n_fft=n_fft)
     times = librosa.frames_to_time(np.arange(spec.shape[1]), sr=sr, hop_length=hop)

@@ -49,7 +49,7 @@ $ARGUMENTS
 
 **Step 1 — Identify the song and the source.** The song is the active `songs/<slug>/`;
 the source is a name in its `assets/manifest.json` (list them with
-`"$PY" -m hallucinote.tools.asset_ingest --song <slug> list`, or read the manifest). A line not
+`"$PY" -m hallucinote.tools.asset_ingest list --song <slug>`, or read the manifest). A line not
 yet ingested can be read as a bare file with `--file <wav> --bpm <tempo>` — constant
 tempo, no placement, and no key unless `--key` is passed; the reading says so.
 

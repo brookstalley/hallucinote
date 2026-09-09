@@ -38,6 +38,12 @@ _SUBCOMMANDS: dict[str, tuple[str, str]] = {
     "overview-drift": ("hallucinote.tools.overview_drift", "main"),
     "init-workspace": ("hallucinote.tools.init_workspace", "main"),
     "inventory": ("hallucinote.inventory", "_main"),
+    # Sampling (SMP-6V2K wave 2): a song's audio sources, its derived cache,
+    # the reading of a line, and the R6.2 listening harness.
+    "asset": ("hallucinote.tools.asset_ingest", "main"),
+    "derived": ("hallucinote.tools.derived_cli", "main"),
+    "sample-lens": ("hallucinote.tools.sample_lens", "main"),
+    "stretch-ab": ("hallucinote.tools.stretch_ab", "main"),
 }
 
 _SUMMARY: dict[str, str] = {
@@ -57,6 +63,10 @@ _SUMMARY: dict[str, str] = {
     "overview-drift": "report a <slug>.md Structure table or build.py docstring layout that has drifted from the form",
     "init-workspace": "create a hallucinote.toml songs-workspace marker (+ git init)",
     "inventory": "refresh the offline browser/instrument cache",
+    "asset": "add a sample to a song's assets/sources with its provenance; list / verify the manifest",
+    "derived": "verify or prune a song's derived-audio cache (assets/derived/)",
+    "sample-lens": "read a line — pitch centre, phrases, where a detector would fire — against bars",
+    "stretch-ab": "render one stretch/pitch move through every available backend, to listen to",
 }
 
 

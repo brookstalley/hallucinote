@@ -1955,6 +1955,15 @@ def assign_sample_handler(
             f"reports no sample. Nothing was assigned; {path!r} may be an "
             "audio file Live opened and then discarded."
         )
+    if os.path.realpath(str(assigned)) != os.path.realpath(path):
+        # A sampler that already held a sample answers `.sample` either way;
+        # only the read-back path says whether THIS file landed.
+        raise RuntimeError(
+            f"assign_sample: replace_sample returned without error but the "
+            f"sampler at device_index={device_index} on {kind} {idx} reports "
+            f"{assigned!r}, not {path!r}. Live kept the previous sample; the "
+            "file may be one it opened and then discarded."
+        )
     result: dict[str, Any] = {
         "device_index": spec["device_index"],
         "parent_kind": kind,

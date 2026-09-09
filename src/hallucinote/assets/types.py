@@ -105,9 +105,20 @@ class Derived:
     source_checksum: str
     chain: tuple[Transform, ...]
     reference_fingerprint: str | None = None
+    # Every file the recipe wrote, in order. A transform that splits its input
+    # (chopping at onsets) writes several; ``path`` is always ``outputs[0]``,
+    # so a reader that only knows ``path`` still names a real file and a
+    # reader that wants them all never has to guess the naming. Left empty by
+    # the writer it defaults to ``(path,)``.
     outputs: tuple[Path, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
+        if not self.outputs:
+            object.__setattr__(self, "outputs", (self.path,))
+        elif self.outputs[0] != self.path:
+            raise ValueError(
+                f"Derived.path {self.path} must be outputs[0]; got outputs[0]={self.outputs[0]}"
+            )
         if not _SHA256_HEX.match(self.address):
             raise ValueError(
                 f"Derived.address must be 64 lowercase hex chars (sha256); got "

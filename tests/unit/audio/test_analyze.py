@@ -1492,7 +1492,9 @@ def test_analyze_mix_populates_render_integrity_and_serializes_it(tmp_path: Path
 
     # Explicit: the flag defaults OFF, like every other analysis flag here,
     # and the handler is what turns it on for a real render.
-    report = analyze_mix(captures_dir, analyze_integrity=True)
+    report = analyze_mix(
+        captures_dir, analyze_integrity=True, analyze_imaging=True
+    )
 
     # One integrity row per captured surface, each naming what it measured.
     measured = {row.track_id for row in report.integrity}
@@ -1572,7 +1574,7 @@ def test_per_section_stems_carry_imaging(tmp_path: Path):
         SectionWindow(name="chorus", start_beat=8.0, end_beat=16.0),
     ]
 
-    report = analyze_mix(captures_dir, sections=sections)
+    report = analyze_mix(captures_dir, sections=sections, analyze_imaging=True)
 
     assert len(report.per_section) == 2
     for section in report.per_section:
@@ -1582,3 +1584,48 @@ def test_per_section_stems_carry_imaging(tmp_path: Path):
 
     payload = report.to_json_dict()
     assert payload["per_section"][0]["stems"][0]["imaging"] is not None
+
+
+def test_analyze_mix_passes_stem_gains_as_linear_gains(tmp_path: Path):
+    """The gain UNIT is a seam, and a seam is what nobody owns by default.
+
+    ``stem_gains`` carries LINEAR gains — the handler converts Live's normalized
+    fader value through the calibrated curve exactly once. A second conversion
+    inside the reconciliation mis-levelled a unity fader by +6 dB and a -14 dB
+    fader by -20 dB, and did it while ``gains_assumed_unity`` reported ``False``,
+    so the report asserted the levels were modelled while they were wrong.
+
+    Neither side's own tests could see it: the module's tests were
+    self-consistent in its own convention, and the analyze-level test passed no
+    gains at all. This one exercises the PRODUCTION argument shape — a non-unity
+    linear gain map — which is the only place the mismatch is visible.
+    """
+    from .fixtures import pink_noise, sine
+
+    bass = sine(80.0, 4.0, amplitude=0.4)
+    lead = pink_noise(4.0, rng=np.random.default_rng(9))
+    half = 10.0 ** (-6.0 / 20.0)
+    # The master is what Live would produce: each stem at its LINEAR gain.
+    master = (bass * half + lead).astype(np.float32)
+
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "Bass", bass), ("track:2", "Lead", lead)],
+        master_audio=master,
+        start_at_beat=0.0,
+        stop_at_beat=8.0,
+    )
+
+    report = analyze_mix(
+        captures_dir,
+        analyze_integrity=True,
+        stem_gains={"track:1": half, "track:2": 1.0},
+    )
+
+    recon = report.sum_reconciliation
+    assert recon is not None
+    assert recon.gains_assumed_unity is False
+    # Interpreting these as normalized fader values instead would scale track:1
+    # by live_fader_gain(0.501) and blow the residual apart.
+    assert recon.residual_db < -20.0, recon
+    assert recon.gain_offset_db == pytest.approx(0.0, abs=1.0), recon

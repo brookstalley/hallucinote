@@ -86,15 +86,21 @@ def test_faithful_sum_is_faithful_in_every_band():
     assert all(db < FAITHFUL_RESIDUAL_DB for db in measured)
 
 
-def test_fader_gains_are_applied_through_the_live_curve():
-    """Stems summed at their normalized Live fader volumes reconstruct a master
-    mixed at those same volumes — the reconstruction is not raw-capture-only."""
+def test_supplied_gains_are_LINEAR_and_applied_as_given():
+    """``stem_gains`` carries LINEAR gains, already off Live's calibrated curve.
+
+    The unit matters more than it looks: the handler that reads ``tracks.volume``
+    converts once, and every other consumer in this package takes the converted
+    value. Converting a second time here would mis-level a unity fader by +6 dB
+    and a -14 dB fader by -20 dB, and would do it while ``gains_assumed_unity``
+    reported ``False`` — the report asserting that levels were modelled while
+    they were wrong. This test passes the gains a real caller passes.
+    """
     stems = _three_stems()
-    # 0.85 is Live's unity; 0.75 reads -4 dB on the calibrated curve.
-    gains = {"kick": 0.85, "bass": 0.75, "lead": 0.75}
+    minus_four_db = 10.0 ** (-4.0 / 20.0)
+    gains = {"kick": 1.0, "bass": minus_four_db, "lead": minus_four_db}
     scaled = [
-        (track_id, (audio * (1.0 if track_id == "kick" else 10.0 ** (-4.0 / 20.0)))
-         .astype(np.float32))
+        (track_id, (audio * gains[track_id]).astype(np.float32))
         for track_id, audio in stems
     ]
     master = _sum_of(scaled)

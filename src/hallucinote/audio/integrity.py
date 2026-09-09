@@ -98,13 +98,23 @@ _Event = TypeVar("_Event")
 # integer stage or a hard limiter returns bit-identical samples for the duration
 # of the over. A band-limited waveform passing through its own peak never does —
 # it is curving, so consecutive samples differ. So a run qualifies when its
-# samples are equal to within `_FLAT_TOP_EPS` AND it sits near the surface's own
-# peak, which makes the test work at any level and for clipping that happened
-# inside a plugin before later gain.
+# samples are equal to within `_FLAT_TOP_EPS` of the channel's own peak AND it
+# sits near that peak, which makes the test work at any level and for clipping
+# that happened inside a plugin before later gain.
+#
+# RELATIVE, not absolute: the flatness of a real waveform's crest scales with
+# amplitude (a sine's crest falls off as A·d²/2 for angular step d), so a fixed
+# tolerance turns into a false positive as material gets quieter. An absolute
+# 1e-6 flagged a clean 20 Hz sine at -12 dBFS — which is where a sub, an 808
+# tail or a low pad lives — the same failure as the amplitude rule it replaced,
+# just at the other end of the range.
 _FLAT_TOP_EPS = 1e-6
 
 # The flat top has to be AT the ceiling the surface actually reached; a brief
-# plateau partway down is a waveform shape, not an over.
+# plateau partway down is a waveform shape, not an over. Measured against the
+# CHANNEL's own peak, not the surface's: an asymmetric pan or M/S-processed stem
+# routinely leaves one channel below the other, and a surface-wide ceiling hides
+# a hard-clipped quiet channel behind its louder sibling entirely.
 _FLAT_TOP_REL_TO_PEAK = 0.9
 
 # Three CONSECUTIVE pinned samples: one sample at the peak is what every correctly
@@ -145,9 +155,17 @@ _DROPOUT_FRAME_S = _MIN_DROPOUT_S
 # far edge. 40 dB is the depth at which the material is gone rather than quiet.
 _DROPOUT_COLLAPSE_DB = 40.0
 
-# A dropout cuts the waveform wherever it happened to be, so at least one of its
-# edges is a hard step; a musical rest is approached through a decay. Requiring an
-# edge at 1% of the surface peak (-40 dB relative) is what separates the two.
+# A dropout cuts the waveform wherever it happened to be, so its LEADING edge is
+# a hard step; a musical rest is approached through a decay. Requiring an edge at
+# 1% of the surface peak (-40 dB relative) is what separates the two.
+#
+# The leading edge specifically, not either edge. A gap that merely ENDS in an
+# attack is ordinary music — every rest is followed by the next note — so
+# accepting either edge turned every rest into a dropout: 15 false dropouts for
+# 16 hits on a percussion part. In Live this is not hypothetical, because a track
+# outputs bit-exact zeros whenever nothing is sounding, so any part that rests
+# for a section hits it. What makes a dropout a dropout is that the audio was
+# CUT while it was still running.
 _DROPOUT_EDGE_REL = 0.01
 
 # Discontinuity threshold, expressed against the material rather than as an
@@ -159,11 +177,45 @@ _DROPOUT_EDGE_REL = 0.01
 _DISCONTINUITY_SIGMA = 12.0
 _MAD_TO_SIGMA = 1.4826
 
-# Floor under that threshold, relative to the surface peak. Sparse material is
+# Floor under that threshold, relative to the LOCAL peak. Sparse material is
 # mostly silence, so its median derivative is ~0 and the sigma test would degrade
-# into reporting the noise floor's every wiggle. 2% of peak (-34 dB) is the
-# smallest step worth calling a pop.
+# into reporting the noise floor's every wiggle. 2% of the local peak (-34 dB) is
+# the smallest step worth calling a pop.
 _DISCONTINUITY_FLOOR_REL = 0.02
+
+# The threshold is computed per WINDOW, not once per surface, and that is the
+# whole design of this detector rather than a refinement of it.
+#
+# Music is strongly non-stationary: a surface with 60 dB of envelope range has a
+# median derivative set by its quiet majority, so every loud moment reads as a
+# 100-sigma outlier and a single global sigma reports tens of thousands of
+# phantom clicks on any percussive or broadband part. Measured on synthetic
+# drum-like material: 32,752 "discontinuities" against 31 real onsets.
+#
+# Locally the statistic behaves: within 25 ms a part is roughly stationary, so
+# steady broadband content produces no outliers at all (its steps are all alike,
+# which is exactly what a robust sigma is for), while a splice or a clip
+# boundary remains an outlier against its own neighbourhood. 25 ms is long
+# enough that one bad sample cannot move the median of ~1200 and short enough to
+# track an envelope.
+_DISCONTINUITY_WINDOW_S = 0.025
+
+# How far above its local threshold a step must sit to be reported EVEN WHEN it
+# falls inside the onset guard.
+#
+# The guard exists because a percussive attack is a burst of large derivatives
+# and would otherwise be reported as a hundred clicks. But the onsets are
+# detected from the same audio, so a click loud enough to register as a
+# spectral-flux event manufactures the very onset that then hides it — a planted
+# splice was located exactly and then suppressed by an onset 224 samples away.
+# A defect that conceals itself in proportion to its own severity is the worst
+# possible failure for this detector.
+#
+# A musical attack is band-limited: however sharp, it cannot move by an
+# arbitrary fraction of full scale between two adjacent samples. A step this far
+# above what the surrounding material produces has no musical explanation, so
+# the guard does not apply to it.
+_ONSET_GUARD_EXEMPTION = 4.0
 
 # How close to a known onset a discontinuity is presumed to BE that onset. Two
 # things have to fit inside it: the spectral-flux front end that supplies the
@@ -245,7 +297,7 @@ def measure_integrity(
     audio: np.ndarray,
     *,
     sample_rate: int,
-    onset_samples: Sequence[int] | None = None,
+    onset_samples: Sequence[int] | np.ndarray | None = None,
     max_events: int = 32,
     track_id: str = "",
 ) -> SurfaceIntegrity:
@@ -311,11 +363,14 @@ def measure_integrity(
     worst_clip_run = 0
     for channel in range(2):
         column = abs_data[:, channel]
-        # Pinned = this sample is level with the next one, near the surface's own
-        # ceiling. A run of pinned samples is a flat top; a waveform curving
+        channel_peak = float(np.max(column))
+        if channel_peak <= _SILENT_PEAK:
+            continue
+        # Pinned = this sample is level with the next one, near THIS channel's
+        # own ceiling. A run of pinned samples is a flat top; a waveform curving
         # through its peak breaks the equality on the first sample.
-        near_ceiling = column >= peak * _FLAT_TOP_REL_TO_PEAK
-        level_with_next = np.abs(np.diff(column)) <= _FLAT_TOP_EPS
+        near_ceiling = column >= channel_peak * _FLAT_TOP_REL_TO_PEAK
+        level_with_next = np.abs(np.diff(column)) <= _FLAT_TOP_EPS * channel_peak
         pinned = np.zeros(column.shape[0], dtype=bool)
         pinned[:-1] = near_ceiling[:-1] & level_with_next
         starts, lengths = _true_runs(pinned)
@@ -365,7 +420,14 @@ def measure_integrity(
     dropouts = _truncate(dropouts, cap, "dropouts", skipped)
 
     # --- discontinuities --------------------------------------------------------
-    if onset_samples is None:
+    # An EMPTY onset list suppresses nothing, exactly like no list at all, and it
+    # is what the real caller produces when the onset front end finds nothing —
+    # so the token has to cover both or it is unreachable in production and the
+    # degraded reading arrives looking authoritative. The partial case is the
+    # nastier one and cannot be detected from here: a surface where the front end
+    # finds 5 onsets out of 200 notes gets 195 unsuppressed attacks and no token,
+    # which is why the caller states the onset count it supplied.
+    if onset_samples is None or len(onset_samples) == 0:
         skipped.append(
             "discontinuities_unsuppressed: no onsets supplied, so every musical "
             "attack is reported as a discontinuity"
@@ -507,13 +569,7 @@ def _find_zero_runs(
     for start, length in zip(starts, lengths):
         start, length = int(start), int(length)
         before = float(np.max(np.abs(data[start - 1, :]))) if start > 0 else 0.0
-        after_index = start + length
-        after = (
-            float(np.max(np.abs(data[after_index, :])))
-            if after_index < data.shape[0]
-            else 0.0
-        )
-        if max(before, after) < edge_floor:
+        if before < edge_floor:
             continue
         dropouts.append(
             Dropout(start_sample=start, length_samples=length, kind="zero_run")
@@ -530,10 +586,14 @@ def _find_rms_collapses(
 ) -> tuple[list[Dropout], str | None]:
     """Holes whose samples are non-zero but whose level is gone.
 
-    A frame is a collapse when it sits ``_DROPOUT_COLLAPSE_DB`` below the frame on
-    EACH side of the run it belongs to. The two-sided test is the whole detector: a
-    decay falls that far eventually but never climbs back out of it in one frame,
-    so only something that cut the signal and then restored it qualifies. Frames
+    A frame is a collapse when it sits ``_DROPOUT_COLLAPSE_DB`` below the frame
+    immediately BEFORE the run, and the signal then climbs back above that same
+    level. The sliding left flank is what makes it work on real material: a decay
+    also falls that far eventually, but it falls gradually — each frame is only
+    slightly below the one before it — so a decay never trips a threshold measured
+    against its own immediate predecessor, while a cut does at once. Requiring the
+    recovery is the other half: only something that removed the signal and then
+    restored it qualifies. Frames
     already claimed by a zero run are left alone — the same hole reported twice
     under two names is not two defects.
     """
@@ -590,17 +650,62 @@ def _find_rms_collapses(
     return collapses, None
 
 
+def _local_step_threshold(
+    deriv: np.ndarray, amplitude: np.ndarray, sample_rate: int
+) -> np.ndarray:
+    """A per-sample step threshold from each sample's own neighbourhood.
+
+    Returns an array the length of ``deriv``. Within a window the threshold is
+    the larger of a robust sigma of the local derivative and a fraction of the
+    local amplitude — the first is what makes steady broadband material produce
+    no outliers, the second is what stops near-silence reporting its own noise
+    floor.
+
+    The window's statistics are taken over a span CENTRED on it (the window plus
+    its two neighbours) so a transient landing on a window boundary is judged
+    against the material around it rather than against whichever half it fell in.
+    """
+    n = deriv.size
+    win = max(1, int(round(_DISCONTINUITY_WINDOW_S * sample_rate)))
+    n_win = int(np.ceil(n / win))
+    pad = n_win * win - n
+    d_pad = np.pad(deriv, (0, pad), mode="edge").reshape(n_win, win)
+    a_pad = np.pad(amplitude[: n], (0, pad + (n - amplitude[:n].size)), mode="edge")
+    a_pad = a_pad[: n_win * win].reshape(n_win, win)
+
+    med = np.median(d_pad, axis=1)
+    loc_peak = np.max(a_pad, axis=1)
+    # Widen to the neighbouring windows: a step exactly on a boundary otherwise
+    # sees only the quieter side and is judged too harshly.
+    def _widen(v: np.ndarray) -> np.ndarray:
+        if v.size == 1:
+            return v
+        stacked = np.stack(
+            [np.roll(v, 1), v, np.roll(v, -1)]
+        )
+        stacked[0, 0] = v[0]
+        stacked[2, -1] = v[-1]
+        return np.max(stacked, axis=0)
+
+    sigma = _MAD_TO_SIGMA * _widen(med)
+    floor = _DISCONTINUITY_FLOOR_REL * _widen(loc_peak)
+    per_window = np.maximum(_DISCONTINUITY_SIGMA * sigma, floor)
+    return np.repeat(per_window, win)[:n]
+
+
 def _find_discontinuities(
     data: np.ndarray,
     peak: float,
     sample_rate: int,
-    onset_samples: Sequence[int] | None,
+    onset_samples: Sequence[int] | np.ndarray | None,
 ) -> list[Discontinuity]:
     """Sample-to-sample steps too large for the material to have produced.
 
     The threshold is derived from the surface itself — a robust sigma of its own
     derivative — because "too large" is a statement about this waveform's bandwidth
     and level, not a constant that would flag a loud part and miss a quiet one.
+    It is derived PER WINDOW rather than once: see ``_DISCONTINUITY_WINDOW_S`` for
+    why a single global sigma cannot work on music.
     """
     guard = int(round(_ONSET_GUARD_S * sample_rate))
     onsets = (
@@ -614,9 +719,8 @@ def _find_discontinuities(
         deriv = np.abs(np.diff(data[:, channel]))
         if deriv.size == 0:
             continue
-        sigma = _MAD_TO_SIGMA * float(np.median(deriv))
-        threshold = max(
-            _DISCONTINUITY_SIGMA * sigma, _DISCONTINUITY_FLOOR_REL * peak
+        threshold = _local_step_threshold(
+            deriv, np.abs(data[:, channel]), sample_rate
         )
         starts, _ = _true_runs(deriv > threshold)
         if starts.size == 0:
@@ -633,7 +737,11 @@ def _find_discontinuities(
             left = np.abs(samples - onsets[np.clip(near - 1, 0, onsets.size - 1)])
             right = np.abs(samples - onsets[np.clip(near, 0, onsets.size - 1)])
             explained = np.minimum(left, right) <= guard
-            samples, magnitudes = samples[~explained], magnitudes[~explained]
+            # ...unless the step is far too large for any attack to have made it.
+            local = threshold[np.clip(samples - 1, 0, threshold.size - 1)]
+            inexplicable = magnitudes > _ONSET_GUARD_EXEMPTION * local
+            keep = ~explained | inexplicable
+            samples, magnitudes = samples[keep], magnitudes[keep]
         found.extend(
             Discontinuity(
                 sample=int(sample), channel=channel, magnitude=float(magnitude)

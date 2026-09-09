@@ -48,9 +48,9 @@ from .io import CaptureSet, Surface, load_capture
 from .levels import apply_stem_gains, live_fader_db
 from .loudness import MIN_LOUDNESS_DURATION_S, measure_loudness
 from .imaging import measure_imaging
-from .integrity import measure_integrity
+from .integrity import SurfaceIntegrity, measure_integrity
 from .onsets import detect_onset_samples, to_mono
-from .phase import measure_phase_relations
+from .phase import PhaseRelation, measure_phase_relations
 from .reconcile import reconcile_stem_sum
 from .stereo import measure_stereo
 from .timbre import measure_timbre
@@ -190,6 +190,7 @@ def analyze_mix(
     analyze_timing: bool = False,
     analyze_cross_rhythm: bool = False,
     analyze_transients: bool = False,
+    analyze_imaging: bool = False,
     analyze_integrity: bool = False,
     stem_gains: "Mapping[str, float] | None" = None,
     master_fader_volume: float | None = None,
@@ -303,9 +304,13 @@ def analyze_mix(
         tempo_map,
     )
 
-    master_metrics = _measure_surface(capture.master)
-    stem_metrics = [_measure_surface(s) for s in capture.stems]
-    return_metrics = [_measure_surface(r) for r in capture.returns]
+    master_metrics = _measure_surface(capture.master, imaging=analyze_imaging)
+    stem_metrics = [
+        _measure_surface(s, imaging=analyze_imaging) for s in capture.stems
+    ]
+    return_metrics = [
+        _measure_surface(r, imaging=analyze_imaging) for r in capture.returns
+    ]
 
     # Render integrity runs FIRST among the render-level passes and its results
     # sit beside the others rather than gating them. It is upstream in meaning,
@@ -320,6 +325,22 @@ def analyze_mix(
     integrity_rows: list = []
     phase_relations: list = []
     sum_reconciliation = None
+    # An empty list IS silently absent unless something names it — this module's
+    # own convention, and the one thing these lenses exist to avoid. Collected
+    # here and merged into `skipped` once the reverb pass has created it.
+    integrity_skips: list[dict] = []
+    if not analyze_integrity:
+        integrity_skips.append({
+            "analysis": "render_integrity",
+            "reason": "analyze_integrity=False — no defect, phase or "
+                      "reconciliation pass was run for this capture",
+        })
+    if not analyze_imaging:
+        integrity_skips.append({
+            "analysis": "imaging",
+            "reason": "analyze_imaging=False — no per-surface or per-section "
+                      "soundstage reading was measured",
+        })
     if analyze_integrity:
         all_surfaces = [capture.master, *capture.stems, *capture.returns]
         # Onsets are threaded in so a musical attack is not reported as a click.
@@ -381,6 +402,7 @@ def analyze_mix(
         declared_sends=declared_reverb_sends,
         beat_map=beat_map,
     )
+    skipped.extend(integrity_skips)
 
     automation_verifications, automation_skips = _run_automation_verifications(
         capture=capture,
@@ -398,6 +420,7 @@ def analyze_mix(
         analyze_timing=analyze_timing,
         analyze_cross_rhythm=analyze_cross_rhythm,
         analyze_transients=analyze_transients,
+        analyze_imaging=analyze_imaging,
         stem_gains=stem_gains or {},
     )
     skipped.extend(section_skips)
@@ -411,6 +434,8 @@ def analyze_mix(
     skipped.extend(width_skips)
 
     findings = _derive_findings(
+        integrity=integrity_rows,
+        phase_relations=phase_relations,
         master=master_metrics,
         stems=stem_metrics,
         overshoots=overshoots,
@@ -453,7 +478,7 @@ def analyze_mix(
     return report
 
 
-def _measure_surface(surface) -> StemMetrics:
+def _measure_surface(surface, *, imaging: bool = False) -> StemMetrics:
     loudness = measure_loudness(surface.audio, sr=surface.sample_rate)
     return StemMetrics(
         track_id=surface.track_id,
@@ -462,7 +487,11 @@ def _measure_surface(surface) -> StemMetrics:
         loudness=loudness,
         timbre=measure_timbre(surface.audio, surface.sample_rate),
         stereo=measure_stereo(surface.audio),
-        imaging=measure_imaging(surface.audio, sample_rate=surface.sample_rate),
+        imaging=(
+            measure_imaging(surface.audio, sample_rate=surface.sample_rate)
+            if imaging
+            else None
+        ),
     )
 
 
@@ -717,6 +746,7 @@ def _measure_sections(
     analyze_timing: bool = False,
     analyze_cross_rhythm: bool = False,
     analyze_transients: bool = False,
+    analyze_imaging: bool = False,
     stem_gains: Mapping[str, float] = {},
 ) -> tuple[list[SectionMetrics], list[dict]]:
     """Measure per-surface loudness scoped to each named section window.
@@ -857,9 +887,15 @@ def _measure_sections(
             section_id=window.section_id,
             start_beat=window.start_beat,
             end_beat=window.end_beat,
-            master=_measure_window(capture.master, sl),
-            stems=[_measure_window(s, sl) for s in capture.stems],
-            returns=[_measure_window(r, sl) for r in capture.returns],
+            master=_measure_window(capture.master, sl, imaging=analyze_imaging),
+            stems=[
+                _measure_window(s, sl, imaging=analyze_imaging)
+                for s in capture.stems
+            ],
+            returns=[
+                _measure_window(r, sl, imaging=analyze_imaging)
+                for r in capture.returns
+            ],
             attribution=band_attribution(sliced_stems, capture.sample_rate),
             masking=masking_pairs,
             bed_masking=bed_masking,
@@ -1060,7 +1096,9 @@ def _measure_window_polymeter(
     ]
 
 
-def _measure_window(surface: Surface, window_slice: WindowSlice) -> StemMetrics:
+def _measure_window(
+    surface: Surface, window_slice: WindowSlice, *, imaging: bool = False
+) -> StemMetrics:
     """Loudness of one surface over a clamped section window."""
     sliced = slice_audio(surface.audio, window_slice)
     loudness = measure_loudness(sliced, sr=surface.sample_rate)
@@ -1074,7 +1112,11 @@ def _measure_window(surface: Surface, window_slice: WindowSlice) -> StemMetrics:
         # Per-section too, like the two above: "the chorus goes wide and the
         # verse is narrow" is the soundstage question people actually ask, and a
         # whole-capture average is exactly the reading that cannot answer it.
-        imaging=measure_imaging(sliced, sample_rate=surface.sample_rate),
+        imaging=(
+            measure_imaging(sliced, sample_rate=surface.sample_rate)
+            if imaging
+            else None
+        ),
     )
 
 
@@ -1101,6 +1143,8 @@ def _derive_findings(
     reverbs: list[ReverbVerification],
     automation: Sequence[EnvelopeVerification] = (),
     sections: Sequence[SectionWindow] = (),
+    integrity: Sequence[SurfaceIntegrity] = (),
+    phase_relations: Sequence[PhaseRelation] = (),
 ) -> list[Finding]:
     """Translate raw metrics into structured findings.
 
@@ -1232,6 +1276,57 @@ def _derive_findings(
                 db_reference=e.note,
             ))
 
+    # Render integrity. These describe DAMAGE, not intent, so unlike every other
+    # finding here they are not read against a declared value — `expected` is the
+    # clean reading. Severity stays at `warning`: the detectors are validated
+    # against two real renders plus a synthetic corpus, which is enough to report
+    # a defect and not enough to halt on one. `blocking` is deliberately unused
+    # until they have been through a broader corpus, because a wrong `blocking`
+    # on a healthy render is a worse failure than a missed defect — this family
+    # spent its first real-capture pass fixing exactly that class of error.
+    for row in integrity:
+        if row.clip_events:
+            findings.append(Finding(
+                kind="stem_clipping",
+                severity="warning",
+                subject=row.track_id,
+                metric="worst_clip_run_samples",
+                observed=float(row.worst_clip_run_samples),
+                expected=0.0,
+                db_reference=row.track_id,
+            ))
+        cuts = [d for d in row.dropouts if d.kind == "zero_run"]
+        if cuts:
+            findings.append(Finding(
+                kind="capture_dropout",
+                severity="warning",
+                subject=row.track_id,
+                metric="dropouts",
+                observed=float(len(cuts)),
+                expected=0.0,
+                db_reference=row.track_id,
+            ))
+        if row.discontinuities:
+            findings.append(Finding(
+                kind="discontinuity",
+                severity="warning",
+                subject=row.track_id,
+                metric="discontinuities",
+                observed=float(len(row.discontinuities)),
+                expected=0.0,
+                db_reference=row.track_id,
+            ))
+    for pair in phase_relations:
+        if pair.polarity_inverted:
+            findings.append(Finding(
+                kind="polarity_inversion",
+                severity="warning",
+                subject=f"{pair.track_id_a} x {pair.track_id_b}",
+                metric="correlation",
+                observed=pair.correlation,
+                expected=0.0,
+                db_reference=pair.track_id_a,
+            ))
     return findings
 
 

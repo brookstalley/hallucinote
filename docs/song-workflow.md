@@ -199,8 +199,13 @@ idempotent, with preflight and rollback. → [push-execute-design.md](../.prawdu
 ### 6 — Capture + analyze `/render-analyze`
 `/render-analyze` runs the capture + analysis in one step: `ableton_render`
 auto-loads the HallucinoteAnalyzer and runs a WAV capture pass; `ableton_analysis`
-builds a **MixReport** from the captures (loudness, master attribution, reverb
-verification, per-part timing/feel, masking, energy realization). Both are
+builds a **MixReport** from the captures (render integrity — clipping, dropouts,
+clicks, phase/polarity, stem-sum reconciliation — plus loudness, master
+attribution, reverb verification, per-part timing/feel, masking, soundstage
+imaging, energy realization). The integrity family runs over the whole capture
+and the imaging one runs per section as well, so together they add roughly a
+minute or two to the analysis of a full-length song — the analysis is a
+start+poll action already, so this lands as a longer poll, not a blocked call. Both are
 realtime / long-running **start + poll** actions (they exceed the 60 s tool-call
 timeout — see `ableton://guides/conventions` "Long-running actions = start +
 poll"), so `/render-analyze` delegates their poll loops to a subagent and hands

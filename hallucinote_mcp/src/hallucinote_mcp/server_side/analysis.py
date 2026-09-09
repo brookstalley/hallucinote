@@ -752,6 +752,10 @@ def analyze_handler(
             # music. A click becomes an onset, a dropout becomes a level move,
             # and an uncompensated plugin delay becomes laid-back feel.
             analyze_integrity=True,
+            # Soundstage, per surface AND per section. Its own flag because it is
+            # the one lens here that also runs inside the section loop, so its
+            # cost scales with the arrangement rather than with the capture.
+            analyze_imaging=True,
             # Mix-level reconstruction (F1): scale each pre-fader stem by its
             # static fader gain so masking sees mix balance, not source level.
             # Fader curve is Live-12-calibrated (see audio/levels.py).

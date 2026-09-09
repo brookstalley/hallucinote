@@ -77,7 +77,7 @@ branch: feat/render-integrity
 - [x] Chunk 02 — phase and alignment
 - [x] Chunk 03 — soundstage imaging
 - [x] Chunk 04 — reconciliation
-- [ ] Chunk 05 — integration (ticks after the cumulative Critic)
+- [x] Chunk 05 — integration
 
 ## Context
 
@@ -89,5 +89,12 @@ All four delegates landed and merged into `feat/render-integrity` without a conf
 - *Every lag was reported as if believable.* A cross-correlation always peaks somewhere, so all eight uncorrelated stem pairs reported offsets of tens of milliseconds at r ~ 0 — two parts sharing a downbeat, which `/mix-review` would have read as device latency. `lag_correlation` now carries how much of the reading to trust (0.001-0.043 on those pairs; >0.9 for a genuine delay).
 
 **Two delegates independently reached for the same private helpers** (`attribution._single_band_energy`, `stereo._correlation`) rather than duplicate a definition. That convergence is why both are now public as `band_energy` / `channel_correlation`.
+
+**Independent review round (2026-09-08).** Four blocking findings, all fixed, plus five notes accepted and filed as #482. The blocking ones were: `stem_gains` converted through Live's fader curve twice (the handler already returns linear gains) so every reconciliation number was wrong on a real render; a single global sigma in the discontinuity detector, which reports tens of thousands of clicks on any percussive part because music is non-stationary; the new flat-top clipping rule carrying an absolute flatness tolerance, which is a false positive at the *quiet* end exactly as the amplitude rule was at the loud end; and a zero-run accepted on *either* abrupt edge, which makes every musical rest a dropout. Findings emission — a named Chunk 05 deliverable — was genuinely missing and is now built at `warning` severity.
+
+**Two rulings on the reviewer's pushback, both of which I accept.**
+
+- *Design decision 2 proved less than it claimed.* "A sample discontinuity has physical ground truth, so no listening day is required" is true of the **quantity** and false of the **threshold placed on it**. Three of the four blocking findings were exactly that: a physically-grounded quantity given a bound no synthetic corpus could falsify. Exempt from the freeze is not exempt from calibration, and this family needs a real-render negative control — a drum stem, a sub, a quiet pad — as badly as a taste lens needs a listening day.
+- *Design decision 3's partition guaranteed no merge conflict and guaranteed nobody owned the interface.* Both defects that mattered most (the gain-unit mismatch, and a skip token unreachable from the real caller) were **seam** defects between a delegate's module convention and the coordinator's call site — invisible to each side's own tests, because each was self-consistent. The cheap mitigation, now written into the pattern: for each delegate module, one integration test at the `analyze_mix` level exercising the **production** argument shapes rather than the module's own convention. `test_analyze_mix_passes_stem_gains_as_linear_gains` is that test, and it was mutation-checked against the reintroduced bug.
 
 **Deferred, with reasons:** the staircase-ramp gesture request from the songs session (a finer-authored ramp currently produces MORE not-realized findings than a coarse one, inverting the signal) is a real defect in the *automation verifier*, not in any lens here — filed, not built, because a peer session cannot widen this plan's scope. `compare.py` significance floors for the new A/B-able quantities are also unbuilt: every threshold here would encode taste, which is the one thing this family is exempt from *because* it avoids.

@@ -98,7 +98,12 @@ class TestCleanMaterial:
     def test_clean_material_skips_nothing(self) -> None:
         # An empty event list means "looked and found nothing" only because an
         # empty skip list is the other half of the contract.
-        result = _measure(sine(220.0, 0.5), onset_samples=[])
+        #
+        # Onsets are SUPPLIED here rather than left empty: an empty list
+        # suppresses nothing, so it now names itself as a degraded reading (see
+        # `test_an_empty_onset_list_names_itself_like_a_missing_one`). A clean
+        # surface analysed the way the real caller analyses one skips nothing.
+        result = _measure(sine(220.0, 0.5), onset_samples=[0])
         assert result.checks_skipped == []
 
     def test_dc_offset_of_a_symmetric_signal_is_negligible(self) -> None:
@@ -421,3 +426,130 @@ class TestLoudIsNotClipped:
         slow = sine(20.0, 0.5, amplitude=1.0).astype(np.float32)
         result = _measure(slow, onset_samples=[])
         assert result.clip_events == []
+
+
+class TestQuietLowFrequencyIsNotClipped:
+    """The flatness tolerance is RELATIVE, so it holds at every level.
+
+    A crest's flatness scales with amplitude, so an absolute tolerance becomes a
+    false positive as material gets quieter — a clean 20 Hz sine at -12 dBFS,
+    which is exactly where a sub or an 808 tail lives, drew 32 phantom clip runs.
+    That is the same failure as the loud one this detector was already fixed for,
+    at the other end of the range.
+    """
+
+    @pytest.mark.parametrize("freq", [20.0, 40.0, 60.0])
+    @pytest.mark.parametrize("amplitude", [0.5, 0.125, 0.02])
+    def test_a_clean_low_sine_reads_clean_at_any_level(
+        self, freq: float, amplitude: float
+    ) -> None:
+        result = _measure(sine(freq, 0.5, amplitude=amplitude), onset_samples=[])
+        assert result.clip_events == []
+
+    def test_a_clipped_channel_is_not_hidden_by_a_louder_sibling(self) -> None:
+        # The ceiling is per CHANNEL: an asymmetric pan or M/S-processed stem
+        # routinely leaves one side quieter, and a surface-wide peak would let
+        # the louder side mask the damaged one entirely.
+        n = SAMPLE_RATE // 2
+        t = np.arange(n) / SAMPLE_RATE
+        left = (1.4 * np.sin(2 * np.pi * 100 * t)).astype(np.float32)
+        right = np.clip(2.0 * np.sin(2 * np.pi * 100 * t), -0.5, 0.5).astype(np.float32)
+        result = _measure(np.stack([left, right], axis=1), onset_samples=[])
+        assert result.clip_events, "the quiet channel is hard-clipped"
+        assert {c.channel for c in result.clip_events} == {1}
+
+
+class TestDiscontinuityThresholdIsLocal:
+    """A single global sigma cannot work on music, which is non-stationary.
+
+    A surface with a wide envelope range has its median derivative set by its
+    quiet majority, so every loud moment reads as a huge outlier. Measured on
+    synthetic drum-like material before this was made local: 32,752
+    "discontinuities" against 31 real onsets.
+    """
+
+    @staticmethod
+    def _bursts(period_s: float, seed: int = 5) -> np.ndarray:
+        rng = np.random.default_rng(seed)
+        n = SAMPLE_RATE * 2
+        out = np.zeros(n)
+        step = int(SAMPLE_RATE * period_s)
+        for start in range(0, n - step, step):
+            length = min(step, int(SAMPLE_RATE * 0.25))
+            out[start:start + length] += (
+                rng.normal(0, 0.3, length) * np.exp(-np.linspace(0, 8, length))
+            )
+        return np.stack([out, out], axis=1).astype(np.float32)
+
+    @pytest.mark.parametrize("period_s", [0.125, 0.25, 0.5])
+    def test_undamaged_percussive_material_reports_nothing(
+        self, period_s: float
+    ) -> None:
+        audio = self._bursts(period_s)
+        result = _measure(audio, onset_samples=[])
+        assert result.discontinuities == []
+
+    def test_a_planted_splice_is_still_found(self) -> None:
+        audio = self._bursts(0.25)
+        at = int(SAMPLE_RATE * 0.9)
+        audio[at] = 0.9
+        audio[at + 1] = -0.9
+        result = _measure(audio, onset_samples=[])
+        assert result.discontinuities, "a one-sample splice is the whole point"
+        assert min(abs(d.sample - at) for d in result.discontinuities) <= 2
+
+    def test_a_splice_is_not_hidden_by_the_onset_it_creates(self) -> None:
+        # The onsets come from the same audio, so a click loud enough to register
+        # as a spectral-flux event manufactures the very onset that would hide it.
+        # A defect that conceals itself in proportion to its severity is the worst
+        # failure this detector can have.
+        audio = self._bursts(0.25)
+        at = int(SAMPLE_RATE * 0.9)
+        audio[at] = 0.9
+        audio[at + 1] = -0.9
+        result = _measure(audio, onset_samples=[at - 200])
+        assert result.discontinuities, "the guard must not swallow an impossible step"
+
+
+class TestRestsAreNotDropouts:
+    """A gap that merely ENDS in an attack is ordinary music.
+
+    In Live a track outputs bit-exact zeros whenever nothing is sounding, so
+    accepting either edge turned every rest into a dropout. What makes a dropout
+    a dropout is that the audio was CUT while it was still running — its LEADING
+    edge is the abrupt one.
+    """
+
+    @staticmethod
+    def _gated_hits() -> np.ndarray:
+        audio = np.zeros((SAMPLE_RATE * 2, 2), dtype=np.float32)
+        one = kick_onset()
+        for i in range(8):
+            start = i * SAMPLE_RATE // 4
+            audio[start:start + one.shape[0]] += one
+        return audio
+
+    def test_bit_exact_rests_between_hits_are_not_dropouts(self) -> None:
+        result = _measure(self._gated_hits(), onset_samples=[])
+        assert [d for d in result.dropouts if d.kind == "zero_run"] == []
+
+    def test_a_cut_mid_decay_still_reports(self) -> None:
+        audio = self._gated_hits()
+        cut = SAMPLE_RATE // 4 + 400
+        audio[cut:cut + int(SAMPLE_RATE * 0.02)] = 0.0
+        result = _measure(audio, onset_samples=[])
+        assert [d for d in result.dropouts if d.kind == "zero_run"]
+
+
+def test_an_empty_onset_list_names_itself_like_a_missing_one() -> None:
+    """An empty list suppresses nothing, exactly like no list at all.
+
+    It is also what the real caller produces when the onset front end finds
+    nothing, so without this the one degradation token is unreachable in
+    production and a degraded reading arrives looking authoritative.
+    """
+    audio = sine(440.0, 0.5, amplitude=0.3)
+    for onsets in (None, []):
+        result = _measure(audio, onset_samples=onsets)
+        tokens = [entry.split(":")[0] for entry in result.checks_skipped]
+        assert "discontinuities_unsuppressed" in tokens

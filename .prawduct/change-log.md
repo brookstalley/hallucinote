@@ -77,7 +77,28 @@ Two delegates building different lenses independently reached for the same two
 private helpers rather than write a second definition of "energy in this band"
 and of the degenerate-correlation cases. Two arrivals at one seam is the signal
 that these were public in all but name, so `attribution.band_energy` and
-`stereo.channel_correlation` now say so.
+`stereo.channel_correlation` now say so. The unification is only partial and
+deliberately so: `phase` and `reconcile` keep their own correlation conventions
+because they answer different degenerate cases, and consolidating them would be
+a behaviour change wearing a refactor's clothes.
+
+**An independent review then found four blocking defects, three of them the same
+shape as the two above — a threshold that is physically grounded but wrong for
+real material.** `stem_gains` was being run through Live's fader curve a second
+time, mis-levelling a unity fader by +6 dB and a −14 dB one by −20 dB while the
+report asserted the levels were modelled. The discontinuity detector derived one
+global sigma over a non-stationary signal, so any percussive part read as tens of
+thousands of clicks — 32,752 against 31 real onsets on drum-like material; it is
+now computed per 25 ms window. The new flat-top clipping rule had picked up a
+false positive at the *opposite* end of the range from the one it fixed, because
+its tolerance was absolute while a crest's flatness scales with amplitude — a
+clean 20 Hz sine at −12 dBFS drew 32 phantom runs. And a zero-run gap was
+accepted if *either* edge was abrupt, which made every musical rest a dropout.
+
+The lesson the plan recorded after the first real-capture pass generalized further
+than it was written: being *exempt from the analyzer freeze* is not the same as
+being *calibrated*. Physical ground truth belongs to the quantity, not to the
+threshold placed on it.
 
 `cross_correlation_peak_lag` also came out of the test tree, where it had sat
 since the MVP behind a docstring promising a promotion that never happened,

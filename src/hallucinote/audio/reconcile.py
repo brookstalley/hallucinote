@@ -88,7 +88,7 @@ import numpy as np
 # alongside the edges keeps a single definition of "energy in this band" rather
 # than two that can drift apart.
 from .attribution import BANDS, band_energy
-from .levels import apply_stem_gains, live_fader_gain
+from .levels import apply_stem_gains
 from .onsets import to_mono
 
 # The peak-lag search is bounded because an unbounded argmax over a long
@@ -152,10 +152,13 @@ class SumReconciliation:
                             the sum and the master are not the same material.
       ``best_lag_samples``  Samples by which the master lags the stem sum.
                             Positive = the master arrives later (the expected
-                            master-chain lookahead case). Non-zero is itself a
-                            finding; the residual is measured after compensating
-                            for it, so a latency never masquerades as a missing
-                            part.
+                            master-chain lookahead case). Read it WITH
+                            ``correlation``, which is measured at this lag: a
+                            cross-correlation always peaks somewhere, so a lag
+                            beside a low correlation is where the argmax landed,
+                            not a latency. The residual is measured after
+                            compensating for the lag, so a real one never
+                            masquerades as a missing part.
       ``gain_offset_db``    Least-squares flat gain applied to the sum to best
                             match the master, in dB. Positive = the master is
                             hotter than the summed stems. Separated from the
@@ -205,11 +208,22 @@ def reconcile_stem_sum(
 
     ``stems`` entries are ``(track_id, audio)``, mono ``(n,)`` or stereo
     ``(n, 2)``; ``master`` is the captured master surface in either shape.
-    ``stem_gains`` maps track_id → Live's **normalized 0..1 fader volume** (the
-    value ``tracks.volume`` carries), converted here through the calibrated
-    curve in ``levels.py``. A track missing from the map is summed at unity, the
-    same pass-through ``levels.apply_stem_gains`` documents; omitting the map
-    entirely sums raw captures and says so via ``gains_assumed_unity``.
+    ``stem_gains`` maps track_id → a **LINEAR gain**, already converted from
+    Live's normalized fader value through the calibrated curve in ``levels.py``.
+    That is the unit every other consumer in this package uses — ``masking`` and
+    the attribution passes take the same map — and converting again here would
+    apply the fader curve twice, mis-levelling a unity fader by +6 dB and a
+    -14 dB one by -20 dB. The conversion happens once, at the handler that reads
+    ``tracks.volume``. A track missing from the map is summed at unity, the same
+    pass-through ``levels.apply_stem_gains`` documents; omitting the map entirely
+    sums raw captures and says so via ``gains_assumed_unity``.
+
+    Two limits worth knowing before reading the number. **Returns are summed at
+    unity** on the real path: the handler collects per-TRACK fader gains only, so
+    a return with a non-unity fader enters the sum at full pre-fader level and
+    inflates the residual. And ``gains_assumed_unity`` is a single flag over the
+    whole call, so a partially-supplied map reports ``False`` — the report says
+    levels were modelled without saying for which surfaces.
 
     Surfaces of unequal length are compared over their common leading samples,
     which is the invariant ``alignment.trim_to_common_length`` establishes for
@@ -223,14 +237,9 @@ def reconcile_stem_sum(
     supplied = dict(stem_gains) if stem_gains else {}
     gains_assumed_unity = not any(track_id in supplied for track_id, _ in stems)
 
-    # Live's normalized fader value is not a gain — the curve between them is
-    # calibrated in levels.py, and this is its second read-side consumer.
-    linear_gains = {
-        track_id: live_fader_gain(value) for track_id, value in supplied.items()
-    }
     scaled = apply_stem_gains(
         [(track_id, to_mono(audio).astype(np.float64)) for track_id, audio in stems],
-        linear_gains,
+        supplied,
     )
 
     master_mono = to_mono(master).astype(np.float64)

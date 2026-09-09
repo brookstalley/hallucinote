@@ -81,7 +81,8 @@ class Transform(Protocol):
     input (chopping at onsets).
     """
 
-    kind: str
+    @property
+    def kind(self) -> str: ...
 
     def params(self) -> dict[str, Any]: ...
 

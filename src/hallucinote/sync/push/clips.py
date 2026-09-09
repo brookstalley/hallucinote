@@ -270,7 +270,7 @@ def resolve_reversed_sample(
         # rejects any concrete transform where the protocol is expected. The
         # runtime check `derive` itself makes is structural and passes.
         derived = derived_cache.derive(
-            source, (transforms.reverse(),), song_dir=song_dir,  # type: ignore[arg-type]
+            source, (transforms.reverse(),), song_dir=song_dir,
         )
     except (OSError, ValueError, sf.SoundFileError) as exc:
         return None, (

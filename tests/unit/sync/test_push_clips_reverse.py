@@ -132,7 +132,7 @@ def _reversed_path(song_dir: Path, name: str = "line") -> str:
     # settable one; the structural check `derive` makes at runtime does pass.
     return str(derived_cache.derive(
         store.source(song_dir, name),
-        (transforms.reverse(),),  # type: ignore[arg-type]
+        (transforms.reverse(),),
         song_dir=song_dir,
     ).path)
 

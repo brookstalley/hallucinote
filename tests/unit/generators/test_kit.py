@@ -1,7 +1,9 @@
 """Kit lookup: canonical pad name → MIDI note via fuzzy chain-name match."""
 from __future__ import annotations
 
+import os
 import warnings
+from pathlib import Path
 
 import pytest
 
@@ -340,3 +342,54 @@ def test_assert_has_strict_still_catches_missing_pads_after_capture():
     kit = Kit.from_dict({"kick": 36, "snare": 38}, name="Sparse Captured")
     with pytest.raises(KeyError, match="missing canonical pad"):
         kit.assert_has("kick", "ride", strict=True)
+
+
+# ---------- purity (JANITOR-2026-09 R2) ----------
+
+
+def test_from_rows_needs_no_database():
+    """A Kit is buildable from rows alone — the purity norm's actual guarantee.
+
+    `kit.py` imported `hallucinote.db.queries` for one call, which made the
+    norm ("generators stay pure — no DB imports under generators/") false at
+    exactly the point it was supposed to buy something: you could not build a
+    Kit without the DB layer imported. Rows in, Kit out, no connection.
+    """
+    kit = Kit.from_rows(
+        [{"midi_note": 36, "chain_name": "Kick Drum"},
+         {"midi_note": 51, "chain_name": "Cowbell"}],
+        name="Hot Rod Kit",
+        device_id="dev-abc12345",
+    )
+    assert kit.pitch_of("kick") == 36
+    assert kit.name == "Hot Rod Kit"
+    assert kit.device_id == "dev-abc12345"
+
+
+def test_generators_package_imports_no_database_code():
+    """Import-graph lock: nothing under `generators/` may pull in `db`.
+
+    Enforcing the norm on the import GRAPH rather than on the source text is
+    what makes it hold — a lazily-imported `db` would pass a grep for
+    module-level imports while still coupling the packages at run time. The
+    one legitimate DB path (`Kit.from_device`) is an alias whose import is
+    function-local, so it does not appear here.
+    """
+    import subprocess
+    import sys
+
+    probe = (
+        "import sys; import hallucinote.generators.kit as k;"
+        "assert k;"
+        "leaked = [m for m in sys.modules if m.startswith('hallucinote.db')];"
+        "print(','.join(leaked))"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True, text=True, check=True,
+        cwd=str(Path(__file__).resolve().parents[3]),
+        env={**os.environ, "PYTHONPATH": "src"},
+    )
+    assert out.stdout.strip() == "", (
+        f"importing generators.kit pulled in DB modules: {out.stdout.strip()}"
+    )

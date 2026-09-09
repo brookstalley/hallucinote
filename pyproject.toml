@@ -99,7 +99,20 @@ select = [
     "F",   # pyflakes (unused/undefined names, f-strings, redefinitions)
     "W",   # pycodestyle warnings (already clean)
     "PLE", # pylint errors (already clean)
+    # I002 ONLY, not the whole `I` set. It mechanizes the
+    # "`from __future__ import annotations` on every module" norm
+    # (project-preferences.md, code-level norms), which sat Critic-owned behind a
+    # standing "promote to a ruff rule" note for long enough that five modules
+    # drifted without it — a rule cannot forget. Its sibling I001
+    # (unsorted-imports) is deliberately NOT enabled: it flags 248 files, and
+    # reordering them is a formatting-churn decision the owner deferred to its
+    # own chunk rather than smuggle into a maintenance sweep.
+    # JANITOR-2026-09 R3, 2026-09-08.
+    "I002",
 ]
+
+[tool.ruff.lint.isort]
+required-imports = ["from __future__ import annotations"]
 
 [tool.ruff.lint.per-file-ignores]
 # Package __init__ files are deliberate re-export surfaces (e.g.

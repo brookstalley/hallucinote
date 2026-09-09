@@ -6,6 +6,7 @@ Discipline:
 - This keeps the door open to flipping source-of-truth from state -> events
   without rewriting generators or sync code.
 """
+from __future__ import annotations
 
 from hallucinote.db.connection import connect, init_db, resolve_db_path
 

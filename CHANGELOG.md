@@ -8,6 +8,22 @@ per-fix narratives if you want the deep story behind any entry.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Deprecated
+
+- `Kit.from_device(conn, device_id)` — use `hallucinote.kits.load_kit(conn,
+  device_id)` instead. Same arguments, same return; the loading moved one layer
+  out of `hallucinote.generators` so that importing a generator pulls in no
+  database code. `Kit.from_device` keeps working for one major version and will
+  be removed in 2.0 — existing `build.py` files need no change now.
+
+### Added
+
+- `Kit.from_rows(rows, *, name, device_id)` — build a `Kit` from
+  `drum_pad_mappings`-shaped rows with no database connection, for songs that
+  measure a kit by hand or construct one in a test.
+
 ## [1.8.6] — 2026-08-12
 
 The demo release. The README now opens with a two-minute video of a prompt

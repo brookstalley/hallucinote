@@ -6,4 +6,5 @@
 # as the MCP server's hallucinote_mcp.BASE_VERSION, which is a decoupled
 # wire-protocol epoch — bumping it per-release would force every Live user to
 # re-vendor the Remote Script.)
+from __future__ import annotations
 __version__ = "1.8.6"

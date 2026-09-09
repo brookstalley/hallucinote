@@ -58,7 +58,7 @@ every judgment call was ruled by the owner before this plan was written (R1-R7 p
 ## Status
 
 - [x] Chunk 01: version-control and plan-directory hygiene
-- [ ] Chunk 02: norm statements reconciled to the owner's R1/R3/R4/R5 rulings
+- [x] Chunk 02: norm statements reconciled to the owner's R1/R3/R4/R5 rulings
 - [ ] Chunk 03: `Kit` dependency inversion (loader module + alias) and the ruff `required-imports` gate
 - [ ] Chunk 04: findings that leave this repo — backlog items and the upstream report
 - [ ] Chunk 05: sweep baseline, change-log, learnings

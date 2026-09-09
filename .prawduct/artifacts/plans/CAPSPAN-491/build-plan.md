@@ -54,6 +54,22 @@ tuning problem.
    indistinguishable one against a capture-length defect. The map is not the bug
    and is not changed; the excess is measured before the rescale hides it.
 
+**Requirement discovered mid-build (Chunk 02), recorded here rather than coded silently.**
+The check compares real audio against a duration integrated from the song's
+**declared** tempo map, and `_collect_tempo_map` already documents that the render
+may not have honored it: the push layer materializes only the bar-1 tempo (the
+non-bar-1-tempo gap, `TMP-7B3X` / `TMP-4J6Q` / `TMP-5K1R`), so a song declaring
+variable tempo renders at one tempo today. Against such a song the declared
+duration and the rendered audio disagree for a reason that is **not** a capture
+defect, and a span check that fired there would be measuring-and-lying — the
+failure this codebase names by that phrase.
+
+So the check answers only where it can: **when the declared tempo is effectively
+constant across the captured span**, which is every song push can render today.
+Otherwise it declines and names the push gap as the reason. The refusal is
+self-healing — it stops applying the moment variable-tempo rendering lands, with
+no threshold to revisit.
+
 **Open assumptions / unknowns:**
 
 - [ASSUMPTION: the excess is a HEAD offset, not a TAIL overrun | MED impact |

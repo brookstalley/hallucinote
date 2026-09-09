@@ -283,13 +283,42 @@ class CaptureSpan:
         )
 
 
+def _declared_tempo_is_constant(
+    start_beat: float,
+    stop_beat: float,
+    tempo_segments: Sequence[TempoSegment],
+) -> bool:
+    """Does the declared tempo hold one value across ``[start_beat, stop_beat]``?
+
+    Any ramp, or any change inside the span, means no.
+    """
+    inside = [
+        s for s in tempo_segments
+        if s.bpm > 0 and s.start_beat < stop_beat
+    ]
+    if not inside:
+        return False
+    if any(str(s.ramp) == "linear" for s in inside):
+        return False
+    # A change strictly inside the span, or differing tempi among the segments
+    # that cover it, both mean the span is not one constant tempo.
+    if any(start_beat < s.start_beat < stop_beat for s in inside):
+        return False
+    return len({float(s.bpm) for s in inside}) == 1
+
+
 def measure_capture_span(
     capture: CaptureSet,
     tempo_segments: Sequence[TempoSegment] = (),
     *,
     tolerance_beats: float = DEFAULT_SPAN_TOLERANCE_BEATS,
-) -> CaptureSpan | None:
+) -> tuple[CaptureSpan | None, str | None]:
     """Compare the captured audio's duration against the manifest's declared span.
+
+    Returns ``(span, skip_reason)`` — exactly one is non-``None``. The reason is
+    returned rather than swallowed because a check that declines silently is
+    indistinguishable from one that passed, which is the defect this whole
+    measurement exists to end.
 
     Measures the MASTER, which after :func:`trim_to_common_length` carries the
     common length. Per-surface lengths must not be used: the returns routinely
@@ -297,19 +326,34 @@ def measure_capture_span(
     (the stop-length ramp this module's docstring describes), so a per-surface
     comparison flags every capture ever made.
 
-    ``None`` when :func:`declared_span_seconds` has no tempo evidence to answer
-    with — the caller reports that as a skipped analysis rather than silence.
+    **This compares audio against the DECLARED tempo, so it answers only where
+    the declared tempo is one constant across the span.** The push layer
+    materializes only the bar-1 tempo today (the non-bar-1-tempo gap), so a song
+    declaring variable tempo renders at a single tempo and its declared duration
+    is not what was played — a mismatch there would say nothing about the
+    capture. Declining is self-healing: it stops applying once variable-tempo
+    rendering lands, and there is no threshold to revisit.
     """
-    declared_beats = (
-        capture.stop_at_beat + capture.ring_out_beats - capture.start_at_beat
-    )
+    stop_beat = capture.stop_at_beat + capture.ring_out_beats
+    declared_beats = stop_beat - capture.start_at_beat
     declared_seconds = declared_span_seconds(
-        capture.start_at_beat,
-        capture.stop_at_beat + capture.ring_out_beats,
-        tempo_segments,
+        capture.start_at_beat, stop_beat, tempo_segments,
     )
     if declared_seconds is None or declared_seconds <= 0:
-        return None
+        return None, (
+            "no usable tempo map was supplied, so the wall-clock duration the "
+            "declared beat span SHOULD take is unknown and the captured audio "
+            "cannot be checked against it"
+        )
+    if not _declared_tempo_is_constant(
+        capture.start_at_beat, stop_beat, tempo_segments
+    ):
+        return None, (
+            "the song declares a tempo change across the captured span, and the "
+            "push layer materializes only the bar-1 tempo, so the declared "
+            "duration is not what was rendered — a span comparison here would "
+            "measure the push gap, not the capture"
+        )
 
     captured_seconds = capture.master.audio.shape[0] / capture.master.sample_rate
     # Convert the excess to beats at the span's own average rate rather than a
@@ -322,7 +366,7 @@ def measure_capture_span(
         captured_seconds=captured_seconds,
         excess_beats=(captured_seconds - declared_seconds) * beats_per_second,
         tolerance_beats=tolerance_beats,
-    )
+    ), None
 
 
 __all__ = [

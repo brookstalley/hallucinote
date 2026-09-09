@@ -211,7 +211,7 @@ def test_span_reproduces_the_reported_defective_capture():
     held 11985920 frames = 249.71 s. That is the excess the report saw as a ~1.1-beat shift, and
     it must land outside tolerance."""
     capture = _span_capture(declared_beats=515.0, captured_seconds=11985920 / SR)
-    span = measure_capture_span(capture, [TempoSegment(0.0, ALIEN_BPM)])
+    span, skip = measure_capture_span(capture, [TempoSegment(0.0, ALIEN_BPM)])
     assert span is not None
     assert span.excess_beats == pytest.approx(1.06, abs=0.005)
     assert not span.within_tolerance
@@ -223,7 +223,7 @@ def test_span_accepts_the_two_healthy_captures():
     which is what makes a quarter-beat tolerance a bright line and not a knob."""
     for frames in (12146688, 12146176):
         capture = _span_capture(declared_beats=523.0, captured_seconds=frames / SR)
-        span = measure_capture_span(capture, [TempoSegment(0.0, ALIEN_BPM)])
+        span, skip = measure_capture_span(capture, [TempoSegment(0.0, ALIEN_BPM)])
         assert span is not None
         assert abs(span.excess_beats) < 0.05
         assert span.within_tolerance
@@ -234,8 +234,8 @@ def test_span_refuses_without_tempo_evidence():
     would manufacture a finding on every song not at 120 — the whole reason
     declared_span_seconds refuses rather than reusing BeatSampleMap's fallback."""
     capture = _span_capture(declared_beats=515.0, captured_seconds=249.19)
-    assert measure_capture_span(capture, []) is None
-    assert measure_capture_span(capture, [TempoSegment(0.0, 0.0)]) is None
+    assert measure_capture_span(capture, [])[0] is None
+    assert measure_capture_span(capture, [TempoSegment(0.0, 0.0)])[0] is None
 
 
 def test_span_refuses_when_the_capture_predates_the_first_tempo_point():
@@ -243,20 +243,48 @@ def test_span_refuses_when_the_capture_predates_the_first_tempo_point():
     leading beats. Refusing is the honest answer; integrating them at a default
     would compare real audio against a partly-invented duration."""
     capture = _span_capture(declared_beats=515.0, captured_seconds=249.19)
-    assert measure_capture_span(capture, [TempoSegment(16.0, ALIEN_BPM)]) is None
+    assert measure_capture_span(capture, [TempoSegment(16.0, ALIEN_BPM)])[0] is None
 
 
-def test_span_is_variable_tempo_accurate():
-    """Half the span at 120 and half at 60 takes 30 s + 60 s = 90 s. A naive
-    constant-BPM read of the first tempo point would expect 60 s and report a
-    60-beat excess on a capture that is exactly right."""
+def test_span_declines_when_the_song_declares_a_tempo_change():
+    """The comparison is against the DECLARED tempo, and push materializes only
+    the bar-1 tempo today — so on a song declaring a change, declared duration
+    and rendered audio disagree for a reason that is not a capture defect.
+    Declining names the push gap instead of reporting it as a bad capture.
+
+    (The integrator itself IS variable-tempo accurate; that is pinned in
+    test_section.py, where it is the integrator's contract rather than this
+    check's.)"""
     capture = _span_capture(declared_beats=120.0, captured_seconds=90.0)
-    span = measure_capture_span(
+    span, skip = measure_capture_span(
         capture, [TempoSegment(0.0, 120.0), TempoSegment(60.0, 60.0)]
     )
+    assert span is None
+    assert skip is not None
+    assert "push layer materializes only the bar-1 tempo" in skip
+
+
+def test_span_declines_on_a_declared_tempo_ramp():
+    """A linear ramp is a tempo change even with no second point inside the span."""
+    capture = _span_capture(declared_beats=120.0, captured_seconds=90.0)
+    span, skip = measure_capture_span(
+        capture,
+        [TempoSegment(0.0, 120.0, "linear"), TempoSegment(200.0, 60.0)],
+    )
+    assert span is None
+    assert skip is not None
+
+
+def test_span_runs_when_a_later_tempo_point_sits_outside_the_span():
+    """A tempo change after the capture ends does not make the captured span
+    variable — declining there would silence the check on any song with a tempo
+    move later in the arrangement than the render window."""
+    capture = _span_capture(declared_beats=40.0, captured_seconds=40 * 60 / ALIEN_BPM)
+    span, skip = measure_capture_span(
+        capture, [TempoSegment(0.0, ALIEN_BPM), TempoSegment(400.0, 90.0)]
+    )
+    assert skip is None
     assert span is not None
-    assert span.declared_seconds == pytest.approx(90.0)
-    assert span.excess_beats == pytest.approx(0.0, abs=1e-9)
     assert span.within_tolerance
 
 
@@ -270,7 +298,7 @@ def test_span_measures_the_master_not_the_longest_surface():
         np.zeros((12154880, 2), dtype=np.float32),  # +0.34 beats, real number
     )
     capture = dataclasses.replace(capture, returns=[late_return])
-    span = measure_capture_span(capture, [TempoSegment(0.0, ALIEN_BPM)])
+    span, skip = measure_capture_span(capture, [TempoSegment(0.0, ALIEN_BPM)])
     assert span is not None
     assert span.within_tolerance
 
@@ -279,7 +307,7 @@ def test_span_human_summary_states_what_it_cannot_know():
     """The summary must not claim the capture 'started early' — length alone
     cannot tell a head offset from a tail overrun."""
     capture = _span_capture(declared_beats=515.0, captured_seconds=11985920 / SR)
-    span = measure_capture_span(capture, [TempoSegment(0.0, ALIEN_BPM)])
+    span, skip = measure_capture_span(capture, [TempoSegment(0.0, ALIEN_BPM)])
     assert span is not None
     summary = span.human_summary
     assert "1.06 beats longer" in summary

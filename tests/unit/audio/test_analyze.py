@@ -1629,3 +1629,147 @@ def test_analyze_mix_passes_stem_gains_as_linear_gains(tmp_path: Path):
     # by live_fader_gain(0.501) and blow the residual apart.
     assert recon.residual_db < -20.0, recon
     assert recon.gain_offset_db == pytest.approx(0.0, abs=1.0), recon
+
+
+# --- capture span mismatch (#491) ---------------------------------------------
+#
+# A capture of songs/alien covered 1.06 beats more audio than its manifest
+# declared. Every per-section number in the resulting mix report was computed on
+# the stretched span, a reverb peak was read as landing a beat after the moment
+# it actually landed, and the report said `status: ok` and nothing else. These
+# tests hold the report to speaking.
+
+ALIEN_BPM = 124.0
+
+
+def _span_capture_dir(
+    tmp_path: Path, *, declared_beats: float, captured_seconds: float
+) -> Path:
+    """A synthetic capture whose audio length and declared span can disagree."""
+    audio = calibrated_pink_noise(-26.0, captured_seconds)
+    return _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "01 Drums", calibrated_pink_noise(-26.0, captured_seconds))],
+        master_audio=audio,
+        start_at_beat=0.0,
+        stop_at_beat=declared_beats,
+        ring_out_beats=0.0,
+    )
+
+
+def test_analyze_mix_flags_a_capture_longer_than_its_declared_span(tmp_path: Path):
+    """The reported capture's own numbers, scaled down to a testable length: at
+    124 BPM a 40-beat span is 19.355 s, and audio of 19.868 s overruns it by the
+    same 1.06 beats the real capture did."""
+    declared_beats = 40.0
+    declared_s = declared_beats * 60 / ALIEN_BPM
+    captured_s = declared_s + 1.06 * 60 / ALIEN_BPM
+    captures_dir = _span_capture_dir(
+        tmp_path, declared_beats=declared_beats, captured_seconds=captured_s
+    )
+
+    report = analyze_mix(captures_dir, tempo_map=[TempoSegment(0.0, ALIEN_BPM)])
+
+    mismatches = [f for f in report.findings if f.kind == "capture_span_mismatch"]
+    assert len(mismatches) == 1
+    finding = mismatches[0]
+    assert finding.severity == "warning"
+    assert finding.subject == "capture"
+    assert finding.expected == pytest.approx(declared_beats)
+    assert finding.observed == pytest.approx(declared_beats + 1.06, abs=0.01)
+    # It must not claim to know WHICH end the extra audio is at.
+    assert "head or the tail" in (finding.db_reference or "")
+
+    span = report.alignment["capture_span"]
+    assert span["within_tolerance"] is False
+    assert span["excess_beats"] == pytest.approx(1.06, abs=0.01)
+
+
+def test_analyze_mix_is_silent_on_a_capture_that_spans_what_it_declares(
+    tmp_path: Path,
+):
+    """The healthy captures measured alongside the defective one sat inside 0.05
+    beats. No finding — but the numbers are still recorded, so a reader can tell
+    a passing check from one that never ran."""
+    declared_beats = 40.0
+    captures_dir = _span_capture_dir(
+        tmp_path,
+        declared_beats=declared_beats,
+        captured_seconds=declared_beats * 60 / ALIEN_BPM,
+    )
+
+    report = analyze_mix(captures_dir, tempo_map=[TempoSegment(0.0, ALIEN_BPM)])
+
+    assert [f for f in report.findings if f.kind == "capture_span_mismatch"] == []
+    span = report.alignment["capture_span"]
+    assert span["within_tolerance"] is True
+    assert span["excess_beats"] == pytest.approx(0.0, abs=0.01)
+    assert [
+        s for s in report.skipped_analyses if s["kind"] == "capture_span"
+    ] == []
+
+
+def test_analyze_mix_names_the_span_check_it_could_not_run(tmp_path: Path):
+    """Without a tempo map there is no wall-clock duration to compare against.
+    The check must say so rather than pass silently — the silence is the bug."""
+    captures_dir = _span_capture_dir(
+        tmp_path, declared_beats=40.0, captured_seconds=25.0
+    )
+
+    report = analyze_mix(captures_dir)
+
+    assert [f for f in report.findings if f.kind == "capture_span_mismatch"] == []
+    assert report.alignment["capture_span"] is None
+    skips = [
+        s for s in report.skipped_analyses if s["kind"] == "capture_span"
+    ]
+    assert len(skips) == 1
+    assert "tempo map" in skips[0]["reason"]
+
+
+def test_analyze_mix_names_the_push_gap_rather_than_blaming_the_capture(
+    tmp_path: Path,
+):
+    """A song declaring a tempo change renders at the bar-1 tempo today, so the
+    declared duration is not what was played. The report must say that is why it
+    could not check, not report the difference as a bad capture."""
+    captures_dir = _span_capture_dir(
+        tmp_path, declared_beats=120.0, captured_seconds=60.0
+    )
+
+    report = analyze_mix(
+        captures_dir,
+        tempo_map=[TempoSegment(0.0, 120.0), TempoSegment(60.0, 60.0)],
+    )
+
+    assert [f for f in report.findings if f.kind == "capture_span_mismatch"] == []
+    skips = [
+        s for s in report.skipped_analyses if s["kind"] == "capture_span"
+    ]
+    assert len(skips) == 1
+    assert "bar-1 tempo" in skips[0]["reason"]
+
+
+def test_every_skipped_analysis_entry_is_keyed_the_same_way(tmp_path: Path):
+    """`kind` is how a consumer selects a skip entry, and consumers index it
+    unguarded. Two entries were once keyed `analysis` instead; they never reached
+    a real report only because the MCP handler happens to enable both lenses, so
+    the inconsistency sat one default away from a KeyError in the reader. This
+    pins the shape across EVERY skip the pipeline can emit, rather than the few
+    a given test happens to trigger."""
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "01 Drums", calibrated_pink_noise(-26.0, 2.0))],
+        master_audio=calibrated_pink_noise(-20.0, 2.0),
+    )
+
+    # Every lens off and nothing declared — the maximal-skip report.
+    report = analyze_mix(captures_dir)
+
+    assert report.skipped_analyses, "expected skips with nothing declared"
+    for entry in report.skipped_analyses:
+        assert "kind" in entry, f"skip entry missing 'kind': {entry}"
+        assert "reason" in entry, f"skip entry missing 'reason': {entry}"
+    assert {"render_integrity", "imaging", "capture_span"} <= {
+        e["kind"] for e in report.skipped_analyses
+    }

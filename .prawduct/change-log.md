@@ -32,6 +32,73 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## CAPSPAN-491 — a capture that does not span what it declares now says so
+
+<!-- prawduct: type=fix | scope=CAPSPAN-491 -->
+
+A peer session reported that one render of `songs/alien` came out with every
+stem shifted about a beat, and that nothing in the analysis pipeline noticed:
+the manifest said `status: ok`, and the mix report attributed a reverb peak to
+the beat *after* the one it landed on.
+
+**Why nothing noticed, which is the interesting half.** `BeatSampleMap` maps the
+declared beat span onto whatever sample count it is handed and rescales. That is
+deliberate — its docstring says the rescale exists so "a global tempo offset
+between the DB `tempo_map` and what the render actually played can't shift
+boundaries". It is a good property against a tempo mismatch and an
+indistinguishable one against audio of the wrong length. The map is not the bug
+and is unchanged; the excess is now measured before the rescale absorbs it.
+
+`measure_capture_span` compares the captured duration against the span the
+manifest declared, and a mismatch beyond a quarter beat emits a
+`capture_span_mismatch` finding. The numbers land in the report's `alignment`
+block on the passing path too — a check that only speaks when it fails cannot be
+told apart from one that never ran, which is the failure being fixed.
+
+**Three things measurement decided that a reading of the report would not have.**
+Three real captures of the same song were measured first: the defective one ran
+1.06 beats long and the two healthy ones sat inside 0.05, which is what makes a
+quarter beat a bright line rather than a tuned threshold. Within *every* capture,
+healthy ones included, the returns run up to 0.38 beats longer than the master —
+the known independent-`sfrecord~` tail spread — so the check reads the common
+(post-trim) length and a per-surface check would have flagged all three. And the
+finding claims only what length can support: a capture that armed early and one
+that disarmed late produce the same number, so it never says "started early",
+though that is what the evidence in the report suggests.
+
+**Where it declines, and why that is not timidity.** The comparison is against
+the *declared* tempo, and push materializes only the bar-1 tempo today, so on a
+song declaring a tempo change the declared duration is not what was rendered. The
+check refuses there and names the push gap, rather than reporting it as a bad
+capture. It refuses on a missing tempo map too, and on a span reaching back
+before the first tempo point — `declared_span_seconds` will not reuse
+`BeatSampleMap`'s constant fallback, which cancels in a rescale but would be a
+fabricated duration here and would manufacture a finding on every song not at
+that constant. Both refusals are named in `skipped_analyses`.
+
+The beats-to-seconds integration is now shared by the map and the check, because
+two integrators disagreeing about how long 515 beats is would produce a finding
+that contradicted the section windows in the same report.
+
+Verified against the reported capture itself, not only fixtures: it produces the
+finding at 1.06 beats and the healthy capture beside it produces none.
+`SCHEMA_VERSION` does not move — a new `Finding.kind` extends no enumeration and
+the `alignment` block gains a key, both additive; bumping it would make every
+existing report un-diffable for no consumer's benefit.
+
+**One thing found on the way.** Skip entries are selected by `kind`, and
+consumers index it unguarded — but the render-integrity and imaging skips were
+keyed `analysis` instead. They never reached a real report only because the MCP
+handler happens to enable both lenses, so the inconsistency sat one default away
+from a `KeyError` in every reader of a report produced by a direct
+`analyze_mix` call. Copying the wrong key for the new entry is what exposed it.
+All three are `kind` now, and a test walks every skip the pipeline can emit
+rather than the few any one test happens to trigger.
+
+Detection only. Correcting the offset, and the Live-side reason `sfrecord~` armed
+early, stay open on #491 — both live in the fingerprint-bearing render handler
+and would force a re-vendor.
+
 ## JANITOR-2026-09 — first Norm Health sweep, and the bookkeeping that had fallen behind the work
 
 <!-- prawduct: type=chore | scope=JANITOR-2026-09 -->

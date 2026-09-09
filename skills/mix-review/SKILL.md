@@ -107,6 +107,20 @@ render rather than any section:
   empty event list means "clean" only when nothing is skipped, and a truncated
   list says so there. Known false positive: a hard-gated part rendered without
   reverb reads its digital-silence rests as dropouts.
+- `alignment.capture_span` — **read this first, before any beat you cite.** It
+  answers whether the captured audio actually covers the span the render
+  declared (`declared_beats` vs `excess_beats`, signed, against
+  `tolerance_beats`). When `within_tolerance` is false a
+  `capture_span_mismatch` finding fires, and it conditions everything else in
+  the report: every section window and every beat reference is computed by
+  stretching the declared span onto the audio that exists, so they are all
+  offset by roughly the excess. A capture that ran a beat long once had a reverb
+  peak read as landing a beat *after* the moment it actually landed. Length
+  alone cannot say whether the extra audio is at the head or the tail, and the
+  finding does not pretend otherwise. `null` here means the check declined —
+  look for the `capture_span` entry in `skipped_analyses`, which says why (no
+  tempo map, or a song declaring a tempo change, which push does not render
+  today).
 - `phase_relations[]` — pairwise, the only lens that sees two surfaces
   *destroying each other* (masking says B is buried under A; this says A and B
   cancelled). `broadband_cancellation_db` and per-band `band_cancellation`:

@@ -1104,3 +1104,65 @@ def test_extent_alert_is_one_per_phase_not_one_per_placement(
     assert len(extent) == 1, plan.alerts
     assert "10 audio placement(s)" in extent[0]
     assert "and 2 more" in extent[0]
+
+
+# ---------------------------------------------------------------------------
+# Unlinked row into an OCCUPIED slot — the pull-ingested seam (#507)
+# ---------------------------------------------------------------------------
+
+
+def test_unlinked_row_into_an_occupied_slot_alerts_the_operator(
+    conn, song, session, audio_track, sample,
+):
+    """Pull writes no link for a clip it ingests, so on the next push the row
+    reaches the planner unlinked and its create carries ``replace=True`` —
+    the delete is inside the handler, invisible in the plan. When the probe
+    shows the slot occupied, the run must say on the operator channel that
+    the clip Live holds is deleted and rebuilt, and that hand-set warp
+    markers do not survive; a silent replace of a clip the operator dragged
+    in is the failure this guards."""
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=3, length_beats=8.0,
+        audio_file=sample, name="dragged",
+    )
+    probe = {4: [_live_slot(3, "/anywhere/dragged.wav")]}
+
+    plan = push.plan_push_clip(
+        conn, clip_id=cid, session_id=session,
+        live_session_clips_by_track=probe,
+    )
+
+    assert plan.blocked_reasons == []
+    assert plan.calls[0].args["action"] == "create"
+    assert plan.calls[0].args["replace"] is True
+    alert = next(a for a in plan.alerts if "DELETED" in a)
+    assert "slot 3" in alert and "track 4" in alert
+    assert "dragged.wav" in alert and "line.wav" in alert
+    assert "#507" in alert and "warp markers" in alert
+
+
+def test_unlinked_row_into_an_empty_or_unprobed_slot_is_silent(
+    conn, song, session, audio_track, sample,
+):
+    """The alert is about a clip that exists. An empty slot, or a track the
+    probe did not cover, plans the same replace-create and says nothing —
+    an alert on every first push would be noise that trains the operator to
+    ignore the one that matters."""
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=3, length_beats=8.0,
+        audio_file=sample, name="fresh",
+    )
+
+    empty = push.plan_push_clip(
+        conn, clip_id=cid, session_id=session,
+        live_session_clips_by_track={4: [_live_slot(1, "/x/other.wav")]},
+    )
+    unprobed = push.plan_push_clip(
+        conn, clip_id=cid, session_id=session,
+        live_session_clips_by_track=None,
+    )
+
+    for plan in (empty, unprobed):
+        assert plan.calls[0].args["action"] == "create"
+        assert plan.calls[0].args["replace"] is True
+        assert not any("DELETED" in a for a in plan.alerts), plan.alerts

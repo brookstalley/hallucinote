@@ -6,6 +6,8 @@ from typing import Any
 
 from hallucinote.db import queries as Q
 
+from hallucinote.paths import resolve_audio_path
+
 from ._core import (
     PushPlan,
     ToolCall,
@@ -13,6 +15,7 @@ from ._core import (
     _position_bar_to_beats,
     uniform_bar_math_divergences,
 )
+from .clips import _AUDIO_CONFORM_PROPERTIES, song_dir_for_conn
 from .envelopes import envelope_hosting_clip_ids
 
 
@@ -34,7 +37,8 @@ def _arrangement_note_refresh_call(
 
     Returns ``None`` when the refresh can't apply: the placement's track or
     arrangement_clip link isn't recorded yet (it'll be created by the duplicate
-    path, not refreshed), or the source clip is audio (no notes; CLP-AUD2 scope).
+    path, not refreshed), or the source clip is audio — an audio clip hosts no
+    note array at all, so there is nothing for a note refresh to carry.
 
     ``row`` must carry ``clip_kind`` (both feeding queries —
     :func:`Q.get_arrangement_for_song` and :func:`Q.get_arrangement_for_clip` —
@@ -94,6 +98,133 @@ def plan_push_arrangement_clip_notes(
     return plan
 
 
+def _audio_placement_call(
+    conn: sqlite3.Connection,
+    *,
+    row: sqlite3.Row,
+    clip_row: sqlite3.Row,
+    track_at: int,
+    start_beats: float,
+    hosts_envelope: bool,
+) -> tuple[ToolCall | None, str | None, str | None]:
+    """Materialize one ``kind='audio'`` placement, or say why it can't be (R1.1).
+
+    Returns ``(call, refusal, conform_gap)``. A ``refusal`` is a reason the
+    whole track must be skipped (§6a: the clear is destructive, so a track is
+    materialized only when every placement on it can be rebuilt). A
+    ``conform_gap`` is a placement that WAS planned but whose authored conform
+    could not travel with it — recorded when the track commits.
+
+    The route is ``Track.create_audio_clip(path, start_beats)`` — the call the
+    LOM probe confirmed for arrangement placement, reached through
+    ``ableton_clip(action='create', location='arrangement', kind='audio')``.
+    It needs no session counterpart, which is why an audio placement does not
+    require its source clip to be linked the way an envelope-bearing MIDI one
+    does.
+
+    Two things it refuses rather than guesses:
+
+    * **A sample that is not on disk.** Checked before the call is planned; a
+      clip that pushes and then plays silence is a phase reporting OK without
+      having determined its state.
+    * **A source clip that HOSTS a clip envelope.** The projection routes an
+      envelope-bearing placement through ``duplicate_to_arrangement`` so the
+      envelope travels with the clip; whether that carries an envelope off an
+      AUDIO session clip is unprobed, and the direct create carries no envelope
+      at all. Neither route is known-good, so the row plans nothing rather than
+      silently dropping an authored ride.
+
+    And one thing it plans while saying what did NOT land: the direct create
+    loads a FRESH clip at Live's defaults, so the row's authored gain /
+    transpose / warp / markers stay on the session clip and do not reach the
+    arrangement copy. The planner cannot conform the copy in the same plan —
+    a `set_property` addresses an arrangement clip by index, and that index
+    exists only in the create's RESULT, after apply; predicting it is exactly
+    the positional guess ARR-PROJ diagnosed as a root cause. So the gap is
+    reported, never guessed at.
+    """
+    row_id = row["id"]
+    ref = clip_row["audio_file"]
+    where = (
+        f"placement {row_id!r} (clip {clip_row['name']!r} @ bar "
+        f"{row['start_bar']:g})"
+    )
+
+    if hosts_envelope:
+        return None, (
+            f"{where} is kind='audio' AND its source clip {row['clip_id']!r} "
+            "HOSTS a clip envelope. An envelope-bearing placement is routed "
+            "through duplicate_to_arrangement so the envelope travels with the "
+            "clip, and whether that carries an envelope off an AUDIO session "
+            "clip is unknown: SMP-6V2K chunk 01 — the operator-gated Live "
+            "session that settles it — has not run. The direct "
+            "Track.create_audio_clip(path, beats) route carries no envelope at "
+            "all. Neither route is known-good, so nothing was planned rather "
+            "than silently dropping an authored ride"
+        ), None
+
+    if not ref:
+        return None, (
+            f"{where} is kind='audio' with no audio_file — the row does not "
+            "say what it plays"
+        ), None
+
+    song_dir = song_dir_for_conn(conn)
+    if song_dir is None:
+        return None, (
+            f"{where} references {ref!r}, but this connection has no database "
+            "file on disk, so there is no song directory to resolve a "
+            "song-relative reference against"
+        ), None
+
+    resolved = resolve_audio_path(song_dir, ref)
+    if not resolved.is_file():
+        return None, (
+            f"{where} names a sample that is not on disk: audio_file={ref!r} "
+            f"resolves to {resolved} against song directory {song_dir}. "
+            "Placing it would put a clip in the arrangement that plays silence"
+        ), None
+
+    call = ToolCall(
+        tool="ableton_clip",
+        args={
+            "action": "create",
+            "location": "arrangement",
+            "kind": "audio",
+            "track_index": track_at,
+            "start_beats": start_beats,
+            # ABSOLUTE by contract — Live resolves nothing.
+            "audio_path": str(resolved),
+            "name": clip_row["name"],
+        },
+        key=f"arrangement_clip:{row_id}",
+        purpose=(
+            f"create arrangement audio clip {row_id!r} on track {track_at} @ "
+            f"bar {row['start_bar']:g} from {resolved.name}"
+        ),
+    )
+
+    authored = [
+        prop for column, prop in _AUDIO_CONFORM_PROPERTIES
+        if clip_row[column] is not None
+    ]
+    conform_gap = None
+    if authored:
+        conform_gap = (
+            f"{where} was placed, but its authored conform ({', '.join(authored)}) "
+            "did NOT travel with it. Live's Track.create_audio_clip loads a "
+            "FRESH clip at Live's defaults, and an arrangement clip can only be "
+            "addressed for a set_property by an index that exists after the "
+            "create's result is applied — predicting that index is the "
+            "positional guess ARR-PROJ diagnosed as a root cause, so it is not "
+            "made. The session clip IS conformed; the arrangement copy plays at "
+            "Live's defaults until the conform reaches it. Conform the clip in "
+            "Live and pull, or re-push once the arrangement copy's conform "
+            "route is settled (SMP-6V2K chunk 01)"
+        )
+    return call, None, conform_gap
+
+
 def _divergence_bars(diverging: list[tuple[float, float, float]]) -> str:
     """Name the diverging bars, not just the first.
 
@@ -145,8 +276,17 @@ def plan_push_arrangement(
         envelope survives (``create``+``set_notes`` writes notes only and would
         silently drop it — the §9 routing risk). Lands on an empty region (clear
         ran first) → no B-24. Needs the clip linked in a session slot.
-      * **audio placement** → the whole (audio) track is left untouched
-        (CLP-AUD2 scope); see §6a below.
+      * **audio placement** → ``create`` a fresh arrangement audio clip
+        directly from the row's resolved sample path
+        (``Track.create_audio_clip(path, beats)``), which needs no session
+        counterpart. Refused — and, per §6a, taking the whole track with it —
+        when the sample is not on disk, or when the source clip HOSTS an
+        envelope (the duplicate route that would carry the envelope is
+        unprobed for audio). See :func:`_audio_placement_call`.
+
+    An audio track the DB has NO placements for never enters the loop, so its
+    hand-placed clips are untouched by construction; the summary names those
+    tracks so "untouched" and "forgotten" don't read the same in the report.
 
     ``live_arrangement_clips_by_track``: ``{track_index: [{arrangement_clip_index,
     start_beats, ...}]}`` from the execute-path probe
@@ -168,8 +308,9 @@ def plan_push_arrangement(
     source clip not linked, placement referencing a missing clip — is recorded
     via :meth:`PushPlan.blocked`, so the executor reports the phase INCOMPLETE
     with a non-zero exit instead of the "skipped (idempotent)" clean OK that hid
-    an empty timeline. A DELIBERATE no-op (audio track, CLP-AUD2) stays a
-    :meth:`PushPlan.warn` — nothing was asked for and nothing is owed.
+    an empty timeline. An audio placement this planner cannot materialize
+    without guessing is in that class, not a deliberate no-op: the song asked
+    for the clip and did not get it.
 
     Each ``create`` / ``duplicate`` call is keyed ``arrangement_clip:{db_id}`` so
     :func:`apply_push_results` records the binding from ``arrangement_clip_index``;
@@ -226,7 +367,7 @@ def plan_push_arrangement(
     for row in arr_rows:
         rows_by_track.setdefault(row["track_id"], []).append(row)
 
-    created = duplicated = cleared = skipped_tracks = 0
+    created = duplicated = cleared = skipped_tracks = placed_audio = 0
 
     for track_id, rows in rows_by_track.items():
         track_at = Q.get_ableton_link(
@@ -274,8 +415,8 @@ def plan_push_arrangement(
         # --- Validate + build the placement calls; commit only if the WHOLE
         #     track is materializable (§6a — never clear what we can't rebuild).
         placement_calls: list[ToolCall] = []
+        pending_gaps: list[str] = []
         skip_reason: str | None = None
-        skip_is_known_scope = False  # audio (CLP-AUD2) → warn; real gap → alert
         for row in rows:
             clip_row = Q.get_clip(conn, row["clip_id"])
             if clip_row is None:
@@ -284,20 +425,32 @@ def plan_push_arrangement(
                     f"{row['clip_id']!r}"
                 )
                 break
-            if clip_row["kind"] == "audio":
-                # A Live track is MIDI or audio, so any audio placement means an
-                # audio track: skip the WHOLE track's projection. Clearing it
-                # would wipe manually-placed audio clips we cannot rebuild
-                # (audio-clip arrangement push is CLP-AUD2 scope).
-                skip_reason = (
-                    f"placement {row['id']!r} is kind='audio' (CLP-AUD2 scope) — "
-                    "audio-track arrangement is not materialized by push; left "
-                    "untouched so manual audio clips are preserved"
-                )
-                skip_is_known_scope = True
-                break
 
             start_beats = _position_bar_to_beats(row["start_bar"], ts_points)
+            if clip_row["kind"] == "audio":
+                # A Live track is MIDI or audio, so any audio placement means
+                # an audio track — and an audio track the DB HAS placements for
+                # is projectable like any other. (A track the DB has NO
+                # placements for never enters `rows_by_track` at all, so
+                # hand-placed audio on it is untouched by construction; the
+                # summary below names those tracks.)
+                audio_call, refusal, conform_gap = _audio_placement_call(
+                    conn, row=row, clip_row=clip_row, track_at=track_at,
+                    start_beats=start_beats,
+                    hosts_envelope=row["clip_id"] in host_clip_ids,
+                )
+                if refusal is not None or audio_call is None:
+                    skip_reason = refusal or (
+                        f"placement {row['id']!r} is kind='audio' and could not "
+                        "be materialized"
+                    )
+                    break
+                placement_calls.append(audio_call)
+                if conform_gap is not None:
+                    pending_gaps.append(conform_gap)
+                placed_audio += 1
+                continue
+
             if row["clip_id"] in host_clip_ids:
                 # Envelope-bearing → duplicate-onto-cleared (needs clip linked).
                 clip_at = Q.get_ableton_link(
@@ -357,12 +510,15 @@ def plan_push_arrangement(
                 f"rebuild) — {skip_reason}. The clear is destructive, so a track "
                 "is materialized only when it can be fully rebuilt (§6a)."
             )
-            # Known scope (audio / CLP-AUD2) is a DELIBERATE no-op → a
-            # diagnostic note. A real gap (missing clip row, unlinked
-            # envelope-bearing source) is work the song asked for that this push
-            # could not determine how to do → `blocked`, so the run reports
-            # INCOMPLETE instead of a clean OK over a silently-unbuilt track.
-            (plan.warn if skip_is_known_scope else plan.blocked)(msg)
+            # Every reason a track is skipped is a real gap — a missing clip
+            # row, an unlinked envelope-bearing source, an audio placement
+            # whose route is unprobed or whose sample is not on disk. That is
+            # work the song asked for and this push could not determine how to
+            # do, so it is `blocked`: the run reports INCOMPLETE rather than a
+            # clean OK over a silently-unbuilt track. (A DELIBERATE no-op would
+            # be a `warn` instead; there is no longer one here — an audio track
+            # stopped being a known-scope skip when audio started materializing.)
+            plan.blocked(msg)
             skipped_tracks += 1
             continue
 
@@ -405,12 +561,34 @@ def plan_push_arrangement(
         track_calls.extend(placement_calls)
         for call in track_calls:
             plan.add(call)
+        # Drained only now: a gap on a track that ended up skipped would name
+        # work nobody attempted. These are placements that DID land minus part
+        # of what the song authored for them, so the run must not read clean.
+        for gap in pending_gaps:
+            plan.blocked(f"arrangement: {gap}.")
 
-    if cleared or created or duplicated:
+    if cleared or created or duplicated or placed_audio:
         plan.warn(
             f"arrangement projection: cleared {cleared}, created+filled "
-            f"{created}, duplicated {duplicated} (envelope-bearing) across "
+            f"{created}, duplicated {duplicated} (envelope-bearing), placed "
+            f"{placed_audio} audio across "
             f"{len(rows_by_track) - skipped_tracks} track(s)"
+        )
+
+    # Say which audio tracks were projected and which were left alone. A track
+    # the DB has no placements for never enters the loop above, so its
+    # hand-placed clips are safe by construction — but "safe by construction"
+    # reads identically to "forgotten" in a report that doesn't mention it.
+    untouched_audio = [
+        t["name"] for t in Q.get_tracks_for_song(conn, song_id)
+        if t["kind"] == "audio" and t["id"] not in rows_by_track
+    ]
+    if untouched_audio:
+        plan.warn(
+            f"arrangement: {len(untouched_audio)} audio track(s) have no DB "
+            f"placements and were left UNTOUCHED (no clear, no rebuild) so "
+            f"anything placed in them by hand survives: "
+            f"{', '.join(sorted(untouched_audio))}"
         )
     return plan
 

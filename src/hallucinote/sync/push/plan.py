@@ -555,6 +555,15 @@ _ACK_ONLY_KINDS: frozenset[str] = frozenset({
     # apply_push_results raises on the unknown key prefix and HALTS the
     # arrangement phase before any clip is rebuilt.
     "arrangement_clip_clear",
+    # SMP-6V2K (audio clips): the conform surface an audio clip is
+    # materialized with — gain / pitch_coarse / pitch_fine / warping /
+    # warp_mode / start_marker / end_marker — written one property at a time
+    # via ableton_clip(action='set_property') and keyed
+    # `clip_conform:{clip_id}:{property}` (clips.py). Ack-only: the value
+    # ORIGINATES in the DB and a conform write records no Live-side index,
+    # exactly like the mixer `track_volume` / `device_parameter` keys above.
+    # The clip's own binding is recorded under `clip:` by the create.
+    "clip_conform",
 })
 
 

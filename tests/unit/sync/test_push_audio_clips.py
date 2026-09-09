@@ -1,0 +1,716 @@
+"""SMP-6V2K chunk 03 — the clips and arrangement phases materialize audio (R1.1).
+
+An authored ``kind='audio'`` row used to warn and skip in both phases. It now
+becomes a real Live clip in the session and in the arrangement, conformed as
+authored — except for two cases the planner REFUSES rather than guesses,
+because the operator-gated Live probe that would settle them has not run:
+
+  * a linked row whose ``audio_file`` CHANGED (``Clip.file_path`` is read-only,
+    so that is a delete-and-recreate whose cost to the clip's envelopes is
+    unknown), and
+  * an audio placement whose source clip HOSTS an envelope (the duplicate route
+    that would carry the envelope is unprobed for audio).
+
+Plus the two properties a destructive reconcile breaks first: a missing sample
+fails its clip BEFORE the call is planned, and a second push of an unchanged
+song plans nothing.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from hallucinote.db import init_db, mutations as M
+from hallucinote.sync import push
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def song_dir(tmp_path):
+    """The DB lives IN the song dir, which is what an ``audio_file`` reference
+    resolves against (``paths.resolve_audio_path``)."""
+    (tmp_path / "assets").mkdir()
+    return tmp_path
+
+
+@pytest.fixture
+def conn(song_dir):
+    c = init_db(song_dir / "aud.db")
+    yield c
+    c.close()
+
+
+@pytest.fixture
+def song(conn):
+    return M.create_song(conn, name="dialogue", key="Dm")
+
+
+@pytest.fixture
+def session(conn, song):
+    return M.create_ableton_session(conn, song_id=song, name="draft")
+
+
+@pytest.fixture
+def sample(song_dir) -> str:
+    """A real file on disk, referenced song-relatively the way build.py does."""
+    (song_dir / "assets" / "line.wav").write_bytes(b"RIFF....WAVEfmt ")
+    return "assets/line.wav"
+
+
+@pytest.fixture
+def audio_track(conn, song, session):
+    tid = M.create_track(
+        conn, song_id=song, track_index=1, name="Dialogue", kind="audio",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=4,
+    )
+    return tid
+
+
+def _link_clip(conn, *, session, clip_id, index=1):
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="clip", db_id=clip_id,
+        ableton_index=index,
+    )
+
+
+def _live_slot(clip_index: int, file_path: str, **conform) -> dict:
+    """One populated entry as ``ableton_clip(action='list', location='session')``
+    reports it for an audio clip (chunk 02's read surface)."""
+    entry = {
+        "clip_index": clip_index,
+        "empty": False,
+        "name": "line",
+        "length": 8.0,
+        "is_audio": True,
+        "file_path": file_path,
+    }
+    entry.update(conform)
+    return entry
+
+
+# ---------------------------------------------------------------------------
+# Session clips — create from an authored row
+# ---------------------------------------------------------------------------
+
+
+def test_authored_audio_row_creates_a_real_clip(
+    conn, song, session, audio_track, sample, song_dir,
+):
+    """The headline: an unlinked audio row plans one create carrying the
+    RESOLVED ABSOLUTE path (Live resolves nothing), on the track's Live index,
+    in the row's slot."""
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=2, length_beats=8.0,
+        audio_file=sample, name="line",
+    )
+    plan = push.plan_push_clip(conn, clip_id=cid, session_id=session)
+
+    assert plan.blocked_reasons == []
+    create = plan.calls[0]
+    assert create.key == f"clip:{cid}"
+    assert create.tool == "ableton_clip"
+    assert create.args["action"] == "create"
+    assert create.args["location"] == "session"
+    assert create.args["kind"] == "audio"
+    assert create.args["track_index"] == 4
+    assert create.args["clip_index"] == 2
+    assert create.args["audio_path"] == str(song_dir / "assets" / "line.wav")
+    assert Path(create.args["audio_path"]).is_absolute()
+    assert create.args["name"] == "line"
+    # No `notes` and no `length`: an audio clip has no note array and takes its
+    # length from the file (the wire refuses notes on kind='audio').
+    assert "notes" not in create.args
+    assert "length" not in create.args
+
+
+def test_authored_conform_rides_along_with_the_create(
+    conn, song, session, audio_track, sample,
+):
+    """Conform is authorship, not a mix-time todo: the authored gain /
+    transpose / warp / markers are planned with the clip. A NULL column means
+    'never authored' and is not written."""
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="line",
+        gain=0.6, pitch_coarse=-3, warping=1, warp_mode=6, start_marker=0.5,
+    )
+    plan = push.plan_push_clip(conn, clip_id=cid, session_id=session)
+
+    conform = [c for c in plan.calls if c.key.startswith("clip_conform:")]
+    written = {c.args["property"]: c.args["value"] for c in conform}
+    assert written == {
+        "gain": 0.6,
+        "pitch_coarse": -3,
+        "warping": True,   # DB stores 0/1; the wire and Live speak bool
+        "warp_mode": 6,
+        "start_marker": 0.5,
+    }
+    assert all(c.args["action"] == "set_property" for c in conform)
+    assert all(c.args["clip_index"] == 1 for c in conform)
+    assert all(c.args["location"] == "session" for c in conform)
+    # pitch_fine / end_marker were never authored → never written.
+    assert "pitch_fine" not in written
+    assert "end_marker" not in written
+
+
+def test_absolute_audio_file_passes_through_unchanged(
+    conn, song, session, audio_track, tmp_path,
+):
+    """``clips.audio_file`` may be absolute (a sample outside the song dir);
+    the resolver passes it through and push uses it verbatim."""
+    outside = tmp_path.parent / "elsewhere.wav"
+    outside.write_bytes(b"RIFF")
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=str(outside), name="line",
+    )
+    plan = push.plan_push_clip(conn, clip_id=cid, session_id=session)
+    assert plan.calls[0].args["audio_path"] == str(outside)
+
+
+# ---------------------------------------------------------------------------
+# The loud failures
+# ---------------------------------------------------------------------------
+
+
+def test_missing_sample_fails_the_clip_before_the_call_is_planned(
+    conn, song, session, audio_track, song_dir,
+):
+    """A clip that pushes and then plays silence is a phase reporting OK
+    without having determined its state. NO call is planned, and the run is
+    INCOMPLETE (blocked), not a clean skip."""
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file="assets/absent.wav", name="ghost",
+    )
+    plan = push.plan_push_clip(conn, clip_id=cid, session_id=session)
+
+    assert plan.calls == [], "a missing sample must plan nothing at all"
+    assert len(plan.blocked_reasons) == 1
+    reason = plan.blocked_reasons[0]
+    assert "not on disk" in reason
+    assert str(song_dir / "assets" / "absent.wav") in reason
+    # blocked is strictly stronger than alert, and rides both channels.
+    assert set(plan.blocked_reasons) <= set(plan.alerts)
+
+
+def test_changed_audio_file_refuses_loudly_and_plans_nothing(
+    conn, song, session, audio_track, sample, song_dir,
+):
+    """REFUSAL (a). Live's ``Clip.file_path`` is read-only, so re-pointing a
+    clip at a different file is a delete-and-recreate — and whether a recreate
+    preserves the clip's envelopes is unprobed. The planner names chunk 01 and
+    invents nothing: no delete, no create, and no 're-emit the envelope just in
+    case' (which would double one that survived)."""
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="line", gain=0.6,
+    )
+    _link_clip(conn, session=session, clip_id=cid, index=1)
+    probe = {4: [_live_slot(1, str(song_dir / "assets" / "OTHER.wav"))]}
+
+    plan = push.plan_push_clip(
+        conn, clip_id=cid, session_id=session,
+        live_session_clips_by_track=probe,
+    )
+
+    assert plan.calls == [], "no delete, no create, and no conform onto the wrong file"
+    assert len(plan.blocked_reasons) == 1
+    reason = plan.blocked_reasons[0]
+    assert "CHANGED" in reason
+    assert "read-only" in reason.lower()
+    assert "chunk 01" in reason
+    assert "OTHER.wav" in reason
+
+
+def test_linked_slot_holding_a_non_audio_clip_refuses_loudly(
+    conn, song, session, audio_track, sample,
+):
+    """Same family as a changed file: making that slot audio means destroying
+    what is there, and the recreate's cost is unprobed."""
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="line",
+    )
+    _link_clip(conn, session=session, clip_id=cid, index=1)
+    probe = {4: [{"clip_index": 1, "empty": False, "name": "x", "is_audio": False}]}
+
+    plan = push.plan_push_clip(
+        conn, clip_id=cid, session_id=session,
+        live_session_clips_by_track=probe,
+    )
+    assert plan.calls == []
+    assert any("chunk 01" in b for b in plan.blocked_reasons)
+
+
+def test_reverse_is_refused_loudly_but_the_clip_is_still_placed(
+    conn, song, session, audio_track, sample,
+):
+    """Live exposes no settable reverse on a Clip, so the wire carries none.
+    The sample still belongs in the set — but a run that reported OK while
+    playing it FORWARD would be exactly the silent-wrong-audio failure."""
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="line", reverse=1,
+    )
+    plan = push.plan_push_clip(conn, clip_id=cid, session_id=session)
+
+    assert any(c.args.get("action") == "create" for c in plan.calls)
+    assert any("reverse" in b for b in plan.blocked_reasons)
+    assert not any(
+        c.args.get("property") == "reverse" for c in plan.calls
+    ), "there is no reverse property on the wire; never invent one"
+
+
+def test_an_in_memory_db_cannot_resolve_a_relative_reference():
+    """The song dir is the directory holding the DB file. With no file there is
+    no anchor — say so rather than resolving against the process cwd."""
+    conn = init_db(":memory:")
+    try:
+        sid = M.create_song(conn, name="x", key="C")
+        sess = M.create_ableton_session(conn, song_id=sid, name="s")
+        tid = M.create_track(
+            conn, song_id=sid, track_index=1, name="A", kind="audio",
+        )
+        M.link_db_to_ableton(
+            conn, session_id=sess, db_kind="track", db_id=tid, ableton_index=1,
+        )
+        cid = M.create_audio_clip(
+            conn, track_id=tid, slot=1, length_beats=4.0,
+            audio_file="assets/line.wav", name="line",
+        )
+        plan = push.plan_push_clip(conn, clip_id=cid, session_id=sess)
+        assert plan.calls == []
+        assert any("no database file on disk" in b for b in plan.blocked_reasons)
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Idempotency — the property a destructive reconcile breaks first
+# ---------------------------------------------------------------------------
+
+
+def test_second_push_of_an_unchanged_song_plans_nothing(
+    conn, song, session, audio_track, sample, song_dir,
+):
+    """THE idempotency pin. With the Live session-clip probe in hand, a linked
+    audio clip whose file and conform values Live already holds plans ZERO
+    calls — no create, no delete, not even a redundant conform write."""
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="line",
+        gain=0.6, pitch_coarse=-3, pitch_fine=12.5, warping=1, warp_mode=6,
+        start_marker=0.5, end_marker=4.0,
+    )
+    _link_clip(conn, session=session, clip_id=cid, index=1)
+    probe = {4: [_live_slot(
+        1, str(song_dir / "assets" / "line.wav"),
+        gain=0.6, pitch_coarse=-3, pitch_fine=12.5, warping=True, warp_mode=6,
+        start_marker=0.5, end_marker=4.0,
+    )]}
+
+    plan = push.plan_push_clips(
+        conn, song_id=song, session_id=session,
+        live_session_clips_by_track=probe,
+    )
+    assert plan.calls == [], f"unchanged song must plan no work; got {[c.args for c in plan.calls]}"
+    assert plan.blocked_reasons == []
+    assert plan.errors == []
+
+
+def test_a_changed_conform_value_is_the_only_thing_rewritten(
+    conn, song, session, audio_track, sample, song_dir,
+):
+    """The diff is per-property: edit the gain in build.py and re-push, and
+    exactly one write goes out."""
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="line", gain=0.75, warping=1, warp_mode=6,
+    )
+    _link_clip(conn, session=session, clip_id=cid, index=1)
+    probe = {4: [_live_slot(
+        1, str(song_dir / "assets" / "line.wav"),
+        gain=0.6, warping=True, warp_mode=6,
+    )]}
+
+    plan = push.plan_push_clip(
+        conn, clip_id=cid, session_id=session,
+        live_session_clips_by_track=probe,
+    )
+    assert [c.args["property"] for c in plan.calls] == ["gain"]
+    assert plan.calls[0].args["value"] == 0.75
+
+
+def test_second_push_without_a_probe_plans_nothing_destructive(
+    conn, song, session, audio_track, sample,
+):
+    """Without the probe the file behind the link cannot be verified, so the
+    planner writes the conform in place and NEVER recreates. The unverified
+    check is stated on the operator channel, not swallowed."""
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="line", gain=0.6,
+    )
+    _link_clip(conn, session=session, clip_id=cid, index=1)
+
+    plan = push.plan_push_clips(conn, song_id=song, session_id=session)
+
+    actions = {c.args["action"] for c in plan.calls}
+    assert actions == {"set_property"}, "no create and no delete on a re-push"
+    assert plan.blocked_reasons == []
+    assert any("WITHOUT a Live session-clip probe" in a for a in plan.alerts)
+
+
+def test_the_unverified_alert_is_raised_once_per_song_not_once_per_clip(
+    conn, song, session, audio_track, sample,
+):
+    """One alert for the song, the same shape as the arrangement projection's
+    'planned WITHOUT a Live arrangement probe' — N of them would be noise, and
+    noise is how a real signal gets routed around."""
+    for slot in (1, 2, 3):
+        cid = M.create_audio_clip(
+            conn, track_id=audio_track, slot=slot, length_beats=8.0,
+            audio_file=sample, name=f"line{slot}",
+        )
+        _link_clip(conn, session=session, clip_id=cid, index=slot)
+
+    plan = push.plan_push_clips(conn, song_id=song, session_id=session)
+    unverified = [a for a in plan.alerts if "WITHOUT a Live session-clip probe" in a]
+    assert len(unverified) == 1
+    assert "line1" in unverified[0] and "line3" in unverified[0]
+
+
+def test_probed_empty_slot_recreates_rather_than_refusing(
+    conn, song, session, audio_track, sample,
+):
+    """A stale link pointing at a slot Live has emptied is not the recreate
+    hazard: there is nothing to destroy, so create it."""
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="line",
+    )
+    _link_clip(conn, session=session, clip_id=cid, index=1)
+
+    plan = push.plan_push_clip(
+        conn, clip_id=cid, session_id=session,
+        live_session_clips_by_track={4: []},
+    )
+    assert plan.blocked_reasons == []
+    assert plan.calls[0].args["action"] == "create"
+    assert plan.calls[0].args["kind"] == "audio"
+
+
+# ---------------------------------------------------------------------------
+# The aggregator
+# ---------------------------------------------------------------------------
+
+
+def test_aggregator_carries_per_clip_blocked_reasons_up(
+    conn, song, session, audio_track, sample,
+):
+    """A blocked reason that did not reach the song-level plan would be a push
+    reporting OK over work it did not do — the exact failure `blocked` exists
+    to prevent."""
+    M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file="assets/absent.wav", name="ghost",
+    )
+    M.create_audio_clip(
+        conn, track_id=audio_track, slot=2, length_beats=8.0,
+        audio_file=sample, name="line",
+    )
+    plan = push.plan_push_clips(conn, song_id=song, session_id=session)
+
+    assert any("not on disk" in b for b in plan.blocked_reasons)
+    assert set(plan.blocked_reasons) <= set(plan.alerts)
+    # The healthy sibling still materializes — one bad reference does not
+    # take the song's other clips with it.
+    assert [c.args["clip_index"] for c in plan.calls
+            if c.args["action"] == "create"] == [2]
+
+
+def test_audio_refusal_leaves_midi_siblings_untouched(
+    conn, song, session, audio_track,
+):
+    """Regression guard kept from the refuse-and-skip era: whatever audio does,
+    a MIDI sibling still gets its kind='midi' create."""
+    midi_track = M.create_track(
+        conn, song_id=song, track_index=2, name="Keys", kind="midi",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=midi_track,
+        ableton_index=5,
+    )
+    mc = M.create_clip(
+        conn, track_id=midi_track, slot=1, length_beats=4.0, name="loop_a",
+    )
+    M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file="assets/absent.wav", name="ghost",
+    )
+    plan = push.plan_push_clips(conn, song_id=song, session_id=session)
+    assert [c.key for c in plan.calls] == [f"clip:{mc}"]
+    assert plan.calls[0].args["kind"] == "midi"
+
+
+# ---------------------------------------------------------------------------
+# Arrangement projection
+# ---------------------------------------------------------------------------
+
+
+def _place(conn, *, song, track, clip, start_bar=1.0, end_bar=None):
+    return M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip,
+        start_bar=start_bar,
+        end_bar=start_bar + 4.0 if end_bar is None else end_bar,
+    )
+
+
+def test_audio_placement_materializes_into_the_arrangement(
+    conn, song, session, audio_track, sample, song_dir,
+):
+    """An audio track the DB HAS placements for is projectable like any other:
+    clear the lane, then create the placement directly from the sample path."""
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="line",
+    )
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4,
+    )
+    aid = _place(conn, song=song, track=audio_track, clip=cid, start_bar=3.0)
+
+    live = {4: [{"arrangement_clip_index": 1, "start_beats": 0.0}]}
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track=live,
+    )
+
+    assert plan.blocked_reasons == []
+    kinds = [c.args["action"] for c in plan.calls]
+    assert kinds == ["delete", "create"], "clear first, then materialize"
+    create = plan.calls[1]
+    assert create.key == f"arrangement_clip:{aid}"
+    assert create.args["location"] == "arrangement"
+    assert create.args["kind"] == "audio"
+    assert create.args["track_index"] == 4
+    assert create.args["start_beats"] == 8.0  # bar 3 in 4/4
+    assert create.args["audio_path"] == str(song_dir / "assets" / "line.wav")
+    assert "notes" not in create.args
+
+
+def test_envelope_hosting_audio_placement_refuses_and_takes_its_track_with_it(
+    conn, song, session, audio_track, sample,
+):
+    """REFUSAL (b). The projection routes an envelope-bearing placement through
+    duplicate-onto-cleared so the envelope travels with the clip; whether that
+    carries an envelope off an AUDIO session clip is unprobed, and the direct
+    create carries nothing. Neither route is known-good, so the whole track is
+    left alone — the clear is destructive (§6a) and must not run for a track
+    that cannot be fully rebuilt."""
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="line",
+    )
+    _link_clip(conn, session=session, clip_id=cid, index=1)
+    # A mixer_volume ride whose span a session clip on this track covers —
+    # which is exactly what makes the clip an envelope HOST.
+    env = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=audio_track,
+    )
+    M.add_breakpoint(conn, envelope_id=env, time_beats=0.0, value=0.5)
+    M.add_breakpoint(conn, envelope_id=env, time_beats=4.0, value=0.9)
+    _place(conn, song=song, track=audio_track, clip=cid)
+    from hallucinote.sync.push.envelopes import envelope_hosting_clip_ids
+    assert cid in envelope_hosting_clip_ids(conn, song), (
+        "fixture precondition: the clip must actually host the envelope"
+    )
+
+    live = {4: [{"arrangement_clip_index": 1, "start_beats": 0.0}]}
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track=live,
+    )
+
+    assert plan.calls == [], "no clear and no rebuild for a track we cannot rebuild"
+    reason = "\n".join(plan.blocked_reasons)
+    assert "HOSTS a clip envelope" in reason
+    assert "chunk 01" in reason
+    assert set(plan.blocked_reasons) <= set(plan.alerts)
+
+
+def test_arrangement_missing_sample_blocks_the_track_without_clearing_it(
+    conn, song, session, audio_track,
+):
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file="assets/absent.wav", name="ghost",
+    )
+    _place(conn, song=song, track=audio_track, clip=cid)
+    live = {4: [{"arrangement_clip_index": 1, "start_beats": 0.0}]}
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track=live,
+    )
+    assert plan.calls == []
+    assert any("not on disk" in b for b in plan.blocked_reasons)
+
+
+def test_arrangement_says_what_the_direct_create_did_not_carry(
+    conn, song, session, audio_track, sample,
+):
+    """The direct create loads a FRESH clip at Live's defaults, so an authored
+    conform does not reach the arrangement copy — and the planner cannot
+    address that copy in the same plan (its index only exists after apply;
+    predicting it is the positional guess ARR-PROJ diagnosed). The placement
+    still lands; the run says what did not."""
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="line", gain=0.6, warp_mode=6,
+    )
+    _place(conn, song=song, track=audio_track, clip=cid)
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track={4: []},
+    )
+    assert any(c.args.get("kind") == "audio" for c in plan.calls)
+    gap = "\n".join(plan.blocked_reasons)
+    assert "did NOT travel" in gap
+    assert "gain" in gap and "warp_mode" in gap
+
+
+def test_conform_gap_is_not_reported_for_a_track_that_was_skipped(
+    conn, song, session, audio_track, sample,
+):
+    """A gap on a track nobody built would name work nobody attempted."""
+    good = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="line", gain=0.6,
+    )
+    ghost = M.create_audio_clip(
+        conn, track_id=audio_track, slot=2, length_beats=8.0,
+        audio_file="assets/absent.wav", name="ghost",
+    )
+    _place(conn, song=song, track=audio_track, clip=good, start_bar=1.0)
+    _place(conn, song=song, track=audio_track, clip=ghost, start_bar=5.0)
+
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track={4: []},
+    )
+    assert plan.calls == []
+    assert not any("did NOT travel" in b for b in plan.blocked_reasons)
+
+
+def test_an_audio_track_with_no_db_placements_is_left_untouched_and_named(
+    conn, song, session, audio_track, sample,
+):
+    """Hand-placed audio on a track the DB says nothing about survives — by
+    construction, since the projection loop is driven by DB rows. The report
+    says so, because 'untouched' and 'forgotten' read identically otherwise."""
+    hand = M.create_track(
+        conn, song_id=song, track_index=2, name="HandDropped", kind="audio",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=hand, ableton_index=5,
+    )
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="line",
+    )
+    _place(conn, song=song, track=audio_track, clip=cid)
+
+    live = {
+        4: [],
+        5: [{"arrangement_clip_index": 1, "start_beats": 0.0}],
+    }
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track=live,
+    )
+    assert not any(
+        c.args["action"] == "delete" and c.args["track_index"] == 5
+        for c in plan.calls
+    ), "never clear a lane the DB has no placements for"
+    assert any("HandDropped" in n and "UNTOUCHED" in n for n in plan.notes)
+
+
+def test_arrangement_projection_is_the_same_plan_every_push(
+    conn, song, session, audio_track, sample,
+):
+    """Idempotent by construction: same DB + same probed lane → same calls."""
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="line",
+    )
+    _place(conn, song=song, track=audio_track, clip=cid)
+    live = {4: []}
+    first = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track=live,
+    )
+    second = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track=live,
+    )
+    assert [c.args for c in first.calls] == [c.args for c in second.calls]
+    assert [c.key for c in first.calls] == [c.key for c in second.calls]
+
+
+# ---------------------------------------------------------------------------
+# The wire boundary — every emitted call must be one the MCP surface accepts
+# ---------------------------------------------------------------------------
+
+
+def test_every_emitted_audio_call_validates_against_the_real_mcp_surface(
+    conn, song, session, audio_track, sample,
+):
+    """The mirror-direction boundary check (chunk 02 owns the producer, this
+    planner is the consumer): build a real ``wire.Request`` for each emitted
+    call and let the dispatcher judge tool / action / param shape. Anything
+    other than 'validated, needs Live' means the planner drifted from the wire.
+    """
+    from hallucinote_mcp import schema, wire
+    from hallucinote_mcp import actions as _actions  # noqa: F401 — populates the registry
+    from hallucinote_mcp.dispatcher import dispatch
+
+    schema.register_help_actions()
+
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="line",
+        gain=0.6, pitch_coarse=-3, pitch_fine=12.5, warping=1, warp_mode=6,
+        start_marker=0.5, end_marker=4.0,
+    )
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4,
+    )
+    _place(conn, song=song, track=audio_track, clip=cid)
+
+    calls = list(push.plan_push_clip(conn, clip_id=cid, session_id=session).calls)
+    calls += list(push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track={4: []},
+    ).calls)
+    assert calls, "the fixture must actually emit audio calls"
+
+    for call in calls:
+        args = dict(call.args)
+        action = args.pop("action")
+        resp = dispatch(
+            wire.Request(tool=call.tool, action=action, params=args),
+            context=None,
+        )
+        assert getattr(resp, "needs_remote", False) or resp.ok, (
+            f"{call.tool}({action}) rejected by the MCP dispatcher: "
+            f"{getattr(resp, 'error', None)}"
+        )

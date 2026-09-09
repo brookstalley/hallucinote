@@ -662,6 +662,40 @@ norm_registry_ratified: >-
   27 norms; six forks ruled by the owner (API scope stays internal; arrangement projection
   contained push-side)
 
+# Norm Health sweep — stamped by /prawduct:janitor's Norm Health theme. Resolves the
+# `norm-health-sweep-overdue` advisory.
+norm_health_last_run: 2026-09-08
+
+# Measured distance per norm, one entry per sweep, APPENDED never overwritten — the
+# trend is the point. Many individually-defensible exceptions summing to a dead norm is
+# exactly what no single diff review can see, and a point-in-time reading cannot either.
+# Keep the last 3 entries; git holds the rest.
+norm_health:
+  - date: 2026-09-08
+    note: >-
+      First sweep — this is the baseline, so there is no trend yet. Of the ten norms
+      measured, six held clean and four had real distance, and the four split evenly by
+      cause, which is the part worth carrying forward. TWO were statement drift, where the
+      code was disciplined and the norm's wording had grown wrong: "no raw SQL in callers,
+      EVER" was wider than the why that justifies it, and the sync row was narrower than
+      the Executor layer its own sibling artifact had already ratified. TWO were ordinary
+      code drift: kit.py imported db.queries, and five modules lacked the future import
+      whose row had carried an unacted-on "promote to a ruff rule" note. The lesson is not
+      that statements always drift — it is that a sweep must ask which side moved, because
+      the remedy is opposite. Fixing code to match a wrong statement, or amending a
+      statement to excuse real drift, are both available and both wrong.
+    measurements:
+      "raw-sql-outside-db": "22 sites outside db/ — 5 writes (all markdown_refs, now a recorded bounded exception), 17 reads. Norm narrowed to writes by owner ruling R1; reads tracked as #486"
+      "generators-pure": "1 violation site (kit.py imported db.queries) — inverted this sweep, now 0, locked by an import-graph test"
+      "sync-plans-not-calls": "7 modules call client.send. Not code drift: sync-boundary-contract.md already ratified an Executor layer, so the preferences row was narrower than its own sibling artifact. Row restated"
+      "future-annotations": "5 modules missing the import — now 0 and mechanized via ruff I002. Two docstring-only __init__ modules are outside the rule's reach and recorded as such"
+      "mcp-handlers-async": "0 violations — enforced structurally at one anyio.to_thread wrapper (server.py) plus test_threading_invariants.py"
+      "broad-except-waived": "38 catches / 45 waiver pragmas — over-covered, not under"
+      "deps-locked": "0 violations — uv lock --check gates CI"
+      "no-telemetry": "0 outbound calls in the tree"
+      "push-projection": "0 violations. Had sat AGENT-PROPOSED / PENDING OWNER VETO for 19 days; ratified by owner ruling R4 this sweep"
+      "engine-api-support-window": "event-bound revisit has NOT fired — no external contributor song repo, no break report (#305 is the owner's own two-machine experiment). Correctly still deferred"
+
 # API versioning — the decision is authored in artifacts/api-contract.md
 # ("Recorded decision: versioning" + "Recorded decision: deprecation and
 # compatibility"): the MCP surface is versioned by content fingerprint rather

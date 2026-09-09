@@ -32,6 +32,55 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## JANITOR-2026-09 — first Norm Health sweep, and the bookkeeping that had fallen behind the work
+
+<!-- prawduct: type=chore | scope=JANITOR-2026-09 -->
+
+The survey found a codebase in good order and bookkeeping that had fallen
+behind it. Six TODO markers, all deliberate scaffold placeholders; every
+relative link across 26 docs resolving; no dead top-level modules; backlog
+groomed with 0 stale and 0 unstaged. What had accumulated was records, not rot.
+
+**Plans (Chunk 01).** `plans/` held 51 entries and had archived 4. Fifty were
+archived here — 39 completed, 11 superseded, each of the latter naming what
+absorbed it. Classification was per-plan because a mechanical read gets it wrong
+in both directions: NODE-ADDR's boxes are unticked while its text says DONE +
+LIVE-VERIFIED, and ENV-9P4T uses a `[~]` box no box-counting regex matches, for
+a chunk its own Live probe invalidated. Every superseded plan's open work was
+confirmed to hold a backlog id BEFORE archiving — archiving a plan whose
+remainder is untracked buries it. `build-plan.md` was deliberately left live
+(gitflow, merged-but-unreleased) and now says so.
+
+**Norms (Chunks 02-03).** Ten measured: six clean, four with distance, split
+evenly between statement drift and code drift — the finding that a sweep must
+ask which side moved, now a learning. Statement drift: the raw-SQL norm narrowed
+to writes (owner ruling R1) with markdown_refs' projection rebuild recorded as a
+bounded exception; the `sync.*` row restated to planners-vs-executor, matching
+the contract artifact that already modelled it. Code drift: `kit.py`'s db import
+inverted into a new `hallucinote.kits` loader, with `Kit.from_device` kept as a
+one-major alias because it is a published authoring API (two ratified norms
+collided; the owner ruled the seam), locked by an import-GRAPH test rather than
+a source grep; and the future-annotations norm mechanized as ruff `I002`, which
+is what its unacted-on "promote to a ruff rule" note should have been. `I001`
+was measured at 248 files and deliberately left off as formatting churn (#487).
+
+Two norms were closed on governance rather than code: the push-projection norm
+had sat AGENT-PROPOSED / PENDING OWNER VETO for 19 days (ratified), and
+`architecture.md` now states its altitude — runtimes and boundaries, not a
+module inventory — naming the ten packages as bare pointers because the
+briefing's staleness probe is a substring test with no way to declare a doc
+deliberately module-free.
+
+**Deferred, not dropped (Chunk 04).** #484/#485 the two cold branches carrying
+real unmerged work, #486 whether the 17 raw-SQL reads should consolidate, #487
+the ruff churn decision, #488 the two worthwhile artifact templates.
+
+**Baseline (Chunk 05).** `norm_health_last_run` and the first `norm_health:`
+entry are stamped, so the next sweep reads a trend instead of measuring from
+zero. That absence is why this one existed.
+
+Suite: 5302 passed, 2 skipped. ruff clean, mypy clean (214 files).
+
 ## 2026-09-08 — The report learns to ask whether the audio is damaged
 
 <!-- prawduct: type=feat | scope=render-integrity -->

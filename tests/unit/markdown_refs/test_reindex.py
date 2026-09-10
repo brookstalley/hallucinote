@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import pytest
 
 from hallucinote.db import init_db, mutations as M, queries as Q
-from hallucinote.markdown_refs import reindex_corpus
+from hallucinote.markdown_refs import _relpath, _SONG_PATH_RE, reindex_corpus
 
 
 @pytest.fixture
@@ -489,3 +489,57 @@ def test_get_markdown_ref_returns_row(repo):
     assert row["kind"] == "annotation"
     missing = Q.get_markdown_ref(conn, "songs/tunesong/decisions/never.md")
     assert missing is None
+
+
+# ---------------------------------------------------------------------------
+# Separator normalization (#503) — the tombstone prefix must match stored paths
+# on a platform whose native separator is not `/`. Exercised with
+# PureWindowsPath so the assertions run on macOS/Linux without touching os.sep.
+# ---------------------------------------------------------------------------
+
+
+def test_relpath_normalizes_a_windows_shaped_path_to_posix():
+    repo_root = PureWindowsPath(r"C:\work\repo")
+    doc = PureWindowsPath(r"C:\work\repo\songs\carpet\decisions\01-duck.md")
+    assert _relpath(doc, repo_root) == "songs/carpet/decisions/01-duck.md"
+
+
+def test_tombstone_prefix_is_the_same_on_windows_and_posix():
+    """The acceptance criterion: a `\\`-separated path yields the prefix its
+    `/` equivalent does. Built the way `reindex_corpus` builds it."""
+    win_song = _relpath(
+        PureWindowsPath(r"C:\work\repo\songs\carpet"),
+        PureWindowsPath(r"C:\work\repo"),
+    )
+    posix_song = _relpath(
+        PurePosixPath("/work/repo/songs/carpet"), PurePosixPath("/work/repo")
+    )
+    assert f"{win_song}/" == f"{posix_song}/" == "songs/carpet/"
+
+
+def test_windows_stored_path_matches_the_windows_tombstone_prefix():
+    """The bug in one line: the stored path and the prefix are both built from
+    Windows-shaped inputs, and the `startswith` test that scopes tombstoning to
+    one song has to fire. With a native-separator `str()` it never did."""
+    repo_root = PureWindowsPath(r"C:\work\repo")
+    song_rel = _relpath(PureWindowsPath(r"C:\work\repo\songs\carpet"), repo_root)
+    prefix = f"{song_rel}/"
+    stored = _relpath(
+        PureWindowsPath(r"C:\work\repo\songs\carpet\decisions\01-duck.md"), repo_root
+    )
+    other = _relpath(
+        PureWindowsPath(r"C:\work\repo\songs\rug\decisions\01-x.md"), repo_root
+    )
+    assert stored.startswith(prefix)
+    assert not other.startswith(prefix)
+
+
+def test_song_id_resolution_regex_accepts_a_windows_built_relpath():
+    """`_SONG_PATH_RE` is anchored on `songs/<slug>/`, so a native-separator
+    relpath would also have silently orphaned every Windows row from its song."""
+    relpath = _relpath(
+        PureWindowsPath(r"C:\work\repo\songs\carpet\annotations\a.md"),
+        PureWindowsPath(r"C:\work\repo"),
+    )
+    m = _SONG_PATH_RE.match(relpath)
+    assert m is not None and m.group(1) == "carpet"

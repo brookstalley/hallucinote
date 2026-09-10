@@ -16,6 +16,14 @@ transport PLAYS once over the UNION span of the changed arcs, so the
 batched call names that union-span wall-clock (integrated across the
 authored tempo map) and a loud ``alert()`` enumerates every span the pass
 will record/overwrite. Skipped-unchanged arcs are listed, not silent.
+
+Visible Fidelity is the same principle applied to the route's resolution
+(#475): the recorder samples on a fixed ~2.5 Hz grid, so an authored
+edge shorter than one tick has no representation on this route at all — it
+lands as a step on the grid rather than the ramp that was written. The
+planner names every such edge and marks the phase INCOMPLETE, because the
+song asked for something it did not get; it does NOT refuse, since the
+fidelity-vs-wall-clock trade (``slowdown_factor``) is the operator's to make.
 """
 from __future__ import annotations
 
@@ -55,6 +63,20 @@ PERFORM_OUTCOME_RECORDED = "recorded"
 # (no corruption), so we err toward the generous side.
 _PERFORM_READ_CEILING_FACTOR = 3.0
 _PERFORM_READ_CEILING_BUFFER_S = 90.0
+
+# The perform route's fixed record tick. The handler's ramp is scheduling-bound
+# at ~2.5 Hz — one breakpoint laid down per 400 ms of WALL-CLOCK — and denser
+# authoring cannot make it denser (only a slower transport can, which is what
+# ``slowdown_factor`` is for). Mirrors
+# ``hallucinote_mcp.handlers.automation``'s ramp scheduler; the engine does not
+# import the MCP package (they ship and version separately), so the number is
+# the contract, the same way ``PERFORM_OUTCOME_RECORDED`` is.
+_PERFORM_TICK_HZ = 2.5
+_PERFORM_TICK_SECONDS = 1.0 / _PERFORM_TICK_HZ
+
+# How many offending edges a single sub-tick warning enumerates before it
+# summarizes the rest — the message must name segments, not become a dump.
+_SUBTICK_NAMED_LIMIT = 3
 
 
 def _tempo_segments(
@@ -98,6 +120,81 @@ def _estimate_span_seconds(
     if start_beats < first_start:
         total += (min(end_beats, first_start) - start_beats) * 60.0 / first_bpm
     return total
+
+
+def _subtick_edges(
+    segments: list[tuple[float, float]],
+    breakpoints: list[sqlite3.Row],
+    *,
+    tick_seconds: float,
+) -> list[tuple[float, float, float]]:
+    """The authored edges this route cannot draw: [(start_beats, end_beats,
+    seconds), ...] for every consecutive breakpoint pair that CHANGES VALUE
+    over a span shorter than one record tick.
+
+    The recorder samples on a fixed wall-clock grid, so a ramp that begins and
+    ends between two ticks is never sampled mid-ride — it lands as a step on
+    the grid instead of the shape that was written, and nothing downstream can
+    tell that apart from a step the author wanted. Two exclusions keep the
+    reading honest rather than merely loud:
+
+    - **equal values** — a flat hold loses nothing by being sampled sparsely;
+      only an EDGE has a shape to lose.
+    - **zero-length pairs** — two breakpoints at one time are a deliberate
+      instantaneous step. The route reproduces a step as a step; only its
+      placement quantizes, which is a different (and much smaller) claim than
+      "the ramp you wrote is gone".
+    """
+    out: list[tuple[float, float, float]] = []
+    for prev, cur in zip(breakpoints, breakpoints[1:]):
+        if float(prev["value"]) == float(cur["value"]):
+            continue
+        start = float(prev["time_beats"])
+        end = float(cur["time_beats"])
+        seconds = _estimate_span_seconds(segments, start, end)
+        if 0.0 < seconds < tick_seconds:
+            out.append((start, end, seconds))
+    return out
+
+
+def _subtick_reason(
+    *,
+    env_id: str,
+    label: str,
+    edges: list[tuple[float, float, float]],
+    tick_seconds: float,
+    slowdown_factor: float,
+) -> str:
+    """The operator-facing sentence for one arc's sub-tick edges: what was
+    authored, what the tick is, and the exact dial setting that would carry it.
+    """
+    named = "; ".join(
+        f"beats {s:g}-{e:g} (~{sec * 1000:.0f} ms)"
+        for (s, e, sec) in edges[:_SUBTICK_NAMED_LIMIT]
+    )
+    more = (
+        f"; +{len(edges) - _SUBTICK_NAMED_LIMIT} more"
+        if len(edges) > _SUBTICK_NAMED_LIMIT else ""
+    )
+    shortest = min(sec for (_, _, sec) in edges)
+    # tick_seconds = _PERFORM_TICK_SECONDS / slowdown_factor, so the factor that
+    # makes the SHORTEST edge span a full tick is an absolute setting, not a
+    # multiplier on the current one.
+    needed = _PERFORM_TICK_SECONDS / shortest
+    at_factor = (
+        f" at {slowdown_factor:g}x slowdown" if slowdown_factor > 1.0 else ""
+    )
+    return (
+        f"performed-automation: arc {env_id} ({label}) authors {len(edges)} "
+        f"edge(s) shorter than one record tick "
+        f"(~{tick_seconds * 1000:.0f} ms{at_factor}): {named}{more}. The "
+        f"perform route records on a fixed ~{_PERFORM_TICK_HZ:g} Hz grid, so an "
+        "edge under one tick is never sampled mid-ride — it lands as a step on "
+        "the grid, NOT as the ramp that was authored, and this pass reports "
+        "nothing wrong about it. Raise slowdown_factor to "
+        f"{needed:.3g} or more (the pass then costs {needed:.3g}x wall-clock) "
+        "to record it, or lengthen the edge."
+    )
 
 
 def _arc_addressing(
@@ -350,6 +447,16 @@ def plan_push_performed_automation(
     so the cost estimates below — the purpose string, the overwrite alert, and
     the #5 read ceiling — are all scaled by it, keeping Visible Costs honest.
 
+    Sub-tick fidelity (#475): every queued arc is also read against the
+    route's fixed ~2.5 Hz record tick (``_PERFORM_TICK_SECONDS``, divided by
+    ``slowdown_factor`` — a slower transport buys proportionally finer authored
+    resolution). An authored edge shorter than one effective tick cannot be
+    represented, so each offending arc raises a ``blocked()`` reason naming the
+    segments, the tick they fell under, and the ``slowdown_factor`` that would
+    carry the shortest of them. Blocked, not refused: the pass still records
+    every arc, but the phase reports INCOMPLETE rather than a clean ok over a
+    ramp that did not materialize.
+
     Visible Costs: the call's purpose names the union-span wall-clock (one
     pass, NOT the per-arc sum), and a loud operator-facing ``alert()``
     enumerates every span the pass will record/overwrite.
@@ -375,6 +482,12 @@ def plan_push_performed_automation(
     # Parallel to `arcs`: (label, span_start, span_end) for the overwrite
     # alert and the union-span cost.
     spans: list[tuple[str, float, float]] = []
+    # #475: authored edges the fixed record grid cannot draw, one
+    # reason per queued arc. Collected during pass B, raised after the
+    # overwrite alert so the operator reads what WILL be recorded first, then
+    # what will not survive it.
+    subtick_reasons: list[str] = []
+    tick_seconds = _PERFORM_TICK_SECONDS / slowdown_factor
     # Addressing identity → envelope id that OWNS the target's single arrangement
     # lane. Two envelopes addressing ONE Live parameter can't both ride a single
     # transport pass, so the planner keeps ONE and loudly defers the rest.
@@ -466,6 +579,15 @@ def plan_push_performed_automation(
         })
         spans.append((label, span_start, span_end))
 
+        edges = _subtick_edges(
+            segments, breakpoints, tick_seconds=tick_seconds,
+        )
+        if edges:
+            subtick_reasons.append(_subtick_reason(
+                env_id=env["id"], label=label, edges=edges,
+                tick_seconds=tick_seconds, slowdown_factor=slowdown_factor,
+            ))
+
     if arcs:
         union_start = min(s for (_, s, _) in spans)
         union_end = max(e for (_, _, e) in spans)
@@ -509,6 +631,15 @@ def plan_push_performed_automation(
             f"{slow_note}) WILL RECORD/OVERWRITE {len(arcs)} arc(s): "
             f"{span_list}. {len(skipped)} unchanged arc(s) skipped."
         )
+        # #475: blocked(), not alert(). The pass still runs and every
+        # arc still records — refusing would reject songs that already carry
+        # sub-tick edges, and the operator, not the planner, owns the
+        # fidelity-vs-wall-clock trade the dial exists for. But the authored
+        # ramp did NOT materialize, so the run must not report a clean ok over
+        # it: that clean success line is the defect being fixed here, not the
+        # flattening itself.
+        for reason in subtick_reasons:
+            plan.blocked(reason)
     for label in skipped:
         plan.warn(f"performed-automation: skipped (unchanged): {label}")
     return plan

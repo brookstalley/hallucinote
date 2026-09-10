@@ -22,6 +22,19 @@ clip (or a DB change that doesn't alter the wire shape, e.g. tags-only) is
 skipped. Fingerprints are recorded in ``.last-notes-push.json`` and compared on
 the next ``changed_only`` run.
 
+**The ledger is scoped to the state dir, and it records what WE last sent — not
+what Live currently holds.** ``.last-notes-push.json`` is a fixed filename
+under ``state_dir`` (the DB's parent by default), so every per-branch DB of one
+song shares ONE ledger; clip ids are per-DB, so the entries stay disjoint and a
+push from one DB can never mark another DB's clip "unchanged". What no
+content-based ledger can see is a change to Live that this path did not make —
+a full ``execute``, a hand edit, or a push driven from a sibling DB. So a
+``changed_only`` run reporting ``pushed: 0`` is a true statement about the DB it
+was handed, and reads as a discrepancy only when the DB it was handed is not
+the one that was rebuilt (SYN-4T7B; the two-DB split behind that report was
+WSP-8Q4M in ``resolve_db_path``, since fixed). ``tests/unit/sync/
+test_push_notes.py`` pins both halves.
+
 The summary returned to the caller carries **note counts, never note arrays**
 (reference-style result, per MCP large-payload guidance).
 """

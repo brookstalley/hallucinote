@@ -67,6 +67,22 @@ surface; verify via each arc's returned `automation_state == 1`), real
 wall-clock for the UNION span (the changed arcs play once together in real
 time), and nested-rack device parameters are unreachable on this route too.
 
+**Fidelity is fixed in wall-clock, not in beats.** The recorder lays down one
+breakpoint per ~400 ms (a fixed ~2.5 Hz tick), whatever the tempo — so
+authoring more breakpoints buys nothing, and an authored edge shorter than one
+tick has no representation on this route: it records as a step on the tick
+grid, not as the ramp you wrote. The only lever is `perform_batch`'s
+`slowdown_factor` (>= 1.0, default off), which lowers the transport tempo for
+the record pass so the same fixed tick lays down factor× more breakpoints per
+beat — at factor× the wall-clock. Both directions of the trade live on that one
+dial: "can I record this faster?" is answered by the tick rate being fixed
+(you cannot, and a shorter pass would not have cost you fidelity either), and
+"my 120 ms duck edge came out as a step" is answered by raising it (400 ms ÷
+your shortest edge is the factor you need). Hallucinote's push checks this for
+you — an arc carrying a sub-tick edge names the segment, the effective tick and
+the required factor, and marks the phase INCOMPLETE rather than reporting a
+clean ok over a ramp that did not materialize.
+
 ### MIDI CC + pitch-bend clip envelopes (`clip_cc` / `clip_pitch_bend`)
 Live 12.4's LOM exposes neither `Clip.envelope_target_for_cc(N)` nor
 `Clip.envelope_target_for_pitch_bend()` — the C++ signature rejects the

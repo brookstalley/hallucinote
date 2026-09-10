@@ -85,6 +85,10 @@ from hallucinote.analyzer_identity import is_analyzer_device
 from hallucinote.db import mutations as M, queries as Q
 from hallucinote.paths import audio_file_ref
 from hallucinote.return_naming import normalize_live_return_name
+# The canonical brand-new-set track names live with the push-side cleanup
+# planner that acts on them; capture reads the same set so the two sides can
+# never disagree about what "Live's default scaffold" is.
+from hallucinote.sync.push.probe import CANONICAL_DEFAULT_SCAFFOLD_TRACK_NAMES
 
 # SNP-8R4K chunk 2 — snapshot schema version stamped on every compiled snapshot
 # (`compile_snapshot`) and asserted by the at-rest cleanup (`migrate_snapshot`).
@@ -1723,6 +1727,56 @@ def _capture_sends(probe, *, track_index: int) -> dict[str, Any]:
     return sends
 
 
+def is_untouched_default_scaffold_track(
+    track: dict[str, Any], *, has_clips: bool,
+) -> bool:
+    """True when a captured track entry is one of Live's brand-new-set
+    scaffold tracks that the song has NOT claimed.
+
+    Live's default set ships four tracks (``1-MIDI`` / ``2-MIDI`` /
+    ``3-Audio`` / ``4-Audio``) that are furniture, not song content. Ingesting
+    them makes them permanent song state: the push-side probe-and-link then
+    MATCHES them by name, so they never reach ``unmatched_live_tracks``, the
+    default-scaffold classifier goes silent, and "delete the default scaffold?"
+    can never be offered again.
+
+    Name alone is not enough on this side. Push can key its cleanup off the
+    name because it only ever judges tracks that are already unmatched; capture
+    judges every track in the set, so a scaffold slot the user has CLAIMED —
+    dropped an instrument on ``2-MIDI``, or a clip on ``3-Audio`` — must
+    survive. Untouched therefore means canonical name AND no devices AND no
+    clips.
+
+    ``has_clips`` is required rather than read off the entry because a snapshot
+    track entry carries clips only when the assembler happened to gather them:
+    a caller that never listed the track's clip slots cannot tell an empty
+    track from an unlisted one, and must not silently drop a claimed track on
+    that ambiguity.
+    """
+    return (
+        track.get("name") in CANONICAL_DEFAULT_SCAFFOLD_TRACK_NAMES
+        and not track.get("devices")
+        and not has_clips
+    )
+
+
+def _track_carries_clips(probe, *, track_index: int) -> bool:
+    """True when a Live track holds at least one clip in either location.
+
+    Session slots are reported dense — empty ones carry ``empty: True`` — while
+    ``arrangement_clips`` lists only real placements, so an entry without an
+    explicit ``empty`` flag counts as a clip.
+    """
+    for location in ("session", "arrangement"):
+        listing = probe(
+            "ableton_clip", "list", track_index=track_index, location=location,
+        )
+        for clip in listing.get("clips") or []:
+            if not clip.get("empty"):
+                return True
+    return False
+
+
 def assemble_snapshot_via_probes(
     probe, *, old_snapshot: dict[str, Any] | None = None,
     song_dir: Path | None = None,
@@ -1752,6 +1806,14 @@ def assemble_snapshot_via_probes(
     anchors a sampler's captured sample to a song-relative ``audio_file``
     reference; omitted, such a path is stored absolute and stops travelling
     between machines.
+
+    An UNTOUCHED track of Live's brand-new-set scaffold is excluded, the way
+    the analyzer is (see :func:`is_untouched_default_scaffold_track` for the
+    predicate and why name alone won't do here); surviving tracks are numbered
+    by dense rank so the exclusion can't leave a hole. This is the only capture
+    entry point that applies it — deciding "untouched" needs the track's clip
+    inventory, which ``compile_snapshot`` never sees, so a caller assembling
+    from probe results it gathered by hand keeps whatever it probed.
     """
     info = probe("ableton_session", "info")
     master_mixer = info.get("master")
@@ -1816,6 +1878,22 @@ def assemble_snapshot_via_probes(
         )
         if devices:
             entry["devices"] = devices
+        # An untouched default-scaffold track is Live's furniture, not the
+        # song's — capturing it would make it permanent song state and silence
+        # the push-side cleanup offer forever. Clips are the one half of the
+        # predicate that costs extra probes, so they are only listed for a
+        # canonically-named track: at most Live's four scaffold slots, and none
+        # at all in a set whose tracks the song has already named.
+        if entry["name"] in CANONICAL_DEFAULT_SCAFFOLD_TRACK_NAMES:
+            if is_untouched_default_scaffold_track(
+                entry, has_clips=_track_carries_clips(probe, track_index=ti),
+            ):
+                continue
+        # Dense 1-based rank among the tracks that survive, NEVER the raw Live
+        # index: `create_track` upserts on (song, track_index), so a snapshot
+        # numbered around a scaffold that later gets deleted would replay the
+        # same song track into a second row at a different index.
+        entry["index"] = len(tracks_out) + 1
         tracks_out.append(entry)
 
     snapshot = compile_snapshot(

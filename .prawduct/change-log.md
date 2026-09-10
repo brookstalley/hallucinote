@@ -125,6 +125,33 @@ paths and reach no live session until the vendored copy is replaced, so their
 verdicts are unknowable rather than passing; #291's `alien` witness and its
 `_PARAM_EPSILON` tolerance need real Live float behaviour, not a fake's.
 
+**Addendum 2026-09-10 (after the sittings ran) — two of the three unproven
+fixes are now measured, and the claim above is narrowed accordingly.**
+
+- **#322's fence is real for the case it models and inert for the case in the
+  report.** Verified against Live 12.4.5: the admission gate refuses concurrent
+  callers naming the running operation and its elapsed time, and `bout_status`
+  answers under a bout-fenced main thread. But the escalation path was never
+  reached, because it cannot be: under a real Ableton export that blocked Live's
+  main thread for 61.5s — four times the ceiling, correlated against the gap in
+  Live's own log — both in-flight calls died as bare 20s socket timeouts, no
+  escalation was generated, and `bout_status` timed out with them. The whole
+  request path stalls before any fence logic runs. **So the bullet above should
+  be read as: the single-flight gate no longer admits stacking retries, which is
+  true and verified. The beachball itself — Live blocked by its own modal work — is
+  NOT addressed by this fix.** Filed as #531.
+- **#291's `_PARAM_EPSILON` is now measured, and it is wrong in two ways**: the
+  float32 round-trip error is relative (1.335e-07 at a value of 4.11, 5e-09 for
+  normalized params) while the epsilon is absolute, and integer-stepped params
+  breach it outright (wrote 41.424, read 41). Filed as #534. The witness itself
+  failed for two further defects the fake `send_fn` cannot model — #532 and #533.
+- **#519's two Live class strings were confirmed** and that sitting is discharged.
+
+Nothing in the entry above is retracted; the fixes landed as described. What is
+narrowed is the scope of what #322 fixes, which the entry's own "none is claimed
+as proven" already anticipated. Evidence: `.prawduct/operator-verification.md`
+§ #322 and § #291.
+
 **The review found the sharpest defect in the sweep, and it was in the
 coordinator's own work.** The #275 guard compared the loader's answer
 (`class_display_name` — "Hybrid Reverb") against `devices.class_name` (Live's

@@ -33,6 +33,46 @@ pending entries when `operator_verification_required: true`.
 
 ---
 
+## RENDERGUARD-0910 — the solo refusal fires against a real Live mixer (2026-09-10) — PENDING
+
+Issue **#548**. The refusal reads `solo` and `mute` off Live's own track objects, across
+`song.tracks` AND `song.return_tracks`, which the unit suite can only model: the fake sets the attribute the handler
+reads, so it proves the handler's logic and nothing about Live's. Needs Live 12.4.x and
+any song with 3+ tracks. **Visual change: no.**
+
+**Fingerprint flip: YES.** `handlers/render.py` is inside `_FINGERPRINT_PATHS`, so the
+vendored Remote Script is stale until re-vendored — Live keeps running the old code and
+this refusal silently does not exist. Re-vendor via `/ableton-mcp-install`, quit Live
+completely and reopen (Live caches Control Surface modules at launch), then `/mcp`.
+
+- [ ] **A soloed track refuses the render.** Solo one track by hand, then
+  `ableton_render(action='start', song_slug=<slug>)`. Pass = refused before the
+  transport moves, the message names that track by index and name, and the captures
+  directory holds no WAVs. The whole point is that this fires in the first second
+  rather than after a full render.
+- [ ] **Two soloed tracks are both named.** Live's solo is exclusive by default
+  (soloing one clears another) — hold ⌘ to solo a second. If this Live cannot hold two
+  solos, record that and the box is N/A rather than failed.
+- [ ] **A muted track warns and proceeds.** Mute one track, render. Pass = the render
+  RUNS, the manifest's `muted_tracks` names it, and `mixer_state` carries
+  `mute: true` for that row. A mute is a plausible authoring choice; refusing it would
+  train the operator to work around the guard.
+- [ ] **The mixer state is recorded on a clean render.** Clear every solo and mute and
+  render. Pass = `manifest.mixer_state` has one row per track carrying `solo: false`,
+  `mute: false` and a `volume` matching Live's fader. This is the half that makes an
+  OLD report auditable — without it, the incident could only be diagnosed by probing a
+  Live session that had already moved on.
+- [ ] **A soloed RETURN refuses too, and a clean song with returns does not.** Solo
+  one return by hand and render — pass = refused, the message naming `return N`. Then
+  clear it and confirm the same song renders clean. Both halves matter: a return is a
+  Track in Live and carries solo, and a guard that false-fires on a healthy song is
+  worse than none.
+
+**Why it can't be headless-verified:** the fake sets `solo` because the handler reads
+`solo`. Only Live can say whether a real soloed track presents that attribute the way
+this assumes, and whether Live's exclusive-solo behaviour leaves the second box
+reachable at all.
+
 ## RELBLK-0910 — the release blockers, against a real chain (2026-09-10) — PENDING
 
 Issues **#532** (Symptom A), **#538**, **#536**, **#537**. Needs Live 12.4.x and the

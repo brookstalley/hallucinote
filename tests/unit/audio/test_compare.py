@@ -442,3 +442,118 @@ def test_section_deltas_skip_unmatched_sections_and_null_sides():
 def test_reports_without_sections_yield_no_section_deltas():
     out = diff_reports(_report(), _report())
     assert out["section_deltas"] == []
+
+
+# --- a master that is not the mix is not diffed --------------------------
+#
+# The 2026-09-10 `alien` incident: a track left soloed put one stem on the
+# master bus, and three consecutive reports advertised "26 significant deltas /
+# 112 section-level deltas" against a song nobody had touched.
+
+
+def _not_stem_sum_finding(
+    metric: str = "stem_sum_correlation",
+    observed: float = 0.159,
+    expected: float = 0.5,
+) -> dict:
+    return {
+        "kind": "master_not_stem_sum",
+        "severity": "blocking",
+        "subject": "master",
+        "metric": metric,
+        "observed": observed,
+        "expected": expected,
+        "db_reference": "the captured master is not the sum of the captured stems",
+    }
+
+
+def test_a_disqualified_master_yields_no_master_deltas():
+    baseline = _report(stems=[_surface("track:1")])
+    current = _report(
+        stems=[_surface("track:1")],
+        master=_surface("master", "master", "Main", lufs_i=-22.6),
+    )
+    current["findings"] = [_not_stem_sum_finding()]
+
+    out = diff_reports(current, baseline)
+
+    assert not [r for r in out["deltas"] if r["track_id"] == "master"]
+    assert out["master_deltas_refused"]["reason"] == "master_not_stem_sum"
+    assert out["master_deltas_refused"]["observed"] == 0.159
+
+
+def test_a_disqualified_master_does_not_suppress_stem_deltas():
+    """The stems are the evidence that proves the master is the odd one out —
+    on the real incident every stem was within 0.4 dB of its baseline."""
+    baseline = _report(stems=[_surface("track:1")])
+    current = _report(
+        stems=[_surface("track:1", lufs_i=-14.3)],
+        master=_surface("master", "master", "Main", lufs_i=-22.6),
+    )
+    current["findings"] = [_not_stem_sum_finding()]
+
+    out = diff_reports(current, baseline)
+
+    row = _find(out, "track:1", "lufs_i")
+    assert row["delta"] == pytest.approx(-0.3)
+
+
+def test_a_healthy_report_diffs_exactly_as_before():
+    """No finding, no gate: the key is absent rather than null, so a consumer
+    that does not know about it behaves as it always did."""
+    baseline = _report(stems=[_surface("track:1")])
+    current = _report(
+        stems=[_surface("track:1")],
+        master=_surface("master", "master", "Main", lufs_i=-14.6),
+    )
+    current["findings"] = []
+
+    out = diff_reports(current, baseline)
+
+    assert "master_deltas_refused" not in out
+    assert _find(out, "master", "lufs_i")["delta"] == pytest.approx(-0.6)
+
+
+def test_a_disqualified_master_yields_no_section_master_deltas():
+    """The per-section master readings come from the same capture as the
+    whole-song one and are wrong in the same way — the real incident's 112
+    section-level deltas came through this path."""
+    base_sec = _section(
+        "chorus3",
+        [_surface("track:4", timbre=_timbre(sharpness_acum=2.51))],
+        master=_surface("master", "master", "Main",
+                        timbre=_timbre(sharpness_acum=2.40)),
+    )
+    cur_sec = _section(
+        "chorus3",
+        [_surface("track:4", timbre=_timbre(sharpness_acum=2.36))],
+        master=_surface("master", "master", "Main",
+                        timbre=_timbre(sharpness_acum=1.10)),
+    )
+    baseline = _report()
+    baseline["per_section"] = [base_sec]
+    current = _report()
+    current["per_section"] = [cur_sec]
+    current["findings"] = [_not_stem_sum_finding()]
+
+    rows = diff_reports(current, baseline)["section_deltas"]
+
+    assert not [r for r in rows if r["track_id"] == "master"]
+    # The stem's section row survives — suppressing it would discard the
+    # evidence that the master is the one that moved.
+    assert [r for r in rows if r["track_id"] == "track:4"]
+
+
+def test_a_disqualified_BASELINE_also_refuses_master_deltas():
+    """A stored report is re-used as a baseline for as long as it is the
+    newest good one. A capture made under a solo does not stop being wrong
+    when it becomes the thing later renders are measured against."""
+    baseline = _report(stems=[_surface("track:1")])
+    baseline["findings"] = [_not_stem_sum_finding()]
+    current = _report(stems=[_surface("track:1")])
+    current["findings"] = []
+
+    out = diff_reports(current, baseline)
+
+    assert not [r for r in out["deltas"] if r["track_id"] == "master"]
+    assert out["master_deltas_refused"]["side"] == "baseline"

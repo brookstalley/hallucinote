@@ -145,10 +145,31 @@ rendered track is *after* the analyzer, so the new device is silently excluded f
 while still reaching the master — a stem-vs-master divergence `sum_reconciliation` would flag
 with nothing pointing at the cause.
 
-Two symptoms, one gap: **the HallucinoteAnalyzer is a device present in Live that no DB models,
-and the device layer does not account for it.** `chain-rebuild` shifts around it; `load` hides
-behind it. Fixing this at the device layer (the tap is always last, and every position-taking
-operation knows it) closes both; three point patches at three call sites would not.
+Two symptoms, one gap. **Corrected mechanism** (the first reading of this, and the triage's,
+were both wrong and are kept here because the wrong reading is the tempting one):
+
+`chain-rebuild` does NOT ignore the analyzer. It consults `is_analyzer_device` in three places
+— filtering it out of the capture (`chain_rebuild.py:315`), out of the DB read (`:426`, *"Never
+authored; the render puts it back itself"*), and out of the post-rebuild verify re-read
+(`:840`). That is a coherent design.
+
+The defect is that the analyzer is filtered out of the **logical** model while still occupying a
+**physical** slot, and the restore addresses devices physically:
+
+    node = build_node_addr(..., device_index=idx)      # chain_rebuild.py:701
+
+where `idx` is the device index captured **before** the delete (`:316`). The restore therefore
+assumes the rebuild reproduces the pre-delete physical layout. A surviving unauthored device
+breaks that assumption — the analyzer sat at the TAIL before (index 4) and at the HEAD after
+(index 1), because the delete removed everything ahead of it and the reloads tail-append behind
+it. Every restore then lands one slot off, which is exactly what the alerts show: EQ Eight
+sought at index 2 found Operator; Erosion sought at index 3 found EQ Eight.
+
+So the fix is not "consult the analyzer predicate" (it already does) and not "delete the
+analyzer too" (the render owns it). It is: **address the restore by the POST-rebuild physical
+index — re-read the chain and map logical position to physical index — instead of trusting the
+captured one.** The same physical/logical confusion is what makes `load` append behind the tap.
+One mapping, made explicit and total, closes both; three point patches would not.
 
 ### Defect B — the restore path cannot write a single continuous parameter
 

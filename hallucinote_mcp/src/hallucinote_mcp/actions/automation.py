@@ -6,8 +6,10 @@ families:
   - **Write**: write_envelope (the load-bearing collapse — 8 fork tools → 1)
   - **Read**: read_envelope, get_envelope (alias) — sampling-based
     reconstruction via Live's `envelope.value_at_time(t)`. Closed in
-    W6-G/H (2026-05-19) for 5 of 7 target_kinds; clip_cc / clip_pitch_bend
-    remain LOM-blocked on the read side mirroring the write side.
+    W6-G/H (2026-05-19) for every target_kind outside the handler's
+    `_READ_BLOCKED_KINDS` (which owns the count): clip_cc /
+    clip_pitch_bend are LOM-blocked on the read side mirroring the write
+    side, and note_expression is unreachable in both directions.
   - **Read-list (not currently supported)**: list — bulk enumeration
     without a target_kind isn't currently supported. `envelope.parameter`
     IS accessible on Live 12.4 (W7-0 smoke confirmed this empirically),
@@ -18,13 +20,20 @@ families:
   - **Destroy**: clear (one envelope), clear_all (all on clip OR parent)
   - **Help**: dispatcher-special
 
-write_envelope's ``target_kind`` discriminator selects among seven shapes:
+write_envelope's ``target_kind`` discriminator selects among:
 
-  ``clip_cc``, ``clip_pitch_bend``, ``note_expression``,
-  ``device_parameter``, ``mixer_volume``, ``mixer_pan``, ``send_level``.
+  ``clip_cc``, ``clip_pitch_bend``, ``device_parameter``,
+  ``mixer_volume``, ``mixer_pan``, ``send_level``.
 
 Each target_kind requires a specific identifier set; the handler validates
 per-kind and surfaces a clear teaching error on misuse.
+
+``note_expression`` remains on the wire but is REFUSED on every action
+(#515). Live's Python API projects no per-note expression surface at all —
+`Clip.envelope_for_note` never existed and nothing replaces it under any
+name — so the kind is retained only so the documented call reaches a
+teaching refusal naming the monophonic `device_parameter` perform route,
+instead of an unhelpful "not in [...]". It is not a pending mechanism.
 
 Time is in **beats** on the wire. The Hallucinote planner converts from
 bar-based song positions before emit — MCP stays meter-agnostic.
@@ -85,11 +94,11 @@ def _envelope_target_params() -> tuple[ParamSpec, ...]:
             name="clip_index", type="int", required=False, minimum=1,
             description=(
                 "1-based session slot OR arrangement-clip index. Required "
-                "for ALL target_kinds on Live 12.4 — the LOM exposes "
-                "envelope creation only through Clip.create_automation_"
-                "envelope, so mixer / pan / send / device-parameter "
-                "envelopes must address a containing clip just like "
-                "clip_cc / clip_pitch_bend / note_expression."
+                "for every reachable target_kind on Live 12.4 — the LOM "
+                "exposes envelope creation only through Clip.create_"
+                "automation_envelope, so mixer / pan / send / device-"
+                "parameter envelopes must address a containing clip just "
+                "like clip_cc / clip_pitch_bend."
             ),
         ),
         ParamSpec(
@@ -111,35 +120,33 @@ def _envelope_target_params() -> tuple[ParamSpec, ...]:
             name="note_pitch", type="int", required=False, minimum=0,
             maximum=127,
             description=(
-                "Required for target_kind='note_expression'. The note is "
-                "identified by (pitch, start_beats) — MPE per-note envelopes."
+                "Addresses a target_kind='note_expression' envelope — a "
+                "kind that is REFUSED on every action (#515: Live's API "
+                "exposes no per-note expression surface). Accepted only so "
+                "the documented call reaches that teaching refusal; nothing "
+                "reads it."
             ),
         ),
         ParamSpec(
             name="note_start_beats", type="float", required=False, minimum=0.0,
             description=(
-                "Required for target_kind='note_expression'. The note's "
-                "start time in beats."
+                "Addresses a target_kind='note_expression' envelope, which "
+                "is REFUSED (#515). Accepted, never read."
             ),
         ),
         ParamSpec(
             name="note_duration", type="float", required=False, minimum=0.0,
             description=(
-                "Optional for target_kind='note_expression'. The note's "
-                "duration in beats. When supplied, the last breakpoint's "
-                "held value is extended to note_duration (per-note "
-                "envelopes use note-LOCAL coordinates [0, note_duration]) "
-                "so it survives to note end instead of reverting to the "
-                "parameter default. Mirrors the clip-length tail anchor "
-                "used for clip_cc / clip_pitch_bend."
+                "Addresses a target_kind='note_expression' envelope, which "
+                "is REFUSED (#515). Accepted, never read."
             ),
         ),
         ParamSpec(
             name="axis", type="str", required=False, enum=_AXIS_ENUM,
             description=(
-                "Required for target_kind='note_expression'. The MPE axis: "
-                "pitch (semitone offsets — supports microtonal), pressure, "
-                "or timbre."
+                "The MPE axis of a target_kind='note_expression' envelope, "
+                "which is REFUSED (#515) — Live's API exposes no per-note "
+                "pitch, pressure or timbre surface. Accepted, never read."
             ),
         ),
     )
@@ -155,8 +162,9 @@ register(
         name="write_envelope",
         description=(
             "Write a single automation envelope. target_kind selects among "
-            "seven shapes: clip_cc, clip_pitch_bend, note_expression, "
-            "device_parameter, mixer_volume, mixer_pan, send_level. The "
+            "clip_cc, clip_pitch_bend, device_parameter, mixer_volume, "
+            "mixer_pan, send_level (note_expression is on the wire but "
+            "always refused — see the tips). The "
             "required identifier set depends on target_kind — the handler "
             "validates and surfaces a teaching error on misuse. breakpoints "
             "is a list of {time_beats, value, curve?} dicts (time in beats; "
@@ -215,14 +223,11 @@ register(
             "{time_beats:16.0, value:0.8, curve:'linear'}])"
         ),
         tips=(
-            "Per-target_kind required identifiers (Live 12.4 — ALL kinds "
-            "require a containing clip; track-level / clip-less paths "
-            "are not exposed by the LOM): "
+            "Per-target_kind required identifiers (Live 12.4 — every "
+            "reachable kind requires a containing clip; track-level / "
+            "clip-less paths are not exposed by the LOM): "
             "clip_cc → track_index + location + clip_index + cc_number; "
             "clip_pitch_bend → track_index + location + clip_index; "
-            "note_expression → track_index + location + clip_index + "
-            "note_pitch + note_start_beats + axis (+ note_duration to "
-            "extend the last-step tail to note end); "
             "device_parameter → node (terminal 'device', top-level; its "
             "track/return parent hosts the clip) + parameter_name + location "
             "+ clip_index; "
@@ -230,6 +235,19 @@ register(
             "+ location + clip_index; "
             "send_level → track_index + return_index + location + "
             "clip_index.",
+            "target_kind='note_expression' ALWAYS raises "
+            "NotImplementedError, on write and read alike, and this is "
+            "permanent (#515). Live's Python API projects no per-note "
+            "expression surface — Clip.envelope_for_note never existed and "
+            "no MPE / pressure / timbre accessor replaces it — so a "
+            "polyphonic per-note bend is unreachable, not pending. The one "
+            "pitch ride that works is MONOPHONIC: a device_parameter arc "
+            "gesture-recorded via action='perform_batch'. Mind the "
+            "parameter — Operator's 'A Fine' is a unipolar ratio tail "
+            "[0.0, 1000.0] whose interval is 1200*log2(Coarse + Fine/1000) "
+            "(Fine=100 is +165 cents, not +100, and there is no way to go "
+            "flat from rest); Pitch (MidiPitcher) is semitone-quantized and "
+            "steps rather than glides.",
             "Breakpoints must be sorted by time_beats — the handler "
             "raises with the offending index if not.",
             "Live 12.4's Envelope only exposes insert_step — segments / "
@@ -392,8 +410,9 @@ register(
             "was-it-present signal once the envelope read surface gap "
             "closes. clip-less mixer / pan / send / device_parameter "
             "calls raise the same teaching error as write_envelope; "
-            "target_kind='note_expression' is not exposed by Live 12.4's "
-            "per-target clear surface — use action='clear_all'."
+            "target_kind='note_expression' is refused outright (#515) — "
+            "the kind was never writable, so there is no per-note envelope "
+            "for a clear to remove."
         ),
         params=(
             ParamSpec(name="target_kind", type="str", enum=_TARGET_KINDS),
@@ -489,7 +508,8 @@ register(
         name="get_envelope",
         description=(
             "Read a single envelope's reconstructed breakpoints. Alias "
-            "for read_envelope — same shape, same params. W6-G/W6-H "
+            "for read_envelope — same shape, same params, same refused "
+            "kinds (clip_cc / clip_pitch_bend / note_expression). W6-G/W6-H "
             "(2026-05-19) closed the previous gap-blocked status via a "
             "sampling-based reconstruction (Live's LOM exposes only "
             "value_at_time, not breakpoint enumeration; the handler "
@@ -541,7 +561,10 @@ register(
             "transition. Step changes are localized to within "
             "resolution_beats; pass a smaller value for finer fidelity. "
             "Returns exists=False (no raise) when no envelope is bound "
-            "to the target."
+            "to the target. Three kinds raise instead of reading: clip_cc "
+            "and clip_pitch_bend (Live's typed boundary rejects the "
+            "envelope target) and note_expression (#515 — no per-note "
+            "expression surface exists to read, in either direction)."
         ),
         params=(
             ParamSpec(name="target_kind", type="str", enum=_TARGET_KINDS),

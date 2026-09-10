@@ -21,9 +21,10 @@ and `Q.get_notes_for_clip(conn, clip_id)` returns the array.
 `ableton_automation(action='list')` is not supported — bulk enumeration would
 require inverting every target-resolution branch.
 **Workaround:** `action='read_envelope'` reads any specific envelope via
-sampling-based reconstruction. Works for 5 of 7 `target_kind`s — `clip_cc` and
-`clip_pitch_bend` are not readable (same LOM gap that blocks the write side).
-`get_envelope` is an alias.
+sampling-based reconstruction. Three `target_kind`s raise instead: `clip_cc`
+and `clip_pitch_bend` (same LOM gap that blocks the write side) and
+`note_expression` (no per-note surface exists in either direction — see
+"Per-note expression" below). `get_envelope` is an alias.
 
 ### Track-level / clip-less envelopes
 Live 12.4's LOM exposes envelope creation only through
@@ -39,8 +40,8 @@ kinds on arrangement clips ("Not a session clip or parameter belongs to
 another track.").
 **Workaround:** author on a session clip, then
 `ableton_clip(action='duplicate_to_arrangement')` — the arrangement clip
-inherits the envelope. (`clip_cc / clip_pitch_bend / note_expression` on
-arrangement clips work normally.)
+inherits the envelope. (`clip_cc / clip_pitch_bend` on arrangement clips work
+normally; `note_expression` works nowhere — see "Per-note expression" below.)
 
 ### Audio-track envelopes (mixer / pan / send / device_parameter)
 ENV-9P4T: audio-track hosts are authorable. A clip-independent (e.g.
@@ -73,8 +74,36 @@ Live 12.4's LOM exposes neither `Clip.envelope_target_for_cc(N)` nor
 structural sentinels.
 **Workaround:** for CC, encode as MIDI control-change events inside
 `replace_notes` (the data lives in the clip, not as an envelope). For
-pitch-bend, use `target_kind='note_expression'` (pitch axis works) or author
-manually.
+pitch-bend, author it by hand in Live's clip envelope editor, or script the
+monophonic ride below — `note_expression` is NOT an alternative; it does not
+exist.
+
+### Per-note expression / MPE (`note_expression`) — PERMANENT
+Not a gap awaiting a method name: Live's Python API projects **no per-note
+expression surface at all**. `Clip.envelope_for_note` never shipped (the Live
+binary's symbol table resolves every other `Clip` LOM method and resolves that
+one zero times; the published Live 12 LOM reference lists no note-scoped
+envelope accessor; a GitHub-wide code search returns no Ableton-related hit),
+and neither does anything under another name — `note_expression`,
+`expression_envelope`, `note_envelope`, `per_note_envelope`,
+`get_note_expression`, `mpe_enabled` all resolve zero times. Live edits MPE
+internally and does not project it. So there is nothing to route a
+**polyphonic** per-note bend to, and no clip-level envelope reconstructs one:
+unlike `clip_cc` (encodable as control-change notes), this has no substitute.
+
+`target_kind='note_expression'` stays on the wire and raises
+`NotImplementedError` on `write_envelope`, `read_envelope` / `get_envelope`
+and `clear` alike — retained so the documented call gets a reason and a route
+rather than `not in [...]`. Nothing in the codebase is waiting to fill it in.
+
+**Workaround (monophonic only, not a fix):** ride a real device parameter and
+gesture-record it — `ableton_automation(action='perform_batch')` with a
+`device_parameter` arc. One parameter rides the whole voice, so two notes
+sounding together cannot bend apart. Two caveats decide the parameter:
+Operator's `A Fine` is a **unipolar ratio tail**, range `[0.0, 1000.0]`, so
+there is no way to go flat from rest, and its interval is
+`1200 * log2(Coarse + Fine/1000)` — `Fine=100` is **+165 cents**, not +100.
+`Pitch` (MidiPitcher) is semitone-quantized, so it steps rather than glides.
 
 ### Arrangement-level tempo + signature automation
 Not closeable via MCP. `create_automation_envelope` is called exclusively on

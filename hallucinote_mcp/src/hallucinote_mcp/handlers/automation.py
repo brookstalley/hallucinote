@@ -6,7 +6,9 @@ to walk the right Live API path:
 
   - **clip_cc** — `clip.create_automation_envelope(midi_cc(N))`
   - **clip_pitch_bend** — `clip.create_automation_envelope(midi_pitch_bend)`
-  - **note_expression** — `clip.envelope_for_note(pitch, start_beats, axis)`
+  - **note_expression** — refused at the boundary. Live's Python API
+    projects no per-note expression surface at all, so there is nothing
+    to walk (`_NOTE_EXPRESSION_GAP`).
   - **device_parameter** — `clip.create_automation_envelope(parameter)` where
     parameter is resolved by name on the device's chain
   - **mixer_volume** / **mixer_pan** / **send_level** — likewise routed
@@ -14,7 +16,7 @@ to walk the right Live API path:
     then ``ableton_clip(action='duplicate_to_arrangement')`` snapshot-copies
     the envelope into the arrangement.
 
-All seven target kinds require a containing ``Clip``. Live 12.4's LOM does
+Every reachable target kind requires a containing ``Clip``. Live 12.4's LOM does
 NOT expose track-level / parameter-level envelope creation:
 ``Track.create_automation_envelope`` and ``Parameter.automation_*`` are not
 in the public surface (verified against Live 12 Suite's bundled ``LomTypes``
@@ -40,8 +42,10 @@ keystone; ``clear`` / ``clear_all`` destroy envelopes; ``read_envelope``
 / ``get_envelope`` (alias) read via sampling-based reconstruction
 (W6-G/H 2026-05-19) — Live exposes only ``envelope.value_at_time(t)``,
 not breakpoint enumeration, so the handler samples and reconstructs
-step transitions. Covers 5 of 7 target_kinds; clip_cc / clip_pitch_bend
-remain LOM-blocked on the read side same as the write side. ``list``
+step transitions. It reads every target kind outside
+``_READ_BLOCKED_KINDS`` — that set owns the arithmetic so no count is
+copied into this sentence: clip_cc / clip_pitch_bend are rejected by
+Live's typed boundary, and note_expression has nothing to read. ``list``
 (target-less enumeration) stays blocked: enumerating
 ``Clip.automation_envelopes`` yields envelope objects but the
 canonical-id mapping back to a *target_kind + addressing args*
@@ -79,11 +83,73 @@ TARGET_KINDS: tuple[str, ...] = (
     "send_level",
 )
 
+# Kinds Live's LOM cannot reach on the read side. clip_cc / clip_pitch_bend
+# are rejected at Live's typed C++ boundary (the structural sentinel the
+# envelope target would need does not type-check); note_expression has no
+# surface at all (see _NOTE_EXPRESSION_GAP). Everything else reads.
+_READ_BLOCKED_KINDS: frozenset[str] = frozenset({
+    "clip_cc", "clip_pitch_bend", "note_expression",
+})
+
+# The kinds the read path actually covers. Derived, never asserted in prose:
+# whoever adds or blocks a kind moves this number by editing one set.
+READABLE_TARGET_KINDS: tuple[str, ...] = tuple(
+    k for k in TARGET_KINDS if k not in _READ_BLOCKED_KINDS
+)
+
 # Kinds that REQUIRE a containing clip on Live 12.4 (used for the teaching
 # error when callers omit clip_index + location).
 _CLIP_REQUIRED_KINDS: frozenset[str] = frozenset({
     "device_parameter", "mixer_volume", "mixer_pan", "send_level",
 })
+
+
+# The only pitch ride Live's Python API actually exposes, and the caveats
+# that decide whether it is usable. Single-sourced because two refusals
+# (note_expression and clip_pitch_bend) both have to route the caller here
+# — a recovery hint that names a dead surface is how #515 compounded.
+_PITCH_RIDE_ROUTE = (
+    "The one route that carries a pitch ride is MONOPHONIC: a "
+    "device_parameter arc gesture-recorded by "
+    "ableton_automation(action='perform_batch'), which rides a real "
+    "DeviceParameter into Live's arrangement automation. One parameter "
+    "rides the whole voice, so two notes sounding together cannot bend "
+    "apart. Two caveats decide the parameter: Operator's 'A Fine' is a "
+    "UNIPOLAR ratio tail, range [0.0, 1000.0] — there is no way to go "
+    "flat from rest — and its interval is 1200*log2(Coarse + Fine/1000), "
+    "so Fine=100 is +165 cents, not +100; and Pitch (MidiPitcher) is "
+    "semitone-quantized, so it steps rather than glides."
+)
+
+# target_kind='note_expression' is a permanent gap, not a pending mechanism.
+#
+# Clip.envelope_for_note never shipped: the Live binary's symbol table
+# resolves every other Clip LOM method and resolves that one zero times,
+# Cycling '74's published Live 12 LOM reference lists no note-scoped
+# envelope accessor, and a GitHub-wide code search returns no Ableton-
+# related hit. Stronger, and what actually decides the shape of this
+# refusal: the LOM exposes no per-note expression surface under ANY name —
+# note_expression, expression_envelope, note_envelope, per_note_envelope,
+# get_note_expression and mpe_enabled all resolve zero times too. Live
+# edits MPE internally and does not project it into the Python API.
+#
+# So there is nothing to route this to, and nothing to build: unlike
+# clip_cc (encodable as control-change notes), a POLYPHONIC per-note bend
+# has no construction over clip-level envelopes. The kind stays in
+# TARGET_KINDS deliberately — a caller reaching for it has a real intent,
+# and this message routes that intent to the one thing that works, where
+# "not in [...]" would teach nothing and break a documented surface.
+_NOTE_EXPRESSION_GAP = (
+    "target_kind='note_expression' cannot be written or read, and this is "
+    "permanent rather than pending: Live's Python API exposes NO per-note "
+    "expression surface at all — not merely none under this name. "
+    "Clip.envelope_for_note never existed on any Live version, and no MPE "
+    "/ per-note / pressure / timbre / slide accessor exists either. Live "
+    "edits MPE internally and does not project it into the LOM, so there "
+    "is nothing to route a polyphonic per-note bend to and no clip-level "
+    "envelope reconstructs one. " + _PITCH_RIDE_ROUTE + " "
+    "See ableton://guides/gaps."
+)
 
 
 _TRACK_LEVEL_GAP_HINT = (
@@ -273,9 +339,6 @@ def _resolve_read_envelope_target_and_clip(
     device_index: int | None,
     parameter_name: str | None,
     cc_number: int | None,
-    note_pitch: int | None,
-    note_start_beats: float | None,
-    axis: str | None,
 ) -> tuple[Any, Any]:
     """Resolve (clip, target) for a read_envelope call. Mirrors the
     target-resolution branches of write_envelope_handler — clip-scoped
@@ -300,23 +363,6 @@ def _resolve_read_envelope_target_and_clip(
         )
         target = _midi_pitch_bend_envelope_target(clip)
         return clip, target
-    if target_kind == "note_expression":
-        _require_note_expression_args(
-            note_pitch=note_pitch,
-            note_start_beats=note_start_beats,
-            axis=axis,
-        )
-        clip = _require_clip(
-            context, track_index=track_index, location=location,
-            clip_index=clip_index,
-        )
-        envelope = clip.envelope_for_note(
-            int(note_pitch), float(note_start_beats), axis  # type: ignore[arg-type]
-        )
-        # For note_expression, envelope IS the target — clip.envelope_for_note
-        # returns the envelope directly. Return (clip, envelope) and let
-        # the caller skip the _find_existing_envelope step.
-        return clip, envelope
     # device_parameter / mixer_volume / mixer_pan / send_level — clip-scoped
     # on Live 12.4.
     if clip_index is None or location is None:
@@ -440,9 +486,10 @@ def read_envelope_handler(
       }
 
     Mirrors write_envelope's target-resolution branches and gap-blocked
-    target kinds. clip_cc / clip_pitch_bend on Live 12.4 raise the same
-    gap error as the write side (Clip.create_automation_envelope rejects
-    those targets at the C++ boundary)."""
+    target kinds — ``_READ_BLOCKED_KINDS`` refuse here exactly as they do
+    on the write side: clip_cc / clip_pitch_bend because Live rejects
+    those targets at the C++ boundary, note_expression because no per-note
+    expression surface exists to read."""
     if target_kind not in TARGET_KINDS:
         raise ValueError(
             f"target_kind {target_kind!r} not in {list(TARGET_KINDS)}"
@@ -462,9 +509,11 @@ def read_envelope_handler(
         raise NotImplementedError(
             "Live 12.4 LOM doesn't expose envelope creation/read for "
             "clip pitch-bend targets — same constraint as clip_cc. Author "
-            "pitch-bend manually in Live's clip envelope editor, or use "
-            "target_kind='note_expression' with axis='pitch'."
+            "pitch-bend manually in Live's clip envelope editor, or "
+            "script it: " + _PITCH_RIDE_ROUTE
         )
+    if target_kind == "note_expression":
+        raise NotImplementedError(_NOTE_EXPRESSION_GAP)
 
     res = resolution_beats if resolution_beats is not None else _DEFAULT_ENVELOPE_READ_RESOLUTION
     if res <= 0:
@@ -480,17 +529,9 @@ def read_envelope_handler(
         device_index=device_index,
         parameter_name=parameter_name,
         cc_number=cc_number,
-        note_pitch=note_pitch,
-        note_start_beats=note_start_beats,
-        axis=axis,
     )
 
-    # note_expression's resolver returns the envelope directly; for all
-    # other target_kinds we resolve via create-or-return on the clip.
-    if target_kind == "note_expression":
-        envelope = target  # the resolver returned the envelope as `target`
-    else:
-        envelope = _find_existing_envelope(clip, target)
+    envelope = _find_existing_envelope(clip, target)
     if envelope is None:
         # Target is valid but Live couldn't bind an envelope to it.
         # Surface as exists=False rather than raising — read-shouldn't-raise
@@ -659,37 +700,6 @@ def _find_parameter(device: Any, parameter_name: str) -> Any:
     )
 
 
-_NOTE_EXPRESSION_AXES = ("pitch", "pressure", "timbre")
-
-
-def _require_note_expression_args(
-    *,
-    note_pitch: int | None,
-    note_start_beats: float | None,
-    axis: str | None,
-) -> None:
-    """Validate the trio of args every ``note_expression`` path requires.
-
-    Called by ``write_envelope`` (where the gap is closed and the args
-    drive the actual ``envelope_for_note`` call) AND by ``clear`` (where
-    the gap is open today but the args ARE part of the target's address
-    — validating them up front matches ``clear``'s ``clip_cc`` precedent
-    which validates ``cc_number`` before raising the Live-API failure).
-
-    Raises ``ValueError`` on missing or invalid args; raises nothing on
-    a valid trio.
-    """
-    if note_pitch is None or note_start_beats is None or axis is None:
-        raise ValueError(
-            "target_kind='note_expression' requires note_pitch, "
-            "note_start_beats, and axis (one of 'pitch'|'pressure'|'timbre')"
-        )
-    if axis not in _NOTE_EXPRESSION_AXES:
-        raise ValueError(
-            f"axis {axis!r} not in {list(_NOTE_EXPRESSION_AXES)}"
-        )
-
-
 _CURVE_KINDS = ("linear", "hold", "fast", "slow")
 
 
@@ -760,10 +770,9 @@ def _write_breakpoints_as_steps(
     ``tail_end`` (in beats) extends the last step to cover [last_t,
     tail_end] so the held value survives to the envelope's intended end.
     Pass ``clip.length`` for clip-scoped envelopes (mixer / pan / send /
-    device_parameter). Pass the note's end time for note_expression.
-    Pass ``None`` to fall back to a zero-duration anchor (legacy behavior
-    — leaves a revert artifact; only useful where the caller genuinely
-    wants a point marker without a hold tail).
+    device_parameter). Pass ``None`` to fall back to a zero-duration
+    anchor — it leaves a revert artifact, so it is only useful where the
+    caller genuinely wants a point marker without a hold tail.
 
     Returns True if any non-'hold' curve hint was present — the caller can
     surface a note explaining the curve was recorded but not applied.
@@ -907,6 +916,11 @@ def write_envelope_handler(
     node: dict[str, Any] | None = None,
     parameter_name: str | None = None,
     cc_number: int | None = None,
+    # note_pitch / note_start_beats / note_duration / axis address a
+    # note_expression envelope and nothing else. Nothing reads them: the
+    # kind is refused below. They stay on the signature so a caller who
+    # writes the documented call reaches that refusal instead of an
+    # "unknown param" rejection from the dispatcher.
     note_pitch: int | None = None,
     note_start_beats: float | None = None,
     note_duration: float | None = None,
@@ -915,11 +929,12 @@ def write_envelope_handler(
     """Write a single automation envelope.
 
     The required identifier set depends on target_kind. The handler
-    validates per-kind before walking the Live API. All seven target kinds
-    require a containing clip (session or arrangement) on Live 12.4 —
+    validates per-kind before walking the Live API. Every reachable target
+    kind requires a containing clip (session or arrangement) on Live 12.4 —
     callers that omit ``clip_index + location`` for the mixer / send /
     device-parameter kinds get a ``NotImplementedError`` citing the LOM
-    gap.
+    gap. ``note_expression`` is refused outright before any Live call
+    (``_NOTE_EXPRESSION_GAP``).
 
     ``value_type='continuous'`` (default): each breakpoint's ``value`` is
     a float. ``value_type='enum'``: each breakpoint's ``value`` is a
@@ -936,6 +951,13 @@ def write_envelope_handler(
         raise ValueError(
             f"target_kind {target_kind!r} not in {list(TARGET_KINDS)}"
         )
+    if target_kind == "note_expression":
+        # Refuse BEFORE touching Live. An AttributeError surfacing from
+        # inside a Live call reads as "your session is broken"; this reads
+        # as what is true. Refused unconditionally, addressing args
+        # included: telling a caller they forgot `axis` would send them to
+        # fix an argument on a call that can never work.
+        raise NotImplementedError(_NOTE_EXPRESSION_GAP)
     if value_type not in _VALUE_TYPES:
         raise ValueError(
             f"value_type must be one of {list(_VALUE_TYPES)}, "
@@ -1006,38 +1028,6 @@ def write_envelope_handler(
             raise _translate_envelope_target_error("clip_pitch_bend", exc) from exc
         non_step_seen = _write_breakpoints_as_steps(
             envelope, cleaned, tail_end=float(getattr(clip, "length", 0.0)),
-        )
-    elif target_kind == "note_expression":
-        _require_note_expression_args(
-            note_pitch=note_pitch,
-            note_start_beats=note_start_beats,
-            axis=axis,
-        )
-        clip = _require_clip(
-            context, track_index=track_index, location=location,
-            clip_index=clip_index,
-        )
-        # Note-expression envelopes have their own factory (envelope_for_note)
-        # rather than the create_automation_envelope path; Live exposes no
-        # equivalent clear-by-target for them, so insert_step's overwrite
-        # semantics handle replacement within the breakpoint range.
-        envelope = clip.envelope_for_note(
-            int(note_pitch), float(note_start_beats), axis
-        )
-        # W7-0 anchor (note_expression branch): when the caller supplies
-        # the note's duration, extend the last step to cover the note's
-        # full duration so the held value survives to note end instead
-        # of reverting to default after the last breakpoint. Per-note
-        # envelopes use note-LOCAL coordinates (Live's envelope_for_note
-        # returns an envelope addressed [0, note_duration_beats]), so the
-        # tail anchor is note_duration — not note_start_beats + duration.
-        # Mirrors the clip-scoped tail_end=clip.length paths above, but
-        # in the note's own coordinate system.
-        ne_tail_end: float | None = (
-            float(note_duration) if note_duration is not None else None
-        )
-        non_step_seen = _write_breakpoints_as_steps(
-            envelope, cleaned, tail_end=ne_tail_end,
         )
     elif target_kind in _CLIP_REQUIRED_KINDS:
         if clip_index is None or location is None:
@@ -1148,6 +1138,8 @@ def clear_handler(
     node: dict[str, Any] | None = None,
     parameter_name: str | None = None,
     cc_number: int | None = None,
+    # Accepted so the documented note_expression call reaches the refusal
+    # below rather than an "unknown param" rejection; nothing reads them.
     note_pitch: int | None = None,
     note_start_beats: float | None = None,
     axis: str | None = None,
@@ -1156,7 +1148,9 @@ def clear_handler(
 
     Same identifier set as write_envelope, minus breakpoints. Clip-scoped
     on Live 12.4 — same gap rationale as ``write_envelope`` for the
-    mixer / send / device-parameter kinds.
+    mixer / send / device-parameter kinds. ``note_expression`` is refused
+    (``_NOTE_EXPRESSION_GAP``): the kind was never writable, so there is
+    no per-note envelope for a clear to remove.
 
     Returns ``cleared: True`` after invoking ``clip.clear_envelope(target)``.
     Live's API is idempotent (no-op when no envelope existed) but does not
@@ -1212,27 +1206,10 @@ def clear_handler(
             raise _translate_envelope_target_error("clip_pitch_bend", exc) from exc
         return {"target_kind": target_kind, "cleared": True}
     if target_kind == "note_expression":
-        # Validate required addressing args FIRST — matches the clip_cc
-        # branch above (which validates cc_number before invoking Live)
-        # and matches write_envelope's note_expression branch. Without
-        # this, the gap raise below would mask "missing axis" errors
-        # behind "not supported," giving the agent two things to debug.
-        _require_note_expression_args(
-            note_pitch=note_pitch,
-            note_start_beats=note_start_beats,
-            axis=axis,
-        )
-        # Live 12.4 has no documented per-axis clear for note-expression
-        # envelopes through Clip.clear_envelope (which expects a Parameter-
-        # shaped target, not the note-expression envelope target). Direct
-        # callers should fall back to action='clear_all' on the clip.
-        raise NotImplementedError(
-            "clear with target_kind='note_expression' is not exposed by "
-            "Live 12.4's LOM (clear_envelope expects a Parameter target; "
-            "envelope_for_note returns the envelope but no symmetric "
-            "clear factory exists). Use action='clear_all' to clear all "
-            "envelopes on the containing clip."
-        )
+        # Nothing to clear: the kind was never writable, so there is no
+        # per-note envelope in the clip for a clear to remove. Same
+        # refusal as write / read rather than a clear-specific story.
+        raise NotImplementedError(_NOTE_EXPRESSION_GAP)
 
     # device_parameter / mixer_volume / mixer_pan / send_level
     if clip_index is None or location is None:
@@ -2072,9 +2049,11 @@ def perform_batch_handler(
         if target_kind not in PERFORM_TARGET_KINDS:
             raise ValueError(
                 f"perform_batch arcs[{i}] target_kind {target_kind!r} not in "
-                f"{list(PERFORM_TARGET_KINDS)} — clip-hosted kinds (clip_cc, "
-                f"clip_pitch_bend, note_expression) are written via "
-                f"write_envelope, not performed"
+                f"{list(PERFORM_TARGET_KINDS)} — the clip-hosted kinds "
+                f"(clip_cc, clip_pitch_bend) are written via write_envelope, "
+                f"not performed, and note_expression is unreachable on this "
+                f"API surface entirely (write_envelope refuses it with the "
+                f"reason and the route that does work)"
             )
         cleaned = _validate_breakpoints(arc.get("breakpoints"))
         span_start = cleaned[0]["time_beats"]

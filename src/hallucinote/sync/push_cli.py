@@ -660,11 +660,31 @@ def _cmd_check_coherence(args: argparse.Namespace) -> int:
 _VERSION_MISMATCH_MARKERS = ("version mismatch", "version handshake")
 
 
+def _vendored_remote_script_pkg() -> str:
+    """Filesystem path to the ``hallucinote_mcp`` copy Live actually loaded.
+
+    The pin recipe below copies that directory, so the path has to be the
+    real one: the User Library is platform-specific and the user can move it
+    (Live's Preferences → Library), so a hardcoded macOS-shaped guess would
+    print a recipe that silently copies nothing. Falls back to a placeholder
+    when ``hallucinote_mcp`` isn't importable, which keeps this module
+    importable without it.
+    """
+    try:
+        from hallucinote_mcp import install_paths  # type: ignore[import-not-found]
+    except ImportError:
+        return "<User Library>/Remote Scripts/Hallucinote/hallucinote_mcp"
+    install_dir = install_paths.remote_script_install_dir(
+        install_paths.default_user_library()
+    )
+    return str(install_dir / "hallucinote_mcp")
+
+
 def _version_mismatch_recovery(result: "push_execute.ExecuteResult") -> str | None:
     """SYN-5C3J: teach the recovery that actually clears an engine↔Remote-Script
     version mismatch.
 
-    When a fresh CLI process is built from a different commit than the Live
+    When a fresh CLI process is built from different source than the Live
     session's running Remote Script, every call refuses on the version
     handshake. The generic ``execute`` recovery ("fix build.py and re-run") is
     actively misleading here — re-running with the same drift refuses again.
@@ -673,6 +693,15 @@ def _version_mismatch_recovery(result: "push_execute.ExecuteResult") -> str | No
     mid-flight Live session untouched (the editable-install + parallel-engine-
     dev case from the swell friction log). Returns ``None`` when no version
     mismatch is present, so normal failures keep the generic recovery.
+
+    The pin is a copy of Live's *vendored package*, not a git checkout: the
+    ``+<suffix>`` in a version string is
+    ``hallucinote_mcp._compute_content_fingerprint`` output — a hash of the
+    vendored content — so no ref, tag or commit resolves it and only the
+    directory Live loaded reproduces that fingerprint. The install strips
+    ``cli/`` and ``server.py`` from what it vendors and neither is in
+    ``_FINGERPRINT_PATHS``, so copying them back from the checkout restores
+    ``preflight`` without moving the pin off the Remote Script's fingerprint.
 
     The Remote Script side generates the refusal, so its hint can't be updated
     in a running session — the teaching has to come from THIS (CLI) side, which
@@ -686,26 +715,36 @@ def _version_mismatch_recovery(result: "push_execute.ExecuteResult") -> str | No
     )
     if not matched:
         return None
+    vendored = _vendored_remote_script_pkg()
     return (
         "\nRecovery (version mismatch): the CLI and the running Remote Script "
-        "are built from different commits, so re-running won't help until they "
-        "agree. The refusal above reports the Remote Script's version — its "
-        "`+<sha>` suffix is the commit it was vendored from. Two paths:\n"
+        "are built from different source, so re-running won't help until they "
+        "agree. The refusal above reports both versions; the `+<suffix>` in "
+        "each is a fingerprint of the package's CONTENT, not a git commit — "
+        "`git cat-file -t` will reject it, and no checkout of it exists. Two "
+        "paths:\n"
         "  1. Update the Remote Script to match the CLI: run `/ableton-mcp-install`, "
         "then fully quit and reopen Live (Live caches Control Surface modules at "
         "startup — `/mcp` alone won't reload them).\n"
-        "  2. Keep the live session and pin the CLI to the Remote Script's "
-        "commit (no Live restart — best when you're developing the engine in "
-        "parallel against a mid-flight song):\n"
-        "       git worktree add /tmp/hallucinote-pin <sha-from-the-refusal-above>\n"
-        "       export PYTHONPATH=/tmp/hallucinote-pin/src:/tmp/hallucinote-pin/hallucinote_mcp/src\n"
-        "       python3 -m hallucinote_mcp.cli preflight   # confirm package.version == the vendored remote_script version\n"
+        "  2. Keep the live session and pin the CLI to the Remote Script's own "
+        "content (no Live restart — best when you're developing the engine in "
+        "parallel against a mid-flight song). Copy the package Live loaded, then "
+        "copy back the two things the install strips; run from your checkout "
+        "root:\n"
+        '       PIN=/tmp/hallucinote-pin; rm -rf "$PIN"; mkdir -p "$PIN"\n'
+        f'       cp -R "{vendored}" "$PIN/"\n'
+        '       cp -R hallucinote_mcp/src/hallucinote_mcp/cli "$PIN/hallucinote_mcp/cli"\n'
+        '       cp hallucinote_mcp/src/hallucinote_mcp/server.py "$PIN/hallucinote_mcp/"\n'
+        '       export PYTHONPATH="$PIN:$PWD/src"\n'
+        "       python3 -m hallucinote_mcp.cli preflight   # remote_script.candidates[].matches_mcp_server must now read true\n"
         "       python3 -m hallucinote.sync.push_cli execute ...   # re-run, now pinned\n"
+        "  Neither `cli/` nor `server.py` is fingerprinted, so copying them back "
+        "leaves the pin on the Remote Script's fingerprint. Drop the pin with "
+        "`rm -rf /tmp/hallucinote-pin` and unset PYTHONPATH when the session ends.\n"
         "  See the error-recovery guide ('Engine version drift during a live "
         "compose session') for why the editable-install + parallel-dev combo "
         "makes this common.\n"
     )
-
 
 def _stderr_progress(line: str) -> None:
     """PSH-5T9D progress sink for ``execute``: stream per-phase lines to stderr

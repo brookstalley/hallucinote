@@ -923,6 +923,7 @@ def _make_fallback_send_fn(
     fail_preset_uri: str,
     search_matches: list[dict],
     succeed_on_fallback_uri: str | None = None,
+    loaded_class_name: str | None = None,
 ):
     """Build a fake send_fn for M1-B fallback scenarios.
 
@@ -932,11 +933,20 @@ def _make_fallback_send_fn(
       `test_load_unknown_preset_uri_errors`).
     * `device.load` with `preset_uri == succeed_on_fallback_uri` → ok=True
       with a fresh device_index.
+    * `loaded_class_name`, when given, rides every successful load response —
+      the field the real handler sends to answer "what is now in that slot",
+      which the executor checks before accepting a substitution.
     * `browser.search` → ok=True with the provided matches list.
     * Everything else → ok=True with a synthetic link index.
     """
     counters: dict[str, int] = {}
     call_log: list[dict] = []
+
+    def _load_result(index: int) -> dict:
+        payload: dict = {"device_index": index}
+        if loaded_class_name is not None:
+            payload["loaded_class_name"] = loaded_class_name
+        return payload
 
     _LINK_KIND_FOR = {
         ("ableton_track", "create"): "track",
@@ -976,13 +986,13 @@ def _make_fallback_send_fn(
             ):
                 counters["device"] = counters.get("device", 0) + 1
                 return FakeResponse(
-                    ok=True, result={"device_index": counters["device"]},
+                    ok=True, result=_load_result(counters["device"]),
                 )
             # Any other URI on load — treat as success too (covers retry
             # scenarios that don't strictly match succeed_on_fallback_uri).
             counters["device"] = counters.get("device", 0) + 1
             return FakeResponse(
-                ok=True, result={"device_index": counters["device"]},
+                ok=True, result=_load_result(counters["device"]),
             )
         kind = _LINK_KIND_FOR.get((req.tool, req.action))
         if kind is None:
@@ -1125,6 +1135,198 @@ def test_execute_fallback_retry_failure_preserves_original_error(
     # was already built before the fallback ran.
     err_messages = [e.get("error", "") for e in errors["errors"]]
     assert any("FileId_AUTHOR_MACHINE" in m for m in err_messages)
+
+
+def test_execute_fallback_routes_by_captured_browser_root(
+    conn, song, session, state_dir,
+):
+    """An audio effect searches `audio_effects`, not the inferred default.
+
+    Kind-inference cannot tell a reverb from a synth, so before the captured
+    browser path was consulted a return's reverb was searched under
+    `instruments` — a root it can never appear in.
+    """
+    tid = M.create_track(
+        conn, song_id=song, track_index=1, name="Pad", kind="midi",
+    )
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    M.create_device(
+        conn, chain_id=chain_id, position=1,
+        kind="Hybrid Reverb", display_name="Hybrid Reverb",
+        class_name="HybridReverb",
+        preset_uri="query:Audio#FileId_AUTHOR",
+        browser_path=["audio_effects", "Hybrid Reverb", "Hybrid Reverb"],
+    )
+    send_fn = _make_fallback_send_fn(
+        fail_preset_uri="query:Audio#FileId_AUTHOR",
+        search_matches=[{
+            "name": "Hybrid Reverb",
+            "uri": "query:Audio#FileId_CONSUMER",
+            "path": ["audio_effects", "Hybrid Reverb", "Hybrid Reverb"],
+            "is_loadable": True,
+        }],
+        succeed_on_fallback_uri="query:Audio#FileId_CONSUMER",
+        loaded_class_name="HybridReverb",
+    )
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn,
+    )
+    assert result.outcome == "ok", result.phase_halted
+    search_calls = [
+        c for c in send_fn.call_log
+        if c["tool"] == "ableton_browser" and c["action"] == "search"
+    ]
+    assert search_calls
+    assert search_calls[0]["params"]["root"] == "audio_effects"
+    # The segments between root and leaf narrow the search to the folder the
+    # device actually came from.
+    assert search_calls[0]["params"]["path_prefix"] == ["Hybrid Reverb"]
+
+
+def test_execute_fallback_prefers_the_captured_browser_path(
+    conn, song, session, state_dir,
+):
+    """Of several same-named hits, the one at the captured path wins.
+
+    A substring search over a whole root is a wide net; taking the first hit
+    is how a Pack device gets replaced by a same-named built-in.
+    """
+    tid = M.create_track(
+        conn, song_id=song, track_index=1, name="Keys", kind="midi",
+    )
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    M.create_device(
+        conn, chain_id=chain_id, position=1,
+        kind="Electric", display_name="Suitcase",
+        class_name="Electric",
+        preset_uri="query:Instruments#FileId_AUTHOR",
+        browser_path=["instruments", "Vintage Keys Pack", "Suitcase"],
+    )
+    send_fn = _make_fallback_send_fn(
+        fail_preset_uri="query:Instruments#FileId_AUTHOR",
+        search_matches=[
+            {
+                "name": "Suitcase", "uri": "query:Instruments#FileId_STOCK",
+                "path": ["instruments", "Electric", "Suitcase"],
+                "is_loadable": True,
+            },
+            {
+                "name": "Suitcase", "uri": "query:Instruments#FileId_PACK",
+                "path": ["instruments", "Vintage Keys Pack", "Suitcase"],
+                "is_loadable": True,
+            },
+        ],
+        succeed_on_fallback_uri="query:Instruments#FileId_PACK",
+        loaded_class_name="Electric",
+    )
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn,
+    )
+    assert result.outcome == "ok", result.phase_halted
+    retry_loads = [
+        c for c in send_fn.call_log
+        if c["tool"] == "ableton_device" and c["action"] == "load"
+        and c["params"].get("preset_uri") != "query:Instruments#FileId_AUTHOR"
+    ]
+    assert retry_loads
+    assert retry_loads[0]["params"]["preset_uri"] == "query:Instruments#FileId_PACK"
+
+
+def test_execute_fallback_refuses_a_load_of_the_wrong_class(
+    conn, song, session, state_dir,
+):
+    """A substitution that lands a different class is refused, not reported ok.
+
+    This is the silently-wrong-mix case: an authored Hybrid Reverb replaced by
+    Live's stock Reverb while the push says nothing. The push must halt with
+    the original preset_uri error instead.
+    """
+    tid = M.create_track(
+        conn, song_id=song, track_index=1, name="Pad", kind="midi",
+    )
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    M.create_device(
+        conn, chain_id=chain_id, position=1,
+        kind="Hybrid Reverb", display_name="Hybrid Reverb",
+        class_name="HybridReverb",
+        preset_uri="query:Audio#FileId_AUTHOR",
+        browser_path=["audio_effects", "Hybrid Reverb", "Hybrid Reverb"],
+    )
+    send_fn = _make_fallback_send_fn(
+        fail_preset_uri="query:Audio#FileId_AUTHOR",
+        search_matches=[{
+            "name": "Reverb", "uri": "query:Audio#FileId_STOCK",
+            "path": ["audio_effects", "Reverb", "Reverb"],
+            "is_loadable": True,
+        }],
+        succeed_on_fallback_uri="query:Audio#FileId_STOCK",
+        loaded_class_name="Reverb",
+    )
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn,
+    )
+    assert result.outcome == "partial"
+    errors = json.loads((state_dir / ".last-push-errors.json").read_text())
+    assert any(
+        "FileId_AUTHOR" in e.get("error", "") for e in errors["errors"]
+    )
+
+
+def test_execute_fallback_accepts_a_load_of_the_authored_class(
+    conn, song, session, state_dir,
+):
+    """The class check passes what it should: same class, different URI."""
+    tid = M.create_track(
+        conn, song_id=song, track_index=1, name="Pad", kind="midi",
+    )
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    M.create_device(
+        conn, chain_id=chain_id, position=1,
+        kind="Hybrid Reverb", display_name="Hybrid Reverb",
+        class_name="HybridReverb",
+        preset_uri="query:Audio#FileId_AUTHOR",
+        browser_path=["audio_effects", "Hybrid Reverb", "Hybrid Reverb"],
+    )
+    send_fn = _make_fallback_send_fn(
+        fail_preset_uri="query:Audio#FileId_AUTHOR",
+        search_matches=[{
+            "name": "Hybrid Reverb", "uri": "query:Audio#FileId_CONSUMER",
+            "path": ["audio_effects", "Hybrid Reverb", "Hybrid Reverb"],
+            "is_loadable": True,
+        }],
+        succeed_on_fallback_uri="query:Audio#FileId_CONSUMER",
+        loaded_class_name="HybridReverb",
+    )
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn,
+    )
+    assert result.outcome == "ok", result.phase_halted
+
+
+def test_execute_fallback_accepts_when_the_server_reports_no_class(
+    conn, song, session, song_with_device, state_dir,
+):
+    """A server that sends no `loaded_class_name` cannot be judged, so the
+    substitution stands — the check refuses a KNOWN mismatch, never silence."""
+    send_fn = _make_fallback_send_fn(
+        fail_preset_uri="query:Drums#FileId_AUTHOR_MACHINE",
+        search_matches=[{
+            "name": "Late Nite Kit",
+            "uri": "query:Drums#FileId_CONSUMER_MACHINE",
+            "path": ["drums", "Drum Kits", "Late Nite Kit"],
+            "is_loadable": True,
+        }],
+        succeed_on_fallback_uri="query:Drums#FileId_CONSUMER_MACHINE",
+    )
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn,
+    )
+    assert result.outcome == "ok", result.phase_halted
 
 
 def test_execute_fallback_routes_plugin_kind_to_plugins_root(

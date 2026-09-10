@@ -331,6 +331,33 @@ def _orphan_param_hint(
     )
 
 
+# The browser roots `ableton_browser(action='search')` accepts. `browser_path_json`
+# stores the resolved browser path from the root down, so its first segment names
+# the root the device was actually loaded from — a fact worth more than any
+# inference from the device's kind.
+_BROWSER_ROOTS = frozenset(
+    {"instruments", "audio_effects", "midi_effects", "drums", "plugins"}
+)
+
+
+def _captured_browser_path(browser_path_json: str | None) -> list[str]:
+    """Decode `devices.browser_path_json` into a path, or `[]` if unusable.
+
+    A device captured before the column existed, or one whose JSON is corrupt,
+    yields an empty path — every caller treats that as "no captured path" and
+    falls back to inference, so a decode failure degrades rather than raises.
+    """
+    if not browser_path_json:
+        return []
+    try:
+        decoded = json.loads(browser_path_json)
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(decoded, list):
+        return []
+    return [str(seg) for seg in decoded if isinstance(seg, (str, int, float))]
+
+
 def _search_root_for_kind(kind: str, class_name: str | None = None) -> str:
     """Pick the canonical browser root for a fallback search by device kind.
 
@@ -344,12 +371,32 @@ def _search_root_for_kind(kind: str, class_name: str | None = None) -> str:
     The substring-'Plugin' check moves to ``class_name``. Drum racks
     still recognize via the rack display name; everything else
     defaults to ``instruments``.
+
+    This is inference from a display name and it is only ever a LAST resort —
+    it cannot tell an audio effect from an instrument, so a reverb whose
+    captured browser path is unavailable is searched under ``instruments``,
+    where it will not be found. Prefer :func:`_search_root_for_device`, which
+    reads the root the device was actually loaded from.
     """
     if class_name and "Plugin" in class_name:
         return "plugins"
     if kind == "Drum Rack":
         return "drums"
     return "instruments"
+
+
+def _search_root_for_device(
+    kind: str, class_name: str | None, captured_path: list[str],
+) -> str:
+    """The browser root to search for this device's replacement.
+
+    The captured path's first segment is Live's own answer, recorded at the
+    moment the device was loaded; kind-inference is what we use when nothing
+    was captured.
+    """
+    if captured_path and captured_path[0] in _BROWSER_ROOTS:
+        return captured_path[0]
+    return _search_root_for_kind(kind, class_name)
 
 
 def _attempt_load_fallback(
@@ -375,6 +422,16 @@ def _attempt_load_fallback(
     5. The search call itself succeeds and returns at least one match
        with a non-empty URI.
     6. The retry load with the fallback URI succeeds.
+    7. The device the retry actually loaded reports the class the DB
+       authored. A substitution that lands a DIFFERENT class is refused,
+       and the original failure stands — see the class-check below.
+
+    A substring search over a whole browser root is a wide net: "Reverb"
+    matches Live's stock Reverb and Hybrid Reverb alike, and taking the first
+    hit means an authored Hybrid Reverb can be replaced by a stock one while
+    the push reports ``ok``. That is a silently wrong mix, so this function
+    narrows the net with the browser path Live itself recorded at load time,
+    and then refuses any result whose class does not match what was authored.
     """
     if failed_call.tool != "ableton_device":
         return None
@@ -387,28 +444,39 @@ def _attempt_load_fallback(
         return None
     device_id = key.split(":", 1)[1]
     row = conn.execute(
-        "SELECT kind, display_name, class_name FROM devices WHERE id = ?",
+        "SELECT kind, display_name, class_name, browser_path_json "
+        "FROM devices WHERE id = ?",
         (device_id,),
     ).fetchone()
     if row is None:
         return None
+    cols = row.keys()
     kind = row["kind"]
-    class_name = row["class_name"] if "class_name" in row.keys() else None
+    class_name = row["class_name"] if "class_name" in cols else None
     display_name = (row["display_name"] or "").strip()
     if not display_name:
         return None
+    captured_path = _captured_browser_path(
+        row["browser_path_json"] if "browser_path_json" in cols else None
+    )
 
-    root = _search_root_for_kind(kind, class_name)
+    root = _search_root_for_device(kind, class_name, captured_path)
+    search_params: dict[str, Any] = {
+        "pattern": display_name,
+        "root": root,
+        "loadable_only": True,
+        "mode": "substring",
+        "limit": 5,
+    }
+    # The segments between the root and the leaf are the vendor / pack folders
+    # the device came from — the discrimination `browser_path_json` is stored
+    # for. Narrowing to them is what keeps a Pack's device from resolving to a
+    # same-named built-in, and vice versa.
+    path_prefix = captured_path[1:-1]
+    if path_prefix:
+        search_params["path_prefix"] = path_prefix
     search_req = request_cls(
-        tool="ableton_browser",
-        action="search",
-        params={
-            "pattern": display_name,
-            "root": root,
-            "loadable_only": True,
-            "mode": "substring",
-            "limit": 5,
-        },
+        tool="ableton_browser", action="search", params=search_params,
     )
     try:
         search_resp = send_fn(search_req)
@@ -421,12 +489,7 @@ def _attempt_load_fallback(
     if not bool(getattr(search_resp, "ok", False)):
         return None
     matches = (getattr(search_resp, "result", None) or {}).get("matches") or []
-    fallback_uri = ""
-    for m in matches:
-        uri = m.get("uri") if isinstance(m, dict) else None
-        if uri:
-            fallback_uri = uri
-            break
+    fallback_uri = _pick_fallback_uri(matches, captured_path)
     if not fallback_uri:
         return None
 
@@ -445,7 +508,62 @@ def _attempt_load_fallback(
         return None
     if not bool(getattr(retry_resp, "ok", False)):
         return None
+    # The load succeeded — but succeeding is not the same as loading the right
+    # device. `loaded_class_name` is the loader's own answer to "what is now in
+    # that slot"; when it disagrees with the class the song authored, the
+    # substitution is wrong and reporting ok would hide a device swap inside a
+    # green push. Refusing hands the operator the original preset_uri error,
+    # which names a real, fixable problem.
+    loaded_class = _loaded_class_of(retry_resp)
+    if class_name and loaded_class and loaded_class != class_name:
+        logger.debug(
+            "load-fallback loaded %r but the song authored %r — refusing the "
+            "substitution", loaded_class, class_name,
+        )
+        return None
     return retry_resp, fallback_uri
+
+
+def _pick_fallback_uri(
+    matches: list[Any], captured_path: list[str],
+) -> str:
+    """Choose which search match to retry the load with.
+
+    A match whose browser path is the one the device was captured from is the
+    same device on this machine; anything else is a same-named neighbour, and
+    picking one of those is how a stock device replaces a Pack device. So an
+    exact path match wins outright. Falling back to the first hit when no path
+    matches is deliberate — it keeps the cross-machine recovery this whole
+    fallback exists for — and it is safe only because the caller then refuses
+    any load whose class is not the authored one.
+    """
+    first_uri = ""
+    for m in matches:
+        if not isinstance(m, dict):
+            continue
+        uri = m.get("uri")
+        if not uri:
+            continue
+        if not first_uri:
+            first_uri = str(uri)
+        if captured_path:
+            path = m.get("path")
+            if isinstance(path, list) and [str(p) for p in path] == captured_path:
+                return str(uri)
+    return first_uri
+
+
+def _loaded_class_of(resp: Any) -> str:
+    """The class name the loader says now occupies the slot, or `''`.
+
+    `ableton_device(action='load')` reports `loaded_class_name` for exactly
+    this question. An older server that does not send it yields `''`, which
+    every caller reads as "cannot tell" rather than as a mismatch.
+    """
+    payload = getattr(resp, "result", None) or {}
+    if not isinstance(payload, dict):
+        return ""
+    return str(payload.get("loaded_class_name") or "")
 
 
 # SYN-9F2L: the planner prefers the display form on the wire (exact via the

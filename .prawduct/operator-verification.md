@@ -15,6 +15,37 @@ pending entries when `operator_verification_required: true`.
 
 ---
 
+## #275 — the authored reverb is the one that reaches Live (2026-09-10)
+
+Backlog **#275**. Needs Live 12.4.x open, the Remote Script re-vendored, and the song
+`sun-zone-done` (hallucinote-songs). One sitting, minutes.
+
+The item's own acceptance criterion is a measurement no static analysis can make: **after a
+fresh push from the DB, does the A-Plate return's device class match
+`captured_session.json` (Hybrid Reverb, not Live's stock Reverb)?** The RT60 verdicts that
+started this item (A-Plate 3.37 vs intent 3.0; B-Room 1.26 vs 0.8) were measured against
+whatever the open set carried, so they mean nothing until this is answered.
+
+The code half is closed and shipped ahead of this sitting: the cross-machine device-load
+fallback could substitute a *different* device and report the push `ok` — it searched a
+browser root inferred from the device kind (which puts every audio effect under
+`instruments`), took the first substring hit, and never compared what loaded against what
+the song authored. It now searches the root and folder Live recorded at capture time,
+prefers the match at that exact path, and refuses any load whose class is not the authored
+one. So a silent stock-for-Hybrid swap can no longer happen through that path.
+
+That leaves two candidate explanations for what was observed, and only the sitting
+separates them:
+
+- [ ] Push `sun-zone-done` fresh from the DB, then read the A-Plate return's device class.
+  **Matches Hybrid Reverb** → the original observation was a set that had simply never been
+  re-pushed, and #275 closes.
+  **Still stock Reverb** → there is a second substitution path the audit did not reach;
+  capture the push report and the device list and re-open with them.
+- [ ] Only if the class matches: re-render and re-run the analysis, then re-assess the two
+  RT60 gaps against the authored devices. Any reverb-vs-intent conclusion drawn before this
+  is void.
+
 ## SMP-6V2K wave 2 — hear it, keep it, play it (2026-09-09) — **PARTLY DISCHARGED 2026-09-09 on Live 12.4.5.** Every probe box answered and R6.2 decided; the first hearing RAN and its music was not accepted, and the symbolic carve was never pushed. Both named below
 
 Plan: `.prawduct/artifacts/plans/SMP-6V2K-W2/build-plan.md`, chunk 17. Backlog **#330**, **#237**,

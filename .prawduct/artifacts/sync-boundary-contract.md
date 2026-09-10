@@ -476,8 +476,8 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
   at a link the phase did not just record would land on whatever clip now holds
   that index, so a failed placement costs that placement its region and no
   other. Withheld or failed region writes are reported on the operator channel,
-  because an unchanged re-push short-circuits the phase before this pass and
-  therefore never retries them.
+  and the remedy they name is a re-push: this phase rebuilds its projection
+  every run, so the placement is re-created and the region written with it.
 
 ### 14. `cues` (`push/arrangement.py`)
 - Carries the same two-ruler divergence alert as §13, for the same reason: a

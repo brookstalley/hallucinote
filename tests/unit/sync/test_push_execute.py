@@ -3186,15 +3186,37 @@ def test_execute_skips_the_region_pass_when_the_placement_failed(
         db_id=Q.get_arrangement_for_song(conn, song)[0]["id"], ableton_index=1,
     )
 
-    send_fn = _make_send_fn(fail_keys={"ableton_clip:create"})
-    push_execute.execute_push(
+    # Fail ONLY the arrangement create. Failing every `ableton_clip:create`
+    # halts the session-clips phase, and the arrangement phase then never runs
+    # at all — which made this assertion vacuous: it held over a push that
+    # could not have written a region whatever the code did.
+    def _fail_only_the_arrangement_create(tool, action, params):
+        return (
+            tool == "ableton_clip"
+            and action == "create"
+            and params.get("location") == "arrangement"
+        )
+
+    send_fn = _make_send_fn(fail_when=_fail_only_the_arrangement_create)
+    result = push_execute.execute_push(
         conn=conn, song_id=song, session_id=session,
         state_dir=state_dir, send_fn=send_fn,
     )
+    assert any(
+        p.name == "arrangement" and p.status != "pending" for p in result.phases
+    ), f"the arrangement phase must actually run: {[(p.name, p.status) for p in result.phases]}"
     assert not [
         c for c in send_fn.call_log
         if c["action"] == "set_property" and c["params"].get("location") == "arrangement"
     ], "a failed placement must not be followed by a write onto a stale index"
+    # The stale link means the planner DID emit region calls and the executor's
+    # filter dropped them — the withheld branch. Pin its text: it is prose that
+    # tells the operator what to do next, and prose of exactly this kind was
+    # wrong once already.
+    said = " ".join(result.warnings)
+    assert "did NOT get their playable region" in said, result.warnings
+    assert "re-push" in said.lower(), said
+    assert "will not retry" not in said.lower(), said
 
 
 def test_one_failed_placement_costs_only_its_own_region(
@@ -3206,8 +3228,7 @@ def test_one_failed_placement_costs_only_its_own_region(
     which requires EVERY call in the phase to have succeeded. That condition
     exists for a re-plan that must not run twice; borrowed here it meant one
     failed create anywhere in the song withheld the region from every copy that
-    did land — and nothing re-writes them, because an unchanged re-push reports
-    "nothing to push" and returns before this pass ever runs.
+    did land, for no safety the per-placement filter does not already give.
     """
     (tmp_path / "assets").mkdir(exist_ok=True)
     (tmp_path / "assets" / "a.wav").write_bytes(b"RIFF....WAVEfmt ")
@@ -3280,3 +3301,46 @@ def test_one_failed_placement_costs_only_its_own_region(
     # than double-counting the failure.
     assert "have no recorded" in said, said
     assert "fails" in said, said
+
+
+def test_a_failed_region_write_is_reported_and_says_re_push(
+    conn, db_path, song, session, state_dir, tmp_path,
+):
+    """The region write can be dispatched and REFUSED by Live — a span longer
+    than the sample is the unprobed case the operator queue asks about. That
+    branch tells the operator what to do next, and no test drove it before.
+    """
+    (tmp_path / "assets").mkdir(exist_ok=True)
+    (tmp_path / "assets" / "a.wav").write_bytes(b"RIFF....WAVEfmt ")
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Dlg", kind="audio")
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4,
+    )
+    cid = M.create_audio_clip(
+        conn, track_id=tid, slot=1, length_beats=8.0,
+        audio_file="assets/a.wav", name="line",
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=tid, clip_id=cid,
+        start_bar=1.0, end_bar=5.0,
+    )
+
+    def _fail_the_region_write(tool, action, params):
+        return (
+            tool == "ableton_clip"
+            and action == "set_property"
+            and params.get("location") == "arrangement"
+        )
+
+    send_fn = _make_send_fn(fail_when=_fail_the_region_write)
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn,
+    )
+
+    said = " ".join(result.warnings)
+    assert "did NOT land" in said, result.warnings
+    assert "re-push" in said.lower(), said
+    assert "will not retry" not in said.lower(), said
+    # Copies, not calls: the copy took two writes and both failed.
+    assert "1 playable-region write(s)" in said, said

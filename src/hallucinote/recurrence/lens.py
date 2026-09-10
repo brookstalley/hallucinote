@@ -146,6 +146,18 @@ class MotifRecall:
     duration_match: bool = True
     partial: bool = False
 
+    @property
+    def counts_as_recall(self) -> bool:
+        """True when this occurrence is evidence the motif RECURRED: beyond its home
+        section AND at or above the analysis's coverage floor.
+
+        The one definition of "counts as a recall". Economy and every render site
+        read it here rather than re-deriving ``not is_home and not partial``, because
+        the shape every consumer had before the floor existed — filtering on
+        ``is_home`` alone — silently re-lands the miscount the floor was added to
+        end."""
+        return not self.is_home and not self.partial
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "motif": self.motif,
@@ -190,9 +202,21 @@ class RecurrenceReport:
     @property
     def recalls(self) -> tuple[MotifRecall, ...]:
         """Every detected occurrence, flattened across sections (home + later,
-        partial + whole). Filter on ``.partial`` for the ones that COUNT as
-        recalls."""
+        partial + whole). This is the WIDE set — use ``counted_recalls`` for the
+        occurrences that count as recalls, and ``partials`` for the rest."""
         return tuple(r for s in self.sections for r in s.recalls)
+
+    @property
+    def counted_recalls(self) -> tuple[MotifRecall, ...]:
+        """The occurrences that count as recalls — see
+        ``MotifRecall.counts_as_recall``, which is where the predicate lives."""
+        return tuple(r for r in self.recalls if r.counts_as_recall)
+
+    @property
+    def partials(self) -> tuple[MotifRecall, ...]:
+        """The sub-threshold derived readings: detected and reported, but not
+        evidence the motif recurred."""
+        return tuple(r for r in self.recalls if r.partial)
 
     @property
     def blocking(self) -> tuple[RecurrenceFinding, ...]:
@@ -284,7 +308,16 @@ def analyze_recurrence(
             for layer_name in sec.layers:
                 notes = sec.layers[layer_name]
                 for res in match_all_in_layer(motif_notes, notes):
-                    found_this_motif = True
+                    partial = res.derived and res.coverage < min_coverage
+                    # Home is the first section where the motif is heard AS ITSELF.
+                    # A sub-threshold partial is not evidence that it sounded, so
+                    # letting one claim home would read the motif's genuine later
+                    # statement as a non-home occurrence — putting it back in the
+                    # cell-set, raising coverage and compression, and dropping it
+                    # out of `never_recalled`. That is the exact inflation the floor
+                    # was added to end, re-entered through the home split.
+                    if not partial:
+                        found_this_motif = True
                     recalls.append(MotifRecall(
                         motif=motif_name,
                         section=sec.name,
@@ -292,9 +325,9 @@ def analyze_recurrence(
                         variation=res.variation,
                         cell_offset_beats=sec.start_beat + res.cell_offset_beats,
                         coverage=res.coverage,
-                        is_home=motif_name not in seen_home,
+                        is_home=not partial and motif_name not in seen_home,
                         duration_match=res.duration_match,
-                        partial=res.derived and res.coverage < min_coverage,
+                        partial=partial,
                     ))
             if found_this_motif:
                 seen_home.add(motif_name)

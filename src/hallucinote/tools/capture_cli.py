@@ -130,6 +130,13 @@ def _make_probe(send_fn):
 # How close to beat 0 the playhead must settle for the capture to trust it. A
 # locate is polled for, not raced, so this is slop for float formatting rather
 # than for timing — anything larger means the seek did not do what it said.
+#
+# COUPLED to `_LOCATE_TOLERANCE_BEATS` in the bridge's seek handler
+# (hallucinote_mcp/.../handlers/_transport.py), which is the tolerance
+# `_wait_for_playhead` uses to decide the playhead ARRIVED. This must not be
+# TIGHTER than that one: if it is, `capture execute` refuses on settles the bridge
+# itself calls arrived, and the refusal tells the operator to move the playhead by
+# hand — which cannot fix it. Widen this with that one, or not at all.
 _BEAT_EPSILON = 1e-3
 
 
@@ -173,7 +180,22 @@ def _park_playhead_at_zero(probe) -> str | None:
             "  (--no-seek captures where the playhead is, accepting that.)"
         )
 
-    at = float(info.get("current_song_time") or 0.0)
+    # Parsed, not defaulted. `or 0.0` sent a present-but-null (or any falsy
+    # non-numeric) reading down the "already at beat 0" path — no seek, no refusal,
+    # every automated parameter captured at the real playhead — which is the same
+    # silence the presence check above refuses, reached one line later.
+    raw_at = info["current_song_time"]
+    try:
+        at = float(raw_at)
+    except (TypeError, ValueError):
+        return (
+            f"capture execute: ableton_session(action='info') reported "
+            f"current_song_time={raw_at!r}, which is not a beat position. There is "
+            f"no way to tell whether an automated parameter would be read at its "
+            f"baseline or at some other beat. Refusing to capture rather than "
+            f"recording values that may be wrong and indistinguishable from "
+            f"deliberate ones."
+        )
     if abs(at) <= _BEAT_EPSILON:
         return None
 

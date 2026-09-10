@@ -263,6 +263,49 @@ def test_a_partial_does_not_make_its_motif_recur():
     assert [f.kind for f in rep.findings] == ["registered-never-recalled"]
 
 
+def test_a_partial_cannot_claim_a_motifs_home_section():
+    """Home is the first section where the motif is heard AS ITSELF. Letting a
+    sub-threshold partial claim it hands the motif's genuine first statement a
+    NON-home reading, which puts it back in the cell-set, refills every economy
+    figure and empties `never_recalled` — the exact inflation the floor exists to
+    end, re-entered through the home split. Every other fixture here places a clean
+    home match first, which is why this was invisible."""
+    sections = [
+        SectionRecurrenceInput("early", 0.0, {"lead": _derived_half(_MOTIF)}),
+        SectionRecurrenceInput("statement", 16.0, {"lead": list(_MOTIF)}),
+    ]
+    rep = analyze_recurrence(sections, _registry(("m", _MOTIF)), song_slug="syn")
+    early = [r for r in rep.recalls if r.section == "early"]
+    assert [r.partial for r in early] == [True]
+    assert early[0].is_home is False
+    assert [r.section for r in rep.recalls if r.is_home] == ["statement"]
+    # And so the statement is not read as a recall of a motif that never sounded.
+    assert rep.counted_recalls == ()
+    assert rep.economy.recurring_motifs == 0
+    assert rep.economy.never_recalled == ("m",)
+
+
+def test_counts_as_recall_is_the_one_predicate():
+    """`counted_recalls` / `partials` / `counts_as_recall` are one definition, not
+    three: a consumer that filters the wide `recalls` on `is_home` alone re-lands
+    the miscount, so the predicate lives on the model where economy and the render
+    both read it."""
+    sections = [
+        SectionRecurrenceInput("home", 0.0, {"lead": list(_MOTIF)}),
+        SectionRecurrenceInput("recap", 16.0, {"lead": list(_MOTIF)}),
+        SectionRecurrenceInput("haze", 32.0, {"lead": _derived_half(_MOTIF)}),
+    ]
+    rep = analyze_recurrence(sections, _registry(("m", _MOTIF)), song_slug="syn")
+    assert [r.section for r in rep.counted_recalls] == ["recap"]
+    assert [r.section for r in rep.partials] == ["haze"]
+    # The wide set is still every occurrence — the facts are never filtered.
+    assert len(rep.recalls) == 3
+    assert all(r.counts_as_recall == (not r.is_home and not r.partial)
+               for r in rep.recalls)
+    # What economy counts and what the report calls counted are the same set.
+    assert rep.economy.occurrence_records == len(rep.counted_recalls)
+
+
 def test_a_clean_fragment_counts_as_recall_at_any_coverage():
     """A `fragment[a,b)` is the matcher's STRUCTURED claim that the layer contains
     that named sub-window of M — the quoted answering cell, a real recall — not the

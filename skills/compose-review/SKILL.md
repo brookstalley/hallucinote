@@ -146,6 +146,7 @@ variation** — a **pitch map** (`exact` / `transpose Δst` / `invert`) composed
 ```
 "$PY" -m hallucinote.cli recurrence <song-slug>          # whole song
 "$PY" -m hallucinote.cli recurrence <song-slug> --section <name>
+"$PY" -m hallucinote.cli recurrence <song-slug> --all    # unfold the partials
 ```
 
 It reports each recall (motif → section → layer → variation) plus a **motivic-economy
@@ -155,8 +156,12 @@ in the JSON) means the recall's onsets and pitches landed but its durations were
 freely re-sung — the arrival-statement shape where the rhythm compresses and the
 notes keep their sung lengths, a real recall, not a near-miss; and
 **`derived (<op>, <coverage>)`** names the transform a partial recall nearly matched
-(`derived (transpose +12 ∘ diminish ×2, 0.67)`) — read it as "the attempt is visible
-and breaks off here," which is often exactly the authored narrative. These are
+— read it as "the attempt is visible and breaks off here," which is often exactly
+the authored narrative. **Sub-threshold `derived` readings do not appear in the
+default render**: they are folded into a per-section partial count and left out of
+every economy figure, so seeing no `derived (...)` line does NOT mean there were
+none — run `--all` (or read `--json`) before reporting on partials. See the caveat
+below for why the fold exists and why a clean `fragment[a,b)` is never one. These are
 **neutral facts, never a verdict**: authored recapitulation is not an error, and
 economy is **style-relative** — a through-composed piece is *legitimately* less
 economical than a minimalist one (`research.md` §2 Temperley), so the lens reports

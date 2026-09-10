@@ -103,6 +103,56 @@ on a locate while the transport is stopped. Queued in `operator-verification.md`
 the failure to look for named — a snapshot still carrying end-of-song values while the
 CLI reports it parked the playhead at 0.
 
+**What the cumulative review found, and it was the same defect three more times.**
+`rev-20260910T215848Z-0aed784e` returned nothing blocking but converged, across three
+independent reviewers, on the transport guard still defaulting the value it had just
+learned to require: `float(info.get("current_song_time") or 0.0)`, two lines under the
+comment saying that assuming "stopped at 0" is the silence the guard exists to end. A
+present-but-null reading passed the presence check and took the already-parked path.
+It is parsed now, and an unreadable value is refused by name.
+
+The floor had the same shape of hole in three more places, each one the fix re-entered
+through a door it had not closed:
+
+- **`match_motif_in_window` dropped `derived=`.** The package-exported entry point
+  rebuilt its result field by field without the new tier flag, so every tier-4 guess
+  reached a consumer as a clean recall — the exact miscount, through the one call the
+  documented contract tells consumers to make. The module also still decided
+  derivedness by prefix-matching the human-facing label at both of its own sites; both
+  read the field now.
+- **A sub-threshold partial could claim a motif's home section.** `found_this_motif`
+  fired on a reading marked `partial` on the next line, so a motif first *detected* as
+  a half-match took that section as home and its genuine later statement read as a
+  non-home recall — back into the cell-set, coverage and compression back up,
+  `never_recalled` emptied. Every fixture placed a clean home match first, so the suite
+  could not see it. Home is now the first section where the motif is heard as itself.
+- **`never_recalled` contradicted the question it feeds.** It names every motif outside
+  the cell-set, which is two populations; the render printed "never recalled" over both
+  while `economy_finding` said, a few lines lower in the same report, that the motif
+  "recurs beyond its home section only as partials". The render splits them.
+
+Underneath those, "counts as a recall" was being re-derived at four sites. It is one
+property on the occurrence now (`MotifRecall.counts_as_recall`), with
+`counted_recalls` / `partials` on the report, because the shape every consumer had
+before the floor existed — filtering on `is_home` alone — silently re-lands the
+miscount.
+
+**The guard also reached the path it did not cover.** `capture_plan()` — the by-hand
+probe recipe two skills drive — had no transport read and no seek, so a hand capture
+after a render bakes end-of-song values in as baselines with none of the refusal. The
+precondition is now the first two records the plan emits. This is a deliberate scope
+extension, recorded in the build plan: the requirement was boundary-shaped (the capture
+contract refuses to read parameters at an unknown playhead) and had been written
+entry-point-shaped.
+
+Two smaller ones from the same review: `melody_lens`'s exit-3 still pointed at
+`songs/sun-zone-done/build.py` after the recurrence twin dropped that pointer on the
+stated principle that a path into `songs/` is a claim about a workspace this package
+neither ships nor can check — it names the shape inline now; and `compose-review`'s
+operative Run-it block still taught the pre-fold render, so an agent who ran the lens,
+saw no `derived (...)` line and reported "no partial recalls" would have been reading a
+render that folds them by default. It offers `--all` and says so.
+
 **Also in this pass, and worth recording because it is the cheaper half of triage:**
 the other two open reports were verified **already fixed** and archived. The
 one-beat-early render capture was root-caused to arm-before-locate and fixed in

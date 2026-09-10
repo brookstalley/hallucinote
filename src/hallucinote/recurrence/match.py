@@ -705,7 +705,7 @@ def match_all_in_layer(
             min_coverage=_COVERAGE_FLOOR)
         if res is None:
             continue
-        if res.variation.startswith("derived"):
+        if res.derived:
             if best_partial is None or res.coverage > best_partial.coverage + 1e-9:
                 best_partial = res
             continue
@@ -763,10 +763,15 @@ def match_motif_in_window(
     results = match_all_in_layer(motif_notes, window_notes, tol=tol)
     if not results:
         return None
-    named = [r for r in results if not r.variation.startswith("derived")]
+    named = [r for r in results if not r.derived]
     pool = named if named else results
     best = max(pool, key=lambda r: r.coverage)
+    # `derived` rides through. It is the authoritative tier signal and its own
+    # docstring tells consumers to read it instead of the label prefix — so a
+    # wrapper that rebuilt the result without it made prefix-matching the only
+    # thing that worked, and every tier-4 guess reached this exported entry point
+    # looking like a clean recall.
     return MatchResult(
         best.variation, best.coverage, cell_offset_beats + best.cell_offset_beats,
         transpose=best.transpose, factor=best.factor,
-        duration_match=best.duration_match)
+        duration_match=best.duration_match, derived=best.derived)

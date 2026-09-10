@@ -34,14 +34,24 @@ if TYPE_CHECKING:  # avoid a runtime cycle — lens imports economy
 class MotivicEconomy:
     """The description-length-style economy summary — facts, never a verdict.
 
+    Every count here is over the occurrences that COUNT as recalls — beyond home AND
+    at or above the coverage floor (``MotifRecall.counts_as_recall``). Sub-threshold
+    partials are reported by the lens and excluded from every figure below.
+
     ``registered_motifs`` is the size of the query set; ``recurring_motifs`` the
-    cell-set size (distinct motifs recalled beyond home); ``recall_coverage`` the
-    fraction; ``recalled_note_mass`` the total note count across NON-home recalls
-    (the realized material the dictionary explains); ``library_note_mass`` the
-    motif-library note count; ``occurrence_records`` the count of non-home recalls
-    (each a ⟨placement, variation⟩ record); ``compression_ratio`` the proxy
-    (recalled note-mass ÷ encoded size). ``never_recalled`` names the registered
-    motifs that never recur (a fact worth surfacing, not a verdict)."""
+    cell-set size (distinct motifs recalled beyond home, partials not counting);
+    ``recall_coverage`` the fraction; ``recalled_note_mass`` the total note count
+    across counted recalls (the realized material the dictionary explains);
+    ``library_note_mass`` the motif-library note count; ``occurrence_records`` the
+    count of counted recalls (each a ⟨placement, variation⟩ record);
+    ``compression_ratio`` the proxy (recalled note-mass ÷ encoded size).
+
+    ``never_recalled`` names the registered motifs OUTSIDE the cell-set — which is
+    two populations, not one: motifs with no later occurrence at all, and motifs
+    whose later occurrences are all sub-threshold partials. "Never recurs" is untrue
+    of the second, so a reader that prints this list must split it (the CLI render
+    does) or word it as "outside the cell-set" — see ``economy_finding``, which
+    already says which case each motif is."""
 
     registered_motifs: int
     recurring_motifs: int
@@ -74,8 +84,10 @@ def _counted(recalls: Sequence["MotifRecall"]) -> list["MotifRecall"]:
     here, and, worse, makes a motif whose only later occurrences are half-matched
     fragments read as recurring, which empties ``never_recalled`` and silences the
     single coaching question this module may emit. See
-    ``lens.DEFAULT_MIN_RECALL_COVERAGE``."""
-    return [r for r in recalls if not r.is_home and not r.partial]
+    ``lens.DEFAULT_MIN_RECALL_COVERAGE``. The predicate itself lives on
+    ``MotifRecall.counts_as_recall`` — this reads it rather than restating it, so
+    economy and the render cannot drift apart on what a recall is."""
+    return [r for r in recalls if r.counts_as_recall]
 
 
 def _recurring_motifs(recalls: Sequence["MotifRecall"]) -> set[str]:

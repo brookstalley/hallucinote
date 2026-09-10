@@ -74,11 +74,11 @@ def render(report, *, section_filter: str | None = None, show_partials: bool = F
     counted and offered, never dropped: the reading is what gets filtered, not the
     facts."""
     lines: list[str] = []
-    recalls = [r for r in report.recalls if not r.is_home and not r.partial]
-    # Counted with the same predicate the per-section folds use, so the header's
-    # total and the section lines can't disagree. A partial is not a recall, so the
-    # home/later split that governs `recalls` does not apply to it.
-    partials = [r for r in report.recalls if r.partial]
+    # Both sets come off the report, which reads `MotifRecall.counts_as_recall` —
+    # the one definition of what counts. Re-deriving `not is_home and not partial`
+    # here is how the header and the section lines drift apart.
+    recalls = list(report.counted_recalls)
+    partials = list(report.partials)
     n_sections = len({r.section for r in recalls})
     partial_note = ""
     if partials and not show_partials:
@@ -111,10 +111,25 @@ def render(report, *, section_filter: str | None = None, show_partials: bool = F
         f"only — partials are not evidence of recall)"
     )
     if econ.never_recalled:
-        lines.append(
-            f"  never recalled: {', '.join(econ.never_recalled)} "
-            f"(intended one-shot, or a planned recall that didn't land?)"
-        )
+        # `never_recalled` is every motif OUTSIDE the cell-set, which is two
+        # populations. Printing "never recalled" over both contradicts the coaching
+        # question a few lines down, which says of the second kind that it "recurs
+        # beyond its home section only as partials" — one report, two opposite
+        # claims about one motif.
+        partial_only = {r.motif for r in partials} & set(econ.never_recalled)
+        outright = [n for n in econ.never_recalled if n not in partial_only]
+        if outright:
+            lines.append(
+                f"  never recalled: {', '.join(outright)} "
+                f"(intended one-shot, or a planned recall that didn't land?)"
+            )
+        if partial_only:
+            listed = [n for n in econ.never_recalled if n in partial_only]
+            lines.append(
+                f"  outside the cell-set, partials only: {', '.join(listed)} "
+                f"(it does sound again, never fully enough to count — see the "
+                f"coaching question below for the best coverage each reached)"
+            )
 
     sections = [
         s for s in report.sections

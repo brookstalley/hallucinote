@@ -248,3 +248,26 @@ hands, and per the api-contract's refuse-and-teach norm the refusal names what t
 meaning; the capture preflight is additive. This is what keeps "tests never weaken" true
 by construction rather than by inspection — the only test edits in this work are the two
 `argparse.Namespace(...)` constructions that must learn the new flag.
+
+### The guard belongs to the capture contract, not to `capture execute` — scope EXTENDED
+
+Chunk 02 as written scoped the playhead guard to `capture execute`. The cumulative
+Critic (`rev-20260910T215848Z-0aed784e`, R-8) found the other half: `capture_plan()`
+emits the by-hand probe recipe that `skills/song-snapshot` and
+`skills/song-pick-instruments` step 6 both drive, and it carried no transport read and
+no seek — so a hand capture taken after a render bakes end-of-song envelope values in
+as dialed baselines with none of the refusal, which is the defect chunk 02 exists to
+end, reachable by the route the same skill offers one line after promising the playhead
+is parked.
+
+**This is an explicit scope extension, not a silent one.** The requirement chunk 02
+should have carried is *the capture contract refuses to read parameters at an unknown
+playhead*, not *`capture execute` parks the playhead* — an entry-point-shaped
+requirement where the defect is boundary-shaped. The transport read + park are now the
+first two records `capture_plan()` emits, so both paths are generated from one
+description of the same precondition, and a test pins that they come first (a seek
+listed after the parameter walk documents nothing).
+
+The hand path can only be *told*, not made to comply — it is a recipe an agent
+executes. That asymmetry stands and is why the record says "prefer `capture execute`",
+which walks it in code.

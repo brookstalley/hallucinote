@@ -170,6 +170,67 @@ def test_json_always_carries_every_partial(capsys, partial_heavy_songs):
     assert payload["min_coverage"] == 0.75
 
 
+@pytest.fixture
+def partial_only_songs(tmp_path, monkeypatch):
+    """A motif whose ONLY later occurrence is sub-threshold: it is outside the
+    cell-set, so it lands in `never_recalled`, but "never recalled" is untrue of
+    it — it does sound again, just never fully enough to count."""
+    root = tmp_path / "songs"
+    song = root / "synth-partial-only"
+    song.mkdir(parents=True)
+    (song / "build.py").write_text(textwrap.dedent('''
+        from hallucinote.recurrence.lens import (
+            SectionRecurrenceInput, analyze_recurrence,
+        )
+
+        def _n(p, s):
+            return {"pitch": p, "start_beats": s, "duration_beats": 0.5,
+                    "velocity": 80, "tags": []}
+
+        _MOTIF = [_n(60, 0.0), _n(64, 1.0), _n(67, 2.0), _n(72, 3.0)]
+        _HALF = [_n(65, 0.0), _n(69, 1.0), _n(70, 2.0), _n(71, 3.0)]
+        _NONE = [_n(48, 0.0), _n(50, 1.5), _n(53, 3.0)]
+
+        class _M:
+            def __init__(self, name, notes):
+                self.name, self.notes = name, notes
+
+        def recurrence_report():
+            secs = [
+                SectionRecurrenceInput("home", 0.0,
+                                       {"lead": list(_MOTIF), "bass": list(_NONE)}),
+                SectionRecurrenceInput("haze", 16.0, {"lead": list(_HALF)}),
+            ]
+            motifs = {"m": _M("m", _MOTIF), "ghost": _M("ghost", _NONE)}
+            return analyze_recurrence(secs, motifs, song_slug="synth-partial-only")
+    '''))
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+    monkeypatch.setenv("HALLUCINOTE_SONGS_ROOT", str(root))
+    return root
+
+
+def test_never_recalled_does_not_contradict_the_coaching_question(
+        capsys, partial_only_songs):
+    """`never_recalled` is every motif OUTSIDE the cell-set, which is two
+    populations. Printing "never recalled" over both put one claim above the
+    coaching question and its opposite inside it, about the same motif, in one
+    report."""
+    rc = main(["synth-partial-only"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    # The partial-only motif is named as what it is...
+    assert "outside the cell-set, partials only: m" in out
+    # ...and the coaching question it feeds still says the same thing.
+    assert "only as partials" in out
+    # ...while the motif that genuinely never sounds again keeps the flat wording.
+    assert "never recalled: ghost" in out
+    # The contradiction was `never recalled: m` printed above `m ... only as
+    # partials`; m must not appear in the flat list at all.
+    flat = [ln for ln in out.splitlines() if "never recalled:" in ln]
+    assert flat and all("m," not in ln and not ln.rstrip().endswith(" m")
+                        for ln in flat)
+
+
 def test_unwired_song_hint_carries_both_authoring_shapes(capsys, tmp_path,
                                                          monkeypatch):
     """The old hint named one song that defines no recurrence_report() and one

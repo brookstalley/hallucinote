@@ -447,3 +447,26 @@ def test_a_transport_read_missing_the_playhead_refuses(tmp_path, monkeypatch,
     assert not out.exists()
     assert walked == []
     assert "did not report current_song_time" in capsys.readouterr().err
+
+
+def test_a_null_playhead_refuses_rather_than_reading_as_beat_zero(
+        tmp_path, monkeypatch, capsys) -> None:
+    """The other half of the same door. A present-but-null `current_song_time`
+    passes the key-presence check, and defaulting it to 0.0 then routes the capture
+    down the "already parked" path — no seek, no refusal, every automated parameter
+    read at whatever beat Live is really at and booked as the baseline. Presence is
+    not readability."""
+    live = _FakeLive()
+    live.send = lambda req: _Resp(
+        True, {"is_playing": False, "current_song_time": None})
+    rc, out, walked = _execute_against(live, tmp_path, monkeypatch)
+    assert rc == 2
+    assert not out.exists()
+    assert walked == []
+    err = capsys.readouterr().err
+    assert "not a beat position" in err
+    # The refusal names the value it could not read.
+    assert "current_song_time=None" in err
+    # And it refused BEFORE trying to seek — an unreadable playhead is not a
+    # playhead somewhere else.
+    assert ("ableton_session", "seek") not in live.calls

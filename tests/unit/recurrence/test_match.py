@@ -155,6 +155,20 @@ def test_partial_above_floor_reads_derived():
     # rather than reading as a nameless `derived`.
     assert res.variation == "derived (exact, 0.50)"
     assert 0.5 <= res.coverage < 1.0
+    # The TIER rides on the field, not on the label's prefix — the wrapper used to
+    # rebuild its result without `derived=`, so this exported entry point reported
+    # every tier-4 guess as a clean recall to any consumer following the documented
+    # contract.
+    assert res.derived is True
+
+
+def test_a_clean_op_is_not_derived_through_the_window_wrapper():
+    """The other half of the tier signal: a named op must come back `derived=False`,
+    or reading the field would be no better than prefix-matching the label."""
+    res = match_motif_in_window(_MOTIF, V.transpose(_MOTIF, -12))
+    assert res is not None
+    assert res.derived is False
+    assert res.coverage == 1.0
 
 
 def test_breathed_jitter_within_tolerance_recovers_augment():

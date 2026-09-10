@@ -138,9 +138,12 @@ def _probe_live_via_mcp(
         # Escalation-aware: a call that outruns Live's ceiling returns ok=True
         # with a job handle, and reading that as a result books work that has
         # not landed. See sync/live_escalation.
-        from hallucinote.sync.live_escalation import resolve_client_send
+        from hallucinote.sync.live_escalation import (
+            resolve_client_send,
+            stderr_progress,
+        )
 
-        send_fn = resolve_client_send()
+        send_fn = resolve_client_send(progress_fn=stderr_progress)
     from hallucinote_mcp.wire import Request  # type: ignore[import-not-found]
 
     track_resp = send_fn(Request(tool="ableton_track", action="list", params={}))
@@ -195,9 +198,12 @@ def _probe_live_devices_via_mcp(
         # Escalation-aware: a call that outruns Live's ceiling returns ok=True
         # with a job handle, and reading that as a result books work that has
         # not landed. See sync/live_escalation.
-        from hallucinote.sync.live_escalation import resolve_client_send
+        from hallucinote.sync.live_escalation import (
+            resolve_client_send,
+            stderr_progress,
+        )
 
-        send_fn = resolve_client_send()
+        send_fn = resolve_client_send(progress_fn=stderr_progress)
     from hallucinote_mcp.wire import Request  # type: ignore[import-not-found]
 
     by_parent: dict[tuple[str, int], list[dict]] = {}
@@ -259,9 +265,12 @@ def _probe_live_session_clips_via_mcp(
         # Escalation-aware: a call that outruns Live's ceiling returns ok=True
         # with a job handle, and reading that as a result books work that has
         # not landed. See sync/live_escalation.
-        from hallucinote.sync.live_escalation import resolve_client_send
+        from hallucinote.sync.live_escalation import (
+            resolve_client_send,
+            stderr_progress,
+        )
 
-        send_fn = resolve_client_send()
+        send_fn = resolve_client_send(progress_fn=stderr_progress)
     from hallucinote_mcp.wire import Request  # type: ignore[import-not-found]
 
     by_track: dict[int, list[dict]] = {}
@@ -311,9 +320,12 @@ def _probe_live_arrangement_clips_via_mcp(
         # Escalation-aware: a call that outruns Live's ceiling returns ok=True
         # with a job handle, and reading that as a result books work that has
         # not landed. See sync/live_escalation.
-        from hallucinote.sync.live_escalation import resolve_client_send
+        from hallucinote.sync.live_escalation import (
+            resolve_client_send,
+            stderr_progress,
+        )
 
-        send_fn = resolve_client_send()
+        send_fn = resolve_client_send(progress_fn=stderr_progress)
     from hallucinote_mcp.wire import Request  # type: ignore[import-not-found]
 
     by_track: dict[int, list[dict]] = {}

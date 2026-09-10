@@ -178,9 +178,12 @@ def verify_song_arrangement(
         # Escalation-aware: a call that outruns Live's ceiling returns ok=True
         # with a job handle, and reading that as a result books work that has
         # not landed. See sync/live_escalation.
-        from hallucinote.sync.live_escalation import resolve_client_send
+        from hallucinote.sync.live_escalation import (
+            resolve_client_send,
+            stderr_progress,
+        )
 
-        send_fn = resolve_client_send()
+        send_fn = resolve_client_send(progress_fn=stderr_progress)
 
     report = ArrangementReport()
     ts = Q.get_time_signature_map(conn, song_id)

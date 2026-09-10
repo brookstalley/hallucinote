@@ -187,9 +187,12 @@ def push_notes(
         # Escalation-aware: a call that outruns Live's ceiling returns ok=True
         # with a job handle, and reading that as a result books work that has
         # not landed. See sync/live_escalation.
-        from hallucinote.sync.live_escalation import resolve_client_send
+        from hallucinote.sync.live_escalation import (
+            resolve_client_send,
+            stderr_progress,
+        )
 
-        send_fn = resolve_client_send()
+        send_fn = resolve_client_send(progress_fn=stderr_progress)
     from hallucinote_mcp.wire import Request  # type: ignore[import-not-found]
     try:
         from hallucinote_mcp.client import (  # type: ignore[import-not-found]

@@ -203,3 +203,33 @@ in no branch's history. Two consequences worth deciding on separately from this 
   issue.
 
 Not fixed here — it is a repo-convention decision, not a release blocker. Flagged to the owner.
+
+## Release facts owed to the change-log and to the cut
+
+- **Chunk 01 is itself `Re-vendor: recommended`.** Its diff touches `install_paths.py`,
+  `install_ops.py` and `__init__.py` — vendored but NOT in `_FINGERPRINT_PATHS` — so by the very
+  rule it adds to `docs/release-process.md` step 5, it is a recommended re-vendor, not a required
+  one. The release commit body must carry that verdict.
+- **Chunk 01 corrected the release-blocking sentence.** `docs/release-process.md`'s consumer-facing
+  section claimed that a release which did not flip the fingerprint meant "nothing to do". That
+  sentence is why #310 was a release blocker and not merely a bug; step 5 now carries a third
+  verdict, `Re-vendor: recommended`.
+- **Chunk 01 pinned the handshake fingerprint with a golden value.** Now that the hash helper is
+  shared between the hard and advisory fingerprints, a well-meaning change from the advisory side
+  would silently invalidate every install in the field. `test_handshake_fingerprint_value_is_
+  unchanged_by_the_shared_hash_helper` pins it to the pre-change value.
+
+## Files touched outside a delegate's stated ownership (disclosed, no collision)
+
+- **Chunk 01 → `hallucinote_mcp/tests/unit/test_version_fingerprint.py`.** The `_hash_file` →
+  `hash_path_into` rename the design mandates has three call sites there; the alternative was an
+  alias nobody needs. Mechanical rename plus one added test. No other chunk owns the file. The
+  partition held — the delegate reported it rather than letting integration find it.
+
+## Backlog candidate raised by chunk 01 (file at close, not now)
+
+Under `coexistence_divergence: true` the advisory compares the vendored tree against the
+**invoking interpreter's** package, but the handshake's real reference is the *running server's*
+copy, which the preflight process cannot read — `preflight` has `--server-version` but no
+server-root override. Out of scope for #310 and correctly left alone; it is a real gap in the
+advisory's honesty under a divergent-coexistence install.

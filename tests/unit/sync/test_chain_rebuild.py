@@ -1801,3 +1801,110 @@ def test_an_entry_without_a_position_refuses_instead_of_inferring_one():
         chain_rebuild._entry_position({"class": "EQ Eight"})
     assert "one slot off" in str(exc.value)
 
+
+# ---------- the two journal-phase branches, each pinned ----------
+
+
+def _leave_a_shortfall(conn, song, session, revoice, live, song_dir):
+    """Run a rebuild that finishes and comes up short, leaving its journal."""
+    original = live._ableton_device__set_parameter
+
+    def _refuse_amount(params):
+        if params["parameter_name"] == "Amount":
+            return _Resp(ok=False, error="parameter is automated")
+        return original(params)
+
+    live._ableton_device__set_parameter = _refuse_amount
+    try:
+        result = _rebuild(conn, song, session, live, song_dir)
+    finally:
+        live._ableton_device__set_parameter = original
+    assert not result.ok
+    journal = chain_rebuild.journal_path_for(song_dir, "track", 3)
+    assert chain_rebuild.journal_phase(journal) == chain_rebuild.PHASE_SHORTFALL
+    return journal
+
+
+def test_a_second_rebuild_over_a_shortfall_journal_refuses_with_the_right_remedy(
+    conn, song, session, revoice, live, song_dir,
+):
+    """Both journal states refuse a fresh rebuild, and they must refuse
+    DIFFERENTLY, because the remedies are opposites: `--resume` recovers a gutted
+    chain and DESTROYS a correct one.
+
+    A shortfall chain is rebuilt, rebound and verified for everything that
+    landed. Telling the operator it "did not finish" and handing them `--resume`
+    as the fix sends them at a full demolish of work that is already right, so
+    this branch names the cheap remedy first and prices the destructive one.
+    """
+    _leave_a_shortfall(conn, song, session, revoice, live, song_dir)
+
+    with pytest.raises(chain_rebuild.RebuildRefused) as exc:
+        _rebuild(conn, song, session, live, song_dir)
+
+    message = str(exc.value)
+    assert "SHORTFALL" in message
+    assert "push execute --only devices" in message, (
+        "the cheap remedy has to be the one named first"
+    )
+    assert "did not finish" not in message, (
+        "that is the mid-flight story, and it is false here"
+    )
+
+
+def test_resume_auto_declines_a_shortfall_journal_and_says_what_to_do_instead(
+    conn, song, session, revoice, live, song_dir, monkeypatch, capsys,
+):
+    """`auto` means "finish the rebuild that stopped". Before this, `auto` read an
+    undifferentiated journal list and would select a shortfall journal — then
+    demolish and rebuild a chain the module had just certified correct, silently,
+    on an operator who asked it to recover something.
+
+    It declines and names the file instead. Retrying the refused writes is still
+    available, but only by naming the journal, so the destruction is always
+    chosen rather than inferred.
+    """
+    journal = _leave_a_shortfall(conn, song, session, revoice, live, song_dir)
+    monkeypatch.setattr(chain_rebuild, "_cli_send_fn", lambda: live.send)
+    classes_before = live.classes(("track", 3))
+    # The setup rebuild did its own deletes; only what happens AFTER this point
+    # says anything about the decline.
+    calls_before = len(live.calls)
+
+    rc = chain_rebuild.main([
+        session, "--db", str(song_dir / "alien.db"), "--resume", "auto",
+    ])
+
+    err = capsys.readouterr().err
+    assert rc != 0
+    assert "no unfinished rebuild to resume" in err
+    assert str(journal) in err
+    assert "push execute --only devices" in err
+    assert not any(c[1] == "delete" for c in live.calls[calls_before:]), (
+        "auto must not demolish a chain it declined to resume"
+    )
+    assert live.classes(("track", 3)) == classes_before
+    assert journal.exists(), "declining must not discard the captured values"
+
+
+def test_resume_auto_still_finishes_a_mid_flight_journal_beside_a_shortfall(
+    conn, song, session, revoice, live, song_dir, monkeypatch, capsys,
+):
+    """The classification is per file. A shortfall journal sitting next to a
+    genuinely unfinished one must not make `auto` give up on the one it exists
+    to finish."""
+    _leave_a_shortfall(conn, song, session, revoice, live, song_dir)
+    d = chain_rebuild.journal_dir_for(song_dir)
+    (d / "track-7.json").write_text(json.dumps({
+        "version": chain_rebuild.JOURNAL_VERSION,
+        "phase": chain_rebuild.PHASE_DEMOLISHED,
+        "parent_kind": "track", "parent_index": 7,
+    }))
+
+    target = chain_rebuild._cli_resume_target("auto", song_dir)
+
+    assert target is not None and target.name == "track-7.json", (
+        "auto must pick the unfinished rebuild, not refuse because a shortfall "
+        "journal is also on disk"
+    )
+

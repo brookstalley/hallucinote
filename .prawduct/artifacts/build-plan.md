@@ -72,15 +72,36 @@ sidechain compressors) against a single-writer `alien`. Both are queued in
 
 ## Status
 
-- [ ] Chunk 01: chain-rebuild addresses the post-rebuild chain, and a shortfall cannot exit 0 (#532 Symptom A + #538)
-- [ ] Chunk 02: `probe set`'s value schema is an explicit union over every JSON type (#537)
-- [ ] Chunk 03: an unreadable sidechain source warns instead of vanishing (#536)
+- [x] Chunk 01: chain-rebuild addresses the post-rebuild chain, and a shortfall cannot exit 0 (#532 Symptom A + #538)
+- [x] Chunk 02: `probe set`'s value schema is an explicit union over every JSON type (#537)
+- [x] Chunk 03: an unreadable sidechain source warns instead of vanishing (#536)
 
-Context: Plan written 2026-09-10 on `fix/release-blockers-0910`, cut from
-`origin/develop` @ `bb4bd3d`. Nothing built yet; three delegates dispatched to
-coordinator-created worktrees. #532 Symptom B was **descoped as already fixed**
-before dispatch — see Decisions. Next: integrate the three branches, run the
-combined suite, then `/prawduct:critic cumulative`.
+Context: Built 2026-09-10 on `fix/release-blockers-0910`, cut from
+`origin/develop` @ `bb4bd3d`. All three chunks were built by coordinator-created
+worktree delegates against disjoint file sets, merged here with no conflicts, and
+their worktrees reaped. #532 Symptom B was **descoped as already fixed** before
+dispatch — see Decisions. Suite green; `.prawduct/change-log.md` carries the
+`RELBLK-0910` entry.
+
+**Three review rounds, and the integration run is what earned them.** Two defects
+reached the tree that no delegate could have seen, because each lives in the seam
+between a chunk and a file no chunk owned: a second hardcoded dedicated-branch
+list in `test_push_execute.py` (the combined suite caught it), and the link
+rebind writing a DB position where every consumer reads a physical index — #532's
+own defect one layer out, found by the first cumulative review and reachable
+through the recovery this work recommends. A third, the shortfall journal blocking
+`push execute --only devices`, was found by reading the call site at integration.
+
+Worth carrying forward: round 1 was wasted on a dispatch-mismatch because two
+documentation commits landed inside the review interval, and rounds 2→3 existed
+because resolving findings introduced new judgeable surface. Reviewing after the
+integration fixes rather than before would have cost one round instead of three.
+
+Remaining, and not blocking the release: the `chain_rebuild.py` sidechain warning
+(the same silence on the most destructive surface — it deletes and reloads the
+device), #526's re-scope, and naming the sidechain-enable hints MCP-side so the
+drift guard can compare imports instead of source. Six Live checks are queued in
+`operator-verification.md`; #291's witness box is unblocked.
 
 ## Decisions taken
 
@@ -226,6 +247,30 @@ The release's re-vendor verdict is unchanged, because other work since `v1.8.6`
 *does* touch `actions/` and `handlers/` — 19 such files. The correction matters to
 the release note's per-item instruction, not to the consumer-facing verdict: a
 reader should not be told to re-vendor *for this item*.
+
+### `ableton_index` holds the index Live answers to, never the DB's ordinal
+
+Recorded here as well as in `boundary-patterns.md` § Ableton Projection, because
+this is the decision the whole of Chunk 01 turns on and it had been living in a
+private docstring.
+
+For `db_kind="device"` an `ableton_links` row holds the **physical**
+`device_index` — what `plan_push_devices` hands `set_parameter` — and not the
+device's DB `position`. The two are equal only while every unauthored device sits
+after the authored ones, which for the `HallucinoteAnalyzer` means while the tap
+is terminal. A rebuild breaks that for as long as the tap survives at the head:
+position *q* answers to index *q+1*.
+
+Writing the position there is how authored values reached the neighbouring device
+through `push execute --only devices` — the same wrong-device class as #532, one
+layer out, through the recovery this work's own alert recommends. A producer
+holding only positions must read the live chain and map (`_logical_chain`); it may
+not assume the two numbers agree.
+
+*Why it is written at the boundary rather than left to the producer:* the defect
+arrived through exactly this ambiguity — "index" read as "ordinal" — inside a
+function called `link_db_to_ableton`, with nothing at the boundary saying which
+number it meant. The review found it; the record is what stops it returning.
 
 ### The release's two governance gaps, dispositioned (owner rulings, 2026-09-10)
 

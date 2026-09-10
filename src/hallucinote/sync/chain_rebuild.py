@@ -330,8 +330,7 @@ def _entry_position(entry: dict[str, Any]) -> int:
     Required, not inferred — which is why this reads the entry and nothing else.
     An earlier version took the span's start and the entry's ordinal too, to
     re-derive a missing ``position`` from the entry's ORDER, on the reasoning
-    that ``captured`` is ascending and starts at the same number. That is true
-    only
+    that ``captured`` is ascending and starts at the same number. That holds only
     when the captured span held nothing but authored devices — and a journal
     written before ``position`` existed is exactly a journal written by the code
     that could not see a surviving analyzer, so replaying one onto a chain whose
@@ -415,8 +414,19 @@ def partition_journals(song_dir: Path) -> tuple[list[Path], list[Path]]:
 
     A shortfall journal describes a chain that is rebuilt, rebound and verified
     for everything that landed — values are missing from it, the chain is not.
-    Everything else describes a rebuild that stopped somewhere between the first
-    delete and the verify, which is the state a push must not plan over.
+    Everything else is treated as mid-flight — a rebuild that stopped somewhere
+    it must not be pushed over. That includes ``verified``, which is **reachable
+    and deliberately grouped there**: the verify is stamped before the final
+    chain read and the link rebind, so a disconnect in that window leaves a chain
+    that is correct while the DB's links still address the PRE-rebuild one. The
+    chain being right is exactly what makes that dangerous — a push would plan
+    against stale indices and report ok — so `verified` refuses like an
+    unfinished rebuild rather than passing like a shortfall. ``--resume`` is the
+    right remedy there, which is the other reason it belongs in this half.
+
+    So: four reachable phases, two answers, and the grouping is a judgement
+    rather than a fallthrough. An unreadable phase lands here too, because
+    unknown has to degrade to dangerous.
     """
     mid_flight: list[Path] = []
     shortfall: list[Path] = []
@@ -432,8 +442,10 @@ def stranded_journals(song_dir: Path) -> list[Path]:
     Two states leave a journal behind, and this does not distinguish them — use
     :func:`partition_journals` where the difference matters:
 
-    * a rebuild stopped between its first delete and its verify, so the chain is
-      in an unknown state (phases ``journaled`` … ``restored``);
+    * a rebuild stopped between its first delete and its link rebind, so either
+      the chain or the links it is addressed by are in an unknown state (phases
+      ``journaled`` … ``restored``, and ``verified`` — the verify is stamped
+      before the rebind, so that one means a correct chain with stale links);
     * a rebuild FINISHED and came up short — the chain is rebuilt, its links are
       rebound and the verify passed for everything that landed, and the journal
       is kept because it is the only record of the values that did not

@@ -114,9 +114,10 @@ measurement half — *A-Plate's class matches the snapshot after a fresh push* �
 
 ## Status
 
-Merged into `docs/backlog-bug-readiness`, each with its targeted surface re-run green.
-The whole-suite run that vouches for the merged set is in flight; boxes are ticked on the
-merge + targeted green, and the suite result is recorded in Context.
+Merged into `docs/backlog-bug-readiness`. A ticked box means the chunk merged, its own
+surface re-ran green, and the whole-suite run covering it exited 0 — **6175 passed, 2 skipped**
+against a 6063 baseline, the delta being the delegates' own new tests. The count going UP is
+what makes that green attributable: a contended run's tell is a total that silently drops.
 
 - [x] B1 — #222 #520 · [ ] B2 · [ ] B3 · [ ] B4 · [x] B5 — #508 #516 #521 · [x] B6 — #503 #475 #328 · [x] B7 — #226
 - [ ] B8 — #291 (dispatched) · [ ] B9 — #322 (held on B2) · [x] B10 — #476 · [ ] B11 — #515

@@ -33,6 +33,7 @@ Subcommands:
            ProbeAndLinkResult JSON. Re-runnable.
 
     push_cli execute [session_id] (--song SLUG | --db PATH) [--state-dir D]
+                     [--reconcile-chains]
         -> W10-E2: dispatches the full fourteen-phase push directly against
            Live's Remote Script via :mod:`hallucinote_mcp.client`,
            bypassing the agent's tool-use channel. Writes
@@ -771,6 +772,82 @@ def _resume_phase_from_state(state_dir: Path) -> str | None:
     return halted if isinstance(halted, str) and halted else None
 
 
+def _reconcile_chains_prepass(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+    reason: str | None,
+) -> int:
+    """DEV-5R8Q: rebuild every chain the devices phase would REFUSE on, before
+    the push runs.
+
+    Opt-in per push (``--reconcile-chains``) and never automatic. A rebuild
+    deletes and reloads real devices and holds Live for real wall-clock time —
+    the kind of operation the operator authorizes explicitly, not one a routine
+    push starts on its own.
+
+    It runs BEFORE ``execute_push`` rather than inside the devices phase because
+    a rebuild is a read-then-write sequence (probe the params, journal them,
+    delete, load, restore, re-read) and a ``PushPlan`` is a flat call list built
+    in full before anything is dispatched. Running first is also what makes the
+    push simple afterwards: with the chain rebuilt and its links re-recorded,
+    the devices planner sees every device linked at its position and emits no
+    load at all.
+
+    Returns a process exit code: 0 when there was nothing to reconcile or every
+    rebuild verified, 1 when one refused or failed its read-back. A failure
+    stops the push — pushing into a half-reconciled set is worse than not
+    pushing.
+    """
+    from hallucinote.sync import chain_rebuild
+
+    try:
+        live_tracks, live_returns = _probe_live_via_mcp()
+        live_devices_by_parent = _probe_live_devices_via_mcp(
+            live_tracks=live_tracks, live_returns=live_returns,
+        )
+    except (SystemExit, OSError, _live_connection_errors()) as exc:
+        sys.stderr.write(
+            f"push_cli execute: --reconcile-chains could not read Live's "
+            f"device chains ({exc}). Refusing to rebuild a chain it cannot "
+            f"see.\n"
+        )
+        return 1
+    try:
+        results = chain_rebuild.reconcile_chains(
+            conn,
+            song_id=song_id,
+            session_id=session_id,
+            live_devices_by_parent=live_devices_by_parent,
+            send_fn=_resolve_send_fn(),
+            actor="sync",
+            reason=reason,
+        )
+    except chain_rebuild.RebuildRefused as exc:
+        sys.stderr.write(f"push_cli execute: --reconcile-chains {exc}\n")
+        return 1
+    except chain_rebuild.RebuildVerifyFailed as exc:
+        sys.stderr.write(
+            f"push_cli execute: --reconcile-chains {exc}\nThe push did NOT "
+            f"run. Replay the journal with `hallucinote chain-rebuild "
+            f"--resume auto --song <slug>` once Live is answering.\n"
+        )
+        return 1
+    if not results:
+        sys.stderr.write(
+            "push_cli execute: --reconcile-chains found no chain whose DB "
+            "position is occupied by an unmatched Live device — nothing to "
+            "rebuild.\n"
+        )
+        return 0
+    for result in results:
+        sys.stderr.write(f"push_cli execute: reconciled {result.describe()}\n")
+        for alert in result.alerts:
+            sys.stderr.write(f"push_cli execute: ALERT {alert}\n")
+    return 0
+
+
 def _cmd_execute(args: argparse.Namespace) -> int:
     """W10-E2: dispatch the full fourteen-phase push directly against Live's
     Remote Script, bypassing the agent's tool-use channel.
@@ -872,6 +949,23 @@ def _cmd_execute(args: argparse.Namespace) -> int:
             json.dump(check.to_dict(), sys.stderr, indent=2)
             sys.stderr.write("\n")
             return 1
+
+    # DEV-5R8Q: the opt-in chain reconcile runs here — after the coherence
+    # check has established the links describe this set, and before any phase
+    # plans. See `_reconcile_chains_prepass` for why it is not inside the
+    # devices phase.
+    if getattr(args, "reconcile_chains", False):
+        rc = _reconcile_chains_prepass(
+            conn,
+            song_id=song_id,
+            session_id=args.session_id,
+            reason=args.reason or (
+                f"push_cli execute --reconcile-chains (session="
+                f"{args.session_id})"
+            ),
+        )
+        if rc != 0:
+            return rc
 
     # ARR-PROJ: the arrangement phase projects the DB onto a CLEARED timeline, so
     # it needs Live's current arrangement clips per track to plan the per-clip
@@ -1459,6 +1553,19 @@ def main(argv: list[str] | None = None) -> int:
         help="continue from the phase the last run halted at (reads "
              ".last-push-state.json's phase_halted → --start-at). Errors if "
              "there's no halted prior run.",
+    )
+    # DEV-5R8Q: opt-in per push, never automatic — a chain rebuild deletes and
+    # reloads real devices and holds Live for real wall-clock time, so the
+    # operator authorizes it explicitly. Without the flag the occupied-slot halt
+    # stands, and its message names this command as one of the three remedies.
+    p_exec.add_argument(
+        "--reconcile-chains", dest="reconcile_chains", action="store_true",
+        help="before pushing, RECONCILE every device chain whose DB position "
+             "is occupied in Live by a device the DB can't match: capture it, "
+             "journal it to disk, delete descending, reload in the DB's order "
+             "and restore every surviving device's parameters (DEV-5R8Q). "
+             "DESTRUCTIVE and slow; without it the devices phase halts on such "
+             "a chain instead.",
     )
     p_exec.set_defaults(func=_cmd_execute)
 

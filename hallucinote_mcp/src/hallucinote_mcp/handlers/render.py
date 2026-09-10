@@ -53,6 +53,10 @@ from ..analyzer import (
     ensure_analyzers_loaded,
     strip_analyzers,
 )
+# The canonical surface -> track_id spelling. Imported rather than re-spelled
+# inline so `mixer_state` rows and the per-surface capture entries they are
+# meant to join to cannot drift apart.
+from ..analyzer.setup import track_id_for_surface
 from ..analyzer.osc import AnalyzerOSC
 from ..analyzer.sidecar import OSCSidecar, shared_sidecar
 from ..dispatcher import LiveContext
@@ -251,7 +255,7 @@ def _mixer_state(context: Any) -> list[dict[str, Any]]:
             "surface_kind": kind,
             "surface_index": index,
             "surface_name": getattr(track, "name", "") or "<unnamed>",
-            "track_id": f"{kind}:{index}",
+            "track_id": track_id_for_surface(kind, index),
             # `None` when Live did not present the attribute at all, NEVER
             # False. Defaulting a missing `solo` to False would make "this
             # surface is not soloed" and "this object did not answer"

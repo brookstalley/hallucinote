@@ -1908,8 +1908,8 @@ def test_analyze_mix_distinguishes_a_missing_tempo_map_from_a_late_first_point(
     assert "before the song's first tempo point" in _reason(late)
 
 
-from hallucinote.audio.analyze import _derive_findings, master_is_not_stem_sum
-from hallucinote.audio.reconcile import SumReconciliation
+from hallucinote.audio.analyze import _derive_findings
+from hallucinote.audio.reconcile import SumReconciliation, master_is_not_stem_sum
 
 # --- the stem-sum residual reaches a finding -----------------------------
 #

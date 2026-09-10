@@ -853,7 +853,9 @@ class EnergyRealization:
 # that gates nothing also looks like — so the suite stayed green while three
 # `alien` renders reported a master that was one soloed stem as a mix change.
 #
-# The split is `gate-verdict-policy.md`'s, not a new one: a DEFECT lens has
+# The split is `gate-verdict-policy.md`'s, and the exemption that lets a defect
+# lens block is design decision 2 of `build-plan-render-integrity.md` — neither
+# is new here: a DEFECT lens has
 # physical ground truth (is this audio damaged, does this capture contradict
 # itself) and may legitimately block; an INTENT lens ranks authored intent
 # against what was rendered, which is an aesthetic judgement and never fails a

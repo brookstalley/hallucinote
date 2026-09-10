@@ -235,10 +235,11 @@ def _master_disqualification(
     same wall of false master deltas, with the sign flipped and nothing to say
     why. A diff is only as honest as its worse side.
 
-    Reads the ``master_not_stem_sum`` finding rather than re-deriving the
-    judgement from ``sum_reconciliation``: the threshold belongs to the lens
-    that owns it, and a second copy here would be free to disagree with the
-    report's own findings about the same numbers.
+    Prefers the report's own ``master_not_stem_sum`` finding and falls back to
+    judging its stored ``sum_reconciliation`` through the same lens in
+    ``reconcile``. Both routes end at one owner, which is the point: a second
+    threshold here would be free to disagree with the report's own findings
+    about the same numbers.
     """
     verdict: tuple[str, float, float] | None = None
     for finding in report.get("findings", []) or []:
@@ -291,10 +292,14 @@ def _reconciliation_from_json(raw: Any) -> SumReconciliation | None:
     try:
         correlation = float(raw["correlation"])
         gain_offset_db = float(raw["gain_offset_db"])
+        # Inside the try with the other two: the serializer legitimately writes
+        # null here, and a rehydration that raises on a field the verdict does
+        # not read would refuse a report the lens could have judged.
+        residual_db = float(raw.get("residual_db") or float("nan"))
     except (KeyError, TypeError, ValueError):
         return None
     return SumReconciliation(
-        residual_db=float(raw.get("residual_db", float("nan"))),
+        residual_db=residual_db,
         correlation=correlation,
         best_lag_samples=int(raw.get("best_lag_samples", 0) or 0),
         gain_offset_db=gain_offset_db,

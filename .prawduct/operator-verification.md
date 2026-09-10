@@ -62,8 +62,10 @@ completely and reopen (Live caches Control Surface modules at launch), then `/mc
   train the operator to work around the guard.
 - [ ] **The mixer state is recorded on a clean render.** Clear every solo and mute and
   render. Pass = `manifest.mixer_state` has one row per track AND one per return, each
-  carrying its `kind`, `solo: false`, `mute: false` and a `volume` matching Live's
-  fader. This is the half that makes an
+  carrying `surface_kind` / `surface_index` / `surface_name` / `track_id`,
+  `solo: false`, `mute: false` and a `volume` matching Live's fader. Check one
+  `track_id` against the matching entry in `tracks[]` — the join is the point of the
+  field. This is the half that makes an
   OLD report auditable — without it, the incident could only be diagnosed by probing a
   Live session that had already moved on.
 - [ ] **A soloed RETURN refuses too, and a clean song with returns does not.** Solo
@@ -77,6 +79,19 @@ completely and reopen (Live caches Control Surface modules at launch), then `/mc
   Live — record N/A unless a Live version turns up whose Track lacks `solo`/`mute`.
   Noted because the code now refuses rather than assuming clear, so an operator who
   ever sees `could not read solo/mute` should know it is the guard working, not a bug.
+
+- [ ] **The stem-sum gate does NOT fire on a healthy song with a hard-working master
+  chain.** The negative control, and the box that prices the false positive: a limiter,
+  saturator or bus compressor on the master produces a residual no linear sum cancels,
+  which is exactly the ambiguity `reconcile.py`'s module doc spends its length on.
+  Render a normal, un-soloed song whose master chain is working, and read
+  `sum_reconciliation.correlation` and `gain_offset_db` from the report. Pass = no
+  `master_not_stem_sum` finding, and both numbers far from the thresholds (0.5 /
+  ±12 dB). **Record the two values whatever the outcome** — the thresholds were drawn
+  from ONE incident (0.159 vs a healthy 0.959) and no second song has exercised them,
+  so this box is the only evidence that the gate does not suppress a legitimate master
+  diff. If either number lands near a threshold on a healthy render, the gate is too
+  tight and that is worse than the failure it prevents.
 
 **Why it can't be headless-verified:** the fake sets `solo` because the handler reads
 `solo`. Only Live can say whether a real soloed track presents that attribute the way

@@ -213,6 +213,28 @@ lenses never fail a build) — and a new test file fails on a block in neither. 
 failure. It does not catch a parameter that exists and is ignored in the body; that
 guarantee is not claimed.
 
+**Three further defects surfaced in review, all in the guards themselves.** The solo
+guard **failed open**: `getattr(track, "solo", False)` made "not soloed" and "did not
+answer" indistinguishable, and the manifest then wrote `solo: false` as a fact
+`boundary-patterns.md` tells consumers to trust — both flags are `null` now when Live
+does not present them, and a null refuses the render. The inert-lens tripwire proved a
+parameter NAME, not the wiring: every finding-bearing parameter has a default, so
+dropping a keyword from the one `_derive_findings` call reproduced the original defect
+with the new test file green — it parses the call site now. And the baseline half could
+not see a report written before the gate existed (those carry `sum_reconciliation` and
+no finding, and `resolve_baseline` filters on `db_seq` alone), so the three stored
+`alien` reports would have stayed diffable as baselines forever; the predicate moved to
+`reconcile.py` as the one owner both readers share. `overshoot_count` — a master-bus
+true-peak window, so a master delta by another name — also survived the disqualification
+and fed the headline count.
+
+`reconcile.py` documented in bold that it holds no threshold and must never be read as a
+verdict. This work put one there. The module doc records that as a narrow, reasoned
+exception — it decides whether the master IS the mix, not whether it is good — rather
+than leaving the contract silently false. A real-render negative control on a song with
+a hard-working master chain is queued in `operator-verification.md`: the thresholds come
+from one incident, and nothing yet prices the false positive.
+
 The Critic caught the returns gap, the baseline half of the gate, and the summary key —
 then, on the verification round, caught that the summary passthrough had shipped with no
 test reaching it through the handler, which is the same shape of gap this entry retracts

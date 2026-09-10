@@ -409,10 +409,20 @@ def partition_journals(song_dir: Path) -> tuple[list[Path], list[Path]]:
 
 
 def stranded_journals(song_dir: Path) -> list[Path]:
-    """Every journal left on disk under ``song_dir``.
+    """Every journal left on disk under ``song_dir``, of either kind.
 
-    A journal exists only between the first delete and a passing verify, so any
-    file here names a chain that a rebuild started on and did not finish.
+    Two states leave a journal behind, and this does not distinguish them — use
+    :func:`partition_journals` where the difference matters:
+
+    * a rebuild stopped between its first delete and its verify, so the chain is
+      in an unknown state (phases ``journaled`` … ``restored``);
+    * a rebuild FINISHED and came up short — the chain is rebuilt, its links are
+      rebound and the verify passed for everything that landed, and the journal
+      is kept because it is the only record of the values that did not
+      (``shortfall``).
+
+    So "a file here" no longer means "a chain nobody finished". Callers that
+    treat it that way are reading one of the two cases wrong.
     """
     d = journal_dir_for(song_dir)
     if not d.is_dir():
@@ -1529,6 +1539,13 @@ def resume(
     reason: str | None = None,
 ) -> RebuildResult:
     """Replay a stranded rebuild from its journal — and from nothing else.
+
+    Replaying a ``shortfall`` journal is a legitimate RETRY rather than a
+    recovery: that chain is already correct, so this demolishes and rebuilds it
+    to re-attempt the writes Live refused (a parameter that was automated when
+    the first run reached it may not be now). It costs a full rebuild of a
+    working chain, which is worth knowing before reaching for ``--resume auto``
+    when a shortfall journal is the one lying around.
 
     An interrupted rebuild leaves a chain in an unknown state and a journal that
     knows what it held. The replay re-probes Live, deletes whatever is sitting in

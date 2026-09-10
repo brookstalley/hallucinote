@@ -682,6 +682,17 @@ def get_parameters_handler(
                     entry["value_items"] = list(items)
             else:
                 entry["is_enum"] = False
+            # Whether Live will accept a WRITE to this parameter. A macro-mapped
+            # or otherwise locked parameter reads fine and refuses every write
+            # ("Value cannot be set, the parameter is disabled"), so a caller
+            # restoring captured state needs to know BEFORE it tries — the
+            # difference between "this is macro-mapped, re-map it" and "the
+            # write failed". Omitted rather than defaulted when Live does not
+            # expose it, because absent must read as unknown, not as writable.
+            try:
+                entry["is_enabled"] = bool(p.is_enabled)
+            except (AttributeError, RuntimeError):
+                pass
         params_out.append(entry)
     result: dict[str, Any] = {
         "device_index": spec["device_index"],

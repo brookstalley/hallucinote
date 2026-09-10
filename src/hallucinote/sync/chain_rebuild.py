@@ -605,9 +605,14 @@ def _restorable(param: dict[str, Any]) -> bool:
 
     ``is_enabled=False`` means macro-mapped or otherwise locked: Live reads it
     fine and refuses every write with "Value cannot be set, the parameter is
-    disabled". A MISSING flag means "unknown", which must not become "skip" —
-    that would silently drop real authored state — so unknown is treated as
-    writable and a failed write becomes the alert instead.
+    disabled". ``get_parameters(detail='full')`` reports it, which is what lets
+    the alert say "this parameter is mapped" rather than "the write failed".
+
+    A MISSING flag means "unknown", which must not become "skip" — that would
+    silently drop real authored state — so unknown is treated as writable and a
+    failed write becomes the alert instead. An older server that does not send
+    the flag therefore degrades to the second-best answer rather than the wrong
+    one.
     """
     return param.get("is_enabled", True) is not False
 

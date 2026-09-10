@@ -26,9 +26,14 @@ class FakeParam:
         max: float = 1.0,
         value_items: tuple[str, ...] | None = None,
         display_fn=None,
+        is_enabled: bool = True,
     ):
         self.name = name
         self.value = value
+        # Live's writability flag: False means macro-mapped or otherwise
+        # locked, and every write is refused. Default True — most params are
+        # writable, and a fake that defaulted to locked would hide real bugs.
+        self.is_enabled = is_enabled
         self.min = min
         self.max = max
         # Live 12.4 raises ``RuntimeError: Only quantized parameters have
@@ -445,6 +450,66 @@ def test_get_parameters_summary_vs_full(loaded_actions):
     p_filter_full = resp_f.result["parameters"][1]
     assert p_filter_full["is_enum"] is True
     assert p_filter_full["value_items"] == ["Lowpass", "Highpass"]
+    # Writability rides the full read too. A caller restoring captured state
+    # needs to know a parameter is locked BEFORE it writes, so it can say
+    # "this is macro-mapped" rather than "the write failed".
+    assert "is_enabled" not in p0_summary
+    assert p_filter_full["is_enabled"] is True
+
+
+def test_get_parameters_full_reports_a_locked_parameter_as_not_enabled(
+    loaded_actions,
+):
+    """A macro-mapped parameter reads fine and refuses every write.
+
+    Without this on the wire, a chain rebuild cannot tell a locked parameter
+    from a writable one until its write is refused, and the operator is told
+    the restore failed rather than that the parameter is mapped.
+    """
+    ctx = _ctx_with_one_device()
+    # track_index is 1-based on the wire; the fake list is not.
+    dev = ctx.song.tracks[0].devices[0]
+    dev.parameters[0].is_enabled = False
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="get_parameters",
+            params={
+                "node": {"parent": {"kind": "track", "index": 1},
+                         "device_index": 1},
+                "detail": "full",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok
+    assert resp.result["parameters"][0]["is_enabled"] is False
+
+
+def test_get_parameters_omits_writability_when_live_does_not_expose_it(
+    loaded_actions,
+):
+    """Absent must read as unknown, never as writable.
+
+    A caller that treated a missing flag as 'locked' would silently drop real
+    authored state; one that treated it as 'writable' at least tries the write
+    and reports a genuine refusal. Omitting the key is what lets the caller
+    make that distinction.
+    """
+    ctx = _ctx_with_one_device()
+    del ctx.song.tracks[0].devices[0].parameters[0].is_enabled
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="get_parameters",
+            params={
+                "node": {"parent": {"kind": "track", "index": 1},
+                         "device_index": 1},
+                "detail": "full",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok
+    assert "is_enabled" not in resp.result["parameters"][0]
 
 
 # ---------- load / delete / enable / disable ----------

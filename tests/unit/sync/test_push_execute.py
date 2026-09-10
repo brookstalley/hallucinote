@@ -3294,8 +3294,12 @@ def test_one_failed_placement_costs_only_its_own_region(
     # The copy that landed is counted from the RESULTS, not from a plan-time
     # count that would also name the one the filter dropped — and in copies,
     # since a copy takes an end_marker AND a loop_end.
-    assert "bounded 1 audio copy" in said, said
-    assert "bounded 2" not in said, said
+    assert "wrote the playable region on 1 audio copy" in said, said
+    assert "on 2 audio" not in said, said
+    # The claim is an ACK, not an audition — the push cannot hear the copy, and
+    # the growing-span case is unprobed. Saying "bounded" asserted the outcome.
+    assert "ACCEPTED" in said, said
+    assert "unverified" in said, said
     # The placement that failed is not silent: the planner skips a row with no
     # recorded link and says so, pointing at the phase's own reasons rather
     # than double-counting the failure.

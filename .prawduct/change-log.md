@@ -58,7 +58,7 @@ resolution — a regression against its acceptance, not a gap.
 The rest: **#505** a replace that cannot succeed no longer deletes the clip first
 (the fake LOM learned track kind, which is why wave 1 deferred it); **#514**
 capture excludes an untouched default scaffold track, and renumbers survivors by
-dense rank so a deleted scaffold cannot replay a song track into a second row;
+dense rank (see the caveat below);
 **#501** the compat check answers for samples through a second entry family whose
 status vocabulary is deliberately disjoint from `DeviceStatus`; **#509** an
 arrangement audio copy is bounded to its authored span.
@@ -69,6 +69,18 @@ placement routes while `Clip.end_time` has no setter, so the trim the issue
 assumed is unreachable and the block extent is a permanent Live limit, not a gap.
 Every surface that told the user to "trim in Live" was corrected, including
 `capability-truth.md`, which declares itself unable to lag.
+
+**One upgrade boundary is NOT closed, and it is named rather than implied.** The
+dense renumber is what makes the exclusion converge, but it also shifts every real
+track's index — and replay keys on `(song, track_index)` with no name
+reconciliation and no prune. So replaying a post-fix snapshot into a DB built from
+a pre-fix one can take a row's name onto a different row and leave the original
+behind at its old index. The snapshot-refresh joins that carry `browser_path` and
+preset seeds now fall back to a unique track name, and replay WARNS when it
+renames a row — but the reconciliation itself is a design question (is a capture
+authoritative over track layout?) that a release-blocker cluster is the wrong
+place to settle. Deleting a user's track rows to fix it would be worse than the
+rename.
 
 **Tests corrected, not weakened** — each encoded the defect its chunk fixes.
 `test_replace_that_fails_to_recreate_says_the_slot_is_now_empty` asserted the clip

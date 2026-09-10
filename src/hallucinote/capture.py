@@ -1019,6 +1019,11 @@ def replay_capture(
         )
 
     track_ids_by_name: dict[str, str] = {}
+    reidentified: list[tuple[int, str, str]] = []
+    existing_names_by_index: dict[int, str] = {
+        int(r["track_index"]): r["name"]
+        for r in Q.get_tracks_for_song(conn, song_id)
+    }
     for t in snapshot.get("tracks") or []:
         track_type = t.get("type", "midi")
         if track_type not in _VALID_TRACK_TYPES:
@@ -1033,6 +1038,13 @@ def replay_capture(
                 f"track {t.get('name')!r}: index {idx} must be >= 1 "
                 "(0 is reserved for the master sentinel)"
             )
+        # A capture whose indices SHIFTED (the scaffold exclusion renumbers by
+        # dense rank) upserts a name onto a row that held a different one, and
+        # `create_track` keys on (song, track_index) with no name reconciliation.
+        # The rename is the silent half; say it, and leave the row alone.
+        was = existing_names_by_index.get(idx)
+        if was is not None and was != t["name"]:
+            reidentified.append((idx, was, t["name"]))
         tid = M.create_track(
             conn,
             song_id=song_id,
@@ -1094,6 +1106,21 @@ def replay_capture(
                 reason=reason,
                 sidechain_pending=sidechain_pending,
             )
+
+    if reidentified:
+        detail = "; ".join(
+            f"index {idx}: {was!r} -> {now!r}" for idx, was, now in reidentified
+        )
+        warnings.warn(
+            f"capture: replay RENAMED {len(reidentified)} existing track row(s) "
+            f"({detail}). A snapshot's track indices shift when capture excludes "
+            "an untouched default scaffold, and replay keys on "
+            "(song, track_index) with no name reconciliation — so a row can take "
+            "a different track's name, and the row the name came from is left "
+            "behind at its old index. Check the song's tracks before building.",
+            stacklevel=2,
+        )
+
 
     # BAK-3M9T: apply each device's sidechain source now that every track exists.
     # The source is stored by surface name (never a per-build UUID), resolved here
@@ -2212,21 +2239,6 @@ def _track_name_index_map(snapshot: dict[str, Any]) -> dict[str, int]:
     for d in dupes:
         seen.pop(d, None)
     return seen
-
-
-def _index_in_old(
-    old: dict[str, Any], new: dict[str, Any], new_index: int, name: Any,
-) -> int | None:
-    """The index this track had in ``old``, when a renumber has moved it.
-
-    Returns the new index unchanged when nothing moved (the overwhelmingly
-    common case), so a snapshot with no scaffold pays nothing.
-    """
-    if not isinstance(name, str):
-        return new_index
-    old_by_name = _track_name_index_map(old)
-    was = old_by_name.get(name)
-    return was if was is not None else new_index
 
 
 def _collect_browser_paths(

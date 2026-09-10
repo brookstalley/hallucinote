@@ -1829,8 +1829,11 @@ def execute_push(
                 })
                 if bounded:
                     msg = (
-                        f"arrangement: bounded {bounded} audio copy/copies to "
-                        "their authored span"
+                        f"arrangement: wrote the playable region on {bounded} "
+                        "audio copy/copies — Live ACCEPTED each write. Whether "
+                        "the copy then sounds the authored span is unverified "
+                        "here: only a shrinking marker write has been probed, "
+                        "and a span longer than the sample has not."
                     )
                     if msg not in warning_messages:
                         warning_messages.append(msg)

@@ -3229,12 +3229,17 @@ def test_cli_prune_apply_deletes_only_the_orphan(
 # ---------------------------------------------------------------------------
 
 
-def _fake_execute_result(*, devices_calls_ok: int):
+def _fake_execute_result(*, devices_calls_ok: int, clips_calls_ok: int = 0):
     from hallucinote.sync.push_execute import ExecuteResult, PhaseOutcome
     return ExecuteResult(
         outcome="ok", exit_code=0, phase_halted=None,
         phases=[
             PhaseOutcome(name="tracks", status="ok", calls_ok=1),
+            PhaseOutcome(
+                name="clips",
+                status="ok" if clips_calls_ok else "skipped",
+                calls_ok=clips_calls_ok,
+            ),
             PhaseOutcome(
                 name="devices",
                 status="ok" if devices_calls_ok else "skipped",
@@ -3625,3 +3630,51 @@ def test_cli_execute_lane_probe_failure_degrades_to_empty_not_none(
     assert lanes == {}
     assert lanes is not None
     assert "INCOMPLETE" in capsys.readouterr().err
+
+
+def test_cli_execute_regenerates_requirements_after_a_clips_only_push(
+    conn, song, session, db_path, capsys, monkeypatch, tmp_path,
+):
+    """REQUIREMENTS.md lists the song's SAMPLES as well as its devices, so a push
+    that re-points an audio clip and touches no device must still refresh it —
+    otherwise the sample list the doc just gained goes stale on exactly the pushes
+    that change it."""
+    import hallucinote.sync.compat as compat
+    calls: list[str] = []
+    monkeypatch.setattr(
+        push_cli.push_execute, "execute_push",
+        lambda **kw: _fake_execute_result(devices_calls_ok=0, clips_calls_ok=3),
+    )
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", lambda send_fn=None: ([], []))
+    monkeypatch.setattr(push_cli, "_resolve_db_path", lambda args: db_path)
+    monkeypatch.setattr(
+        compat, "regen_requirements",
+        lambda slug: (calls.append(slug), tmp_path / "REQUIREMENTS.md")[1],
+    )
+    rc = push_cli.main(["execute", session, "--song", "t", "--no-coherence-check"])
+    assert rc == 0
+    assert calls == ["t"], calls
+
+
+def test_cli_execute_regenerates_requirements_exactly_once_when_both_applied(
+    conn, song, session, db_path, capsys, monkeypatch, tmp_path,
+):
+    """The trigger is a list over two phases now. Regenerating per matching phase
+    would rewrite the file twice on an ordinary full push — same content, but two
+    notices and two writes, and the doubled work is invisible until someone reads
+    stderr."""
+    import hallucinote.sync.compat as compat
+    calls: list[str] = []
+    monkeypatch.setattr(
+        push_cli.push_execute, "execute_push",
+        lambda **kw: _fake_execute_result(devices_calls_ok=2, clips_calls_ok=3),
+    )
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", lambda send_fn=None: ([], []))
+    monkeypatch.setattr(push_cli, "_resolve_db_path", lambda args: db_path)
+    monkeypatch.setattr(
+        compat, "regen_requirements",
+        lambda slug: (calls.append(slug), tmp_path / "REQUIREMENTS.md")[1],
+    )
+    rc = push_cli.main(["execute", session, "--song", "t", "--no-coherence-check"])
+    assert rc == 0
+    assert calls == ["t"], f"expected exactly one regen, got {len(calls)}"

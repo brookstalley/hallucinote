@@ -149,10 +149,14 @@ def _fold_event(conn, kind: str, payload: dict, song_id, clip_id) -> None:
              p["instrument_uri"], p["kind"]),
         )
     elif kind == E.TRACK_UPDATED:
+        # track_index is folded because a reindex emits this event with a
+        # NEW index and nothing else — replay that dropped it would rebuild
+        # every renumbered track at its old position.
         conn.execute(
-            "UPDATE tracks SET name = ?, instrument_uri = ?, kind = ? "
-            "WHERE id = ?",
-            (p["name"], p["instrument_uri"], p["kind"], p["track_id"]),
+            "UPDATE tracks SET name = ?, instrument_uri = ?, kind = ?, "
+            "track_index = ? WHERE id = ?",
+            (p["name"], p["instrument_uri"], p["kind"], p["track_index"],
+             p["track_id"]),
         )
     elif kind == E.TRACK_DELETED:
         conn.execute("DELETE FROM tracks WHERE id = ?", (p["track_id"],))

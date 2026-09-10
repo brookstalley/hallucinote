@@ -15,6 +15,36 @@ pending entries when `operator_verification_required: true`.
 
 ---
 
+## The open-bug sweep's re-vendor sitting (2026-09-10)
+
+Backlog **#508**, **#516**, **#515**, **#519**. Needs Live 12.4.x, the Remote Script
+**re-vendored** (`/hallucinote:ableton-mcp-install`) and Live restarted. One sitting — the
+re-vendor is the expensive part and everything below rides the same one. Batch it with the
+#275 check below; that one needs the same restart.
+
+Three of the sweep's fixes are inside `_FINGERPRINT_PATHS`, so none of them reaches a live
+session until the vendored copy is replaced. Until then the wire is unchanged and these
+verdicts are unknowable, not passing.
+
+- [ ] **#508** — `ableton_probe(action='set', path='…clip.warp_mode', value=5)` on an audio
+  clip. Previously `ArgumentError: did not match C++ signature`. Should now set. Then the
+  guard in the other direction: `ableton_probe(action='set', path='song.tracks[0].name',
+  value="808")` must leave the track named `808`, not `808` the integer — the coercion is
+  gated on the property's current type, and this is the case that gate exists for.
+- [ ] **#516** — load a `Pitch` MIDI effect onto a track holding an instrument. The response's
+  `loaded_class_name` must read `MidiPitcher` at its actual index, not the displaced
+  `Operator`. This one also feeds push's device linking, so a wrong answer here is not
+  cosmetic.
+- [ ] **#515** — `ableton_automation(action='write_envelope', target_kind='note_expression',
+  …)` must return the teaching refusal naming the `device_parameter` perform route, not
+  `AttributeError`. Cheap; confirms the boundary refusal reaches a real client.
+- [ ] **#519 — one assumption the unit suite cannot settle.** The exclusion predicate names
+  Live's classes for the two default-scaffold return devices as `Reverb` and `B-Delay`'s
+  `Delay`. If Live 12 reports something else for the merged Delay device, the predicate never
+  fires and the scaffold returns keep becoming song content — silently, which is the failure
+  mode this fixed. Read both with `ableton_return(action='list')` on a brand-new set;
+  `src/hallucinote/default_scaffold.py`'s constant is the single place to correct.
+
 ## #275 — the authored reverb is the one that reaches Live (2026-09-10)
 
 Backlog **#275**. Needs Live 12.4.x open, the Remote Script re-vendored, and the song

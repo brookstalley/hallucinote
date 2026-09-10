@@ -242,11 +242,14 @@ suggested recovery), which restored both lost gain cuts.
 - **#534** — `_PARAM_EPSILON` is absolute and step-blind. Ordered *after* #533: it is
   unobservable until the restore can actually write, and becomes load-bearing the same day.
 
-**`bug/b8-chainrebuild` is unmerged and rewrites this same file** (−126/+32 against
-`origin/develop`) **without fixing either defect** — it still carries `{"value": float(value)}`
-and `abs(before - after) > _PARAM_EPSILON` with the same absolute constant. Whoever takes #533
-or #534 should land on top of b8 or land b8 first; opening a third branch in this file
-independently will conflict.
+**There is no branch collision — an earlier claim here that there was one was wrong, and is
+corrected.** `bug/b8-chainrebuild` is an *ancestor* of `origin/develop` (0 commits ahead, 38
+behind; `git merge-base --is-ancestor` confirms), so its work is already merged. The `−126/+32`
+diff that produced the wrong claim is `origin/develop → b8`, i.e. b8 is the OLDER and smaller
+copy (1491 lines against develop's 1585) — read backwards, it looks like b8 rewrites the file.
+It shows up in "unmerged" listings only because it is unmerged to `main`, which is true of
+everything on `develop`. **Base #533 and #534 on `origin/develop`**, where the defect is live at
+`chain_rebuild.py:636`.
 
 **A note the docstring earns:** `_param_write_kwargs` promises "the round trip is exact because
 it is the same scale in both directions". The measurements above show that claim is **true** —

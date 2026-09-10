@@ -60,7 +60,7 @@ The CLI emits a JSON report with status buckets — `native`, `placeholder`, `th
 
 **Exit codes:** `0` = clean. `1` = at least one device in a problem bucket — display the offending entries and ask the user:
 
-> *"Some devices won't load cleanly on this machine. Pushing now will fail at device-load for those (the chain stays empty; nothing is substituted). Continue anyway? (yes/no)"*
+> *"Some devices won't load cleanly on this machine, and/or some audio clips reference samples that are missing or unreadable. Pushing now will fail at device-load for the devices (the chain stays empty; nothing is substituted) and in Live for the samples. Continue anyway? (yes/no)"*
 
 Proceed only on explicit `yes`. If `no`, point at `songs/<slug>/REQUIREMENTS.md` (regenerate with `compat write-requirements <slug>` if absent) and stop. Re-running compat after fixes is idempotent.
 

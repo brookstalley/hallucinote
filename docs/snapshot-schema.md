@@ -221,6 +221,15 @@ The recapture step is what makes step 3 ("staging in Live") part of authorship a
 - **Score-half**: tempo map, time signature map, sections, cue points. All authored by `build.py`.
 - **Automation envelopes**. The capture pipeline doesn't ingest envelopes (MCP envelope-read exists; capture-side reading is still backlog).
 
+### What capture filters out before the snapshot exists
+
+Two things are excluded at capture time, so they never reach the snapshot at all:
+
+- **The `HallucinoteAnalyzer`**, on tracks, returns and the master.
+- **An untouched default scaffold TRACK** — one of Live's brand-new-set `1-MIDI` / `2-MIDI` / `3-Audio` / `4-Audio` that carries the canonical name AND no devices AND no clips. A **claimed** scaffold track — canonical name but carrying a device or a clip — is real song content and is captured. Without this, one capture→replay round makes the scaffold permanent song state and the push-side cleanup that would have offered to remove it can never fire again. Surviving tracks are renumbered by dense rank rather than the raw Live index, because `create_track` upserts on `(song_id, track_index)` and numbering *around* the scaffold would replay a song track into a second row once the scaffold was deleted.
+
+The default scaffold **returns** (`A-Reverb`, `B-Delay`) are **not** filtered: Live ships them carrying devices, so the untouched predicate can never fire on them, and a name-only exclusion would drop a claimed return's captured mix and leave a surviving track's `sends` map naming a return the snapshot no longer defines. On a pre-cleanup capture they still become song content.
+
 ---
 
 ## Picking built-in content presets (drum kits, instrument presets)

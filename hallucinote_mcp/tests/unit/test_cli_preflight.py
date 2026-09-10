@@ -398,3 +398,131 @@ def test_an_unreadable_source_tree_is_named_as_the_source_side(tmp_path, monkeyp
     )
     assert entry["matches_vendored_content"] is None
     assert entry["content_read_error"] == "source_tree_unreadable", entry
+
+
+# ---------- which package copy the content advisory compares against ----------
+
+
+def _server_copy_and_vendored_install(tmp_path):
+    """A coexistence layout: a SERVER package copy that has drifted from this
+    checkout, and a User Library vendored correctly FROM that server copy.
+
+    The correct verdict is "the install matches the server" — which the invoking
+    package, the only copy preflight can reach on its own, cannot deliver.
+    """
+    import shutil
+
+    from hallucinote_mcp import install_paths as P
+
+    server_pkg = tmp_path / "server" / "hallucinote_mcp"
+    server_pkg.parent.mkdir(parents=True)
+    shutil.copytree(P.package_root(), server_pkg, ignore=P.vendor_ignore(P.package_root()))
+    drifted = server_pkg / "analyzer" / "setup.py"
+    drifted.write_text(
+        drifted.read_text(encoding="utf-8") + "\n# only in the server's copy\n",
+        encoding="utf-8",
+    )
+
+    lib = tmp_path / "UserLib"
+    vendored_pkg = P.remote_script_install_dir(lib) / "hallucinote_mcp"
+    vendored_pkg.parent.mkdir(parents=True)
+    shutil.copytree(server_pkg, vendored_pkg)
+    return server_pkg, lib
+
+
+def test_content_advisory_compares_against_the_server_copy_when_pointed_at_it(
+    tmp_path, monkeypatch,
+):
+    """The install vendors from the running server's package_root, so that is
+    what a correctly-vendored tree matches. Given --server-root, the advisory
+    compares against the same copy the vendor shipped from and reports the
+    truth: this install is current."""
+    from hallucinote_mcp.cli import preflight as pf
+
+    server_pkg, lib = _server_copy_and_vendored_install(tmp_path)
+    monkeypatch.setattr(pf.P, "candidate_user_libraries", lambda: [lib])
+    monkeypatch.setattr(pf.P, "default_user_library", lambda: lib)
+
+    report = _build_report(server_root_override=str(server_pkg))
+    assert report["remote_script"]["source_content_authority"] == "server_package_root"
+    assert report["remote_script"]["source_content_root"] == str(server_pkg)
+    cand = report["remote_script"]["candidates"][0]
+    assert cand["matches_vendored_content"] is True, cand
+    assert cand["content_read_error"] is None
+    assert cand["differing_count"] == 0
+
+
+def test_content_advisory_without_the_server_root_would_report_drift_that_is_not_real(
+    tmp_path, monkeypatch,
+):
+    """The defect, pinned from the other side: the same correctly-vendored tree
+    measured against the INVOKING copy differs, because the invoking copy is not
+    what it was vendored from. Nothing here may report that as an install
+    problem — with divergence confirmed the verdict is withheld, not inverted."""
+    from hallucinote_mcp.cli import preflight as pf
+
+    _, lib = _server_copy_and_vendored_install(tmp_path)
+    monkeypatch.setattr(pf.P, "candidate_user_libraries", lambda: [lib])
+    monkeypatch.setattr(pf.P, "default_user_library", lambda: lib)
+
+    report = _build_report(server_version_override="0.1.0+the-running-server")
+    assert report["coexistence_divergence"] is True
+    rs = report["remote_script"]
+    assert rs["source_content_authority"] == "withheld_coexistence_divergence"
+    assert rs["source_content_fingerprint"] is None
+    assert rs["source_content_root"] is None
+    cand = rs["candidates"][0]
+    # Withheld, not guessed: null with the reason beside it.
+    assert cand["matches_vendored_content"] is None, cand
+    assert cand["content_read_error"] == "source_not_authoritative"
+    assert cand["differing_paths"] == []
+    assert cand["differing_count"] == 0
+
+
+def test_a_server_root_that_is_not_a_package_withholds_rather_than_fingerprints_it(
+    tmp_path, monkeypatch,
+):
+    """The same guard install-remote-script applies to --from-package-root: a
+    typo, or the repo root passed instead of the package dir, is not a reference
+    — and fingerprinting it would produce a confident, wrong verdict."""
+    from hallucinote_mcp.cli import preflight as pf
+    from hallucinote_mcp import install_paths as P
+
+    lib = tmp_path / "UserLib"
+    (P.remote_script_install_dir(lib) / "hallucinote_mcp").mkdir(parents=True)
+    monkeypatch.setattr(pf.P, "candidate_user_libraries", lambda: [lib])
+    monkeypatch.setattr(pf.P, "default_user_library", lambda: lib)
+
+    report = _build_report(server_root_override=str(tmp_path / "not-a-package"))
+    rs = report["remote_script"]
+    assert rs["source_content_authority"] == "server_root_unreadable"
+    assert rs["source_content_fingerprint"] is None
+    cand = rs["candidates"][0]
+    assert cand["matches_vendored_content"] is None, cand
+    assert cand["content_read_error"] == "server_root_unreadable"
+
+
+def test_content_advisory_defaults_to_the_invoking_package_when_it_is_the_server():
+    """No divergence and no override — the invoking copy IS the copy the plugin
+    launches, so the advisory keeps its long-standing reference and says so."""
+    report = _build_report()
+    rs = report["remote_script"]
+    assert rs["source_content_authority"] == "invoking_package"
+    assert isinstance(rs["source_content_fingerprint"], str)
+    assert rs["source_content_root"] == report["package"]["root"]
+
+
+def test_cli_preflight_accepts_server_root_flag(capsys):
+    """End-to-end through the dispatcher: --server-root flows into the report,
+    beside the --server-version the skill already passes."""
+    from hallucinote_mcp import install_paths as P
+
+    rc = cli_main([
+        "preflight",
+        "--server-version", "0.1.0+from-resource",
+        "--server-root", str(P.package_root()),
+    ])
+    assert rc == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["remote_script"]["source_content_authority"] == "server_package_root"
+    assert report["remote_script"]["source_content_root"] == str(P.package_root())

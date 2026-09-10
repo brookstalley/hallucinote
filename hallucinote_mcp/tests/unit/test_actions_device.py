@@ -557,6 +557,99 @@ def test_load_appends_to_existing_chain(loaded_actions):
     assert [d.name for d in track.devices] == ["A", "B", "EQ8"]
 
 
+def test_load_reports_the_device_loaded_not_the_one_it_displaced(loaded_actions):
+    """Live keeps a chain in MIDI-effects / instrument / audio-effects order,
+    so loading a MIDI effect onto a track that already holds an instrument
+    inserts at the HEAD and pushes the instrument down. The response must name
+    the device just loaded at its real position — naming the displaced device
+    is the worst failure shape available here, because it names a REAL device
+    and nothing downstream (push's device linking reads `device_index`) can
+    tell it is wrong."""
+    track = FakeTrack("T1", devices=[
+        FakeDevice("Operator", class_name="Operator"),
+    ])
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    _add_browser_item(ctx, "midi_effects", "Pitch", uri="query:Pitch")
+
+    def fake_load(item):
+        ctx.application.browser.load_calls.append(item)
+        track.devices.insert(
+            0, FakeDevice(name=item.name, class_name="MidiPitcher")
+        )
+    ctx.application.browser.load_item = fake_load
+
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Pitch"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.to_dict()
+    assert [d.class_name for d in track.devices] == ["MidiPitcher", "Operator"]
+    assert resp.result["device_index"] == 1
+    assert resp.result["loaded_class_name"] == "MidiPitcher"
+    assert resp.result["name"] == "Pitch"
+
+
+def test_load_into_the_middle_of_a_chain_reports_that_position(loaded_actions):
+    """The MIDI-effect-at-the-head case is one instance, not the boundary: any
+    load Live does not append lands somewhere the tail does not name. An
+    instrument dropped between a MIDI effect and the audio effects reports its
+    own position."""
+    track = FakeTrack("T1", devices=[
+        FakeDevice("Pitch", class_name="MidiPitcher"),
+        FakeDevice("Reverb", class_name="Reverb"),
+    ])
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    _add_browser_item(ctx, "instruments", "Operator", uri="query:Operator")
+
+    def fake_load(item):
+        ctx.application.browser.load_calls.append(item)
+        track.devices.insert(
+            1, FakeDevice(name=item.name, class_name="Operator")
+        )
+    ctx.application.browser.load_item = fake_load
+
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Operator"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.to_dict()
+    assert resp.result["device_index"] == 2
+    assert resp.result["loaded_class_name"] == "Operator"
+
+
+def test_load_of_a_second_same_class_device_still_reports_the_tail(loaded_actions):
+    """Positional diff boundary: when the loaded device's class already sits in
+    the chain, the first diverging position is where the chain grew — for a
+    plain append that is still the tail, so the common shape is unchanged."""
+    track = FakeTrack("T1", devices=[
+        FakeDevice("EQ8", class_name="Eq8"),
+    ])
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    _add_browser_item(ctx, "audio_effects", "EQ Eight", uri="query:Eq8")
+
+    def fake_load(item):
+        ctx.application.browser.load_calls.append(item)
+        track.devices.append(FakeDevice(name=item.name, class_name="Eq8"))
+    ctx.application.browser.load_item = fake_load
+
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "EQ Eight"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.to_dict()
+    assert resp.result["device_index"] == 2
+    assert resp.result["name"] == "EQ Eight"
+
+
 def test_load_with_preset_uri_finds_by_uri_in_nested_folder(loaded_actions):
     """preset_uri match walks the full tree, including non-default roots."""
     ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))

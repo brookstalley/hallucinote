@@ -610,3 +610,18 @@ def test_an_old_baseline_that_reconciles_cleanly_still_diffs():
 
     assert "master_deltas_refused" not in out
     assert _find(out, "master", "lufs_i")["delta"] == pytest.approx(-0.6)
+
+
+def test_a_stored_residual_of_exactly_zero_survives_rehydration():
+    """`or` on a numeric field would map a real 0.0 measurement to NaN. The
+    verdict does not read `residual_db`, so this is inert today — which is
+    exactly why it would go unnoticed until something did read it."""
+    from hallucinote.audio.compare import _reconciliation_from_json
+
+    recon = _reconciliation_from_json({
+        "residual_db": 0.0, "correlation": 0.959, "best_lag_samples": 0,
+        "gain_offset_db": -1.2, "worst_offender": None, "skipped": None,
+    })
+
+    assert recon is not None
+    assert recon.residual_db == 0.0

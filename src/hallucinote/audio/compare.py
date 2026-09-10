@@ -262,20 +262,20 @@ def _master_disqualification(
             _reconciliation_from_json(report.get("sum_reconciliation"))
         )
     if verdict is not None:
-            metric, observed, expected = verdict
-            return {
-                "reason": "master_not_stem_sum",
-                "side": side,
-                "metric": metric,
-                "observed": observed,
-                "expected": expected,
-                "detail": (
-                    f"the {side} report's master is not the sum of its stems, "
-                    "so a master delta would compare a capture of something "
-                    "other than the mix against one of the mix. Stem deltas "
-                    "below are unaffected."
-                ),
-            }
+        metric, observed, expected = verdict
+        return {
+            "reason": "master_not_stem_sum",
+            "side": side,
+            "metric": metric,
+            "observed": observed,
+            "expected": expected,
+            "detail": (
+                f"the {side} report's master is not the sum of its stems, "
+                "so a master delta would compare a capture of something "
+                "other than the mix against one of the mix. Stem deltas "
+                "below are unaffected."
+            ),
+        }
     return None
 
 
@@ -292,10 +292,14 @@ def _reconciliation_from_json(raw: Any) -> SumReconciliation | None:
     try:
         correlation = float(raw["correlation"])
         gain_offset_db = float(raw["gain_offset_db"])
-        # Inside the try with the other two: the serializer legitimately writes
-        # null here, and a rehydration that raises on a field the verdict does
-        # not read would refuse a report the lens could have judged.
-        residual_db = float(raw.get("residual_db") or float("nan"))
+        # Inside the try with the other two so a rehydration cannot raise on a
+        # field the verdict never reads. `is not None` rather than a truthiness
+        # test: a stored residual of exactly 0.0 is a real measurement, and
+        # `or` would silently turn it into NaN.
+        raw_residual = raw.get("residual_db")
+        residual_db = (
+            float(raw_residual) if raw_residual is not None else float("nan")
+        )
     except (KeyError, TypeError, ValueError):
         return None
     return SumReconciliation(

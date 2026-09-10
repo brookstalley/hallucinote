@@ -101,6 +101,21 @@ blocked the very recovery the shortfall alert recommends — `--resume auto` wil
 not silently select a shortfall journal, and an unreadable phase counts as
 mid-flight, because unknown degrades to dangerous.
 
+**A journal written before this release cannot be replayed, and the two refusals
+share one exit.** `JOURNAL_VERSION` goes 1 → 2 because a v1 entry carries no DB
+`position` — it is precisely a record written by the code that could not see a
+surviving analyzer, so replaying it would reproduce the off-by-one this work
+ends. `read_journal` refuses it by version rather than guessing. A v1 file left
+on disk by a pre-release crash therefore meets the operator twice: `journal_phase`
+cannot read a phase it does not know, unknown degrades to mid-flight, and
+`push execute` refuses and points at `--resume auto` — which then refuses on the
+version. Both refusals name the file and neither destroys anything, but the way
+out is stated in only one place, so it is stated here and in
+`docs/song-authoring-conventions.md`: read the journal, rebuild the chain from
+the DB (`chain-rebuild` with no `--resume`), delete the journal. The same trap
+runs backwards on a rollback — an engine at v1 refuses a v2 journal — and the
+exit is the same one.
+
 **#536 — an unreadable sidechain source stopped vanishing quietly.** A device
 that exposes `S/C On` but no input routing (Multiband Dynamics) can be armed and
 never pointed anywhere, and a source set by hand in Live's UI was lost on the

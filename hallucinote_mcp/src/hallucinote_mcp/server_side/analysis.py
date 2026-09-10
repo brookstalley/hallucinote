@@ -411,6 +411,11 @@ def _collect_declared_envelopes(
     ``time_beats`` is already arrangement-local (song-absolute) beats for
     mixer/send/device envelopes (schema), so no bar→beat conversion is needed.
     Envelopes with fewer than two breakpoints carry no change to verify.
+
+    Each breakpoint carries its ``curve_kind`` through as well: it is the fact
+    that tells the verifier whether a change is a step at the breakpoint or a
+    traversal across the segment before it, and windowing a ramp as a step is
+    what made realized gestures read as unrealized.
     """
     out: list["DeclaredEnvelope"] = []
     for env in Q.get_envelopes_for_song(conn, song_id):
@@ -425,7 +430,18 @@ def _collect_declared_envelopes(
             target_kind=env["target_kind"],
             parameter_path=env["parameter_path"],
             breakpoints=tuple(
-                (float(b["time_beats"]), float(b["value"])) for b in bps
+                (
+                    float(b["time_beats"]),
+                    float(b["value"]),
+                    # The curve is what tells the verifier a STEP from a RAMP.
+                    # Dropping it here (which this boundary used to do) left the
+                    # audio module assuming every change was instantaneous, so
+                    # a ramp longer than its window put both windows ON the
+                    # ramp and a fully realized gesture read as unrealized.
+                    # NULL/absent → the schema's own default, 'linear'.
+                    str(b["curve_kind"] or "linear"),
+                )
+                for b in bps
             ),
         ))
     return out
@@ -845,6 +861,15 @@ def analyze_handler(
             # that answers "is the delivered output clipping?" (None → the master
             # block stays pre-fader bus only).
             master_fader_volume=master_fader_volume,
+            # …and say WHERE it came from. This handler runs server-side and
+            # never talks to Live (see the module docstring), so the value is
+            # the song DB's DECLARATION, not a reading of the set that was
+            # rendered. Marking it unverified is what stops a fader trimmed in
+            # Live but never pulled back from riding into the report as a
+            # measurement — and from making an agent re-trim a level it has
+            # already fixed, because delivered_true_peak_dbtp never moved.
+            master_fader_source="song_db",
+            master_fader_verified=False,
             compare_to=compare_to,
             analysis_dir=analysis_dir,
         )
@@ -908,6 +933,12 @@ def analyze_handler(
         "master_true_peak_dbtp": report_dict["master"]["loudness"]["true_peak_dbtp"],
         "delivered_true_peak_dbtp": report_dict["delivered_true_peak_dbtp"],
         "master_fader_db": report_dict["master_fader_db"],
+        # The delivered peak rides the fader, so the fader's provenance rides
+        # with it — /render-analyze surfaces ONLY this summary, and a caveat
+        # that lives solely in the report file would never reach the agent
+        # reading the number.
+        "master_fader_verified": report_dict["master_fader_verified"],
+        "master_fader_note": report_dict["master_fader_note"],
         "overshoot_count": len(report_dict["overshoots"]),
         "reverb_out_of_tolerance_count": len(out_of_tolerance),
         "section_count": len(report_dict["per_section"]),

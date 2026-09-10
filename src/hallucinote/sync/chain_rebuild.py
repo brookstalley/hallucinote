@@ -624,6 +624,13 @@ def _param_write_kwargs(param: dict[str, Any]) -> dict[str, Any] | None:
     ``value`` that was read off Live — the round trip is exact because it is the
     same scale in both directions, which a display-string round trip is not.
     Returns ``None`` when the capture carries nothing writable.
+
+    Both branches hand the wire a **string**: ``set_parameter`` declares
+    ``ParamSpec(name="value", type="str")`` and validation rejects a float
+    before it reaches Live, so a continuous value is carried as ``repr`` of the
+    float — shortest round-trip form, exact on the way back — and the handler
+    coerces it. Sending the bare float refused every continuous restore
+    (#533); the exactness this docstring claims was real but unreachable.
     """
     if param.get("is_enum") and param.get("value_items"):
         display = str(param.get("value_display") or "").strip()
@@ -633,7 +640,7 @@ def _param_write_kwargs(param: dict[str, Any]) -> dict[str, Any] | None:
     value = param.get("value")
     if value is None:
         return None
-    return {"value": float(value), "value_type": "continuous"}
+    return {"value": repr(float(value)), "value_type": "continuous"}
 
 
 def _restorable(param: dict[str, Any]) -> bool:

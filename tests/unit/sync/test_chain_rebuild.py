@@ -19,6 +19,10 @@ import json
 
 import pytest
 
+import hallucinote_mcp.actions  # noqa: F401  — registers every Action
+from hallucinote_mcp import schema as mcp_schema
+from hallucinote_mcp.dispatcher import validate_params
+
 from hallucinote.db import init_db, mutations as M, queries as Q
 from hallucinote.sync import chain_rebuild, live_escalation
 from hallucinote.sync.push import devices as push_devices
@@ -108,6 +112,16 @@ class FakeLive:
 
     # -- dispatch ----------------------------------------------------------
     def send(self, req):
+        # The wire validates every param against the action's ParamSpec before
+        # a handler ever sees it, so a fake that skips validation lets a
+        # wrong-typed param pass here and fail only against a real Live. That
+        # is exactly how #533 shipped: the restore sent a float where
+        # set_parameter declares type="str", and every continuous restore
+        # failed on first contact with Ableton while the suite stayed green.
+        # Validating here holds the fake to the same contract as the wire.
+        action = mcp_schema.get(req.tool, req.action)
+        if action is not None:
+            validate_params(action, dict(req.params))
         self.calls.append((req.tool, req.action, dict(req.params)))
         for hook in self.watch.get((req.tool, req.action), []):
             hook(dict(req.params))
@@ -1248,3 +1262,46 @@ def test_cli_resume_on_a_missing_journal_says_so(
     ])
     assert rc == 2
     assert "nothing to resume" in capsys.readouterr().err
+
+
+def test_a_continuous_restore_value_reaches_the_wire_as_a_string():
+    """#533. ``set_parameter`` declares ``ParamSpec(name="value", type="str")``,
+    so a bare float is rejected by validation before it reaches Live.
+
+    The restore sent one anyway, which meant NO continuous parameter had ever
+    been restored by a rebuild — the failure was invisible to this suite
+    because the fake dispatched params without validating them, and invisible
+    in review because ``_param_write_kwargs``'s docstring correctly describes
+    an exact raw-value round trip that the wire call could never perform.
+
+    Asserted here against the REAL action schema, not a copy of it, so the two
+    cannot drift apart again.
+    """
+    kwargs = chain_rebuild._param_write_kwargs(
+        {"name": "1 Gain A", "value": -1.99951171875}
+    )
+    assert kwargs is not None
+    assert isinstance(kwargs["value"], str), (
+        "a float here is refused by the wire and restores nothing"
+    )
+    # exact on the way back: repr is float's shortest round-trip form
+    assert float(kwargs["value"]) == -1.99951171875
+
+    action = mcp_schema.get("ableton_device", "set_parameter")
+    assert action is not None
+    validate_params(action, {
+        "node": {"parent": {"kind": "track", "index": 4},
+                 "terminal": "device", "device_index": 2},
+        "parameter_name": "1 Gain A",
+        **kwargs,
+    })
+
+
+def test_an_enum_restore_value_still_rides_its_display_string():
+    """The enum branch was always correct; #533 was the continuous branch
+    only. Pinned so a fix to one does not regress the other."""
+    kwargs = chain_rebuild._param_write_kwargs({
+        "name": "Mode", "is_enum": True,
+        "value_items": ["Standard", "Soft Clip"], "value_display": "Soft Clip",
+    })
+    assert kwargs == {"value": "Soft Clip", "value_type": "enum"}

@@ -212,10 +212,17 @@ def test_clip_pitch_bend_skipped_with_lom_gap_warn(
 # ---------- note_expression (MPE microtonal) ----------
 
 
-def test_note_expression_microtonal_pitch_envelope(
+def test_note_expression_is_refused_at_plan_time(
     conn, song, session, linked_track, linked_clip, note,
 ):
-    """Synthetic microtonal MPE: a per-note pitch envelope (semitone offsets)."""
+    """A per-note bend never reaches dispatch: Live has no surface for it.
+
+    This test used to assert the addressing of a `write_envelope` call built
+    for `Clip.envelope_for_note` — a method Live has never shipped. The LOM
+    exposes no per-note expression surface under any name, so the call could
+    only ever be refused; the contract is now the refusal, and it arrives
+    before the phase starts rather than partway through it.
+    """
     eid = M.create_envelope(
         conn, song_id=song, target_kind="note_expression",
         target_note_id=note, parameter_path="pitch",
@@ -229,20 +236,12 @@ def test_note_expression_microtonal_pitch_envelope(
         ],
     )
     plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
-    calls = _calls_by_target_kind(plan)
-    assert list(calls) == ["note_expression"]
-    call = calls["note_expression"][0]
-    assert call.tool == "ableton_automation"
-    assert call.args["track_index"] == 5
-    assert call.args["location"] == "session"
-    assert call.args["clip_index"] == 1
-    assert call.args["note_pitch"] == 60
-    assert call.args["note_start_beats"] == 1.5
-    # W7-0 anchor (P1): planner threads the note's duration so the MCP
-    # handler can extend the last step to note end (note spans 1.5..2.5).
-    assert call.args["note_duration"] == 1.0
-    assert call.args["axis"] == "pitch"
-    assert len(call.args["breakpoints"]) == 3
+    assert _calls_by_target_kind(plan) == {}
+    assert plan.blocked_reasons, plan.notes
+    reason = " ".join(plan.blocked_reasons)
+    assert "no per-note expression surface" in reason
+    # The refusal has to name the route that DOES work, or it strands the user.
+    assert "device_parameter" in reason
 
 
 # ---------- device_parameter (track + return) ----------
@@ -884,19 +883,15 @@ def test_emittable_target_kinds_in_one_song(
     conn, song, session, linked_track, linked_clip, linked_return,
     linked_device, note, arr_clip,
 ):
-    """W4-B: five target_kinds are emittable today (clip_cc / clip_pitch_bend
-    are skip-and-warn per the LOM gap). All emit through one
+    """Four target_kinds are emittable today. All emit through one
     ableton_automation tool; each carries the envelope:<id> key.
 
-    ``arr_clip`` provides session-clip routing for the four mix-targeting
-    kinds; the note_expression envelope addresses ``linked_clip`` directly
-    via target_note_id.
+    ``clip_cc`` / ``clip_pitch_bend`` are skip-and-warn per the LOM gap, and
+    ``note_expression`` is refused outright — Live exposes no per-note
+    expression surface for it to reach. ``arr_clip`` provides the session-clip
+    routing the four need.
     """
     eids = []
-    eids.append(M.create_envelope(
-        conn, song_id=song, target_kind="note_expression",
-        target_note_id=note, parameter_path="timbre",
-    ))
     eids.append(M.create_envelope(
         conn, song_id=song, target_kind="device_parameter",
         target_device_id=linked_device, parameter_path="Threshold",
@@ -921,7 +916,6 @@ def test_emittable_target_kinds_in_one_song(
         "device_parameter",
         "mixer_pan",
         "mixer_volume",
-        "note_expression",
         "send_level",
     ]
     # Single-tool collapse holds across all emittable target_kinds.
@@ -1046,20 +1040,21 @@ def test_skipped_envelope_does_not_emit_lossy_curve_warn(
     assert any("clip_cc" in n and "Skipping" in n for n in plan.notes)
 
 
-def test_lossy_warn_fires_on_note_expression_path(
-    conn, song, session, linked_track, linked_clip, note,
+def test_lossy_warn_fires_on_the_send_level_path(
+    conn, song, session, linked_track, linked_clip, linked_return, arr_clip,
 ):
-    """The warn helper is wired into all four emit paths. Cross-path
-    canary: note_expression envelope with lossy curves → one warn."""
+    """The warn helper is wired into every emit path, not just the one its
+    own tests exercise. Cross-path canary — it rode note_expression until
+    that kind stopped emitting at all."""
     eid = M.create_envelope(
-        conn, song_id=song, target_kind="note_expression",
-        target_note_id=note, parameter_path="pitch",
+        conn, song_id=song, target_kind="send_level",
+        target_track_id=linked_track, target_send_return_id=linked_return,
     )
     _add_one_breakpoint(conn, eid)  # linear defaults
     plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
     warns = _lossy_warns(plan)
     assert len(warns) == 1, plan.notes
-    assert "note_expression" in warns[0]
+    assert "send_level" in warns[0]
 
 
 # ---------------------------------------------------------------------------

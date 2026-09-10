@@ -669,8 +669,9 @@ pitch and gain are ordinary device parameters and envelopes.
 **What is not there yet.** The score-dependent `carve` / `vocode` transforms are
 built and unit-tested but have **never been pushed to Live** — the one piece of
 the sampling path with no live run behind it. Per-note MPE bends
-(`note_expression`) cannot be pushed at all on Live 12.4.5: `Clip.envelope_for_note`
-does not exist (#515), so a monophonic line's glide goes through a
+(`note_expression`) cannot be pushed at all — Live's Python API exposes no
+per-note expression surface under any name, so this is permanent rather than
+pending a Live update (#515). A monophonic line's glide goes through a
 `device_parameter` ride instead. Source separation is deferred (#266); a sampler nested inside
 a rack is pushed but not captured back; a sampler's reverse has no intent column
 to read from. R4.3 (formant-preserving grain-scatter) is **no longer gated** —

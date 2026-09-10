@@ -532,47 +532,27 @@ def _emit_note_expression_envelope(
     envelope: sqlite3.Row,
     breakpoints_mcp: list[dict[str, Any]],
 ) -> None:
-    """note_expression emission — MPE per-note envelopes addressed by
-    (clip, pitch, start_beats). Note links aren't tracked, so the canonical
-    args identify the note in-band."""
-    note_row = Q.get_note(conn, envelope["target_note_id"])
-    if note_row is None:
-        plan.warn(
-            f"envelope {envelope['id']} (note_expression): note "
-            f"{envelope['target_note_id']} not found; skipping"
-        )
-        return
-    track_at, clip_at = _clip_and_track_indices(
-        conn, session_id=session_id, clip_id=note_row["clip_id"]
+    """Refuse a note_expression row at plan time — the route does not exist.
+
+    Live's Python API exposes no per-note expression surface under any name,
+    so there is nothing for this envelope to be written through: not a method
+    waiting on the right spelling, and not a gap a Live update is expected to
+    close. Nothing in the codebase authors such a row any more, so reaching
+    here means a DB predating that.
+
+    This refuses rather than dispatching because the call it used to build is
+    now refused at the MCP boundary, and a refusal that arrives mid-push has
+    already begun a phase it cannot finish. `blocked` is the right channel:
+    the song asked for something the push cannot carry, which leaves the run
+    INCOMPLETE and non-zero without halting the phases behind it.
+    """
+    plan.blocked(
+        f"envelope {envelope['id']} (note_expression): Live's Python API has "
+        "no per-note expression surface under any name, so a polyphonic "
+        "per-note bend cannot be pushed by any route. Author a monophonic "
+        "glide as a `device_parameter` ride on the instrument's pitch "
+        "parameter instead, and drop this row from build.py."
     )
-    if track_at is None or clip_at is None:
-        plan.warn(
-            f"envelope {envelope['id']} (note_expression): clip not linked "
-            f"(track={track_at}, clip={clip_at}); skipping"
-        )
-        return
-    plan.add(ToolCall(
-        tool="ableton_automation",
-        args={
-            "action": "write_envelope",
-            "target_kind": "note_expression",
-            "track_index": track_at,
-            "location": "session",
-            "clip_index": clip_at,
-            "note_pitch": note_row["pitch"],
-            "note_start_beats": float(note_row["start_beats"]),
-            "note_duration": float(note_row["duration_beats"]),
-            "axis": envelope["parameter_path"],
-            "breakpoints": breakpoints_mcp,
-        },
-        key=f"envelope:{envelope['id']}",
-        purpose=(
-            f"note_expression {envelope['parameter_path']} on note "
-            f"pitch={note_row['pitch']} @ beat {note_row['start_beats']:g}: "
-            f"{len(breakpoints_mcp)} breakpoint(s)"
-        ),
-    ))
-    _warn_lossy_curve_hints(plan, envelope=envelope, breakpoints_mcp=breakpoints_mcp)
 
 
 _LOSSY_CURVE_HINTS = frozenset({"linear", "fast", "slow"})

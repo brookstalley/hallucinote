@@ -210,33 +210,16 @@ def test_clip_pitch_bend_skipped_with_lom_gap_warn(
 # ---------------------------------------------------------------------------
 
 
-def test_note_expression_emits_correct_addressing(
+def test_note_expression_is_refused_at_plan_time(
     conn, song, session, linked_track, linked_clip, note,
 ):
-    eid = M.create_envelope(
-        conn, song_id=song, target_kind="note_expression",
-        target_note_id=note, parameter_path="pitch",
-    )
-    _add_two_breakpoints(conn, eid)
-    plan = pull.plan_pull_envelopes(conn, song_id=song, session_id=session)
-    assert len(plan.calls) == 1
-    call = plan.calls[0]
-    assert call.tool == "ableton_automation"
-    assert call.args["action"] == "read_envelope"
-    assert call.args["target_kind"] == "note_expression"
-    assert call.args["track_index"] == 5
-    assert call.args["clip_index"] == 1
-    assert call.args["location"] == "session"
-    assert call.args["note_pitch"] == 60
-    assert call.args["note_start_beats"] == 1.5
-    assert call.args["axis"] == "pitch"
-    assert call.key == f"envelope:{eid}"
+    """There is nothing in Live to read back, so no read is planned.
 
-
-def test_note_expression_skips_when_clip_not_linked(
-    conn, song, session, linked_track, clip, note,
-):
-    """Clip linked is required (track linked alone isn't enough)."""
+    This test used to assert the addressing of a `read_envelope` call that
+    mirrored push's write. Both rode `Clip.envelope_for_note`, a method Live
+    has never shipped, and the LOM exposes no per-note expression surface
+    under any name — so no envelope of this kind can exist in Live at all.
+    """
     eid = M.create_envelope(
         conn, song_id=song, target_kind="note_expression",
         target_note_id=note, parameter_path="pitch",
@@ -244,7 +227,27 @@ def test_note_expression_skips_when_clip_not_linked(
     _add_two_breakpoints(conn, eid)
     plan = pull.plan_pull_envelopes(conn, song_id=song, session_id=session)
     assert plan.calls == []
-    assert any("not linked" in n for n in plan.notes)
+    assert any("no per-note expression surface" in n for n in plan.notes), plan.notes
+
+
+def test_note_expression_is_refused_even_when_nothing_is_linked(
+    conn, song, session, linked_track, clip, note,
+):
+    """The refusal does not depend on link state — it is about the API.
+
+    Worth pinning separately: the old skip here was 'clip not linked', which
+    is a fixable condition. This one never becomes fixable, and telling a user
+    to link a clip would send them to work that changes nothing.
+    """
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="note_expression",
+        target_note_id=note, parameter_path="pitch",
+    )
+    _add_two_breakpoints(conn, eid)
+    plan = pull.plan_pull_envelopes(conn, song_id=song, session_id=session)
+    assert plan.calls == []
+    assert any("no per-note expression surface" in n for n in plan.notes), plan.notes
+    assert not any("not linked" in n for n in plan.notes)
 
 
 # ---------------------------------------------------------------------------

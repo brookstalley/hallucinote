@@ -627,10 +627,11 @@ def _param_write_kwargs(param: dict[str, Any]) -> dict[str, Any] | None:
 
     Both branches hand the wire a **string**: ``set_parameter`` declares
     ``ParamSpec(name="value", type="str")`` and validation rejects a float
-    before it reaches Live, so a continuous value is carried as ``repr`` of the
-    float — shortest round-trip form, exact on the way back — and the handler
-    coerces it. Sending the bare float refused every continuous restore
-    (#533); the exactness this docstring claims was real but unreachable.
+    before it reaches Live. A continuous value therefore rides ``str`` of the
+    float — shortest round-trip form, so the exactness above survives it — and
+    the handler coerces it back. ``str`` and not ``repr`` because
+    ``push.devices._param_value_kv`` produces the same wire field the same way;
+    two producers of one field that choose differently is how they drift.
     """
     if param.get("is_enum") and param.get("value_items"):
         display = str(param.get("value_display") or "").strip()
@@ -640,7 +641,7 @@ def _param_write_kwargs(param: dict[str, Any]) -> dict[str, Any] | None:
     value = param.get("value")
     if value is None:
         return None
-    return {"value": repr(float(value)), "value_type": "continuous"}
+    return {"value": str(float(value)), "value_type": "continuous"}
 
 
 def _restorable(param: dict[str, Any]) -> bool:

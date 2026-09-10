@@ -164,6 +164,28 @@ LOM objects). The point is explicitness, not narrowing: the set of values
 server-side `coerce_wire_value` stays exactly as it is — #508 rejected typing *as
 a substitute for* coercion, not typing *alongside* it.
 
+### Chunk 02 flips no fingerprint — #537's stated re-vendor cost was wrong
+
+Found at integration, and it corrects the reasoning that put this chunk in
+scope. #537's body says *"`actions/probe.py` and `handlers/probe.py` are hashed
+into the version-handshake fingerprint, so this **forces a re-vendor**"*, and the
+plan inherited that. The fix as built touches **neither** file: `ParamSpec` has
+no schema hook, so the change lands in `server.py`, and `_FINGERPRINT_PATHS`
+(`hallucinote_mcp/src/hallucinote_mcp/__init__.py:46`) is exactly `wire.py`,
+`schema.py`, `dispatcher.py`, `actions`, `handlers`, `remote_script` — `server.py`
+is not in it.
+
+So this chunk forces no re-vendor on its own. What it needs to take effect is an
+**MCP server restart** — the schema is emitted by the locally running
+`hallucinote-mcp` process, not by the copy vendored into Live's User Library, and
+the Remote Script is the far side of the wire rather than the thing that
+generates the schema.
+
+The release's re-vendor verdict is unchanged, because other work since `v1.8.6`
+*does* touch `actions/` and `handlers/` — 19 such files. The correction matters to
+the release note's per-item instruction, not to the consumer-facing verdict: a
+reader should not be told to re-vendor *for this item*.
+
 ### The release's two governance gaps, dispositioned (owner rulings, 2026-09-10)
 
 Both were surfaced as release decisions and both were ruled by the owner while

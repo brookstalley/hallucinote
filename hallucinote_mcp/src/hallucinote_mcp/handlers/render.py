@@ -283,8 +283,8 @@ def _refuse_under_solo(mixer_state: list[dict[str, Any]]) -> list[str]:
             f"{t['kind']} {t['index']} ({t['name']!r})" for t in soloed
         )
         raise SoloedTrackError(
-            f"render refused: {len(soloed)} track(s) are SOLOED — {named}. "
-            "Solo silences every other track, so the master bus would carry "
+            f"render refused: {len(soloed)} surface(s) are SOLOED — {named}. "
+            "Solo silences everything else, so the master bus would carry "
             "only the soloed part and every other stem would capture silence. "
             "The capture would be faithful to a mix nobody meant to render, "
             "and the report would read as a large mix change. Clear solo in "

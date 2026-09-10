@@ -58,8 +58,9 @@ completely and reopen (Live caches Control Surface modules at launch), then `/mc
   `mute: true` for that row. A mute is a plausible authoring choice; refusing it would
   train the operator to work around the guard.
 - [ ] **The mixer state is recorded on a clean render.** Clear every solo and mute and
-  render. Pass = `manifest.mixer_state` has one row per track carrying `solo: false`,
-  `mute: false` and a `volume` matching Live's fader. This is the half that makes an
+  render. Pass = `manifest.mixer_state` has one row per track AND one per return, each
+  carrying its `kind`, `solo: false`, `mute: false` and a `volume` matching Live's
+  fader. This is the half that makes an
   OLD report auditable — without it, the incident could only be diagnosed by probing a
   Live session that had already moved on.
 - [ ] **A soloed RETURN refuses too, and a clean song with returns does not.** Solo

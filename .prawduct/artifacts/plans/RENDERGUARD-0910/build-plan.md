@@ -87,6 +87,11 @@ overturned rather than discovered in the code.
   last is unrelated to this incident.
 - Any change to the analyzer, the capture path, or surface binding. Nothing is wrong
   there, and the earlier reading that said otherwise is retracted.
+- **Rack-chain solo.** Chain solo is first-class here (`handlers/device.py` `is_soloed`,
+  the `device_chains.solo` column), and a soloed chain does change what renders — but it
+  silences sibling chains inside one rack rather than the song, so it is materially
+  weaker than a track or return solo and is new scope rather than a missed part of this
+  guard. Filed rather than accepted, so it is not lost.
 
 ## Status
 
@@ -192,6 +197,7 @@ a refusal that fires against real Live solo state is not provable against a fake
 - Two soloed tracks are both named in one refusal.
 - A soloed RETURN refuses, and the message names `return N` — the collection that is
   not `song.tracks` and is the easy one to miss.
+- The refusal's own wording says `surface(s)`, not `track(s)`: it can name a return.
 - A muted track or return warns, names it, and the render proceeds.
 - A clean song renders exactly as today, with the new manifest fields present.
 - The manifest carries solo/mute/volume for every track on a clean render.

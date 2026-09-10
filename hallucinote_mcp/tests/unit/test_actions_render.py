@@ -1604,7 +1604,7 @@ def test_a_solo_refusal_names_every_soloed_track(
         )
 
     msg = str(excinfo.value)
-    assert "2 track(s)" in msg
+    assert "2 surface(s)" in msg
     for track in ctx_two_tracks_one_return.song.tracks[:2]:
         assert track.name in msg
 

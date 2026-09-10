@@ -213,7 +213,12 @@ lenses never fail a build) — and a new test file fails on a block in neither. 
 failure. It does not catch a parameter that exists and is ignored in the body; that
 guarantee is not claimed.
 
-The Critic caught the returns gap, the baseline half of the gate, and the summary key.
+The Critic caught the returns gap, the baseline half of the gate, and the summary key —
+then, on the verification round, caught that the summary passthrough had shipped with no
+test reaching it through the handler, which is the same shape of gap this entry retracts
+two paragraphs above. Rack-chain solo is a real hole in the same guard and is filed as
+#550 rather than accepted: a soloed chain silences siblings inside one rack, not the
+song, so it is weaker than a track or return solo and is its own scope.
 
 ## 2026-09-10 — The release blockers: a restore that lands on the right device, and a failure that says so
 

@@ -25,7 +25,7 @@ import re
 import sqlite3
 import warnings
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any
 
 from hallucinote.db import mutations as M
@@ -57,6 +57,24 @@ _LIST_KEYS = frozenset({"bars", "tags", "related"})
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _FRONTMATTER_DELIM = "---"
 _SONG_PATH_RE = re.compile(r"^songs/([a-z0-9_-]+)/")
+
+
+def _relpath(path: PurePath, repo_root: PurePath) -> str:
+    """Repo-relative path as a POSIX-separated string — the one shape a
+    `markdown_refs.path` value ever takes.
+
+    Every stored path and the reindex tombstone prefix are built here, so the
+    prefix test (`path.startswith(prefix)`) and `_SONG_PATH_RE` above always
+    compare like with like. `str(Path.relative_to(...))` would emit the NATIVE
+    separator, which on Windows makes a stored `songs\\slug\\decisions\\x.md`
+    and a prefix `songs\\slug/` — a match that silently never fires, so a
+    single-song reindex tombstones nothing and stale rows outlive their files.
+    `as_posix()` is the normalization; it is a no-op where `/` is native.
+
+    Takes `PurePath` so a Windows-shaped path can be exercised (via
+    `PureWindowsPath`) from a POSIX test run.
+    """
+    return path.relative_to(repo_root).as_posix()
 
 
 # ---------------------------------------------------------------------------
@@ -384,7 +402,7 @@ def load_markdown_doc(path: Path, *, repo_root: Path) -> MarkdownDoc:
             )
         fm = Frontmatter(kind=kind, scope="song")
         body = text.strip()
-    relpath = str(path.relative_to(repo_root))
+    relpath = _relpath(path, repo_root)
     return MarkdownDoc(
         path=path,
         relpath=relpath,
@@ -508,7 +526,7 @@ def reindex_corpus(
         raise ValueError("pass exactly one of songs_root / song_dir")
     if song_dir is not None:
         corpus = discover_song_corpus(song_dir)
-        tombstone_prefix = f"{song_dir.relative_to(repo_root)}/"
+        tombstone_prefix = f"{_relpath(song_dir, repo_root)}/"
     else:
         corpus = discover_corpus(songs_root)  # type: ignore[arg-type]
         tombstone_prefix = None
@@ -518,7 +536,7 @@ def reindex_corpus(
         try:
             docs.append(load_markdown_doc(p, repo_root=repo_root))
         except ValueError as exc:
-            relpath = str(p.relative_to(repo_root))
+            relpath = _relpath(p, repo_root)
             skipped.append(relpath)
             warnings.warn(
                 f"reindex_corpus: skipping unparseable corpus file {relpath}: "

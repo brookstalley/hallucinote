@@ -2934,17 +2934,53 @@ def test_unknown_result_kind_records_nothing_for_the_batch(
 
 def test_known_result_key_kinds_is_the_union_of_the_apply_tables():
     """KNOWN_RESULT_KEY_KINDS is the ONE registry (SYN-8Q3F): exactly the two
-    dispatch tables plus the dedicated perform_batch branch — so the static
-    emitted-kind guard, the apply dispatch, and the executor hint can never
-    disagree about what 'known' means."""
+    dispatch tables plus the kinds resolved by a dedicated branch — so the
+    static emitted-kind guard, the apply dispatch, and the executor hint can
+    never disagree about what 'known' means.
+
+    The dedicated set is spelled out HERE as a literal on purpose. Reading it
+    back from `plan._DEDICATED_BRANCH_KINDS` would make this assertion a
+    tautology, because that is the set `KNOWN_RESULT_KEY_KINDS` is built from —
+    so a new dedicated kind has to be declared in two places that cannot see
+    each other, and this test is the second one.
+    """
     from hallucinote.sync.push import plan
 
-    assert plan.KNOWN_RESULT_KEY_KINDS == (
-        frozenset(plan._LINK_KINDS) | plan._ACK_ONLY_KINDS | {"perform_batch"}
+    dedicated = {"perform_batch", "device_sidechain_probe"}
+    assert set(plan._DEDICATED_BRANCH_KINDS) == dedicated, (
+        "a dedicated-branch kind appeared or vanished — declare it here too, "
+        "and check it really has a branch below"
     )
-    # Adding an enum-member-equivalent (a new kind) without declaring it can't
-    # pass: the registry is DERIVED from the tables, and the static guard in
-    # test_push.py checks every planner-emitted kind against those tables.
+    assert plan.KNOWN_RESULT_KEY_KINDS == (
+        frozenset(plan._LINK_KINDS) | plan._ACK_ONLY_KINDS | dedicated
+    )
+
+
+def test_every_dedicated_branch_kind_really_has_a_branch():
+    """Declaring a kind in `_DEDICATED_BRANCH_KINDS` admits it past
+    `apply_push_results`' unknown-kind raise. If no branch then handles it, the
+    result is silently dropped — the exact silent-drop class the registry exists
+    to close, arriving through the registry itself.
+
+    So every declared kind must be dispatched on by name. Checked against the
+    source because the alternative is constructing a valid result payload per
+    kind, which is what the per-branch tests already do; this one answers the
+    cheaper and different question of whether a branch exists AT ALL.
+    """
+    import inspect
+
+    from hallucinote.sync.push import plan
+
+    source = inspect.getsource(plan.apply_push_results)
+    missing = [
+        kind for kind in plan._DEDICATED_BRANCH_KINDS
+        if f'kind == "{kind}"' not in source
+    ]
+    assert not missing, (
+        f"declared in _DEDICATED_BRANCH_KINDS with no branch in "
+        f"apply_push_results: {sorted(missing)} — each would be admitted past "
+        f"the unknown-kind raise and then dropped"
+    )
 
 
 def test_errors_file_write_failure_still_closes_request(

@@ -1624,3 +1624,70 @@ def test_the_fake_refuses_an_action_the_wire_does_not_register():
     )
     with pytest.raises(AssertionError, match="not a registered MCP action"):
         live.send(_Req())
+
+
+# ---------- the journal's two meanings (#538 integration) ----------
+
+
+def test_a_shortfall_stamps_its_journal_so_a_later_reader_can_tell(
+    conn, song, session, revoice, live, song_dir,
+):
+    """The retained journal has to say WHICH kind of retention it is.
+
+    A rebuild that finished and rebound its links, missing some values, is not a
+    rebuild that stopped mid-demolition — and `push execute` must treat them
+    differently, so the distinction has to survive on disk rather than living in
+    the exit code of a process that already ended.
+    """
+    original = live._ableton_device__set_parameter
+
+    def _refuse_amount(params):
+        if params["parameter_name"] == "Amount":
+            return _Resp(ok=False, error="parameter is automated")
+        return original(params)
+
+    live._ableton_device__set_parameter = _refuse_amount
+    result = _rebuild(conn, song, session, live, song_dir)
+
+    assert not result.ok
+    journal = chain_rebuild.journal_path_for(song_dir, "track", 3)
+    assert journal.exists()
+    assert chain_rebuild.journal_phase(journal) == chain_rebuild.PHASE_SHORTFALL
+    mid_flight, shortfall = chain_rebuild.partition_journals(song_dir)
+    assert shortfall == [journal]
+    assert mid_flight == [], (
+        "a finished-but-short rebuild is not a chain anyone abandoned"
+    )
+
+
+def test_an_unreadable_journal_is_treated_as_mid_flight(song_dir):
+    """Unknown degrades to dangerous. A journal this cannot parse might describe
+    a half-demolished chain, so it must never be classified as the benign kind —
+    that is the direction the failure has to fall."""
+    d = chain_rebuild.journal_dir_for(song_dir)
+    d.mkdir(parents=True, exist_ok=True)
+    garbage = d / "track-9.json"
+    garbage.write_text("{not json at all")
+
+    assert chain_rebuild.journal_phase(garbage) == ""
+    mid_flight, shortfall = chain_rebuild.partition_journals(song_dir)
+    assert mid_flight == [garbage] and shortfall == []
+
+
+def test_a_mid_flight_journal_classifies_as_mid_flight(song_dir):
+    """The phases a rebuild passes through before it can possibly be short."""
+    d = chain_rebuild.journal_dir_for(song_dir)
+    d.mkdir(parents=True, exist_ok=True)
+    for i, phase in enumerate((
+        chain_rebuild.PHASE_JOURNALED,
+        chain_rebuild.PHASE_DEMOLISHED,
+        chain_rebuild.PHASE_REBUILT,
+        chain_rebuild.PHASE_RESTORED,
+    )):
+        (d / f"track-{i}.json").write_text(
+            json.dumps({"version": chain_rebuild.JOURNAL_VERSION, "phase": phase})
+        )
+
+    mid_flight, shortfall = chain_rebuild.partition_journals(song_dir)
+    assert len(mid_flight) == 4 and shortfall == []
+

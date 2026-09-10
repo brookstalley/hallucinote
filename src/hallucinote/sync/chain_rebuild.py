@@ -99,6 +99,11 @@ PHASE_DEMOLISHED = "demolished"
 PHASE_REBUILT = "rebuilt"
 PHASE_RESTORED = "restored"
 PHASE_VERIFIED = "verified"
+PHASE_SHORTFALL = "shortfall"
+"""The rebuild finished and rebound its links, and some captured parameters
+never landed. Distinct from the phases above because it describes a chain that
+is CORRECT and linked, with values missing — not one a rebuild abandoned
+mid-flight. `push execute` refuses the latter and only warns about this."""
 
 
 class RebuildRefused(Exception):
@@ -371,6 +376,36 @@ def read_journal(path: Path) -> dict[str, Any]:
             f"and rebuild the chain from it."
         )
     return payload
+
+
+def journal_phase(path: Path) -> str:
+    """The phase recorded in one journal, or ``""`` when it cannot be read.
+
+    Unreadable counts as unknown, never as finished: a journal whose phase this
+    cannot determine is treated by every caller as the dangerous kind.
+    """
+    try:
+        payload = json.loads(Path(path).read_text())
+    except Exception:  # prawduct:allow prawduct/broad-except -- an unreadable journal must degrade to "unknown phase", which every caller treats as mid-flight; re-raising here would turn a recovery hint into a crash.
+        return ""
+    phase = payload.get("phase")
+    return phase if isinstance(phase, str) else ""
+
+
+def partition_journals(song_dir: Path) -> tuple[list[Path], list[Path]]:
+    """Split the journals on disk into ``(mid_flight, shortfall)``.
+
+    A shortfall journal describes a chain that is rebuilt, rebound and verified
+    for everything that landed — values are missing from it, the chain is not.
+    Everything else describes a rebuild that stopped somewhere between the first
+    delete and the verify, which is the state a push must not plan over.
+    """
+    mid_flight: list[Path] = []
+    shortfall: list[Path] = []
+    for journal in stranded_journals(song_dir):
+        (shortfall if journal_phase(journal) == PHASE_SHORTFALL
+         else mid_flight).append(journal)
+    return mid_flight, shortfall
 
 
 def stranded_journals(song_dir: Path) -> list[Path]:
@@ -1418,6 +1453,12 @@ def _destructive_body(
         # describes is the one an operator has to finish by hand.
         result.ok = False
         result.journal_path = journal_path
+        # Stamp the journal so a later reader can tell this chain apart from one
+        # a rebuild abandoned: the links are rebound and the chain is in the
+        # DB's order here, so `push execute` warns about it rather than
+        # refusing (which would block the very recovery the alert recommends).
+        journal["phase"] = PHASE_SHORTFALL
+        write_journal(journal_path, journal)
         result.alerts.append(
             f"chain-rebuild: SHORTFALL on {parent_kind} #{parent_index} — "
             f"{len(written)} of {len(expected_params)} writable parameter(s) "

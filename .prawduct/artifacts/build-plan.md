@@ -164,6 +164,42 @@ LOM objects). The point is explicitness, not narrowing: the set of values
 server-side `coerce_wire_value` stays exactly as it is — #508 rejected typing *as
 a substitute for* coercion, not typing *alongside* it.
 
+### A requirement surfaced at integration: a retained journal has two meanings
+
+Chunk 01's #538 half introduced a state the module did not previously have, and
+nothing in the plan anticipated what it collides with. **A shortfall journal and
+a mid-flight journal are not the same object, and `push execute` treats them
+identically.**
+
+`push_cli._refuse_on_stranded_rebuild` (`push_cli.py:833`) runs unconditionally
+in `push execute`, before any phase and regardless of `--only`. Its reasoning is
+that a journal means a rebuild "gutted a chain and did not finish", so the DB's
+device links describe a chain Live no longer has. That is true of a journal left
+at `journaled` / `demolished` / `rebuilt`. It is **false** of a shortfall journal:
+`_rebind_links` has already run, the chain is in the DB's order, and the verify
+passed for everything that landed — only some captured values are missing.
+
+The collision is concrete and self-inflicted: the shortfall alert tells the
+operator to run `push execute --only devices` to re-apply what did not land, and
+that command is refused by the journal the shortfall just retained. A fix whose
+own recommended recovery is blocked by the fix is not finished.
+
+**Requirement.** The journal's state is readable, and the refusal acts on it:
+a mid-flight journal refuses the push (unchanged); a shortfall journal warns,
+names itself, and lets the push proceed. Retention itself is not up for
+negotiation — #538 asks for it by name, and the journal is the only record of
+the values that did not land.
+
+The mechanism was already there and unused: the journal persists a `phase` at
+every step (`journaled` → `demolished` → `rebuilt` → `restored` → `verified`,
+each written to disk), so classifying costs a read rather than a new format.
+
+**Also mine at integration, from Chunk 01's report:** `push_cli`'s reconcile
+caller ignored `result.ok`, so `push execute --reconcile-chains` still exited 0
+on a shortfall — #538's contract honored by one of its two callers is not
+honored. And the refusal message's claim about stale links is wrong for the
+shortfall case, which is the misleading half of the same defect.
+
 ### Chunk 02 flips no fingerprint — #537's stated re-vendor cost was wrong
 
 Found at integration, and it corrects the reasoning that put this chunk in

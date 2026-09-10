@@ -2148,7 +2148,7 @@ def execute_push(
             ))
             _emit_progress(
                 f"[{phase.name}] INCOMPLETE — {calls_ok} call(s) ok, "
-                f"{len(blocked_reasons)} precondition(s) could not be determined"
+                f"{len(blocked_reasons)} thing(s) the push could not carry"
             )
             continue
         phase_outcomes.append(PhaseOutcome(
@@ -2271,12 +2271,12 @@ def format_summary(result: ExecuteResult) -> str:
             if p.calls_ok:
                 detail = (
                     f"{p.calls_ok}/{p.calls_ok} ok, INCOMPLETE — "
-                    f"{n} could not be determined"
+                    f"{n} not carried"
                 )
             else:
                 detail = (
-                    f"NOT PUSHED — could not determine state "
-                    f"({n} reason{'s' if n != 1 else ''})"
+                    f"NOT PUSHED — {n} thing{'s' if n != 1 else ''} "
+                    f"the push could not carry"
                 )
         elif p.status == _STATUS_HALTED:
             mark = "[FAIL]"

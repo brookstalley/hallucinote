@@ -114,11 +114,38 @@ measurement half — *A-Plate's class matches the snapshot after a fresh push* �
 
 ## Status
 
-- [ ] B1 · [ ] B2 · [ ] B3 · [ ] B4 · [ ] B5 · [ ] B6 · [ ] B7
-- [ ] B8 · [ ] B9 · [ ] B10 · [ ] B11
+Merged into `docs/backlog-bug-readiness`, each with its targeted surface re-run green.
+The whole-suite run that vouches for the merged set is in flight; boxes are ticked on the
+merge + targeted green, and the suite result is recorded in Context.
+
+- [x] B1 — #222 #520 · [ ] B2 · [ ] B3 · [ ] B4 · [x] B5 — #508 #516 #521 · [x] B6 — #503 #475 #328 · [x] B7 — #226
+- [ ] B8 — #291 (dispatched) · [ ] B9 — #322 (held on B2) · [x] B10 — #476 · [ ] B11 — #515
 - [x] B12 — #275 code half shipped (`261aa51`); the item stays open on the operator half,
   now queued in `operator-verification.md` with both outcomes named
 - [ ] Cumulative Critic over the whole sweep
+
+### Coordinator work the merges pulled in
+
+- `cli.py` + `docs/running-the-engine.md` registration for `verify-scaffold` (B10 reported the
+  lines; a subcommand missing from that table fails `test_cli.py`).
+- The three surfaces still pointing at the pytest step #476 removed — `scaffold`'s own
+  next-steps print above all, since an agent reads it immediately before the fixed step.
+- `skills/ableton-mcp-install/` now passes the server root it already captured, so #521's
+  advisory can reach the authoritative copy instead of withholding.
+- The INCOMPLETE phase wording, which asserted every gap was an undetermined precondition —
+  false about the sub-tick edge #475 added.
+
+### Filed, not fixed
+
+- **#526** — `ableton_probe(action='call')` carries #508's string-typing hole; left out of that
+  fix deliberately, and it has one real design question (`coerce_wire_value` gates on the
+  property's current value, and a call argument has none).
+- **#527** — `pytest hallucinote_mcp/tests/` alone fails collection. Reproduced on the
+  untouched base commit, so it predates this sweep; not fixed here because the remedy touches
+  shared pytest config while delegates are running against it.
+- **WSP-8Q4M is NOT an open discrepancy.** A delegate flagged it as open in
+  `.prawduct/backlog.md:1192`; that file is frozen history and is not read. The item is
+  \#327 in the tracker of record and is already closed.
 
 ## Context
 

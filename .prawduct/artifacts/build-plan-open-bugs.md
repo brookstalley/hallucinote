@@ -119,8 +119,9 @@ surface re-ran green, and the whole-suite run covering it exited 0 — **6175 pa
 against a 6063 baseline, the delta being the delegates' own new tests. The count going UP is
 what makes that green attributable: a contended run's tell is a total that silently drops.
 
-- [x] B1 — #222 #520 · [ ] B2 · [ ] B3 · [ ] B4 · [x] B5 — #508 #516 #521 · [x] B6 — #503 #475 #328 · [x] B7 — #226
-- [ ] B8 — #291 (dispatched) · [ ] B9 — #322 (held on B2) · [x] B10 — #476 · [ ] B11 — #515
+- [x] B1 — #222 #520 · [x] B2 — #325 #481 #465 · [x] B3 — #496 #506 #522 · [x] B4 — #519 #524
+- [x] B5 — #508 #516 #521 · [x] B6 — #503 #475 #328 · [x] B7 — #226
+- [ ] B8 — #291 (running) · [ ] B9 — #322 (running) · [x] B10 — #476 · [x] B11 — #515
 - [x] B12 — #275 code half shipped (`261aa51`); the item stays open on the operator half,
   now queued in `operator-verification.md` with both outcomes named
 - [ ] Cumulative Critic over the whole sweep

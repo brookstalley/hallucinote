@@ -254,9 +254,10 @@ chunk owned exclusively, and the narrowest run that proved it.
 ## Status
 
 Merged into `docs/backlog-bug-readiness`. A ticked box means the chunk merged, its own
-surface re-ran green, and the whole-suite run covering it exited 0 — **6175 passed, 2 skipped**
-against a 6063 baseline, the delta being the delegates' own new tests. The count going UP is
-what makes that green attributable: a contended run's tell is a total that silently drops.
+surface re-ran green, and the whole-suite run covering it exited 0 — with a total ABOVE the
+6063 baseline, the delta being the delegates' own new tests. The count going UP is what makes
+that green attributable: a contended run's tell is a total that silently drops. The boxes were
+ticked in waves, so no single figure covers all of them; Context records the final run.
 
 - [x] B1 — #222 #520 · [x] B2 — #325 #481 #465 · [x] B3 — #496 #506 #522 · [x] B4 — #519 #524
 - [x] B5 — #508 #516 #521 · [x] B6 — #503 #475 #328 · [x] B7 — #226
@@ -281,9 +282,6 @@ what makes that green attributable: a contended run's tell is a total that silen
 - **#526** — `ableton_probe(action='call')` carries #508's string-typing hole; left out of that
   fix deliberately, and it has one real design question (`coerce_wire_value` gates on the
   property's current value, and a call argument has none).
-- **#527** — `pytest hallucinote_mcp/tests/` alone fails collection. Reproduced on the
-  untouched base commit, so it predates this sweep; not fixed here because the remedy touches
-  shared pytest config while delegates are running against it.
 - **WSP-8Q4M is NOT an open discrepancy.** A delegate flagged it as open in
   `.prawduct/backlog.md:1192`; that file is frozen history and is not read. The item is
   \#327 in the tracker of record and is already closed.

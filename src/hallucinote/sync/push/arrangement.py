@@ -96,6 +96,52 @@ def plan_push_arrangement_clip_notes(
     return plan
 
 
+# What Live lets a push write on an ALREADY-PLACED arrangement clip to bound
+# what it PLAYS. `end_marker` bounds a clip that runs once; a LOOPING clip
+# repeats its loop brace instead, so `loop_end` has to move with it or the copy
+# keeps sounding past the authored region. Both are settable on a placed clip,
+# on the direct-create route and the duplicate route alike.
+#
+# The span a clip OCCUPIES on the timeline is `Clip.end_time`, and Live exposes
+# it with NO SETTER — it is fixed when the clip is placed and no write moves it.
+# That is why this list bounds playback and never the block.
+_REGION_PROPERTIES: tuple[str, ...] = ("end_marker", "loop_end")
+
+
+def _region_is_writable(clip_row: sqlite3.Row) -> bool:
+    """Whether the authored region can be written to this clip's copy in the
+    BEATS domain the arrangement is authored in.
+
+    Live's markers carry a dual unit — beats when the clip is warped, seconds
+    when it is not (`clips.warping`, and the wire says the same). A row that
+    authors `warping = 0` is saying the copy reads its markers in seconds, so a
+    beats-domain region would trim it to the wrong place; the write is skipped
+    and said rather than made wrong. An unauthored `warping` leaves Live's own
+    default in force and the beats domain is the one to write.
+    """
+    return clip_row["warping"] != 0
+
+
+def _block_note(
+    where: str, *, end_bar: float, region_travels: bool, route: str,
+) -> str:
+    """One placement's line in the phase's block-extent alert.
+
+    Terse by design: it NAMES the placement and what its block is, and leaves
+    the two-part explanation — the region travels, the block cannot — to the
+    single phase-level alert that carries these. Saying it per placement would
+    repeat a permanent Live limit once per stem.
+    """
+    region = (
+        "region set to the authored span" if region_travels
+        else "region NOT set (unwarped clip — markers are in seconds)"
+    )
+    return (
+        f"{where}: {region}; block stays {route} "
+        f"(placement end_bar {end_bar:g})"
+    )
+
+
 def _audio_placement_call(
     conn: sqlite3.Connection,
     *,
@@ -107,7 +153,7 @@ def _audio_placement_call(
     """Materialize one ENVELOPE-FREE ``kind='audio'`` placement by direct
     create, or say why it can't be (R1.1).
 
-    Returns ``(call, refusal, (extent_gap, conform_gap))``. A ``refusal`` is a reason the
+    Returns ``(call, refusal, (block_note, conform_gap))``. A ``refusal`` is a reason the
     whole track must be skipped (§6a: the clear is destructive, so a track is
     materialized only when every placement on it can be rebuilt). A
     ``conform_gap`` is a placement that WAS planned but whose authored conform
@@ -132,11 +178,13 @@ def _audio_placement_call(
     And one thing it plans while saying what did NOT land: the direct create
     loads a FRESH clip at Live's defaults, so the row's authored gain /
     transpose / warp / markers stay on the session clip and do not reach the
-    arrangement copy. The planner cannot conform the copy in the same plan —
-    a `set_property` addresses an arrangement clip by index, and that index
+    arrangement copy. Nothing in the same plan can conform it — a
+    `set_property` addresses an arrangement clip by index, and that index
     exists only in the create's RESULT, after apply; predicting it is exactly
-    the positional guess ARR-PROJ diagnosed as a root cause. So the gap is
-    reported, never guessed at.
+    the positional guess ARR-PROJ diagnosed as a root cause. The copy's
+    PLAYABLE REGION does reach it, in the pass that runs after apply against
+    the recorded link (:func:`plan_push_arrangement_audio_regions`); the rest
+    of the conform is still reported as a gap, never guessed at.
     """
     row_id = row["id"]
     where = (
@@ -184,41 +232,42 @@ def _audio_placement_call(
         prop for column, prop in AUDIO_CONFORM_PROPERTIES
         if clip_row[column] is not None
     ]
-    # TWO gaps, two severities, because they are two different facts.
+    # TWO facts, two severities, because they are two different facts.
     #
-    # EXTENT is universal: Track.create_audio_clip takes a path and a position
-    # and no length, so the copy plays the whole file however long the placement
-    # is. That is true of every audio placement ever planned, so it is an ALERT
-    # — operator-visible and non-fatal; routing it as blocked would make every
-    # song with a stem exit non-zero forever, which is the invariant
-    # `test_audio_track_is_not_blocked` protects. It is said for EVERY audio
-    # placement, not only rows with an authored conform column: the loudest
-    # symptom is a bare placement with an end_bar that simply runs long.
+    # BLOCK EXTENT is universal and PERMANENT: Track.create_audio_clip takes a
+    # path and a position and no length, so the copy's block is the file's
+    # length — and Live exposes `Clip.end_time` with no setter, so nothing this
+    # push can write moves it afterwards either. That is true of every audio
+    # placement ever planned, so it is an ALERT — operator-visible and
+    # non-fatal; routing it as blocked would make every song with a stem exit
+    # non-zero forever, which is the invariant `test_audio_track_is_not_blocked`
+    # protects. It is said for EVERY audio placement, not only rows with an
+    # authored conform column. The per-placement line only NAMES the placement;
+    # the two-part explanation (region travels, block does not) is said once for
+    # the phase in `plan_push_arrangement`'s summary alert.
     #
     # AUTHORED CONFORM is per-song: the song asked for a gain or a warp mode and
     # did not get it on this copy. That is a run that must not read clean.
-    extent_gap = (
-        f"{where} was placed, but its EXTENT did not travel: Live's "
-        "Track.create_audio_clip takes a path and a position and no length, so "
-        "the arrangement copy plays the whole file regardless of the "
-        f"placement's end_bar ({row['end_bar']:g})"
+    block_note = _block_note(
+        where,
+        end_bar=float(row["end_bar"]),
+        region_travels=_region_is_writable(clip_row),
+        route="the file's length",
     )
     conform_gap = None
     if authored:
         conform_gap = (
             f"{where} was placed, but its authored conform ({', '.join(authored)}) "
             "did NOT travel with it. Live's Track.create_audio_clip loads a "
-            "FRESH clip at Live's defaults, and an arrangement clip can only be "
-            "addressed for a set_property by an index that exists after the "
-            "create's result is applied — predicting that index is the "
-            "positional guess ARR-PROJ diagnosed as a root cause, so it is not "
-            "made. The session clip IS conformed; the arrangement copy plays at "
-            "Live's defaults until the conform reaches it. Conform the copy in "
-            "Live by hand for now; a placement whose clip hosts an envelope "
-            "does not have this gap, because it travels by duplicate of the "
-            "conformed session clip"
+            "FRESH clip at Live's defaults, and the region pass that follows the "
+            "create writes only the copy's PLAYABLE REGION — not its gain, "
+            "transpose, warp or markers. The session clip IS conformed; the "
+            "arrangement copy plays at Live's defaults until the conform reaches "
+            "it. Conform the copy in Live by hand for now; a placement whose clip "
+            "hosts an envelope does not have this gap, because it travels by "
+            "duplicate of the conformed session clip"
         )
-    return call, None, (extent_gap, conform_gap)
+    return call, None, (block_note, conform_gap)
 
 
 def _divergence_bars(diverging: list[tuple[float, float, float]]) -> str:
@@ -373,12 +422,14 @@ def plan_push_arrangement(
         rows_by_track.setdefault(row["track_id"], []).append(row)
 
     created = duplicated = cleared = skipped_tracks = placed_audio = 0
-    # Per-placement extent gaps, collected across tracks and said ONCE per
-    # phase below — on the operator channel, because `notes` is the channel
-    # the executor discards and a fact the operator has to act on (trim in
-    # Live) must reach them; one alert per placement would bury the rest of
-    # the report under a stem-heavy song.
-    extent_notes: list[str] = []
+    # Per-placement block-extent lines, collected across tracks and said ONCE
+    # per phase below — on the operator channel, because `notes` is the channel
+    # the executor discards and a fact the operator may have to act on
+    # (shorten the block in Live) must reach them; one alert per placement
+    # would bury the rest of the report under a stem-heavy song. Each carries
+    # whether that placement's REGION travels, so the phase-level sentence can
+    # say what actually happened rather than what usually does.
+    extent_notes: list[tuple[str, bool]] = []
 
     for track_id, rows in rows_by_track.items():
         track_at = Q.get_ableton_link(
@@ -427,7 +478,7 @@ def plan_push_arrangement(
         #     track is materializable (§6a — never clear what we can't rebuild).
         placement_calls: list[ToolCall] = []
         pending_gaps: list[str] = []
-        pending_extent_notes: list[str] = []
+        pending_extent_notes: list[tuple[str, bool]] = []
         skip_reason: str | None = None
         for row in rows:
             clip_row = Q.get_clip(conn, row["clip_id"])
@@ -466,8 +517,10 @@ def plan_push_arrangement(
                 # one. The guard keeps the pair's optionality honest rather than
                 # assuming the shape a successful return happens to have.
                 if gaps is not None:
-                    extent_gap, authored_gap = gaps
-                    pending_extent_notes.append(extent_gap)
+                    block_note, authored_gap = gaps
+                    pending_extent_notes.append(
+                        (block_note, _region_is_writable(clip_row))
+                    )
                     if authored_gap is not None:
                         pending_gaps.append(authored_gap)
                 placed_audio += 1
@@ -509,17 +562,18 @@ def plan_push_arrangement(
                 duplicated += 1
                 if is_audio:
                     placed_audio += 1
-                    # The extent still does not travel on this route either —
-                    # the duplicate is the session clip's length, not the
-                    # placement's end_bar — so say so, as the direct create does.
-                    pending_extent_notes.append(
+                    # The block is the session clip's length on this route, and
+                    # is just as unmovable as on the direct create — but the
+                    # copy's playable region is written by the same post-apply
+                    # pass, so this line reads like the direct create's.
+                    dup_region_travels = _region_is_writable(clip_row)
+                    pending_extent_notes.append((_block_note(
                         f"placement {row['id']!r} (clip {clip_row['name']!r} "
-                        f"@ bar {row['start_bar']:g}) was placed by duplicate "
-                        "of its conformed session clip (its envelope and "
-                        "conform travel with it), but its EXTENT did not: the "
-                        "duplicate is the session clip's length, not the "
-                        f"placement's end_bar ({row['end_bar']:g})"
-                    )
+                        f"@ bar {row['start_bar']:g}, duplicate route)",
+                        end_bar=float(row["end_bar"]),
+                        region_travels=dup_region_travels,
+                        route="the session clip's length",
+                    ), dup_region_travels))
             else:
                 # Note-only → create+fill a FRESH arrangement clip from DB notes.
                 notes = Q.get_notes_for_clip(conn, row["clip_id"])
@@ -609,13 +663,33 @@ def plan_push_arrangement(
         extent_notes.extend(pending_extent_notes)
 
     if extent_notes:
-        shown = extent_notes[:8]
+        shown = [line for line, _ in extent_notes[:8]]
         more = len(extent_notes) - len(shown)
+        # The whole two-part truth, said ONCE for the phase. Half of it is now
+        # work this push does (the region), half of it is a Live limit nobody
+        # can lift (the block) — and an operator who is told only the second
+        # half goes hand-trimming clips that already play the right thing.
+        # The first half is claimed only for the placements it is true of; the
+        # per-placement lines say which those are.
+        any_region = any(travels for _, travels in extent_notes)
+        region_clause = (
+            "Their PLAYABLE REGION is written to the authored span right after "
+            "the placements apply (Live takes end_marker and loop_end on a "
+            "placed clip), so each copy SOUNDS the placement's span. "
+            if any_region else
+            "None of them could take a PLAYABLE REGION write, for the reason "
+            "each line gives. "
+        )
         plan.alert(
-            f"arrangement: {len(extent_notes)} audio placement(s) landed "
-            "without their EXTENT — neither Live's direct arrangement-create "
-            "nor the duplicate route takes the placement's end_bar, so each "
-            "copy plays its clip's length. Trim in Live. Placements: "
+            f"arrangement: {len(extent_notes)} audio placement(s) landed. "
+            + region_clause
+            + "The BLOCK each copy occupies on the timeline is a different "
+            "thing and stays the clip's own length: Live's Clip.end_time has no "
+            "setter, so no push can move it — a copy can therefore sit in a "
+            "block that runs past its end_bar, silent after the region ends and "
+            "overlapping whatever the DB places behind it. Shorten those blocks "
+            "in Live when the visual span matters or a later placement collides. "
+            "Placements: "
             + " | ".join(shown)
             + (f" | and {more} more" if more > 0 else "")
         )
@@ -646,6 +720,145 @@ def plan_push_arrangement(
             f"placements and were left UNTOUCHED (no clear, no rebuild) so "
             f"anything placed in them by hand survives: "
             f"{', '.join(sorted(untouched_audio))}"
+        )
+    return plan
+
+
+def plan_push_arrangement_audio_regions(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+) -> PushPlan:
+    """Set each placed audio copy's PLAYABLE REGION to the span the placement
+    authored — the pass that runs AFTER the arrangement placements apply.
+
+    Why it is a separate pass and not part of :func:`plan_push_arrangement`: a
+    `set_property` addresses an arrangement clip by index, and that index does
+    not exist until the create's result comes back. This planner never predicts
+    one. It reads the `arrangement_clip` binding `apply_push_results` recorded
+    from `arrangement_clip_index`, so every copy it touches is one Live already
+    told us the index of — the positional guess ARR-PROJ diagnosed as a root
+    cause is not made here either.
+
+    What it writes, and what it cannot:
+
+    * `end_marker` and `loop_end` (:data:`_REGION_PROPERTIES`) go to the end of
+      the authored span. A clip that runs once is bounded by the marker; a
+      LOOPING one repeats its brace instead, so both move together and the copy
+      sounds the authored span in either state.
+    * The BLOCK the copy occupies on the timeline is `Clip.end_time`, which Live
+      exposes with no setter. It is fixed when the clip is placed. Nothing here
+      changes it and nothing can — the copy plays the right span inside a block
+      that may still run to the file's length.
+
+    A placement is skipped, with a reason on the operator channel, when its copy
+    is not addressable (no track or `arrangement_clip` link recorded — the
+    placement did not materialize, and the arrangement phase already said so) or
+    when the row authors `warping = 0`, which puts the copy's markers in seconds
+    while the arrangement is authored in bars (see :func:`_region_is_writable`).
+    """
+    plan = PushPlan()
+    rows = [
+        r for r in Q.get_arrangement_for_song(conn, song_id)
+        if r["clip_kind"] == "audio"
+    ]
+    if not rows:
+        plan.warn("no audio placements; no arrangement region to set")
+        return plan
+
+    ts_points = Q.get_time_signature_map(conn, song_id)
+    host_clip_ids = envelope_hosting_clip_ids(conn, song_id)
+    unwarped: list[str] = []
+    unlinked: list[str] = []
+    written = 0
+
+    for row in rows:
+        row_id = row["id"]
+        where = (
+            f"placement {row_id!r} (clip {row['clip_name']!r} @ bar "
+            f"{row['start_bar']:g})"
+        )
+        track_at = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="track", db_id=row["track_id"],
+        )
+        arr_at = Q.get_ableton_link(
+            conn, session_id=session_id, db_kind="arrangement_clip", db_id=row_id,
+        )
+        if track_at is None or arr_at is None:
+            unlinked.append(where)
+            continue
+        clip_row = Q.get_clip(conn, row["clip_id"])
+        if clip_row is None:
+            unlinked.append(where)
+            continue
+        if not _region_is_writable(clip_row):
+            unwarped.append(where)
+            continue
+
+        region_beats = (
+            _position_bar_to_beats(row["end_bar"], ts_points)
+            - _position_bar_to_beats(row["start_bar"], ts_points)
+        )
+        # The region starts where the copy's playable region already starts, so
+        # the write moves the END and nothing else. On the duplicate route the
+        # session clip's conformed `start_marker` travelled with the copy; on
+        # the direct create it did not (that is the conform gap the arrangement
+        # phase reports), so the copy sits at Live's own 0.0.
+        start_marker = 0.0
+        if row["clip_id"] in host_clip_ids and clip_row["start_marker"] is not None:
+            start_marker = float(clip_row["start_marker"])
+        region_end = start_marker + region_beats
+
+        for prop in _REGION_PROPERTIES:
+            plan.add(ToolCall(
+                tool="ableton_clip",
+                args={
+                    "action": "set_property",
+                    "location": "arrangement",
+                    "track_index": track_at,
+                    "clip_index": arr_at,
+                    "property": prop,
+                    "value": region_end,
+                },
+                # Its own key kind: this writes playback bounds on an
+                # already-linked copy and records no binding — declared
+                # ack-only in plan._ACK_ONLY_KINDS.
+                key=f"arrangement_clip_region:{row_id}:{prop}",
+                purpose=(
+                    f"bound arrangement copy of placement {row_id!r} to its "
+                    f"authored {region_beats:g}-beat region ({prop}={region_end:g})"
+                ),
+            ))
+        written += 1
+
+    if written:
+        plan.warn(
+            f"arrangement regions: bounded {written} audio copy/copies to the "
+            "authored span"
+        )
+    if unwarped:
+        plan.alert(
+            f"arrangement: {len(unwarped)} audio placement(s) kept their copy's "
+            "FULL playable region — the row authors warping=0, so Live reads the "
+            "copy's markers in seconds while the placement is authored in bars, "
+            "and a beats-domain write would trim to the wrong point. Warp the "
+            "clip, or trim the copy in Live. Placements: "
+            + " | ".join(unwarped[:8])
+            + (f" | and {len(unwarped) - 8} more" if len(unwarped) > 8 else "")
+        )
+    if unlinked:
+        # Not `blocked`: the arrangement phase already reported whatever kept
+        # these placements from materializing, and raising it a second time
+        # would double-count one failure. Said, so a copy that is playing its
+        # whole file is never a silent surprise.
+        plan.alert(
+            f"arrangement: {len(unlinked)} audio placement(s) have no recorded "
+            "arrangement clip to bound, so their region was not set — the "
+            "placement did not materialize (see the arrangement phase's own "
+            "reasons). Placements: "
+            + " | ".join(unlinked[:8])
+            + (f" | and {len(unlinked) - 8} more" if len(unlinked) > 8 else "")
         )
     return plan
 

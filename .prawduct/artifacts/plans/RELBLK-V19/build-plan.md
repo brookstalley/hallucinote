@@ -174,3 +174,32 @@ is discharged at integration, not by the delegate that found it.
   No consumer change needed: none reads the error string and none can depend on the destruction,
   so the push now receives a refusal instead of a destroyed clip plus an error. Recorded so the
   integration run is not surprised by a behaviour change in files no chunk owns.
+
+## Corrected tests, recorded here because delegates cannot write `.prawduct/`
+
+Each of these encoded the defect its chunk fixes. Correcting them is legitimate under Tests Are
+Contracts; weakening them would not be. Carry these into the change-log entry at the cut.
+
+- **Chunk 03** — `test_replace_that_fails_to_recreate_says_the_slot_is_now_empty` asserted the
+  clip was destroyed on a wrong-kind replace. Retargeted to a bad audio path on an audio track —
+  a failure the pre-check genuinely cannot foresee — so the post-delete disclosure contract stays
+  pinned exactly as before.
+- **Chunk 02** — `test_version_mismatch_recovery_teaches_pin_recipe`,
+  `test_cli_execute_version_mismatch_prints_pin_recovery_not_generic` and
+  `test_error_recovery_guide_documents_version_pin_recovery` all asserted
+  `"git worktree add" in text`, pinning a recipe that cannot work. Replaced with assertions that
+  the suffix is never called a commit and that the printed recipe, executed, actually pins.
+
+## Finding: `incoming-bugs/` is gitignored, and an issue's `refs:` can point into it
+
+`.gitignore:113` ignores `incoming-bugs/` wholesale. The chunk 02 delegate could not read the
+report its own issue references, because the directory exists only in the primary checkout and is
+in no branch's history. Two consequences worth deciding on separately from this plan:
+
+- **#518's `refs:` names evidence nobody else can open** — not the delegate, not a reviewer, not
+  a future reader of the issue. The verified recipe survived only because the issue body repeated
+  it in a `<details>` block.
+- The reports are **unbacked**. A lost checkout loses every bug report not yet promoted to an
+  issue.
+
+Not fixed here — it is a repo-convention decision, not a release blocker. Flagged to the owner.

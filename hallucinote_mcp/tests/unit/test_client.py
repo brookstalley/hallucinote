@@ -102,3 +102,31 @@ def test_send_honors_explicit_none_as_block_forever():
         read_timeout=None,
     )
     assert rt is None
+
+
+# ---------------------------------------------------------------------------
+# Response decoding — the discriminator on the ok path
+# ---------------------------------------------------------------------------
+
+
+def test_ok_response_carries_its_code_through_the_client():
+    """An escalated call and a completed one BOTH arrive as ok=True.
+
+    `code` is the only field that tells them apart, so a decoder that dropped
+    it on the ok path would hand callers a job handle indistinguishable from a
+    result — which is the failure the escalation contract exists to prevent.
+    """
+    resp = client._response_from_dict({
+        "ok": True,
+        "code": "work_escalated",
+        "result": {"escalated": True, "job_id": "j1", "label": "device.load"},
+    })
+    assert resp.ok is True
+    assert resp.code == "work_escalated"
+
+
+def test_an_ordinary_ok_response_has_no_code():
+    """Absence stays absence — a plain success must not acquire a discriminator."""
+    resp = client._response_from_dict({"ok": True, "result": {"track_index": 1}})
+    assert resp.ok is True
+    assert resp.code is None

@@ -15,6 +15,7 @@ import pytest
 
 from hallucinote.db import init_db, mutations as M, queries as Q
 from hallucinote.sync import push_execute
+from hallucinote.sync import live_escalation
 
 
 _LINK_FIELDS: dict[str, str] = {
@@ -923,6 +924,7 @@ def _make_fallback_send_fn(
     fail_preset_uri: str,
     search_matches: list[dict],
     succeed_on_fallback_uri: str | None = None,
+    loaded_class_name: str | None = None,
 ):
     """Build a fake send_fn for M1-B fallback scenarios.
 
@@ -932,11 +934,20 @@ def _make_fallback_send_fn(
       `test_load_unknown_preset_uri_errors`).
     * `device.load` with `preset_uri == succeed_on_fallback_uri` → ok=True
       with a fresh device_index.
+    * `loaded_class_name`, when given, rides every successful load response —
+      the field the real handler sends to answer "what is now in that slot",
+      which the executor checks before accepting a substitution.
     * `browser.search` → ok=True with the provided matches list.
     * Everything else → ok=True with a synthetic link index.
     """
     counters: dict[str, int] = {}
     call_log: list[dict] = []
+
+    def _load_result(index: int) -> dict:
+        payload: dict = {"device_index": index}
+        if loaded_class_name is not None:
+            payload["loaded_class_name"] = loaded_class_name
+        return payload
 
     _LINK_KIND_FOR = {
         ("ableton_track", "create"): "track",
@@ -976,13 +987,13 @@ def _make_fallback_send_fn(
             ):
                 counters["device"] = counters.get("device", 0) + 1
                 return FakeResponse(
-                    ok=True, result={"device_index": counters["device"]},
+                    ok=True, result=_load_result(counters["device"]),
                 )
             # Any other URI on load — treat as success too (covers retry
             # scenarios that don't strictly match succeed_on_fallback_uri).
             counters["device"] = counters.get("device", 0) + 1
             return FakeResponse(
-                ok=True, result={"device_index": counters["device"]},
+                ok=True, result=_load_result(counters["device"]),
             )
         kind = _LINK_KIND_FOR.get((req.tool, req.action))
         if kind is None:
@@ -1125,6 +1136,209 @@ def test_execute_fallback_retry_failure_preserves_original_error(
     # was already built before the fallback ran.
     err_messages = [e.get("error", "") for e in errors["errors"]]
     assert any("FileId_AUTHOR_MACHINE" in m for m in err_messages)
+
+
+def test_execute_fallback_routes_by_captured_browser_root(
+    conn, song, session, state_dir,
+):
+    """An audio effect searches `audio_effects`, not the inferred default.
+
+    Kind-inference cannot tell a reverb from a synth, so before the captured
+    browser path was consulted a return's reverb was searched under
+    `instruments` — a root it can never appear in.
+    """
+    tid = M.create_track(
+        conn, song_id=song, track_index=1, name="Pad", kind="midi",
+    )
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    M.create_device(
+        conn, chain_id=chain_id, position=1,
+        kind="Hybrid Reverb", display_name="Hybrid Reverb",
+        class_name="HybridReverb",
+        preset_uri="query:Audio#FileId_AUTHOR",
+        browser_path=["audio_effects", "Hybrid Reverb", "Hybrid Reverb"],
+    )
+    send_fn = _make_fallback_send_fn(
+        fail_preset_uri="query:Audio#FileId_AUTHOR",
+        search_matches=[{
+            "name": "Hybrid Reverb",
+            "uri": "query:Audio#FileId_CONSUMER",
+            "path": ["audio_effects", "Hybrid Reverb", "Hybrid Reverb"],
+            "is_loadable": True,
+        }],
+        # `loaded_class_name` is built from Live's class_display_name, so the
+        # fake speaks the browser namespace the loader really speaks.
+        succeed_on_fallback_uri="query:Audio#FileId_CONSUMER",
+        loaded_class_name="Hybrid Reverb",
+    )
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn,
+    )
+    assert result.outcome == "ok", result.phase_halted
+    search_calls = [
+        c for c in send_fn.call_log
+        if c["tool"] == "ableton_browser" and c["action"] == "search"
+    ]
+    assert search_calls
+    assert search_calls[0]["params"]["root"] == "audio_effects"
+    # The segments between root and leaf narrow the search to the folder the
+    # device actually came from.
+    assert search_calls[0]["params"]["path_prefix"] == ["Hybrid Reverb"]
+
+
+def test_execute_fallback_prefers_the_captured_browser_path(
+    conn, song, session, state_dir,
+):
+    """Of several same-named hits, the one at the captured path wins.
+
+    A substring search over a whole root is a wide net; taking the first hit
+    is how a Pack device gets replaced by a same-named built-in.
+    """
+    tid = M.create_track(
+        conn, song_id=song, track_index=1, name="Keys", kind="midi",
+    )
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    M.create_device(
+        conn, chain_id=chain_id, position=1,
+        kind="Electric", display_name="Suitcase",
+        class_name="Electric",
+        preset_uri="query:Instruments#FileId_AUTHOR",
+        browser_path=["instruments", "Vintage Keys Pack", "Suitcase"],
+    )
+    send_fn = _make_fallback_send_fn(
+        fail_preset_uri="query:Instruments#FileId_AUTHOR",
+        search_matches=[
+            {
+                "name": "Suitcase", "uri": "query:Instruments#FileId_STOCK",
+                "path": ["instruments", "Electric", "Suitcase"],
+                "is_loadable": True,
+            },
+            {
+                "name": "Suitcase", "uri": "query:Instruments#FileId_PACK",
+                "path": ["instruments", "Vintage Keys Pack", "Suitcase"],
+                "is_loadable": True,
+            },
+        ],
+        succeed_on_fallback_uri="query:Instruments#FileId_PACK",
+        loaded_class_name="Electric",  # display name == class name for this one
+    )
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn,
+    )
+    assert result.outcome == "ok", result.phase_halted
+    retry_loads = [
+        c for c in send_fn.call_log
+        if c["tool"] == "ableton_device" and c["action"] == "load"
+        and c["params"].get("preset_uri") != "query:Instruments#FileId_AUTHOR"
+    ]
+    assert retry_loads
+    assert retry_loads[0]["params"]["preset_uri"] == "query:Instruments#FileId_PACK"
+
+
+def test_execute_fallback_refuses_a_load_of_the_wrong_class(
+    conn, song, session, state_dir,
+):
+    """A substitution that lands a different class is refused, not reported ok.
+
+    This is the silently-wrong-mix case: an authored Hybrid Reverb replaced by
+    Live's stock Reverb while the push says nothing. The push must halt with
+    the original preset_uri error instead.
+    """
+    tid = M.create_track(
+        conn, song_id=song, track_index=1, name="Pad", kind="midi",
+    )
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    M.create_device(
+        conn, chain_id=chain_id, position=1,
+        kind="Hybrid Reverb", display_name="Hybrid Reverb",
+        class_name="HybridReverb",
+        preset_uri="query:Audio#FileId_AUTHOR",
+        browser_path=["audio_effects", "Hybrid Reverb", "Hybrid Reverb"],
+    )
+    send_fn = _make_fallback_send_fn(
+        fail_preset_uri="query:Audio#FileId_AUTHOR",
+        search_matches=[{
+            "name": "Reverb", "uri": "query:Audio#FileId_STOCK",
+            "path": ["audio_effects", "Reverb", "Reverb"],
+            "is_loadable": True,
+        }],
+        succeed_on_fallback_uri="query:Audio#FileId_STOCK",
+        loaded_class_name="Reverb",
+    )
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn,
+    )
+    assert result.outcome == "partial"
+    errors = json.loads((state_dir / ".last-push-errors.json").read_text())
+    assert any(
+        "FileId_AUTHOR" in e.get("error", "") for e in errors["errors"]
+    )
+
+
+def test_execute_fallback_accepts_a_load_of_the_authored_class(
+    conn, song, session, state_dir,
+):
+    """The class check passes what it should: same device, different URI.
+
+    The fixture's `kind` and `class_name` differ on purpose — "Hybrid Reverb"
+    is the browser display name, "HybridReverb" Live's internal identifier —
+    because a check that compared the loader's answer against the wrong one of
+    those would refuse every CORRECT substitution and silently disable the
+    cross-machine recovery. It reads as a stricter guard and is a broken one.
+    """
+    tid = M.create_track(
+        conn, song_id=song, track_index=1, name="Pad", kind="midi",
+    )
+    chain_id = M.create_device_chain(conn, parent_track_id=tid, position=0)
+    M.create_device(
+        conn, chain_id=chain_id, position=1,
+        kind="Hybrid Reverb", display_name="Hybrid Reverb",
+        class_name="HybridReverb",
+        preset_uri="query:Audio#FileId_AUTHOR",
+        browser_path=["audio_effects", "Hybrid Reverb", "Hybrid Reverb"],
+    )
+    send_fn = _make_fallback_send_fn(
+        fail_preset_uri="query:Audio#FileId_AUTHOR",
+        search_matches=[{
+            "name": "Hybrid Reverb", "uri": "query:Audio#FileId_CONSUMER",
+            "path": ["audio_effects", "Hybrid Reverb", "Hybrid Reverb"],
+            "is_loadable": True,
+        }],
+        # `loaded_class_name` is built from Live's class_display_name, so the
+        # fake speaks the browser namespace the loader really speaks.
+        succeed_on_fallback_uri="query:Audio#FileId_CONSUMER",
+        loaded_class_name="Hybrid Reverb",
+    )
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn,
+    )
+    assert result.outcome == "ok", result.phase_halted
+
+
+def test_execute_fallback_accepts_when_the_server_reports_no_class(
+    conn, song, session, song_with_device, state_dir,
+):
+    """A server that sends no `loaded_class_name` cannot be judged, so the
+    substitution stands — the check refuses a KNOWN mismatch, never silence."""
+    send_fn = _make_fallback_send_fn(
+        fail_preset_uri="query:Drums#FileId_AUTHOR_MACHINE",
+        search_matches=[{
+            "name": "Late Nite Kit",
+            "uri": "query:Drums#FileId_CONSUMER_MACHINE",
+            "path": ["drums", "Drum Kits", "Late Nite Kit"],
+            "is_loadable": True,
+        }],
+        succeed_on_fallback_uri="query:Drums#FileId_CONSUMER_MACHINE",
+    )
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn,
+    )
+    assert result.outcome == "ok", result.phase_halted
 
 
 def test_execute_fallback_routes_plugin_kind_to_plugins_root(
@@ -3153,8 +3367,15 @@ def test_execute_bounds_a_placed_audio_copy_after_the_placement_applies(
     actions = [c["action"] for c in arrangement_calls]
     assert "create" in actions, actions
     region = [c for c in arrangement_calls if c["action"] == "set_property"]
-    assert [c["params"]["property"] for c in region] == ["end_marker", "loop_end"]
-    assert all(c["params"]["value"] == 16.0 for c in region), region
+    # `warping` leads, and it is the reason the two markers can be written in
+    # BEATS at all (#522): Live reads a marker in beats on a warped clip and in
+    # seconds on an unwarped one, this row authors no warp state, so the pass
+    # writes one instead of assuming Live's default supplied it.
+    assert [c["params"]["property"] for c in region] == [
+        "warping", "end_marker", "loop_end",
+    ], region
+    assert region[0]["params"]["value"] is True, region[0]
+    assert all(c["params"]["value"] == 16.0 for c in region[1:]), region
     # After the create, never before — the index it uses is the create's result.
     assert actions.index("create") < actions.index("set_property")
     created_index = 1
@@ -3276,8 +3497,13 @@ def test_one_failed_placement_costs_only_its_own_region(
     ]
     # The copy that landed is bounded to its authored 16 beats...
     assert region, "the placement that succeeded must still get its region"
-    assert {c["params"]["property"] for c in region} == {"end_marker", "loop_end"}
-    assert all(c["params"]["value"] == 16.0 for c in region), region
+    assert {c["params"]["property"] for c in region} == {
+        "warping", "end_marker", "loop_end",
+    }
+    assert all(
+        c["params"]["value"] == 16.0 for c in region
+        if c["params"]["property"] != "warping"
+    ), region
     # ...and the one that never materialized is not written onto a stale index.
     assert all(c["params"]["clip_index"] == 1 for c in region), region
 
@@ -3362,3 +3588,189 @@ def test_a_failed_region_write_is_reported_and_says_re_push(
         "the push stopped at the arrangement phase, so a refused region write "
         f"halted it after all: {phases_run}"
     )
+
+
+# ---------------------------------------------------------------------------
+# MCP-7J2Q: a main-thread call that outran Live's ceiling (an escalation)
+#
+# The escalation reply is ok=True and carries a job handle, because the work is
+# STILL RUNNING inside Live — Python cannot interrupt a Live API call, so it has
+# neither succeeded nor failed. Counting it as ``calls_ok`` would record a write
+# that has not landed; counting it as a failure would be a second lie. The
+# executor polls the handle to a terminal state and reports what happened.
+# ---------------------------------------------------------------------------
+
+
+def _escalating_send_fn(
+    *,
+    escalate_on: str,
+    job_states: list[dict],
+    job_id: str = "main_thread-abc123",
+    carry_code: bool = False,
+):
+    """Wrap the standard fake so ONE (tool:action) escalates the first time.
+
+    ``job_states`` is consumed one entry per ``bout_status`` poll, so a test
+    can make the job read ``running`` before it lands. ``carry_code`` toggles
+    whether the reply carries the ``code`` discriminator — a client that drops
+    it on the ok path must still be understood via the payload's
+    ``escalated`` flag.
+    """
+    inner = _make_send_fn()
+    escalated: dict[str, bool] = {}
+    polls: list[str] = []
+
+    def send(req, *, read_timeout=None):
+        composite = f"{req.tool}:{req.action}"
+        if req.tool == "ableton_session" and req.action == "bout_status":
+            polls.append(req.params.get("job_id"))
+            state = job_states[min(len(polls) - 1, len(job_states) - 1)]
+            return FakeResponse(ok=True, result={
+                "occupied": state.get("state") == "running",
+                "job": {"job_id": job_id, "kind": "main_thread", **state},
+            })
+        if composite == escalate_on and not escalated.get(composite):
+            escalated[composite] = True
+            resp = FakeResponse(ok=True, result={
+                "escalated": True,
+                "job_id": job_id,
+                "label": composite,
+                "elapsed_s": 121.5,
+                "poll": "poll me with ableton_session(action='bout_status')",
+            })
+            if carry_code:
+                resp.code = "work_escalated"  # type: ignore[attr-defined]
+            return resp
+        return inner(req, read_timeout=read_timeout)
+
+    send.polls = polls  # type: ignore[attr-defined]
+    send.inner_log = inner.call_log  # type: ignore[attr-defined]
+    return send
+
+
+def test_escalated_call_is_polled_to_done_and_applied(
+    conn, song, session, tiny_song, state_dir, monkeypatch,
+):
+    """The clip create outran the ceiling, then landed. The step succeeds with
+    the CALL'S OWN result — the link index Live actually produced — not with
+    the handle, and the push reads clean."""
+    monkeypatch.setattr(live_escalation, "ESCALATION_POLL_INTERVAL_S", 0.0)
+    send_fn = _escalating_send_fn(
+        escalate_on="ableton_clip:create",
+        job_states=[
+            {"state": "running"},
+            {"state": "done", "result": {"clip_index": 1}},
+        ],
+    )
+
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn,
+    )
+
+    assert result.outcome == "ok", result.errors_file
+    assert result.exit_code == push_execute.EXIT_OK
+    # It polled — twice, because the first poll still read ``running``.
+    assert send_fn.polls == ["main_thread-abc123", "main_thread-abc123"]
+    # And the link the escalated call produced is in the DB, so the result
+    # really was applied rather than the handle being applied in its place.
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="clip", db_id=tiny_song["clip_id"],
+    ) == 1
+    said = " ".join(result.warnings)
+    assert "outran Live's main-thread ceiling" in said, result.warnings
+
+
+def test_escalation_is_recognised_from_either_signal(
+    conn, song, session, tiny_song, state_dir, monkeypatch,
+):
+    """``code='work_escalated'`` is the contract, and the payload's
+    ``escalated`` flag is what survives a transport that does not carry
+    ``code`` through on the ok path. Either one alone has to be enough — the
+    cost of missing it is applying a write that has not landed."""
+    monkeypatch.setattr(live_escalation, "ESCALATION_POLL_INTERVAL_S", 0.0)
+    for carry_code in (True, False):
+        c = init_db(state_dir / f"code-{carry_code}.db")
+        try:
+            sid = M.create_song(c, name="t", key="Dm")
+            sess = M.create_ableton_session(c, song_id=sid, name="draft")
+            tid = M.create_track(
+                c, song_id=sid, track_index=1, name="Drums", kind="midi",
+            )
+            M.create_clip(c, track_id=tid, slot=1, length_beats=4.0, name="l")
+            send_fn = _escalating_send_fn(
+                escalate_on="ableton_clip:create",
+                job_states=[{"state": "done", "result": {"clip_index": 1}}],
+                carry_code=carry_code,
+            )
+            result = push_execute.execute_push(
+                conn=c, song_id=sid, session_id=sess,
+                state_dir=state_dir, send_fn=send_fn,
+            )
+            assert result.outcome == "ok", (carry_code, result.errors_file)
+            assert send_fn.polls == ["main_thread-abc123"], carry_code
+        finally:
+            c.close()
+
+
+def test_escalated_call_that_fails_in_live_fails_the_step(
+    conn, song, session, tiny_song, state_dir, monkeypatch,
+):
+    """Polled to ``failed`` — Live's own error is what reaches the operator,
+    and the phase halts on it like any other failure."""
+    monkeypatch.setattr(live_escalation, "ESCALATION_POLL_INTERVAL_S", 0.0)
+    send_fn = _escalating_send_fn(
+        escalate_on="ableton_clip:create",
+        job_states=[{"state": "failed", "error": "clip slot occupied"}],
+    )
+
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn,
+    )
+
+    assert result.outcome == "partial"
+    assert result.exit_code == push_execute.EXIT_PARTIAL
+    errors = json.loads((state_dir / ".last-push-errors.json").read_text())
+    blob = json.dumps(errors)
+    assert "clip slot occupied" in blob
+    assert "main_thread-abc123" in blob
+
+
+def test_an_escalation_that_never_lands_is_not_counted_as_a_success(
+    conn, song, session, tiny_song, state_dir, monkeypatch,
+):
+    """The inverse of the old bug, from the consumer's side. The work is still
+    running; we stopped watching. That must read as a failed step naming the
+    job — never as ``calls_ok``, which would record a write that has not
+    happened."""
+    monkeypatch.setattr(live_escalation, "ESCALATION_POLL_INTERVAL_S", 0.0)
+    monkeypatch.setattr(live_escalation, "ESCALATION_POLL_CEILING_S", 0.0)
+    send_fn = _escalating_send_fn(
+        escalate_on="ableton_clip:create",
+        job_states=[{"state": "running"}],
+    )
+
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn,
+    )
+
+    assert result.outcome == "partial"
+    assert result.exit_code == push_execute.EXIT_PARTIAL
+    errors = json.loads((state_dir / ".last-push-errors.json").read_text())
+    blob = json.dumps(errors)
+    assert "STILL RUNNING" in blob
+    assert "main_thread-abc123" in blob
+    assert "Do NOT" in blob and "re-push" in blob
+    # No clip link was written — the escalated create never landed.
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="clip", db_id=tiny_song["clip_id"],
+    ) is None
+
+
+def test_escalated_job_id_ignores_an_ordinary_success():
+    assert push_execute._escalated_job_id(
+        FakeResponse(ok=True, result={"clip_index": 3})
+    ) is None
+    assert push_execute._escalated_job_id(FakeResponse(ok=False, error="x")) is None

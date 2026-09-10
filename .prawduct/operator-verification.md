@@ -15,6 +15,151 @@ pending entries when `operator_verification_required: true`.
 
 ---
 
+## #322 — does the fence hold against a real Live, and does it ever wedge? (2026-09-10)
+
+Backlog **#322** (with **#324** folded in). Needs Live 12.4.x, the Remote Script re-vendored,
+and something genuinely slow to load — the ~490 KB `HallucinoteAnalyzer.amxd` that produced the
+original report is the right instrument. Batch with the other re-vendor checks.
+
+The fakes prove the fence holds against a wedged scheduler. They cannot prove Live behaves the
+way the fence assumes, and **the design deliberately has no timed auto-clear**, so the failure
+this could introduce — occupancy never released, server bricked — is recoverable only by
+someone who knows to look. That is the trade the issue chose; this sitting is what tells you
+whether it was right.
+
+- [ ] **Reproduce the original.** Load the analyzer device directly and let it exceed the
+  ceiling. The call must come back `ok=True` with `code=work_escalated` and a job id — not a
+  `TimeoutError` — and a second caller arriving during the wait must be refused with
+  `LiveBusyError` naming the still-running operation and its elapsed time.
+- [ ] **Then the half that used to be open**: a caller arriving *after* the give-up must ALSO
+  be refused, not admitted. That admission is what let retries stack work behind an op still
+  running, and it is the specific mechanism behind the beachball.
+- [ ] **Does the runner actually signal?** Poll the job to a terminal state and confirm
+  `done` carries the call's real result (a polled `device.load` must yield
+  `loaded_class_name`). If Live ever *drops* a scheduled callback rather than delivering it
+  late, the bout stays occupied forever — this is the residual risk, and only a real session
+  shows it.
+- [ ] **`abandon_bout` releases**, marks the job failed, and warns that the work may still be
+  running in Live. Then the next call is admitted.
+- [ ] **R9 over a real socket.** The margin between the client's read timeout and the Live-side
+  ceiling is pinned arithmetically and has never been *observed* — confirm the escalation reply
+  actually arrives before the client stops listening. If it does not, the fix is invisible from
+  the client and everything above reads as a plain timeout.
+- [ ] **R8's reachability caveat.** `info` is main-thread-wrapped, so its `main_thread_bout`
+  block is only reachable from inside a nested bout; `ableton_session(action='bout_status')` is
+  the surface that answers while the fence is closed. Confirm `bout_status` works from a fresh
+  caller during an occupied bout — that is the one an operator will actually reach for.
+
+## #291 — the `alien` witness: does a real chain survive a rebuild? (2026-09-10)
+
+Backlog **#291** (with **#323** folded in). Needs Live 12.4.x, the Remote Script re-vendored
+(the same one the sweep's other checks need — batch it), and the song `alien`. One sitting.
+
+`rebuild_chain` runs entirely against a fake `send_fn` here, and the fake models the one thing
+that matters — a freshly loaded device comes back at class defaults, so "forgot to restore" is
+a detectable state. What it cannot model is Live's own float and enum behaviour, which is where
+this either works or quietly does not.
+
+**The witness the issue names, and the highest-value check here:**
+
+- [ ] On `alien`'s Alien Voice track, swap the position-1 instrument (Analog → Operator) with
+  `hallucinote chain-rebuild`. EQ Eight and Erosion must still be downstream, in order, with
+  **every non-default parameter unchanged**. Record the before/after parameter values, not just
+  a pass/fail — a rebuild that restores 19 of 20 params looks identical to one that restores 20
+  unless you compare.
+- [ ] **`_PARAM_EPSILON = 1e-6` is the number most likely to be wrong.** It is the tolerance the
+  verify pass compares read-back values against, and it was reasoned, not measured. Too tight
+  gives false verify failures on a real chain; too loose misses a parameter left near its
+  default. The run above produces the data that settles it.
+- [ ] **Sidechain restore.** The rebuild restores a sidechain *source* through
+  `get_input_routing` → `set_input_routing` rather than `set_sidechain`. Unproven against a real
+  Compressor with a live sidechain source — try one.
+- [ ] **R4's refusal is narrower than it reads.** It catches "the DB names nothing loadable"; it
+  cannot catch "the DB names a plugin this machine does not have". That case surfaces at load
+  time as a verify failure with the journal intact — safe, but after the delete rather than
+  before it. Worth one deliberate try on a machine missing a plugin the song uses.
+- [ ] **R5 — does `mute` actually silence the window?** Rebuild during playback and listen. On
+  the master the module alerts rather than pretending; confirm that is what happens.
+- [ ] **R7 + the #323 criterion.** `push execute --reconcile-chains` against a set with a real
+  occupied slot, then a SECOND push: it must emit **no** drift note for that parent. The DB-side
+  half is pinned by a test that runs the real `probe_and_link` after a real rebuild; the
+  Live-side half is not.
+
+## The open-bug sweep's re-vendor sitting (2026-09-10) — **FULLY DISCHARGED 2026-09-10, Live 12.4.5, all four passed**
+
+Backlog **#508**, **#516**, **#515**, **#519**. Needs Live 12.4.x, the Remote Script
+**re-vendored** (`/hallucinote:ableton-mcp-install`) and Live restarted. One sitting — the
+re-vendor is the expensive part and everything below rides the same one. Batch it with the
+#275 check below; that one needs the same restart.
+
+Three of the sweep's fixes are inside `_FINGERPRINT_PATHS`, so none of them reaches a live
+session until the vendored copy is replaced. Until then the wire is unchanged and these
+verdicts are unknowable, not passing.
+
+- [x] **#508 — PASSED** (Live 12.4.5, server `0.1.0+6025d7a7e0af`). Driven over the raw wire,
+  because the MCP client coerces JSON numbers and so cannot reproduce the untyped-client shape
+  the bug needs. `probe set song.tracks[0].color_index value="26"` (a genuine `str`) →
+  `{old: 12, new: 26, changed: true}`; that call previously died on `ArgumentError: did not
+  match C++ signature`. The gate holds in the other direction too:
+  `probe set song.tracks[0].name value="808"` read back `type: str, value: '808'` — not the
+  integer 808. A `warp_mode` write on a real audio clip was NOT run (the scratch set had no
+  audio clip); the coercion path it exercises is the same one, so this is a narrower witness
+  than the issue's example, not a different one.
+- [x] **#516 — PASSED** (Live 12.4.5). Operator loaded on track 1 → `device_index: 1`. Then a
+  `Pitch` MIDI effect: response `{device_index: 1, loaded_class_name: "Pitch",
+  resolved_path: ["midi_effects", "Pitch"]}`. `ableton_device(action='list')` confirms Live
+  re-ordered exactly as reported — `1: Pitch (MidiPitcher)`, `2: Operator` — so the response
+  named the device loaded, at its real index. Pre-fix this reported `device_index: 2,
+  loaded_class_name: "Operator"`. Scratch devices deleted after; the set is back to default.
+  **Note the response reports the browser DISPLAY name (`Pitch`), not the internal class
+  (`MidiPitcher`)** — the issue's expectation said `MidiPitcher`. Display is correct and is
+  what `_canonical_class_name` documents; this is the same two-namespace distinction that
+  produced the blocking Critic finding on #275, so it is worth stating rather than glossing.
+- [x] **#515 — PASSED** (Live 12.4.5). Returns `NotImplementedError: target_kind=
+  'note_expression' cannot be written or read, and this is permanent rather than pending:
+  Live's Python API exposes NO per-note expression surface at all…`, naming the monophonic
+  route. Not `AttributeError: 'Clip' object has no attribute 'envelope_for_note'`. It refused
+  a call whose `clip_index` does not exist, which also confirms the refusal fires ahead of
+  any Live call and any arg validation.
+- [x] **#519 — PASSED. The assumption holds.** Read off a brand-new Live 12.4.5 default set:
+  return 1 `A-Reverb` carries a device whose `class_name` AND `class_display_name` are both
+  `Reverb`; return 2 `B-Delay` carries `Delay`. That is exactly
+  `CANONICAL_DEFAULT_SCAFFOLD_RETURN_DEVICES = {'A-Reverb': 'Reverb', 'B-Delay': 'Delay'}`, so
+  the exclusion predicate can fire. This was the one that would have failed **silently** —
+  a wrong class string means the predicate never matches and the scaffold returns go on
+  becoming permanent song content, which is the defect #519 fixed.
+
+## #275 — the authored reverb is the one that reaches Live (2026-09-10)
+
+Backlog **#275**. Needs Live 12.4.x open, the Remote Script re-vendored, and the song
+`sun-zone-done` (hallucinote-songs). One sitting, minutes.
+
+The item's own acceptance criterion is a measurement no static analysis can make: **after a
+fresh push from the DB, does the A-Plate return's device class match
+`captured_session.json` (Hybrid Reverb, not Live's stock Reverb)?** The RT60 verdicts that
+started this item (A-Plate 3.37 vs intent 3.0; B-Room 1.26 vs 0.8) were measured against
+whatever the open set carried, so they mean nothing until this is answered.
+
+The code half is closed and shipped ahead of this sitting: the cross-machine device-load
+fallback could substitute a *different* device and report the push `ok` — it searched a
+browser root inferred from the device kind (which puts every audio effect under
+`instruments`), took the first substring hit, and never compared what loaded against what
+the song authored. It now searches the root and folder Live recorded at capture time,
+prefers the match at that exact path, and refuses any load whose class is not the authored
+one. So a silent stock-for-Hybrid swap can no longer happen through that path.
+
+That leaves two candidate explanations for what was observed, and only the sitting
+separates them:
+
+- [ ] Push `sun-zone-done` fresh from the DB, then read the A-Plate return's device class.
+  **Matches Hybrid Reverb** → the original observation was a set that had simply never been
+  re-pushed, and #275 closes.
+  **Still stock Reverb** → there is a second substitution path the audit did not reach;
+  capture the push report and the device list and re-open with them.
+- [ ] Only if the class matches: re-render and re-run the analysis, then re-assess the two
+  RT60 gaps against the authored devices. Any reverb-vs-intent conclusion drawn before this
+  is void.
+
 ## SMP-6V2K wave 2 — hear it, keep it, play it (2026-09-09) — **PARTLY DISCHARGED 2026-09-09 on Live 12.4.5.** Every probe box answered and R6.2 decided; the first hearing RAN and its music was not accepted, and the symbolic carve was never pushed. Both named below
 
 Plan: `.prawduct/artifacts/plans/SMP-6V2K-W2/build-plan.md`, chunk 17. Backlog **#330**, **#237**,

@@ -407,7 +407,7 @@ def test_analyze_mix_verifies_declared_device_parameter_flip(tmp_path: Path):
         master_audio=stem.copy(),
         stop_at_beat=16.0,
     )
-    envs = [DeclaredEnvelope(
+    envs = [DeclaredEnvelope.from_pairs(
         target_surface_id="track:3",
         target_kind="device_parameter",
         parameter_path="Amp Type",
@@ -431,7 +431,7 @@ def test_analyze_mix_flags_unrealized_automation(tmp_path: Path):
         master_audio=flat.copy(),
         stop_at_beat=16.0,
     )
-    envs = [DeclaredEnvelope(
+    envs = [DeclaredEnvelope.from_pairs(
         target_surface_id="track:3",
         target_kind="device_parameter",
         parameter_path="Amp Type",
@@ -440,6 +440,35 @@ def test_analyze_mix_flags_unrealized_automation(tmp_path: Path):
     report = analyze_mix(captures_dir, declared_envelopes=envs)
     assert report.automation_verifications[0].realized is False
     assert any(f.kind == "automation_not_realized" for f in report.findings)
+
+
+def test_analyze_mix_reports_a_staircase_ramp_as_one_finding(tmp_path: Path):
+    """A 64-step staircase that did not land is ONE finding, not 64.
+
+    Per-step grading turned a finer, better-authored ramp into 64 warnings
+    against a flat stem, drowning the report — and the count moved with the
+    step size rather than with anything about the mix.
+    """
+    flat = sine(440.0, 4.0, amplitude=0.5)
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:3", "03 Rhythm Gtr", flat)],
+        master_audio=flat.copy(),
+        stop_at_beat=16.0,
+    )
+    envs = [DeclaredEnvelope(
+        target_surface_id="track:3",
+        target_kind="device_parameter",
+        parameter_path="Tone",
+        breakpoints=tuple(
+            (4.0 + i * (4.0 / 64), i / 64, "linear") for i in range(65)
+        ),
+    )]
+    report = analyze_mix(captures_dir, declared_envelopes=envs)
+    assert len(report.automation_verifications) == 1
+    assert report.automation_verifications[0].steps == 64
+    assert len([f for f in report.findings
+                if f.kind == "automation_not_realized"]) == 1
 
 
 def test_analyze_mix_verifies_declared_mixer_volume_on_master(tmp_path: Path):
@@ -460,7 +489,7 @@ def test_analyze_mix_verifies_declared_mixer_volume_on_master(tmp_path: Path):
         master_audio=master,
         stop_at_beat=16.0,
     )
-    envs = [DeclaredEnvelope(
+    envs = [DeclaredEnvelope.from_pairs(
         target_surface_id="track:1",
         target_kind="mixer_volume",
         parameter_path=None,
@@ -491,7 +520,7 @@ def test_analyze_mix_unrealized_mixer_volume_produces_finding(tmp_path: Path):
         master_audio=flat_master,
         stop_at_beat=16.0,
     )
-    envs = [DeclaredEnvelope(
+    envs = [DeclaredEnvelope.from_pairs(
         target_surface_id="track:1",
         target_kind="mixer_volume",
         parameter_path=None,
@@ -528,7 +557,7 @@ def test_analyze_mix_pan_prediction_uses_stem_gains(tmp_path: Path):
         master_audio=master,
         stop_at_beat=16.0,
     )
-    envs = [DeclaredEnvelope(
+    envs = [DeclaredEnvelope.from_pairs(
         target_surface_id="track:1",
         target_kind="mixer_pan",
         parameter_path=None,
@@ -611,6 +640,67 @@ def test_analyze_mix_muted_master_serializes_delivered_as_null(tmp_path: Path):
     assert parsed["master_fader_volume"] == 0.0
     assert parsed["master_fader_db"] is None
     assert parsed["delivered_true_peak_dbtp"] is None
+
+
+def test_analyze_mix_marks_an_unprobed_master_fader_unverified(tmp_path: Path):
+    """A fader value nothing confirmed against the render is not a measurement.
+
+    Analysis is server-side and never talks to Live, so the fader it applies is
+    whatever the song DB declares. When Live and the DB disagree — a trim made
+    in Live and never pulled back — `delivered_true_peak_dbtp` is wrong by
+    exactly that drift, and it reads as authoritative. The report has to say so
+    itself: an agent that trims the fader, re-renders, and sees the same
+    delivered peak trims again.
+    """
+    duration_s = 2.0
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "01 Drums", calibrated_pink_noise(-26.0, duration_s))],
+        master_audio=calibrated_pink_noise(-20.0, duration_s),
+    )
+    report = analyze_mix(
+        captures_dir, master_fader_volume=0.70, master_fader_source="song_db",
+    )
+
+    assert report.master_fader_verified is False
+    assert report.master_fader_source == "song_db"
+    assert "not a reading of the set" in report.master_fader_note.lower()
+    assert "ableton_session" in report.master_fader_note
+    parsed = report.to_json_dict()
+    assert parsed["master_fader_verified"] is False
+    assert parsed["master_fader_note"] == report.master_fader_note
+
+
+def test_analyze_mix_says_in_the_report_which_numbers_are_pre_fader(tmp_path: Path):
+    """The pre-fader caveat belongs in the report, not only in skill prose.
+
+    A fader-only move leaves every per-stem and per-section row byte-identical.
+    Without this block that reads as "the level change did nothing" and the
+    next move is an EQ that was never needed.
+    """
+    duration_s = 2.0
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "01 Drums", calibrated_pink_noise(-26.0, duration_s))],
+        master_audio=calibrated_pink_noise(-20.0, duration_s),
+    )
+    basis = analyze_mix(captures_dir).to_json_dict()["measurement_basis"]
+
+    assert basis["stem_loudness"] == "pre_fader"
+    assert basis["section_masking"] == "pre_fader"
+    assert basis["master"] == "pre_master_fader"
+    assert basis["delivered_true_peak_dbtp"] == "post_master_fader"
+    assert "fader-only" in basis["note"]
+
+    # Masking reconstructs mix balance from DECLARED static fader gains — still
+    # pre-fader audio, and the basis has to name that difference rather than
+    # letting the two cases share one label.
+    gained = analyze_mix(
+        captures_dir, analyze_masking=True, stem_gains={"track:1": 0.5},
+    ).to_json_dict()["measurement_basis"]
+    assert gained["section_masking"] == (
+        "pre_fader_scaled_by_declared_static_fader_gains"
+    )
 
 
 def test_analyze_mix_skips_when_no_automation_declared(tmp_path: Path):

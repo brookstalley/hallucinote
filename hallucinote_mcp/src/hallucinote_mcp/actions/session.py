@@ -324,6 +324,75 @@ register(
 
 
 # ---------------------------------------------------------------------------
+# Main-thread occupancy: bout_status / abandon_bout
+#
+# Both are runs_on_worker=True and MUST stay that way. A ``run_on_main`` that
+# outran its ceiling keeps Live's main thread fenced until the runner signals,
+# so an action that took a main-thread bout in order to ask about the
+# main-thread bout would be refused by the very fence it reports on — it could
+# never run at exactly the moment it is needed.
+# ---------------------------------------------------------------------------
+
+register(
+    Action(
+        tool="ableton_session",
+        name="bout_status",
+        description=(
+            "Report what Live's main thread is currently occupied with, and "
+            "poll an escalated operation (one that outran its timeout and is "
+            "STILL RUNNING) to a terminal state."
+        ),
+        params=(
+            ParamSpec(name="job_id", type="str", required=False),
+        ),
+        handler=session_handlers.bout_status_handler,
+        runs_on_worker=True,
+        example="ableton_session(action='bout_status', job_id='main_thread-ab12cd34ef56')",
+        tips=(
+            "A call answered with code='work_escalated' has NOT failed and "
+            "has NOT finished — Python cannot interrupt a Live API call. Poll "
+            "the job_id it handed you until state is 'done' or 'failed'.",
+            "Call it with no job_id to ask only 'what is Live busy with?' — "
+            "the read you have when a request was refused as busy rather than "
+            "escalated.",
+            "Safe to call while the main thread is fenced: this action runs "
+            "on the worker thread and never takes a bout.",
+        ),
+    )
+)
+
+register(
+    Action(
+        tool="ableton_session",
+        name="abandon_bout",
+        description=(
+            "Force-release the admission gate held by an escalated operation. "
+            "Marks its job failed and lets new calls in. Does NOT cancel the "
+            "work — Live may still be running it."
+        ),
+        params=(
+            ParamSpec(name="job_id", type="str"),
+        ),
+        handler=session_handlers.abandon_bout_handler,
+        runs_on_worker=True,
+        example="ableton_session(action='abandon_bout', job_id='main_thread-ab12cd34ef56')",
+        tips=(
+            "Last resort. There is deliberately no automatic timed clear — "
+            "admitting work behind an operation Live is still executing is "
+            "the exact failure this fence exists to prevent, and a timer only "
+            "delays it.",
+            "Use it when you believe the runner will never signal (Live "
+            "restarted, engine wedged). If Live is merely slow, waiting is "
+            "strictly better: anything you send after abandoning queues "
+            "behind the work that is still running.",
+            "The job_id must be the one currently holding the gate — read it "
+            "from ableton_session(action='bout_status') first.",
+        ),
+    )
+)
+
+
+# ---------------------------------------------------------------------------
 # Arrangement loop region — moved to ableton_arrangement(action='set_loop') in
 # Wave M-5. The arrangement-loop concern belongs structurally on the
 # arrangement tool; the M-5 home also takes meter-agnostic beats (vs M-1's

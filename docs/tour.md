@@ -331,7 +331,7 @@ Grit as timbre:
 
 ![The Garage Kit's Saturator dialed to 11 dB drive, output pulled down to −14](assets/tour-drum-saturation.png)
 
-Two constraints Live imposed are recorded ([`decisions/09-the-dirt.md`](../examples/punk-fate/decisions/09-the-dirt.md)): device loads tail-append and Live 12.4 has no reorder API, so the new stages sit *after* the compressor, departing from the authored order — defensible for a wall-of-sound genre, and written down as a deliberate departure.
+Two constraints Live imposed are recorded ([`decisions/09-the-dirt.md`](../examples/punk-fate/decisions/09-the-dirt.md)): device loads tail-append and Live 12.4 has no reorder API, so the new stages sit *after* the compressor, departing from the authored order — defensible for a wall-of-sound genre, and written down as a deliberate departure. (Live still has no reorder API. What has changed since this session is that `hallucinote chain-rebuild` will now reconstruct a chain into the DB's order without losing the dialed state of everything downstream, so the departure is a choice rather than the only option.)
 And appending devices had pushed them *past the analyzer*, which would have captured every stem pre-distortion while reporting `ok` — caught because the manifest's `terminal` flag was re-checked.
 Headroom held at the output, measured across all eight sections: delivered ≈ **−2.1 to −2.6 dBTP** across three renders (a realtime capture has run-to-run spread, and the decision records the range).
 The *bus* did not: it sat at **+1.93 dBTP with 2–4 overshoots** depending on the capture, which is the number beat 14 fixes by putting a limiter where the fader had been standing in for one.

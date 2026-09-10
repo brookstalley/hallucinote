@@ -209,6 +209,8 @@ _EXPECTED_ACTIONS = {
     "stop",
     "seek",
     "back_to_arrangement",
+    "bout_status",
+    "abandon_bout",
     "snapshot",
     "revert",
     "list_snapshots",

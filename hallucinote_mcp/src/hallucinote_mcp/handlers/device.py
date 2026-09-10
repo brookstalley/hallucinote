@@ -682,6 +682,17 @@ def get_parameters_handler(
                     entry["value_items"] = list(items)
             else:
                 entry["is_enum"] = False
+            # Whether Live will accept a WRITE to this parameter. A macro-mapped
+            # or otherwise locked parameter reads fine and refuses every write
+            # ("Value cannot be set, the parameter is disabled"), so a caller
+            # restoring captured state needs to know BEFORE it tries — the
+            # difference between "this is macro-mapped, re-map it" and "the
+            # write failed". Omitted rather than defaulted when Live does not
+            # expose it, because absent must read as unknown, not as writable.
+            try:
+                entry["is_enabled"] = bool(p.is_enabled)
+            except (AttributeError, RuntimeError):
+                pass
         params_out.append(entry)
     result: dict[str, Any] = {
         "device_index": spec["device_index"],
@@ -1010,6 +1021,26 @@ def _canonical_class_name(device: Any) -> str:
         or getattr(device, "class_name", None)
         or ""
     )
+
+
+def _grew_at(before_classes: list[str], after_classes: list[str]) -> int:
+    """0-based position where a grown device chain gained its new device.
+
+    Live keeps a device chain in canonical order — MIDI effects, then the
+    instrument, then audio effects — so a load is NOT always an append. A MIDI
+    effect loaded onto a track that holds an instrument lands at position 0 and
+    pushes the instrument down; reading the tail then names the DISPLACED
+    device, a real device that is not the one loaded, which nothing downstream
+    can tell is wrong (`device_index` also feeds push's device linking).
+
+    Comparing the two class lists position by position finds where the chain
+    actually grew: the first index at which they diverge, or the end of
+    ``before`` when every shared position still matches (the plain append).
+    """
+    for i, (before, after) in enumerate(zip(before_classes, after_classes)):
+        if after != before:
+            return i
+    return len(before_classes)
 
 
 def _raise_silent_noop(
@@ -1695,9 +1726,14 @@ def load_handler(
         census_before, census_after, target=target_key
     )
     if len(chain_after) > len(chain_before_classes):
-        # Append case (the common shape): Live grew the chain by N >= 1.
-        new_index = len(chain_after)
-        new_device = chain_after[-1]
+        # Live grew the chain by N >= 1 — at the end in the common case, but
+        # not always: Live re-orders the chain into MIDI-effects / instrument /
+        # audio-effects order, so the new device can land anywhere. Diff the
+        # class lists positionally to find where it actually went, the same way
+        # the equal-length branch below does.
+        grew_at = _grew_at(chain_before_classes, chain_after_classes)
+        new_index = grew_at + 1
+        new_device = chain_after[grew_at]
     elif len(chain_after) == len(chain_before_classes):
         # Same length — either replace-in-place (one position changed
         # class) or a silent no-op (Live did nothing because a matching
@@ -3146,8 +3182,13 @@ def _load_into_rack_chain(
             f"exactly one device (chain length {len(chain_before_classes)} → "
             f"{len(chain_after)}). Post-insert chain: [{existing_str}]."
         )
-    nested_position = len(chain_after)
-    new_device = chain_after[-1]
+    # Same positional diff as the main-chain loader: `insert_device` was probed
+    # as a plain append (2026-06-15), where the diff and the tail agree — but if
+    # Live ever re-orders a nested chain the way it re-orders the track's main
+    # one, the diff names the inserted device and the tail names its neighbour.
+    grew_at = _grew_at(chain_before_classes, chain_after_classes)
+    nested_position = grew_at + 1
+    new_device = chain_after[grew_at]
     result: dict[str, Any] = {
         "device_index": device_index,
         "chain_index": chain_index,

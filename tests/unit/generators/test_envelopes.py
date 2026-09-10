@@ -61,6 +61,26 @@ def _events(conn) -> list[sqlite3.Row]:
 # ---------- target_kind validation per-kind ----------
 
 
+def _legacy_note_expression(conn, *, song_id, note_id, axis="pitch"):
+    """Insert a `note_expression` envelope the way a DB predating its
+    retirement holds one.
+
+    `create_envelope` refuses this kind — Live exposes no per-note expression
+    surface under any name, so authoring a new one only defers the refusal to
+    push time. Rows like this still exist in older DBs, and the note-anchored
+    query and the FK cascade below are what serve them.
+    """
+    import uuid
+    eid = uuid.uuid4().hex
+    conn.execute(
+        "INSERT INTO envelopes (id, song_id, target_kind, target_note_id, "
+        "parameter_path) VALUES (?, ?, 'note_expression', ?, ?)",
+        (eid, song_id, note_id, axis),
+    )
+    return eid
+
+
+
 def test_create_clip_cc_envelope(conn, song, clip):
     eid = M.create_envelope(
         conn, song_id=song, target_kind="clip_cc",
@@ -81,22 +101,19 @@ def test_create_clip_pitch_bend_envelope(conn, song, clip):
     assert row["parameter_path"] is None
 
 
-def test_create_note_expression_envelope_microtonal(conn, song, note):
-    """The schema path to microtonal: per-note pitch envelope in semitones."""
-    eid = M.create_envelope(
-        conn, song_id=song, target_kind="note_expression",
-        target_note_id=note, parameter_path="pitch",
-    )
-    M.replace_breakpoints(
-        conn, envelope_id=eid,
-        breakpoints=[
-            {"time_beats": 0.0, "value": 0.0, "curve_kind": "linear"},
-            {"time_beats": 0.5, "value": 0.25, "curve_kind": "linear"},
-            {"time_beats": 1.0, "value": 0.0, "curve_kind": "linear"},
-        ],
-    )
-    bps = Q.get_breakpoints(conn, eid)
-    assert [b["value"] for b in bps] == [0.0, 0.25, 0.0]
+def test_note_expression_cannot_be_authored(conn, song, note):
+    """This used to be "the schema path to microtonal". There is no such path.
+
+    Live's Python API exposes no per-note expression surface under any name, so
+    the row could be written and never pushed. Refusing at authoring time is
+    what stops a composer building a part around a gesture that cannot sound —
+    the refusal is worth more the earlier it arrives.
+    """
+    with pytest.raises(ValueError, match="no per-note expression surface"):
+        M.create_envelope(
+            conn, song_id=song, target_kind="note_expression",
+            target_note_id=note, parameter_path="pitch",
+        )
 
 
 def test_create_device_parameter_envelope(conn, song, device):
@@ -188,12 +205,18 @@ def test_parameter_path_forbidden_for_mixer(conn, song, track):
         )
 
 
-def test_note_expression_axis_validated(conn, song, note):
-    with pytest.raises(ValueError, match="not in"):
-        M.create_envelope(
-            conn, song_id=song, target_kind="note_expression",
-            target_note_id=note, parameter_path="bogus_axis",
-        )
+def test_note_expression_is_refused_whatever_the_axis(conn, song, note):
+    """The refusal is about the kind, not the axis.
+
+    It used to validate an MPE-axis allowlist. Telling someone their axis is
+    wrong implies a right one exists, and none does.
+    """
+    for axis in ("pitch", "pressure", "timbre", "bogus_axis"):
+        with pytest.raises(ValueError, match="no per-note expression surface"):
+            M.create_envelope(
+                conn, song_id=song, target_kind="note_expression",
+                target_note_id=note, parameter_path=axis,
+            )
 
 
 def test_clip_cc_parameter_path_must_be_int(conn, song, clip):
@@ -251,21 +274,6 @@ def test_envelope_create_emits_event_with_song(conn, song, clip):
     evs = [e for e in _events(conn) if e["kind"] == E.ENVELOPE_CREATED]
     assert len(evs) == 1
     assert evs[0]["song_id"] == song
-
-
-def test_note_expression_event_carries_clip_id(conn, song, clip, note):
-    """Provenance: note_expression envelope events resolve clip_id via the note
-    so audit-trail queries by clip find them (the polymorphic FK alone wouldn't).
-    """
-    M.create_envelope(
-        conn, song_id=song, target_kind="note_expression",
-        target_note_id=note, parameter_path="pitch",
-    )
-    ev = conn.execute(
-        "SELECT clip_id FROM events WHERE kind = ? ORDER BY seq DESC LIMIT 1",
-        (E.ENVELOPE_CREATED,),
-    ).fetchone()
-    assert ev["clip_id"] == clip
 
 
 def test_envelope_delete_emits_event(conn, song, clip):
@@ -402,10 +410,7 @@ def test_delete_clip_cascades_envelopes(conn, song, clip):
 
 
 def test_delete_note_cascades_envelope(conn, song, note):
-    eid = M.create_envelope(
-        conn, song_id=song, target_kind="note_expression",
-        target_note_id=note, parameter_path="pressure",
-    )
+    eid = _legacy_note_expression(conn, song_id=song, note_id=note, axis="pressure")
     M.delete_notes(conn, note_ids=[note])
     assert Q.get_envelope(conn, eid) is None
 
@@ -444,8 +449,7 @@ def test_queries_filter_by_target(conn, song, clip, note, device, track, ret):
                            target_clip_id=clip, parameter_path="1")
     pb = M.create_envelope(conn, song_id=song, target_kind="clip_pitch_bend",
                            target_clip_id=clip)
-    ne = M.create_envelope(conn, song_id=song, target_kind="note_expression",
-                           target_note_id=note, parameter_path="pitch")
+    ne = _legacy_note_expression(conn, song_id=song, note_id=note)
     dp = M.create_envelope(conn, song_id=song, target_kind="device_parameter",
                            target_device_id=device, parameter_path="Threshold")
     mv = M.create_envelope(conn, song_id=song, target_kind="mixer_volume",

@@ -191,7 +191,14 @@ def _response_from_dict(obj: dict[str, Any]) -> Response:
     warnings = _maybe_tuple(obj.get("warnings"))
     is_ok = bool(obj.get("ok"))
     if is_ok:
-        return Response(ok=True, result=obj.get("result"), warnings=warnings)
+        # `code` rides the OK path too, and dropping it here would strand the
+        # one discriminator that tells a completed call from an escalated one —
+        # both arrive as ok=True, and confusing them is how a caller treats a
+        # handle as a result.
+        return Response(
+            ok=True, result=obj.get("result"), warnings=warnings,
+            code=obj.get("code"),
+        )
     return Response(
         ok=False,
         error=obj.get("error", ""),

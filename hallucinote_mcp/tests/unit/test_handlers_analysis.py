@@ -823,7 +823,13 @@ def test_collect_declared_envelopes_resolves_surfaces(synthetic_song: Path):
     by_kind = {e.target_kind: e for e in declared}
     assert by_kind["device_parameter"].target_surface_id == "track:3"
     assert by_kind["device_parameter"].parameter_path == "Amp Type"
-    assert by_kind["device_parameter"].breakpoints == ((0.0, 0.0), (8.0, 1.0))
+    # The fixture writes curve_kind="hold"; this assertion passing WITH 'hold'
+    # present is the positive evidence the curve survives the MCP boundary —
+    # dropping it there is what left the verifier unable to tell a step from
+    # a ramp.
+    assert by_kind["device_parameter"].breakpoints == (
+        (0.0, 0.0, "hold"), (8.0, 1.0, "hold"),
+    )
     assert by_kind["send_level"].target_surface_id == "return:1"
     assert by_kind["mixer_volume"].target_surface_id == "track:3"
 

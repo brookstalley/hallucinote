@@ -128,12 +128,19 @@ class Response:
     hint: str | None = None
     needs_remote: bool = False
     warnings: tuple[str, ...] | None = None
-    # Stable machine-readable discriminator for errors the MCP server side
-    # post-processes. Today the only producer is the version handshake
+    # Stable machine-readable discriminator the MCP server side
+    # post-processes. Two producers today: the version handshake
     # (``VERSION_MISMATCH_CODE``), which the server uses to refine the
-    # remediation hint (re-vendor vs. respawn the server process). Optional
-    # and serialized only when set, so it is backward-compatible with a
-    # vendored Remote Script that predates it.
+    # remediation hint (re-vendor vs. respawn the server process), and the
+    # main-thread escalation (``WORK_ESCALATED_CODE``), which rides an
+    # ``ok=True`` response. Optional and serialized only when set, so it is
+    # backward-compatible with a vendored Remote Script that predates it.
+    #
+    # Serialized on BOTH the ok and the error path. An escalation is ok=True
+    # by design — the work is observable, not failed — so if ``code`` only
+    # survived on errors, a consumer would have no machine-readable way to
+    # tell a handle to still-running work from a completed operation, and the
+    # difference is whether the thing it asked for has happened yet.
     code: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -152,8 +159,8 @@ class Response:
                 out["example"] = self.example
             if self.hint is not None:
                 out["hint"] = self.hint
-            if self.code is not None:
-                out["code"] = self.code
+        if self.code is not None:
+            out["code"] = self.code
         if self.warnings:
             out["warnings"] = list(self.warnings)
         return out
@@ -195,6 +202,18 @@ def error(
 #: knows whether its own *process* is the stale half — see
 #: ``hallucinote_mcp.stale_server_process_hint``).
 VERSION_MISMATCH_CODE = "version_mismatch"
+
+
+# ---------------------------------------------------------------------------
+# Main-thread work escalation
+# ---------------------------------------------------------------------------
+
+#: Discriminator on the ``ok=True`` response that carries a job handle for a
+#: main-thread bout which outran its ceiling and is STILL RUNNING inside Live.
+#: The call has not failed and it has not finished — it is observable. A
+#: consumer that treats every ``ok=True`` as "done" would record a write that
+#: has not landed yet, so this is the flag that says "poll before believing".
+WORK_ESCALATED_CODE = "work_escalated"
 
 
 def check_version_compat(

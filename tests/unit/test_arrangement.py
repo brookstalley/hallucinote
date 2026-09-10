@@ -295,3 +295,102 @@ def test_materialize_unknown_track_raises_loud(db_conn, song_and_tracks):
     )
     with pytest.raises(KeyError, match="unknown track 'Theremin'"):
         arr.materialize(db_conn, song_id=song_id, tracks=tracks)
+
+
+# ==========================================================================
+# Bar-ruler provenance (#496)
+# ==========================================================================
+
+
+def test_materialize_stamps_every_row_it_writes_as_uniform(db_conn, song_and_tracks):
+    """This class accumulates whole bars against ONE ``beats_per_bar`` and
+    never reads the song's ``time_signature_map``. That IS uniform bar math, so
+    every row it writes says so — which is what lets the push planner tell a
+    deliberate multi-meter song from one this ruler misplaced."""
+    song_id, tracks = song_and_tracks
+    _two_section_arrangement().materialize(db_conn, song_id=song_id, tracks=tracks)
+
+    placements = Q.get_arrangement_for_song(db_conn, song_id)
+    assert placements, "fixture precondition"
+    assert {p["bar_ruler"] for p in placements} == {"uniform"}
+
+    cues = Q.get_cue_points(db_conn, song_id)
+    assert cues, "fixture precondition"
+    assert {c["bar_ruler"] for c in cues} == {"uniform"}
+
+    sections = Q.get_sections_for_song(db_conn, song_id)
+    assert sections, "fixture precondition"
+    assert {sec["bar_ruler"] for sec in sections} == {"uniform"}
+
+
+def test_uniform_is_claimed_by_exactly_one_module_in_the_tree():
+    """The regression shape that matters is a FOURTH writer of bar positions
+    doing uniform math and silently inheriting the mutator's ``map`` default —
+    which would make its rows unalertable forever. ``uniform`` is an opt-out
+    exactly one component is entitled to; a new one showing up here is a
+    deliberate act that has to be seen."""
+    src = Path(__file__).resolve().parents[2] / "src" / "hallucinote"
+    claimants = sorted(
+        path.relative_to(src).as_posix()
+        for path in src.rglob("*.py")
+        if 'bar_ruler="uniform"' in path.read_text()
+    )
+    assert claimants == ["arrangement.py"], claimants
+
+
+def test_the_mutators_default_to_map_so_an_unwitting_writer_is_correct(db_conn, song_and_tracks):
+    """``map`` on the MUTATOR, not at the call sites: a writer that has never
+    heard of this column authors a correct row, and only the one component
+    doing uniform math has to know the rule exists."""
+    song_id, tracks = song_and_tracks
+    clip_id = M.create_clip(
+        db_conn, track_id=tracks["Drums"], slot=9, length_beats=4.0, name="x",
+    )
+    M.add_arrangement_clip(
+        db_conn, song_id=song_id, track_id=tracks["Drums"], clip_id=clip_id,
+        start_bar=1.0, end_bar=5.0,
+    )
+    M.add_cue_point(db_conn, song_id=song_id, position_bar=1.0, name="top")
+    assert Q.get_arrangement_for_song(db_conn, song_id)[0]["bar_ruler"] == "map"
+    assert Q.get_cue_points(db_conn, song_id)[0]["bar_ruler"] == "map"
+
+
+def test_an_unknown_bar_ruler_is_refused_by_the_mutator(db_conn, song_and_tracks):
+    """The schema CHECK would also refuse it, in SQLite's words, naming neither
+    the argument nor the two legal values."""
+    song_id, tracks = song_and_tracks
+    clip_id = M.create_clip(
+        db_conn, track_id=tracks["Drums"], slot=9, length_beats=4.0, name="x",
+    )
+    with pytest.raises(ValueError, match="bar_ruler"):
+        M.add_arrangement_clip(
+            db_conn, song_id=song_id, track_id=tracks["Drums"], clip_id=clip_id,
+            start_bar=1.0, end_bar=5.0, bar_ruler="uniformish",
+        )
+    with pytest.raises(ValueError, match="bar_ruler"):
+        M.add_cue_point(
+            db_conn, song_id=song_id, position_bar=1.0, bar_ruler="beats",
+        )
+
+
+def test_re_adding_a_row_with_a_different_ruler_restamps_it(db_conn, song_and_tracks):
+    """A song repaired by re-authoring its positions against the meter map is
+    re-run, not re-created. The existing-row UPDATE branch has to carry the new
+    ruler, or the repaired song keeps raising the alert it just fixed."""
+    song_id, tracks = song_and_tracks
+    clip_id = M.create_clip(
+        db_conn, track_id=tracks["Drums"], slot=9, length_beats=4.0, name="x",
+    )
+    for ruler in ("uniform", "map"):
+        M.add_arrangement_clip(
+            db_conn, song_id=song_id, track_id=tracks["Drums"], clip_id=clip_id,
+            start_bar=1.0, end_bar=5.0, bar_ruler=ruler,
+        )
+        M.add_cue_point(
+            db_conn, song_id=song_id, position_bar=1.0, name="top",
+            bar_ruler=ruler,
+        )
+    placements = Q.get_arrangement_for_song(db_conn, song_id)
+    cues = Q.get_cue_points(db_conn, song_id)
+    assert len(placements) == 1 and placements[0]["bar_ruler"] == "map"
+    assert len(cues) == 1 and cues[0]["bar_ruler"] == "map"

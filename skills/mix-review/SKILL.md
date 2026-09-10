@@ -288,6 +288,21 @@ For each section, you have:
   wasn't known or the master is muted. Never read the bus true-peak as delivery, and
   never advise trimming the master fader to move `master.true_peak` — the fader is
   post-tap, so the bus number won't budge (only `delivered_true_peak_dbtp` will).
+  **Check `master_fader_verified` before you trust the delivered number.** Analysis
+  is server-side and never reads Live, so the fader it applies is whatever the song
+  DB declares (`master_fader_source: "song_db"`, `master_fader_verified: false`).
+  A fader trimmed in Live and never pulled back leaves `delivered_true_peak_dbtp`
+  wrong by exactly that drift — `master_fader_note` says so and names the probe
+  that settles it (`ableton_session(action='info')`). Judge a level move you just
+  made on the master-bus true peak + overshoot delta, which IS measured.
+- `measurement_basis` — what each family of numbers is measured relative to.
+  **Every per-stem and per-section reading is PRE-fader**, so a fader-only move
+  leaves `loudness`, `masking` and `bed_masking` byte-identical across an A/B.
+  That is the tap, not a failed change: never read flat stem rows after a level
+  move as "the fix didn't work" and reach for EQ. `section_masking` reads
+  `pre_fader_scaled_by_declared_static_fader_gains` when masking reconstructed mix
+  balance from the DB's static gains — still pre-fader audio, and still blind to a
+  fader move that never reached the DB.
   The last of these is **per return** (RT60
   is a property of the return's reverb device, measured once from its captured
   ring-out — not per send). When `sufficient_tail` is false the capture had no
@@ -302,7 +317,13 @@ For each section, you have:
   `conflicting_declarations` (non-empty) means sends into one return declared
   different RT60s — one device can't have two decay times; surface the conflict.
 - `automation_verifications` — was authored time-varying automation realized in
-  audio? Per value-changing breakpoint: a `device_parameter` flip is verified on
+  audio? **One row per authored GESTURE, not per breakpoint**: consecutive
+  same-direction changes closer together than the analysis window are graded as
+  one move, so a ramp authored as 64 small steps is a single verdict spanning the
+  whole traversal. `at_beat` is where the move starts, `through_beat` where it
+  lands, and `steps` how many declared changes it collapsed — read the span, not
+  `at_beat` alone, when you cite where something happened. A `device_parameter`
+  flip is verified on
   **TWO probes — timbre OR image** (STR-4C8N), because spectral centroid alone
   cannot see a comb/width effect (a flanger notches roughly symmetrically, so it
   barely moves the centroid however wet it gets, and centroid-only verification
@@ -323,10 +344,14 @@ For each section, you have:
   against a prediction from the declared values + the stem's contribution.
   `realized=false` (with `measurable=true`) means the authored gesture didn't
   happen in the render — surface it. `measurable=false` means it can't be
-  checked from this capture (the window was silent; or, for mixer kinds, the
-  stem is too diluted in the mix for the master to speak, or master-chain
-  limiting broke the prediction model) — report the gap, don't read it as a
-  failure. The `note` field explains each verdict.
+  checked from this capture: the window was silent; **or the declared value
+  never settles on one side of the move — a neighbouring ramp runs straight
+  through where the plateau would be, so there is no steady span to read the
+  old (or new) value off**; or, for mixer kinds, the stem is too diluted in the
+  mix for the master to speak, or master-chain limiting broke the prediction
+  model. Report the gap, don't read it as a failure — and for the no-settled-
+  window case the fix is authorship, not mixing: give the move a plateau to be
+  judged against. The `note` field explains each verdict.
 - `energy_realization` — declared-energy-curve vs rendered-intensity (ARR-7M3D):
   did the per-section `energy` the composer authored actually render as
   intensity? `correlate_rho` is Spearman ρ per correlate (`loudness`,

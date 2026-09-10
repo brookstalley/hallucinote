@@ -508,6 +508,51 @@ These are **materialized-state authorship**, exactly like `params_dialed` — th
 
 ---
 
+## Reordering / inserting mid-chain
+
+**Live 12.4 has no device-reorder API, and `load` always tail-appends.** There is no in-place move: a device you load lands at the END of the destination chain, wherever the DB says it belongs. So "swap the instrument at position 1 and keep the EQ + Erosion after it" is not an edit — it is a rebuild of everything from that position down.
+
+The supported command is:
+
+```bash
+"$PY" -m hallucinote.cli chain-rebuild --song <slug> --track <live index> --from-position 1
+```
+
+It runs five phases against Live: **capture** the chain from `--from-position` to the tail (every parameter, each device's input routing — which is where a compressor's *sidechain source* lives — and a rack's per-chain properties and drum pads); **journal** all of it to `songs/<slug>/.rebuild/<parent>.json` *before the first delete*; **demolish** (mute the parent, then delete descending — Live shifts later indices down after each delete, so descending is the only order that works); **rebuild** by loading in ascending DB `position` order and letting the tail-append produce the right order; then **restore** the captured state and **re-read Live to prove it landed**. The parent's mute is put back to whatever it was, and the journal is deleted only once the read-back agrees.
+
+`--return <n>` and `--master` address the other two parent kinds. On the master there is no mute, so the transient window cannot be silenced — stop the transport first.
+
+Three things worth knowing before you run it:
+
+- **It refuses rather than half-doing it.** A device in the affected span with no loadable identity — a `placeholder` (an intentionally empty slot, which a tail-append cannot reproduce mid-chain), or a row with no kind or preset selector — stops the command *before the first delete*, naming the device. Deleting something that cannot be put back is unrecoverable, so that check runs while the chain is still there to look at.
+- **An interrupted run leaves a journal, and `--resume` replays it.** If Live disconnects mid-rebuild, the chain is gutted and the journal is the record of what was in it. `chain-rebuild --resume auto --song <slug>` re-probes, deletes whatever the interrupted run left in the span, reloads and restores from the journal alone.
+- **A parameter it cannot restore is reported, never dropped.** A macro-mapped or locked parameter (`is_enabled` reads False) is named in the output rather than silently skipped — the whole point of the command is that a rebuild never quietly costs you mix work.
+
+### In-rack hand edits do not survive a rebuild
+
+**A rack is put back by reloading its preset.** Everything the preset contains comes back — its chains, its nested devices, the macros, the samples — *as the preset saved them*. Two things do not survive:
+
+- **Structure you added inside the rack in Live**: a device dropped into a drum pad's chain by hand, a chain created in the rack's editor. The preset does not contain it, so the reloaded rack does not have it.
+- **Nested-device parameters you dialed by ear and never saved**: the rebuild restores the rack's own top-level parameters (its macros), not the parameters of devices *inside* it. Those come back at whatever the preset holds.
+
+What *is* carried across is the rack's top-level parameters and its authored **per-chain properties** (`choke_group`, `out_note`, chain `mute` / `solo` / `volume` / `pan`) — captured before the delete and re-applied onto the reloaded preset. See *Per-chain authorship* above.
+
+Push does re-assert nested-device parameters the **DB** carries (`device_param_overrides` — see DEEP-RACK-ADDR), so a nested tweak that reached the DB via `/hallucinote:song-snapshot` comes back on the next `push execute --only devices`. It is the tweak that never left Live that is lost.
+
+If you have hand-built inside a rack, save it as a preset (or capture it with `/hallucinote:song-snapshot`, which records the preset identity the DB reloads from) **before** rebuilding the chain around it.
+
+### The push side: `--reconcile-chains`
+
+The same orchestration has a second caller. When a push finds a device the DB authors at a position Live already has something else at, the `devices` phase **halts** — it refuses to load, because a load would tail-append a second copy and silently double the signal path. Three fixes, in the order to try them:
+
+1. `push_cli probe-and-link <session> --song <slug> --probe` — bind the chain Live already has (nothing changes in Live).
+2. `/hallucinote:song-snapshot` — accept Live's order and make the DB describe it.
+3. `push execute --reconcile-chains` — make the **DB's** order true, by running the rebuild above on every chain the phase would have halted on, before the phases dispatch.
+
+The flag is **opt-in per push and never automatic**: a rebuild is destructive and holds Live for real wall-clock time, which is not something a routine push starts on its own. Without it the halt stands, and its message names the command.
+
+---
+
 ## Repeated sections (verse twice, chorus three times)
 
 A song with two verses or three choruses has two valid models, and the natural convention isn't obvious from the data alone.
@@ -560,7 +605,7 @@ For non-4/4 sections:
 >
 > **Realize the meter as felt groove, because the ruler won't carry it.** Bar-scaled generators via `beats_per_bar`, plus hand-authored within-bar accent groupings. Never present that to the user as a creative option — it isn't one; it's what the renderer forces.
 >
-> **Two bar rulers, and they diverge after the first meter change.** Push translates bar positions through the meter map (`_split_bar` / `_position_bar_to_beats`), while `hallucinote.arrangement` accumulates whole bars against one uniform `beats_per_bar` and never reads the map. `Arrangement(beats_per_bar=...)` is a single value, so there is no setting that makes them agree for a multi-meter song — in a 4/4 song that turns 7/4 at bar 9, bar 13 is beat 48 to the arrangement layer and beat 60 to push (push gains the extra beats every bar after the change adds). The arrangement push phase detects this and alerts, naming the placements affected; it cannot repair them.
+> **Two bar rulers, and they diverge after the first meter change.** Push translates bar positions through the meter map (`_split_bar` / `_position_bar_to_beats`), while `hallucinote.arrangement` accumulates whole bars against one uniform `beats_per_bar` and never reads the map. `Arrangement(beats_per_bar=...)` is a single value, so there is no setting that makes them agree for a multi-meter song — in a 4/4 song that turns 7/4 at bar 9, bar 13 is beat 48 to the arrangement layer and beat 60 to push (push gains the extra beats every bar after the change adds). Every bar-position row records which ruler produced it, and the arrangement push phase alerts only on the ones that came from the uniform accumulation — so a song authored directly against the map raises nothing, and the alert stops being one an operator learns to skip. It names the placements affected; it cannot repair them.
 >
 > Two ways through, both real: **author the placements after the change directly** — `M.add_arrangement_clip` / `M.create_section` take float bars and push resolves them through the map, so `Arrangement` is simply not the tool past that point — or **keep the song single-meter in the DB** and carry the odd groupings as accent alone. Making `Arrangement.plan()` meter-aware is `ARR-4M3T`.
 >
@@ -669,8 +714,9 @@ pitch and gain are ordinary device parameters and envelopes.
 **What is not there yet.** The score-dependent `carve` / `vocode` transforms are
 built and unit-tested but have **never been pushed to Live** — the one piece of
 the sampling path with no live run behind it. Per-note MPE bends
-(`note_expression`) cannot be pushed at all on Live 12.4.5: `Clip.envelope_for_note`
-does not exist (#515), so a monophonic line's glide goes through a
+(`note_expression`) cannot be pushed at all — Live's Python API exposes no
+per-note expression surface under any name, so this is permanent rather than
+pending a Live update (#515). A monophonic line's glide goes through a
 `device_parameter` ride instead. Source separation is deferred (#266); a sampler nested inside
 a rack is pushed but not captured back; a sampler's reverse has no intent column
 to read from. R4.3 (formant-preserving grain-scatter) is **no longer gated** —

@@ -26,9 +26,14 @@ class FakeParam:
         max: float = 1.0,
         value_items: tuple[str, ...] | None = None,
         display_fn=None,
+        is_enabled: bool = True,
     ):
         self.name = name
         self.value = value
+        # Live's writability flag: False means macro-mapped or otherwise
+        # locked, and every write is refused. Default True — most params are
+        # writable, and a fake that defaulted to locked would hide real bugs.
+        self.is_enabled = is_enabled
         self.min = min
         self.max = max
         # Live 12.4 raises ``RuntimeError: Only quantized parameters have
@@ -445,6 +450,66 @@ def test_get_parameters_summary_vs_full(loaded_actions):
     p_filter_full = resp_f.result["parameters"][1]
     assert p_filter_full["is_enum"] is True
     assert p_filter_full["value_items"] == ["Lowpass", "Highpass"]
+    # Writability rides the full read too. A caller restoring captured state
+    # needs to know a parameter is locked BEFORE it writes, so it can say
+    # "this is macro-mapped" rather than "the write failed".
+    assert "is_enabled" not in p0_summary
+    assert p_filter_full["is_enabled"] is True
+
+
+def test_get_parameters_full_reports_a_locked_parameter_as_not_enabled(
+    loaded_actions,
+):
+    """A macro-mapped parameter reads fine and refuses every write.
+
+    Without this on the wire, a chain rebuild cannot tell a locked parameter
+    from a writable one until its write is refused, and the operator is told
+    the restore failed rather than that the parameter is mapped.
+    """
+    ctx = _ctx_with_one_device()
+    # track_index is 1-based on the wire; the fake list is not.
+    dev = ctx.song.tracks[0].devices[0]
+    dev.parameters[0].is_enabled = False
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="get_parameters",
+            params={
+                "node": {"parent": {"kind": "track", "index": 1},
+                         "device_index": 1},
+                "detail": "full",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok
+    assert resp.result["parameters"][0]["is_enabled"] is False
+
+
+def test_get_parameters_omits_writability_when_live_does_not_expose_it(
+    loaded_actions,
+):
+    """Absent must read as unknown, never as writable.
+
+    A caller that treated a missing flag as 'locked' would silently drop real
+    authored state; one that treated it as 'writable' at least tries the write
+    and reports a genuine refusal. Omitting the key is what lets the caller
+    make that distinction.
+    """
+    ctx = _ctx_with_one_device()
+    del ctx.song.tracks[0].devices[0].parameters[0].is_enabled
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="get_parameters",
+            params={
+                "node": {"parent": {"kind": "track", "index": 1},
+                         "device_index": 1},
+                "detail": "full",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok
+    assert "is_enabled" not in resp.result["parameters"][0]
 
 
 # ---------- load / delete / enable / disable ----------
@@ -555,6 +620,99 @@ def test_load_appends_to_existing_chain(loaded_actions):
     assert resp.ok is True
     assert resp.result["device_index"] == 3
     assert [d.name for d in track.devices] == ["A", "B", "EQ8"]
+
+
+def test_load_reports_the_device_loaded_not_the_one_it_displaced(loaded_actions):
+    """Live keeps a chain in MIDI-effects / instrument / audio-effects order,
+    so loading a MIDI effect onto a track that already holds an instrument
+    inserts at the HEAD and pushes the instrument down. The response must name
+    the device just loaded at its real position — naming the displaced device
+    is the worst failure shape available here, because it names a REAL device
+    and nothing downstream (push's device linking reads `device_index`) can
+    tell it is wrong."""
+    track = FakeTrack("T1", devices=[
+        FakeDevice("Operator", class_name="Operator"),
+    ])
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    _add_browser_item(ctx, "midi_effects", "Pitch", uri="query:Pitch")
+
+    def fake_load(item):
+        ctx.application.browser.load_calls.append(item)
+        track.devices.insert(
+            0, FakeDevice(name=item.name, class_name="MidiPitcher")
+        )
+    ctx.application.browser.load_item = fake_load
+
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Pitch"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.to_dict()
+    assert [d.class_name for d in track.devices] == ["MidiPitcher", "Operator"]
+    assert resp.result["device_index"] == 1
+    assert resp.result["loaded_class_name"] == "MidiPitcher"
+    assert resp.result["name"] == "Pitch"
+
+
+def test_load_into_the_middle_of_a_chain_reports_that_position(loaded_actions):
+    """The MIDI-effect-at-the-head case is one instance, not the boundary: any
+    load Live does not append lands somewhere the tail does not name. An
+    instrument dropped between a MIDI effect and the audio effects reports its
+    own position."""
+    track = FakeTrack("T1", devices=[
+        FakeDevice("Pitch", class_name="MidiPitcher"),
+        FakeDevice("Reverb", class_name="Reverb"),
+    ])
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    _add_browser_item(ctx, "instruments", "Operator", uri="query:Operator")
+
+    def fake_load(item):
+        ctx.application.browser.load_calls.append(item)
+        track.devices.insert(
+            1, FakeDevice(name=item.name, class_name="Operator")
+        )
+    ctx.application.browser.load_item = fake_load
+
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "Operator"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.to_dict()
+    assert resp.result["device_index"] == 2
+    assert resp.result["loaded_class_name"] == "Operator"
+
+
+def test_load_of_a_second_same_class_device_still_reports_the_tail(loaded_actions):
+    """Positional diff boundary: when the loaded device's class already sits in
+    the chain, the first diverging position is where the chain grew — for a
+    plain append that is still the tail, so the common shape is unchanged."""
+    track = FakeTrack("T1", devices=[
+        FakeDevice("EQ8", class_name="Eq8"),
+    ])
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    _add_browser_item(ctx, "audio_effects", "EQ Eight", uri="query:Eq8")
+
+    def fake_load(item):
+        ctx.application.browser.load_calls.append(item)
+        track.devices.append(FakeDevice(name=item.name, class_name="Eq8"))
+    ctx.application.browser.load_item = fake_load
+
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"node": {"parent": {"kind": "track", "index": 1}, "terminal": "track"}, "kind": "EQ Eight"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.to_dict()
+    assert resp.result["device_index"] == 2
+    assert resp.result["name"] == "EQ Eight"
 
 
 def test_load_with_preset_uri_finds_by_uri_in_nested_folder(loaded_actions):

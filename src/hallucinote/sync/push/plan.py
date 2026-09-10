@@ -588,13 +588,21 @@ _ACK_ONLY_KINDS: frozenset[str] = frozenset({
     # duplicate landed); this op only rewrites content, so there's no new index
     # to record — ack-only. Distinct from the `arrangement_clip:` duplicate key.
     "arrangement_clip_notes",
-    # The post-apply pass that bounds a placed AUDIO copy to the span its
-    # placement authored — ableton_clip(action='set_property',
-    # location='arrangement') writing end_marker / loop_end, keyed
+    # The post-apply pass that CONFORMS a placed AUDIO copy and bounds it to
+    # the span its placement authored — ableton_clip(action='set_property',
+    # location='arrangement') writing warping / warp_mode / gain / pitch /
+    # start_marker and then end_marker / loop_end, all keyed
     # `arrangement_clip_region:{placement}:{property}`
     # (arrangement.plan_push_arrangement_audio_regions). Ack-only for the same
     # reason as `arrangement_clip_notes`: the copy's binding already exists (it
     # is what the pass addresses), and a property write returns no new index.
+    #
+    # ONE key kind for the whole pass, conform included, and the property name
+    # is what tells the two halves apart. The kind is a RESULT contract — this
+    # write records no binding, and (push_execute) a refusal must not halt the
+    # phase, because a copy whose conform or region write Live refused is in
+    # exactly the state it was in before this pass existed. Splitting the kind
+    # would silently opt the conform half out of that second rule.
     "arrangement_clip_region",
     # ARR-PROJ Chunk 2: the projection planner CLEARS a track's existing
     # arrangement clips before create+filling from the DB, emitting

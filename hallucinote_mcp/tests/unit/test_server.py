@@ -727,7 +727,7 @@ def test_status_longpoll_does_not_block_concurrent_tool_calls():
     mcp = create_server()
     analysis = get_registered_tool(mcp, "ableton_analysis")
     reg = default_registry()
-    job = reg.create(kind="analyze", dir="/tmp/x")  # running; won't self-finish
+    job = reg.create(kind="analyze", detail={"report_dir": "/tmp/x"})  # running; won't self-finish
     order: list[str] = []
 
     async def main():

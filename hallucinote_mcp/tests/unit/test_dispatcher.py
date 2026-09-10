@@ -7,6 +7,7 @@ import pytest
 
 from hallucinote_mcp import schema
 from hallucinote_mcp.dispatcher import (
+    LiveWorkEscalatedError,
     ParamValidationError,
     dispatch,
     execute_declarative,
@@ -15,7 +16,7 @@ from hallucinote_mcp.dispatcher import (
     validate_params,
 )
 from hallucinote_mcp.schema import Action, LiveOp, ParamSpec
-from hallucinote_mcp.wire import Request
+from hallucinote_mcp.wire import WORK_ESCALATED_CODE, Request
 
 
 # ---------- A tiny fake LiveContext for tests ----------
@@ -430,6 +431,85 @@ def test_dispatch_translates_executor_exception_to_structured_error(isolated_reg
     # Critic finding W2: dispatcher must log the exception so the server
     # operator has a record. Don't just translate; log too.
     assert any("executor failed" in record.message for record in caplog.records)
+
+
+# ---------- main-thread work escalation ----------
+
+
+def test_dispatch_returns_a_handle_not_an_error_when_work_escalates(
+    isolated_registry, caplog,
+):
+    """R4. ``LiveWorkEscalatedError`` is caught AHEAD of the broad
+    executor-failure catch. The work has not failed — Python cannot interrupt
+    a Live API call, so it is still running — and reporting an error would
+    invite the retry that stacks more work behind it. The truthful reply is
+    ``ok=True`` plus the ``work_escalated`` discriminator and a job handle.
+    """
+    import logging
+
+    def _escalate(_context: FakeLiveContext) -> None:
+        raise LiveWorkEscalatedError(
+            job_id="main_thread-abc123",
+            label="ableton_device('load')",
+            elapsed_s=121.25,
+            waited_s=120.0,
+        )
+
+    isolated_registry.register(
+        Action(
+            tool="ableton_session", name="info", description="",
+            handler=_escalate,
+        )
+    )
+    with caplog.at_level(logging.WARNING, logger="hallucinote_mcp.dispatcher"):
+        resp = dispatch(
+            Request(tool="ableton_session", action="info"),
+            context=FakeLiveContext(FakeNode()),
+        )
+
+    assert resp.ok is True
+    assert resp.error is None
+    assert resp.code == WORK_ESCALATED_CODE
+    assert resp.result["escalated"] is True
+    assert resp.result["job_id"] == "main_thread-abc123"
+    assert resp.result["label"] == "ableton_device('load')"
+    assert resp.result["elapsed_s"] == 121.25
+    assert resp.result["waited_s"] == 120.0
+    assert "bout_status" in resp.result["poll"]
+    # Not reformatted by the broad catch — that ordering is the whole point.
+    assert "failed:" not in str(resp.result)
+    # Visible in the server log: an operation Live is still chewing on is
+    # something the operator needs a record of, even though it is not a defect.
+    assert any(
+        "main-thread work escalated" in r.message for r in caplog.records
+    )
+
+
+def test_escalation_is_a_runtimeerror_so_only_arm_order_keeps_it_ok(
+    isolated_registry,
+):
+    """``LiveWorkEscalatedError`` is a ``RuntimeError``: the broad
+    executor-failure catch WOULD swallow it into an error response. Nothing
+    about the type protects it — only the arm sitting ahead of the broad
+    catch does. Pinned next to a plain ``RuntimeError`` from the same handler
+    shape, which must still come back as a failure."""
+    assert issubclass(LiveWorkEscalatedError, RuntimeError)
+
+    def _plain(_context: FakeLiveContext) -> None:
+        raise RuntimeError("Live API rejected the value")
+
+    isolated_registry.register(
+        Action(
+            tool="ableton_session", name="info", description="",
+            handler=_plain,
+        )
+    )
+    resp = dispatch(
+        Request(tool="ableton_session", action="info"),
+        context=FakeLiveContext(FakeNode()),
+    )
+    assert resp.ok is False
+    assert resp.code is None
 
 
 # ---------- help_for_tool ----------

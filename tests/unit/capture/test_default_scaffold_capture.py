@@ -42,10 +42,12 @@ def conn(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def _track(name, kind="midi", devices=(), session_clips=0, arrangement_clips=0):
+def _track(name, kind="midi", devices=(), session_clips=0, arrangement_clips=0,
+           sends=None):
     return {
         "name": name, "kind": kind, "devices": list(devices),
         "session_clips": session_clips, "arrangement_clips": arrangement_clips,
+        "sends": dict(sends or {}),
     }
 
 
@@ -70,6 +72,18 @@ class _FakeLive:
             for i, t in enumerate(self.tracks, start=1)
         ]
 
+    def live_returns(self):
+        return [
+            {"return_index": r["return_index"], "name": r["name"]}
+            for r in self.returns
+        ]
+
+    def _return(self, return_index):
+        for r in self.returns:
+            if r["return_index"] == return_index:
+                return r
+        raise AssertionError(f"no return at {return_index}")
+
     def __call__(self, tool, action, **params):
         self.calls.append((tool, action, params))
         if (tool, action) == ("ableton_session", "info"):
@@ -81,7 +95,14 @@ class _FakeLive:
                 "return_count": len(self.returns),
             }
         if (tool, action) == ("ableton_return", "list"):
-            return {"returns": list(self.returns)}
+            return {"returns": [
+                {"return_index": r["return_index"], "name": r["name"]}
+                for r in self.returns
+            ]}
+        if (tool, action) == ("ableton_return", "info"):
+            r = self._return(params["return_index"])
+            return {"name": r["name"], "volume": 0.85, "panning": 0.0,
+                    "color": r.get("color")}
         if (tool, action) == ("ableton_track", "info"):
             t = self.tracks[params["track_index"] - 1]
             return {
@@ -90,7 +111,11 @@ class _FakeLive:
                 "mute": False, "solo": False, "arm": False,
             }
         if (tool, action) == ("ableton_track", "get_sends"):
-            return {"sends": []}
+            t = self.tracks[params["track_index"] - 1]
+            return {"sends": [
+                {"return_name": name, "value": value}
+                for name, value in t.get("sends", {}).items()
+            ]}
         if (tool, action) == ("ableton_clip", "list"):
             t = self.tracks[params["track_index"] - 1]
             if params["location"] == "session":
@@ -106,10 +131,25 @@ class _FakeLive:
                 for i in range(1, t["arrangement_clips"] + 1)
             ]}
         if (tool, action) == ("ableton_device", "list"):
-            if params.get("master") or "return_index" in params:
+            if params.get("master"):
                 return {"devices": []}
+            if "return_index" in params:
+                return {"devices": self._return(params["return_index"])["devices"]}
             return {"devices": self.tracks[params["track_index"] - 1]["devices"]}
         if (tool, action) == ("ableton_device", "get_parameters"):
+            # Only a return that declares `params` reports a dialed one; the
+            # snapshot's default filter drops anything sitting at its default,
+            # so an undialed device comes back with an empty params_dialed map.
+            ri = (params.get("node") or {}).get("parent", {}).get("index")
+            kind = (params.get("node") or {}).get("parent", {}).get("kind")
+            if kind == "return":
+                dialed = self._return(ri).get("params") or {}
+                return {"parameters": [
+                    {"name": name, "value": value, "default_value": 0.0,
+                     "value_display": str(value), "min": 0.0, "max": 1.0,
+                     "is_enum": False}
+                    for name, value in dialed.items()
+                ]}
             return {"parameters": []}
         if (tool, action) == ("ableton_device", "get_input_routing"):
             return {"has_input_routing": False}
@@ -437,43 +477,340 @@ def test_an_ordinary_set_gets_no_scaffold_warning(recwarn):
 
 
 # ---------------------------------------------------------------------------
-# Replay's rename guard: the shipped mitigation for the open half of the
-# upgrade boundary (#524). The change-log sells it as that mitigation, so it
-# needs an assertion behind it and not only a sentence.
+# The upgrade boundary's replay half lives in test_replay_track_identity.py —
+# the shifted-index case is reconciled by name now, not merely warned about.
+# What belongs HERE is the capture half's other remainder: the default
+# scaffold's RETURNS.
 # ---------------------------------------------------------------------------
 
 
-def _song_with_tracks(conn, name, tracks):
-    """Seed a song whose track rows sit at the given (index, name) pairs."""
-    song_id = M.create_song(conn, name=name)
-    for idx, tname in tracks:
-        M.create_track(conn, song_id=song_id, track_index=idx, name=tname, kind="midi")
-    return song_id
+def _stock(class_name):
+    """Live's factory device on a default return: stock class, stock name,
+    nothing dialed."""
+    return {"device_index": 1, "name": class_name, "class_name": class_name,
+            "class_display_name": class_name, "is_active": True}
 
 
-def _snapshot_with_tracks(tracks):
-    return {
-        "session": {"tempo": 120.0, "signature": {"numerator": 4, "denominator": 4}},
-        "tracks": [
-            {"index": i, "name": n, "type": "midi"} for i, n in tracks
+def _scaffold_returns():
+    return [
+        {"return_index": 1, "name": "A-Reverb", "devices": [_stock("Reverb")]},
+        {"return_index": 2, "name": "B-Delay", "devices": [_stock("Delay")]},
+    ]
+
+
+def _return_names(snapshot):
+    return [r["name"] for r in snapshot["returns"]]
+
+
+# --- the predicate ---------------------------------------------------------
+
+
+def _return_entry(name, devices):
+    return {"index": 1, "name": name, "devices": list(devices)}
+
+
+def test_return_predicate_untouched_canonical_return_is_scaffold():
+    assert capture.is_untouched_default_scaffold_return(
+        _return_entry("A-Reverb", [{"class_name": "Reverb", "name": "Reverb"}]),
+        has_sends=False,
+    )
+
+
+def test_return_predicate_name_alone_is_never_enough():
+    """The whole reason the track predicate does not transfer: Live ships its
+    default returns CARRYING devices, so a name-only rule would drop a claimed
+    return's entire captured mix."""
+    assert not capture.is_untouched_default_scaffold_return(
+        _return_entry("A-Reverb", []), has_sends=False,
+    )
+    assert not capture.is_untouched_default_scaffold_return(
+        _return_entry("A-Reverb", [{"class_name": "Chorus", "name": "Chorus"}]),
+        has_sends=False,
+    )
+
+
+def test_return_predicate_a_dialed_parameter_claims_the_return():
+    assert not capture.is_untouched_default_scaffold_return(
+        _return_entry("A-Reverb", [
+            {"class_name": "Reverb", "name": "Reverb",
+             "params_dialed": {"Dry/Wet": {"value": "60 %"}}},
+        ]),
+        has_sends=False,
+    )
+
+
+def test_return_predicate_a_renamed_device_claims_the_return():
+    assert not capture.is_untouched_default_scaffold_return(
+        _return_entry("A-Reverb", [
+            {"class_name": "Reverb", "name": "Big Room"},
+        ]),
+        has_sends=False,
+    )
+
+
+def test_return_predicate_a_second_device_claims_the_return():
+    assert not capture.is_untouched_default_scaffold_return(
+        _return_entry("A-Reverb", [
+            {"class_name": "Reverb", "name": "Reverb"},
+            {"class_name": "EQ Eight", "name": "EQ Eight"},
+        ]),
+        has_sends=False,
+    )
+
+
+def test_return_predicate_a_send_claims_the_return():
+    """The conjunct that keeps replay satisfiable, not merely the mix tidy: a
+    return something sends to can never be dropped, because the send would
+    then name a return the snapshot no longer defines."""
+    assert not capture.is_untouched_default_scaffold_return(
+        _return_entry("A-Reverb", [{"class_name": "Reverb", "name": "Reverb"}]),
+        has_sends=True,
+    )
+
+
+def test_return_predicate_wrong_slot_device_is_not_scaffold():
+    """A-Reverb carrying a Delay is not the factory pairing."""
+    assert not capture.is_untouched_default_scaffold_return(
+        _return_entry("A-Reverb", [{"class_name": "Delay", "name": "Delay"}]),
+        has_sends=False,
+    )
+
+
+# --- capture ---------------------------------------------------------------
+
+
+def test_untouched_scaffold_returns_never_enter_the_snapshot():
+    live = _FakeLive(
+        [_track("Drums", devices=[_instrument()])], returns=_scaffold_returns(),
+    )
+    assert _return_names(assemble_snapshot_via_probes(live)) == []
+
+
+def test_a_claimed_scaffold_return_survives_with_its_device():
+    live = _FakeLive(
+        [_track("Drums", devices=[_instrument()])],
+        returns=[
+            {"return_index": 1, "name": "A-Reverb",
+             "devices": [_stock("Reverb")],
+             "params": {"Dry/Wet": 0.6}},
+            {"return_index": 2, "name": "B-Delay", "devices": [_stock("Delay")]},
         ],
-        "returns": [],
+    )
+    snap = assemble_snapshot_via_probes(live)
+    assert _return_names(snap) == ["A-Reverb"]
+    assert snap["returns"][0]["devices"][0]["name"] == "Reverb"
+
+
+def test_a_return_something_sends_to_survives():
+    """A non-zero send is a claim on the return, whatever its chain looks like."""
+    live = _FakeLive(
+        [_track("Drums", devices=[_instrument()], sends={"A-Reverb": 0.4})],
+        returns=_scaffold_returns(),
+    )
+    snap = assemble_snapshot_via_probes(live)
+    assert _return_names(snap) == ["A-Reverb"]
+    assert snap["tracks"][0]["sends"] == {"A-Reverb": 0.4}
+
+
+def test_a_zero_send_is_lives_default_wiring_not_a_claim():
+    """Every track in a brand-new set carries a 0.0 send to every return. If
+    that counted, the exclusion could never fire on a real set."""
+    live = _FakeLive(
+        [_track("Drums", devices=[_instrument()],
+                sends={"A-Reverb": 0.0, "B-Delay": 0.0})],
+        returns=_scaffold_returns(),
+    )
+    snap = assemble_snapshot_via_probes(live)
+    assert _return_names(snap) == []
+
+
+def test_dropping_a_return_strips_the_sends_that_named_it(conn):
+    """The half that makes the snapshot REPLAYABLE rather than merely tidy:
+    `replay_capture` raises on a send naming a return the snapshot does not
+    define, so the zero-level send keys have to go with the return."""
+    live = _FakeLive(
+        [_track("Drums", devices=[_instrument()],
+                sends={"A-Reverb": 0.0, "B-Delay": 0.0})],
+        returns=_scaffold_returns(),
+    )
+    snap = assemble_snapshot_via_probes(live)
+    assert "sends" not in snap["tracks"][0]
+    # The proof the strip is load-bearing: this replays instead of raising.
+    replay_capture(conn, snap, song_name="stripped")
+    song_id = Q.get_song_by_name(conn, "stripped")["id"]
+    assert [r["name"] for r in Q.get_returns_for_song(conn, song_id)] == []
+
+
+def test_a_surviving_send_keeps_its_key():
+    live = _FakeLive(
+        [_track("Drums", devices=[_instrument()],
+                sends={"A-Reverb": 0.4, "B-Delay": 0.0})],
+        returns=_scaffold_returns(),
+    )
+    snap = assemble_snapshot_via_probes(live)
+    assert snap["tracks"][0]["sends"] == {"A-Reverb": 0.4}
+
+
+def test_surviving_returns_are_densely_renumbered():
+    """`create_return` upserts on (song, position). A snapshot numbered AROUND
+    a dropped scaffold return would replay the same return into a second row
+    once Live's copy is actually deleted."""
+    live = _FakeLive(
+        [_track("Drums", devices=[_instrument()], sends={"B-Delay": 0.3})],
+        returns=_scaffold_returns(),
+    )
+    snap = assemble_snapshot_via_probes(live)
+    assert [(r["index"], r["name"]) for r in snap["returns"]] == [(1, "B-Delay")]
+
+
+def test_dropping_a_scaffold_return_is_never_silent():
+    live = _FakeLive(
+        [_track("Drums", devices=[_instrument()])], returns=_scaffold_returns(),
+    )
+    with pytest.warns(UserWarning, match="untouched default scaffold return"):
+        assemble_snapshot_via_probes(live)
+
+
+def test_an_ordinary_return_set_gets_no_return_warning(recwarn):
+    live = _FakeLive(
+        [_track("Drums", devices=[_instrument()])],
+        returns=[{"return_index": 1, "name": "Room",
+                  "devices": [_stock("Reverb")]}],
+    )
+    assemble_snapshot_via_probes(live)
+    assert not [
+        w for w in recwarn.list
+        if "untouched default scaffold return" in str(w.message)
+    ]
+
+
+def test_the_return_cleanup_offer_survives_a_capture(conn):
+    """The point of the exclusion, end to end: the scaffold returns stay
+    UNMATCHED after a capture -> replay round, so the push-side cleanup
+    planner can still offer to delete them. Ingesting them is what made that
+    offer impossible forever."""
+    live = _FakeLive(
+        [_track("Drums", devices=[_instrument()])], returns=_scaffold_returns(),
+    )
+    song_id = M.create_song(conn, name="returns")
+    session_id = M.create_ableton_session(conn, song_id=song_id, name="draft")
+    snapshot = assemble_snapshot_via_probes(live)
+    replay_capture(conn, snapshot, song_name="returns")
+
+    result = push.probe_and_link(
+        conn, song_id=song_id, session_id=session_id,
+        live_tracks=live.live_tracks(), live_returns=live.live_returns(),
+    )
+    assert [r["name"] for r in result.unmatched_live_returns] == [
+        "A-Reverb", "B-Delay",
+    ]
+    plan = push.plan_cleanup_default_scaffold(
+        unmatched_live_tracks=result.default_scaffold_unmatched_tracks,
+        unmatched_live_returns=result.unmatched_live_returns,
+        total_live_track_count=len(live.tracks),
+        matched_track_count=len(result.matched_tracks),
+    )
+    assert plan.can_proceed
+    assert [r["return_index"] for r in plan.deletable_returns] == [2, 1]
+
+
+def test_a_return_browser_path_survives_the_scaffold_renumber():
+    """The return half of the identity join. The exclusion renumbers surviving
+    returns, and the join's miss path drops a browser path SILENTLY — losing
+    every device's cross-machine identity on exactly the songs the exclusion
+    exists for is not an acceptable price for it."""
+    old = {
+        "tracks": [],
+        "returns": [
+            {"index": 1, "name": "A-Reverb", "devices": [
+                {"index": 1, "class": "Reverb", "name": "Reverb"},
+            ]},
+            {"index": 2, "name": "B-Delay", "devices": [
+                {"index": 1, "class": "Delay", "name": "Delay",
+                 "browser_path": ["Audio Effects", "Delay", "Slapback"]},
+            ]},
+        ],
     }
+    new = {
+        "tracks": [],
+        "returns": [
+            {"index": 1, "name": "B-Delay", "devices": [
+                {"index": 1, "class": "Delay", "name": "Delay"},
+            ]},
+        ],
+    }
+    capture.preserve_browser_paths(old, new)
+    assert new["returns"][0]["devices"][0]["browser_path"] == [
+        "Audio Effects", "Delay", "Slapback",
+    ]
 
 
-def test_replay_warns_when_a_rename_orphans_the_row_the_name_came_from(conn):
-    """The index-shift case: 'Drums' was at 5, the post-fix snapshot puts it at
-    1, and row 1 held '1-MIDI'. Replay upserts by index, so row 1 becomes
-    'Drums' and the original 'Drums' is stranded at 5 as a duplicate."""
-    _song_with_tracks(conn, "shifted", [(1, "1-MIDI"), (2, "2-MIDI"), (5, "Drums")])
-    with pytest.warns(UserWarning, match="left behind as a duplicate"):
-        replay_capture(conn, _snapshot_with_tracks([(1, "Drums")]), song_name="shifted")
+def test_a_return_preset_seed_survives_the_scaffold_renumber():
+    old = {
+        "tracks": [],
+        "returns": [
+            {"index": 1, "name": "A-Reverb", "devices": [
+                {"index": 1, "class": "Reverb", "name": "Reverb"},
+            ]},
+            {"index": 2, "name": "B-Delay", "devices": [
+                {"index": 1, "class": "AudioEffectGroupDevice", "name": "Echo Rack",
+                 "preset_query": "Tape Echo"},
+            ]},
+        ],
+    }
+    new = {
+        "tracks": [],
+        "returns": [
+            {"index": 1, "name": "B-Delay", "devices": [
+                {"index": 1, "class": "AudioEffectGroupDevice",
+                 "name": "Echo Rack", "chains": []},
+            ]},
+        ],
+    }
+    capture.preserve_preset_overrides(old, new)
+    assert new["returns"][0]["devices"][0].get("preset_query") == "Tape Echo"
 
 
-def test_replay_is_quiet_when_a_track_was_simply_renamed_in_live(conn, recwarn):
-    """The ambiguous twin, and the one the guard must NOT alarm on: a user
-    renames a track in Live and re-captures. Same (index, old, new) triple, but
-    the new name sits nowhere else, so no row is orphaned and the DB is right."""
-    _song_with_tracks(conn, "renamed", [(1, "Drums")])
-    replay_capture(conn, _snapshot_with_tracks([(1, "Kit")]), song_name="renamed")
-    assert not [w for w in recwarn.list if "RENAMED" in str(w.message)]
+def test_a_duplicated_return_name_is_not_guessed_across_the_renumber():
+    """Same refusal as the track side: an ambiguous name is dropped from the
+    map rather than carrying a path onto a device that never had one."""
+    old = {
+        "tracks": [],
+        "returns": [
+            {"index": 1, "name": "Dup", "devices": [
+                {"index": 1, "class": "Reverb", "browser_path": ["A"]},
+            ]},
+            {"index": 2, "name": "Dup", "devices": [
+                {"index": 1, "class": "Reverb", "browser_path": ["B"]},
+            ]},
+        ],
+    }
+    new = {
+        "tracks": [],
+        "returns": [
+            {"index": 9, "name": "Dup", "devices": [{"index": 1, "class": "Reverb"}]},
+        ],
+    }
+    capture.preserve_browser_paths(old, new)
+    assert "browser_path" not in new["returns"][0]["devices"][0]
+
+
+def test_the_return_name_join_ignores_lives_slot_prefix():
+    """A snapshot may store the prefixed or the stripped form; the join must
+    not be defeated by which."""
+    old = {
+        "tracks": [],
+        "returns": [
+            {"index": 3, "name": "A-Room", "devices": [
+                {"index": 1, "class": "Reverb", "browser_path": ["Hall"]},
+            ]},
+        ],
+    }
+    new = {
+        "tracks": [],
+        "returns": [
+            {"index": 1, "name": "Room", "devices": [{"index": 1, "class": "Reverb"}]},
+        ],
+    }
+    capture.preserve_browser_paths(old, new)
+    assert new["returns"][0]["devices"][0]["browser_path"] == ["Hall"]

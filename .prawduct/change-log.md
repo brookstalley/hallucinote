@@ -32,6 +32,133 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-09-10 — Every open bug, and the surfaces that had been reporting them fixed
+
+<!-- prawduct: type=fix | scope=BUGSWEEP-0910 -->
+
+The owner asked for every open bug closed on one branch, with subagents where
+they would not conflict. All twenty-two `kind: bug` items sat at `stage: ready`,
+each carrying its own requirements and design from the 2026-09-10 readiness
+pass — so this was not a design cycle. It was a partition problem and, far more
+than expected, an integration one.
+
+Twelve chunks: eleven built by worktree-isolated delegates against disjoint file
+sets, one taken here. Every delegate's file ownership was stated in its brief and
+none crossed it except where a brief was wrong. The partition's one error ran the
+safe way — #291 turned out not to touch `push_execute.py`, so two chunks held
+apart for a collision that did not exist went out together instead.
+
+**What the bugs had in common.** Very few were wrong arithmetic. Almost all were
+a surface stating something untrue, confidently, on the success path:
+
+- **#222** printed *"None. This song uses only Live's built-in devices"* over a
+  song whose Drum Rack lives in an Ableton Pack — an affirmative wrong answer to
+  the one question REQUIREMENTS.md exists to answer. The signal was already in
+  the DB, in two columns compat had never read.
+- **#516** returned a **real** device that was not the one loaded, which is the
+  worst failure shape available: nothing downstream can tell it is wrong, and
+  `device_index` feeds push's device linking.
+- **#481** made better authorship read as worse: a ramp authored as 64 fine steps
+  produced 64 `not_realized` findings where a coarse one produced two.
+- **#475** turned a 120 ms automation edge into a step on a 400 ms grid and
+  reported `ok` — on a song whose entire subject was the perceptibility of that
+  edge.
+- **#515** called `Clip.envelope_for_note`, a method Live has never shipped, and
+  a test fake for it kept the suite green over three load-bearing call sites.
+- **#291** lost every downstream effect's dialed parameter state on an instrument
+  swap, which on a tuned chain is mix work destroyed rather than a bug.
+- **#496** raised an alert on correctly-authored multi-meter songs forever, which
+  costs the alert channel its meaning for the cases that are real.
+- **#322** raised `TimeoutError` while the work was still executing on Live's
+  main thread — Python cannot interrupt a running Live API call, so the timeout
+  was only the caller looking away — and released the single-flight gate on that
+  path, admitting exactly the retries that stack more work behind the op still
+  running. That is the beachball the operator force-quit.
+
+**#328 was investigated and closed as not reproducible**, and it corrected its
+own issue on the way: the claim that each per-branch DB carries its own
+fingerprint state is false — `.last-notes-push.json` is a fixed filename in the
+song directory, so every branch's DB shares one ledger. That makes the confound
+different, not weaker, and it still explains the report. Its root cause was
+already fixed and closed.
+
+**#275 could not be closed here** and is not claimed as closed. Its acceptance
+criterion is a measurement only a live Ableton set can make. What was closable
+was the question the issue also asked — *is the device-load path reliable?* — and
+the answer was no: the cross-machine fallback inferred its browser root from the
+device kind (filing every audio effect under `instruments`), took the first
+substring hit, and never compared what loaded against what the song authored, so
+an authored Hybrid Reverb could be replaced by a stock one inside a green push.
+It now reads the root and folder Live recorded at capture time, prefers the match
+at that exact path, and refuses any load whose class is not the authored one.
+
+**The integration work was not merging.** Three patterns recurred often enough to
+be worth recording:
+
+1. **A landed column nobody writes is a requirement half-done, not descoped.**
+   #496 R1 covers three tables; the delegate that owned the schema could not
+   reach `score.py`, so `sections.bar_ruler` shipped inert. Finishing it was the
+   difference between a requirement met and a requirement filed.
+2. **A fix that removes a step has to remove every pointer to it.** #476 replaced
+   an unrunnable pytest invocation, and `scaffold`'s own next-steps print — read
+   immediately *before* the fixed step — still named the old one.
+3. **Docs describe the bug, so fixing the bug falsifies the docs.** Nine
+   documents asserted behaviour these fixes overturned, including two that
+   described a permanent API absence as a Live-version limitation, which reads as
+   *pending an update*.
+
+**Four follow-ups were filed rather than folded in** (#526–#529), each with the
+reason it was not fixed here: a real design question, a shared-config change that
+would have disturbed running delegates, an explicit non-goal of its parent, and a
+gap whose fix lives in a file the boundary reserved.
+
+**Three fixes could not be proven here, and none is claimed as proven.** #322's
+fence holds against a wedged scheduler in tests and cannot be shown to hold
+against Live dropping a scheduled callback; the design has no timed auto-clear
+by choice, so that state is recoverable only by an operator who knows to look.
+#291's verify tolerance was reasoned, not measured. #519's exclusion predicate
+names two Live class strings nothing here can read. All three are on the
+operator queue with what would settle them.
+
+**Three operator sittings are queued.** Three fixes are inside the MCP fingerprint
+paths and reach no live session until the vendored copy is replaced, so their
+verdicts are unknowable rather than passing; #291's `alien` witness and its
+`_PARAM_EPSILON` tolerance need real Live float behaviour, not a fake's.
+
+**The review found the sharpest defect in the sweep, and it was in the
+coordinator's own work.** The #275 guard compared the loader's answer
+(`class_display_name` — "Hybrid Reverb") against `devices.class_name` (Live's
+internal "HybridReverb"). Two namespaces, so it would have refused every
+*correct* substitution and disabled the cross-machine recovery it was written
+to protect. It passed because the fixture asserted the same contradiction — a
+test built from the same misunderstanding as the code confirms the
+misunderstanding rather than catching it.
+
+Three review rounds, and each found something the previous fix introduced:
+
+1. Thirteen fixed, four accepted. Beyond the blocking one, the recurring
+   shape was a **contract only one caller learned** — two delegates authored
+   in parallel against the same wire, and the escalation reply that means "still
+   running" was resolved in one caller and unwrapped as success in the other.
+2. Both new operator-facing refusals shipped **untested**, including the
+   coupling that mattered most: `resume` reaches the destructive phases
+   directly and so bypasses the journal-overwrite guard — correct today, and
+   exactly what a later refactor breaks silently.
+3. The fix for (1) closed the wire contract at two sites when it needed closing
+   **by construction**, and a docstring I wrote to explain the remaining raw
+   seam named a consumer that does not exist — while two destructive
+   index-based delete loops, its real consumers, stayed escalation-blind. Every
+   engine seam that resolves the client send is escalation-aware now, so a
+   module written tomorrow inherits the contract without knowing it exists.
+
+The pattern worth keeping: **a green suite is evidence about what could have
+made it red.** Three of the defects above passed a green suite because the
+fixture, the fake, or the assertion carried the same wrong assumption as the
+code — a fake for a method Live has never had (#515), a fixture asserting two
+namespaces are one (#275), and an assertion matching digits rather than the
+quantity it meant, which failed 4% of runs for a reason unrelated to its
+subject.
+
 ## 2026-09-09 — The release blockers: seven defects that would have shipped, and two of them were in the release mechanism
 
 <!-- prawduct: type=fix | scope=RELBLK-V19 -->

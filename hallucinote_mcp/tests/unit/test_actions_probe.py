@@ -8,6 +8,7 @@ from hallucinote_mcp.handlers.probe import (
     MAX_VECTOR_ITEMS,
     _request_differs,
     call_handler,
+    coerce_wire_value,
     describe_handler,
     get_handler,
     resolve_path,
@@ -51,6 +52,23 @@ class FakeClip:
         self.is_audio_clip = True
         self.envelope_args: list = []
         self.last_envelope: FakeEnvelope | None = None
+        self._warp_mode = 0
+
+    @property
+    def warp_mode(self) -> int:
+        return self._warp_mode
+
+    @warp_mode.setter
+    def warp_mode(self, value) -> None:
+        # Mirror the real LOM setter, whose Boost.Python signature is
+        # None(TPyHandle<AClip>, int): a str never matches it, so the write
+        # fails outright rather than being coerced by Live.
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise TypeError(
+                f"Python argument types in None(Clip, {type(value).__name__}) "
+                f"did not match C++ signature: None(TPyHandle<AClip>, int)"
+            )
+        self._warp_mode = value
 
     def create_automation_envelope(self, parameter):
         """create_automation_envelope( (Clip)self, (DeviceParameter)p) -> object"""
@@ -339,6 +357,91 @@ class TestSet:
         out = set_handler(ctx, "song.tracks[0].arm", [1, 2])
         assert "applied" not in out
         assert "warning" not in out
+
+    def test_string_numeric_value_reaches_live_with_its_number_type(self):
+        # The wire schema types `value` as `any`, so a client is free to send
+        # 5 as "5" — and Live's C++ setter refuses a str outright. The string
+        # is parsed back to the int it names before the setattr.
+        ctx = FakeCtx()
+        ctx.song.tracks[0].clip_slots[0].clip = FakeClip()
+        out = set_handler(ctx, "song.tracks[0].clip_slots[0].clip.warp_mode", "5")
+        assert ctx.song.tracks[0].clip_slots[0].clip.warp_mode == 5
+        assert out["new"] == 5
+        assert out["changed"] is True
+
+    def test_string_bool_value_reaches_live_as_a_bool(self):
+        ctx = FakeCtx()
+        set_handler(ctx, "song.tracks[0].arm", "true")
+        assert ctx.song.tracks[0].arm is True
+
+    def test_string_value_on_a_string_property_is_kept_verbatim(self):
+        # A track named "808" is a name, not a number: when the property
+        # already holds a string, the string is what it wants.
+        ctx = FakeCtx()
+        out = set_handler(ctx, "song.tracks[0].name", "808")
+        assert ctx.song.tracks[0].name == "808"
+        assert out["new"] == "808"
+
+    def test_string_value_that_is_not_json_stays_a_string(self):
+        ctx = FakeCtx()
+        ctx.song.tracks[0].arm = 0  # non-str current value: parsing is live
+        set_handler(ctx, "song.tracks[0].arm", "Beats")
+        assert ctx.song.tracks[0].arm == "Beats"
+
+    def test_string_dollar_path_marker_still_resolves(self):
+        # The same client that stringifies 5 stringifies the $path marker;
+        # parsing it back restores the marker, which resolves as it always did.
+        ctx = FakeCtx()
+        set_handler(
+            ctx,
+            "song.tracks[0].mixer_device.volume",
+            '{"$path": "song.tracks[1].mixer_device.volume"}',
+        )
+        assert (
+            ctx.song.tracks[0].mixer_device.volume
+            is ctx.song.tracks[1].mixer_device.volume
+        )
+
+    def test_string_request_equal_to_current_is_not_flagged_as_ignored(self):
+        # The silently-ignored-write guard compares the COERCED request: "120.0"
+        # against a stored 120.0 is a no-op, not a dropped write.
+        ctx = FakeCtx()
+        out = set_handler(ctx, "song.tempo", "120.0")
+        assert out["changed"] is False
+        assert "applied" not in out
+        assert "warning" not in out
+
+    def test_string_request_that_live_drops_is_still_flagged(self):
+        ctx = FakeCtx()
+        out = set_handler(ctx, "song.back_to_arranger", "false")
+        assert out["applied"] is False
+        assert "did not land" in out["warning"]
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("5", 5),
+            ("-2", -2),
+            ("1.5", 1.5),
+            ("true", True),
+            ("false", False),
+            ("null", None),
+            ("[1, 2]", [1, 2]),
+            ('{"a": 1}', {"a": 1}),
+            ("abc", "abc"),
+            ("Beats", "Beats"),
+            ("", ""),
+        ],
+    )
+    def test_coerce_wire_value_parses_json_literals(self, raw, expected):
+        assert coerce_wire_value(raw, current=0) == expected
+
+    @pytest.mark.parametrize("already_typed", [5, 1.5, True, None, [1], {"a": 1}])
+    def test_coerce_wire_value_passes_non_strings_through(self, already_typed):
+        assert coerce_wire_value(already_typed, current=0) is already_typed
+
+    def test_coerce_wire_value_leaves_strings_alone_on_string_properties(self):
+        assert coerce_wire_value("5", current="Probe Clip") == "5"
 
     def test_unknown_attribute_rejected_before_write(self):
         with pytest.raises(AttributeError, match="no attribute 'nonexistent'"):

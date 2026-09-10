@@ -93,11 +93,15 @@ patch over the gap — it is the thing that makes the assumption true. Skip it a
 every downstream wall-clock number is computed from a tempo the set is not
 playing.
 
-Push additionally alerts when arrangement placements or cue points sit *after* a
-meter change, because two bar rulers exist — push resolves bar positions through
-the meter map, while `hallucinote.arrangement` accumulates whole bars against one
-uniform `beats_per_bar` and never reads it. For a song with a within-song meter
-change, author those placements directly rather than relying on that class's bar
+Two bar rulers exist — push resolves bar positions through the meter map, while
+`hallucinote.arrangement` accumulates whole bars against one uniform
+`beats_per_bar` and never reads it — so a placement or cue point sitting *after*
+a meter change may be in the wrong place. Push alerts only on rows recorded as
+having come from that uniform accumulation, so a deliberately-authored
+multi-meter song raises nothing; a row written before the provenance column
+existed raises a separate, provisional alert that names re-running
+`build.py` as the way to settle it. For a song with a within-song meter change,
+author those placements directly rather than relying on that class's bar
 arithmetic past the first change.
 
 ## A few device-parameter enums can't round-trip

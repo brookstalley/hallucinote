@@ -441,7 +441,7 @@ class Arrangement:
                 M.create_section(
                     conn, song_id=song_id, name=sec.name,
                     start_bar=float(sec.start_bar), end_bar=float(sec.end_bar),
-                    energy=sec.energy,
+                    energy=sec.energy, bar_ruler="uniform",
                     actor=actor, reason=f"{sec.name} section",
                 )
                 created["sections"] += 1

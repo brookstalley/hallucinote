@@ -432,20 +432,24 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
   Only the envelope-hosting rows duplicate — the duplicate carries the session
   clip's length, not the placement's, and the positional renumbering ARR-PROJ
   fixed was born in that path, so widening it is a separate decision.
-- **Two audio gaps the phase reports rather than papers over.** A direct create
-  loads a fresh clip at Live's defaults, and the planner cannot `set_property`
-  the copy in the same plan: an arrangement clip is addressed by an index that
-  exists only in the create's *result*, after apply, and predicting it is exactly
-  the positional guess ARR-PROJ diagnosed as a root cause. So an envelope-free
-  placement with authored conform is planned and then reports (`blocked`) what
-  did not land; a duplicated one has no such gap, since the duplicate copies the
-  conformed session clip. EXTENT is two facts, not one, and both are said
-  ONCE per phase as an `alert` naming each placement (capped, cap stated) — an
-  alert because `notes` is the channel the executor discards; one per phase
-  because one per placement would bury a stem-heavy song's report. (1) The
-  PLAYABLE REGION does travel, but not from this planner: a second pass
-  (`plan_push_arrangement_audio_regions`) runs after apply and writes each
-  copy's `end_marker`/`loop_end` to the authored span. (2) The BLOCK the copy
+- **One audio gap the phase reports rather than papers over, and one it used to.**
+  A direct create loads a fresh clip at Live's defaults, and the planner cannot
+  `set_property` the copy in the same plan: an arrangement clip is addressed by an
+  index that exists only in the create's *result*, after apply, and predicting it
+  is exactly the positional guess ARR-PROJ diagnosed as a root cause. The authored
+  conform therefore cannot travel *from this planner* — but it does travel, from
+  the same post-apply pass that writes the region, so what was a reported gap is
+  now a two-stage write. A duplicated placement never had the gap, since the
+  duplicate copies the conformed session clip. EXTENT is two facts, not one, and
+  both are said ONCE per phase as an `alert` naming each placement (capped, cap
+  stated) — an alert because `notes` is the channel the executor discards; one
+  per phase because one per placement would bury a stem-heavy song's report.
+  (1) The PLAYABLE REGION and the conform both travel, but not from this planner:
+  a second pass (`plan_push_arrangement_audio_regions`) runs after apply, writes
+  the copy's warp state FIRST — which is what makes the beats the region is
+  written in true rather than assumed of a file Live may have loaded unwarped —
+  then the rest of the conform, then each copy's `end_marker`/`loop_end` to the
+  authored span. (2) The BLOCK the copy
   occupies does not and cannot — `Clip.end_time` has no setter (probe row 27),
   so it is a Live limit, not a gap awaiting work, and the operator shortens it
   in Live only when the visual span matters or a block overlaps what follows. The untouched-audio-track summary is

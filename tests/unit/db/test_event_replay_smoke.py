@@ -203,9 +203,11 @@ def _fold_event(conn, kind: str, payload: dict, song_id, clip_id) -> None:
     elif kind == E.SECTION_CREATED:
         conn.execute(
             "INSERT INTO sections (id, song_id, name, start_bar, end_bar, "
-            "color, notes_md, energy) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "color, notes_md, energy, bar_ruler) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (p["section_id"], song_id, p["name"], p["start_bar"],
-             p["end_bar"], p["color"], p["notes_md"], p["energy"]),
+             p["end_bar"], p["color"], p["notes_md"], p["energy"],
+             p["bar_ruler"]),
         )
     elif kind == E.SECTION_UPDATED:
         sets = ", ".join(f"{k} = ?" for k in p["changes"])

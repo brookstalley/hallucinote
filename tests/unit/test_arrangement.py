@@ -318,6 +318,10 @@ def test_materialize_stamps_every_row_it_writes_as_uniform(db_conn, song_and_tra
     assert cues, "fixture precondition"
     assert {c["bar_ruler"] for c in cues} == {"uniform"}
 
+    sections = Q.get_sections_for_song(db_conn, song_id)
+    assert sections, "fixture precondition"
+    assert {sec["bar_ruler"] for sec in sections} == {"uniform"}
+
 
 def test_uniform_is_claimed_by_exactly_one_module_in_the_tree():
     """The regression shape that matters is a FOURTH writer of bar positions

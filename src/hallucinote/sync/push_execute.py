@@ -1937,13 +1937,22 @@ def execute_push(
                     apply_ok = _apply_results(region_results, phase.name)
                 # Report what actually landed, from the results — a count taken
                 # at plan time would name copies the filter above dropped.
+                # Only the two region properties count toward "bounded": the
+                # pass also writes conform properties, and a copy that authored
+                # `warping = 0` gets those and deliberately NO region, so
+                # counting every ok result would report it as bounded in the
+                # same breath as alerting that it kept its full region.
                 bounded = len({
                     str(r.get("key", "")).split(":")[1]
-                    for r in region_results if r.get("ok")
+                    for r in region_results
+                    if r.get("ok")
+                    and str(r.get("key", "")).endswith((":end_marker", ":loop_end"))
                 })
                 failed = len({
                     str(r.get("key", "")).split(":")[1]
-                    for r in region_results if not r.get("ok")
+                    for r in region_results
+                    if not r.get("ok")
+                    and str(r.get("key", "")).endswith((":end_marker", ":loop_end"))
                 })
                 if bounded:
                     msg = (

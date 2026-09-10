@@ -263,7 +263,7 @@ what makes that green attributable: a contended run's tell is a total that silen
 - [x] B8 — #291 (+ #323, folded) · [x] B9 — #322 (+ #324, folded) · [x] B10 — #476 · [x] B11 — #515
 - [x] B12 — #275 code half shipped (`261aa51`); the item stays open on the operator half,
   now queued in `operator-verification.md` with both outcomes named
-- [ ] Cumulative Critic over the whole sweep
+- [x] Cumulative Critic over the whole sweep — three rounds, review closed with zero findings
 
 ### Coordinator work the merges pulled in
 
@@ -290,18 +290,28 @@ what makes that green attributable: a contended run's tell is a total that silen
 
 ## Context
 
-**Dispatched**: B1-B7 (wave 1) plus B10 and B11, which re-checking showed are disjoint from
-every wave-1 row by construction — B10 needs only a new module and the `song-new` skill, and
-B11 was told to report its `lom-probe-results.md` row edit rather than make it, which is what
-takes it off B5's surface. Holding a chunk that cannot collide costs wall clock and buys
-nothing.
+**Complete.** All twelve chunks merged into `docs/backlog-bug-readiness`; suite green at
+6357 passed / 2 skipped under the declared parallel command, recorded from JUnit against
+HEAD's own tree; `ruff` and `mypy` clean across 250 source files.
 
-**Still held**: B8 (#291) contends with B4 on `db/mutations/links.py` and with B1 on
-`skills/ableton-push/`; B9 (#322) contends with B2 on `server_side/analysis.py`. Both go out
-once those merge. Re-checking the plan-time partition at dispatch found one thing it had
-wrong: #291 does **not** touch `push_execute.py` (its own change list names
-`push/devices.py`, `push_cli.py`, `push/probe.py` and `cli.py`), so B8 and B9 do not contend
-with each other and can run together.
+**Backlog:** 21 items stamped `shipped` with `closed-by`. **#275 is deliberately NOT among
+them** — its code half shipped and its acceptance criterion is a measurement only a live set
+can make, recorded as a comment on the issue rather than swept into the batch.
 
-**B12 (#275) is done and committed** — see the Status box. Baseline before any edit:
-6063 passed, 2 skipped.
+**Filed, not fixed:** #526 (`probe call` carries #508's string-typing hole, with a real design
+question — the coercion gates on the property's current value and a call argument has none),
+#528 (the return-position half of #524, an explicit non-goal of its parent), #529 (the render
+records no fader values for #465's analysis to verify against). **#527 was filed and then
+fixed** once the delegates finished and the shared-config change it needed was safe.
+
+**Three operator sittings queued** in `operator-verification.md`, batched around one
+re-vendor: the fingerprint-flipping MCP fixes plus #519's two Live class strings; #291's
+`alien` witness and its verify tolerance; and #322's fence against a real wedged main thread.
+
+**What the partition got wrong, for the next one to reuse:** the plan-time file map was right
+about eleven chunks and wrong about one — #291 does not touch `push_execute.py`, so two chunks
+were held apart for a collision that did not exist. Re-checking ownership at dispatch rather
+than trusting the map cost minutes and bought a wave. The costlier miss was not in the map at
+all: two delegates authored against the same wire contract in parallel, and nothing in the
+partition could have caught it, because their FILES were disjoint. A shared contract is not a
+shared file.

@@ -63,11 +63,22 @@ def _build_report(*, server_version_override: str | None = None) -> dict:
         content_fp = (
             P.vendored_content_fingerprint(vendored_pkg) if installed else None
         )
-        # None means "nothing to compare" — no install, or an unreadable tree on
-        # either side. Only a genuine comparison reports True/False.
+        # `None` means "nothing to compare", and the two ways to get there are
+        # NOT the same news. No install is benign. An install that exists but
+        # cannot be read is the advisory failing silently on the one tree it was
+        # built to watch — reported as nothing-to-compare, it reads as benign and
+        # Live keeps running stale code, which is the exact silence this advisory
+        # exists to end. Keep the never-raise discipline; separate the causes.
         matches_content = (
             content_fp == source_content_fp
             if (content_fp is not None and source_content_fp is not None)
+            else None
+        )
+        content_read_error = (
+            "installed_tree_unreadable" if (installed and content_fp is None)
+            else "source_tree_unreadable" if (
+                content_fp is not None and source_content_fp is None
+            )
             else None
         )
         # Which files moved — only worth walking when they did.
@@ -86,6 +97,10 @@ def _build_report(*, server_version_override: str | None = None) -> dict:
             ),
             "content_fingerprint": content_fp,
             "matches_vendored_content": matches_content,
+            # Non-None ONLY when `matches_vendored_content` is null for a reason
+            # that is not "no install" — so a consumer can tell benign absence
+            # from a check that could not run.
+            "content_read_error": content_read_error,
             # Capped so a wholly-stale install doesn't flood the report; the
             # count stays exact so the reader knows the list was truncated.
             "differing_paths": list(differing[:_DIFFERING_PATHS_CAP]),

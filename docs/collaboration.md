@@ -15,7 +15,7 @@ songs/<slug>/
 ├── <slug>.md                   # composer intent + decisions context
 ├── build.py                    # the generative spec — runs to materialize the DB
 ├── captured_session.json       # the mix snapshot — devices, params, sends
-├── REQUIREMENTS.md             # third-party plugin shopping list
+├── REQUIREMENTS.md             # plugins AND samples the song needs
 ├── annotations/                # markdown notes for the composer/agent
 ├── decisions/                  # design-decision history
 └── tests/                      # per-song structural assertions
@@ -50,7 +50,7 @@ single `songs/<slug>/` directory into their own workspace (any folder with a
 
 ### 2. Check the requirements
 
-Before pushing the song into Ableton, the collaborator reads `songs/<slug>/REQUIREMENTS.md`. This file is the **shopping list** the composer left behind — it enumerates any third-party VST/AU plugins the song needs, with every use site (track + chain position) noted.
+Before pushing the song into Ableton, the collaborator reads `songs/<slug>/REQUIREMENTS.md`. This file is the **shopping list** the composer left behind — it enumerates any third-party VST/AU plugins the song needs, with every use site (track + chain position) noted, and the audio samples its clips reference, saying per sample whether it travels with the song (song-relative) or must be supplied by you (absolute).
 
 Three things `REQUIREMENTS.md` does NOT carry:
 
@@ -87,7 +87,7 @@ The skill walks the song into Live across fourteen ordered phases. **Before the 
 
 - The skill probes Live for the installed-plugin list via the MCP browser.
 - It runs the engine's compat check (`hallucinote.cli compat check`) against that list.
-- If the report flags any third-party plugin as missing (in the DB but not in Live's plugin scanner) or unverified (couldn't probe — Live wasn't responsive), the skill stops and asks you to confirm.
+- If the report flags any third-party plugin as missing (in the DB but not in Live's plugin scanner) or unverified (couldn't probe — Live wasn't responsive), the skill stops and asks you to confirm. It stops on **samples** the same way: an audio clip whose file is missing or unreadable on this machine fails the gate on its own, with no device flagged.
 
 If you confirm "no, install missing plugins first": go install them, then rerun. If you confirm "yes, push anyway": push will fail at device-load for the missing plugins (the chain stays empty; nothing is substituted), but other devices, clips, arrangement, automation, and cue points still apply. You can fix the empty chains by hand in Live afterward.
 
@@ -144,7 +144,7 @@ The composer's session id is irrelevant to the collaborator — sessions are per
 
 A short checklist for handoff hygiene.
 
-1. **Regenerate `REQUIREMENTS.md`** after material device changes: `"$PY" -m hallucinote.cli compat write-requirements <slug>` (see [`running-the-engine.md`](running-the-engine.md) for `$PY`), or just ask Claude. Commit the result. (A push whose devices phase applied changes already regenerates it in the same flow — the manual command covers out-of-band edits.)
+1. **Regenerate `REQUIREMENTS.md`** after material device *or sample* changes: `"$PY" -m hallucinote.cli compat write-requirements <slug>` (see [`running-the-engine.md`](running-the-engine.md) for `$PY`), or just ask Claude. Commit the result. (A push whose devices phase applied changes already regenerates it in the same flow — the manual command covers out-of-band edits.)
 2. **Refresh `captured_session.json`** if the mix has moved since the snapshot. See the `/hallucinote:song-snapshot` skill for the diff-and-confirm workflow.
 3. **Verify the song builds clean** in a fresh checkout. Delete the local DB (`rm songs/<slug>/<slug>*.db*`) and rebuild (step 3 above). The tests in `songs/<slug>/tests/` should pass.
 4. **Document content dependencies in `<slug>.md`** if the song needs a specific Live Pack or sample library. Compat check won't catch these (Case C).

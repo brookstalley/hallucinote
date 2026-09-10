@@ -133,6 +133,7 @@ def _handle_arrangement_projection(req, arr_state):
 def _make_send_fn(
     *,
     fail_keys: set[str] = frozenset(),
+    fail_when=None,
     raise_on_key: str | None = None,
     fail_hint: str | None = None,
     perform_automation_state: int | None = 1,
@@ -140,6 +141,10 @@ def _make_send_fn(
     """Build a fake send_fn that returns synthetic ok results with monotonic
     link indexes per kind, unless the call's key is in ``fail_keys`` (returns
     ok=False) or matches ``raise_on_key`` (raises — simulates connection loss).
+
+    ``fail_when(tool, action, params)`` fails ONE call among several sharing a
+    (tool, action) pair — needed wherever a test must distinguish a per-item
+    failure from a phase-wide one, which a tool+action match cannot express.
 
     The key is reconstructed from the Request shape — we look at the canonical
     plan's ``call.key`` which the CLI passes through but doesn't appear on
@@ -189,7 +194,9 @@ def _make_send_fn(
         composite = f"{req.tool}:{req.action}"
         if raise_on_key and composite == raise_on_key:
             raise ConnectionRefusedError("simulated Live unreachable")
-        if composite in fail_keys:
+        if composite in fail_keys or (
+            fail_when is not None and fail_when(req.tool, req.action, req.params)
+        ):
             return FakeResponse(
                 ok=False,
                 error=f"simulated failure for {composite}",
@@ -3188,3 +3195,88 @@ def test_execute_skips_the_region_pass_when_the_placement_failed(
         c for c in send_fn.call_log
         if c["action"] == "set_property" and c["params"].get("location") == "arrangement"
     ], "a failed placement must not be followed by a write onto a stale index"
+
+
+def test_one_failed_placement_costs_only_its_own_region(
+    conn, db_path, song, session, state_dir, tmp_path,
+):
+    """A per-placement failure must cost that placement its region and no other.
+
+    The pass was first written behind the devices phase's convergence guard,
+    which requires EVERY call in the phase to have succeeded. That condition
+    exists for a re-plan that must not run twice; borrowed here it meant one
+    failed create anywhere in the song withheld the region from every copy that
+    did land — and nothing re-writes them, because an unchanged re-push reports
+    "nothing to push" and returns before this pass ever runs.
+    """
+    (tmp_path / "assets").mkdir(exist_ok=True)
+    (tmp_path / "assets" / "a.wav").write_bytes(b"RIFF....WAVEfmt ")
+    (tmp_path / "assets" / "b.wav").write_bytes(b"RIFF....WAVEfmt ")
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Dlg", kind="audio")
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4,
+    )
+    good = M.create_audio_clip(
+        conn, track_id=tid, slot=1, length_beats=8.0,
+        audio_file="assets/a.wav", name="keeps",
+    )
+    doomed = M.create_audio_clip(
+        conn, track_id=tid, slot=2, length_beats=8.0,
+        audio_file="assets/b.wav", name="fails",
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=tid, clip_id=good,
+        start_bar=1.0, end_bar=5.0,      # 16 beats
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=tid, clip_id=doomed,
+        start_bar=9.0, end_bar=13.0,
+    )
+
+    def _fail_only_the_doomed_placement(tool, action, params):
+        return (
+            tool == "ableton_clip"
+            and action == "create"
+            and params.get("location") == "arrangement"
+            and float(params.get("start_beats", -1)) == 32.0   # bar 9
+        )
+
+    send_fn = _make_send_fn(fail_when=_fail_only_the_doomed_placement)
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn,
+    )
+
+    region = [
+        c for c in send_fn.call_log
+        if c["tool"] == "ableton_clip"
+        and c["action"] == "set_property"
+        and c["params"].get("location") == "arrangement"
+    ]
+    # The copy that landed is bounded to its authored 16 beats...
+    assert region, "the placement that succeeded must still get its region"
+    assert {c["params"]["property"] for c in region} == {"end_marker", "loop_end"}
+    assert all(c["params"]["value"] == 16.0 for c in region), region
+    # ...and the one that never materialized is not written onto a stale index.
+    assert all(c["params"]["clip_index"] == 1 for c in region), region
+
+    # The operator channel must not invent a retry rule the phase does not
+    # have. The arrangement phase is an unconditional clear-and-rebuild
+    # projection — a delete for every probed clip, a create for every row, no
+    # link check — so a song with placements always has calls, the phase never
+    # short-circuits, and a re-push DOES re-place the copy and re-run this
+    # pass. Telling the operator the write is permanently lost would send them
+    # hand-trimming in Live for something re-pushing fixes.
+    said = " ".join(result.warnings)
+    assert "will not retry" not in said.lower(), said
+    assert "nothing to push" not in said.lower(), said
+    # The copy that landed is counted from the RESULTS, not from a plan-time
+    # count that would also name the one the filter dropped — and in copies,
+    # since a copy takes an end_marker AND a loop_end.
+    assert "bounded 1 audio copy" in said, said
+    assert "bounded 2" not in said, said
+    # The placement that failed is not silent: the planner skips a row with no
+    # recorded link and says so, pointing at the phase's own reasons rather
+    # than double-counting the failure.
+    assert "have no recorded" in said, said
+    assert "fails" in said, said

@@ -64,6 +64,9 @@ def test_preflight_report_remote_script_block_has_per_candidate_match_status():
             "matches_mcp_server",
             # The advisory half — vendored content, not just wire shape.
             "content_fingerprint",
+            # Separates "no install" from "installed but unreadable"; without it
+            # a blind advisory reports as benign absence.
+            "content_read_error",
             "matches_vendored_content",
             "differing_paths",
             "differing_count",
@@ -316,3 +319,53 @@ def test_preflight_caps_the_named_paths_but_not_the_count(tmp_path, monkeypatch)
     total = len(P.vendored_content_diff(P.package_root(), vendored_pkg))
     assert cand["differing_count"] == total > pf._DIFFERING_PATHS_CAP
     assert len(cand["differing_paths"]) == pf._DIFFERING_PATHS_CAP
+
+
+def test_an_unreadable_installed_tree_is_not_reported_as_no_install(tmp_path, monkeypatch):
+    """The advisory's whole purpose is to break a silence: a green handshake over
+    a stale vendored copy. An install that exists but cannot be read makes the
+    advisory blind, and collapsing that into the same `null` as "no install"
+    hands the operator the benign reading of the one case that is not benign.
+    """
+    from hallucinote_mcp.cli import preflight as PF
+    from hallucinote_mcp import install_paths as P
+
+    lib = tmp_path / "UserLib"
+    rs = P.remote_script_install_dir(lib)
+    (rs / "hallucinote_mcp").mkdir(parents=True)
+
+    monkeypatch.setattr(P, "candidate_user_libraries", lambda: [lib])
+    # The tree is there; reading it fails. Never raise, but never lie either.
+    monkeypatch.setattr(P, "vendored_content_fingerprint",
+                        lambda pkg_root: None if pkg_root != P.package_root() else "src-fp")
+
+    entry = next(
+        c for c in PF._build_report()["remote_script"]["candidates"]
+        if c["user_library"] == str(lib)
+    )
+    assert entry["installed"] is True
+    assert entry["matches_vendored_content"] is None
+    assert entry["content_read_error"] == "installed_tree_unreadable", entry
+
+
+def test_an_unreadable_source_tree_is_named_as_the_source_side(tmp_path, monkeypatch):
+    """The mirror of the installed-tree case, and it points the other way: if
+    the SOURCE cannot be read, re-vendoring from it would ship whatever could
+    not be read, so the operator must not be sent to `--force`."""
+    from hallucinote_mcp.cli import preflight as PF
+    from hallucinote_mcp import install_paths as P
+
+    lib = tmp_path / "UserLib"
+    rs = P.remote_script_install_dir(lib)
+    (rs / "hallucinote_mcp").mkdir(parents=True)
+
+    monkeypatch.setattr(P, "candidate_user_libraries", lambda: [lib])
+    monkeypatch.setattr(P, "vendored_content_fingerprint",
+                        lambda pkg_root: None if pkg_root == P.package_root() else "installed-fp")
+
+    entry = next(
+        c for c in PF._build_report()["remote_script"]["candidates"]
+        if c["user_library"] == str(lib)
+    )
+    assert entry["matches_vendored_content"] is None
+    assert entry["content_read_error"] == "source_tree_unreadable", entry

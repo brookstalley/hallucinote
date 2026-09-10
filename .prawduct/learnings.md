@@ -406,3 +406,9 @@ generous `MCP_TIMEOUT`; a pre-warm hook is best-effort, not the mitigation.**
 ## An estimator that reports the FIRST threshold crossing is bimodal on multi-lobe material
 
 **When a measurement is the interval between two threshold crossings, anchor BOTH scans on the feature you mean and scan back from it — never forward from a search window's edge. Forward-scanning let an earlier envelope lobe capture a kick's 90 % point, so a 1 % change in that lobe's height moved the reported rise by 28 ms and a uniform mix edit "changed" two sections of ten. A bimodal reading on real material looks exactly like a real difference.**
+
+## A delegate in a shared clone must never `git stash`
+
+The stash is per-CLONE, not per-worktree, so a delegate's `git stash pop` reaches into another
+session's uncommitted work. Use `git show HEAD:<path> > <path>` for a pre-fix baseline. Detail:
+`learnings-detail.md` → *A delegate in a shared clone must never `git stash`*.

@@ -439,12 +439,16 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
   the positional guess ARR-PROJ diagnosed as a root cause. So an envelope-free
   placement with authored conform is planned and then reports (`blocked`) what
   did not land; a duplicated one has no such gap, since the duplicate copies the
-  conformed session clip. The EXTENT gap is route-independent — neither the
-  direct create nor the duplicate takes the placement's `end_bar` — and is said
-  ONCE per phase as an `alert` naming each placement (capped, cap stated): an
-  alert because `notes` is the channel the executor discards and the operator
-  has to act on it (trim in Live); one per phase because one per placement
-  would bury a stem-heavy song's report. The untouched-audio-track summary is
+  conformed session clip. EXTENT is two facts, not one, and both are said
+  ONCE per phase as an `alert` naming each placement (capped, cap stated) — an
+  alert because `notes` is the channel the executor discards; one per phase
+  because one per placement would bury a stem-heavy song's report. (1) The
+  PLAYABLE REGION does travel, but not from this planner: a second pass
+  (`plan_push_arrangement_audio_regions`) runs after apply and writes each
+  copy's `end_marker`/`loop_end` to the authored span. (2) The BLOCK the copy
+  occupies does not and cannot — `Clip.end_time` has no setter (probe row 27),
+  so it is a Live limit, not a gap awaiting work, and the operator shortens it
+  in Live only when the visual span matters or a block overlaps what follows. The untouched-audio-track summary is
   an `alert` for the same reason.
 - **Re-probes:** the arrangement probe (resolved at THIS phase, not before the
   loop — §Gates) supplies each track's current Live clips for the clear; a lane
@@ -463,7 +467,17 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
   `skipped (idempotent)`. Clears emitted descending-index. Per-call failure → boundary halt;
   `ArrangementIntegrityError` → halt (silent corruption must not report OK).
   Keys: `arrangement_clip:` (link), `arrangement_clip_clear:` /
-  `arrangement_clip_notes:` (ack-only).
+  `arrangement_clip_notes:` / `arrangement_clip_region:` (ack-only).
+- **Post-apply second dispatch (region pass):** this is the one phase that
+  dispatches a SECOND planner after its own results apply. `execute_push` calls
+  `plan_push_arrangement_audio_regions`, which addresses each copy by the
+  `arrangement_clip` link apply just recorded — never a predicted index. It is
+  bounded to placements whose create succeeded THIS phase: a region write aimed
+  at a link the phase did not just record would land on whatever clip now holds
+  that index, so a failed placement costs that placement its region and no
+  other. Withheld or failed region writes are reported on the operator channel,
+  because an unchanged re-push short-circuits the phase before this pass and
+  therefore never retries them.
 
 ### 14. `cues` (`push/arrangement.py`)
 - Carries the same two-ruler divergence alert as §13, for the same reason: a

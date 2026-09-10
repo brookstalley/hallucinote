@@ -51,7 +51,7 @@ devices **and** no clips.
 
 ## Chunks
 
-### `[ ]` 01 — #310: the vendored-content advisory fingerprint
+### Chunk 01: #310 — the vendored-content advisory fingerprint
 The install vendors eleven entries that `_FINGERPRINT_PATHS` does not cover, so Live runs stale
 non-wire code on a green handshake. Release step 5 derives the consumer-facing `Re-vendor:`
 verdict from those same paths, which is why this one is a release blocker and not just a bug.
@@ -62,7 +62,7 @@ The issue carries a complete design; follow it, including its rejected alternati
 **Done when:** editing `analyzer/setup.py` flips the advisory to false while
 `compute_version_for` is unchanged, and `differing_paths` names exactly that file.
 
-### `[ ]` 02 — #518: the pin-recovery recipe names a commit that does not exist
+### Chunk 02: #518 — the pin-recovery recipe names a commit that does not exist
 `_version_mismatch_recovery` (`src/hallucinote/sync/push_cli.py:663`) tells the user the `+<sha>`
 suffix "is the commit it was vendored from" and hands them `git worktree add /tmp/hallucinote-pin
 <sha>`. It is `_compute_content_fingerprint` output — `git cat-file -t` rejects it and the recipe
@@ -78,7 +78,7 @@ not weakening it — say so in the change-log).
 **Done when:** neither site claims the suffix is a commit, and the printed recipe is one a reader
 can paste.
 
-### `[ ]` 03 — #505: a failed replace must not destroy the clip first
+### Chunk 03: #505 — a failed replace must not destroy the clip first
 `create_handler(replace=True)` calls `slot.delete_clip()` (`handlers/clip.py:560`) before a create
 Live may refuse, leaving the slot empty and the previous clip unrecoverable. Pre-check track kind
 via `has_midi_input`/`has_audio_input` before deleting. Wave 1 deferred this because the fake LOM
@@ -87,7 +87,7 @@ does not model track kind — modelling it is part of this chunk.
 model plus its clip tests.
 **Done when:** a replace of an audio path onto a MIDI track refuses with the existing clip intact.
 
-### `[ ]` 04 — #498: the capture starts a beat early
+### Chunk 04: #498 — the capture starts a beat early
 Root cause is identified and is an ordering bug, not a Max bug: `render.py:554` arms every
 analyzer, then `:591` locates, and the patch's detector — whose prev-beat is reset to `-1` on the
 arm rising edge — fires on the first `current_song_time` change while armed, which is the locate,
@@ -112,7 +112,7 @@ branch into this one is the owner's call, not the coordinator's. It is one of ro
 branches awaiting integration; that backlog is a release problem in its own right, separate from
 this plan.
 
-### `[ ]` 05 — #514: capture must exclude an untouched default scaffold
+### Chunk 05: #514 — capture must exclude an untouched default scaffold
 Capture ingests Live's brand-new-set scaffold as song content, `probe-and-link` then matches it,
 the W18-D classifier goes silent, and the link state never converges. Apply the predicate decided
 above, following the SNP-8R4K analyzer-filter precedent already in `capture.py`. The issue's
@@ -122,7 +122,7 @@ evidence is read off the code and not yet reduced to a repro — **confirm it be
 `default_scaffold_unmatched_tracks` still populates, and a scaffold-named track carrying a device
 survives.
 
-### `[ ]` 06 — #501: the compat check must verify `clips.audio_file` exists
+### Chunk 06: #501 — the compat check must verify clips.audio_file exists
 A song whose audio clip points at a moved sample passes compat clean and fails in Live. Add a
 second entry family with its own rendering path — never a synthesized `DeviceEntry` — with an
 enumerated status distinguishing missing from unreadable. Existence and readability only.
@@ -130,7 +130,7 @@ enumerated status distinguishing missing from unreadable. Existence and readabil
 **Done when:** a dangling `clips.audio_file` fails compat with the path named, and the device
 path is untouched.
 
-### `[ ]` 07 — #509: an audio placement's extent never reaches the arrangement
+### Chunk 07: #509 — an audio placement's extent never reaches the arrangement
 **Re-scoped 2026-09-09 — the probe this chunk was going to write had already been run.**
 Chunk 17 of SMP-6V2K-W2 answered #509 against Live 12.4.5 and recorded it as row 27 of
 `docs/research/audio-first-class/lom-probe-results.md`: `end_marker` and `loop_end` are writable
@@ -167,192 +167,20 @@ re-scope rather than leaving the answered design questions standing.
 
 ## Status
 
-- `[ ]` 01 · `[ ]` 02 · `[ ]` 03 · `[ ]` 04 · `[ ]` 05 · `[ ]` 06 · `[ ]` 07
+- [x] Chunk 01: #310 — the vendored-content advisory fingerprint
+- [x] Chunk 02: #518 — the pin-recovery recipe names a commit that does not exist
+- [x] Chunk 03: #505 — a failed replace must not destroy the clip first
+- [ ] Chunk 04: #498 — the capture starts a beat early *(built on `fix/rnd-capture-arm-order`, NOT on this branch)*
+- [x] Chunk 05: #514 — capture must exclude an untouched default scaffold
+- [x] Chunk 06: #501 — the compat check must verify clips.audio_file exists
+- [x] Chunk 07: #509 — an audio placement's extent never reaches the arrangement
 
-## Integration debt raised by delegates
+Chunk 04 stays UNTICKED deliberately, and the box is the honest one: its fix exists, but on
+another branch that this one does not contain, so this plan's work is not done. Ticking it would
+tell `lib/buildplan_refs.py` — which reads these boxes to answer "are all chunks done" — that a
+branch carrying the fix is ready when it is not. A session resuming here is meant to land on 04
+and read the prose above, which says the code is written and the merge is the owner's call.
 
-Coordinator-owned follow-ups, reported by a delegate against a file outside its ownership. Each
-is discharged at integration, not by the delegate that found it.
-
-- **Chunk 03 → the `replace` wire-schema text.** `hallucinote_mcp/src/hallucinote_mcp/actions/clip.py:130,218`
-  describes `replace` as "delete the existing slot's clip". Not made false by the pre-check — it
-  still describes the succeeding case — but it no longer describes the whole contract, since a
-  definite kind mismatch now refuses before deleting. One line, owned by nobody in this plan.
-- **Chunk 03 → `src/hallucinote/sync/push/clips.py` calls `replace=True` at :494, :563, :734.**
-  No consumer change needed: none reads the error string and none can depend on the destruction,
-  so the push now receives a refusal instead of a destroyed clip plus an error. Recorded so the
-  integration run is not surprised by a behaviour change in files no chunk owns.
-
-## Corrected tests, recorded here because delegates cannot write `.prawduct/`
-
-Each of these encoded the defect its chunk fixes. Correcting them is legitimate under Tests Are
-Contracts; weakening them would not be. Carry these into the change-log entry at the cut.
-
-- **Chunk 03** — `test_replace_that_fails_to_recreate_says_the_slot_is_now_empty` asserted the
-  clip was destroyed on a wrong-kind replace. Retargeted to a bad audio path on an audio track —
-  a failure the pre-check genuinely cannot foresee — so the post-delete disclosure contract stays
-  pinned exactly as before.
-- **Chunk 02** — `test_version_mismatch_recovery_teaches_pin_recipe`,
-  `test_cli_execute_version_mismatch_prints_pin_recovery_not_generic` and
-  `test_error_recovery_guide_documents_version_pin_recovery` all asserted
-  `"git worktree add" in text`, pinning a recipe that cannot work. Replaced with assertions that
-  the suffix is never called a commit and that the printed recipe, executed, actually pins.
-
-## Finding: `incoming-bugs/` is gitignored, and an issue's `refs:` can point into it
-
-`.gitignore:113` ignores `incoming-bugs/` wholesale. The chunk 02 delegate could not read the
-report its own issue references, because the directory exists only in the primary checkout and is
-in no branch's history. Two consequences worth deciding on separately from this plan:
-
-- **#518's `refs:` names evidence nobody else can open** — not the delegate, not a reviewer, not
-  a future reader of the issue. The verified recipe survived only because the issue body repeated
-  it in a `<details>` block.
-- The reports are **unbacked**. A lost checkout loses every bug report not yet promoted to an
-  issue.
-
-Not fixed here — it is a repo-convention decision, not a release blocker. Flagged to the owner.
-
-## Release facts owed to the change-log and to the cut
-
-- **Chunk 01 is itself `Re-vendor: recommended`.** Its diff touches `install_paths.py`,
-  `install_ops.py` and `__init__.py` — vendored but NOT in `_FINGERPRINT_PATHS` — so by the very
-  rule it adds to `docs/release-process.md` step 5, it is a recommended re-vendor, not a required
-  one. The release commit body must carry that verdict.
-- **Chunk 01 corrected the release-blocking sentence.** `docs/release-process.md`'s consumer-facing
-  section claimed that a release which did not flip the fingerprint meant "nothing to do". That
-  sentence is why #310 was a release blocker and not merely a bug; step 5 now carries a third
-  verdict, `Re-vendor: recommended`.
-- **Chunk 01 pinned the handshake fingerprint with a golden value.** Now that the hash helper is
-  shared between the hard and advisory fingerprints, a well-meaning change from the advisory side
-  would silently invalidate every install in the field. `test_handshake_fingerprint_value_is_
-  unchanged_by_the_shared_hash_helper` pins it to the pre-change value.
-
-## Files touched outside a delegate's stated ownership (disclosed, no collision)
-
-- **Chunk 01 → `hallucinote_mcp/tests/unit/test_version_fingerprint.py`.** The `_hash_file` →
-  `hash_path_into` rename the design mandates has three call sites there; the alternative was an
-  alias nobody needs. Mechanical rename plus one added test. No other chunk owns the file. The
-  partition held — the delegate reported it rather than letting integration find it.
-
-## Backlog candidate raised by chunk 01 (file at close, not now)
-
-Under `coexistence_divergence: true` the advisory compares the vendored tree against the
-**invoking interpreter's** package, but the handshake's real reference is the *running server's*
-copy, which the preflight process cannot read — `preflight` has `--server-version` but no
-server-root override. Out of scope for #310 and correctly left alone; it is a real gap in the
-advisory's honesty under a divergent-coexistence install.
-
-## Chunk 05: what it closed, and the residue it did not
-
-**Closed.** The defect was reduced to a runnable repro before any code changed, per the brief:
-pre-fix, all four scaffold tracks are captured, `probe_and_link` matches them all by name,
-`unmatched_live_tracks` empties and the W18-D classifier is permanently silent. Post-fix the same
-script captures one real track and reports all four in `default_scaffold_unmatched_tracks`.
-
-A second fix rode along and matters independently of #514: survivors are now numbered by **dense
-rank** rather than the raw Live index. `create_track` upserts on `(song_id, track_index)`, so a
-snapshot numbered *around* the scaffold would replay the same song track into a second row once
-the scaffold was deleted.
-
-**`[RESIDUE: the scaffold RETURNS are still captured as song content]`** — not a silent gap, and
-not a defect in this chunk. Live's default `A-Reverb` / `B-Delay` ship WITH devices, so the
-settled untouched predicate (name AND no devices AND no clips) can never fire on them; applying
-it to returns would be dead code, and a name-only return exclusion would drop a claimed return's
-captured mix and break replay, since a surviving track's `sends` map would name a return the
-snapshot no longer defines. Track-only satisfies the issue's Expected clause and all three
-Done-when items. But the consequence stands: on a pre-cleanup capture the scaffold returns still
-become permanent song content, and push-side return cleanup can never fire on them either.
-**Follow-up item owed at close** — this is part of #514's problem statement that #514's settled
-predicate cannot reach.
-
-**Two deliberate non-changes, both reasoned rather than skipped.** `compile_snapshot` does not
-filter, because deciding "untouched" needs a clip inventory it never sees, and a name-only drop
-there would silently discard a `3-Audio` track carrying a user's audio clip and no device — a
-real shape on the `/song-pick-instruments` hand-assembly path. The reason is written into the
-docstring, not just the report.
-
-## Integration debt (coordinator)
-
-- **`docs/snapshot-schema.md` documents the analyzer capture exclusion but not this one.** Genuine
-  artifact drift, outside every delegate's ownership. One paragraph, owed at integration.
-- **Layering nit for the Critic's judgment:** chunk 05 adds a `capture.py` → `sync.push.probe`
-  import to keep one source of truth for the canonical scaffold names. That edge is slightly
-  backwards. The SNP-8R4K precedent solved the same shape by extracting `analyzer_identity.py` to
-  the top level; the parallel move is a `hallucinote/default_scaffold.py`. Creating a new module
-  was outside the owned set, so it was flagged rather than taken.
-
-## Incident: `git stash` is shared across every worktree of a clone
-
-A chunk 06 delegate tried to stash its own source file to prove a pre-fix failure. Its
-`git stash push -m` was malformed and created nothing, so the follow-up `git stash pop` applied
-**another session's** stash into its worktree. It recovered by copying its two files aside and
-running `git reset --hard`.
-
-**Verified by the coordinator, not taken on the delegate's word:** both entries are still present
-and intact — `stash@{0}` (12 files, 433 insertions) and `stash@{1}` (2 files). The pop conflicted,
-so the entry was kept. Chunk 06's commit is exactly its two owned files, and every worktree is
-clean. Nothing was lost.
-
-**Rule this earns, and it belongs in `learnings.md` at close:** a delegate in a shared clone must
-never use `git stash` — the stash is per-clone, not per-worktree, so it reaches straight across
-into other sessions' uncommitted work. The safe way to test a pre-fix baseline is
-`git show HEAD:<path> > <path>`, which touches nothing outside the worktree. Chunk 01 and chunk 02
-both used stash-based baselines too, and were lucky.
-
-**Owed to the owner:** the other worktrees' sessions should be told a pop was attempted against
-their entry, even though it did not land.
-
-## Chunk 06: the #501-ahead-of-#222 assumption held
-
-No code-level dependency on #222 exists — the recorded `[ASSUMPTION]` is discharged, not merely
-unfalsified. The sample vocabulary is deliberately disjoint from `DeviceStatus`, and
-`test_sample_status_vocabulary_is_disjoint_from_device_status` will fail loudly if #222 later
-reuses a sample status string. The shape #222 should mirror: family-prefixed status values, a
-second list on the report rather than a widened `entries`, a `*_issues` property defined as
-"not ok" so a later status is an issue by default, and its own REQUIREMENTS section.
-
-## Integration debt and backlog candidates from chunk 06
-
-- **`skills/ableton-push/SKILL.md` is now incomplete** — it enumerates the device buckets and
-  phrases the exit-1 prompt as "Some devices won't load cleanly on this machine". The gate can now
-  fail on a sample. Coordinator's at integration.
-- **`examples/punk-fate/REQUIREMENTS.md` is stale generated output** — missing the new section.
-  Regenerating needs a build of the example song.
-- **`devices.audio_file` carries the identical false-clean** (sampler samples) and is NOT covered
-  — the issue names clips only. The `SampleEntry` family would absorb it with one added
-  "referenced by" field. Backlog item, not silent scope creep.
-- **A `kind='audio'` clip with a NULL/empty `audio_file` still passes compat clean.** Push refuses
-  it by name; it is a different defect with no path to an existence check. Skipped deliberately
-  and said so in the code, not just the report.
-
-## Chunk 07: three residuals, named rather than papered over
-
-The brief asked for an honest partial over a message implying the problem was solved. It
-delivered that.
-
-1. **The block still runs long.** The copy plays the authored span inside a block that is still
-   the file's length — silent after the region ends, and it **can overlap a later placement on the
-   same track**. Live exposes no setter; the operator text says so and says to shorten in Live when
-   the visual span matters or a collision occurs.
-2. **Unwarped clips get no region, and the deeper half is worse.** `warping = 0` puts Live's
-   markers in seconds while the placement is authored in bars, so a beats-domain write would trim
-   to the wrong point — skipped and named. But on the **direct-create route the authored warp does
-   not travel at all**, so a row with `warping` unset (the common case) is written in beats on the
-   assumption Live warped the file. If Live loaded it unwarped, the region lands in the wrong unit.
-   **Follow-on owed:** probe the copy's warp state, or write the conform in the same pass.
-3. **The conform gap is still `blocked`.** #509's second design question asked for a post-create
-   conform *and* trim. The pass now proves the addressing works, so writing gain/pitch/warp there
-   is a small step — but it changes `blocked` behaviour, so scope stayed at the region.
-
-It also corrected a **fourth** operator-text site the brief did not name: the `conform_gap` string
-asserted that an arrangement clip "can only be addressed for a set_property by an index that
-exists after the create's result is applied … so it is not made". This chunk makes that claim
-false, so it now says the region pass writes only the region, not the conform. Finding the
-brief's own omission is the behaviour the brief asked for.
-
-## Operator verification owed
-
-`.prawduct/operator-verification.md:157` carries a **checked-off** entry quoting the old extent
-warning verbatim. It no longer matches shipped behaviour and needs re-verification against a real
-Live push — which is also the only way to confirm the region write actually bounds playback, since
-every chunk-07 assertion above is unit-level.
+The earlier compact form of this roster (`- \`[x]\` 01 · …`) was never machine-read at all:
+`_iter_status_section_items` matches `- [ ]` / `- [x]` at line start, so backtick-wrapped boxes
+parse as nothing in either direction, and `[~]` is not a value it knows.

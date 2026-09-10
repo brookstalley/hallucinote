@@ -675,7 +675,10 @@ def plan_push_arrangement(
         region_clause = (
             "Their PLAYABLE REGION is written to the authored span right after "
             "the placements apply (Live takes end_marker and loop_end on a "
-            "placed clip), so each copy SOUNDS the placement's span. "
+            "placed clip). That write is a SEPARATE pass that runs once the "
+            "placements land, so this line is what the push intends, not what "
+            "it has done — the run reports the region outcome separately, and "
+            "says so if any copy did not get one. "
             if any_region else
             "None of them could take a PLAYABLE REGION write, for the reason "
             "each line gives. "
@@ -771,7 +774,6 @@ def plan_push_arrangement_audio_regions(
     host_clip_ids = envelope_hosting_clip_ids(conn, song_id)
     unwarped: list[str] = []
     unlinked: list[str] = []
-    written = 0
 
     for row in rows:
         row_id = row["id"]
@@ -830,13 +832,12 @@ def plan_push_arrangement_audio_regions(
                     f"authored {region_beats:g}-beat region ({prop}={region_end:g})"
                 ),
             ))
-        written += 1
 
-    if written:
-        plan.warn(
-            f"arrangement regions: bounded {written} audio copy/copies to the "
-            "authored span"
-        )
+    # No plan-time "bounded N copies" line. This planner does not know what
+    # will be dispatched: the executor drops region calls for placements whose
+    # create did not land this phase, so a count taken here reports copies that
+    # were never written. The executor owns the outcome line, derived from the
+    # results it actually got back.
     if unwarped:
         plan.alert(
             f"arrangement: {len(unwarped)} audio placement(s) kept their copy's "

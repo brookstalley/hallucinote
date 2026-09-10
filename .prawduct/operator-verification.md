@@ -2148,6 +2148,13 @@ reopen Live before any box below.
 - [ ] **#518 — the printed pin recipe works from a genuinely mismatched session.** The recipe was
   executed successfully against this machine during the build, but not from a real refusal.
   Provoke the version mismatch, paste what the CLI prints, confirm the push then runs.
+- [ ] **#509 — a placement authored LONGER than its sample.** Every other box here covers the
+  block-runs-long direction. The region write computes its end from the authored bars alone and
+  emits it unconditionally, and only a SHRINKING write was ever probed (row 27: `end_marker`
+  8.0 → 4.0). Place a 4-bar authored span over a 1-bar sample and record which happens: Live
+  refuses the marker (and the arrangement phase now fails a push that used to report ok-with-an-
+  alert), or Live accepts it and the copy does not in fact sound the authored span. The answer
+  decides whether the write should be emitted at all in the growing case.
 - [ ] **#514 — capture→cleanup→capture converges on a real set.** Open a set still holding the
   default scaffold, capture, accept the cleanup offer, capture again: the second round must emit
   zero net link changes. Then confirm a scaffold-NAMED track carrying a device survives capture.

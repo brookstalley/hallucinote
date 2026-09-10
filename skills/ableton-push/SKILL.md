@@ -56,11 +56,15 @@ If the probe fails or returns nothing, omit `--installed-plugins` in 0b. The com
 
 `--probe` resolves every device's `preset_query` against Live's browser in-process. Omit it if Live or the MCP bridge isn't available; the gate still enforces user confirmation on unverified entries.
 
-The CLI emits a JSON report with status buckets — `native`, `placeholder`, `third_party_ok`, `third_party_missing`, `third_party_unverified`, `preset_query_invalid`, `kind_unresolvable`, `kind_ambiguous`, `preset_query_unverified`. The CLI also prints a human summary explaining each bucket.
+The CLI emits a JSON report covering **two independent families**. Devices, under `entries` with status buckets `native`, `placeholder`, `third_party_ok`, `third_party_missing`, `third_party_unverified`, `preset_query_invalid`, `kind_unresolvable`, `kind_ambiguous`, `preset_query_unverified`. Samples, under `samples` with `sample_ok`, `sample_missing`, `sample_unreadable`, `sample_not_a_file`, `sample_unresolvable`, and their own `samples_*` summary counts. The report is JSON and nothing else — there is no human summary to read out; you compose one from the entries.
 
-**Exit codes:** `0` = clean. `1` = at least one device in a problem bucket — display the offending entries and ask the user:
+**Exit codes:** `0` = clean. `1` = at least one DEVICE or at least one SAMPLE in a problem bucket. **Read which family actually fired before you speak** — a sample-only failure leaves every device bucket empty, so an agent that displays only devices shows the user nothing and asks them to confirm a refusal it cannot evidence. Display the offending entries from whichever family is non-empty, then ask:
 
-> *"Some devices won't load cleanly on this machine, and/or some audio clips reference samples that are missing or unreadable. Pushing now will fail at device-load for the devices (the chain stays empty; nothing is substituted) and in Live for the samples. Continue anyway? (yes/no)"*
+> *Devices only:* "Some devices won't load cleanly on this machine. Pushing now will fail at device-load for those (the chain stays empty; nothing is substituted). Continue anyway? (yes/no)"
+>
+> *Samples only:* "Some audio clips reference samples that are missing or unreadable on this machine. Pushing now will place clips Live cannot play. Continue anyway? (yes/no)"
+>
+> *Both:* name both, in that order.
 
 Proceed only on explicit `yes`. If `no`, point at `songs/<slug>/REQUIREMENTS.md` (regenerate with `compat write-requirements <slug>` if absent) and stop. Re-running compat after fixes is idempotent.
 

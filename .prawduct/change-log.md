@@ -52,9 +52,17 @@ all 41 EQ Eight params and all 5 Erosion params failed in one run, each with
 **The wire form is confirmed against Live 12.4.5**, not merely reasoned: the
 same sitting's tolerance probe wrote `{"value": <stringified float>,
 "value_type": "continuous"}` over the real wire for 29 continuous params
-across Analog, EQ Eight and Erosion, and every write landed. Re-writing a
-parameter's existing value round-tripped at exactly 0.0; only writes of values
-that are not float32 points showed any delta at all.
+across Analog, EQ Eight and Erosion, and every write was accepted rather than
+refused. That — validation admits the string form — is the whole of what this
+confirms, and it is what the defect needed.
+
+It confirms nothing about round-trip fidelity. Those 29 writes re-wrote each
+parameter's EXISTING value, which Live short-circuits, so their exact-0.0
+result measures nothing; the sitting records that pass as worthless for
+tolerance and it is not evidence here either. Fidelity is #534's question, its
+numbers come from a separate perturbing pass, and the deltas there are not
+float32 representability — the largest are integer-stepped params
+(`Note PB Range` written 41.424, read 41).
 
 `str` rather than `repr` — identical for floats, but `push.devices`'s
 `_param_value_kv` already produces this same wire field with `str`, and two

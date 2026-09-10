@@ -267,6 +267,23 @@ generous `MCP_TIMEOUT`; a pre-warm hook is best-effort, not the mitigation.**
 
 **`check-change-log-entry` (and the other PR gates) evaluate LOCAL commits, but `gh pr merge` squashes ORIGIN. If you commit anything — especially the change-log entry the gate just forced you to add — AFTER your last `git push` and before `gh pr merge`, re-push first. A gate that passed locally does NOT mean the commit reached the branch the merge will squash.**
 
+**Recurred 2026-09-10 (second occurrence), on PR #540.** The gates were run, the
+Critic and the PR reviewer both read the local tree, the PR body described the
+local tree — and the merge took `ebdd9b1` because `605f569` was never pushed. The
+work merged with NO change-log entry, and `operator-verification.md` was left
+citing a `scope=` that resolved nowhere. Knowing the rule did not prevent it,
+so the rule is not the gap; the gap is that nothing checks.
+
+Two mechanical checks, both seconds, that would have caught it:
+
+- **Before merging:** `test "$(git rev-parse HEAD)" = "$(git rev-parse origin/$(git branch --show-current))"` — refuse to merge unless they match.
+- **After merging:** read the merge commit's second parent (`git log -1 --format=%P`) and confirm it is the commit you reviewed, not merely a commit on your branch.
+
+What actually caught it was `git branch -d` REFUSING to delete the branch as
+unmerged. Reaching for `-D` on that refusal — the reflex it is designed to
+provoke — would have destroyed the only copy of the commit. **Treat a `-d`
+refusal on a branch you believe is merged as a finding, never as friction.**
+
 ## Multi-write Live handlers resolve everything before writing anything
 
 **When an MCP handler performs more than one Live write derived from separate validations (a routing TYPE plus an optional CHANNEL, a load plus a link, etc.), resolve and validate ALL inputs before performing ANY write. A raise that lands mid-sequence leaves Live half-mutated while the agent receives an error response and reasonably assumes nothing changed — a silent state/response divergence.**

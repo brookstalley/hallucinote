@@ -7,10 +7,18 @@ testable.
 
 Scope: read-only detection and path math. No filesystem mutation — the skills
 do the copying / editing themselves, the helpers just hand them the answers.
+
+The vendor-set definition (:func:`vendor_ignore` and the fingerprint helpers
+beside it) belongs here for that reason: deciding *which* files an install would
+ship is path math, while doing the shipping is ``install_ops``. Keeping the
+answer in one place is what stops the copy, the completeness check and the
+staleness report from describing three different trees.
 """
 from __future__ import annotations
 
+import collections.abc
 import dataclasses
+import fnmatch
 import hashlib
 import json
 import os
@@ -47,6 +55,145 @@ REMOTE_SCRIPT_EXCLUDE_DIRS_ANY: tuple[str, ...] = (
 REMOTE_SCRIPT_EXCLUDE_FILE_GLOBS_ANY: tuple[str, ...] = (
     "*.pyc",
 )
+
+
+# --- What gets vendored ----------------------------------------------------
+
+def vendor_ignore(
+    source_root: pathlib.Path | str,
+) -> collections.abc.Callable[[str | os.PathLike[str], list[str]], set[str]]:
+    """Build a ``shutil.copytree``-compatible ``ignore(dir, names)`` predicate.
+
+    The single definition of *what the install vendors into Live*. Every reader
+    of that question goes through here — the copy itself
+    (:func:`install_ops.vendor_remote_script`), the completeness expectation
+    (:func:`install_ops.verify_remote_script`) and the advisory content
+    fingerprint below — so adding an exclude above changes all three at once
+    instead of leaving one of them describing a tree that is no longer shipped.
+
+    Reproduces rsync's anchoring in pure Python: the package-root ``server.py``
+    (FastMCP-dependent — Live's embedded Python can't import it) is excluded
+    **only at the source root**, so ``remote_script/server.py`` (the Control
+    Surface entry point Live loads) survives. Directory names and ``*.pyc``
+    globs are excluded anywhere.
+    """
+    root_resolved = pathlib.Path(source_root).resolve()
+
+    def _ignore(dirpath: str | os.PathLike[str], names: list[str]) -> set[str]:
+        out: set[str] = set()
+        try:
+            at_root = pathlib.Path(dirpath).resolve() == root_resolved
+        except OSError:
+            at_root = False
+        for name in names:
+            if at_root and name in REMOTE_SCRIPT_EXCLUDE_TOP_LEVEL_FILES:
+                out.add(name)
+            elif name in REMOTE_SCRIPT_EXCLUDE_DIRS_ANY:
+                out.add(name)
+            elif any(fnmatch.fnmatch(name, pat) for pat in REMOTE_SCRIPT_EXCLUDE_FILE_GLOBS_ANY):
+                out.add(name)
+        return out
+
+    return _ignore
+
+
+def vendored_files(root: pathlib.Path | str) -> list[tuple[str, pathlib.Path]]:
+    """Every file a vendor of ``root`` would ship, as ``(relpath, path)``, sorted.
+
+    ``relpath`` is POSIX-shaped and relative to ``root``, so the same key
+    identifies a file in the source tree and in the vendored copy — that is what
+    makes the two sides comparable path-by-path.
+    """
+    root = pathlib.Path(root)
+    ignore = vendor_ignore(root)
+    out: list[tuple[str, pathlib.Path]] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        ignored = ignore(dirpath, list(dirnames) + list(filenames))
+        dirnames[:] = [d for d in dirnames if d not in ignored]
+        for fn in filenames:
+            if fn in ignored:
+                continue
+            path = pathlib.Path(dirpath) / fn
+            out.append((path.relative_to(root).as_posix(), path))
+    out.sort(key=lambda item: item[0])
+    return out
+
+
+def _vendored_file_digest(path: pathlib.Path, rel: str) -> str:
+    """One vendored file's digest, hashed through the shared normalization."""
+    from . import hash_path_into
+
+    hasher = hashlib.sha256()
+    hash_path_into(hasher, path, rel)
+    return hasher.hexdigest()
+
+
+def vendored_content_fingerprint(pkg_root: pathlib.Path | str) -> str | None:
+    """Advisory content fingerprint of the whole vendored tree at ``pkg_root``.
+
+    Twelve hex chars of sha256 over every file :func:`vendored_files` would
+    ship, or ``None`` when ``pkg_root`` isn't a readable directory.
+
+    This is the **advisory** half of the drift story and is deliberately wider
+    than the handshake's ``_FINGERPRINT_PATHS``: the install ships far more into
+    Live than the wire-shape files — ``analyzer/`` (which Live *executes* during
+    a render), ``resources/``, ``client.py`` — and an edit to any of those leaves
+    Live running stale code while the handshake stays green. Comparing this
+    fingerprint against the source tree's makes that staleness visible.
+
+    It must never gate anything. The handshake stays the only hard contract, so
+    a difference here is a *re-vendor recommendation*: pair it with
+    :func:`vendored_content_diff` to say which files moved, because part of the
+    vendored set (``server_side/``) is imported in Live but never executed there
+    and its churn is uninteresting.
+
+    Returns ``None`` rather than raising on an unreadable tree, matching
+    :func:`hallucinote_mcp.compute_version_for`'s discipline — a detection
+    helper must not be able to break the caller.
+    """
+    from . import hash_path_into
+
+    pkg_root = pathlib.Path(pkg_root)
+    try:
+        if not pkg_root.is_dir():
+            return None
+        hasher = hashlib.sha256()
+        for rel, path in vendored_files(pkg_root):
+            hash_path_into(hasher, path, rel)
+    except OSError:
+        return None
+    return hasher.hexdigest()[:12]
+
+
+def vendored_content_diff(
+    source_root: pathlib.Path | str,
+    installed_pkg: pathlib.Path | str,
+) -> tuple[str, ...]:
+    """Vendored-relative paths whose bytes differ between source and install.
+
+    Sorted, and covering both content drift and one-sided presence (a file the
+    source ships that the install lacks, or a leftover the install still
+    carries). This is what lets a reader tell ``analyzer/setup.py`` — code Live
+    runs — from ``server_side/analysis.py``, which Live only imports, without a
+    per-path severity table anyone would have to maintain.
+
+    Returns ``()`` when either side isn't a readable directory, for the same
+    never-raise reason as :func:`vendored_content_fingerprint`.
+    """
+    source_root = pathlib.Path(source_root)
+    installed_pkg = pathlib.Path(installed_pkg)
+    try:
+        if not source_root.is_dir() or not installed_pkg.is_dir():
+            return ()
+        src = dict(vendored_files(source_root))
+        dst = dict(vendored_files(installed_pkg))
+        differing = set(src) ^ set(dst)
+        for rel in set(src) & set(dst):
+            if _vendored_file_digest(src[rel], rel) != _vendored_file_digest(dst[rel], rel):
+                differing.add(rel)
+    except OSError:
+        return ()
+    return tuple(sorted(differing))
 
 
 # --- Package introspection -------------------------------------------------
@@ -686,4 +833,8 @@ __all__ = [
     "remote_script_install_dir",
     "remote_script_stub_text",
     "uv_runtime",
+    "vendor_ignore",
+    "vendored_content_diff",
+    "vendored_content_fingerprint",
+    "vendored_files",
 ]

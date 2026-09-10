@@ -145,8 +145,8 @@ class TestStaleServerProcessHint:
         assert stale_server_process_hint(running_version=__version__) is None
 
 
-def test_hash_file_is_stable_across_crlf_and_lf(tmp_path: Path):
-    """The internal ``_hash_file`` helper must produce the same hash
+def test_hash_path_into_is_stable_across_crlf_and_lf(tmp_path: Path):
+    """The shared ``hash_path_into`` helper must produce the same hash
     for a file's content whether the on-disk bytes use CRLF or LF
     line endings. Without this, a Windows checkout (or any git config
     with autocrlf=true) produces a different ``__version__`` than a
@@ -155,7 +155,7 @@ def test_hash_file_is_stable_across_crlf_and_lf(tmp_path: Path):
 
     This is the load-bearing property for W4-F.
     """
-    from hallucinote_mcp import _hash_file
+    from hallucinote_mcp import hash_path_into
 
     lf_path = tmp_path / "lf.py"
     crlf_path = tmp_path / "crlf.py"
@@ -163,20 +163,20 @@ def test_hash_file_is_stable_across_crlf_and_lf(tmp_path: Path):
     crlf_path.write_bytes(b"def f():\r\n    return 1\r\n")
 
     h_lf = hashlib.sha256()
-    _hash_file(h_lf, lf_path, "same-rel-key")
+    hash_path_into(h_lf, lf_path, "same-rel-key")
     h_crlf = hashlib.sha256()
-    _hash_file(h_crlf, crlf_path, "same-rel-key")
+    hash_path_into(h_crlf, crlf_path, "same-rel-key")
     assert h_lf.hexdigest() == h_crlf.hexdigest(), (
         "CRLF and LF versions of the same source must hash identically"
     )
 
 
-def test_hash_file_still_distinguishes_genuinely_different_content(tmp_path: Path):
+def test_hash_path_into_still_distinguishes_genuinely_different_content(tmp_path: Path):
     """Sanity: CRLF/LF normalization must not be so broad that it
     collapses genuinely different content into the same hash. A
     minimal byte-flip in non-newline content must still change the
     fingerprint contribution."""
-    from hallucinote_mcp import _hash_file
+    from hallucinote_mcp import hash_path_into
 
     a = tmp_path / "a.py"
     b = tmp_path / "b.py"
@@ -184,13 +184,13 @@ def test_hash_file_still_distinguishes_genuinely_different_content(tmp_path: Pat
     b.write_bytes(b"def f():\n    return 2\n")
 
     h_a = hashlib.sha256()
-    _hash_file(h_a, a, "same-rel-key")
+    hash_path_into(h_a, a, "same-rel-key")
     h_b = hashlib.sha256()
-    _hash_file(h_b, b, "same-rel-key")
+    hash_path_into(h_b, b, "same-rel-key")
     assert h_a.hexdigest() != h_b.hexdigest()
 
 
-def test_hash_file_preserves_binary_content_through_nul_sniff(tmp_path: Path):
+def test_hash_path_into_preserves_binary_content_through_nul_sniff(tmp_path: Path):
     """When a fingerprint entry contains a NUL byte, the CRLF→LF
     normalization is skipped — a future ``_FINGERPRINT_PATHS`` entry
     pointing at a non-Python file (JSON manifest with literal CRLF,
@@ -202,7 +202,7 @@ def test_hash_file_preserves_binary_content_through_nul_sniff(tmp_path: Path):
     defends. (Python source files have no NUL bytes, so the existing
     CRLF/LF stability test continues to apply for them.)
     """
-    from hallucinote_mcp import _hash_file
+    from hallucinote_mcp import hash_path_into
 
     crlf_binary = tmp_path / "manifest.bin"
     lf_binary = tmp_path / "manifest2.bin"
@@ -212,9 +212,9 @@ def test_hash_file_preserves_binary_content_through_nul_sniff(tmp_path: Path):
     lf_binary.write_bytes(b"hdr\x00payload\nfooter")
 
     h_crlf = hashlib.sha256()
-    _hash_file(h_crlf, crlf_binary, "same-rel-key")
+    hash_path_into(h_crlf, crlf_binary, "same-rel-key")
     h_lf = hashlib.sha256()
-    _hash_file(h_lf, lf_binary, "same-rel-key")
+    hash_path_into(h_lf, lf_binary, "same-rel-key")
     assert h_crlf.hexdigest() != h_lf.hexdigest(), (
         "binary files (NUL byte present) must hash byte-for-byte; the "
         "CRLF→LF normalization must NOT fire on them"
@@ -275,3 +275,27 @@ def test_compute_fingerprint_handles_missing_paths_gracefully(tmp_path: Path, mo
         assert mod.__version__ != __version__
     finally:
         sys.modules.pop("_partial_test", None)
+
+
+def test_handshake_fingerprint_value_is_unchanged_by_the_shared_hash_helper(tmp_path: Path):
+    """A golden value over a fixed tree.
+
+    The advisory vendored-content fingerprint hashes through the same helper as
+    the handshake one, so the helper is now shared and could be "improved" from
+    either side. Any such change would silently invalidate every vendored
+    install in the field — a version mismatch for code that never drifted. This
+    pins the produced value, CRLF normalization included.
+    """
+    from hallucinote_mcp import _compute_content_fingerprint
+
+    root = tmp_path / "pkg"
+    root.mkdir()
+    (root / "wire.py").write_bytes(b"WIRE\r\nsecond line\n")
+    (root / "schema.py").write_bytes(b"SCHEMA\n")
+    (root / "dispatcher.py").write_bytes(b"DISPATCH\n")
+    for sub in ("actions", "handlers", "remote_script"):
+        (root / sub).mkdir()
+        (root / sub / "__init__.py").write_bytes(f"# {sub}\n".encode())
+    (root / "handlers" / "render.py").write_bytes(b"RENDER\n")
+
+    assert _compute_content_fingerprint(root) == "ea03c173dcbc"

@@ -70,7 +70,9 @@ floor — to the same status as `derived (invert ∘ diminish ×2, 0.50)`. The r
 author had already resolved this by hand; their filter kept every non-derived
 variation at any coverage. `MatchResult.derived` now carries the tier from the one
 site that chooses it, so consumers weigh a reading without prefix-matching a
-human-facing label.
+human-facing label. The floor rides on the report itself, so the render names the
+percentage it actually applied instead of guarding for a field that is now always
+there and falling back to prose that names no threshold at all.
 
 **`capture execute` baked end-of-song automation values in as baselines.** A parameter
 under an automation envelope reads at whatever value the envelope holds *at the
@@ -86,7 +88,11 @@ an ordinary field change, indistinguishable from a deliberate by-ear tweak.
 when the playhead is elsewhere, and confirms the seek settled there before the walk
 begins. It refuses (exit 2) while the transport is rolling — a capture cannot be made
 deterministic while the playhead moves, so no seek would help — and refuses if the
-seek does not land, which is the silent case in miniature. The confirmation reads the
+seek does not land, which is the silent case in miniature. It refuses on one more
+reading: a transport `info` that comes back without `is_playing` or
+`current_song_time`. Defaulting a missing read to "stopped at beat 0" would let the
+guard reinstate the exact silence it was built to end, so the unreadable case is
+named and refused rather than assumed away. The confirmation reads the
 seek handler's own settle poll rather than reading `current_song_time` back, because
 Live's getter can return a stale cached value in the same callback as the setter
 (`learnings.md`). `--no-seek` opts out and warns.

@@ -274,7 +274,12 @@ def test_cmd_execute_writes_refresh_json_and_forwards_old(
         captured["song_dir"] = song_dir
         return {"snapshot_version": 1, "tracks": []}
 
-    monkeypatch.setattr(cc, "_resolve_send_fn", lambda: (lambda req: _Resp(True, {})))
+    # The bridge must answer the transport read the capture makes before it
+    # walks anything; an empty result is refused, not assumed to mean "at 0".
+    monkeypatch.setattr(
+        cc, "_resolve_send_fn",
+        lambda: (lambda req: _Resp(True, {"is_playing": False,
+                                          "current_song_time": 0.0})))
     monkeypatch.setattr(
         "hallucinote.capture.assemble_snapshot_via_probes", fake_assemble
     )
@@ -429,3 +434,16 @@ def test_no_seek_skips_the_preflight_and_warns(
     assert ("ableton_session", "seek") not in live.calls
     assert out.exists()
     assert "--no-seek" in capsys.readouterr().err
+
+
+def test_a_transport_read_missing_the_playhead_refuses(tmp_path, monkeypatch,
+                                                       capsys) -> None:
+    """Assuming "stopped at 0" from an incomplete read is the same silence the
+    guard exists to end."""
+    live = _FakeLive()
+    live.send = lambda req: _Resp(True, {"is_playing": False})
+    rc, out, walked = _execute_against(live, tmp_path, monkeypatch)
+    assert rc == 2
+    assert not out.exists()
+    assert walked == []
+    assert "did not report current_song_time" in capsys.readouterr().err

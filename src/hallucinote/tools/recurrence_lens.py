@@ -80,12 +80,11 @@ def render(report, *, section_filter: str | None = None, show_partials: bool = F
     # home/later split that governs `recalls` does not apply to it.
     partials = [r for r in report.recalls if r.partial]
     n_sections = len({r.section for r in recalls})
-    floor = getattr(report, "min_coverage", None)
     partial_note = ""
     if partials and not show_partials:
-        floor_txt = f"below {floor:.0%} coverage; " if floor is not None else ""
         partial_note = (
-            f", {len(partials)} partial(s) folded ({floor_txt}--all to list)"
+            f", {len(partials)} partial(s) folded "
+            f"(below {report.min_coverage:.0%} coverage; --all to list)"
         )
     elif partials:
         partial_note = f", {len(partials)} partial(s) listed"

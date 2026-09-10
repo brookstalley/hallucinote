@@ -150,6 +150,20 @@ def _park_playhead_at_zero(probe) -> str | None:
     Returns ``None`` when the capture may proceed, else the refusal text.
     """
     info = probe("ableton_session", "info")
+    # Both keys are required rather than defaulted: a capture that cannot read
+    # where the playhead is cannot claim its baselines are the right ones, and
+    # quietly assuming "stopped at 0" is the same silence this guard exists to
+    # end. `info` returns both on every real bridge.
+    missing = [k for k in ("is_playing", "current_song_time") if k not in info]
+    if missing:
+        return (
+            f"capture execute: ableton_session(action='info') did not report "
+            f"{', '.join(missing)}, so there is no way to tell whether an automated "
+            f"parameter would be read at its baseline or at some other beat. "
+            f"Refusing to capture rather than recording values that may be wrong "
+            f"and indistinguishable from deliberate ones."
+        )
+
     if bool(info.get("is_playing")):
         return (
             "capture execute: the transport is rolling. A capture reads each "

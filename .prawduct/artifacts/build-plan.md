@@ -93,7 +93,8 @@ at the end vs 2.50 s at beat 0).
 Context: cut from `origin/develop` @ `446f732`. Both defects are the two reports left
 open by the 2026-09-10 incoming-bugs triage; the other two reports from that triage were
 verified already-fixed and archived in the same pass. Built serially in one session;
-suite green (6434 passed, 2 skipped) and each new test was mutation-checked by reverting
+suite green at every chunk close — the evidence store carries the per-tree result, so
+no total is copied here to drift — and each new test was mutation-checked by reverting
 the mechanism it names.
 
 No backlog items were filed. Both defects arrived through `incoming-bugs/` rather than

@@ -260,7 +260,14 @@ class ReverbVerification:
 class EnvelopeVerification:
     """Realized-vs-declared verdict for one authored automation change (AUD-8H2M).
 
-    One record per value-changing breakpoint of a declared envelope. ``metric``
+    One record per authored GESTURE — a run of value changes graded as a single
+    move. ``at_beat`` is the gesture's first change, ``through_beat`` its last,
+    and ``steps`` how many value changes it collapsed (1 for a lone
+    breakpoint). A ramp authored as 64 small steps is ONE record spanning the
+    whole traversal, not 64: a per-step verdict is only valid when the step has
+    a full analysis window on each side, so grading a staircase per step
+    compared two points on the same gesture and made finer authorship read as
+    worse realization. ``metric``
     + ``before`` / ``after`` are the measured quantity across the change
     (``spectral_centroid_hz`` for a device-parameter flip, ``rms_db``
     for a send-level step — the return's STEREO RMS, the same quantity the
@@ -299,6 +306,12 @@ class EnvelopeVerification:
     realized: bool
     note: str
     probe: str | None = None
+    # The gesture's span. ``through_beat`` is the beat the move LANDS on (equal
+    # to ``at_beat`` for a single-breakpoint change); ``steps`` is how many
+    # declared value changes it collapsed. Together they say what was graded,
+    # so a reader never has to infer a staircase's extent from the note.
+    through_beat: float | None = None
+    steps: int = 1
 
 
 @dataclass(frozen=True)
@@ -856,6 +869,26 @@ class Finding:
             )
 
 
+# Where each family of numbers in a MixReport is tapped. The analyzer sits in
+# each track's device chain and in the master's, so every per-surface and
+# per-section reading is PRE that surface's mixer fader; only the delivered
+# true-peak applies one. ``analyze_mix`` overwrites ``section_masking`` when it
+# reconstructs mix balance from declared static fader gains.
+_MEASUREMENT_BASIS = {
+    "stem_loudness": "pre_fader",
+    "return_loudness": "pre_fader",
+    "section_masking": "pre_fader",
+    "master": "pre_master_fader",
+    "delivered_true_peak_dbtp": "post_master_fader",
+    "note": (
+        "every per-stem and per-section number here is measured off a "
+        "PRE-fader tap, so a fader-only change moves NONE of them — they are "
+        "expected to be identical across an A/B of a level move. Only the "
+        "master block and delivered_true_peak_dbtp respond to a fader."
+    ),
+}
+
+
 @dataclass
 class MixReport:
     """Top-level wire format. Mutable so ``analyze_mix`` can populate
@@ -951,6 +984,27 @@ class MixReport:
     # Post-fader true-peak = bus true-peak + master_fader_db (the master fader is a
     # linear gain after the captured chain). THIS is the delivery/clipping number.
     delivered_true_peak_dbtp: float | None = None
+    # WHERE the fader value above came from, and whether anything confirmed it
+    # against the set that produced this audio. `"song_db"` means it is what the
+    # song's DB DECLARES — read at analysis time, never compared with Live,
+    # because analysis is server-side and has no connection to the set. A fader
+    # trimmed in Live and not pulled back therefore leaves `master_fader_db` and
+    # `delivered_true_peak_dbtp` wrong by exactly that drift, silently, and an
+    # agent reading them keeps trimming a level it already fixed. None when no
+    # fader value was supplied at all.
+    master_fader_source: str | None = None
+    master_fader_verified: bool = False
+    # Why it is unverified, and the one command that settles it. None when the
+    # value WAS verified, or when there is no fader value to qualify.
+    master_fader_note: str | None = None
+    # What each family of numbers here is measured RELATIVE TO. It lives in the
+    # report rather than only in /mix-review's prose because the report is what
+    # an A/B comparison reads: a fader-only move leaves every per-stem and
+    # per-section row byte-identical, and without this block that reads as "the
+    # change did nothing" rather than "these rows cannot see a fader".
+    measurement_basis: dict[str, str] = field(
+        default_factory=lambda: dict(_MEASUREMENT_BASIS)
+    )
     schema_version: str = SCHEMA_VERSION
 
     def to_json_dict(self) -> dict[str, Any]:
@@ -987,6 +1041,13 @@ class MixReport:
             "master_fader_volume": self.master_fader_volume,
             "master_fader_db": _finite_or_none(self.master_fader_db),
             "delivered_true_peak_dbtp": _finite_or_none(self.delivered_true_peak_dbtp),
+            # Provenance travels WITH the number. Without it a reader has no
+            # way to tell a fader read off the rendered set from one declared
+            # in the DB and never checked against it.
+            "master_fader_source": self.master_fader_source,
+            "master_fader_verified": self.master_fader_verified,
+            "master_fader_note": self.master_fader_note,
+            "measurement_basis": dict(self.measurement_basis),
             "stems": [_stem_to_dict(s) for s in self.stems],
             "returns": [_stem_to_dict(r) for r in self.returns],
             "overshoots": [_overshoot_to_dict(o) for o in self.overshoots],
@@ -1383,6 +1444,11 @@ def _envelope_to_dict(e: EnvelopeVerification) -> dict[str, Any]:
         "target_kind": e.target_kind,
         "parameter_path": e.parameter_path,
         "at_beat": e.at_beat,
+        # The span this verdict graded — a 64-step staircase is one row from
+        # `at_beat` through `through_beat` with `steps: 64`. Machine-readable
+        # so /mix-review never has to parse the note to learn the extent.
+        "through_beat": e.through_beat,
+        "steps": e.steps,
         "metric": e.metric,
         # NaN when measurable=False (too-quiet / too-diluted / model
         # breakdown) — serialized as JSON null (B1), the "honestly

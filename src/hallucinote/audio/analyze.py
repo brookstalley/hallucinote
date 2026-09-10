@@ -68,6 +68,7 @@ from .intelligibility import measure_intelligibility, sum_bed
 from .masking import analyze_masking_window
 from .report import (
     SCHEMA_VERSION,
+    _MEASUREMENT_BASIS,
     EnergyRealization,
     EnvelopeVerification,
     Finding,
@@ -223,6 +224,8 @@ def analyze_mix(
     analyze_integrity: bool = False,
     stem_gains: "Mapping[str, float] | None" = None,
     master_fader_volume: float | None = None,
+    master_fader_source: str | None = None,
+    master_fader_verified: bool = False,
     compare_to: int | Path | str | None = None,
     analysis_dir: Path | str | None = None,
 ) -> MixReport:
@@ -437,10 +440,43 @@ def analyze_mix(
     # clipping?" — the master fader is a linear gain after the captured chain.
     master_fader_db: float | None = None
     delivered_true_peak_dbtp: float | None = None
+    master_fader_note: str | None = None
     if master_fader_volume is not None:
         master_fader_db = live_fader_db(float(master_fader_volume))
         delivered_true_peak_dbtp = (
             master_metrics.loudness.true_peak_dbtp + master_fader_db
+        )
+        if not master_fader_verified:
+            # The delivered number rides this fader, so an unconfirmed fader
+            # makes it unconfirmed too — say so beside it rather than letting
+            # a stale value read as a measurement. An agent that trims the
+            # fader and re-analyzes otherwise sees the same delivered peak and
+            # trims again.
+            if master_fader_source == "song_db":
+                origin = "the value the song's DB declares"
+            elif master_fader_source:
+                origin = f"the value {master_fader_source} supplied"
+            else:
+                origin = "an unattributed declared value"
+            master_fader_note = (
+                f"master fader {float(master_fader_volume):.3f} is {origin}"
+                ", NOT a reading of the set that produced this render — "
+                "analysis runs server-side and never talks to Live, so a "
+                "fader moved in Live and not pulled back leaves "
+                "master_fader_db and delivered_true_peak_dbtp wrong by "
+                "exactly that drift. Confirm with ableton_session("
+                "action='info') before trusting the delivered peak; judge a "
+                "level move on the master-bus true peak + overshoot delta, "
+                "which is measured."
+            )
+
+    measurement_basis = dict(_MEASUREMENT_BASIS)
+    if stem_gains:
+        # Masking reconstructs mix balance by scaling each pre-fader stem by
+        # its DECLARED static fader gain (F1) — still pre-fader audio, and
+        # still blind to a fader move that never reached the DB.
+        measurement_basis["section_masking"] = (
+            "pre_fader_scaled_by_declared_static_fader_gains"
         )
 
     overshoot_windows = find_master_overshoots(
@@ -537,6 +573,10 @@ def analyze_mix(
         master_fader_volume=master_fader_volume,
         master_fader_db=master_fader_db,
         delivered_true_peak_dbtp=delivered_true_peak_dbtp,
+        master_fader_source=master_fader_source,
+        master_fader_verified=master_fader_verified,
+        master_fader_note=master_fader_note,
+        measurement_basis=measurement_basis,
     )
 
     if baseline is not None:

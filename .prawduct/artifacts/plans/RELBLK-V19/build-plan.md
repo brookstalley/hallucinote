@@ -150,7 +150,15 @@ setting the clip's **playable region** so the copy plays the authored region. Tw
   binding from `arrangement_clip_index` (`sync/push/arrangement.py:321`), so the copy can be
   addressed by its recorded link without the positional guess ARR-PROJ diagnosed.
 
-**Owns:** `src/hallucinote/sync/push/arrangement.py` and its tests.
+**Owns (AMENDED at integration — the original line was wrong).** The playable-region write is
+not reachable from `arrangement.py` alone: a `ToolCall`'s args are frozen at plan time and the
+link is recorded only at phase apply, so the pass needs a post-apply hook. The delegate reported
+the overrun rather than trimming the deliverable to fit a boundary that could not hold it, which
+is the right call. Actual set: `src/hallucinote/sync/push/arrangement.py`, `push_execute.py`,
+`push/plan.py` (declare `arrangement_clip_region` ack-only, or `apply_push_results` raises),
+`push/__init__.py` (export, required by the coverage canary), and tests in `tests/unit/sync/`
+including `test_planner_mcp_coverage.py`, whose own stated contract is "when a new planner ships,
+register it". No other chunk names any of these paths, so the partition held.
 **Done when:** an audio placement's copy plays the authored region; the operator text no longer
 claims an unreachable trim nor promises a reachable one it does not perform; and the permanent
 LOM limit (the block extent) is stated once, as a limit, not as a gap awaiting a fix.
@@ -316,3 +324,35 @@ second list on the report rather than a widened `entries`, a `*_issues` property
 - **A `kind='audio'` clip with a NULL/empty `audio_file` still passes compat clean.** Push refuses
   it by name; it is a different defect with no path to an existence check. Skipped deliberately
   and said so in the code, not just the report.
+
+## Chunk 07: three residuals, named rather than papered over
+
+The brief asked for an honest partial over a message implying the problem was solved. It
+delivered that.
+
+1. **The block still runs long.** The copy plays the authored span inside a block that is still
+   the file's length — silent after the region ends, and it **can overlap a later placement on the
+   same track**. Live exposes no setter; the operator text says so and says to shorten in Live when
+   the visual span matters or a collision occurs.
+2. **Unwarped clips get no region, and the deeper half is worse.** `warping = 0` puts Live's
+   markers in seconds while the placement is authored in bars, so a beats-domain write would trim
+   to the wrong point — skipped and named. But on the **direct-create route the authored warp does
+   not travel at all**, so a row with `warping` unset (the common case) is written in beats on the
+   assumption Live warped the file. If Live loaded it unwarped, the region lands in the wrong unit.
+   **Follow-on owed:** probe the copy's warp state, or write the conform in the same pass.
+3. **The conform gap is still `blocked`.** #509's second design question asked for a post-create
+   conform *and* trim. The pass now proves the addressing works, so writing gain/pitch/warp there
+   is a small step — but it changes `blocked` behaviour, so scope stayed at the region.
+
+It also corrected a **fourth** operator-text site the brief did not name: the `conform_gap` string
+asserted that an arrangement clip "can only be addressed for a set_property by an index that
+exists after the create's result is applied … so it is not made". This chunk makes that claim
+false, so it now says the region pass writes only the region, not the conform. Finding the
+brief's own omission is the behaviour the brief asked for.
+
+## Operator verification owed
+
+`.prawduct/operator-verification.md:157` carries a **checked-off** entry quoting the old extent
+warning verbatim. It no longer matches shipped behaviour and needs re-verification against a real
+Live push — which is also the only way to confirm the region write actually bounds playback, since
+every chunk-07 assertion above is unit-level.

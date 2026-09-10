@@ -1059,13 +1059,15 @@ def analyze_start_handler(
     # must be atomic; create_if_idle closes the check-then-create TOCTOU. A
     # start while one runs returns a busy handle pointing at the live job.
     report_dir = resolve_report_dir(song_slug)
-    job, created = registry.create_if_idle(kind="analyze", dir=str(report_dir))
+    job, created = registry.create_if_idle(
+        kind="analyze", detail={"report_dir": str(report_dir)},
+    )
     if not created:
         return {
             "busy": True,
             "job_id": job.job_id,
             "state": job.state,
-            "report_dir": job.dir,
+            "report_dir": job.detail.get("report_dir"),
             "message": (
                 "An analysis is already running (one at a time). Poll it with "
                 f"ableton_analysis(action='status', job_id='{job.job_id}'), "

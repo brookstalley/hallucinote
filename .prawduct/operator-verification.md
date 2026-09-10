@@ -15,6 +15,41 @@ pending entries when `operator_verification_required: true`.
 
 ---
 
+## #322 — does the fence hold against a real Live, and does it ever wedge? (2026-09-10)
+
+Backlog **#322** (with **#324** folded in). Needs Live 12.4.x, the Remote Script re-vendored,
+and something genuinely slow to load — the ~490 KB `HallucinoteAnalyzer.amxd` that produced the
+original report is the right instrument. Batch with the other re-vendor checks.
+
+The fakes prove the fence holds against a wedged scheduler. They cannot prove Live behaves the
+way the fence assumes, and **the design deliberately has no timed auto-clear**, so the failure
+this could introduce — occupancy never released, server bricked — is recoverable only by
+someone who knows to look. That is the trade the issue chose; this sitting is what tells you
+whether it was right.
+
+- [ ] **Reproduce the original.** Load the analyzer device directly and let it exceed the
+  ceiling. The call must come back `ok=True` with `code=work_escalated` and a job id — not a
+  `TimeoutError` — and a second caller arriving during the wait must be refused with
+  `LiveBusyError` naming the still-running operation and its elapsed time.
+- [ ] **Then the half that used to be open**: a caller arriving *after* the give-up must ALSO
+  be refused, not admitted. That admission is what let retries stack work behind an op still
+  running, and it is the specific mechanism behind the beachball.
+- [ ] **Does the runner actually signal?** Poll the job to a terminal state and confirm
+  `done` carries the call's real result (a polled `device.load` must yield
+  `loaded_class_name`). If Live ever *drops* a scheduled callback rather than delivering it
+  late, the bout stays occupied forever — this is the residual risk, and only a real session
+  shows it.
+- [ ] **`abandon_bout` releases**, marks the job failed, and warns that the work may still be
+  running in Live. Then the next call is admitted.
+- [ ] **R9 over a real socket.** The margin between the client's read timeout and the Live-side
+  ceiling is pinned arithmetically and has never been *observed* — confirm the escalation reply
+  actually arrives before the client stops listening. If it does not, the fix is invisible from
+  the client and everything above reads as a plain timeout.
+- [ ] **R8's reachability caveat.** `info` is main-thread-wrapped, so its `main_thread_bout`
+  block is only reachable from inside a nested bout; `ableton_session(action='bout_status')` is
+  the surface that answers while the fence is closed. Confirm `bout_status` works from a fresh
+  caller during an occupied bout — that is the one an operator will actually reach for.
+
 ## #291 — the `alien` witness: does a real chain survive a rebuild? (2026-09-10)
 
 Backlog **#291** (with **#323** folded in). Needs Live 12.4.x, the Remote Script re-vendored

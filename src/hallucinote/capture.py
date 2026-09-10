@@ -1855,6 +1855,7 @@ def assemble_snapshot_via_probes(
         returns_out.append(entry)
 
     tracks_out: list[dict[str, Any]] = []
+    dropped_scaffold: list[str] = []
     track_count = int(info.get("track_count") or 0)
     for ti in range(1, track_count + 1):
         tinfo = probe("ableton_track", "info", track_index=ti)
@@ -1888,6 +1889,9 @@ def assemble_snapshot_via_probes(
             if is_untouched_default_scaffold_track(
                 entry, has_clips=_track_carries_clips(probe, track_index=ti),
             ):
+                # Never silent: a pristine set captures as zero tracks, and
+                # without this the operator is told nothing about why.
+                dropped_scaffold.append(str(entry.get("name")))
                 continue
         # Dense 1-based rank among the tracks that survive, NEVER the raw Live
         # index: `create_track` upserts on (song, track_index), so a snapshot
@@ -1896,6 +1900,15 @@ def assemble_snapshot_via_probes(
         entry["index"] = len(tracks_out) + 1
         tracks_out.append(entry)
 
+    if dropped_scaffold:
+        warnings.warn(
+            f"capture: excluded {len(dropped_scaffold)} untouched default "
+            f"scaffold track(s) ({', '.join(dropped_scaffold)}) — Live's "
+            "brand-new-set tracks carrying no devices and no clips. Add a "
+            "device or a clip to keep one. Surviving tracks are renumbered "
+            "from 1.",
+            stacklevel=2,
+        )
     snapshot = compile_snapshot(
         session_info=session_info, returns=returns_out, tracks=tracks_out,
     )
@@ -2172,6 +2185,50 @@ def inject_browser_paths(
                 )
 
 
+def _track_name_index_map(snapshot: dict[str, Any]) -> dict[str, int]:
+    """Track name -> index, for names that are UNIQUE in the snapshot.
+
+    Capture renumbers surviving tracks by dense rank when it drops an untouched
+    default scaffold, so a song captured from a scaffold-bearing set moves every
+    real track's index down. The identity joins below key on that index, and
+    their miss path is a silent drop — so without a stable second key, one
+    refresh of such a song would lose every device's browser path and every
+    preset seed, on exactly the songs the scaffold exclusion exists for.
+
+    A duplicated name is omitted rather than guessed: matching the wrong track
+    would carry a real path onto a real device that never had it, which is worse
+    than the drop this exists to prevent.
+    """
+    seen: dict[str, int] = {}
+    dupes: set[str] = set()
+    for t in snapshot.get("tracks") or []:
+        name, idx = t.get("name"), t.get("index")
+        if not isinstance(name, str) or idx is None:
+            continue
+        if name in seen:
+            dupes.add(name)
+            continue
+        seen[name] = int(idx)
+    for d in dupes:
+        seen.pop(d, None)
+    return seen
+
+
+def _index_in_old(
+    old: dict[str, Any], new: dict[str, Any], new_index: int, name: Any,
+) -> int | None:
+    """The index this track had in ``old``, when a renumber has moved it.
+
+    Returns the new index unchanged when nothing moved (the overwhelmingly
+    common case), so a snapshot with no scaffold pays nothing.
+    """
+    if not isinstance(name, str):
+        return new_index
+    old_by_name = _track_name_index_map(old)
+    was = old_by_name.get(name)
+    return was if was is not None else new_index
+
+
 def _collect_browser_paths(
     snapshot: dict[str, Any],
 ) -> dict[tuple[str, int, int, Any], list[str]]:
@@ -2224,14 +2281,20 @@ def preserve_browser_paths(
     old_paths = _collect_browser_paths(old)
     if not old_paths:
         return
+    old_by_name = _track_name_index_map(old)
     for t in new.get("tracks") or []:
         if "index" not in t:
             continue
         ti = int(t["index"])
+        # Second key for the renumber case: same name, the index it HAD.
+        was = old_by_name.get(t.get("name")) if isinstance(t.get("name"), str) else None
         for d in t.get("devices") or []:
             if d.get("browser_path") or "index" not in d:
                 continue
-            key = ("track", ti, int(d["index"]), d.get("class"))
+            di, cls = int(d["index"]), d.get("class")
+            key = ("track", ti, di, cls)
+            if key not in old_paths and was is not None:
+                key = ("track", was, di, cls)
             if key in old_paths:
                 d["browser_path"] = list(old_paths[key])
     for r in new.get("returns") or []:
@@ -2356,16 +2419,27 @@ def preserve_preset_overrides(
     old_presets = _collect_preset_queries(old)
     if not old_presets:
         return
+    old_by_name = _track_name_index_map(old)
     for parent_kind, parents in (("track", new.get("tracks")),
                                  ("return", new.get("returns"))):
         for parent in parents or []:
             if "index" not in parent:
                 continue
             pidx = int(parent["index"])
+            # Same renumber fallback as the browser-path join: a dense-ranked
+            # track carries a different index than the snapshot it is refreshing.
+            was = (
+                old_by_name.get(parent.get("name"))
+                if parent_kind == "track" and isinstance(parent.get("name"), str)
+                else None
+            )
             for d in parent.get("devices") or []:
                 if "index" not in d:
                     continue
-                key = (parent_kind, pidx, int(d["index"]), d.get("class"))
+                di, cls = int(d["index"]), d.get("class")
+                key = (parent_kind, pidx, di, cls)
+                if key not in old_presets and was is not None:
+                    key = (parent_kind, was, di, cls)
                 preset = old_presets.get(key)
                 if preset is None:
                     continue

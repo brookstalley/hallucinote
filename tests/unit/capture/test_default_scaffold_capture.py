@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import pytest
 
+from hallucinote import capture
+
 from hallucinote.capture import (
     assemble_snapshot_via_probes,
     is_untouched_default_scaffold_track,
@@ -321,4 +323,114 @@ def test_a_claimed_scaffold_track_still_matches_after_capture(conn):
     assert [m["name"] for m in result.matched_tracks] == ["2-MIDI"]
     assert [t["name"] for t in result.default_scaffold_unmatched_tracks] == [
         "1-MIDI", "3-Audio", "4-Audio",
+    ]
+
+
+# ---------------------------------------------------------------------------
+# The upgrade boundary: a snapshot taken BEFORE the scaffold exclusion, refreshed
+# AFTER it. Every real track's index moves, and the identity joins that carry
+# browser paths and preset seeds forward key on that index.
+# ---------------------------------------------------------------------------
+
+
+def _old_scaffold_snapshot():
+    """What a pre-fix capture of a scaffold-bearing set looks like: the four
+    default tracks ingested as song content, the real track pushed to index 5."""
+    return {
+        "tracks": [
+            {"index": 1, "name": "1-MIDI", "devices": []},
+            {"index": 2, "name": "2-MIDI", "devices": []},
+            {"index": 3, "name": "3-Audio", "devices": []},
+            {"index": 4, "name": "4-Audio", "devices": []},
+            {"index": 5, "name": "Drums", "devices": [
+                {"index": 0, "class": "DrumGroupDevice", "name": "Kit",
+                 "browser_path": ["Drums", "Kit", "909"],
+                 "preset_query": "909 Core Kit"},
+            ]},
+        ],
+        "returns": [],
+    }
+
+
+def test_a_browser_path_survives_the_scaffold_renumber():
+    """The renumber is what makes #514's fix work, and it is also what breaks
+    this join: post-fix the real track is index 1, the old snapshot has it at 5,
+    and the miss path drops the path SILENTLY. Losing every device's
+    cross-machine identity on exactly the songs the exclusion exists for is not
+    an acceptable price for it.
+    """
+    old = _old_scaffold_snapshot()
+    new = {
+        "tracks": [
+            {"index": 1, "name": "Drums", "devices": [
+                {"index": 0, "class": "DrumGroupDevice", "name": "Kit"},
+            ]},
+        ],
+        "returns": [],
+    }
+    capture.preserve_browser_paths(old, new)
+    assert new["tracks"][0]["devices"][0]["browser_path"] == ["Drums", "Kit", "909"]
+
+
+def test_a_preset_seed_survives_the_scaffold_renumber():
+    old = _old_scaffold_snapshot()
+    new = {
+        "tracks": [
+            {"index": 1, "name": "Drums", "devices": [
+                {"index": 0, "class": "DrumGroupDevice", "name": "Kit",
+                 "chains": []},
+            ]},
+        ],
+        "returns": [],
+    }
+    capture.preserve_preset_overrides(old, new)
+    assert new["tracks"][0]["devices"][0].get("preset_query") == "909 Core Kit"
+
+
+def test_a_duplicated_track_name_is_not_guessed_across_the_renumber():
+    """The name fallback must never carry a path onto a device that never had
+    one. Two tracks sharing a name make the name ambiguous, so it is dropped
+    from the map — the join falls back to the index, which is the pre-fix
+    behaviour, not a guess."""
+    old = {
+        "tracks": [
+            {"index": 1, "name": "Dup", "devices": [
+                {"index": 0, "class": "Operator", "browser_path": ["A"]},
+            ]},
+            {"index": 2, "name": "Dup", "devices": [
+                {"index": 0, "class": "Operator", "browser_path": ["B"]},
+            ]},
+        ],
+        "returns": [],
+    }
+    new = {
+        "tracks": [
+            {"index": 9, "name": "Dup", "devices": [
+                {"index": 0, "class": "Operator"},
+            ]},
+        ],
+        "returns": [],
+    }
+    capture.preserve_browser_paths(old, new)
+    assert "browser_path" not in new["tracks"][0]["devices"][0]
+
+
+def test_dropping_a_scaffold_track_is_never_silent():
+    """A pristine set captures as zero tracks. Without a line saying why, the
+    operator sees an empty capture and no cause — the failure looks like the
+    probe, not like a deliberate exclusion."""
+    with pytest.warns(UserWarning, match="untouched default scaffold track"):
+        snap = assemble_snapshot_via_probes(_FakeLive(_SCAFFOLD))
+    assert snap["tracks"] == []
+
+
+def test_an_ordinary_set_gets_no_scaffold_warning(recwarn):
+    """The line must fire only when something was actually dropped."""
+    live = _FakeLive([
+        {"name": "Drums", "kind": "midi", "devices": [{"index": 0, "class": "X"}]},
+    ])
+    assemble_snapshot_via_probes(live)
+    assert not [
+        w for w in recwarn.list
+        if "untouched default scaffold" in str(w.message)
     ]

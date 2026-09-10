@@ -91,10 +91,17 @@ it. The counts were wrong in both directions too: the "bounded N" alert was
 emitted before the executor's filter ran, and the withheld count counted calls
 rather than copies, doubling every number.
 
-**Re-vendor: recommended** — the diff touches `install_paths.py`, `install_ops.py`,
-`__init__.py`, `handlers/clip.py` and `resources/guides/error-recovery.md`, which
-are vendored but outside `_FINGERPRINT_PATHS`, so the handshake will not flip.
-By the rule this release adds, that is a recommendation rather than a requirement.
+**Re-vendor: REQUIRED.** `handlers/clip.py` and `actions/clip.py` are both inside
+`_FINGERPRINT_PATHS` — the tuple names the `handlers` and `actions` DIRECTORIES,
+not a file list — so the handshake fingerprint flips: `6283768de096` on `develop`
+becomes `b277dc550592` here, computed from clean checkouts of both. A consumer who
+skips the re-vendor gets a server that refuses every call.
+
+The bundle also touches `install_paths.py`, `install_ops.py`, `__init__.py` and
+`resources/guides/error-recovery.md`, which are vendored but NOT fingerprinted.
+Those alone would have been `recommended` — the advisory this release adds is
+exactly what reports them. They do not lower the verdict; the fingerprint-bearing
+pair sets it.
 
 Follow-ons filed rather than absorbed: **#519** (scaffold returns ship with
 devices, so the untouched predicate can never reach them), **#520**

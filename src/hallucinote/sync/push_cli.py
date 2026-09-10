@@ -960,10 +960,14 @@ def _cmd_execute(args: argparse.Namespace) -> int:
     # that still applied device changes regenerates too (the doc tracks
     # current set state, not push success). Regen failure must never mask
     # the push outcome — it degrades to a stderr notice.
-    devices_phase = next(
-        (p for p in result.phases if p.name == "devices"), None,
-    )
-    if devices_phase is not None and devices_phase.calls_ok > 0:
+    # REQUIREMENTS.md lists the song's SAMPLES as well as its devices, so the
+    # clips phase moves it too — a push that re-points an audio clip and touches
+    # no device would otherwise leave the sample list stale.
+    regen_phases = [
+        p for p in result.phases
+        if p.name in ("devices", "clips") and p.calls_ok > 0
+    ]
+    if regen_phases:
         if getattr(args, "song", None):
             from hallucinote.sync.compat import regen_requirements
             try:

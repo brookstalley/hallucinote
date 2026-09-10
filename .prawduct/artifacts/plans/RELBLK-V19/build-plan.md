@@ -99,6 +99,19 @@ their tests.
 **Done when:** a simulated transport reproduces the +1.1-beat offset before the change and not
 after. **Operator verification required** — the real signal is a Live render, so enqueue it.
 
+**ALREADY BUILT — not dispatched.** `fix/rnd-capture-arm-order` (`8b54a53`, authored by the owner
+2026-09-09) carries exactly this fix: the arm moves below the locate, `_set_arm_on_all`'s
+docstring is corrected where it claimed arm timing was irrelevant to the recording boundary, and
+72 lines of tests assert the ORDER rather than mere occurrence. The reorder also subsumes the
+issue's second half — with the arm after the locate, the `start_at_beat = 0` pre-roll clamp is no
+longer harmful, because the first post-arm movement is the transport itself.
+
+The branch is unpushed and unintegrated, and its worktree still exists, so it may belong to a
+live session. **Left for its owner rather than absorbed** — folding another session's in-flight
+branch into this one is the owner's call, not the coordinator's. It is one of roughly 25 local
+branches awaiting integration; that backlog is a release problem in its own right, separate from
+this plan.
+
 ### `[ ]` 05 — #514: capture must exclude an untouched default scaffold
 Capture ingests Live's brand-new-set scaffold as song content, `probe-and-link` then matches it,
 the W18-D classifier goes silent, and the link state never converges. Apply the predicate decided

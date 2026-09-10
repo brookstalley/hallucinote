@@ -85,7 +85,7 @@ this either works or quietly does not.
   half is pinned by a test that runs the real `probe_and_link` after a real rebuild; the
   Live-side half is not.
 
-## The open-bug sweep's re-vendor sitting (2026-09-10)
+## The open-bug sweep's re-vendor sitting (2026-09-10) — **DISCHARGED 2026-09-10** for #508 / #516 / #515; #519's probe still open
 
 Backlog **#508**, **#516**, **#515**, **#519**. Needs Live 12.4.x, the Remote Script
 **re-vendored** (`/hallucinote:ableton-mcp-install`) and Live restarted. One sitting — the
@@ -96,19 +96,32 @@ Three of the sweep's fixes are inside `_FINGERPRINT_PATHS`, so none of them reac
 session until the vendored copy is replaced. Until then the wire is unchanged and these
 verdicts are unknowable, not passing.
 
-- [ ] **#508** — `ableton_probe(action='set', path='…clip.warp_mode', value=5)` on an audio
-  clip. Previously `ArgumentError: did not match C++ signature`. Should now set. Then the
-  guard in the other direction: `ableton_probe(action='set', path='song.tracks[0].name',
-  value="808")` must leave the track named `808`, not `808` the integer — the coercion is
-  gated on the property's current type, and this is the case that gate exists for.
-- [ ] **#516** — load a `Pitch` MIDI effect onto a track holding an instrument. The response's
-  `loaded_class_name` must read `MidiPitcher` at its actual index, not the displaced
-  `Operator`. This one also feeds push's device linking, so a wrong answer here is not
-  cosmetic.
-- [ ] **#515** — `ableton_automation(action='write_envelope', target_kind='note_expression',
-  …)` must return the teaching refusal naming the `device_parameter` perform route, not
-  `AttributeError`. Cheap; confirms the boundary refusal reaches a real client.
-- [ ] **#519 — one assumption the unit suite cannot settle.** The exclusion predicate names
+- [x] **#508 — PASSED** (Live 12.4.5, server `0.1.0+6025d7a7e0af`). Driven over the raw wire,
+  because the MCP client coerces JSON numbers and so cannot reproduce the untyped-client shape
+  the bug needs. `probe set song.tracks[0].color_index value="26"` (a genuine `str`) →
+  `{old: 12, new: 26, changed: true}`; that call previously died on `ArgumentError: did not
+  match C++ signature`. The gate holds in the other direction too:
+  `probe set song.tracks[0].name value="808"` read back `type: str, value: '808'` — not the
+  integer 808. A `warp_mode` write on a real audio clip was NOT run (the scratch set had no
+  audio clip); the coercion path it exercises is the same one, so this is a narrower witness
+  than the issue's example, not a different one.
+- [x] **#516 — PASSED** (Live 12.4.5). Operator loaded on track 1 → `device_index: 1`. Then a
+  `Pitch` MIDI effect: response `{device_index: 1, loaded_class_name: "Pitch",
+  resolved_path: ["midi_effects", "Pitch"]}`. `ableton_device(action='list')` confirms Live
+  re-ordered exactly as reported — `1: Pitch (MidiPitcher)`, `2: Operator` — so the response
+  named the device loaded, at its real index. Pre-fix this reported `device_index: 2,
+  loaded_class_name: "Operator"`. Scratch devices deleted after; the set is back to default.
+  **Note the response reports the browser DISPLAY name (`Pitch`), not the internal class
+  (`MidiPitcher`)** — the issue's expectation said `MidiPitcher`. Display is correct and is
+  what `_canonical_class_name` documents; this is the same two-namespace distinction that
+  produced the blocking Critic finding on #275, so it is worth stating rather than glossing.
+- [x] **#515 — PASSED** (Live 12.4.5). Returns `NotImplementedError: target_kind=
+  'note_expression' cannot be written or read, and this is permanent rather than pending:
+  Live's Python API exposes NO per-note expression surface at all…`, naming the monophonic
+  route. Not `AttributeError: 'Clip' object has no attribute 'envelope_for_note'`. It refused
+  a call whose `clip_index` does not exist, which also confirms the refusal fires ahead of
+  any Live call and any arg validation.
+- [ ] **#519 — STILL OPEN. One assumption the unit suite cannot settle.** The exclusion predicate names
   Live's classes for the two default-scaffold return devices as `Reverb` and `B-Delay`'s
   `Delay`. If Live 12 reports something else for the merged Delay device, the predicate never
   fires and the scaffold returns keep becoming song content — silently, which is the failure

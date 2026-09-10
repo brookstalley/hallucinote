@@ -49,13 +49,17 @@ Keep its `version` as `SERVER_VERSION` and `package_root` as `SERVER_ROOT`.
   call. On a genuinely fresh install the server often isn't connected yet and there
   is only one copy anyway — the fallback is correct there.
 
-Then run preflight, passing the server version when you have it:
+Then run preflight, passing the server version AND the server root when you have them:
 
 ```bash
-python -m hallucinote_mcp.cli preflight --server-version "<SERVER_VERSION>"
+python -m hallucinote_mcp.cli preflight --server-version "<SERVER_VERSION>" --server-root "<SERVER_ROOT>"
 ```
 
-(Omit `--server-version` entirely if the resource read failed. If `hallucinote_mcp`
+`--server-root` is what lets the content advisory compare against the copy the plugin
+actually launches. Without it, a divergent coexistence install withholds that verdict
+rather than compare against the wrong copy — honest, but unanswered.
+
+(Omit both flags entirely if the resource read failed. If `hallucinote_mcp`
 import fails, the plugin's env isn't built or connected — make sure the plugin is
 installed and run `/mcp` to connect, then retry; the plugin provides the package, so
 there's nothing to `pip install`. On Windows, if `python` opens the Microsoft Store,
@@ -80,7 +84,7 @@ The JSON report blocks you act on:
 
   - **`false`** — the vendored tree differs from what this source would ship, in files the handshake does not look at. With `matches_mcp_server: true` this is the case worth saying out loud: the handshake will pass and Live is running **stale non-wire code**. Read `differing_paths` (capped; `differing_count` is exact) before you speak — unless `differing_count` is **`null`**, which with `content_read_error: diff_unreadable` means the trees are known to differ but the walk that would name the files failed: say the drift is real and the file list unavailable, and offer the `--force` re-vendor without naming paths — `analyzer/*` is code Live *executes* during a render, so say so and offer the Step 3 re-vendor with `--force`; a difference confined to `server_side/*` is imported in Live but never run there, so mention it and don't push.
   - **`true`** — the vendored tree matches. Nothing to say.
-  - **`null`** — the comparison did not run, and **`content_read_error` beside it says why**. Absent → no install, which is benign. `installed_tree_unreadable` → a Remote Script IS installed but could not be read, so the advisory is blind and Live may be running stale code: say that plainly and offer the `--force` re-vendor. `source_tree_unreadable` → the installed copy read fine but THIS checkout did not, so re-vendoring from it would ship whatever could not be read; investigate the checkout instead.
+  - **`null`** — the comparison did not run, and **`content_read_error` beside it says why**. Absent → no install, which is benign. `installed_tree_unreadable` → a Remote Script IS installed but could not be read, so the advisory is blind and Live may be running stale code: say that plainly and offer the `--force` re-vendor. `source_tree_unreadable` → the installed copy read fine but THIS checkout did not, so re-vendoring from it would ship whatever could not be read; investigate the checkout instead. `source_not_authoritative` → the running server's copy differs from this shell's and no `--server-root` was passed, so the advisory withheld its verdict rather than compare against a reference it knows is the wrong one: re-run preflight with `--server-root "<SERVER_ROOT>"` to get a real answer. `server_root_unreadable` → the `--server-root` you passed is not a package directory; pass `package_root` from `ableton://server/info`, not the repo root. `remote_script.source_content_authority` says which copy any verdict came from.
 
 - **`mcp_configs.containing_entry`** — pre-existing `hallucinote-mcp` registrations from a *legacy* (pre-plugin) install; not needed for install (the plugin provides the server), but worth noting so the user can clean them via `/ableton-mcp-uninstall` if a stale entry shadows the plugin.
 

@@ -160,3 +160,17 @@ re-scope rather than leaving the answered design questions standing.
 ## Status
 
 - `[ ]` 01 · `[ ]` 02 · `[ ]` 03 · `[ ]` 04 · `[ ]` 05 · `[ ]` 06 · `[ ]` 07
+
+## Integration debt raised by delegates
+
+Coordinator-owned follow-ups, reported by a delegate against a file outside its ownership. Each
+is discharged at integration, not by the delegate that found it.
+
+- **Chunk 03 → the `replace` wire-schema text.** `hallucinote_mcp/src/hallucinote_mcp/actions/clip.py:130,218`
+  describes `replace` as "delete the existing slot's clip". Not made false by the pre-check — it
+  still describes the succeeding case — but it no longer describes the whole contract, since a
+  definite kind mismatch now refuses before deleting. One line, owned by nobody in this plan.
+- **Chunk 03 → `src/hallucinote/sync/push/clips.py` calls `replace=True` at :494, :563, :734.**
+  No consumer change needed: none reads the error string and none can depend on the destruction,
+  so the push now receives a refusal instead of a destroyed clip plus an error. Recorded so the
+  integration run is not surprised by a behaviour change in files no chunk owns.

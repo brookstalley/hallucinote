@@ -121,7 +121,7 @@ what makes that green attributable: a contended run's tell is a total that silen
 
 - [x] B1 — #222 #520 · [x] B2 — #325 #481 #465 · [x] B3 — #496 #506 #522 · [x] B4 — #519 #524
 - [x] B5 — #508 #516 #521 · [x] B6 — #503 #475 #328 · [x] B7 — #226
-- [x] B8 — #291 (+ #323, folded) · [ ] B9 — #322 (running) · [x] B10 — #476 · [x] B11 — #515
+- [x] B8 — #291 (+ #323, folded) · [x] B9 — #322 (+ #324, folded) · [x] B10 — #476 · [x] B11 — #515
 - [x] B12 — #275 code half shipped (`261aa51`); the item stays open on the operator half,
   now queued in `operator-verification.md` with both outcomes named
 - [ ] Cumulative Critic over the whole sweep

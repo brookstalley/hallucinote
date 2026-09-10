@@ -117,13 +117,32 @@ enumerated status distinguishing missing from unreadable. Existence and readabil
 **Done when:** a dangling `clips.audio_file` fails compat with the path named, and the device
 path is untouched.
 
-### `[ ]` 07 — #509: an audio placement's extent never reaches the arrangement `[OPERATOR-GATED]`
-Both routes play the session clip's length, not the placement's `end_bar`. The two design
-questions cannot be answered from source: they need a Live probe establishing whether
-`duplicate_clip_to_arrangement` plus a later `end_marker`/length write behaves, and whether Live
-exposes a length/end on arrangement audio clips at all. **This chunk delivers the probe script
-and the decision record it feeds, not a fix** — the fix is whatever the probe's answer permits,
-and it cannot be built in the same pass. Flagged to the owner rather than silently descoped.
+### `[ ]` 07 — #509: an audio placement's extent never reaches the arrangement
+**Re-scoped 2026-09-09 — the probe this chunk was going to write had already been run.**
+Chunk 17 of SMP-6V2K-W2 answered #509 against Live 12.4.5 and recorded it as row 27 of
+`docs/research/audio-first-class/lom-probe-results.md`: `end_marker` and `loop_end` are writable
+on **both** placement routes (`arrangement_clips[N].end_marker` 8.0 → 4.0 succeeded on the
+duplicate route and on the direct create), but `end_time` has **no setter** and did not follow
+either write — the block a clip occupies in the arrangement is fixed at placement time and no LOM
+write moves it.
+
+So the item's assumed build — trim the arrangement copy to `end_bar` — is **unreachable through
+the LOM**, and #509's body still asks for a probe that has already returned. What IS reachable is
+setting the clip's **playable region** so the copy plays the authored region. Two consequences:
+
+- The operator text is currently **false in the direction that matters**. It says the extent
+  cannot travel and tells the user to "Trim in Live", when the playable region is in fact
+  settable. Correcting that text is the release-facing half.
+- The second pass #509 hypothesised is buildable: `apply_push_results` already records the
+  binding from `arrangement_clip_index` (`sync/push/arrangement.py:321`), so the copy can be
+  addressed by its recorded link without the positional guess ARR-PROJ diagnosed.
+
+**Owns:** `src/hallucinote/sync/push/arrangement.py` and its tests.
+**Done when:** an audio placement's copy plays the authored region; the operator text no longer
+claims an unreachable trim nor promises a reachable one it does not perform; and the permanent
+LOM limit (the block extent) is stated once, as a limit, not as a gap awaiting a fix.
+**Bookkeeping owed at close:** #509's body is stale against its own probe — update it to the
+re-scope rather than leaving the answered design questions standing.
 
 ## Status
 

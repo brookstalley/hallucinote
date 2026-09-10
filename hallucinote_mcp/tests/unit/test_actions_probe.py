@@ -1,7 +1,10 @@
 """ableton_probe schema + handler behavior — constrained LOM introspection."""
 from __future__ import annotations
 
+import asyncio
+
 import pytest
+from pydantic import TypeAdapter
 
 from hallucinote_mcp.dispatcher import dispatch
 from hallucinote_mcp.handlers.probe import (
@@ -16,6 +19,7 @@ from hallucinote_mcp.handlers.probe import (
     set_handler,
 )
 from hallucinote_mcp.schema import actions_for
+from hallucinote_mcp.server import _annotated_param_type, create_server
 from hallucinote_mcp.testing import isolated_actions
 from hallucinote_mcp.wire import Request
 
@@ -681,3 +685,149 @@ class TestRegistration:
             )
             assert not resp.ok
             assert "nope" in resp.error
+
+
+# ---------- the wire schema for `value` ----------
+#
+# The defect these pin is in what the CLIENT IS TOLD, not in what the handler
+# does: `value` was annotated `typing.Any`, so the emitted schema carried
+# `anyOf: [{}, {"type": "null"}]`. An empty `{}` branch names no type, so a
+# client had nothing to serialize a string against — it emitted the string
+# bare and the payload died in the client's own JSON parse before a request
+# ever reached the server. Every test below that bypasses the schema stays
+# green on that bug, which is why these assert on the schema itself.
+#
+# The union is explicit over every JSON type and deliberately NOT scalar-only:
+# `value` may be a `{"$path": ...}` dict for LOM-object properties, so dropping
+# the object branch would take that assignment path out.
+
+
+def _probe_input_schema() -> dict:
+    """The `ableton_probe` inputSchema as an MCP client receives it."""
+    mcp = create_server()
+    tools = asyncio.run(mcp.list_tools())
+    return next(t for t in tools if t.name == "ableton_probe").inputSchema
+
+
+def _value_param_spec():
+    return next(
+        param
+        for action in actions_for("ableton_probe")
+        if action.name == "set"
+        for param in action.params
+        if param.name == "value"
+    )
+
+
+def _value_validator() -> TypeAdapter:
+    """A validator over the SAME annotation the emitted schema is generated
+    from — so "schema-valid" here means the declared schema and the server's
+    enforcement agree, not merely that the handler tolerates the value.
+    """
+    return TypeAdapter(_annotated_param_type(_value_param_spec()))
+
+
+class TestValueWireSchema:
+    def test_no_branch_is_an_empty_schema(self):
+        value = _probe_input_schema()["properties"]["value"]
+        branches = value["anyOf"]
+        assert branches, "value lost its anyOf union"
+        for branch in branches:
+            assert branch, (
+                "value's schema still carries an empty {} branch — a client "
+                f"has no type to serialize against. Got: {branches}"
+            )
+            assert "type" in branch, (
+                f"every branch must name a JSON type; got {branch!r}"
+            )
+
+    def test_every_json_type_has_a_branch(self):
+        value = _probe_input_schema()["properties"]["value"]
+        declared = {branch.get("type") for branch in value["anyOf"]}
+        # object and array are load-bearing: `{"$path": ...}` dict values and
+        # list-valued properties both go through `probe set`.
+        assert {"string", "boolean", "object", "array", "null"} <= declared, (
+            f"value's union is missing a JSON type: {sorted(declared)}"
+        )
+        # pydantic splits JSON's `number` into integer + number; either spelling
+        # gives a client somewhere to put a numeric literal.
+        assert declared & {"number", "integer"}, (
+            f"value's union names no numeric type: {sorted(declared)}"
+        )
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "Tannoy Room Verb",  # spaces — the reported failure shape
+            "Compressor",        # no spaces — failed identically
+            "",
+            "808",
+            140.0,
+            5,
+            True,
+            None,
+            [1, 2],
+            {"$path": "song.tracks[1].mixer_device.volume"},
+        ],
+    )
+    def test_every_value_shape_probe_set_accepts_is_schema_valid(self, value):
+        # The acceptance set after typing must EQUAL the set before it: the
+        # schema is explicit, not narrower.
+        assert _value_validator().validate_python(value) == value
+
+    @pytest.mark.parametrize(
+        "value,expect_type",
+        [("5", str), (5, int), (5.0, float), (True, bool), ({"a": 1}, dict)],
+    )
+    def test_validation_preserves_the_type_the_client_sent(self, value, expect_type):
+        # The union must not coerce on the way in, or #508's server-side
+        # `coerce_wire_value` would see the wrong thing: a stringified "5" has
+        # to arrive as a str (it decides what to parse it to against the
+        # property's current value), and an int must not widen to float —
+        # Live's C++ setters reject a float where the signature wants an int.
+        out = _value_validator().validate_python(value)
+        assert type(out) is expect_type
+        assert out == value
+
+    def test_string_value_round_trips_from_wire_payload_to_setattr(self):
+        # Schema-valid AND it lands: the validated payload drives the dispatch.
+        with isolated_actions():
+            ctx = FakeCtx()
+            validated = _value_validator().validate_python("Tannoy Room Verb")
+            resp = dispatch(
+                Request(
+                    tool="ableton_probe",
+                    action="set",
+                    params={"path": "song.tracks[0].name", "value": validated},
+                ),
+                context=ctx,
+            )
+            assert resp.ok, resp.error
+            assert ctx.song.tracks[0].name == "Tannoy Room Verb"
+            assert resp.result["new"] == "Tannoy Room Verb"
+
+    def test_dollar_path_dict_value_round_trips_to_a_live_lom_object(self):
+        # The regression a scalar-only union would have caused: a dict value is
+        # schema-valid and still resolves to the live LOM object.
+        with isolated_actions():
+            ctx = FakeCtx()
+            validated = _value_validator().validate_python(
+                {"$path": "song.tracks[1].mixer_device.volume"}
+            )
+            assert isinstance(validated, dict)
+            resp = dispatch(
+                Request(
+                    tool="ableton_probe",
+                    action="set",
+                    params={
+                        "path": "song.tracks[0].mixer_device.volume",
+                        "value": validated,
+                    },
+                ),
+                context=ctx,
+            )
+            assert resp.ok, resp.error
+            assert (
+                ctx.song.tracks[0].mixer_device.volume
+                is ctx.song.tracks[1].mixer_device.volume
+            )

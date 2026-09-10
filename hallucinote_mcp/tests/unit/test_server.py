@@ -939,11 +939,24 @@ def test_start_call_swallows_seq_read_errors(tmp_path, monkeypatch, caplog):
 
 def test_annotated_param_type_any_is_explicit_not_fallback():
     # 'any' must be a first-class _PARAM_TYPE_MAP entry; regressing to the
-    # .get() fallback would still work today, but the explicit entry is the
-    # documented contract for polymorphic params (ableton_probe set's value).
+    # .get() fallback would silently re-annotate polymorphic params
+    # (ableton_probe set's value) as bare `typing.Any`, which emits an empty
+    # `{}` schema branch — a client then has no type to serialize a string
+    # against and the payload dies in its own JSON parse. The entry must be a
+    # union spelling out every JSON type.
+    import typing
+
     from hallucinote_mcp.server import _PARAM_TYPE_MAP
-    from typing import Any
-    assert _PARAM_TYPE_MAP["any"] is Any
+
+    entry = _PARAM_TYPE_MAP["any"]
+    assert entry is not typing.Any, (
+        "'any' regressed to bare typing.Any — the emitted schema loses every "
+        "type name"
+    )
+    assert typing.get_origin(entry) is typing.Union
+    assert set(typing.get_args(entry)) == {
+        bool, int, float, str, dict, list, type(None)
+    }
 
 
 # ---------------------------------------------------------------------------

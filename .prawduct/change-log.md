@@ -32,6 +32,159 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-09-10 — The release blockers: a restore that lands on the right device, and a failure that says so
+
+<!-- prawduct: type=fix | scope=RELBLK-0910 -->
+
+Four issues, and one that turned out not to be an issue at all.
+
+**#532 — the restore addressed a chain that no longer existed.** `chain-rebuild`
+excluded the `HallucinoteAnalyzer` from its *logical* model in three places and
+still addressed devices *physically*, by the index captured **before** the
+delete. The demolish deletes only DB-known devices, so the tap survived; the
+reloads tail-appended behind it; the analyzer that sat at the tail now sat at the
+head, and every restore landed one slot off. Measured on `alien` before this
+release made it worse: EQ Eight lost 7 of 84 parameters, two of them real gain
+cuts (`3 Gain A` −1.99951 dB → 0.0, `4 Gain A` −2.50488 dB → 0.0).
+
+This was urgent rather than merely open because **this release also ships #533's
+fix**. Until now every restore write was refused before it reached Live, so the
+off-by-one wrote to the wrong device and the wrong device ignored it. Those
+writes land now. Shipping #533 without this would have converted a latent
+addressing bug into silent corruption of a real mix — and the device that
+triggers it is placed by our own render path, so the trigger is "rendered, then
+rebuilt a chain", not an exotic state.
+
+The journal now carries each device's DB `position` alongside its physical index,
+and the restore, the verify and the link rebind all pair by position against a
+**post-rebuild** chain read. A device the rebuild can neither address nor delete
+refuses before the first delete, naming it; the analyzer is the one tolerated
+survivor.
+
+**The same defect was one layer further out, and the review found it.** The link
+rebind wrote `ableton_index=position`, but a device link is consumed as a
+*physical* index — `plan_push_devices` hands it straight to `set_parameter` as
+`device_index`. The two agree only while the tap is terminal, which is exactly
+what a rebuild undoes. So the restore landed correctly and the links then sent
+the *next* push to the wrong device — including the `push execute --only devices`
+that this work's own shortfall alert recommends. Verified reachable rather than
+reasoned about: `reconcile_device_links`' stale-drop keeps those links because
+the indices exist, and its positional bind finds a class mismatch and declines to
+rebind. The rebind reads the post-rebuild chain now, and
+`boundary-patterns.md` says which number `ableton_index` holds — the ambiguity
+that produced the defect is the reason that is written down where the boundary
+is specified rather than in a docstring.
+
+**#538 — a rebuild that restored nothing reported success and deleted the
+evidence.** Three behaviours composed: `main()` returned 0 unconditionally; the
+verify was scoped to the set of *written* parameters, so when every write failed
+it compared **zero** of them and passed vacuously; and the journal — which the
+module's own docstring calls "the only way back" — was unlinked on that clean
+path. This is how #533 survived the module's entire life: every continuous
+restore failed on every rebuild ever run, and the command exited 0 each time.
+
+A run that captured N writable values and restored M < N now exits non-zero and
+keeps the journal; landing **none** of a non-empty capture fails the verify
+instead of passing on an empty comparison. A refused `set_input_routing` counts
+too — that is the sidechain source, the one value the module could still lose
+while exiting 0. Both callers honour the contract: the reconcile prepass used to
+print the alerts and return 0.
+
+**A retained journal means two different things, and saying the wrong one
+destroys work.** A shortfall journal describes a chain that is rebuilt, rebound
+and verified for everything that landed; a mid-flight journal describes one a
+rebuild abandoned. `--resume` is recovery for the second and destruction for the
+first. The journal already recorded a phase at every step and nothing read it, so
+the states were distinguishable on disk all along: `push execute` now refuses
+only the mid-flight kind and warns about the other — otherwise it would have
+blocked the very recovery the shortfall alert recommends — `--resume auto` will
+not silently select a shortfall journal, and an unreadable phase counts as
+mid-flight, because unknown degrades to dangerous.
+
+**A journal written before this release cannot be replayed, and the two refusals
+share one exit.** `JOURNAL_VERSION` goes 1 → 2 because a v1 entry carries no DB
+`position` — it is precisely a record written by the code that could not see a
+surviving analyzer, so replaying it would reproduce the off-by-one this work
+ends. `read_journal` refuses it by version rather than guessing. A v1 file left
+on disk by a pre-release crash therefore meets the operator twice: `journal_phase`
+cannot read a phase it does not know, unknown degrades to mid-flight, and
+`push execute` refuses and points at `--resume auto` — which then refuses on the
+version. Both refusals name the file and neither destroys anything, but the way
+out is stated in only one place, so it is stated here and in
+`docs/song-authoring-conventions.md`: read the journal, rebuild the chain from
+the DB (`chain-rebuild` with no `--resume`), delete the journal. The same trap
+runs backwards on a rollback — an engine at v1 refuses a v2 journal — and the
+exit is the same one.
+
+**#536 — an unreadable sidechain source stopped vanishing quietly.** A device
+that exposes `S/C On` but no input routing (Multiband Dynamics) can be armed and
+never pointed anywhere, and a source set by hand in Live's UI was lost on the
+next `build.py` rebuild with nothing said at capture time or push time. Not a
+routing fix — that limit is Live's. Both surfaces warn from one shared sentence,
+so they cannot drift: capture reads `S/C On` off the probe it already made, and
+push asks Live for `has_input_routing` per armed sourceless device. The negative
+half is as load-bearing as the warning: a device with a readable routing surface
+stays silent, because a warning that fired on the Compressor path #374 already
+covers would train the operator to ignore all of them.
+
+No snapshot field. `has_input_routing` is a property of the device in front of
+you, and persisting it would keep warning after the operator swapped the device —
+the noise failure from the other direction.
+
+The warning rides the **printed** channel, not the errors file. Nothing here
+failed to record, so a push carrying only this condition is clean, and a clean
+push does not print that file — the operator's one cue would never have reached
+them.
+
+**#537 — a string could not be sent through `probe set` at all.** The value was
+declared `ParamSpec(type="any")`, which serializes to `anyOf: [{}, null]`. An
+empty `{}` gives a calling client no type to serialize against, so a string was
+emitted bare and died in the client's own JSON parse before any request left the
+client — reproduced 6/6. Device renaming therefore had no working path, which is
+load-bearing: `replay_capture` keys devices by `display_name`, and `alien` now
+carries three indistinguishable Compressors on one track.
+
+The emitted schema is now an explicit union over every JSON type. Not the
+scalar-only union originally filed — that would have made a `dict` value
+schema-invalid and taken out `probe set`'s `{"$path": …}` LOM-object assignment.
+The point is explicitness, not narrowing: the set of values `probe set` accepts
+is the set it accepted before. #508's server-side coercion is untouched; #508
+rejected typing *as a substitute for* it, not typing alongside it.
+
+**Two corrections to what this item claimed.** The fix is not expressible in
+`actions/probe.py` — `ParamSpec` has no schema hook, so it lands in `server.py`,
+which `_FINGERPRINT_PATHS` does not include. So #537 **forces no re-vendor** and
+takes effect on an MCP server restart; the release's re-vendor comes from other
+work. And #526's blocker dissolves rather than needing a solution: its real
+defect is the same empty-schema bug one level down (`args` emits `items: {}`),
+which is a re-scope, not a fix here.
+
+**#532's second symptom was already fixed, three months earlier.** It claimed a
+`load` onto a rendered track leaves the new device after the tap, so the stem
+under-measures while the master does not. The harm is not reachable:
+`render(start)` calls `ensure_analyzers_loaded` in its preamble, which deletes
+and re-adds a non-terminal analyzer so it is terminal *before* any capture. That
+self-heal shipped 2026-06-13, and its own comment describes this exact case. The
+reporter saw the post-load chain order and inferred a consequence the sweep
+prevents — their recorded workaround is what the sweep does unattended. So this
+needed no MCP change, and the item's cross-package re-vendor argument and its
+open "where does the predicate live" question both dissolve. (The second was
+already answered in-tree: the dependency direction is MCP→engine, each side
+defines its own constant, and a drift-guard test keeps them equal. A second guard
+now does the same for the sidechain-enable hints, which were duplicated across
+the same boundary with nothing watching them.)
+
+**What the fakes cannot prove, and is not claimed.** Every chunk landed with unit
+coverage against fakes, and fakes are what let all of this survive: the fake
+chain was built from the DB's own rows, so a live chain holding a device the DB
+does not author was not merely untested but *unrepresentable*. It can hold one
+now. Six checks that need a real Live — a restore with the tap surviving, a
+genuinely refused write, the shortfall journal not blocking its own recovery, a
+mid-flight journal still refusing, the MBD warning firing once while seven
+Compressors stay quiet, and a string reaching `probe set` from a real client —
+are queued in `operator-verification.md`. #291's witness box, which failed twice
+on 2026-09-10, is unblocked for the first time.
+
 ## 2026-09-10 — A chain rebuild could not carry a single parameter, and the fake said it could
 
 <!-- prawduct: type=fix | scope=CHAIN-RESTORE-STR -->

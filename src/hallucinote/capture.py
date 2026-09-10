@@ -1653,17 +1653,30 @@ def _snapshot_param_entry(p: dict[str, Any]) -> dict[str, Any] | None:
     return entry
 
 
-def _params_dialed_via_probe(
+def _probe_device_parameters(
     probe, *, node: dict[str, Any],
-) -> dict[str, Any]:
-    """Probe one device's parameters (``detail='full'`` — the filter + the
-    normalized math need min/max/is_enum) and assemble the filtered
-    ``params_dialed`` map keyed by parameter name."""
+) -> list[dict[str, Any]]:
+    """One device's RAW ``get_parameters`` entries (``detail='full'`` — the
+    default filter + the normalized math need min/max/is_enum).
+
+    Split out from :func:`_params_dialed_via_probe` so a caller that needs a
+    parameter's raw live VALUE — not its snapshot-filtered form — can read it
+    off the same single probe instead of paying a second round trip. The
+    sidechain-arming check (:func:`sidechain_armed_in_probe`) is the caller
+    that needs it: a param sitting at its intrinsic default is absent from
+    ``params_dialed``, so presence there cannot answer "is it on?".
+    """
     result = probe("ableton_device", "get_parameters", node=node, detail="full")
+    return [p for p in (result.get("parameters") or []) if isinstance(p, dict)]
+
+
+def _params_dialed_from_probed(
+    parameters: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Assemble the filtered ``params_dialed`` map (keyed by parameter name)
+    from raw probed parameter entries."""
     out: dict[str, Any] = {}
-    for p in result.get("parameters") or []:
-        if not isinstance(p, dict):
-            continue
+    for p in parameters:
         name = p.get("name")
         if not isinstance(name, str) or not name:
             continue
@@ -1671,6 +1684,17 @@ def _params_dialed_via_probe(
         if entry is not None:
             out[name] = entry
     return out
+
+
+def _params_dialed_via_probe(
+    probe, *, node: dict[str, Any],
+) -> dict[str, Any]:
+    """Probe one device's parameters (``detail='full'`` — the filter + the
+    normalized math need min/max/is_enum) and assemble the filtered
+    ``params_dialed`` map keyed by parameter name."""
+    return _params_dialed_from_probed(
+        _probe_device_parameters(probe, node=node)
+    )
 
 
 def _parent_node(parent_kind: str, parent_index: int | None) -> dict[str, Any]:
@@ -1842,9 +1866,72 @@ def _device_sample_ref(
     return audio_file_ref(song_dir, str(file_path))
 
 
+# A device's sidechain-ENABLE parameter, matched the way the MCP
+# `set_sidechain` handler matches it (lowercased substring over the canonical
+# name + the known naming variants), so "armed" means the same thing on every
+# surface that asks. Live natives use `S/C On`; the variants cover plugins.
+SIDECHAIN_ENABLE_PARAM_HINTS: tuple[str, ...] = (
+    "s/c on", "sidechain on", "sidechain active", "side enable",
+    "external sidechain",
+)
+
+
+def is_sidechain_enable_param(name: Any) -> bool:
+    """True when ``name`` is a device's sidechain-ENABLE parameter."""
+    if not isinstance(name, str):
+        return False
+    lname = name.lower()
+    return any(hint in lname for hint in SIDECHAIN_ENABLE_PARAM_HINTS)
+
+
+def sidechain_armed_in_probe(parameters: list[dict[str, Any]]) -> bool:
+    """True when raw probed ``get_parameters`` entries show the device's
+    sidechain ENABLED.
+
+    Reads the raw live ``value``, never ``params_dialed`` membership: the
+    snapshot's default filter DROPS a param sitting at its intrinsic default,
+    so an absent `S/C On` can mean "off" — and a present one can mean "Live
+    wouldn't report a default", which says nothing about the value.
+    """
+    for p in parameters:
+        if not is_sidechain_enable_param(p.get("name")):
+            continue
+        raw = p.get("value")
+        if isinstance(raw, bool):
+            return raw
+        if isinstance(raw, (int, float)):
+            return float(raw) > 0.5
+    return False
+
+
+def unreadable_sidechain_source_warning(targets: list[str]) -> str:
+    """The ONE message text for an armed sidechain on a device with no
+    input-routing surface (#536), shared by `/song-snapshot`'s capture and
+    push's ``device_sidechain`` phase so the two can't drift.
+
+    ``targets`` are pre-rendered ``"<device> on <parent>"`` labels. Per
+    `api-contract.md` § Direction (errors teach) the message says what WILL
+    happen — the source does not survive the next rebuild — and what to do
+    instead, not merely that something is off.
+    """
+    return (
+        "sidechain source NOT machine-readable: " + "; ".join(targets)
+        + " — the sidechain is ARMED (S/C On) on a device Live exposes no "
+        "input-routing surface for, so Hallucinote can neither read nor write "
+        "its SOURCE (Multiband Dynamics is the known case). Whatever source is "
+        "set by hand in Live's device view is LOST on the next build.py "
+        "rebuild — the device comes back armed and pointed at nothing. Re-set "
+        "the source by hand in Live after every push, or move the sidechain "
+        "onto a device that does expose routing (Compressor / Gate / Glue "
+        "Compressor)."
+    )
+
+
 def _capture_devices_for_parent(
     probe, *, parent_kind: str, parent_index: int | None = None,
     song_dir: Path | None = None,
+    parent_label: str | None = None,
+    unreadable_sidechain_sink: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Capture the full device chain (top-level + nested, to any depth) for one
     parent (track / return / master), in the snapshot ``devices`` shape.
@@ -1855,6 +1942,13 @@ def _capture_devices_for_parent(
     ``song_dir`` anchors a sampler's ``audio_file`` reference; without it every
     captured sample path is stored absolute, which still replays on this
     machine but does not travel.
+
+    ``unreadable_sidechain_sink`` collects ``"<device> on <parent>"`` labels for
+    the #536 condition — an ARMED sidechain on a device with no input-routing
+    surface, whose source this capture provably cannot see. The caller owns the
+    warning so one message covers the whole set; pass ``parent_label`` with it
+    (the track/return NAME, which this function is not given otherwise). Without
+    a sink the condition goes undetected, so a new caller must pass one.
     """
     listing = probe("ableton_device", "list", **_parent_flat_args(parent_kind, parent_index))
     out: list[dict[str, Any]] = []
@@ -1877,7 +1971,8 @@ def _capture_devices_for_parent(
             "terminal": "device",
             "device_index": di,
         }
-        params = _params_dialed_via_probe(probe, node=node)
+        probed_params = _probe_device_parameters(probe, node=node)
+        params = _params_dialed_from_probed(probed_params)
         if params:
             entry["params_dialed"] = params
         # BAK-3M9T: a top-level device's sidechain SOURCE — the one piece the
@@ -1896,6 +1991,22 @@ def _capture_devices_for_parent(
             channel = routing.get("current_channel")
             if channel:
                 entry["sidechain_source_channel"] = channel
+        elif (
+            unreadable_sidechain_sink is not None
+            and not routing.get("has_input_routing")
+            and sidechain_armed_in_probe(probed_params)
+        ):
+            # #536: the sidechain is ON and Live exposes no routing surface, so
+            # there is no source for capture to record and none for push to
+            # restore. The Live limit is genuine and not ours to fix — what IS
+            # ours is that the loss stops being silent. Gated on has_input_routing
+            # so a routing-capable device (#374's author→push→pull path, the
+            # Compressor common case) never warns: a warning that fires there
+            # would teach the operator to ignore all of them.
+            unreadable_sidechain_sink.append(
+                f"{(entry['name'] or entry['class'] or 'device')!r} on "
+                f"{parent_label or f'{parent_kind} {parent_index}'}"
+            )
         if cls_display in RACK_CLASS_NAMES:
             chains_resp = probe(
                 "ableton_device", "get_device_chains",
@@ -2222,6 +2333,9 @@ def assemble_snapshot_via_probes(
     it gathered by hand keeps whatever it probed.
     """
     info = probe("ableton_session", "info")
+    # #536: every device whose sidechain is armed on a surface Live exposes no
+    # routing for, collected across the whole walk so one warning covers the set.
+    unreadable_sidechain: list[str] = []
     master_mixer = info.get("master")
     master_block: dict[str, Any] | None = None
     if master_mixer:
@@ -2231,6 +2345,8 @@ def assemble_snapshot_via_probes(
         }
         master_devices = _capture_devices_for_parent(
             probe, parent_kind="master", song_dir=song_dir,
+            parent_label="master",
+            unreadable_sidechain_sink=unreadable_sidechain,
         )
         if master_devices:
             master_block["devices"] = master_devices
@@ -2255,6 +2371,8 @@ def assemble_snapshot_via_probes(
         }
         devices = _capture_devices_for_parent(
             probe, parent_kind="return", parent_index=ri, song_dir=song_dir,
+            parent_label=f"return {entry['name']!r}",
+            unreadable_sidechain_sink=unreadable_sidechain,
         )
         if devices:
             entry["devices"] = devices
@@ -2282,6 +2400,8 @@ def assemble_snapshot_via_probes(
             entry["sends"] = sends
         devices = _capture_devices_for_parent(
             probe, parent_kind="track", parent_index=ti, song_dir=song_dir,
+            parent_label=f"track {entry['name']!r}",
+            unreadable_sidechain_sink=unreadable_sidechain,
         )
         if devices:
             entry["devices"] = devices
@@ -2333,6 +2453,14 @@ def assemble_snapshot_via_probes(
         session_info=session_info, returns=returns_out, tracks=tracks_out,
     )
     _resolve_captured_sidechain_sources(snapshot)
+    if unreadable_sidechain:
+        warnings.warn(
+            "capture: " + unreadable_sidechain_source_warning(
+                unreadable_sidechain
+            ),
+            UserWarning,
+            stacklevel=2,
+        )
     if old_snapshot is not None:
         preserve_browser_paths(old_snapshot, snapshot)
         # SNP-2H9F: a device the prior snapshot loaded via preset_query keeps its

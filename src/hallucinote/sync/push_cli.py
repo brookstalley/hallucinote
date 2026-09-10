@@ -834,11 +834,22 @@ def _refuse_on_stranded_rebuild(conn: sqlite3.Connection) -> int:
     """Refuse the push when a chain rebuild is stranded mid-flight.
 
     A journal under the song's ``.rebuild/`` exists only between a rebuild's
-    first delete and its passing verify. While one is there, the DB's device
-    links describe a chain Live no longer holds, so every device-phase decision
-    is made against a fiction — and push would report ok over it.
+    first delete and its passing verify — with one exception, which is why this
+    reads the journal's phase instead of counting files. Two states, two
+    answers:
 
-    Returns 0 when clear, 1 when refusing.
+    * **mid-flight** (``journaled`` / ``demolished`` / ``rebuilt`` /
+      ``restored``, or a phase this cannot read): the DB's device links describe
+      a chain Live no longer holds, so every device-phase decision would be made
+      against a fiction and push would report ok over it. REFUSE.
+    * **shortfall**: the rebuild finished, rebound its links and verified
+      everything that landed; only captured values are missing. The chain is
+      real and the links describe it, so there is nothing here to plan against
+      wrongly. WARN and continue — refusing would block
+      ``push execute --only devices``, which is the recovery the shortfall's own
+      alert tells the operator to run.
+
+    Returns 0 when clear or warning, 1 when refusing.
     """
     try:
         song_dir = paths.song_dir_for_conn(conn)
@@ -846,13 +857,28 @@ def _refuse_on_stranded_rebuild(conn: sqlite3.Connection) -> int:
         return 0
     if song_dir is None:
         return 0
-    stranded = chain_rebuild.stranded_journals(Path(song_dir))
-    if not stranded:
+    mid_flight, shortfall = chain_rebuild.partition_journals(Path(song_dir))
+    if shortfall:
+        sys.stderr.write(
+            "push_cli execute: a chain rebuild ended in a SHORTFALL and its "
+            "journal is still on disk.\n"
+        )
+        for journal in shortfall:
+            sys.stderr.write(f"  {journal}\n")
+        sys.stderr.write(
+            "That chain is rebuilt and its links are rebound — this push plans "
+            "against the chain Live actually has. What the journal still holds "
+            "is the captured value(s) the restore could not write, which this "
+            "push re-applies for anything the DB authors. Delete the journal "
+            "once you are satisfied the chain carries what it should; until "
+            "then every push repeats this warning.\n"
+        )
+    if not mid_flight:
         return 0
     sys.stderr.write(
         "push_cli execute: refused — an unfinished chain rebuild is on disk.\n"
     )
-    for journal in stranded:
+    for journal in mid_flight:
         sys.stderr.write(f"  {journal}\n")
     sys.stderr.write(
         "Each file is the only record of what that chain held before the "
@@ -935,10 +961,25 @@ def _reconcile_chains_prepass(
             "rebuild.\n"
         )
         return 0
+    short = [r for r in results if not r.ok]
     for result in results:
         sys.stderr.write(f"push_cli execute: reconciled {result.describe()}\n")
         for alert in result.alerts:
             sys.stderr.write(f"push_cli execute: ALERT {alert}\n")
+    if short:
+        # A rebuild that could not carry every captured value is not a success
+        # for this caller either. Exiting 0 here would let the push roll on over
+        # a chain missing restored mix work, which is the shape of silent loss
+        # this whole path exists to end — and it is the same contract the
+        # `chain-rebuild` CLI reports, so the two callers agree.
+        sys.stderr.write(
+            "push_cli execute: refused — "
+            f"{len(short)} chain rebuild(s) ended in a SHORTFALL (named above) "
+            "and their journals are on disk holding the values that did not "
+            "land. Re-apply them, or delete the journal once the chain carries "
+            "what it should, then re-run this push.\n"
+        )
+        return 1
     return 0
 
 

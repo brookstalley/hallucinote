@@ -13,7 +13,79 @@ pending entries when `operator_verification_required: true`.
 > round-trip, and **MIX-3S7P** chunk-2 render verification. New entries added *after*
 > this date are not covered and block PRs as usual.
 
+> **2026-09-10 — the gate is deliberately NOT armed for this release (owner
+> ruling).** `operator_verification_required` is absent from
+> `project-state.yaml`, so `check-operator-verification` exits 0 while entries
+> below sit unticked. That was surfaced as a release decision and the owner chose
+> to ship this release with the gate off rather than arm it and work the queue
+> down under time pressure.
+>
+> **Read the exit code accordingly: the gate passing means the requirement is
+> off, not that anything was verified.** This release's Live-side claims rest on
+> the two 2026-09-10 sittings recorded below and on nothing else — where a box
+> below is unticked, the thing it describes is unwitnessed, and each sitting says
+> per box which is which. The release is not asserting otherwise; #541 already
+> narrowed the one claim (`#322`) that had over-reached.
+>
+> This is a per-release decision, not a standing one. Arming the gate was
+> explicitly left open for a later release, so a future reader should not read the
+> absent key as settled policy.
+
 ---
+
+## RELBLK-0910 — the release blockers, against a real chain (2026-09-10) — PENDING
+
+Issues **#532** (Symptom A), **#538**, **#536**, **#537**. Needs Live 12.4.x and the
+song `alien` with **one writer** — the 2026-09-10 sitting was corrupted by a
+concurrent authoring agent and any run of these boxes must confirm sole
+ownership first. Everything below landed with unit coverage against fakes; the
+fakes cannot model Live's own refusal and routing behaviour, which is where the
+#291 sitting found both of its defects on first contact. **Visual change: no.**
+
+**Run the #291 witness box (below) FIRST** — it is the box that proves #532
+Symptom A, and it is now unblocked for the first time. The boxes here are the
+state the fakes cannot reach.
+
+- [ ] **A restore lands on the right device when the tap survives.** The #291
+  witness, re-run. What makes it a real test: `alien`'s Alien Voice track must
+  hold a `HallucinoteAnalyzer` (render it first if it does not), so the analyzer
+  survives the demolish and sits at the HEAD of the rebuilt span while the
+  journal recorded it at the TAIL. Record EQ Eight's and Erosion's non-default
+  parameters before and after, per value — the 2026-09-10 run lost `3 Gain A`
+  (−1.99951 dB → 0.0) and `4 Gain A` (−2.50488 dB → 0.0), so those two are the
+  named witnesses. Pass = every captured parameter back on the device it came
+  from, and no alert naming a class change that did not happen.
+- [ ] **A refused write produces a SHORTFALL, not a success.** Needs a parameter
+  Live actually refuses. The honest way to get one is an **automated** parameter
+  (put an envelope on an EQ band's gain, then rebuild that chain) — the unit
+  suite fakes the refusal and cannot prove Live refuses anything. Pass = exit
+  code 1, an alert naming N of M, and the journal still on disk afterwards.
+  **This box is what distinguishes #538 from a fake's opinion of it.**
+- [ ] **The shortfall journal does not block the recovery it recommends.** With
+  the journal from the box above still on disk, run
+  `push execute --only devices`. Pass = the push RUNS, prints a SHORTFALL warning
+  naming the journal, and does NOT refuse. Then delete the journal and confirm a
+  clean push says nothing. This is the integration defect found at merge — the
+  unit test asserts the classification, only Live proves the whole path.
+- [ ] **A mid-flight journal still refuses.** Interrupt a rebuild (kill it
+  between the demolish and the restore), then run `push execute`. Pass = refused,
+  naming the file, with the `--resume auto` remedy. The two journal states must
+  behave differently on one real song.
+- [ ] **The Multiband Dynamics warning fires once, and the Compressor path stays
+  quiet.** `alien` track 3 carries the MBD with `S/C On` armed and
+  `has_input_routing: false`; the song also carries seven sidechain Compressors
+  (#374's path). Run `/song-snapshot` and a `push execute`. Pass = both surfaces
+  name the MBD and its track, and **no** warning mentions any Compressor. The
+  negative half is the one that matters — a warning that fires on the common
+  case trains the operator to ignore all of them.
+- [ ] **A string reaches `probe set`, from this client.** The #537 repro was
+  6/6 client-side failures, so the only honest test is the real MCP client:
+  `ableton_probe(action='set', path='song.tracks[2].devices[6].name', value='SC Alien Duck')`.
+  Pass = the device is renamed in Live. **Requires an MCP server restart, NOT a
+  re-vendor** — the schema is emitted by the local server process; `server.py` is
+  not in `_FINGERPRINT_PATHS`. Then confirm a numeric write and a
+  `{"$path": ...}` assignment still work, since those are what the retyping could
+  have broken.
 
 ## #322 — does the fence hold against a real Live, and does it ever wedge? (2026-09-10) — **RUN 2026-09-10 on Live 12.4.5. TWO BOXES PASS, THE OTHER FOUR ARE UNREACHABLE, AND THE SITTING FOUND A DEFECT THE FAKES CANNOT SEE.**
 
@@ -195,13 +267,27 @@ suggested recovery), which restored both lost gain cuts.
   EQ Eight 7 of 84 params changed (two real gain cuts to 0.0), Erosion 0 of 6. Re-run this box
   once A and B are fixed.
 
-  **Defect B is fixed** (PR #540, `scope=CHAIN-RESTORE-STR`): the restore now hands the wire a
-  string, so a continuous parameter can be carried at all. **Defect A is not** — #532 is open,
-  and until it lands the restore still addresses devices by their pre-delete physical index.
-  So this box stays unticked and is **blocked behind #532, not behind #533**: re-running it now
-  would exercise a restore that writes real values onto the wrong same-class device, which is a
-  worse outcome than the refusals it replaced, not a better one. Re-run when #532 closes, on an
-  `alien` with a single writer.
+  **Defect B is fixed** (the one-line fix in PR #540; its `scope=CHAIN-RESTORE-STR`
+  change-log entry landed separately in PR #542, which repaired #540's incomplete
+  merge): the restore now hands the wire a
+  string, so a continuous parameter can be carried at all.
+
+  **Defect A is now fixed too, and this box is UNBLOCKED for the first time**
+  (`scope=RELBLK-0910`, 2026-09-10). The restore and the verify no longer trust
+  the physical index captured before the delete: the journal carries each
+  device's DB `position` alongside it, and both passes pair journal entry to
+  device by position against a **post-rebuild** chain read. A device the rebuild
+  can neither address nor delete now refuses before the first delete, with the
+  analyzer the one tolerated survivor.
+
+  So the earlier reason for not running this — that a restore would write real
+  values onto the wrong same-class device, which is worse than the refusals it
+  replaced — **no longer applies.** Run it, on an `alien` with a single writer,
+  and run it before the boxes in `RELBLK-0910` above: this is the box that proves
+  the fix, and the rest of that entry covers what the fakes could not reach.
+  Unit coverage exists for the analyzer-at-the-tail case and fails against the
+  pre-fix module, but no fake can model Live's real chain behaviour, which is
+  what failed here twice before.
 - [x] **`_PARAM_EPSILON = 1e-6` — SETTLED, and it is wrong in two independent ways.** Measured
   by perturbing writes (offset 0.137 of range) followed by read-back on Analog, EQ Eight and
   Erosion:

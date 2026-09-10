@@ -2867,6 +2867,91 @@ def test_cli_execute_proceeds_when_no_rebuild_is_stranded(
     assert rc == 0 and ran["yes"]
 
 
+def _shortfall_journal(song_dir, name="track-3.json"):
+    """A journal left by a rebuild that FINISHED and rebound its links, with
+    some captured values unrestored — the #538 shortfall state."""
+    import json
+    from hallucinote.sync import chain_rebuild
+    d = song_dir / ".rebuild"
+    d.mkdir(exist_ok=True)
+    path = d / name
+    path.write_text(json.dumps({
+        "version": chain_rebuild.JOURNAL_VERSION,
+        "phase": chain_rebuild.PHASE_SHORTFALL,
+        "parent_kind": "track", "parent_index": 3,
+    }))
+    return path
+
+
+def test_cli_execute_proceeds_over_a_shortfall_journal_and_says_why(
+    conn, song, session, db_path, monkeypatch, capsys, tmp_path,
+):
+    """A shortfall journal is NOT a gutted chain: the rebuild finished, rebound
+    its links and verified everything that landed, so the push plans against the
+    chain Live actually has.
+
+    Refusing here would block `push execute --only devices` — the recovery the
+    shortfall's own alert tells the operator to run — so the fix would block its
+    own remedy. It warns and proceeds instead.
+    """
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", lambda send_fn=None: ([], []))
+    monkeypatch.setattr(push_cli.paths, "song_dir_for_conn", lambda _conn: tmp_path)
+    journal = _shortfall_journal(tmp_path)
+    ran = {"yes": False}
+
+    def _fake_execute(**kwargs):
+        from hallucinote.sync.push_execute import ExecuteResult
+        ran["yes"] = True
+        return ExecuteResult(
+            outcome="ok", exit_code=0, phase_halted=None,
+            phases=[], state_file=None, errors_file=None,
+        )
+    monkeypatch.setattr(push_cli.push_execute, "execute_push", _fake_execute)
+
+    rc = push_cli.main([
+        "execute", session, "--db", str(db_path),
+        "--no-coherence-check", "--state-dir", str(tmp_path),
+    ])
+
+    assert rc == 0 and ran["yes"], "the recommended recovery must not be blocked"
+    err = capsys.readouterr().err
+    assert "SHORTFALL" in err, "silence would hide that values are unrestored"
+    assert str(journal.name) in err, "the warning must name the file"
+    assert "unfinished chain rebuild" not in err, (
+        "a shortfall must not be reported as a gutted chain"
+    )
+
+
+def test_cli_execute_still_refuses_a_mid_flight_journal_beside_a_shortfall(
+    conn, song, session, db_path, monkeypatch, capsys, tmp_path,
+):
+    """The two states are judged per file, not per directory. One shortfall does
+    not buy a pass for a chain some rebuild actually abandoned."""
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", lambda send_fn=None: ([], []))
+    monkeypatch.setattr(push_cli.paths, "song_dir_for_conn", lambda _conn: tmp_path)
+    monkeypatch.setattr(
+        push_cli.push_execute, "execute_push",
+        lambda **kw: pytest.fail("push ran despite a mid-flight rebuild journal"),
+    )
+    _shortfall_journal(tmp_path, "track-3.json")
+    import json
+    from hallucinote.sync import chain_rebuild
+    (tmp_path / ".rebuild" / "track-5.json").write_text(json.dumps({
+        "version": chain_rebuild.JOURNAL_VERSION,
+        "phase": chain_rebuild.PHASE_DEMOLISHED,
+    }))
+
+    rc = push_cli.main([
+        "execute", session, "--db", str(db_path),
+        "--no-coherence-check", "--state-dir", str(tmp_path),
+    ])
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "unfinished chain rebuild" in err
+    assert "track-5.json" in err, "the refusal must name the mid-flight file"
+
+
 # ---------- A1-resid — _cmd_execute default coherence-check hardening ----------
 
 
@@ -3990,6 +4075,52 @@ def test_cli_execute_reconcile_chains_runs_before_the_phases(
     assert "reconciled" in err
     assert "Alien Voice" in err
 
+
+
+
+def test_cli_execute_reconcile_refuses_when_a_rebuild_came_up_SHORT(
+    conn, song, session, db_path, monkeypatch, capsys, tmp_path,
+):
+    """#538's contract is honored by BOTH callers or by neither.
+
+    The `chain-rebuild` CLI exits non-zero on a shortfall; this prepass printed
+    the alerts and returned 0, so `push execute --reconcile-chains` rolled
+    straight on over a chain missing restored mix work and reported success —
+    the silent loss the exit contract exists to end, through the other door.
+    """
+    from hallucinote.sync import chain_rebuild, push
+    monkeypatch.setattr(push, "check_coherence",
+                        lambda *a, **kw: push.CoherenceResult(ok=True))
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp",
+                        lambda send_fn=None: ([], []))
+    monkeypatch.setattr(push_cli, "_probe_live_devices_via_mcp",
+                        lambda **kw: {("track", 3): []})
+    monkeypatch.setattr(push_cli, "_resolve_send_fn", lambda: (lambda req: None))
+
+    def _fake_reconcile(*args, **kwargs):
+        short = chain_rebuild.RebuildResult(
+            parent_kind="track", parent_index=3, parent_name="Alien Voice",
+            from_position=1, deleted=["Analog"], loaded=["Operator"],
+            restored_params=3,
+        )
+        short.expected_params = 4
+        short.ok = False
+        short.alerts.append("chain-rebuild: SHORTFALL on track #3 — 3 of 4")
+        return [short]
+    monkeypatch.setattr(chain_rebuild, "reconcile_chains", _fake_reconcile)
+    monkeypatch.setattr(
+        push_cli.push_execute, "execute_push",
+        lambda **kw: pytest.fail("the push ran over a short rebuild"),
+    )
+
+    rc = push_cli.main([
+        "execute", session, "--db", str(db_path), "--probe",
+        "--reconcile-chains", "--state-dir", str(tmp_path),
+    ])
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "SHORTFALL" in err
 
 def test_cli_execute_reconcile_failure_stops_the_push(
     conn, song, session, db_path, monkeypatch, tmp_path, capsys,

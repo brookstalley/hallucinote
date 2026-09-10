@@ -32,6 +32,136 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-09-10 — Two silent lenses: a partial that stopped counting as a recall, and a capture that stopped reading the wrong beat
+
+<!-- prawduct: type=fix | scope=OPENBUGS-0910 -->
+
+The two reports the 2026-09-10 incoming-bugs triage left open. Both are the same
+shape of defect: something measured the wrong thing and said nothing about it.
+
+**The recurrence lens counted a guess as a recall.** The matcher has two tiers. A
+clean recovered op — `exact`, `transpose +8`, `fragment[0,1.5)` — is a structured
+claim about the layer. When nothing clean matches it falls back to
+`derived (<op>, <coverage>)`: the most of the motif some composed op could account
+for. Over eleven motifs, ten sections and five layers the transform group finds one
+of those almost everywhere, and on `alien` 201 occurrence records came back with the
+large majority sitting at exactly 0.50 coverage. Read straight, the render said every
+motif recurs on every layer everywhere and the whole-motif recalls that describe the
+form were a fifth of the lines.
+
+The reported symptom was noise. The consequence found by reading the code was worse:
+`_recurring_motifs` counted a motif as recurring on **any** non-home occurrence, so
+the partials put every registered motif in the cell-set, made `recall_coverage` read
+100 %, and emptied `never_recalled` — which silenced `registered-never-recalled`, the
+single coaching question the economy path is allowed to emit. The noise was not
+burying the signal, it was deleting a finding.
+
+Now a sub-threshold **derived** reading is marked `partial`: still detected, still in
+the report, still in `--json` (the matcher reports partials on purpose — REC-4Z8Q),
+but folded into a per-section count in the render (`--all` expands) and excluded from
+every economy figure. A motif that recurs only as partials now raises its question and
+says so, naming the best coverage it reached, because "never recurs" would be untrue
+of it.
+
+The floor is **derived-tier only**, and that distinction is the part the plan got
+wrong before the code did. A coverage-only floor demotes `fragment[0,1.5)` at 0.50 —
+the quoted answering cell, a real recall carrying the fragment tier's own evidence
+floor — to the same status as `derived (invert ∘ diminish ×2, 0.50)`. The reporting
+author had already resolved this by hand; their filter kept every non-derived
+variation at any coverage. `MatchResult.derived` now carries the tier from the one
+site that chooses it, so consumers weigh a reading without prefix-matching a
+human-facing label. The floor rides on the report itself, so the render names the
+percentage it actually applied instead of guarding for a field that is now always
+there and falling back to prose that names no threshold at all.
+
+**`capture execute` baked end-of-song automation values in as baselines.** A parameter
+under an automation envelope reads at whatever value the envelope holds *at the
+playhead*, and after any render or performed-automation push the playhead sits at the
+end of the arrangement. Captured there, that value becomes the device's dialed
+baseline and `replay_capture` re-asserts it on every subsequent build — permanently
+redefining the value every envelope rides from. Hit five times in one session on
+`alien`, silently each time: A-Reverb return volume 0.95 for 0.85 and its `Decay Time`
+6.87 s for 2.50 s, the Voice Shifter's `Dry/Wet` 72 % for 0 % and `RM Coarse` 283 Hz
+for 220 Hz, the Noise Auto Filter's `Frequency` 893 Hz for 2.52 kHz. The diff shows
+each as an ordinary field change, indistinguishable from a deliberate by-ear tweak.
+
+`capture execute` now reads the transport before it probes anything, seeks to beat 0
+when the playhead is elsewhere, and confirms the seek settled there before the walk
+begins. It refuses (exit 2) while the transport is rolling — a capture cannot be made
+deterministic while the playhead moves, so no seek would help — and refuses if the
+seek does not land, which is the silent case in miniature. It refuses on one more
+reading: a transport `info` that comes back without `is_playing` or
+`current_song_time`. Defaulting a missing read to "stopped at beat 0" would let the
+guard reinstate the exact silence it was built to end, so the unreadable case is
+named and refused rather than assumed away. The confirmation reads the
+seek handler's own settle poll rather than reading `current_song_time` back, because
+Live's getter can return a stale cached value in the same callback as the setter
+(`learnings.md`). `--no-seek` opts out and warns.
+
+This one's Live-side half is an assumption the unit tests cannot reach: they prove the
+seek precedes the walk against a fake bridge, not that Live re-applies automated values
+on a locate while the transport is stopped. Queued in `operator-verification.md` with
+the failure to look for named — a snapshot still carrying end-of-song values while the
+CLI reports it parked the playhead at 0.
+
+**What the cumulative review found, and it was the same defect three more times.**
+`rev-20260910T215848Z-0aed784e` returned nothing blocking but converged, across three
+independent reviewers, on the transport guard still defaulting the value it had just
+learned to require: `float(info.get("current_song_time") or 0.0)`, two lines under the
+comment saying that assuming "stopped at 0" is the silence the guard exists to end. A
+present-but-null reading passed the presence check and took the already-parked path.
+It is parsed now, and an unreadable value is refused by name.
+
+The floor had the same shape of hole in three more places, each one the fix re-entered
+through a door it had not closed:
+
+- **`match_motif_in_window` dropped `derived=`.** The package-exported entry point
+  rebuilt its result field by field without the new tier flag, so every tier-4 guess
+  reached a consumer as a clean recall — the exact miscount, through the one call the
+  documented contract tells consumers to make. The module also still decided
+  derivedness by prefix-matching the human-facing label at both of its own sites; both
+  read the field now.
+- **A sub-threshold partial could claim a motif's home section.** `found_this_motif`
+  fired on a reading marked `partial` on the next line, so a motif first *detected* as
+  a half-match took that section as home and its genuine later statement read as a
+  non-home recall — back into the cell-set, coverage and compression back up,
+  `never_recalled` emptied. Every fixture placed a clean home match first, so the suite
+  could not see it. Home is now the first section where the motif is heard as itself.
+- **`never_recalled` contradicted the question it feeds.** It names every motif outside
+  the cell-set, which is two populations; the render printed "never recalled" over both
+  while `economy_finding` said, a few lines lower in the same report, that the motif
+  "recurs beyond its home section only as partials". The render splits them.
+
+Underneath those, "counts as a recall" was being re-derived at four sites. It is one
+property on the occurrence now (`MotifRecall.counts_as_recall`), with
+`counted_recalls` / `partials` on the report, because the shape every consumer had
+before the floor existed — filtering on `is_home` alone — silently re-lands the
+miscount.
+
+**The guard also reached the path it did not cover.** `capture_plan()` — the by-hand
+probe recipe two skills drive — had no transport read and no seek, so a hand capture
+after a render bakes end-of-song values in as baselines with none of the refusal. The
+precondition is now the first two records the plan emits. This is a deliberate scope
+extension, recorded in the build plan: the requirement was boundary-shaped (the capture
+contract refuses to read parameters at an unknown playhead) and had been written
+entry-point-shaped.
+
+Two smaller ones from the same review: `melody_lens`'s exit-3 still pointed at
+`songs/sun-zone-done/build.py` after the recurrence twin dropped that pointer on the
+stated principle that a path into `songs/` is a claim about a workspace this package
+neither ships nor can check — it names the shape inline now; and `compose-review`'s
+operative Run-it block still taught the pre-fold render, so an agent who ran the lens,
+saw no `derived (...)` line and reported "no partial recalls" would have been reading a
+render that folds them by default. It offers `--all` and says so.
+
+**Also in this pass, and worth recording because it is the cheaper half of triage:**
+the other two open reports were verified **already fixed** and archived. The
+one-beat-early render capture was root-caused to arm-before-locate and fixed in
+`8b54a53` with a regression test; `push_cli`'s version-pin recovery no longer calls
+the content fingerprint a commit. A fourth report was a leftover stub carrying an
+unrelated bug under an archived report's filename — refiled under its own name, which
+is where the capture-playhead fix above came from.
+
 ## 2026-09-10 — The release blockers: a restore that lands on the right device, and a failure that says so
 
 <!-- prawduct: type=fix | scope=RELBLK-0910 -->

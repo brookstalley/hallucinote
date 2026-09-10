@@ -1420,7 +1420,29 @@ def capture_plan() -> list[dict[str, str]]:
     """
     return [
         {"tool": "ableton_session(action='info')",
-         "purpose": "global state: tempo, signature, master volume/pan, track counts"},
+         "purpose": "PRECONDITION FIRST, then global state. Read `is_playing` and "
+                    "`current_song_time` before probing anything else. If "
+                    "`is_playing` is true, STOP — a capture reads each parameter at "
+                    "whatever beat the probe lands on, so a moving playhead makes "
+                    "the snapshot nondeterministic and no seek can fix it; ask for "
+                    "the transport to be stopped. If either key is missing or "
+                    "non-numeric, STOP — an unreadable playhead cannot be assumed "
+                    "to be at 0. Otherwise: tempo, signature, master volume/pan, "
+                    "track counts"},
+        {"tool": "ableton_session(action='seek', bar=1, beat=0.0)",
+         "purpose": "Park the playhead at beat 0 before any parameter is read, "
+                    "unless `current_song_time` is already 0. Every parameter under "
+                    "an automation envelope reads at the value the envelope holds AT "
+                    "THE PLAYHEAD, and after a render or a performed-automation push "
+                    "the playhead sits at the END of the arrangement — captured "
+                    "there, an end-of-song value becomes the device's dialed "
+                    "baseline and `replay_capture` re-asserts it on every subsequent "
+                    "build, permanently redefining the value every envelope rides "
+                    "from. It is silent: the diff shows an ordinary field change. "
+                    "Check the reply's `settled_beats` is 0 before continuing; if it "
+                    "is not, STOP rather than capture values that may be wrong and "
+                    "indistinguishable from deliberate ones. (`capture execute` does "
+                    "all of this in code — prefer it.)"},
         {"tool": "ableton_device(action='list', target='master')",
          "purpose": "SNP-4K7M: the master's top-level device chain (kind + "
                     "display_name + position), attached as `song.master.devices` "

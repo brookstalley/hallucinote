@@ -58,6 +58,29 @@ from hallucinote.recurrence.match import match_all_in_layer
 NoteDict = dict[str, Any]
 
 Severity = Literal["info", "warning", "blocking"]
+
+# The coverage at or above which a DERIVED-tier reading still counts as a recall.
+# On a song with many registered motifs over many layers, the transform group
+# finds a low-coverage derived reading for nearly every (motif x layer x
+# section) triple — the most of M some composed op could account for, which is
+# not the same claim as "M recurs here". Counting those as recalls does two
+# things, both wrong: it buries the whole-motif recalls that describe the form,
+# and — because a motif counts as recurring on ANY non-home occurrence — it
+# empties `never_recalled`, silencing the one coaching question the economy path
+# is allowed to emit.
+#
+# 0.75 separates the two populations with room on both sides: a clean
+# whole-motif op scores 1.0, and the derived readings that swamped the `alien`
+# report sat at exactly 0.50.
+#
+# The floor applies ONLY to the derived tier. A clean recovered op — `exact`,
+# `transpose +8`, `fragment[0,1.5)` — is a structured claim carrying the
+# matcher's own evidence floor, and a bare `fragment` is a real musical recall
+# (the quoted answering cell) however little of M it covers. Sub-threshold
+# derived readings are MARKED (`MotifRecall.partial`), never dropped: they stay
+# in the report and in `to_dict()`, because the matcher reports partials on
+# purpose (REC-4Z8Q).
+DEFAULT_MIN_RECALL_COVERAGE = 0.75
 _VALID_SEVERITIES = ("info", "warning", "blocking")
 
 
@@ -104,7 +127,14 @@ class MotifRecall:
     but its durations were freely re-sung — the ``variation`` label then carries a
     ``(durations free)`` qualifier. The common expressive-recapitulation shape (an
     arrival statement compresses the rhythm while the notes keep their sung lengths)
-    is REPORTED with the relaxation visible, never dropped as no recall."""
+    is REPORTED with the relaxation visible, never dropped as no recall.
+
+    ``partial`` marks a DERIVED-tier reading below the analysis's ``min_coverage``
+    floor — the matcher found no clean op and could account for only part of the
+    motif. It is still a detected occurrence and still reported; the flag is what
+    keeps the economy summary from reading it as evidence that the motif recurred. A
+    clean recovered op is never partial, whatever its coverage — see
+    ``DEFAULT_MIN_RECALL_COVERAGE``."""
 
     motif: str
     section: str
@@ -114,6 +144,19 @@ class MotifRecall:
     coverage: float
     is_home: bool = False
     duration_match: bool = True
+    partial: bool = False
+
+    @property
+    def counts_as_recall(self) -> bool:
+        """True when this occurrence is evidence the motif RECURRED: beyond its home
+        section AND at or above the analysis's coverage floor.
+
+        The one definition of "counts as a recall". Economy and every render site
+        read it here rather than re-deriving ``not is_home and not partial``, because
+        the shape every consumer had before the floor existed — filtering on
+        ``is_home`` alone — silently re-lands the miscount the floor was added to
+        end."""
+        return not self.is_home and not self.partial
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -125,6 +168,7 @@ class MotifRecall:
             "coverage": self.coverage,
             "is_home": self.is_home,
             "duration_match": self.duration_match,
+            "partial": self.partial,
         }
 
 
@@ -150,11 +194,29 @@ class RecurrenceReport:
     sections: tuple[SectionRecurrence, ...]
     economy: MotivicEconomy
     findings: tuple[RecurrenceFinding, ...]  # song-level rollup (all findings)
+    # The floor this analysis applied, carried so a reader can NAME the threshold
+    # its partial counts were folded at instead of printing a number that could
+    # drift away from the one actually used.
+    min_coverage: float = DEFAULT_MIN_RECALL_COVERAGE
 
     @property
     def recalls(self) -> tuple[MotifRecall, ...]:
-        """Every detected recall, flattened across sections (home + later)."""
+        """Every detected occurrence, flattened across sections (home + later,
+        partial + whole). This is the WIDE set — use ``counted_recalls`` for the
+        occurrences that count as recalls, and ``partials`` for the rest."""
         return tuple(r for s in self.sections for r in s.recalls)
+
+    @property
+    def counted_recalls(self) -> tuple[MotifRecall, ...]:
+        """The occurrences that count as recalls — see
+        ``MotifRecall.counts_as_recall``, which is where the predicate lives."""
+        return tuple(r for r in self.recalls if r.counts_as_recall)
+
+    @property
+    def partials(self) -> tuple[MotifRecall, ...]:
+        """The sub-threshold derived readings: detected and reported, but not
+        evidence the motif recurred."""
+        return tuple(r for r in self.recalls if r.partial)
 
     @property
     def blocking(self) -> tuple[RecurrenceFinding, ...]:
@@ -173,6 +235,7 @@ class RecurrenceReport:
             "sections": [s.to_dict() for s in self.sections],
             "economy": self.economy.to_dict(),
             "findings": [f.to_dict() for f in self.findings],
+            "min_coverage": self.min_coverage,
         }
 
 
@@ -208,6 +271,7 @@ def analyze_recurrence(
     motifs: "Mapping[str, Motif]",
     *,
     song_slug: str,
+    min_coverage: float = DEFAULT_MIN_RECALL_COVERAGE,
 ) -> RecurrenceReport:
     """Analyze which registered motifs recur where, per (motif × section × layer).
 
@@ -218,7 +282,12 @@ def analyze_recurrence(
     material first sounding is not a recall; the economy summary counts only later
     recalls. Render-free and DB-decoupled: feed it
     ``arrangement.Arrangement.section_recurrence_inputs()`` at build time, or
-    synthetic ``SectionRecurrenceInput`` inputs in a test."""
+    synthetic ``SectionRecurrenceInput`` inputs in a test.
+
+    ``min_coverage`` is the floor at which an occurrence counts as a recall: below
+    it the occurrence is still detected and still reported, but carries
+    ``partial=True`` and is excluded from every economy figure. See
+    ``DEFAULT_MIN_RECALL_COVERAGE`` for why the distinction exists."""
     pairs = _registry_pairs(motifs)
     seen_home: set[str] = set()
     section_results: list[SectionRecurrence] = []
@@ -239,7 +308,16 @@ def analyze_recurrence(
             for layer_name in sec.layers:
                 notes = sec.layers[layer_name]
                 for res in match_all_in_layer(motif_notes, notes):
-                    found_this_motif = True
+                    partial = res.derived and res.coverage < min_coverage
+                    # Home is the first section where the motif is heard AS ITSELF.
+                    # A sub-threshold partial is not evidence that it sounded, so
+                    # letting one claim home would read the motif's genuine later
+                    # statement as a non-home occurrence — putting it back in the
+                    # cell-set, raising coverage and compression, and dropping it
+                    # out of `never_recalled`. That is the exact inflation the floor
+                    # was added to end, re-entered through the home split.
+                    if not partial:
+                        found_this_motif = True
                     recalls.append(MotifRecall(
                         motif=motif_name,
                         section=sec.name,
@@ -247,8 +325,9 @@ def analyze_recurrence(
                         variation=res.variation,
                         cell_offset_beats=sec.start_beat + res.cell_offset_beats,
                         coverage=res.coverage,
-                        is_home=motif_name not in seen_home,
+                        is_home=not partial and motif_name not in seen_home,
                         duration_match=res.duration_match,
+                        partial=partial,
                     ))
             if found_this_motif:
                 seen_home.add(motif_name)
@@ -265,10 +344,16 @@ def analyze_recurrence(
         sections=tuple(section_results),
         economy=economy,
         findings=findings,
+        min_coverage=min_coverage,
     )
 
 
-def analyze_arrangement(arr: "Arrangement", *, song_slug: str) -> RecurrenceReport:
+def analyze_arrangement(
+    arr: "Arrangement",
+    *,
+    song_slug: str,
+    min_coverage: float = DEFAULT_MIN_RECALL_COVERAGE,
+) -> RecurrenceReport:
     """Run the recurrence lens over an in-memory ``Arrangement`` — the build-time
     entry point a song's ``recurrence_report()`` calls (and
     ``tools/recurrence_lens.py`` surfaces to ``/compose-review``).
@@ -287,4 +372,5 @@ def analyze_arrangement(arr: "Arrangement", *, song_slug: str) -> RecurrenceRepo
         arr.section_recurrence_inputs(),
         arr.motifs,
         song_slug=song_slug,
+        min_coverage=min_coverage,
     )

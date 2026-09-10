@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from hallucinote.recurrence.economy import MotivicEconomy, summarize_economy
 from hallucinote.recurrence.lens import (
+    DEFAULT_MIN_RECALL_COVERAGE,
     MotifRecall,
     RecurrenceFinding,
     RecurrenceReport,
@@ -32,6 +33,7 @@ __all__ = [
     "SectionRecurrence",
     "RecurrenceReport",
     "SectionRecurrenceInput",
+    "DEFAULT_MIN_RECALL_COVERAGE",
     "analyze_recurrence",
     "analyze_arrangement",
     # economy

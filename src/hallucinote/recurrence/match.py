@@ -113,7 +113,15 @@ class MatchResult:
     alone and its durations were freely re-sung — the label then carries a
     ``(durations free)`` qualifier. The distinction stays VISIBLE rather than being
     dropped from the identity triple, so an augmentation is never confused with an
-    onset-only compression."""
+    onset-only compression.
+
+    ``derived`` marks the tier-4 fallback: no clean op was recoverable, so the reading
+    is a partial account of M under the op it came closest to. It is the honest
+    difference between "the layer contains this named sub-window of M" (a fragment —
+    a structured claim with its own evidence floor) and "this is the most of M any op
+    could explain" — two readings that can carry the SAME coverage number and mean
+    very different things. Consumers weighing how much a reading is worth read this,
+    never the ``derived (`` prefix of the human-facing label."""
 
     variation: str
     coverage: float
@@ -121,6 +129,7 @@ class MatchResult:
     transpose: int | None = None
     factor: float | None = None
     duration_match: bool = True
+    derived: bool = False
 
 
 def _signature(notes: Sequence[NoteDict]) -> list[Triple]:
@@ -549,7 +558,7 @@ def _match_at_alignment(
             return
         if best_partial is None or cov > best_partial.coverage + 1e-9:
             best_partial = MatchResult(
-                _derived_label(op_label, cov), cov, onset, **fields)
+                _derived_label(op_label, cov), cov, onset, derived=True, **fields)
 
     # --- tier 1: pitch axis alone (identity time map) -----------------------
     for (plabel, rdelta, mapped, _cpat, _cdelta) in transpose_maps:
@@ -696,7 +705,7 @@ def match_all_in_layer(
             min_coverage=_COVERAGE_FLOOR)
         if res is None:
             continue
-        if res.variation.startswith("derived"):
+        if res.derived:
             if best_partial is None or res.coverage > best_partial.coverage + 1e-9:
                 best_partial = res
             continue
@@ -754,10 +763,15 @@ def match_motif_in_window(
     results = match_all_in_layer(motif_notes, window_notes, tol=tol)
     if not results:
         return None
-    named = [r for r in results if not r.variation.startswith("derived")]
+    named = [r for r in results if not r.derived]
     pool = named if named else results
     best = max(pool, key=lambda r: r.coverage)
+    # `derived` rides through. It is the authoritative tier signal and its own
+    # docstring tells consumers to read it instead of the label prefix — so a
+    # wrapper that rebuilt the result without it made prefix-matching the only
+    # thing that worked, and every tier-4 guess reached this exported entry point
+    # looking like a clean recall.
     return MatchResult(
         best.variation, best.coverage, cell_offset_beats + best.cell_offset_beats,
         transpose=best.transpose, factor=best.factor,
-        duration_match=best.duration_match)
+        duration_match=best.duration_match, derived=best.derived)

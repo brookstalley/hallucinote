@@ -32,6 +32,57 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-09-10 — A chain rebuild could not carry a single parameter, and the fake said it could
+
+<!-- prawduct: type=fix | scope=CHAIN-RESTORE-STR -->
+
+`chain-rebuild`'s whole purpose is to swap a device without destroying the
+dialed state below it. It had never once done so. `_param_write_kwargs`
+returned `{"value": float(value)}` on the continuous branch while
+`ableton_device set_parameter` declares `ParamSpec(name="value", type="str")`,
+so validation refused every write before it reached Live and the captured
+values stayed in the journal. The enum branch beside it already passed a
+display string and worked, which is why the defect was one branch wide and
+nothing noticed.
+
+Found on first contact with a real chain, during the #291 operator sitting:
+all 41 EQ Eight params and all 5 Erosion params failed in one run, each with
+`param 'value' must be str, got float`.
+
+**The wire form is confirmed against Live 12.4.5**, not merely reasoned: the
+same sitting's tolerance probe wrote `{"value": <stringified float>,
+"value_type": "continuous"}` over the real wire for 29 continuous params
+across Analog, EQ Eight and Erosion, and every write was accepted rather than
+refused. That — validation admits the string form — is the whole of what this
+confirms, and it is what the defect needed.
+
+It confirms nothing about round-trip fidelity. Those 29 writes re-wrote each
+parameter's EXISTING value, which Live short-circuits, so their exact-0.0
+result measures nothing; the sitting records that pass as worthless for
+tolerance and it is not evidence here either. Fidelity is #534's question, its
+numbers come from a separate perturbing pass, and the deltas there are not
+float32 representability — the largest are integer-stepped params
+(`Note PB Range` written 41.424, read 41).
+
+`str` rather than `repr` — identical for floats, but `push.devices`'s
+`_param_value_kv` already produces this same wire field with `str`, and two
+producers of one field that choose differently is how they drift apart.
+
+**Why the suite never caught it, fixed at the root.** `FakeLive.send`
+dispatched `dict(req.params)` with no validation, so a wrong-typed param
+passed the fixture and failed only against Ableton. It now runs the real
+`validate_params` against the real registered `Action`, and **fails closed** —
+an unregistered pair raises rather than silently switching validation off,
+which would reintroduce this defect's exact shape. Holding the fake to the
+wire's contract turns 20 existing tests red against the old code: the coverage
+was always there, only the contract was missing.
+
+**What this unblocks, and what it exposes.** #532 (an off-by-one that puts a
+restore on the wrong same-class device) previously had every write refused
+anyway; those writes now land, so its severity rises. #534 (`_PARAM_EPSILON`
+is absolute where the float32 error is relative, and blind to stepped params)
+governs a verify comparison that until now had nothing to compare.
+
 ## 2026-09-10 — Every open bug, and the surfaces that had been reporting them fixed
 
 <!-- prawduct: type=fix | scope=BUGSWEEP-0910 -->

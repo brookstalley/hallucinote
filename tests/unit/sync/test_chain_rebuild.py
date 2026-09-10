@@ -3,8 +3,10 @@
 Every test drives a FAKE Live (``FakeLive`` below) rather than a real one, so
 what is proved here is the ORCHESTRATION: the order the calls go out in, what is
 on disk when, what refuses before touching anything, and what the verify gate
-catches. The one thing the fake models faithfully on purpose is the failure the
-whole module exists to prevent — a freshly loaded device comes back at its
+catches. The fake validates every param against the real registered ``Action``
+so the orchestration it proves is held to the wire's own contract, and it models
+faithfully on purpose the failure the whole module exists to prevent — a
+freshly loaded device comes back at its
 CLASS DEFAULTS, so a rebuild that forgets to restore produces exactly the
 audibly-wrong chain that a call-level "every call returned ok" would report as
 success.
@@ -113,15 +115,22 @@ class FakeLive:
     # -- dispatch ----------------------------------------------------------
     def send(self, req):
         # The wire validates every param against the action's ParamSpec before
-        # a handler ever sees it, so a fake that skips validation lets a
-        # wrong-typed param pass here and fail only against a real Live. That
-        # is exactly how #533 shipped: the restore sent a float where
-        # set_parameter declares type="str", and every continuous restore
-        # failed on first contact with Ableton while the suite stayed green.
-        # Validating here holds the fake to the same contract as the wire.
+        # a handler ever sees it. A fake that skips that lets a wrong-typed
+        # param pass here and fail only against a real Live, so validate to
+        # hold this fake to the same contract the wire enforces.
+        #
+        # FAIL CLOSED on an unregistered pair: `mcp_schema.get` returns None
+        # for an action that was renamed or retired, and treating that as
+        # "nothing to check" would silently switch validation off for exactly
+        # the change most likely to break the wire contract.
         action = mcp_schema.get(req.tool, req.action)
-        if action is not None:
-            validate_params(action, dict(req.params))
+        if action is None:
+            raise AssertionError(
+                f"{req.tool}({req.action!r}) is not a registered MCP action — "
+                f"the fake cannot validate it, and passing it unchecked is how "
+                f"a wire-contract break reaches Live with the suite green."
+            )
+        validate_params(action, dict(req.params))
         self.calls.append((req.tool, req.action, dict(req.params)))
         for hook in self.watch.get((req.tool, req.action), []):
             hook(dict(req.params))
@@ -1265,17 +1274,11 @@ def test_cli_resume_on_a_missing_journal_says_so(
 
 
 def test_a_continuous_restore_value_reaches_the_wire_as_a_string():
-    """#533. ``set_parameter`` declares ``ParamSpec(name="value", type="str")``,
-    so a bare float is rejected by validation before it reaches Live.
+    """``set_parameter`` declares ``ParamSpec(name="value", type="str")``, so a
+    bare float is rejected by validation before it reaches Live.
 
-    The restore sent one anyway, which meant NO continuous parameter had ever
-    been restored by a rebuild — the failure was invisible to this suite
-    because the fake dispatched params without validating them, and invisible
-    in review because ``_param_write_kwargs``'s docstring correctly describes
-    an exact raw-value round trip that the wire call could never perform.
-
-    Asserted here against the REAL action schema, not a copy of it, so the two
-    cannot drift apart again.
+    Asserted against the REAL action schema, not a copy of it, so the producer
+    and the contract cannot drift apart.
     """
     kwargs = chain_rebuild._param_write_kwargs(
         {"name": "1 Gain A", "value": -1.99951171875}
@@ -1298,10 +1301,31 @@ def test_a_continuous_restore_value_reaches_the_wire_as_a_string():
 
 
 def test_an_enum_restore_value_still_rides_its_display_string():
-    """The enum branch was always correct; #533 was the continuous branch
-    only. Pinned so a fix to one does not regress the other."""
+    """The enum branch rides its display string, the continuous branch a
+    stringified float. Pinned so a fix to one does not regress the other."""
     kwargs = chain_rebuild._param_write_kwargs({
         "name": "Mode", "is_enum": True,
         "value_items": ["Standard", "Soft Clip"], "value_display": "Soft Clip",
     })
     assert kwargs == {"value": "Soft Clip", "value_type": "enum"}
+
+
+def test_the_fake_refuses_an_action_the_wire_does_not_register():
+    """The fixture's validation must FAIL CLOSED.
+
+    ``mcp_schema.get`` returns ``None`` for a renamed or retired action, so a
+    guard that treats a miss as "nothing to check" would switch validation off
+    for precisely the change most likely to break the wire contract — the same
+    shape as the defect this fixture was hardened to catch. Without this test
+    that branch is unreachable from the suite and could rot silently.
+    """
+    live = FakeLive()
+
+    class _Req:
+        tool, action, params = "ableton_device", "no_such_action_here", {}
+
+    assert mcp_schema.get(_Req.tool, _Req.action) is None, (
+        "this test is only meaningful while the action is genuinely unregistered"
+    )
+    with pytest.raises(AssertionError, match="not a registered MCP action"):
+        live.send(_Req())

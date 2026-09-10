@@ -116,9 +116,24 @@ measurement half — *A-Plate's class matches the snapshot after a fresh push* �
 
 - [ ] B1 · [ ] B2 · [ ] B3 · [ ] B4 · [ ] B5 · [ ] B6 · [ ] B7
 - [ ] B8 · [ ] B9 · [ ] B10 · [ ] B11
-- [ ] B12 (code half; #275 stays open on the operator half)
+- [x] B12 — #275 code half shipped (`261aa51`); the item stays open on the operator half,
+  now queued in `operator-verification.md` with both outcomes named
 - [ ] Cumulative Critic over the whole sweep
 
 ## Context
 
-Nothing dispatched yet. Baseline suite run started before any edit.
+**Dispatched**: B1-B7 (wave 1) plus B10 and B11, which re-checking showed are disjoint from
+every wave-1 row by construction — B10 needs only a new module and the `song-new` skill, and
+B11 was told to report its `lom-probe-results.md` row edit rather than make it, which is what
+takes it off B5's surface. Holding a chunk that cannot collide costs wall clock and buys
+nothing.
+
+**Still held**: B8 (#291) contends with B4 on `db/mutations/links.py` and with B1 on
+`skills/ableton-push/`; B9 (#322) contends with B2 on `server_side/analysis.py`. Both go out
+once those merge. Re-checking the plan-time partition at dispatch found one thing it had
+wrong: #291 does **not** touch `push_execute.py` (its own change list names
+`push/devices.py`, `push_cli.py`, `push/probe.py` and `cli.py`), so B8 and B9 do not contend
+with each other and can run together.
+
+**B12 (#275) is done and committed** — see the Status box. Baseline before any edit:
+6063 passed, 2 skipped.

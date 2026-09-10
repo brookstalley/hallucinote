@@ -481,7 +481,13 @@ def test_per_bout_timeout_override_is_honoured():
     message = str(caught.value)
     assert caught.value.waited_s == 0.05
     assert "within 0.05s" in message, message
-    assert "30" not in message, "the context default must not win over the override"
+    # Name the whole quantity, not the digits. A bare `"30" not in message`
+    # also matches the elapsed time and the random job id the message carries —
+    # a 12-char job id contains "30" about 4% of the time, so the assertion
+    # failed on runs that had nothing to do with the override.
+    assert "within 30.0s" not in message, (
+        "the context default must not win over the override"
+    )
     assert len(wedged.pending) == 1, "the work was scheduled, just never run"
 
 

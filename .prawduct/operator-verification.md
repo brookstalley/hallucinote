@@ -85,7 +85,7 @@ this either works or quietly does not.
   half is pinned by a test that runs the real `probe_and_link` after a real rebuild; the
   Live-side half is not.
 
-## The open-bug sweep's re-vendor sitting (2026-09-10) — **DISCHARGED 2026-09-10** for #508 / #516 / #515; #519's probe still open
+## The open-bug sweep's re-vendor sitting (2026-09-10) — **FULLY DISCHARGED 2026-09-10, Live 12.4.5, all four passed**
 
 Backlog **#508**, **#516**, **#515**, **#519**. Needs Live 12.4.x, the Remote Script
 **re-vendored** (`/hallucinote:ableton-mcp-install`) and Live restarted. One sitting — the
@@ -121,12 +121,13 @@ verdicts are unknowable, not passing.
   route. Not `AttributeError: 'Clip' object has no attribute 'envelope_for_note'`. It refused
   a call whose `clip_index` does not exist, which also confirms the refusal fires ahead of
   any Live call and any arg validation.
-- [ ] **#519 — STILL OPEN. One assumption the unit suite cannot settle.** The exclusion predicate names
-  Live's classes for the two default-scaffold return devices as `Reverb` and `B-Delay`'s
-  `Delay`. If Live 12 reports something else for the merged Delay device, the predicate never
-  fires and the scaffold returns keep becoming song content — silently, which is the failure
-  mode this fixed. Read both with `ableton_return(action='list')` on a brand-new set;
-  `src/hallucinote/default_scaffold.py`'s constant is the single place to correct.
+- [x] **#519 — PASSED. The assumption holds.** Read off a brand-new Live 12.4.5 default set:
+  return 1 `A-Reverb` carries a device whose `class_name` AND `class_display_name` are both
+  `Reverb`; return 2 `B-Delay` carries `Delay`. That is exactly
+  `CANONICAL_DEFAULT_SCAFFOLD_RETURN_DEVICES = {'A-Reverb': 'Reverb', 'B-Delay': 'Delay'}`, so
+  the exclusion predicate can fire. This was the one that would have failed **silently** —
+  a wrong class string means the predicate never matches and the scaffold returns go on
+  becoming permanent song content, which is the defect #519 fixed.
 
 ## #275 — the authored reverb is the one that reaches Live (2026-09-10)
 

@@ -54,15 +54,19 @@ If the probe fails or returns nothing, omit `--installed-plugins` in 0b. The com
     --probe
 ```
 
-`--probe` resolves every device's `preset_query` against Live's browser in-process. Omit it if Live or the MCP bridge isn't available; the gate still enforces user confirmation on unverified entries.
+`--probe` resolves every device's `preset_query` against Live's browser in-process, and — when the song loads content from an Ableton Pack — reads this machine's installed Packs so an absent one is named. Omit it if Live or the MCP bridge isn't available; the gate still enforces user confirmation on unverified entries, and Pack content then reports as a requirement (`pack_content`) rather than a refusal, because nothing looked.
 
-The CLI emits a JSON report covering **two independent families**. Devices, under `entries` with status buckets `native`, `placeholder`, `third_party_ok`, `third_party_missing`, `third_party_unverified`, `preset_query_invalid`, `kind_unresolvable`, `kind_ambiguous`, `preset_query_unverified`. Samples, under `samples` with `sample_ok`, `sample_missing`, `sample_unreadable`, `sample_not_a_file`, `sample_unresolvable`, and their own `samples_*` summary counts. The report is JSON and nothing else — there is no human summary to read out; you compose one from the entries.
+The CLI emits a JSON report covering **two independent families**. Devices, under `entries` with status buckets `native`, `placeholder`, `third_party_ok`, `third_party_missing`, `third_party_unverified`, `preset_query_invalid`, `kind_unresolvable`, `kind_ambiguous`, `preset_query_unverified`, `pack_content`, `pack_content_missing`, `user_content`. Samples, under `samples` with `sample_ok`, `sample_missing`, `sample_unreadable`, `sample_not_a_file`, `sample_unresolvable`, and their own `samples_*` summary counts — each sample row carries `use_site`, `"clip"` or `"device"`, because a sampler's missing sample and a clip's are the same fault in different places. The report is JSON and nothing else — there is no human summary to read out; you compose one from the entries.
+
+**A native class is not native content.** `pack_content` / `pack_content_missing` / `user_content` mark devices whose Live class ships with Live but whose SOUND does not — a Drum Rack out of an Ableton Pack, a Simpler pointing into the author's user library. `pack_content` and `user_content` are requirements for the *next* machine, not failures on this one, so they do not set exit 1; `pack_content_missing` does, because `--probe` looked and the Pack is not here.
 
 **Exit codes:** `0` = clean. `1` = at least one DEVICE or at least one SAMPLE in a problem bucket. **Read which family actually fired before you speak** — a sample-only failure leaves every device bucket empty, so an agent that displays only devices shows the user nothing and asks them to confirm a refusal it cannot evidence. Display the offending entries from whichever family is non-empty, then ask:
 
 > *Devices only:* "Some devices won't load cleanly on this machine. Pushing now will fail at device-load for those (the chain stays empty; nothing is substituted). Continue anyway? (yes/no)"
 >
-> *Samples only:* "Some audio clips reference samples that are missing or unreadable on this machine. Pushing now will place clips Live cannot play. Continue anyway? (yes/no)"
+> *Samples only:* "Some clips or samplers reference samples that are missing or unreadable on this machine. Pushing now will place clips Live cannot play and samplers with nothing loaded. Continue anyway? (yes/no)"
+>
+> *A missing Pack:* "This song loads content from Ableton Pack(s) this machine doesn't have; those devices will come up empty. Continue anyway? (yes/no)" — name the Packs.
 >
 > *Both:* name both, in that order.
 

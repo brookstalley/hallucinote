@@ -154,7 +154,7 @@ fingerprint — re-vendor (`/hallucinote:ableton-mcp-install`) + Live restart be
 
 - [x] **Re-pointed `audio_file`** — the sequence above, against a real set with a real ride: after the push, `automation_envelope` on the new clip is non-`None` and the arrangement lane still shows the ride — `read_envelope` `exists: true` on the recreated session clip; `song.tracks[4].mixer_device.volume.automation_state` = 1 after the re-projection (the arrangement-clip envelope itself has no LOM read surface — the read refuses with the same teaching error as the write)
 - [x] **Envelope-hosting audio placement** takes the duplicate route: the arrangement copy carries the session clip's gain/warp/markers AND the ride (`automation_state` flips on the track), and the run reports **no** conform gap for it — while an envelope-free audio placement on the same track still reports its conform gap and lands at Live's defaults — plan: `duplicate_to_arrangement(track 5, clip 1, start_beats 0.0)` then `create(arrangement, kind=audio, start_beats 16.0)`; arrangement list: copy 1 gain 0.8 / warp 6 / markers 0–8, copy 2 gain 0.4 / warp 0; `automation_state` 1; only `tone-dry` in the gap report
-- [x] The **extent** warn fires for both routes (the copy plays the clip's length, not `end_bar`) — one warning per push, naming both placements: `… placed by duplicate of its conformed session clip … but its EXTENT did not: … not the placement's end_bar (3) | … Track.create_audio_clip takes a path and a position and no length … end_bar (7)`; both copies list `length: 8.0`
+- [x] ~~**SUPERSEDED 2026-09-09 by RELBLK-V19 chunk 07** — this box verified the OLD warning, which said the extent simply could not travel and told the operator to trim in Live. The playable region is now written, so the shipped text is two-part and this record no longer describes it. Kept as the run record it was; re-verification is queued in the RELBLK-V19 section below.~~ The **extent** warn fires for both routes (the copy plays the clip's length, not `end_bar`) — one warning per push, naming both placements: `… placed by duplicate of its conformed session clip … but its EXTENT did not: … not the placement's end_bar (3) | … Track.create_audio_clip takes a path and a position and no length … end_bar (7)`; both copies list `length: 8.0`
 - [x] A second push of the unchanged song still plans nothing (no delete, no recreate, no re-emit) — after the re-point: `[clips] skipped (nothing to push)`, zero `DELETED` alerts (the standing per-push envelope re-write noted under chunk 03 box 3 is not a recreate re-emit)
 
 ### Chunk 04 — a ride under a dialogue line
@@ -2112,3 +2112,42 @@ did not.
    against the prose lever itself** — the answer is not a seventh chunk of
    prose, it is to bring the external eval framework in sooner, against the
    corpus already seeded at `.prawduct/artifacts/collaboration-corpus/`.
+
+
+---
+
+## RELBLK-V19 — the release blockers (2026-09-09) — **PENDING**
+
+Plan: `.prawduct/artifacts/plans/RELBLK-V19/build-plan.md`. Backlog **#310**, **#518**, **#505**,
+**#514**, **#501**, **#509**. Every assertion behind these boxes is unit-level; each box below is
+a claim only a real Live session can settle.
+
+**Re-vendor first.** Chunk 03 edits `handlers/clip.py` and chunk 07's siblings touch the push
+path, so the wire fingerprint flips: `/hallucinote:ableton-mcp-install`, then fully quit and
+reopen Live before any box below.
+
+- [ ] **#509 — the region write actually bounds playback.** An audio placement's arrangement copy
+  plays only the authored span. Both routes: duplicate-of-session (region starts at the conformed
+  `start_marker`) and direct create (starts at Live's 0). The block still runs the file's length —
+  confirm it is SILENT after the region ends rather than continuing.
+- [ ] **#509 — the residual is real, not theoretical.** A placement whose block overruns into a
+  later placement on the same track: confirm what Live actually does, since the operator text now
+  tells the user to shorten in Live when a collision occurs.
+- [ ] **#509 — an UNWARPED clip is skipped, not mistrimmed.** `warping = 0` puts Live's markers in
+  seconds while the placement is authored in bars. Confirm no region is written and the skip is
+  named. The deeper case: a row with `warping` unset on the direct-create route, where the authored
+  warp does not travel — confirm which unit Live ends up in.
+- [ ] **#505 — a failed replace leaves the clip intact in a real set.** An audio path onto a MIDI
+  track, and the MIDI direction. The unit tests use a fake LOM whose refusal STRING is not probed
+  verbatim; this box is what confirms Live refuses where the fake says it does.
+- [ ] **#310 — the advisory is honest against a real User Library.** Already observed once during
+  the build (`matches_mcp_server: true` with `matches_vendored_content: false`,
+  `differing_paths: ["__init__.py", "install_ops.py", "install_paths.py"]`). Re-confirm AFTER the
+  re-vendor above: the advisory should go quiet, and editing `analyzer/setup.py` should flip it
+  again while the handshake stays green.
+- [ ] **#518 — the printed pin recipe works from a genuinely mismatched session.** The recipe was
+  executed successfully against this machine during the build, but not from a real refusal.
+  Provoke the version mismatch, paste what the CLI prints, confirm the push then runs.
+- [ ] **#514 — capture→cleanup→capture converges on a real set.** Open a set still holding the
+  default scaffold, capture, accept the cleanup offer, capture again: the second round must emit
+  zero net link changes. Then confirm a scaffold-NAMED track carrying a device survives capture.

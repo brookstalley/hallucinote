@@ -1,14 +1,19 @@
 ---
 artifact: build-plan
 version: 2
-scope: open-bug-sweep
+scope: BUGSWEEP-0910
 branch: docs/backlog-bug-readiness
 partition: >-
   parallel in two waves — wave 1's seven chunks own disjoint file sets by construction;
   wave 2 holds the four chunks that contend for cli.py / push_execute.py / links.py with
   each other or with wave 1, plus the one item that needs a live Live session.
 last_validated: 2026-09-10
+lifecycle: completed
+archived: 2026-09-10
+maintained: false
 ---
+
+> **Archived — no longer maintained.** This plan records what was built, not what will be. Do not edit it to reflect later changes; write those where they are true.
 
 # Build plan — close every open `kind: bug` item
 

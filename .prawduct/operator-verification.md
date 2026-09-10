@@ -13,6 +13,24 @@ pending entries when `operator_verification_required: true`.
 > round-trip, and **MIX-3S7P** chunk-2 render verification. New entries added *after*
 > this date are not covered and block PRs as usual.
 
+> **2026-09-10 — the gate is deliberately NOT armed for this release (owner
+> ruling).** `operator_verification_required` is absent from
+> `project-state.yaml`, so `check-operator-verification` exits 0 while entries
+> below sit unticked. That was surfaced as a release decision and the owner chose
+> to ship this release with the gate off rather than arm it and work the queue
+> down under time pressure.
+>
+> **Read the exit code accordingly: the gate passing means the requirement is
+> off, not that anything was verified.** This release's Live-side claims rest on
+> the two 2026-09-10 sittings recorded below and on nothing else — where a box
+> below is unticked, the thing it describes is unwitnessed, and each sitting says
+> per box which is which. The release is not asserting otherwise; #541 already
+> narrowed the one claim (`#322`) that had over-reached.
+>
+> This is a per-release decision, not a standing one. Arming the gate was
+> explicitly left open for a later release, so a future reader should not read the
+> absent key as settled policy.
+
 ---
 
 ## #322 — does the fence hold against a real Live, and does it ever wedge? (2026-09-10) — **RUN 2026-09-10 on Live 12.4.5. TWO BOXES PASS, THE OTHER FOUR ARE UNREACHABLE, AND THE SITTING FOUND A DEFECT THE FAKES CANNOT SEE.**

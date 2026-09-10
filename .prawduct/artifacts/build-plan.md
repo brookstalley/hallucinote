@@ -164,6 +164,47 @@ LOM objects). The point is explicitness, not narrowing: the set of values
 server-side `coerce_wire_value` stays exactly as it is — #508 rejected typing *as
 a substitute for* coercion, not typing *alongside* it.
 
+### The release's two governance gaps, dispositioned (owner rulings, 2026-09-10)
+
+Both were surfaced as release decisions and both were ruled by the owner while
+this plan's chunks were being built.
+
+**The operator-verification gate stays unarmed for this release.** The ruling and
+what it does and does not mean are recorded at the top of
+`.prawduct/operator-verification.md`, which is where a reader of that file's exit
+code will actually look. Arming it was left open for a later release, so the
+absent key is a per-release decision rather than settled policy.
+
+**The six planless release-pending scopes were five mis-readings and one correct
+one.** The owner chose to retro-record the code-bearing scopes and explicitly
+accept the rest; working the list turned up that most of it needed no record at
+all:
+
+- `BUGSWEEP-0910` — **the plan existed all along.**
+  `.prawduct/artifacts/build-plan-open-bugs.md` is the complete plan for exactly
+  that work (B1–B12, #291 as B8, #322 as B9, cumulative Critic closed), but its
+  frontmatter said `scope: open-bug-sweep` while the change-log entry says
+  `scope=BUGSWEEP-0910`, and nothing else in the change log used the former — an
+  orphaned tag, so the gate could not pair them. Retagged to `BUGSWEEP-0910` and
+  archived as completed, which is what its all-ticked Status had earned. No
+  document was written; one tag was corrected.
+- `CHAIN-RESTORE-STR` — genuinely planless, and **correctly so.** It is a
+  one-branch, one-branch-of-one-function bugfix (`_param_write_kwargs`'s
+  continuous branch sending a float at a `str` wire field). By the size heuristic
+  in `/prawduct:methodology building` that is *small* work, whose governance is
+  "understand + build + verify + update affected artifacts" — a build plan is not
+  among them. Its change-log entry is unusually thorough and carries everything a
+  plan would have. Writing a retrospective plan here would have manufactured an
+  artifact the methodology never asked for.
+- `docs-hygiene`, `governance-file-sizes`, `advisory-clearing`,
+  `effort-s-burndown` — docs and chore scopes, same reasoning as
+  `CHAIN-RESTORE-STR` and more so. Accepted as shipping planless, on the record.
+
+So `check-releasability`'s warning is sound as a prompt and wrong as a verdict:
+"no plan describes this" is a defect only when the work was big enough to need
+one. Five of the six warnings were the gate asking a question that had a good
+answer.
+
 ## Chunks
 
 ### Chunk 01: chain-rebuild addresses the post-rebuild chain, and a shortfall cannot exit 0

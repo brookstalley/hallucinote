@@ -197,8 +197,9 @@ naming each offending surface, warns on mute, and records per-surface `solo` / `
 Returns are in because a return is a Track in Live and carries solo: soloing one
 silences every regular track's direct output — the same wrong mix through the
 collection that is easy to miss. `handlers/` is fingerprinted, so this does not exist
-in Live until the Remote Script is re-vendored and Live fully restarted; five boxes are
-queued in `operator-verification.md`.
+in Live until the Remote Script is re-vendored and Live fully restarted; the boxes for it
+are queued in `operator-verification.md`. The read-side half is not on that clock —
+`server_side/` sits outside the fingerprint, so the summary change takes effect at once.
 
 **The tests were the third defect, and the user named it: *"tests are suspect if that
 shipped."*** They were. The `sum_reconciliation` tests asserted it was present, that

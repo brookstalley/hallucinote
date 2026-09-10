@@ -12,17 +12,21 @@ governed_by:
     dispositions:
       - "Refuse-and-teach over silent wrong behavior, at every boundary → conforms (02 refuses a render under a soloed track and names the tracks; 01 turns an already-measured disqualification into a blocking finding instead of a field nobody reads)"
       - "Errors teach — structured recovery information, never a bare string → conforms (02's refusal names each offending track and the one-gesture fix; 01's finding carries the correlation and the offset it was disqualified on)"
-      - "The MCP surface is versioned by content fingerprint → 02 touches `handlers/` and `actions/`, which ARE fingerprinted: the fix does not reach Live until the operator re-vendors, and the plan says so rather than letting it be discovered"
+      - "The MCP surface is versioned by content fingerprint → 02 touches `handlers/`, which IS fingerprinted: the solo guard does not reach Live until the operator re-vendors and restarts. 01's `server_side/analysis.py` is deliberately OUTSIDE the fingerprint, so the read-side half takes effect at once — the two halves of this scope ship on different clocks, and the plan says so rather than letting it be discovered"
       - "No compatibility shims for consumers that cannot exist → conforms (the manifest and compare payload gain fields, and both are read defensively — `master_deltas_refused` is ABSENT rather than null on a healthy report, and manifests predating `mixer_state` stay readable)"
       - "Mutator signatures are keyword-only after conn, and every mutator accepts actor/reason → inapplicable because nothing here writes to the DB; every change is on the analysis read path or the render handler"
       - "Timing transforms stay in the engine and off the MCP surface → inapplicable because nothing here touches timing"
       - "The MCP tool surface stays inside the band where tool-selection accuracy holds → conforms (no tool and no action is added; `ableton_render(start)` gains a refusal and two manifest keys)"
       - "These interfaces stay internally scoped → conforms (nothing changes about what is published)"
 partition: >
-  serial, and deliberately ordered weakest-dependency-first. Chunk 01 owns
-  `audio/{analyze,compare,report}.py` + tests; chunk 02 owns
-  `handlers/render.py`, `actions/render.py` + tests. No file is named by both,
-  and neither imports the other. 01 goes first because it is the guard that
+  serial, and deliberately ordered weakest-dependency-first. Chunk 01 owns the
+  analysis read path — `audio/analyze.py`, `audio/compare.py`,
+  `audio/reconcile.py` (which ends up owning the disqualification predicate so
+  the report writer and the baseline differ share one) and
+  `server_side/analysis.py`, where the refusal reaches the operator summary —
+  plus tests; chunk 02 owns `handlers/render.py` + tests; chunk 03 owns
+  `audio/report.py`'s gating maps and its own test file. No file is named by
+  two, and none imports another's. 01 goes first because it is the guard that
   catches the whole class from the read side — including the cases 02's
   refusal cannot anticipate — so if only one ships, it should be 01.
 last_validated: 2026-09-10

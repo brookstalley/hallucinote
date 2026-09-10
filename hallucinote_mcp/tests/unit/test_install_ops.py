@@ -85,6 +85,23 @@ def test_kept_files_present(tmp_path):
         assert (pkg / rel).is_file(), f"{rel} should be kept"
 
 
+def test_vendored_set_has_one_definition(tmp_path):
+    """"What gets vendored" is answered in exactly one place. The copy, the
+    completeness check and the advisory content walk all read
+    ``install_paths.vendor_ignore``, so adding an exclude moves all three
+    together instead of leaving one describing a tree that no longer ships."""
+    source, install_dir, _ = _vendor(tmp_path)
+    pkg = install_dir / "hallucinote_mcp"
+    copied = {
+        os.path.relpath(os.path.join(r, f), pkg).replace(os.sep, "/")
+        for r, _, fs in os.walk(pkg)
+        for f in fs
+    }
+    assert copied == {rel for rel, _ in P.vendored_files(source)}
+    # And an identically-vendored tree reads as current, by construction.
+    assert P.vendored_content_diff(source, pkg) == ()
+
+
 def test_stub_text_matches_install_paths(tmp_path):
     _, install_dir, _ = _vendor(tmp_path)
     assert (install_dir / "__init__.py").read_text(encoding="utf-8") == P.remote_script_stub_text()

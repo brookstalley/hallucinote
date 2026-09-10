@@ -209,6 +209,29 @@ suggested recovery), which restored both lost gain cuts.
   tracks 2, 3, 4 and 5). Two writers on one Live set and one song DB invalidates a drift check
   by construction. Re-run when `alien` has a single writer.
 
+### Filed, and the branch that will collide with the fixes
+
+- **#532** — chain-rebuild ignores live devices the DB does not author (Defect A).
+- **#533** — chain-rebuild's param restore sends a float, wire wants str (Defect B). Mechanism
+  confirmed in code: `_param_write_kwargs` (`src/hallucinote/sync/chain_rebuild.py`) returns
+  `{"value": float(value), "value_type": "continuous"}` while `set_parameter` declares
+  `ParamSpec(name="value", type="str")` (`hallucinote_mcp/.../actions/device.py`). The enum
+  branch immediately above already passes a string and works; only the continuous branch is
+  wrong, unconditionally.
+- **#534** — `_PARAM_EPSILON` is absolute and step-blind. Ordered *after* #533: it is
+  unobservable until the restore can actually write, and becomes load-bearing the same day.
+
+**`bug/b8-chainrebuild` is unmerged and rewrites this same file** (−126/+32 against
+`origin/develop`) **without fixing either defect** — it still carries `{"value": float(value)}`
+and `abs(before - after) > _PARAM_EPSILON` with the same absolute constant. Whoever takes #533
+or #534 should land on top of b8 or land b8 first; opening a third branch in this file
+independently will conflict.
+
+**A note the docstring earns:** `_param_write_kwargs` promises "the round trip is exact because
+it is the same scale in both directions". The measurements above show that claim is **true** —
+write-then-read is exact to ~1e-8 relative on real Live. The design was right; only the wire
+call was wrong, which is why the bug survived review.
+
 ### Coordination hazard worth recording
 
 This sitting mutates a real song. It ran while an authoring agent was also editing `alien`,

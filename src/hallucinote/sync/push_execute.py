@@ -27,6 +27,7 @@ import json
 import logging
 import os
 import sqlite3
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -52,6 +53,143 @@ logger = logging.getLogger(__name__)
 EXIT_OK = 0
 EXIT_PARTIAL = 1
 EXIT_CONNECTION_LOST = 2
+
+
+# MCP-7J2Q: a main-thread call that outran Live's ceiling comes back as an
+# ESCALATION — ok=True, code='work_escalated', carrying a job handle — because
+# Python cannot interrupt a Live API call, so neither "done" nor "failed" is
+# true yet. The executor must not read that as success (the write has not
+# landed) nor as failure (it may still land): it polls the handle to a terminal
+# state and reports what actually happened.
+_ESCALATION_CODE = "work_escalated"
+# How long to wait between polls, and how long to keep polling before giving
+# up. The ceiling is generous because the escalated operation is uncancellable
+# — a device load of a large Max device is the witnessed case — and because
+# giving up does not stop it. When it expires the step FAILS honestly, naming
+# the job so an operator can keep watching it.
+_ESCALATION_POLL_INTERVAL_S = 2.0
+_ESCALATION_POLL_CEILING_S = 600.0
+
+
+@dataclass
+class _PolledResponse:
+    """Response-shaped stand-in for the terminal outcome of an escalated call.
+
+    The dispatch loop duck-types responses (``ok`` / ``result`` / ``error`` /
+    ``hint``), so the polled outcome substitutes for the escalation reply and
+    every downstream branch — fallbacks, apply, error records — reads the real
+    answer instead of a handle.
+    """
+
+    ok: bool
+    result: Any = None
+    error: str | None = None
+    hint: str | None = None
+    code: str | None = None
+
+
+def _escalated_job_id(resp: Any) -> str | None:
+    """The job id of an escalation reply, or ``None`` for an ordinary one.
+
+    Reads BOTH the ``code`` discriminator and the ``escalated`` flag in the
+    result: the code is the contract, and the payload flag is what survives a
+    client that does not carry ``code`` through on the ok path.
+    """
+    if not bool(getattr(resp, "ok", False)):
+        return None
+    payload = getattr(resp, "result", None)
+    flagged = (
+        isinstance(payload, dict) and payload.get("escalated") is True
+    )
+    if getattr(resp, "code", None) != _ESCALATION_CODE and not flagged:
+        return None
+    job_id = payload.get("job_id") if isinstance(payload, dict) else None
+    return str(job_id) if job_id else None
+
+
+def _await_escalated(
+    *,
+    job_id: str,
+    label: str,
+    send_fn: Callable[..., Any],
+    request_cls: type,
+    progress_fn: Callable[[str], None],
+    warnings_sink: Callable[[str], None],
+) -> _PolledResponse:
+    """Poll an escalated main-thread call to a terminal state.
+
+    Live is still executing the work; ``ableton_session(action='bout_status')``
+    runs on the worker thread precisely so it can answer while the main thread
+    is fenced. Returns the call's real outcome — its own result on ``done``, an
+    error on ``failed``, and an error naming the job if the ceiling passes with
+    the work still running (which is the honest report: we stopped watching,
+    the work did not stop).
+    """
+    deadline = time.monotonic() + _ESCALATION_POLL_CEILING_S
+    progress_fn(
+        f"[escalated] {label} outran Live's ceiling and is still running — "
+        f"polling job {job_id}"
+    )
+    while True:
+        poll = send_fn(request_cls(
+            tool="ableton_session",
+            action="bout_status",
+            params={"job_id": job_id},
+        ))
+        if not bool(getattr(poll, "ok", False)):
+            return _PolledResponse(
+                ok=False,
+                error=(
+                    f"{label} was escalated to job {job_id} and the poll for "
+                    f"it failed: {getattr(poll, 'error', None)}"
+                ),
+                hint=(
+                    "The original call may still be running on Live's main "
+                    "thread. Check ableton_session(action='bout_status') "
+                    "before re-pushing — a retry queues behind work Live "
+                    "cannot cancel."
+                ),
+            )
+        job = (getattr(poll, "result", None) or {}).get("job") or {}
+        state = job.get("state")
+        if state == "done":
+            warnings_sink(
+                f"{label}: outran Live's main-thread ceiling and was polled "
+                f"to completion via job {job_id} — the call succeeded, it was "
+                f"just slower than the ceiling allows"
+            )
+            return _PolledResponse(ok=True, result=job.get("result"))
+        if state == "failed":
+            return _PolledResponse(
+                ok=False,
+                error=(
+                    f"{label} (escalated to job {job_id}) failed in Live: "
+                    f"{job.get('error')}"
+                ),
+                hint=(
+                    "The call outran Live's main-thread ceiling and then "
+                    "failed. The error above is Live's own; the escalation "
+                    "only changed how it was reported."
+                ),
+            )
+        if time.monotonic() >= deadline:
+            return _PolledResponse(
+                ok=False,
+                error=(
+                    f"{label} (escalated to job {job_id}) was STILL RUNNING "
+                    f"after {_ESCALATION_POLL_CEILING_S:.0f}s of polling. It "
+                    f"has not failed — Live cannot be made to abandon it — "
+                    f"but this push stopped waiting for it."
+                ),
+                hint=(
+                    f"Poll it yourself with ableton_session("
+                    f"action='bout_status', job_id='{job_id}'). Do NOT "
+                    f"re-push until it reaches a terminal state: every call "
+                    f"you send now queues behind it, which is how a slow "
+                    f"operation becomes an unresponsive Live."
+                ),
+            )
+        time.sleep(_ESCALATION_POLL_INTERVAL_S)
 
 
 # PSH-3K9D chunk 2: emit a mid-phase progress heartbeat every this-many dispatched
@@ -1270,6 +1408,20 @@ def execute_push(
                 send_kwargs["read_timeout"] = call.read_timeout
             try:
                 resp = send_fn(req, **send_kwargs)
+                # MCP-7J2Q: an escalation is neither success nor failure — the
+                # work is still executing inside Live. Resolve it to the real
+                # outcome before ANY downstream branch reads ``ok``, so an
+                # unfinished write is never counted as an applied one.
+                escalated_job = _escalated_job_id(resp)
+                if escalated_job is not None:
+                    resp = _await_escalated(
+                        job_id=escalated_job,
+                        label=f"{call.tool}({action!r})",
+                        send_fn=send_fn,
+                        request_cls=Request,
+                        progress_fn=_emit_progress,
+                        warnings_sink=warning_messages.append,
+                    )
             except _CONNECTION_EXCS as exc:
                 # Connection-class failure (Live unreachable, socket error).
                 # Halt immediately — no point continuing without Live. Wire

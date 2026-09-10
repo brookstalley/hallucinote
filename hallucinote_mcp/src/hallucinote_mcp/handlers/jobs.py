@@ -26,7 +26,15 @@ from typing import Any, Callable, Literal
 from uuid import uuid4
 
 JobState = Literal["running", "done", "failed"]
-JobKind = Literal["render", "analyze"]
+JobKind = Literal["render", "analyze", "main_thread"]
+"""What produced the job.
+
+``render`` and ``analyze`` are the two async start+poll surfaces.
+``main_thread`` is an ESCALATION: a ``run_on_main`` bout that outran its
+ceiling is still executing on Live's main thread (Python cannot interrupt a
+Live API call), so the caller is handed a job to observe rather than a
+failure that is a lie. Its work was never started by this registry — the
+runner on Live's main thread settles it when it finally returns."""
 
 # The status long-poll window — how long a ``status`` call waits for a job to
 # leave ``running`` before returning, so the agent's poll loop is a handful of
@@ -68,12 +76,17 @@ class Job:
 
     job_id: str
     kind: JobKind
-    dir: str  # captures_dir (render) | report_dir (analyze), absolute
+    #: Per-kind facts that ride along on BOTH the ``start`` and ``status``
+    #: payloads, merged in verbatim. Render populates ``{captures_dir,
+    #: expected_stop_beat}``, analyze ``{report_dir}``, an escalated
+    #: main-thread bout ``{label, elapsed_s}``. A dict rather than one
+    #: per-kind field apiece: three kinds through a two-way ``if kind ==``
+    #: branch is how the fourth becomes unwritable.
+    detail: dict[str, Any] = field(default_factory=dict)
     state: JobState = "running"
     created_at: str = field(default_factory=_utc_now_iso)
     updated_at: str = field(default_factory=_utc_now_iso)
     eta_seconds: int | None = None
-    expected_stop_beat: int | None = None  # render only
     progress: dict[str, Any] = field(default_factory=dict)
     result: dict[str, Any] | None = None  # set on state == "done"
     error: str | None = None  # set on state == "failed"
@@ -97,12 +110,7 @@ class Job:
             "eta_seconds": self.eta_seconds,
             "poll": poll_text,
         }
-        if self.kind == "render":
-            out["captures_dir"] = self.dir
-            if self.expected_stop_beat is not None:
-                out["expected_stop_beat"] = self.expected_stop_beat
-        else:
-            out["report_dir"] = self.dir
+        out.update(self.detail)
         return out
 
     def status_result(self) -> dict[str, Any]:
@@ -114,20 +122,26 @@ class Job:
             "state": self.state,
             "progress": dict(self.progress),
         }
-        if self.kind == "render":
-            out["captures_dir"] = self.dir
-        else:
-            out["report_dir"] = self.dir
+        out.update(self.detail)
         if self.state == "done" and self.result is not None:
+            # The terminal payload IS per-kind — each kind's result carries a
+            # different thing — so this branch stays explicit. Every kind is
+            # named: a bare ``else`` would hand one kind's key names to the
+            # next kind that gets added.
             if self.kind == "render":
                 out["manifest"] = self.result.get("manifest")
                 out["manifest_path"] = self.result.get("manifest_path")
                 # 'ok' | 'incomplete' from the render itself (distinct from the
                 # job state, which is 'done' once the render returns at all).
                 out["render_status"] = self.result.get("status")
-            else:
+            elif self.kind == "analyze":
                 out["report"] = self.result.get("report")
                 out["report_path"] = self.result.get("report_path")
+            elif self.kind == "main_thread":
+                # What the escalated Live call actually returned, so a consumer
+                # that polled to ``done`` gets the result it would have got had
+                # the call landed inside its ceiling — not just "it finished".
+                out["result"] = self.result.get("result")
         if self.state == "failed" and self.error is not None:
             out["error"] = self.error
         return out
@@ -150,30 +164,24 @@ class JobRegistry:
         self,
         *,
         kind: JobKind,
-        dir: str,
+        detail: dict[str, Any] | None,
         eta_seconds: int | None,
-        expected_stop_beat: int | None,
     ) -> Job:
         return Job(
             job_id=f"{kind}-{uuid4().hex[:12]}",
             kind=kind,
-            dir=dir,
+            detail=dict(detail or {}),
             eta_seconds=eta_seconds,
-            expected_stop_beat=expected_stop_beat,
         )
 
     def create(
         self,
         *,
         kind: JobKind,
-        dir: str,
+        detail: dict[str, Any] | None = None,
         eta_seconds: int | None = None,
-        expected_stop_beat: int | None = None,
     ) -> Job:
-        job = self._build_job(
-            kind=kind, dir=dir, eta_seconds=eta_seconds,
-            expected_stop_beat=expected_stop_beat,
-        )
+        job = self._build_job(kind=kind, detail=detail, eta_seconds=eta_seconds)
         with self._lock:
             self._jobs[job.job_id] = job
             self._order.append(job.job_id)
@@ -183,9 +191,8 @@ class JobRegistry:
         self,
         *,
         kind: JobKind,
-        dir: str,
+        detail: dict[str, Any] | None = None,
         eta_seconds: int | None = None,
-        expected_stop_beat: int | None = None,
     ) -> "tuple[Job, bool]":
         """Atomic one-at-a-time-per-kind claim. Returns ``(job, created)``:
 
@@ -204,8 +211,7 @@ class JobRegistry:
                 if existing.kind == kind and existing.state == "running":
                     return existing, False
             job = self._build_job(
-                kind=kind, dir=dir, eta_seconds=eta_seconds,
-                expected_stop_beat=expected_stop_beat,
+                kind=kind, detail=detail, eta_seconds=eta_seconds,
             )
             self._jobs[job.job_id] = job
             self._order.append(job.job_id)

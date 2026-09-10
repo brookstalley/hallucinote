@@ -908,16 +908,18 @@ def render_start_handler(
     # start while one runs returns a busy handle pointing at the live job.
     job, created = registry.create_if_idle(
         kind="render",
-        dir=output_dir,
+        detail={
+            "captures_dir": output_dir,
+            "expected_stop_beat": expected_stop_beat,
+        },
         eta_seconds=eta_seconds,
-        expected_stop_beat=expected_stop_beat,
     )
     if not created:
         return {
             "busy": True,
             "job_id": job.job_id,
             "state": job.state,
-            "captures_dir": job.dir,
+            "captures_dir": job.detail.get("captures_dir"),
             "message": (
                 "A render is already running (one at a time). Poll it with "
                 f"ableton_render(action='status', job_id='{job.job_id}'), "

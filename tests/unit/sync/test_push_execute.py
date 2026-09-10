@@ -3576,3 +3576,189 @@ def test_a_failed_region_write_is_reported_and_says_re_push(
         "the push stopped at the arrangement phase, so a refused region write "
         f"halted it after all: {phases_run}"
     )
+
+
+# ---------------------------------------------------------------------------
+# MCP-7J2Q: a main-thread call that outran Live's ceiling (an escalation)
+#
+# The escalation reply is ok=True and carries a job handle, because the work is
+# STILL RUNNING inside Live — Python cannot interrupt a Live API call, so it has
+# neither succeeded nor failed. Counting it as ``calls_ok`` would record a write
+# that has not landed; counting it as a failure would be a second lie. The
+# executor polls the handle to a terminal state and reports what happened.
+# ---------------------------------------------------------------------------
+
+
+def _escalating_send_fn(
+    *,
+    escalate_on: str,
+    job_states: list[dict],
+    job_id: str = "main_thread-abc123",
+    carry_code: bool = False,
+):
+    """Wrap the standard fake so ONE (tool:action) escalates the first time.
+
+    ``job_states`` is consumed one entry per ``bout_status`` poll, so a test
+    can make the job read ``running`` before it lands. ``carry_code`` toggles
+    whether the reply carries the ``code`` discriminator — a client that drops
+    it on the ok path must still be understood via the payload's
+    ``escalated`` flag.
+    """
+    inner = _make_send_fn()
+    escalated: dict[str, bool] = {}
+    polls: list[str] = []
+
+    def send(req, *, read_timeout=None):
+        composite = f"{req.tool}:{req.action}"
+        if req.tool == "ableton_session" and req.action == "bout_status":
+            polls.append(req.params.get("job_id"))
+            state = job_states[min(len(polls) - 1, len(job_states) - 1)]
+            return FakeResponse(ok=True, result={
+                "occupied": state.get("state") == "running",
+                "job": {"job_id": job_id, "kind": "main_thread", **state},
+            })
+        if composite == escalate_on and not escalated.get(composite):
+            escalated[composite] = True
+            resp = FakeResponse(ok=True, result={
+                "escalated": True,
+                "job_id": job_id,
+                "label": composite,
+                "elapsed_s": 121.5,
+                "poll": "poll me with ableton_session(action='bout_status')",
+            })
+            if carry_code:
+                resp.code = "work_escalated"  # type: ignore[attr-defined]
+            return resp
+        return inner(req, read_timeout=read_timeout)
+
+    send.polls = polls  # type: ignore[attr-defined]
+    send.inner_log = inner.call_log  # type: ignore[attr-defined]
+    return send
+
+
+def test_escalated_call_is_polled_to_done_and_applied(
+    conn, song, session, tiny_song, state_dir, monkeypatch,
+):
+    """The clip create outran the ceiling, then landed. The step succeeds with
+    the CALL'S OWN result — the link index Live actually produced — not with
+    the handle, and the push reads clean."""
+    monkeypatch.setattr(push_execute, "_ESCALATION_POLL_INTERVAL_S", 0.0)
+    send_fn = _escalating_send_fn(
+        escalate_on="ableton_clip:create",
+        job_states=[
+            {"state": "running"},
+            {"state": "done", "result": {"clip_index": 1}},
+        ],
+    )
+
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn,
+    )
+
+    assert result.outcome == "ok", result.errors_file
+    assert result.exit_code == push_execute.EXIT_OK
+    # It polled — twice, because the first poll still read ``running``.
+    assert send_fn.polls == ["main_thread-abc123", "main_thread-abc123"]
+    # And the link the escalated call produced is in the DB, so the result
+    # really was applied rather than the handle being applied in its place.
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="clip", db_id=tiny_song["clip_id"],
+    ) == 1
+    said = " ".join(result.warnings)
+    assert "outran Live's main-thread ceiling" in said, result.warnings
+
+
+def test_escalation_is_recognised_from_either_signal(
+    conn, song, session, tiny_song, state_dir, monkeypatch,
+):
+    """``code='work_escalated'`` is the contract, and the payload's
+    ``escalated`` flag is what survives a transport that does not carry
+    ``code`` through on the ok path. Either one alone has to be enough — the
+    cost of missing it is applying a write that has not landed."""
+    monkeypatch.setattr(push_execute, "_ESCALATION_POLL_INTERVAL_S", 0.0)
+    for carry_code in (True, False):
+        c = init_db(state_dir / f"code-{carry_code}.db")
+        try:
+            sid = M.create_song(c, name="t", key="Dm")
+            sess = M.create_ableton_session(c, song_id=sid, name="draft")
+            tid = M.create_track(
+                c, song_id=sid, track_index=1, name="Drums", kind="midi",
+            )
+            M.create_clip(c, track_id=tid, slot=1, length_beats=4.0, name="l")
+            send_fn = _escalating_send_fn(
+                escalate_on="ableton_clip:create",
+                job_states=[{"state": "done", "result": {"clip_index": 1}}],
+                carry_code=carry_code,
+            )
+            result = push_execute.execute_push(
+                conn=c, song_id=sid, session_id=sess,
+                state_dir=state_dir, send_fn=send_fn,
+            )
+            assert result.outcome == "ok", (carry_code, result.errors_file)
+            assert send_fn.polls == ["main_thread-abc123"], carry_code
+        finally:
+            c.close()
+
+
+def test_escalated_call_that_fails_in_live_fails_the_step(
+    conn, song, session, tiny_song, state_dir, monkeypatch,
+):
+    """Polled to ``failed`` — Live's own error is what reaches the operator,
+    and the phase halts on it like any other failure."""
+    monkeypatch.setattr(push_execute, "_ESCALATION_POLL_INTERVAL_S", 0.0)
+    send_fn = _escalating_send_fn(
+        escalate_on="ableton_clip:create",
+        job_states=[{"state": "failed", "error": "clip slot occupied"}],
+    )
+
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn,
+    )
+
+    assert result.outcome == "partial"
+    assert result.exit_code == push_execute.EXIT_PARTIAL
+    errors = json.loads((state_dir / ".last-push-errors.json").read_text())
+    blob = json.dumps(errors)
+    assert "clip slot occupied" in blob
+    assert "main_thread-abc123" in blob
+
+
+def test_an_escalation_that_never_lands_is_not_counted_as_a_success(
+    conn, song, session, tiny_song, state_dir, monkeypatch,
+):
+    """The inverse of the old bug, from the consumer's side. The work is still
+    running; we stopped watching. That must read as a failed step naming the
+    job — never as ``calls_ok``, which would record a write that has not
+    happened."""
+    monkeypatch.setattr(push_execute, "_ESCALATION_POLL_INTERVAL_S", 0.0)
+    monkeypatch.setattr(push_execute, "_ESCALATION_POLL_CEILING_S", 0.0)
+    send_fn = _escalating_send_fn(
+        escalate_on="ableton_clip:create",
+        job_states=[{"state": "running"}],
+    )
+
+    result = push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn,
+    )
+
+    assert result.outcome == "partial"
+    assert result.exit_code == push_execute.EXIT_PARTIAL
+    errors = json.loads((state_dir / ".last-push-errors.json").read_text())
+    blob = json.dumps(errors)
+    assert "STILL RUNNING" in blob
+    assert "main_thread-abc123" in blob
+    assert "Do NOT" in blob and "re-push" in blob
+    # No clip link was written — the escalated create never landed.
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="clip", db_id=tiny_song["clip_id"],
+    ) is None
+
+
+def test_escalated_job_id_ignores_an_ordinary_success():
+    assert push_execute._escalated_job_id(
+        FakeResponse(ok=True, result={"clip_index": 3})
+    ) is None
+    assert push_execute._escalated_job_id(FakeResponse(ok=False, error="x")) is None

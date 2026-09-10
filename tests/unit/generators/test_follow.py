@@ -1,4 +1,10 @@
-"""The pitch follower: an F0 contour in beats becomes tagged notes and bends.
+"""The pitch follower: an F0 contour in beats becomes tagged notes.
+
+The follower emits notes and nothing else. A per-note pitch envelope has no
+push path — Live's Python API exposes no per-note expression surface at all
+(#515) — so ``bend='note_expression'`` is refused at author time, and the
+refusal is what the tests below hold. An envelope shape pinned here would be
+a contract on an artifact that can never reach a clip.
 
 Every stream here is synthesized from MIDI numbers through the inverse of
 the Hz→MIDI mapping, so the expected pitches are exact and no audio is
@@ -77,40 +83,6 @@ def test_stepped_contour_yields_exactly_its_steps():
     assert out.envelopes == []
 
 
-def test_stepped_contour_carries_no_bend_because_nothing_moves():
-    stream = contour([(60, 1.0), (64, 1.0)])
-    out = follow_pitch(stream, key=None, register=(48, 84), bend="note_expression")
-    assert pitches(out) == [60, 64]
-    assert out.envelopes == []
-
-
-def test_glide_yields_one_note_with_a_bend():
-    # Two semitones over one beat: no half-semitone dwell lasts 0.75 beats,
-    # so the gesture is one note centred on its median with the motion as
-    # a bend around it.
-    stream = contour([((60.0, 62.0), 1.0)])
-    out = follow_pitch(
-        stream, key=None, register=(48, 84), min_note_beats=0.75,
-        bend="note_expression",
-    )
-    assert pitches(out) == [61]
-    assert len(out.envelopes) == 1
-    env = out.envelopes[0]
-    assert env["target_kind"] == "note_expression"
-    assert env["parameter_path"] == "pitch"
-    assert env["note_pitch"] == 61
-    assert env["note_start_beats"] == pytest.approx(0.0)
-    assert env["note_duration"] == pytest.approx(1.0)
-    times = [bp["time_beats"] for bp in env["breakpoints"]]
-    values = [bp["value"] for bp in env["breakpoints"]]
-    assert times[0] == pytest.approx(0.0)
-    assert times[-1] < env["note_duration"]
-    assert values[0] == pytest.approx(-1.0, abs=0.06)
-    assert values[-1] == pytest.approx(0.9, abs=0.06)
-    assert all(b > a for a, b in zip(values, values[1:]))
-    assert all(bp["curve_kind"] == "linear" for bp in env["breakpoints"])
-
-
 def test_glide_with_bend_none_yields_the_note_and_no_envelope():
     stream = contour([((60.0, 62.0), 1.0)])
     out = follow_pitch(stream, key=None, register=(48, 84), min_note_beats=0.75)
@@ -120,18 +92,17 @@ def test_glide_with_bend_none_yields_the_note_and_no_envelope():
 
 def test_scoop_into_a_held_tone_belongs_to_that_note():
     # A quarter-beat rise into a beat of held pitch: one note starting at
-    # the scoop, pitched by the dwell, whose bend records the rise.
+    # the scoop, pitched by the dwell. The rise is inside the note's span,
+    # not a separate blip — that segmentation is the contract here; the
+    # motion itself has no pushable home (see the refusal tests below).
     stream = contour([((58.0, 60.0), 0.25), (60, 1.0)])
     out = follow_pitch(
         stream, key=None, register=(48, 84), min_note_beats=0.5,
-        bend="note_expression",
     )
     assert pitches(out) == [60]
     assert out.notes[0]["start_beats"] == pytest.approx(0.0)
     assert out.notes[0]["duration_beats"] == pytest.approx(1.25)
-    env = out.envelopes[0]
-    assert env["breakpoints"][0]["value"] == pytest.approx(-2.0)
-    assert env["breakpoints"][-1]["value"] == pytest.approx(0.0)
+    assert out.envelopes == []
 
 
 def test_unvoiced_gaps_yield_rests_not_zero_pitch_notes():
@@ -162,11 +133,10 @@ def test_vibrato_stays_inside_one_note():
     beats = np.arange(0.0, 2.0, HOP)
     midi = 60.0 + 0.3 * np.sin(2 * np.pi * 6.0 * beats)
     stream = BeatStream(name="f0", beats=beats, values=midi_to_hz(midi), units="Hz")
-    out = follow_pitch(stream, key=None, register=(48, 84), bend="note_expression")
+    out = follow_pitch(stream, key=None, register=(48, 84))
     assert pitches(out) == [60]
     assert out.notes[0]["duration_beats"] == pytest.approx(2.0)
-    values = [bp["value"] for bp in out.envelopes[0]["breakpoints"]]
-    assert max(abs(v) for v in values) == pytest.approx(np.max(np.abs(midi - 60.0)))
+    assert out.envelopes == []
 
 
 def test_empty_stream_yields_nothing():
@@ -214,18 +184,14 @@ def test_unknown_mode_teaches_the_known_set():
         follow_pitch(stream, key=(0, "Mixolydic"), register=(48, 84))
 
 
-def test_bend_is_the_residual_around_the_centre_so_the_key_holds():
+def test_a_vibrato_is_still_pitched_by_its_centre_under_the_key():
+    # The key decision is made on the contour's centre, so a wobble around
+    # a pitch does not drag the emitted note off the key's pitch class.
     beats = np.arange(0.0, 2.0, HOP)
     midi = 61.2 + 0.3 * np.sin(2 * np.pi * 6.0 * beats)
     stream = BeatStream(name="f0", beats=beats, values=midi_to_hz(midi), units="Hz")
-    out = follow_pitch(
-        stream, key=(0, "Major"), register=(48, 84), bend="note_expression"
-    )
+    out = follow_pitch(stream, key=(0, "Major"), register=(48, 84))
     assert pitches(out) == [62]
-    values = [bp["value"] for bp in out.envelopes[0]["breakpoints"]]
-    # The vibrato rides around zero; the 0.8-semitone key correction is
-    # not smuggled back in through the envelope.
-    assert max(abs(v) for v in values) < 0.35
 
 
 # ---------------------------------------------------------------------------
@@ -261,6 +227,47 @@ def test_register_too_narrow_for_every_pitch_class_is_refused():
 # ---------------------------------------------------------------------------
 # Refusals that teach
 # ---------------------------------------------------------------------------
+
+
+def test_note_expression_bend_is_refused_at_author_time():
+    """#515: Live's API exposes no per-note expression surface, so a
+    per-note bend has no push path. The follower refuses rather than write
+    envelope rows whose only possible outcome is a failure at push."""
+    stream = contour([((60.0, 62.0), 1.0)])
+    with pytest.raises(NotImplementedError) as exc:
+        follow_pitch(
+            stream, key=None, register=(48, 84), min_note_beats=0.75,
+            bend="note_expression",
+        )
+    msg = str(exc.value)
+    assert "no per-note expression surface" in msg
+    # It routes somewhere: a refusal with no route is as useless to the
+    # author as the failure it prevents.
+    assert "device_parameter" in msg
+    assert "MONOPHONIC" in msg
+    assert "A Fine" in msg
+    assert "bend='none'" in msg
+
+
+def test_note_expression_is_refused_before_any_note_is_emitted():
+    """The refusal is a guard, not a filter applied after the work — a
+    contour that would yield notes never gets partway through."""
+    stream = contour([(60, 1.0), (64, 1.0)])
+    with pytest.raises(NotImplementedError):
+        follow_pitch(stream, key=None, register=(48, 84), bend="note_expression")
+
+
+def test_note_expression_stays_a_named_mode_so_the_refusal_can_teach():
+    """Retained-and-blocked, like the MCP target kind: an unknown-value
+    ValueError would tell an author nothing about why, or where to go."""
+    from hallucinote.generators.follow import _BEND_MODES
+
+    assert "note_expression" in _BEND_MODES
+    stream = contour([(60, 1.0)])
+    with pytest.raises(ValueError, match="bend must be one of"):
+        follow_pitch(
+            stream, key=None, register=(48, 84), bend="clip_pitch_bend",
+        )
 
 
 def test_zero_hz_on_a_voiced_frame_is_refused():

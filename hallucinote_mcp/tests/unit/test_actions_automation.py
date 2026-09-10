@@ -109,8 +109,6 @@ class FakeClip:
     - ``clear_envelope(target)`` removes the envelope for that target
       (idempotent — no error if absent).
     - ``clear_all_envelopes()`` wipes everything.
-    - ``envelope_for_note(pitch, start, axis)`` returns the per-note MPE
-      envelope; note-expression has its own factory in Live's API.
     - ``length`` is the clip's length in beats (W6-G read path samples
       across [0, length]).
     """
@@ -147,14 +145,6 @@ class FakeClip:
             return None
         env = FakeEnvelope(parameter=target)
         self.envelopes_by_target[key] = env
-        return env
-
-    def envelope_for_note(self, pitch: int, start: float, axis: str) -> FakeEnvelope:
-        key = ("note", pitch, start, axis)
-        env = self.envelopes_by_target.get(key)
-        if env is None:
-            env = FakeEnvelope(parameter=key)
-            self.envelopes_by_target[key] = env
         return env
 
 
@@ -441,97 +431,92 @@ def test_write_envelope_clip_cc_translates_typed_boundary_error(loaded_actions):
     assert "replace_notes" in err  # suggests the workaround
 
 
-def test_write_envelope_note_expression(loaded_actions):
-    ctx, clip = _track_with_clip()
-    resp = dispatch(
+# ---------- write_envelope: note_expression is a PERMANENT gap ----------
+#
+# Live's API exposes no per-note expression surface under any name (#515),
+# so the contract here is the refusal and what the refusal teaches. Note
+# what the FakeClip must NOT grow back: a per-note envelope factory. A fake
+# for a method Live does not have makes every assertion above it vacuous.
+
+
+def _note_expression_write(ctx, **extra):
+    params = {
+        "target_kind": "note_expression",
+        "track_index": 1, "location": "session", "clip_index": 1,
+        "breakpoints": [
+            {"time_beats": 0.0, "value": 0.0},
+            {"time_beats": 0.5, "value": 0.5},
+        ],
+    }
+    params.update(extra)
+    return dispatch(
         Request(
-            tool="ableton_automation", action="write_envelope",
-            params={
-                "target_kind": "note_expression",
-                "track_index": 1, "location": "session", "clip_index": 1,
-                "note_pitch": 60, "note_start_beats": 1.0, "axis": "pitch",
-                "breakpoints": [
-                    {"time_beats": 0.0, "value": 0.0},
-                    {"time_beats": 0.5, "value": 0.5},
-                ],
-            },
+            tool="ableton_automation", action="write_envelope", params=params
         ),
         context=ctx,
     )
-    assert resp.ok is True
-    assert ("note", 60, 1.0, "pitch") in clip.envelopes_by_target
-    # note_expression uses envelope_for_note (no pre-clear): insert_step
-    # overwrites the existing breakpoints in the time range.
-    assert ("note", 60, 1.0, "pitch") not in clip.clear_envelope_calls
 
 
-def test_write_envelope_note_expression_extends_tail_to_note_end(loaded_actions):
-    """W7-0 anchor (note_expression branch). When the caller supplies
-    note_duration, the last step's duration must extend to note_duration
-    (per-note envelopes use note-LOCAL coords: [0, note_duration]) so
-    the held value survives to note end. Without it, Live's envelope
-    reverts to default after the last breakpoint, leaving an audible
-    artifact between last_t and note_end — the same pathology the
-    clip-scoped tail anchor fixed for clip_cc / pitch_bend."""
+def test_write_envelope_note_expression_refuses_with_the_reason(loaded_actions):
+    """The refusal states the constraint as it actually is: not "missing on
+    this build" but "no per-note expression surface exists at all"."""
     ctx, clip = _track_with_clip()
-    resp = dispatch(
-        Request(
-            tool="ableton_automation", action="write_envelope",
-            params={
-                "target_kind": "note_expression",
-                "track_index": 1, "location": "session", "clip_index": 1,
-                "note_pitch": 60, "note_start_beats": 1.0,
-                "note_duration": 4.0,  # note spans beats 1.0..5.0 (note-local 0.0..4.0)
-                "axis": "pitch",
-                "breakpoints": [
-                    {"time_beats": 0.0, "value": 0.0},
-                    {"time_beats": 0.5, "value": 0.5},
-                ],
-            },
-        ),
-        context=ctx,
+    resp = _note_expression_write(
+        ctx, note_pitch=60, note_start_beats=1.0, axis="pitch",
     )
-    assert resp.ok is True
-    env = clip.envelopes_by_target[("note", 60, 1.0, "pitch")]
-    # Two insert_step calls: segment (0.0, 0.5, value=0.0) + tail
-    # (0.5, 3.5, value=0.5). The tail's duration covers [last_t,
-    # note_duration] = [0.5, 4.0], so the final value holds for 3.5
-    # beats — survives to the note's end (note-local time 4.0).
-    assert len(env.steps) == 2
-    seg_t, seg_dur, seg_v = env.steps[0]
-    tail_t, tail_dur, tail_v = env.steps[1]
-    assert (seg_t, seg_v) == (0.0, 0.0)
-    assert (tail_t, tail_v) == (0.5, 0.5)
-    assert tail_dur == 3.5  # 4.0 (note-end) - 0.5 (last_t)
+    assert resp.ok is False
+    err = (resp.error or "")
+    assert "note_expression" in err
+    lowered = err.lower()
+    assert "no per-note expression surface" in lowered
+    assert "never existed" in lowered
+    # And it does not reach Live: nothing was written, nothing cleared.
+    assert clip.envelopes_by_target == {}
+    assert clip.clear_envelope_calls == []
 
 
-def test_write_envelope_note_expression_without_duration_falls_back_to_anchor(loaded_actions):
-    """Backwards-compat: omitting note_duration falls back to the legacy
-    zero-duration anchor (matches the original W7-0 design when the
-    caller doesn't know the note's end). Push-side planners always
-    supply note_duration from the DB; the bare-call path keeps the
-    same shape as before this change."""
-    ctx, clip = _track_with_clip()
-    resp = dispatch(
-        Request(
-            tool="ableton_automation", action="write_envelope",
-            params={
-                "target_kind": "note_expression",
-                "track_index": 1, "location": "session", "clip_index": 1,
-                "note_pitch": 60, "note_start_beats": 1.0,
-                "axis": "pitch",
-                "breakpoints": [
-                    {"time_beats": 0.0, "value": 0.0},
-                    {"time_beats": 0.5, "value": 0.5},
-                ],
-            },
-        ),
-        context=ctx,
+def test_write_envelope_note_expression_names_the_route_that_works(loaded_actions):
+    """Asserting the raise alone would hold over a message that sends the
+    caller nowhere. The refusal must name the monophonic device_parameter
+    perform route AND the caveat that decides whether it is usable."""
+    ctx, _ = _track_with_clip()
+    resp = _note_expression_write(
+        ctx, note_pitch=60, note_start_beats=1.0, axis="pitch",
     )
-    assert resp.ok is True
-    env = clip.envelopes_by_target[("note", 60, 1.0, "pitch")]
-    # Tail step has zero duration (legacy anchor behavior).
-    assert env.steps[-1] == (0.5, 0.0, 0.5)
+    err = (resp.error or "")
+    assert "perform_batch" in err
+    assert "device_parameter" in err
+    assert "monophonic" in err.lower()
+    assert "A Fine" in err          # the parameter to reach for
+    assert "1000.0" in err          # its unipolar ratio-tail range
+    assert "165" in err             # Fine=100 is +165 cents, not +100
+    assert "MidiPitcher" in err     # and why Pitch is not the alternative
+
+
+def test_write_envelope_note_expression_refuses_before_arg_validation(loaded_actions):
+    """Refused unconditionally, addressing args included. Telling a caller
+    they forgot ``axis`` would send them to fix an argument on a call that
+    can never work — the wall-routing this issue exists to remove."""
+    ctx, _ = _track_with_clip()
+    resp = _note_expression_write(ctx)  # no note_pitch / start / axis at all
+    assert resp.ok is False
+    err = (resp.error or "").lower()
+    assert "no per-note expression surface" in err
+    assert "requires note_pitch" not in err
+
+
+def test_write_envelope_note_expression_stays_on_the_wire(loaded_actions):
+    """Retained-and-blocked, not removed: dropping the kind from
+    TARGET_KINDS would answer a documented call with "not in [...]", which
+    teaches nothing and breaks an exposed MCP surface."""
+    from hallucinote_mcp.handlers.automation import TARGET_KINDS
+
+    assert "note_expression" in TARGET_KINDS
+    ctx, _ = _track_with_clip()
+    resp = _note_expression_write(
+        ctx, note_pitch=60, note_start_beats=1.0, axis="pitch",
+    )
+    assert "not in [" not in (resp.error or "")
 
 
 def test_write_envelope_note_expression_invalid_axis(loaded_actions):
@@ -1397,9 +1382,10 @@ def test_clear_mixer_volume_clip_scoped(loaded_actions):
     assert track.mixer_device.volume in clip.clear_envelope_calls
 
 
-def test_clear_note_expression_raises_teaching_error(loaded_actions):
-    """note_expression clear isn't exposed in Live 12.4 — surface the gap
-    rather than silently doing nothing or crashing.
+def test_clear_note_expression_refuses_identically(loaded_actions):
+    """Clear says the same thing as write and read: there is nothing to
+    clear, because the kind was never writable. A clear-specific story
+    about a missing symmetric factory would imply a write path exists.
     """
     ctx, _ = _track_with_clip()
     resp = dispatch(
@@ -1414,22 +1400,18 @@ def test_clear_note_expression_raises_teaching_error(loaded_actions):
         context=ctx,
     )
     assert resp.ok is False
-    err = (resp.error or "").lower()
-    assert "note_expression" in err
-    assert "clear_all" in err  # points at the working alternative
+    err = (resp.error or "")
+    assert "no per-note expression surface" in err.lower()
+    assert "perform_batch" in err
+    # Not clear_all either: it is not "the working alternative" here,
+    # because there is no per-note envelope for it to clear.
+    assert "clear_all" not in err
 
 
-# W6-A: missing-arg validation precedes the gap raise — matches the
-# clip_cc branch's "validate cc_number first" precedent. Without these
-# tests, a future refactor could silently re-flip the precedence and
-# mask a missing-axis error behind a "not supported" error, giving the
-# agent two things to debug instead of one.
-
-
-def test_clear_note_expression_missing_axis_raises_value_error_first(loaded_actions):
-    """When note_expression args are missing, the missing-arg ValueError
-    fires BEFORE the gap NotImplementedError. The agent sees the actionable
-    error (missing axis) rather than the structural one (not supported)."""
+def test_clear_note_expression_refuses_before_arg_validation(loaded_actions):
+    """Missing addressing args do not change the answer — same reason as
+    the write side. Raising "requires note_pitch" first would send the
+    agent to fix an argument on a call that can never work."""
     ctx, _ = _track_with_clip()
     resp = dispatch(
         Request(
@@ -1445,13 +1427,13 @@ def test_clear_note_expression_missing_axis_raises_value_error_first(loaded_acti
     )
     assert resp.ok is False
     err = (resp.error or "").lower()
-    assert "requires note_pitch" in err or "axis" in err
-    # Critically: the gap message must NOT be what surfaces.
-    assert "clear_all" not in err
+    assert "no per-note expression surface" in err
+    assert "requires note_pitch" not in err
 
 
-def test_clear_note_expression_invalid_axis_raises_value_error_first(loaded_actions):
-    """Same precedence applies to invalid (not just missing) args."""
+def test_clear_note_expression_invalid_axis_is_caught_by_the_wire_enum(loaded_actions):
+    """The ``axis`` enum still guards at the dispatcher, ahead of the
+    handler's refusal — a typo'd axis is a schema error, not a gap."""
     ctx, _ = _track_with_clip()
     resp = dispatch(
         Request(
@@ -1468,33 +1450,6 @@ def test_clear_note_expression_invalid_axis_raises_value_error_first(loaded_acti
     err = (resp.error or "").lower()
     assert "axis" in err and "volume" in err
     assert "clear_all" not in err
-
-
-def test_write_envelope_note_expression_validation_uses_shared_helper(loaded_actions):
-    """Cross-check: write_envelope's note_expression branch produces the
-    SAME error text as clear's note_expression branch when args are
-    missing. Pins the shared-helper extraction — both paths route through
-    _require_note_expression_args."""
-    ctx, _ = _track_with_clip()
-    resp = dispatch(
-        Request(
-            tool="ableton_automation", action="write_envelope",
-            params={
-                "target_kind": "note_expression",
-                "track_index": 1, "location": "session", "clip_index": 1,
-                "note_pitch": 60, "note_start_beats": 1.0,
-                # axis intentionally omitted
-                "breakpoints": [
-                    {"time_beats": 0.0, "value": 0.0},
-                    {"time_beats": 1.0, "value": 0.5},
-                ],
-            },
-        ),
-        context=ctx,
-    )
-    assert resp.ok is False
-    err = (resp.error or "").lower()
-    assert "requires note_pitch" in err
 
 
 # ---------- clear_all ----------
@@ -1771,6 +1726,93 @@ def test_read_envelope_clip_cc_raises_lom_gap(loaded_actions):
     assert "lom" in err or "12.4" in err
 
 
+def test_read_envelope_note_expression_refuses_the_same_way(loaded_actions):
+    """Symmetric with the write side, and refused at the boundary — no
+    clip resolution, no Live call."""
+    ctx, clip = _track_with_clip()
+    resp = dispatch(
+        Request(
+            tool="ableton_automation", action="read_envelope",
+            params={
+                "target_kind": "note_expression",
+                "track_index": 1, "location": "session", "clip_index": 1,
+                "note_pitch": 60, "note_start_beats": 1.0, "axis": "pitch",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = (resp.error or "")
+    assert "no per-note expression surface" in err.lower()
+    assert "perform_batch" in err
+    assert clip.envelopes_by_target == {}
+
+
+def test_read_envelope_clip_pitch_bend_routes_to_the_perform_ride(loaded_actions):
+    """A teaching error's job is the recovery, so this one must name the
+    route that actually carries a pitch ride, with the caveat that decides
+    the parameter. It must NOT name note_expression: that kind is refused
+    too, so recommending it routes the caller into a wall."""
+    ctx, _ = _track_with_clip()
+    resp = dispatch(
+        Request(
+            tool="ableton_automation", action="read_envelope",
+            params={
+                "target_kind": "clip_pitch_bend",
+                "track_index": 1, "location": "session", "clip_index": 1,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = (resp.error or "")
+    assert "note_expression" not in err
+    assert "perform_batch" in err
+    assert "device_parameter" in err
+    assert "A Fine" in err
+    assert "1000.0" in err
+
+
+def test_readable_target_kinds_is_derived_not_asserted_in_prose(loaded_actions):
+    """The read path's coverage count is computed from TARGET_KINDS minus
+    the blocked set rather than written into prose, so a kind that becomes
+    blocked cannot leave a stale count behind. Three of seven are
+    blocked."""
+    from hallucinote_mcp.handlers import automation as H
+
+    assert H.READABLE_TARGET_KINDS == tuple(
+        k for k in H.TARGET_KINDS if k not in H._READ_BLOCKED_KINDS
+    )
+    assert len(H.READABLE_TARGET_KINDS) == 4
+    assert "note_expression" not in H.READABLE_TARGET_KINDS
+    assert "5 of 7" not in (H.__doc__ or "")
+
+
+def test_no_automation_surface_advertises_note_expression_as_loadable(loaded_actions):
+    """The kind is on the wire so the documented call reaches a teaching
+    refusal — but nothing may still describe it as something that works.
+    Scans the live action descriptions, tips and param docs."""
+    from hallucinote_mcp import schema
+
+    prose: list[str] = []
+    for action in schema.actions_for("ableton_automation"):
+        prose.append(action.description)
+        prose.extend(action.tips or ())
+        for p in action.params:
+            prose.append(p.description or "")
+    blob = "\n".join(prose)
+    assert "note_expression" in blob  # it is documented...
+    for sentence in blob.split(". "):
+        if "note_expression" not in sentence:
+            continue
+        lowered = sentence.lower()
+        # ...only ever as refused, never as a thing to reach for.
+        assert any(
+            marker in lowered
+            for marker in ("refus", "never read", "#515", "unreachable")
+        ), sentence
+
+
 def test_read_envelope_arrangement_clip_raises_gap(loaded_actions):
     """Same Live 12.4 LOM constraint as write_envelope: track-level
     targets on arrangement clips aren't supported."""
@@ -1962,9 +2004,9 @@ def test_write_breakpoints_as_steps_extends_last_step_to_tail_end(loaded_actions
 
 
 def test_write_breakpoints_as_steps_zero_duration_anchor_without_tail_end(loaded_actions):
-    """Without tail_end, the last step is a zero-duration anchor — legacy
-    behavior preserved for callers (note_expression) that don't have a
-    natural envelope-end value."""
+    """Without tail_end, the last step is a zero-duration anchor — the
+    fallback for a caller that wants a point marker with no hold tail and
+    has no natural envelope-end value."""
     from hallucinote_mcp.handlers.automation import _write_breakpoints_as_steps
 
     env = FakeEnvelope()

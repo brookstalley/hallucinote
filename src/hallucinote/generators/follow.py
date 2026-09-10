@@ -2,9 +2,15 @@
 
 A voice, a bowed line, a film actor's sentence: once its fundamental has been
 tracked into a ``BeatStream`` of Hz against song beats, ``follow_pitch`` turns
-that contour into notes an instrument can play, plus — when asked — a
-per-note pitch envelope carrying the motion the notes alone cannot (the scoop
-into a word, the glide between two held tones, the vibrato on a long one).
+that contour into notes an instrument can play.
+
+The motion between those notes — the scoop into a word, the glide between two
+held tones, the vibrato on a long one — does NOT come back as a per-note
+envelope. It cannot: Live's Python API projects no per-note expression
+surface, so nothing this generator could write for it is pushable
+(``bend='note_expression'`` is refused here rather than authored and left to
+fail at the wire — #515). A monophonic line's glide goes through a
+``device_parameter`` ride gesture-recorded by the performed-automation phase.
 
 Discipline (the ruler-not-stamp norm, R4.6): the follower proposes a line and
 decides nothing musical. The key it may quantize to, the register it lands in,
@@ -14,10 +20,8 @@ parameters the author passes. ``key`` in particular has no default: passing
 lead, or does the sample?" stays a choice the author makes per song and per
 moment rather than a default this module makes for them.
 
-Pure: no database, no MCP. The caller threads the returned notes and
-envelopes through the mutators; a per-note envelope here carries the note's
-in-band address (pitch, start, duration) because a generator never knows a
-row id.
+Pure: no database, no MCP. The caller threads the returned notes through the
+mutators.
 """
 from __future__ import annotations
 
@@ -27,13 +31,37 @@ from typing import Literal
 import numpy as np
 
 from hallucinote.features.types import BeatStream
-from hallucinote.generators.output import EnvelopeDict, GeneratorOutput, NoteDict
+from hallucinote.generators.output import GeneratorOutput, NoteDict
 from hallucinote.theory.model import mode, pitch_class
 
 FOLLOW_TAG = "follow"
 
+# ``note_expression`` stays a NAMED mode rather than being dropped from the
+# Literal, for the same reason MCP keeps the target kind on the wire: an
+# author who reaches for a per-note bend has a real intent, and a refusal
+# that says why and where to go routes it. A plain "not one of ['none']"
+# would not.
 BendMode = Literal["none", "note_expression"]
 _BEND_MODES: frozenset[str] = frozenset({"none", "note_expression"})
+
+# Why the mode is refused instead of emitted. Live's API exposes no per-note
+# expression surface at all — ``Clip.envelope_for_note`` never existed on any
+# Live version and no MPE / pressure / timbre accessor replaces it (#515) —
+# so a per-note bend has nowhere to be pushed. The refusal belongs here, at
+# author time, rather than at push: an envelope emitted for this mode is a
+# row whose only possible outcome is a failure several stages downstream.
+_BEND_UNPUSHABLE = (
+    "bend='note_expression' cannot be authored: Live's Python API exposes "
+    "no per-note expression surface at all, so a per-note bend has no push "
+    "path under any name (#515 — Clip.envelope_for_note never existed, and "
+    "nothing replaces it). This generator refuses rather than write "
+    "envelopes that could only fail at push. For a MONOPHONIC line, carry "
+    "the glide as a device_parameter ride gesture-recorded by the "
+    "performed-automation phase; mind the parameter, since Operator's "
+    "'A Fine' is a unipolar ratio tail [0.0, 1000.0] whose interval is "
+    "1200*log2(Coarse + Fine/1000) and Pitch (MidiPitcher) is "
+    "semitone-quantized. Pass bend='none' for the notes alone."
+)
 
 # Units a contour must declare to be read as a fundamental in Hz. The units
 # field exists so a cents or MIDI stream is refused rather than misread.
@@ -44,10 +72,6 @@ _HZ_UNITS: frozenset[str] = frozenset({"hz", "hertz"})
 # chromatic pitch's catchment, so a contour hovering at a pitch boundary is
 # held by the median instead of flapping between two notes.
 _STABLE_TOLERANCE_SEMITONES = 0.5
-
-# A residual smaller than this everywhere is a straight note, not a bend; no
-# envelope is emitted for it. One cent is below what any player perceives.
-_BEND_SILENCE_SEMITONES = 0.01
 
 # The narrowest register in which every pitch class has an octave to land in:
 # twelve semitones inclusive, so any pitch can be transposed inside by octaves.
@@ -76,18 +100,14 @@ def follow_pitch(
     reaches ``confidence_floor``; everything else is a rest or is folded into
     the neighbouring note as its scoop or glide.
 
-    ``bend='note_expression'`` emits envelopes that **cannot be pushed to Live
-    12.4.5** — `Clip.envelope_for_note` does not exist on that build (#515),
-    so the envelopes are authored correctly and fail at the wire. Default is
-    ``'none'``; for a MONOPHONIC follower the working route is a
+    ``bend`` has one working value, ``'none'`` (the default), which is the
+    notes alone. ``bend='note_expression'`` is REFUSED with a
+    ``NotImplementedError`` that names the route that does work: Live's
+    Python API exposes no per-note expression surface, so a per-note bend
+    has no push path (#515), and writing one here would only defer the
+    failure to push. A monophonic line's glide goes through a
     ``device_parameter`` ride gesture-recorded by the performed-automation
-    phase, which is what the chunk-17 hearing used.
-
-    With ``bend='note_expression'`` each note whose contour moves carries an
-    envelope on the MPE pitch axis: the contour minus the note's own centre,
-    in semitones, note-relative beats. The residual is taken against the
-    centre rather than the emitted pitch so a key or register decision is
-    never quietly undone by the bend re-pitching the note back.
+    phase instead.
     """
     midi = _contour_in_midi(stream)
     voiced = _voiced_mask(stream, midi, confidence_floor)
@@ -102,6 +122,8 @@ def follow_pitch(
         raise ValueError(
             f"bend must be one of {sorted(_BEND_MODES)} (got {bend!r})"
         )
+    if bend == "note_expression":
+        raise NotImplementedError(_BEND_UNPUSHABLE)
     if not 0 <= velocity <= 127:
         raise ValueError(f"velocity must be in [0, 127] (got {velocity})")
 
@@ -117,13 +139,6 @@ def follow_pitch(
             start = float(beats[span.start])
             duration = float(frame_ends[span.stop - 1] - start)
             out.notes.append(_note(pitch, start, duration, velocity))
-            if bend == "note_expression":
-                env = _bend_envelope(
-                    midi, beats, span, centre=centre, pitch=pitch,
-                    start=start, duration=duration,
-                )
-                if env is not None:
-                    out.envelopes.append(env)
     return out
 
 
@@ -373,42 +388,6 @@ def _note(pitch: int, start: float, duration: float, velocity: int) -> NoteDict:
         "duration_beats": duration,
         "velocity": velocity,
         "tags": [FOLLOW_TAG],
-    }
-
-
-def _bend_envelope(
-    midi: np.ndarray,
-    beats: np.ndarray,
-    span: _NoteSpan,
-    *,
-    centre: float,
-    pitch: int,
-    start: float,
-    duration: float,
-) -> EnvelopeDict | None:
-    """The note's residual contour as an MPE pitch envelope, or ``None`` for
-    a note that does not move.
-
-    Breakpoints are note-relative beats and semitones from the note's own
-    centre, the coordinate system Live's ``envelope_for_note`` addresses.
-    The note is named in-band by pitch, start and duration, exactly as the
-    push planner addresses one, because no row id exists yet.
-    """
-    residual = midi[span.start:span.stop] - centre
-    if float(np.max(np.abs(residual))) < _BEND_SILENCE_SEMITONES:
-        return None
-    times = beats[span.start:span.stop] - start
-    breakpoints = [
-        {"time_beats": float(t), "value": float(v), "curve_kind": "linear"}
-        for t, v in zip(times, residual)
-    ]
-    return {
-        "target_kind": "note_expression",
-        "parameter_path": "pitch",
-        "note_pitch": pitch,
-        "note_start_beats": start,
-        "note_duration": duration,
-        "breakpoints": breakpoints,
     }
 
 

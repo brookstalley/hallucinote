@@ -77,18 +77,30 @@ from __future__ import annotations
 import re
 import sqlite3
 import warnings
+from collections import Counter
+from dataclasses import dataclass, field as _dc_field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from hallucinote.analyzer_identity import is_analyzer_device
 from hallucinote.db import mutations as M, queries as Q
+# The two track-row operations replay needs that the package's flat namespace
+# does not re-export yet — imported from the submodule the way `db.mutations`
+# submodules import each other.
+from hallucinote.db.mutations.tracks import (
+    describe_track_deletion,
+    reindex_tracks,
+)
 from hallucinote.paths import audio_file_ref
 from hallucinote.return_naming import normalize_live_return_name
 # One definition of what Live's default scaffold IS, read by both sides that
 # have to recognize it — capture (exclude it from the snapshot) and the push
 # cleanup planner (offer to delete it) — so the two can never disagree.
-from hallucinote.default_scaffold import CANONICAL_DEFAULT_SCAFFOLD_TRACK_NAMES
+from hallucinote.default_scaffold import (
+    CANONICAL_DEFAULT_SCAFFOLD_RETURN_DEVICES,
+    CANONICAL_DEFAULT_SCAFFOLD_TRACK_NAMES,
+)
 
 # SNP-8R4K chunk 2 — snapshot schema version stamped on every compiled snapshot
 # (`compile_snapshot`) and asserted by the at-rest cleanup (`migrate_snapshot`).
@@ -814,6 +826,159 @@ def _mixer_from_snapshot(t: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+@dataclass
+class TrackReconciliation:
+    """How a snapshot's tracks line up against the rows a song already has.
+
+    ``moves`` maps an existing row id -> the ``track_index`` it must end up at
+    (only rows that actually have to move). ``claimed`` maps an incoming track
+    name -> the row id it reconciled onto. ``orphans`` are the existing rows no
+    incoming track claims. ``ambiguous`` names the incoming tracks that could
+    not be resolved by name and fall back to index-keyed upsert.
+    """
+
+    moves: dict[str, int] = _dc_field(default_factory=dict)
+    claimed: dict[str, str] = _dc_field(default_factory=dict)
+    orphans: list[dict[str, Any]] = _dc_field(default_factory=list)
+    ambiguous: list[str] = _dc_field(default_factory=list)
+
+
+def plan_track_reconciliation(
+    existing_rows: Iterable[Any], incoming_tracks: Iterable[dict[str, Any]],
+) -> TrackReconciliation:
+    """Match a snapshot's tracks to a song's existing track rows BY NAME, and
+    say where each row has to move.
+
+    Pure: takes row-like mappings (``id`` / ``track_index`` / ``name``) and
+    snapshot track entries (``index`` / ``name``), touches no database.
+
+    **Why name and not index.** ``track_index`` is a POSITION, and the system
+    renumbers positions — capture's dense rank around an excluded default
+    scaffold is exactly that. Keying a track's identity on its position means
+    "same index" silently reads as "same track", so a renumber renames a real
+    row onto a slot it never occupied and strands the row it came from. A
+    reconciliation has to match on something that SURVIVES a renumber, and the
+    name is what does.
+
+    **Ambiguity refuses rather than guesses.** Live permits duplicate track
+    names. Where a name matches more than one existing row — or the incoming
+    snapshot itself repeats it, so which incoming track owns the row is
+    unknowable — nothing is reconciled for that name and it is reported. A
+    wrong reconciliation is worse than none: it silently renames a real row,
+    which is the failure this exists to prevent. An incoming name matching NO
+    existing row is not ambiguous at all — it is a new track, or a track
+    genuinely renamed in Live — and is left to the index-keyed upsert in
+    silence, because a warning that fires on the healthy path is one an
+    operator learns to ignore.
+
+    **Orphans are moved out of the way, never deleted.** An orphan is a row
+    neither claimed by name nor standing in for an unresolved incoming index.
+    It still holds a position a reconciled row may need, so it is relocated
+    above every claimed index — keeping its UUID, its children and its pulled
+    mix state intact — and the renumber stays satisfiable. Deleting it is the
+    operator's call (`prune_track`), never replay's.
+    """
+    rows = [
+        r for r in existing_rows
+        if r["kind"] != "master" and int(r["track_index"]) != 0
+    ]
+    incoming = list(incoming_tracks)
+    plan = TrackReconciliation()
+
+    rows_by_name: dict[str, list[Any]] = {}
+    for row in rows:
+        rows_by_name.setdefault(row["name"], []).append(row)
+    incoming_name_counts: Counter[str] = Counter(t["name"] for t in incoming)
+
+    target: dict[str, int] = {}
+    unresolved: list[dict[str, Any]] = []
+    for entry in incoming:
+        name = entry["name"]
+        candidates = rows_by_name.get(name) or []
+        if len(candidates) == 1 and incoming_name_counts[name] == 1:
+            row = candidates[0]
+            plan.claimed[name] = row["id"]
+            target[row["id"]] = int(entry["index"])
+            continue
+        if candidates and (
+            len(candidates) > 1 or incoming_name_counts[name] > 1
+        ):
+            if name not in plan.ambiguous:
+                plan.ambiguous.append(name)
+        unresolved.append(entry)
+
+    # The index-keyed fallback, unchanged in effect and now explicit. An
+    # incoming name that identified no row is either a NEW track or one
+    # renamed in Live, and in the rename case the row that should wear the new
+    # name is the one already sitting at that index. Binding it here is what
+    # keeps a rename a rename — the row keeps its UUID and its children — and
+    # it is also what stops the rename's own row being mistaken for an orphan.
+    rows_by_index = {int(r["track_index"]): r for r in rows}
+    for entry in unresolved:
+        row = rows_by_index.get(int(entry["index"]))
+        if row is None or row["id"] in target:
+            continue
+        target.setdefault(row["id"], int(row["track_index"]))
+
+    incoming_indexes = {int(t["index"]) for t in incoming}
+    claimed_indexes = set(target.values())
+    plan.orphans = [row for row in rows if row["id"] not in target]
+
+    # An orphan sitting on an index the snapshot claims has to step aside.
+    # Park it above everything either side uses, in its current order, so the
+    # relocation is deterministic and never itself collides.
+    occupied = incoming_indexes | claimed_indexes | {
+        int(r["track_index"]) for r in rows
+    }
+    next_free = max(occupied, default=0) + 1
+    for row in sorted(plan.orphans, key=lambda r: int(r["track_index"])):
+        current = int(row["track_index"])
+        if current not in incoming_indexes and current not in claimed_indexes:
+            continue
+        target[row["id"]] = next_free
+        next_free += 1
+
+    plan.moves = {
+        row["id"]: target[row["id"]] for row in rows
+        if row["id"] in target and int(row["track_index"]) != target[row["id"]]
+    }
+    return plan
+
+
+def _validate_snapshot_track(t: dict[str, Any]) -> int:
+    """Validate one snapshot track entry and return its index.
+
+    Runs as a PRE-PASS over every incoming track, before replay writes
+    anything: the reconciliation re-indexes rows, and a malformed entry
+    discovered halfway through the upsert loop would leave that renumber half
+    applied with no transaction spanning it.
+    """
+    track_type = t.get("type", "midi")
+    if track_type not in _VALID_TRACK_TYPES:
+        raise ValueError(
+            f"track {t.get('name')!r}: type {track_type!r} not in "
+            f"{sorted(_VALID_TRACK_TYPES)}"
+        )
+    idx = int(t["index"])
+    if idx < 1:
+        # 0 is reserved for the master sentinel; Live's tracks are 1-based.
+        raise ValueError(
+            f"track {t.get('name')!r}: index {idx} must be >= 1 "
+            "(0 is reserved for the master sentinel)"
+        )
+    return idx
+
+
+def _orphan_report(conn: sqlite3.Connection, orphans: list[Any]) -> str:
+    """The per-orphan detail line: what each stranded row is carrying."""
+    parts = []
+    for row in orphans:
+        plan = describe_track_deletion(conn, track_id=row["id"])
+        detail = plan.summary() if plan is not None else "unreadable"
+        parts.append(f"index {row['track_index']}: {row['name']!r} ({detail})")
+    return "; ".join(parts)
+
+
 def replay_capture(
     conn: sqlite3.Connection,
     snapshot: dict[str, Any],
@@ -846,6 +1011,16 @@ def replay_capture(
     pre-dated mutator idempotency and is no longer needed; the actor='sync'
     threading still distinguishes pulled state from build-owned state for
     tombstone-time semantics.
+
+    Tracks are reconciled BY NAME before that upsert runs
+    (`plan_track_reconciliation` + `reindex_tracks`). ``track_index`` is a
+    position the system renumbers, not an identity: keying the upsert on it
+    meant a renumbered snapshot renamed a real row onto a slot it never held
+    and stranded the row the name came from. Reconciliation moves each matched
+    row to its new index first, keeping its UUID (so `ableton_links` and every
+    child row stay valid), and refuses to guess where a name is ambiguous. A
+    row the snapshot no longer defines is REPORTED with what it carries and the
+    command that removes it — never deleted here.
 
     The mix layout IS replayed: tracks/returns/sends/mixer AND the full device
     tree — top-level devices, nested rack chains (`_replay_rack_chains`, depth-N),
@@ -1018,30 +1193,60 @@ def replay_capture(
             stacklevel=2,
         )
 
+    incoming_tracks = list(snapshot.get("tracks") or [])
+    # Validate the whole incoming set BEFORE anything is written: the
+    # reconciliation below re-indexes rows, and a malformed entry found
+    # mid-loop would leave that renumber half applied.
+    for t in incoming_tracks:
+        _validate_snapshot_track(t)
+
+    # Reconcile by NAME before upserting by index. `track_index` is a position
+    # the system is allowed to renumber (capture's dense rank around an
+    # excluded default scaffold does exactly that), so keying identity on it
+    # made "same index" silently mean "same track" — a real row got renamed
+    # onto a slot it never held and the row it came from was stranded as a
+    # duplicate. Here each row is carried to its new position first; the upsert
+    # loop below then finds identity and position already agreeing.
+    reconciliation = plan_track_reconciliation(
+        Q.get_tracks_for_song(conn, song_id), incoming_tracks,
+    )
+    if reconciliation.moves:
+        reindex_tracks(
+            conn,
+            song_id=song_id,
+            moves=reconciliation.moves,
+            actor=actor,
+            request_id=request_id,
+            reason=reason or "replay_capture: reconcile track identity by name",
+        )
+    if reconciliation.ambiguous:
+        warnings.warn(
+            "replay_capture: could not reconcile "
+            f"{len(reconciliation.ambiguous)} track name(s) "
+            f"({', '.join(repr(n) for n in sorted(reconciliation.ambiguous))}) "
+            "— the name matches more than one row in this song, or the "
+            "snapshot itself repeats it, so which row it identifies is "
+            "unknowable. Those tracks fall back to the (song, track_index) "
+            "upsert, which can rename a row. Give the duplicated tracks "
+            "distinct names in Live and re-capture.",
+            UserWarning,
+            stacklevel=2,
+        )
+
     track_ids_by_name: dict[str, str] = {}
     reidentified: list[tuple[int, str, str]] = []
+    # Read AFTER the reconciliation, so the rename guard below judges the rows
+    # as they now stand rather than as they stood before the moves.
     existing_names_by_index: dict[int, str] = {
         int(r["track_index"]): r["name"]
         for r in Q.get_tracks_for_song(conn, song_id)
     }
-    for t in snapshot.get("tracks") or []:
+    for t in incoming_tracks:
         track_type = t.get("type", "midi")
-        if track_type not in _VALID_TRACK_TYPES:
-            raise ValueError(
-                f"track {t.get('name')!r}: type {track_type!r} not in "
-                f"{sorted(_VALID_TRACK_TYPES)}"
-            )
         idx = int(t["index"])
-        if idx < 1:
-            # 0 is reserved for the master sentinel; Live's tracks are 1-based.
-            raise ValueError(
-                f"track {t.get('name')!r}: index {idx} must be >= 1 "
-                "(0 is reserved for the master sentinel)"
-            )
-        # A capture whose indices SHIFTED (the scaffold exclusion renumbers by
-        # dense rank) upserts a name onto a row that held a different one, and
-        # `create_track` keys on (song, track_index) with no name reconciliation.
-        # The rename is the silent half; say it, and leave the row alone.
+        # What survives to here is the fallback path: a name the reconciliation
+        # refused to resolve, upserted onto whatever row holds its index. The
+        # rename is the silent half; say it, and leave the row alone.
         was = existing_names_by_index.get(idx)
         if was is not None and was != t["name"]:
             reidentified.append((idx, was, t["name"]))
@@ -1111,12 +1316,17 @@ def replay_capture(
     # renaming a track in Live and re-capturing produces the same (index, old,
     # new) triple as an index shift, and on that path the row is simply correct.
     # What distinguishes them is whether the incoming name ALSO sits at a
-    # different index in the DB — that is the row about to be left behind.
+    # different index in the DB **that the snapshot does not itself cover**. A
+    # deliberate SWAP (DB {1:'A', 2:'B'}, snapshot [(1,'B'), (2,'A')]) puts each
+    # name at another index too, yet strands nothing: both indices are claimed
+    # by an incoming track. Consulting the incoming index set is what tells the
+    # two apart.
+    incoming_indexes = {int(t["index"]) for t in incoming_tracks}
     shifted = [
         (idx, was, now) for idx, was, now in reidentified
-        if existing_names_by_index.get(idx) != now
-        and any(
-            n == now and i != idx for i, n in existing_names_by_index.items()
+        if any(
+            n == now and i != idx and i not in incoming_indexes
+            for i, n in existing_names_by_index.items()
         )
     ]
     if shifted:
@@ -1125,12 +1335,34 @@ def replay_capture(
         )
         warnings.warn(
             f"capture: replay RENAMED {len(shifted)} existing track row(s) "
-            f"({detail}), and each incoming name ALSO sits at another index in "
-            "this song — so the row it came from is being left behind as a "
-            "duplicate. A snapshot's track indices shift when capture excludes "
-            "an untouched default scaffold, and replay keys on "
-            "(song, track_index) with no name reconciliation and no prune. "
-            "Check the song's tracks before building.",
+            f"({detail}), and each incoming name ALSO sits at another index "
+            "this snapshot does not cover — so the row it came from is being "
+            "left behind as a duplicate. Replay reconciles tracks by name, so "
+            "this only happens where the name was ambiguous and the "
+            "(song, track_index) upsert had to stand in. Check the song's "
+            "tracks before building.",
+            stacklevel=2,
+        )
+
+    # R5 — a row the snapshot no longer defines is REPORTED, never pruned by
+    # replay. An orphan can be carrying pulled human work (its mixer state, its
+    # sends, a tuned device chain, its clips and notes), none of which a build
+    # without `--reset` re-authors, and `_guard_stale_snapshot` already refuses
+    # rather than silently reverting pulled edits — a replay that deleted rows
+    # on its own authority would contradict a guard this module ships. It is
+    # not inert either: the next push materializes it as a junk track in Live.
+    # So the report names the remedy.
+    if reconciliation.orphans:
+        detail = _orphan_report(conn, reconciliation.orphans)
+        warnings.warn(
+            f"capture: replay left {len(reconciliation.orphans)} track row(s) "
+            f"this snapshot does not define: {detail}. Replay never deletes a "
+            "track row — an orphan can be carrying pulled work a rebuild does "
+            "not re-author, but the next push will materialize it in Live. "
+            "Remove one with: hallucinote prune-tracks --db <song>.db --song "
+            f"{song_name!r} --track <name>  (or --all-orphans --snapshot "
+            "<captured_session.json> for every orphan at once).",
+            UserWarning,
             stacklevel=2,
         )
 
@@ -1800,6 +2032,68 @@ def is_untouched_default_scaffold_track(
     )
 
 
+# A device entry key that only a CLAIMED device carries. `params_dialed` is
+# already non-default-filtered (`_snapshot_param_entry` drops anything sitting
+# at its intrinsic default), so an empty/absent map IS "at factory settings" —
+# a bypassed device shows up here because `Device On` is then off-default.
+# `browser_path` is deliberately absent: it is cross-machine IDENTITY carried
+# forward by `preserve_browser_paths`, not something a user dialed.
+_DEVICE_AUTHORSHIP_KEYS: tuple[str, ...] = (
+    "params_dialed", "chains", "param_overrides", "drum_pads",
+    "audio_file", "sidechain_source", "sidechain_source_channel",
+    "preset_query",
+)
+
+
+def is_untouched_default_scaffold_return(
+    entry: dict[str, Any], *, has_sends: bool,
+) -> bool:
+    """True when a captured return entry is one of Live's brand-new-set
+    scaffold returns that the song has NOT claimed.
+
+    The sibling of :func:`is_untouched_default_scaffold_track`, and
+    deliberately a DIFFERENT predicate. Live ships its default returns
+    ``A-Reverb`` and ``B-Delay`` carrying devices, so the track side's
+    "canonical name AND no devices" can never fire here. Name alone is worse
+    than useless: it would drop a claimed return's whole captured mix, and it
+    would break replay outright, because a surviving track's ``sends`` map
+    names returns and `replay_capture` raises on a send to a return the
+    snapshot no longer defines.
+
+    Untouched therefore means all four of:
+
+    * the canonical slot NAME (``A-Reverb`` / ``B-Delay``);
+    * EXACTLY the canonical device for that slot, and nothing else on the
+      chain — a second device, or a different one, is the user's chain;
+    * that device still at factory settings and under its stock name — a
+      dialed parameter, a nested-rack edit, a preset seed or a rename is a
+      claim;
+    * and NOTHING SENDS TO IT. That last conjunct is what keeps replay
+      satisfiable rather than merely tidy: if no track sends to the return,
+      dropping it cannot orphan a ``sends`` entry.
+
+    ``has_sends`` is required rather than read off the entry for the same
+    reason ``has_clips`` is on the track side — a return entry carries no
+    record of who sends to it, and the answer lives on the *tracks*. A caller
+    that has not looked cannot tell "nobody sends to it" from "I didn't check",
+    and must not drop a claimed return on that ambiguity.
+    """
+    canonical_device = CANONICAL_DEFAULT_SCAFFOLD_RETURN_DEVICES.get(
+        entry.get("name")
+    )
+    if canonical_device is None or has_sends:
+        return False
+    devices = entry.get("devices") or []
+    if len(devices) != 1:
+        return False
+    device = devices[0]
+    if (device.get("class_name") or device.get("class")) != canonical_device:
+        return False
+    if device.get("name") not in (None, "", canonical_device):
+        return False
+    return not any(device.get(key) for key in _DEVICE_AUTHORSHIP_KEYS)
+
+
 def _track_carries_clips(probe, *, track_index: int) -> bool:
     """True when a Live track holds at least one clip in either location.
 
@@ -1815,6 +2109,73 @@ def _track_carries_clips(probe, *, track_index: int) -> bool:
             if not clip.get("empty"):
                 return True
     return False
+
+
+def _exclude_untouched_scaffold_returns(
+    returns_out: list[dict[str, Any]], tracks_out: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Drop the untouched default-scaffold returns from a freshly assembled
+    capture, in the order the two halves have to happen.
+
+    Returns ``(surviving_returns, dropped_names)``. Three things move together
+    and none of them is optional:
+
+    1. The predicate needs the TRACKS, because "nothing sends to it" is the
+       conjunct that keeps replay satisfiable — so this runs after the track
+       walk, not during the return walk. A send whose level is ``0.0`` is
+       Live's default wiring, not a send: every track carries one to every
+       return in a brand-new set.
+    2. Every surviving track's ``sends`` map loses the dropped return's key.
+       `replay_capture` RAISES on a send naming a return the snapshot does not
+       define, so leaving the key behind would trade an ingested scaffold for
+       an unreplayable snapshot. Only proven-zero sends are ever stripped, so
+       nothing authored is lost.
+    3. Survivors are renumbered by dense rank, for the reason the track half
+       is (`create_return` upserts on ``(song_id, position)``): a snapshot
+       numbered AROUND a scaffold return that Live later deletes would replay
+       the same return into a second row at a different position. Dense rank
+       makes the snapshot's numbering identical before and after the
+       push-side cleanup actually runs.
+
+    Send keys are compared through `normalize_live_return_name`, the same
+    normalization replay's own send lookup uses, so the strip cannot miss a
+    key because one side carried Live's ``<letter>-`` prefix and the other
+    did not.
+    """
+    sent_to: set[str] = set()
+    for track in tracks_out:
+        for return_name, level in (track.get("sends") or {}).items():
+            if isinstance(level, bool) or not isinstance(level, (int, float)):
+                continue
+            if float(level) > 0.0:
+                sent_to.add(normalize_live_return_name(return_name))
+
+    surviving: list[dict[str, Any]] = []
+    dropped: list[str] = []
+    for entry in returns_out:
+        name = entry.get("name")
+        has_sends = normalize_live_return_name(str(name)) in sent_to
+        if is_untouched_default_scaffold_return(entry, has_sends=has_sends):
+            dropped.append(str(name))
+            continue
+        entry["index"] = len(surviving) + 1
+        surviving.append(entry)
+
+    if dropped:
+        dropped_normalized = {normalize_live_return_name(n) for n in dropped}
+        for track in tracks_out:
+            sends = track.get("sends")
+            if not sends:
+                continue
+            kept = {
+                key: level for key, level in sends.items()
+                if normalize_live_return_name(key) not in dropped_normalized
+            }
+            if kept:
+                track["sends"] = kept
+            else:
+                track.pop("sends", None)
+    return surviving, dropped
 
 
 def assemble_snapshot_via_probes(
@@ -1850,10 +2211,15 @@ def assemble_snapshot_via_probes(
     An UNTOUCHED track of Live's brand-new-set scaffold is excluded, the way
     the analyzer is (see :func:`is_untouched_default_scaffold_track` for the
     predicate and why name alone won't do here); surviving tracks are numbered
-    by dense rank so the exclusion can't leave a hole. This is the only capture
-    entry point that applies it — deciding "untouched" needs the track's clip
-    inventory, which ``compile_snapshot`` never sees, so a caller assembling
-    from probe results it gathered by hand keeps whatever it probed.
+    by dense rank so the exclusion can't leave a hole. Its untouched RETURNS go
+    the same way, on a necessarily different predicate
+    (:func:`is_untouched_default_scaffold_return`) and after the track walk,
+    because one of its conjuncts is "nothing sends to it"
+    (`_exclude_untouched_scaffold_returns`). This is the only capture entry
+    point that applies either — deciding "untouched" needs the track's clip
+    inventory and the whole set's send map, neither of which
+    ``compile_snapshot`` ever sees, so a caller assembling from probe results
+    it gathered by hand keeps whatever it probed.
     """
     info = probe("ableton_session", "info")
     master_mixer = info.get("master")
@@ -1947,6 +2313,20 @@ def assemble_snapshot_via_probes(
             "brand-new-set tracks carrying no devices and no clips. Add a "
             "device or a clip to keep one. Surviving tracks are renumbered "
             "from 1.",
+            stacklevel=2,
+        )
+
+    returns_out, dropped_returns = _exclude_untouched_scaffold_returns(
+        returns_out, tracks_out,
+    )
+    if dropped_returns:
+        warnings.warn(
+            f"capture: excluded {len(dropped_returns)} untouched default "
+            f"scaffold return(s) ({', '.join(dropped_returns)}) — Live's "
+            "brand-new-set returns still carrying only their stock device at "
+            "factory settings, with nothing sent to them. Dial the device, "
+            "swap it, or send something to it to keep one. Surviving returns "
+            "are renumbered from 1.",
             stacklevel=2,
         )
     snapshot = compile_snapshot(
@@ -2225,26 +2605,36 @@ def inject_browser_paths(
                 )
 
 
-def _track_name_index_map(snapshot: dict[str, Any]) -> dict[str, int]:
-    """Track name -> index, for names that are UNIQUE in the snapshot.
+def _name_index_map(
+    snapshot: dict[str, Any], parent_kind: str,
+) -> dict[str, int]:
+    """Track / return name -> index, for names that are UNIQUE in the snapshot.
 
-    Capture renumbers surviving tracks by dense rank when it drops an untouched
-    default scaffold, so a song captured from a scaffold-bearing set moves every
-    real track's index down. The identity joins below key on that index, and
-    their miss path is a silent drop — so without a stable second key, one
-    refresh of such a song would lose every device's browser path and every
-    preset seed, on exactly the songs the scaffold exclusion exists for.
+    Capture renumbers survivors by dense rank when it drops an untouched
+    default scaffold — tracks AND returns both — so a song captured from a
+    scaffold-bearing set moves every real one's index down. The identity joins
+    below key on that index, and their miss path is a silent drop, so without a
+    stable second key one refresh of such a song would lose every device's
+    browser path and every preset seed, on exactly the songs the scaffold
+    exclusion exists for.
 
-    A duplicated name is omitted rather than guessed: matching the wrong track
+    A duplicated name is omitted rather than guessed: matching the wrong parent
     would carry a real path onto a real device that never had it, which is worse
     than the drop this exists to prevent.
+
+    Return names are compared through `normalize_live_return_name` so a
+    snapshot written with Live's ``<letter>-`` slot prefix still joins against
+    one written without it.
     """
+    key = snapshot.get("tracks") if parent_kind == "track" else snapshot.get("returns")
     seen: dict[str, int] = {}
     dupes: set[str] = set()
-    for t in snapshot.get("tracks") or []:
-        name, idx = t.get("name"), t.get("index")
+    for p in key or []:
+        name, idx = p.get("name"), p.get("index")
         if not isinstance(name, str) or idx is None:
             continue
+        if parent_kind == "return":
+            name = normalize_live_return_name(name)
         if name in seen:
             dupes.add(name)
             continue
@@ -2252,6 +2642,15 @@ def _track_name_index_map(snapshot: dict[str, Any]) -> dict[str, int]:
     for d in dupes:
         seen.pop(d, None)
     return seen
+
+
+def _joined_name(parent: dict[str, Any], parent_kind: str) -> str | None:
+    """The key a parent joins on in `_name_index_map`, or None when it has no
+    usable name."""
+    name = parent.get("name")
+    if not isinstance(name, str):
+        return None
+    return normalize_live_return_name(name) if parent_kind == "return" else name
 
 
 def _collect_browser_paths(
@@ -2306,32 +2705,25 @@ def preserve_browser_paths(
     old_paths = _collect_browser_paths(old)
     if not old_paths:
         return
-    old_by_name = _track_name_index_map(old)
-    for t in new.get("tracks") or []:
-        if "index" not in t:
-            continue
-        ti = int(t["index"])
-        # Second key for the renumber case: same name, the index it HAD.
-        was = old_by_name.get(t.get("name")) if isinstance(t.get("name"), str) else None
-        for d in t.get("devices") or []:
-            if d.get("browser_path") or "index" not in d:
+    for parent_kind, parents in (("track", new.get("tracks")),
+                                 ("return", new.get("returns"))):
+        old_by_name = _name_index_map(old, parent_kind)
+        for parent in parents or []:
+            if "index" not in parent:
                 continue
-            di, cls = int(d["index"]), d.get("class")
-            key = ("track", ti, di, cls)
-            if key not in old_paths and was is not None:
-                key = ("track", was, di, cls)
-            if key in old_paths:
-                d["browser_path"] = list(old_paths[key])
-    for r in new.get("returns") or []:
-        if "index" not in r:
-            continue
-        ri = int(r["index"])
-        for d in r.get("devices") or []:
-            if d.get("browser_path") or "index" not in d:
-                continue
-            key = ("return", ri, int(d["index"]), d.get("class"))
-            if key in old_paths:
-                d["browser_path"] = list(old_paths[key])
+            pidx = int(parent["index"])
+            # Second key for the renumber case: same name, the index it HAD.
+            joined = _joined_name(parent, parent_kind)
+            was = old_by_name.get(joined) if joined is not None else None
+            for d in parent.get("devices") or []:
+                if d.get("browser_path") or "index" not in d:
+                    continue
+                di, cls = int(d["index"]), d.get("class")
+                key = (parent_kind, pidx, di, cls)
+                if key not in old_paths and was is not None:
+                    key = (parent_kind, was, di, cls)
+                if key in old_paths:
+                    d["browser_path"] = list(old_paths[key])
 
 
 # ---------------------------------------------------------------------------
@@ -2444,20 +2836,18 @@ def preserve_preset_overrides(
     old_presets = _collect_preset_queries(old)
     if not old_presets:
         return
-    old_by_name = _track_name_index_map(old)
     for parent_kind, parents in (("track", new.get("tracks")),
                                  ("return", new.get("returns"))):
+        old_by_name = _name_index_map(old, parent_kind)
         for parent in parents or []:
             if "index" not in parent:
                 continue
             pidx = int(parent["index"])
             # Same renumber fallback as the browser-path join: a dense-ranked
-            # track carries a different index than the snapshot it is refreshing.
-            was = (
-                old_by_name.get(parent.get("name"))
-                if parent_kind == "track" and isinstance(parent.get("name"), str)
-                else None
-            )
+            # track or return carries a different index than the snapshot it
+            # is refreshing.
+            joined = _joined_name(parent, parent_kind)
+            was = old_by_name.get(joined) if joined is not None else None
             for d in parent.get("devices") or []:
                 if "index" not in d:
                     continue

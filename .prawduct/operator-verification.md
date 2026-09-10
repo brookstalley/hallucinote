@@ -194,6 +194,14 @@ suggested recovery), which restored both lost gain cuts.
   above. Before/after values recorded per the box's requirement, not just a pass/fail:
   EQ Eight 7 of 84 params changed (two real gain cuts to 0.0), Erosion 0 of 6. Re-run this box
   once A and B are fixed.
+
+  **Defect B is fixed** (PR #540, `scope=CHAIN-RESTORE-STR`): the restore now hands the wire a
+  string, so a continuous parameter can be carried at all. **Defect A is not** — #532 is open,
+  and until it lands the restore still addresses devices by their pre-delete physical index.
+  So this box stays unticked and is **blocked behind #532, not behind #533**: re-running it now
+  would exercise a restore that writes real values onto the wrong same-class device, which is a
+  worse outcome than the refusals it replaced, not a better one. Re-run when #532 closes, on an
+  `alien` with a single writer.
 - [x] **`_PARAM_EPSILON = 1e-6` — SETTLED, and it is wrong in two independent ways.** Measured
   by perturbing writes (offset 0.137 of range) followed by read-back on Analog, EQ Eight and
   Erosion:

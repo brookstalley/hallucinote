@@ -671,12 +671,24 @@ built and unit-tested but have **never been pushed to Live** — the one piece o
 the sampling path with no live run behind it. Per-note MPE bends
 (`note_expression`) cannot be pushed at all on Live 12.4.5: `Clip.envelope_for_note`
 does not exist (#515), so a monophonic line's glide goes through a
-`device_parameter` ride instead. An arrangement copy's extent is fixed at
-placement (#509). Source separation is deferred (#266); a sampler nested inside
+`device_parameter` ride instead. Source separation is deferred (#266); a sampler nested inside
 a rack is pushed but not captured back; a sampler's reverse has no intent column
 to read from. R4.3 (formant-preserving grain-scatter) is **no longer gated** —
 R6.2 was decided on 2026-09-09 in favour of Rubber Band, which prices in the
-`rubberband` binary as a dependency. Sampler assignment and reverse-via-derived
+`rubberband` binary as a dependency.
+
+An arrangement copy's BLOCK is fixed when Live places it — `Clip.end_time` has no
+setter, so this is a permanent Live limit rather than work outstanding, and it is
+not in the list above. What the push DOES control is the copy's playable region:
+on a WARPED row, `end_marker` and `loop_end` are written to the authored span
+after the placements apply, so the copy is meant to sound `end_bar` even while
+sitting in a longer block. A row authoring `warping = 0` is skipped — Live keeps
+that clip's markers in seconds while the arrangement is authored in bars, so the
+copy keeps its full region and the run names it rather than trimming to the wrong
+place. That write is built and unit-tested but **not yet confirmed against a real
+set** — only a shrinking marker write was ever probed. Author
+accordingly — a placement much shorter than its sample leaves a silent tail that
+can overlap what follows it on the same track. Sampler assignment and reverse-via-derived
 **ran against Live 12.4.5 on 2026-09-09** and passed. `capability-truth.md`'s
 audio row is the current answer; believe it over this paragraph if the two ever
 drift.

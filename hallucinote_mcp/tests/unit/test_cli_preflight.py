@@ -62,6 +62,14 @@ def test_preflight_report_remote_script_block_has_per_candidate_match_status():
             "installed",
             "version",
             "matches_mcp_server",
+            # The advisory half — vendored content, not just wire shape.
+            "content_fingerprint",
+            # Separates "no install" from "installed but unreadable"; without it
+            # a blind advisory reports as benign absence.
+            "content_read_error",
+            "matches_vendored_content",
+            "differing_paths",
+            "differing_count",
         }
         assert isinstance(entry["installed"], bool)
         # version is either None or a non-empty string.
@@ -227,3 +235,166 @@ def test_cli_unknown_command_still_reported(capsys):
     assert "unknown command" in err
     # Help should still list preflight.
     assert "preflight" in err
+
+
+# ---------- the advisory vendored-content report ----------
+
+
+def test_preflight_reports_the_source_vendored_content_fingerprint():
+    """The reference a candidate's `content_fingerprint` is compared against —
+    what the current source WOULD vendor, spanning the whole vendored tree
+    rather than the handshake's wire-shape subset."""
+    report = _build_report()
+    fp = report["remote_script"]["source_content_fingerprint"]
+    assert isinstance(fp, str) and len(fp) == 12
+
+
+def test_preflight_advisory_is_null_when_nothing_is_installed(tmp_path, monkeypatch):
+    """No Remote Script in a candidate User Library → nothing to compare, so the
+    advisory reports null rather than fabricating a verdict."""
+    from hallucinote_mcp.cli import preflight as pf
+
+    monkeypatch.setattr(pf.P, "candidate_user_libraries", lambda: [tmp_path])
+    monkeypatch.setattr(pf.P, "default_user_library", lambda: tmp_path)
+    cand = _build_report()["remote_script"]["candidates"][0]
+    assert cand["installed"] is False
+    assert cand["content_fingerprint"] is None
+    assert cand["matches_vendored_content"] is None
+    assert cand["differing_paths"] == []
+    assert cand["differing_count"] == 0
+
+
+def test_preflight_advisory_flags_stale_vendored_content_without_touching_the_handshake(
+    tmp_path, monkeypatch,
+):
+    """The whole point: an edit to vendored-but-unfingerprinted code (Live runs
+    `analyzer/setup.py` during a render) reads as `matches_vendored_content:
+    false` with the file named, while `matches_mcp_server` stays true."""
+    import shutil
+
+    from hallucinote_mcp import install_paths as P
+    from hallucinote_mcp.cli import preflight as pf
+
+    source = P.package_root()
+    vendored_pkg = tmp_path / "Remote Scripts" / "Hallucinote" / "hallucinote_mcp"
+    vendored_pkg.parent.mkdir(parents=True)
+    shutil.copytree(source, vendored_pkg, ignore=P.vendor_ignore(source))
+
+    monkeypatch.setattr(pf.P, "candidate_user_libraries", lambda: [tmp_path])
+    monkeypatch.setattr(pf.P, "default_user_library", lambda: tmp_path)
+
+    fresh = _build_report()["remote_script"]["candidates"][0]
+    assert fresh["matches_vendored_content"] is True
+    assert fresh["differing_paths"] == []
+
+    stale_file = vendored_pkg / "analyzer" / "setup.py"
+    stale_file.write_text(
+        stale_file.read_text(encoding="utf-8") + "\n# drifted\n", encoding="utf-8",
+    )
+
+    stale = _build_report()["remote_script"]["candidates"][0]
+    assert stale["matches_vendored_content"] is False
+    assert stale["differing_paths"] == ["analyzer/setup.py"]
+    assert stale["differing_count"] == 1
+    # Non-blocking: the handshake is untouched by an advisory-only difference.
+    assert stale["matches_mcp_server"] is True
+
+
+def test_preflight_caps_the_named_paths_but_not_the_count(tmp_path, monkeypatch):
+    """A wholly-stale install must not flood the report — the list truncates
+    while the count stays exact, so the reader knows the scale."""
+    from hallucinote_mcp import install_paths as P
+    from hallucinote_mcp.cli import preflight as pf
+
+    # An install carrying nothing the source ships: every source file differs.
+    vendored_pkg = tmp_path / "Remote Scripts" / "Hallucinote" / "hallucinote_mcp"
+    vendored_pkg.mkdir(parents=True)
+    (vendored_pkg / "__init__.py").write_text("# empty\n", encoding="utf-8")
+
+    monkeypatch.setattr(pf.P, "candidate_user_libraries", lambda: [tmp_path])
+    monkeypatch.setattr(pf.P, "default_user_library", lambda: tmp_path)
+
+    cand = _build_report()["remote_script"]["candidates"][0]
+    assert cand["matches_vendored_content"] is False
+    total = len(P.vendored_content_diff(P.package_root(), vendored_pkg))
+    assert cand["differing_count"] == total > pf._DIFFERING_PATHS_CAP
+    assert len(cand["differing_paths"]) == pf._DIFFERING_PATHS_CAP
+
+
+def test_an_unreadable_installed_tree_is_not_reported_as_no_install(tmp_path, monkeypatch):
+    """The advisory's whole purpose is to break a silence: a green handshake over
+    a stale vendored copy. An install that exists but cannot be read makes the
+    advisory blind, and collapsing that into the same `null` as "no install"
+    hands the operator the benign reading of the one case that is not benign.
+    """
+    from hallucinote_mcp.cli import preflight as PF
+    from hallucinote_mcp import install_paths as P
+
+    lib = tmp_path / "UserLib"
+    rs = P.remote_script_install_dir(lib)
+    (rs / "hallucinote_mcp").mkdir(parents=True)
+
+    monkeypatch.setattr(P, "candidate_user_libraries", lambda: [lib])
+    # The tree is there; reading it fails. Never raise, but never lie either.
+    monkeypatch.setattr(P, "vendored_content_fingerprint",
+                        lambda pkg_root: None if pkg_root != P.package_root() else "src-fp")
+
+    entry = next(
+        c for c in PF._build_report()["remote_script"]["candidates"]
+        if c["user_library"] == str(lib)
+    )
+    assert entry["installed"] is True
+    assert entry["matches_vendored_content"] is None
+    assert entry["content_read_error"] == "installed_tree_unreadable", entry
+
+
+def test_a_diff_that_could_not_run_is_not_reported_as_no_files_differ(tmp_path, monkeypatch):
+    """Both fingerprints read, and they disagree — so the trees DO differ. If
+    the walk that names the files then fails, `differing_paths: []` beside
+    `differing_count: 0` would read as "nothing differs" while
+    `matches_vendored_content` says False: a report contradicting itself, and
+    the half a reader believes is the concrete list.
+    """
+    from hallucinote_mcp.cli import preflight as PF
+    from hallucinote_mcp import install_paths as P
+
+    lib = tmp_path / "UserLib"
+    rs = P.remote_script_install_dir(lib)
+    (rs / "hallucinote_mcp").mkdir(parents=True)
+
+    monkeypatch.setattr(P, "candidate_user_libraries", lambda: [lib])
+    monkeypatch.setattr(P, "vendored_content_fingerprint",
+                        lambda pkg_root: "src-fp" if pkg_root == P.package_root() else "other-fp")
+    monkeypatch.setattr(P, "vendored_content_diff", lambda source, installed: None)
+
+    entry = next(
+        c for c in PF._build_report()["remote_script"]["candidates"]
+        if c["user_library"] == str(lib)
+    )
+    assert entry["matches_vendored_content"] is False
+    assert entry["content_read_error"] == "diff_unreadable", entry
+    assert entry["differing_count"] is None, entry
+    assert entry["differing_paths"] == [], entry
+
+
+def test_an_unreadable_source_tree_is_named_as_the_source_side(tmp_path, monkeypatch):
+    """The mirror of the installed-tree case, and it points the other way: if
+    the SOURCE cannot be read, re-vendoring from it would ship whatever could
+    not be read, so the operator must not be sent to `--force`."""
+    from hallucinote_mcp.cli import preflight as PF
+    from hallucinote_mcp import install_paths as P
+
+    lib = tmp_path / "UserLib"
+    rs = P.remote_script_install_dir(lib)
+    (rs / "hallucinote_mcp").mkdir(parents=True)
+
+    monkeypatch.setattr(P, "candidate_user_libraries", lambda: [lib])
+    monkeypatch.setattr(P, "vendored_content_fingerprint",
+                        lambda pkg_root: None if pkg_root == P.package_root() else "installed-fp")
+
+    entry = next(
+        c for c in PF._build_report()["remote_script"]["candidates"]
+        if c["user_library"] == str(lib)
+    )
+    assert entry["matches_vendored_content"] is None
+    assert entry["content_read_error"] == "source_tree_unreadable", entry

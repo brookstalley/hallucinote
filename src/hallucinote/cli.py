@@ -51,7 +51,7 @@ _SUMMARY: dict[str, str] = {
     "pull": "fold manual Live edits back into the DB",
     "verify-arrangement": "audit the DB arrangement against Live (collapsed-set; exit 1 on divergence)",
     "tuning-pull": "capture Live's loaded alternate tuning onto a song (rare; 0.01%)",
-    "compat": "check a song's third-party plugin requirements before sharing/pushing",
+    "compat": "check a song's device and sample requirements before sharing/pushing",
     "capture": "acquire the live set into a song's captured_session.json",
     "captures": "list/prune/pin rendered audio takes (disk retention)",
     "context": "query a song's composer intent + decision rationale",

@@ -85,6 +85,10 @@ from hallucinote.analyzer_identity import is_analyzer_device
 from hallucinote.db import mutations as M, queries as Q
 from hallucinote.paths import audio_file_ref
 from hallucinote.return_naming import normalize_live_return_name
+# One definition of what Live's default scaffold IS, read by both sides that
+# have to recognize it — capture (exclude it from the snapshot) and the push
+# cleanup planner (offer to delete it) — so the two can never disagree.
+from hallucinote.default_scaffold import CANONICAL_DEFAULT_SCAFFOLD_TRACK_NAMES
 
 # SNP-8R4K chunk 2 — snapshot schema version stamped on every compiled snapshot
 # (`compile_snapshot`) and asserted by the at-rest cleanup (`migrate_snapshot`).
@@ -1015,6 +1019,11 @@ def replay_capture(
         )
 
     track_ids_by_name: dict[str, str] = {}
+    reidentified: list[tuple[int, str, str]] = []
+    existing_names_by_index: dict[int, str] = {
+        int(r["track_index"]): r["name"]
+        for r in Q.get_tracks_for_song(conn, song_id)
+    }
     for t in snapshot.get("tracks") or []:
         track_type = t.get("type", "midi")
         if track_type not in _VALID_TRACK_TYPES:
@@ -1029,6 +1038,13 @@ def replay_capture(
                 f"track {t.get('name')!r}: index {idx} must be >= 1 "
                 "(0 is reserved for the master sentinel)"
             )
+        # A capture whose indices SHIFTED (the scaffold exclusion renumbers by
+        # dense rank) upserts a name onto a row that held a different one, and
+        # `create_track` keys on (song, track_index) with no name reconciliation.
+        # The rename is the silent half; say it, and leave the row alone.
+        was = existing_names_by_index.get(idx)
+        if was is not None and was != t["name"]:
+            reidentified.append((idx, was, t["name"]))
         tid = M.create_track(
             conn,
             song_id=song_id,
@@ -1090,6 +1106,34 @@ def replay_capture(
                 reason=reason,
                 sidechain_pending=sidechain_pending,
             )
+
+    # Only the ORPHANING case earns the alarm. A rename is ambiguous on its own:
+    # renaming a track in Live and re-capturing produces the same (index, old,
+    # new) triple as an index shift, and on that path the row is simply correct.
+    # What distinguishes them is whether the incoming name ALSO sits at a
+    # different index in the DB — that is the row about to be left behind.
+    shifted = [
+        (idx, was, now) for idx, was, now in reidentified
+        if existing_names_by_index.get(idx) != now
+        and any(
+            n == now and i != idx for i, n in existing_names_by_index.items()
+        )
+    ]
+    if shifted:
+        detail = "; ".join(
+            f"index {idx}: {was!r} -> {now!r}" for idx, was, now in shifted
+        )
+        warnings.warn(
+            f"capture: replay RENAMED {len(shifted)} existing track row(s) "
+            f"({detail}), and each incoming name ALSO sits at another index in "
+            "this song — so the row it came from is being left behind as a "
+            "duplicate. A snapshot's track indices shift when capture excludes "
+            "an untouched default scaffold, and replay keys on "
+            "(song, track_index) with no name reconciliation and no prune. "
+            "Check the song's tracks before building.",
+            stacklevel=2,
+        )
+
 
     # BAK-3M9T: apply each device's sidechain source now that every track exists.
     # The source is stored by surface name (never a per-build UUID), resolved here
@@ -1723,6 +1767,56 @@ def _capture_sends(probe, *, track_index: int) -> dict[str, Any]:
     return sends
 
 
+def is_untouched_default_scaffold_track(
+    track: dict[str, Any], *, has_clips: bool,
+) -> bool:
+    """True when a captured track entry is one of Live's brand-new-set
+    scaffold tracks that the song has NOT claimed.
+
+    Live's default set ships four tracks (``1-MIDI`` / ``2-MIDI`` /
+    ``3-Audio`` / ``4-Audio``) that are furniture, not song content. Ingesting
+    them makes them permanent song state: the push-side probe-and-link then
+    MATCHES them by name, so they never reach ``unmatched_live_tracks``, the
+    default-scaffold classifier goes silent, and "delete the default scaffold?"
+    can never be offered again.
+
+    Name alone is not enough on this side. Push can key its cleanup off the
+    name because it only ever judges tracks that are already unmatched; capture
+    judges every track in the set, so a scaffold slot the user has CLAIMED —
+    dropped an instrument on ``2-MIDI``, or a clip on ``3-Audio`` — must
+    survive. Untouched therefore means canonical name AND no devices AND no
+    clips.
+
+    ``has_clips`` is required rather than read off the entry because a snapshot
+    track entry carries clips only when the assembler happened to gather them:
+    a caller that never listed the track's clip slots cannot tell an empty
+    track from an unlisted one, and must not silently drop a claimed track on
+    that ambiguity.
+    """
+    return (
+        track.get("name") in CANONICAL_DEFAULT_SCAFFOLD_TRACK_NAMES
+        and not track.get("devices")
+        and not has_clips
+    )
+
+
+def _track_carries_clips(probe, *, track_index: int) -> bool:
+    """True when a Live track holds at least one clip in either location.
+
+    Session slots are reported dense — empty ones carry ``empty: True`` — while
+    ``arrangement_clips`` lists only real placements, so an entry without an
+    explicit ``empty`` flag counts as a clip.
+    """
+    for location in ("session", "arrangement"):
+        listing = probe(
+            "ableton_clip", "list", track_index=track_index, location=location,
+        )
+        for clip in listing.get("clips") or []:
+            if not clip.get("empty"):
+                return True
+    return False
+
+
 def assemble_snapshot_via_probes(
     probe, *, old_snapshot: dict[str, Any] | None = None,
     song_dir: Path | None = None,
@@ -1752,6 +1846,14 @@ def assemble_snapshot_via_probes(
     anchors a sampler's captured sample to a song-relative ``audio_file``
     reference; omitted, such a path is stored absolute and stops travelling
     between machines.
+
+    An UNTOUCHED track of Live's brand-new-set scaffold is excluded, the way
+    the analyzer is (see :func:`is_untouched_default_scaffold_track` for the
+    predicate and why name alone won't do here); surviving tracks are numbered
+    by dense rank so the exclusion can't leave a hole. This is the only capture
+    entry point that applies it — deciding "untouched" needs the track's clip
+    inventory, which ``compile_snapshot`` never sees, so a caller assembling
+    from probe results it gathered by hand keeps whatever it probed.
     """
     info = probe("ableton_session", "info")
     master_mixer = info.get("master")
@@ -1793,6 +1895,7 @@ def assemble_snapshot_via_probes(
         returns_out.append(entry)
 
     tracks_out: list[dict[str, Any]] = []
+    dropped_scaffold: list[str] = []
     track_count = int(info.get("track_count") or 0)
     for ti in range(1, track_count + 1):
         tinfo = probe("ableton_track", "info", track_index=ti)
@@ -1816,8 +1919,36 @@ def assemble_snapshot_via_probes(
         )
         if devices:
             entry["devices"] = devices
+        # An untouched default-scaffold track is Live's furniture, not the
+        # song's — capturing it would make it permanent song state and silence
+        # the push-side cleanup offer forever. Clips are the one half of the
+        # predicate that costs extra probes, so they are only listed for a
+        # canonically-named track: at most Live's four scaffold slots, and none
+        # at all in a set whose tracks the song has already named.
+        if entry["name"] in CANONICAL_DEFAULT_SCAFFOLD_TRACK_NAMES:
+            if is_untouched_default_scaffold_track(
+                entry, has_clips=_track_carries_clips(probe, track_index=ti),
+            ):
+                # Never silent: a pristine set captures as zero tracks, and
+                # without this the operator is told nothing about why.
+                dropped_scaffold.append(str(entry.get("name")))
+                continue
+        # Dense 1-based rank among the tracks that survive, NEVER the raw Live
+        # index: `create_track` upserts on (song, track_index), so a snapshot
+        # numbered around a scaffold that later gets deleted would replay the
+        # same song track into a second row at a different index.
+        entry["index"] = len(tracks_out) + 1
         tracks_out.append(entry)
 
+    if dropped_scaffold:
+        warnings.warn(
+            f"capture: excluded {len(dropped_scaffold)} untouched default "
+            f"scaffold track(s) ({', '.join(dropped_scaffold)}) — Live's "
+            "brand-new-set tracks carrying no devices and no clips. Add a "
+            "device or a clip to keep one. Surviving tracks are renumbered "
+            "from 1.",
+            stacklevel=2,
+        )
     snapshot = compile_snapshot(
         session_info=session_info, returns=returns_out, tracks=tracks_out,
     )
@@ -2094,6 +2225,35 @@ def inject_browser_paths(
                 )
 
 
+def _track_name_index_map(snapshot: dict[str, Any]) -> dict[str, int]:
+    """Track name -> index, for names that are UNIQUE in the snapshot.
+
+    Capture renumbers surviving tracks by dense rank when it drops an untouched
+    default scaffold, so a song captured from a scaffold-bearing set moves every
+    real track's index down. The identity joins below key on that index, and
+    their miss path is a silent drop — so without a stable second key, one
+    refresh of such a song would lose every device's browser path and every
+    preset seed, on exactly the songs the scaffold exclusion exists for.
+
+    A duplicated name is omitted rather than guessed: matching the wrong track
+    would carry a real path onto a real device that never had it, which is worse
+    than the drop this exists to prevent.
+    """
+    seen: dict[str, int] = {}
+    dupes: set[str] = set()
+    for t in snapshot.get("tracks") or []:
+        name, idx = t.get("name"), t.get("index")
+        if not isinstance(name, str) or idx is None:
+            continue
+        if name in seen:
+            dupes.add(name)
+            continue
+        seen[name] = int(idx)
+    for d in dupes:
+        seen.pop(d, None)
+    return seen
+
+
 def _collect_browser_paths(
     snapshot: dict[str, Any],
 ) -> dict[tuple[str, int, int, Any], list[str]]:
@@ -2146,14 +2306,20 @@ def preserve_browser_paths(
     old_paths = _collect_browser_paths(old)
     if not old_paths:
         return
+    old_by_name = _track_name_index_map(old)
     for t in new.get("tracks") or []:
         if "index" not in t:
             continue
         ti = int(t["index"])
+        # Second key for the renumber case: same name, the index it HAD.
+        was = old_by_name.get(t.get("name")) if isinstance(t.get("name"), str) else None
         for d in t.get("devices") or []:
             if d.get("browser_path") or "index" not in d:
                 continue
-            key = ("track", ti, int(d["index"]), d.get("class"))
+            di, cls = int(d["index"]), d.get("class")
+            key = ("track", ti, di, cls)
+            if key not in old_paths and was is not None:
+                key = ("track", was, di, cls)
             if key in old_paths:
                 d["browser_path"] = list(old_paths[key])
     for r in new.get("returns") or []:
@@ -2278,16 +2444,27 @@ def preserve_preset_overrides(
     old_presets = _collect_preset_queries(old)
     if not old_presets:
         return
+    old_by_name = _track_name_index_map(old)
     for parent_kind, parents in (("track", new.get("tracks")),
                                  ("return", new.get("returns"))):
         for parent in parents or []:
             if "index" not in parent:
                 continue
             pidx = int(parent["index"])
+            # Same renumber fallback as the browser-path join: a dense-ranked
+            # track carries a different index than the snapshot it is refreshing.
+            was = (
+                old_by_name.get(parent.get("name"))
+                if parent_kind == "track" and isinstance(parent.get("name"), str)
+                else None
+            )
             for d in parent.get("devices") or []:
                 if "index" not in d:
                     continue
-                key = (parent_kind, pidx, int(d["index"]), d.get("class"))
+                di, cls = int(d["index"]), d.get("class")
+                key = (parent_kind, pidx, di, cls)
+                if key not in old_presets and was is not None:
+                    key = (parent_kind, was, di, cls)
                 preset = old_presets.get(key)
                 if preset is None:
                     continue

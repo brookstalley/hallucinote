@@ -11,6 +11,8 @@ apply. Exercises the full fourteen-phase loop through the CLI surface.
 from __future__ import annotations
 
 import json
+import os
+import pathlib
 
 import pytest
 
@@ -2908,18 +2910,127 @@ def _result_with_error_substring(substr: str):
 
 
 def test_version_mismatch_recovery_teaches_pin_recipe():
-    """A version-mismatch refusal yields the pin recovery: the worktree +
-    PYTHONPATH recipe and the preflight verify step, plus the reinstall
-    alternative."""
+    """A version-mismatch refusal yields the pin recovery: copy the package
+    Live vendored, PYTHONPATH at it, the preflight verify step, plus the
+    reinstall alternative."""
     result = _result_with_error_substring(
         "Hallucinote MCP version mismatch: MCP server side reports 0.9.4"
     )
     text = push_cli._version_mismatch_recovery(result)
     assert text is not None
-    assert "git worktree add" in text
+    assert "Remote Scripts/Hallucinote/hallucinote_mcp" in text
     assert "PYTHONPATH" in text
     assert "preflight" in text
     assert "ableton-mcp-install" in text  # the reinstall path is offered too
+
+
+def test_version_mismatch_recovery_never_calls_the_suffix_a_commit():
+    """The ``+<suffix>`` is a content fingerprint, so a git recipe against it
+    cannot resolve. The recovery must say so and must not hand out one."""
+    text = push_cli._version_mismatch_recovery(_result_with_error_substring(
+        "Hallucinote MCP version mismatch: MCP server side reports 0.9.4"
+    ))
+    assert text is not None
+    assert "git worktree add" not in text
+    assert "git checkout" not in text
+    assert "the commit it was vendored from" not in text
+    assert "not a git commit" in text.lower()
+
+
+def test_version_mismatch_recovery_names_the_detected_user_library(monkeypatch):
+    """The recipe copies a directory, so it prints the User Library this
+    machine actually resolves — a hardcoded platform guess would copy nothing
+    for anyone who moved theirs."""
+    from hallucinote_mcp import install_paths
+
+    moved = pathlib.Path("/somewhere/else/User Library")
+    monkeypatch.setattr(install_paths, "default_user_library", lambda: moved)
+    text = push_cli._version_mismatch_recovery(_result_with_error_substring(
+        "Hallucinote MCP version mismatch: MCP server side reports 0.9.4"
+    ))
+    assert text is not None
+    assert (
+        '"/somewhere/else/User Library/Remote Scripts/Hallucinote/hallucinote_mcp"'
+        in text
+    )
+
+
+def _pin_recipe_shell_lines(text: str) -> list[str]:
+    """The indented command lines of the printed pin recipe, verbatim."""
+    return [
+        line.strip() for line in text.splitlines()
+        if line.startswith("       ") and line.strip()
+    ]
+
+
+def test_version_mismatch_recovery_pin_recipe_actually_pins(tmp_path, monkeypatch):
+    """Run the PRINTED recipe against a vendored Remote Script that has drifted
+    from the checkout: the resulting tree must report the vendored version, or
+    the handshake it promises to clear would refuse again. Executing the text is
+    the only check that catches an unfollowable recipe — prose alone reads fine.
+    """
+    import shutil
+    import subprocess
+    import sys
+
+    import hallucinote_mcp
+    from hallucinote_mcp import install_ops, install_paths
+
+    real_pkg = install_paths.package_root()
+
+    # A checkout whose engine + bridge sources are the current ones...
+    checkout = tmp_path / "checkout"
+    (checkout / "hallucinote_mcp" / "src").mkdir(parents=True)
+    shutil.copytree(real_pkg, checkout / "hallucinote_mcp" / "src" / "hallucinote_mcp")
+
+    # ...and a Live install vendored from source the checkout no longer has.
+    drifted = tmp_path / "drifted-source"
+    shutil.copytree(real_pkg, drifted)
+    clip_handler = drifted / "handlers" / "clip.py"
+    clip_handler.write_text(clip_handler.read_text() + "\n# vendored-side drift\n")
+    user_library = tmp_path / "User Library"
+    install_ops.vendor_remote_script(
+        install_paths.remote_script_install_dir(user_library),
+        source_root=drifted,
+        force=True,
+    )
+    vendored_version = install_paths.installed_remote_script_version(user_library)
+    assert vendored_version not in (None, hallucinote_mcp.__version__), (
+        "the fixture must reproduce a real mismatch, else the pin proves nothing"
+    )
+
+    monkeypatch.setattr(install_paths, "default_user_library", lambda: user_library)
+    text = push_cli._version_mismatch_recovery(_result_with_error_substring(
+        "Hallucinote MCP version mismatch: MCP server side reports 0.9.4"
+    ))
+    assert text is not None
+
+    # Only the pin's location is redirected — a test that scribbles in /tmp is
+    # the one thing the recipe may not do verbatim.
+    pin = tmp_path / "pin"
+    lines = _pin_recipe_shell_lines(text)
+    lines = [line.replace("PIN=/tmp/hallucinote-pin", f'PIN="{pin}"') for line in lines]
+    script = "\n".join(
+        line for line in lines
+        if not line.startswith("python3 -m hallucinote.sync.push_cli")
+        and not line.startswith("python3 -m hallucinote_mcp.cli")
+    )
+    subprocess.run(
+        ["bash", "-euc", script], cwd=checkout, check=True, capture_output=True,
+    )
+
+    assert hallucinote_mcp.compute_version_for(pin / "hallucinote_mcp") == vendored_version
+    # The recipe's own verify step is `hallucinote_mcp.cli preflight`, which the
+    # install strips out of what it vendors — the copy-back has to restore it.
+    assert (pin / "hallucinote_mcp" / "cli").is_dir()
+    assert (pin / "hallucinote_mcp" / "server.py").is_file()
+
+    pinned = subprocess.run(
+        [sys.executable, "-c", "import hallucinote_mcp; print(hallucinote_mcp.__version__)"],
+        cwd=checkout, capture_output=True, text=True, check=True,
+        env={**os.environ, "PYTHONPATH": str(pin)},
+    )
+    assert pinned.stdout.strip() == vendored_version
 
 
 def test_version_mismatch_recovery_detects_handshake_missing_branch():
@@ -2970,8 +3081,9 @@ def test_cli_execute_version_mismatch_prints_pin_recovery_not_generic(
     ])
     assert rc == 1
     out = capsys.readouterr().out
-    assert "git worktree add" in out
+    assert "Remote Scripts/Hallucinote/hallucinote_mcp" in out
     assert "PYTHONPATH" in out
+    assert "git worktree add" not in out
     # The generic build.py recovery must NOT also fire — that's the bug.
     assert "fix the underlying issue (build.py or snapshot)" not in out
 
@@ -3117,12 +3229,17 @@ def test_cli_prune_apply_deletes_only_the_orphan(
 # ---------------------------------------------------------------------------
 
 
-def _fake_execute_result(*, devices_calls_ok: int):
+def _fake_execute_result(*, devices_calls_ok: int, clips_calls_ok: int = 0):
     from hallucinote.sync.push_execute import ExecuteResult, PhaseOutcome
     return ExecuteResult(
         outcome="ok", exit_code=0, phase_halted=None,
         phases=[
             PhaseOutcome(name="tracks", status="ok", calls_ok=1),
+            PhaseOutcome(
+                name="clips",
+                status="ok" if clips_calls_ok else "skipped",
+                calls_ok=clips_calls_ok,
+            ),
             PhaseOutcome(
                 name="devices",
                 status="ok" if devices_calls_ok else "skipped",
@@ -3513,3 +3630,51 @@ def test_cli_execute_lane_probe_failure_degrades_to_empty_not_none(
     assert lanes == {}
     assert lanes is not None
     assert "INCOMPLETE" in capsys.readouterr().err
+
+
+def test_cli_execute_regenerates_requirements_after_a_clips_only_push(
+    conn, song, session, db_path, capsys, monkeypatch, tmp_path,
+):
+    """REQUIREMENTS.md lists the song's SAMPLES as well as its devices, so a push
+    that re-points an audio clip and touches no device must still refresh it —
+    otherwise the sample list the doc just gained goes stale on exactly the pushes
+    that change it."""
+    import hallucinote.sync.compat as compat
+    calls: list[str] = []
+    monkeypatch.setattr(
+        push_cli.push_execute, "execute_push",
+        lambda **kw: _fake_execute_result(devices_calls_ok=0, clips_calls_ok=3),
+    )
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", lambda send_fn=None: ([], []))
+    monkeypatch.setattr(push_cli, "_resolve_db_path", lambda args: db_path)
+    monkeypatch.setattr(
+        compat, "regen_requirements",
+        lambda slug: (calls.append(slug), tmp_path / "REQUIREMENTS.md")[1],
+    )
+    rc = push_cli.main(["execute", session, "--song", "t", "--no-coherence-check"])
+    assert rc == 0
+    assert calls == ["t"], calls
+
+
+def test_cli_execute_regenerates_requirements_exactly_once_when_both_applied(
+    conn, song, session, db_path, capsys, monkeypatch, tmp_path,
+):
+    """The trigger is a list over two phases now. Regenerating per matching phase
+    would rewrite the file twice on an ordinary full push — same content, but two
+    notices and two writes, and the doubled work is invisible until someone reads
+    stderr."""
+    import hallucinote.sync.compat as compat
+    calls: list[str] = []
+    monkeypatch.setattr(
+        push_cli.push_execute, "execute_push",
+        lambda **kw: _fake_execute_result(devices_calls_ok=2, clips_calls_ok=3),
+    )
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", lambda send_fn=None: ([], []))
+    monkeypatch.setattr(push_cli, "_resolve_db_path", lambda args: db_path)
+    monkeypatch.setattr(
+        compat, "regen_requirements",
+        lambda slug: (calls.append(slug), tmp_path / "REQUIREMENTS.md")[1],
+    )
+    rc = push_cli.main(["execute", session, "--song", "t", "--no-coherence-check"])
+    assert rc == 0
+    assert calls == ["t"], f"expected exactly one regen, got {len(calls)}"

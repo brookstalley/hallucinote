@@ -546,13 +546,6 @@ def render_handler(
         # window).
         frames_before = sidecar.frames_received
 
-        # Arm everyone. Each arm write is its own main-thread bout with a
-        # wall-clock yield between (see _set_arm_on_all). Live's beat
-        # observer (inside the patch) defines the recording boundary, not
-        # the arm-write timing, so per-arm latency is irrelevant — the
-        # iteration cost just buys notification-cascade safety.
-        _set_arm_on_all(context, layout, arm=True)
-
         # Seek then play. SPLIT into two main-thread bouts with a worker-
         # thread yield between: setting current_song_time triggers Live's
         # transport-state notification cascade, and start_playing() called
@@ -590,6 +583,19 @@ def render_handler(
         # `handlers/_transport.py`.
         locate = locate_start_position(context, seek_to)
         time.sleep(_INTER_MUTATION_YIELD_S)
+        # Arm everyone — AFTER the locate, never before it. The patch resets its
+        # ``prev_beat`` to -1 on the Arm RISING EDGE (m4l/HallucinoteAnalyzer.amxd.spec.md,
+        # "prev_beat is reset to -1"), which makes the start detector's
+        # ``prev_beat < start_at_beat`` clause unconditionally true. While armed, the
+        # detector then fires on the FIRST current_song_time change of any kind — and a
+        # locate is exactly such a change. Arming first therefore opened ``sfrecord~`` at
+        # the seek and captured the wall clock before the transport rolled, putting every
+        # per-section window in the report about a beat early. Arming after the locate
+        # makes the first post-arm movement the transport itself. Each arm write is its
+        # own main-thread bout with a wall-clock yield between (see _set_arm_on_all).
+        _set_arm_on_all(context, layout, arm=True)
+        time.sleep(_INTER_MUTATION_YIELD_S)
+
         def _play_on_main() -> None:
             context.song.start_playing()
         context.run_on_main(_play_on_main)
@@ -1015,7 +1021,15 @@ def _set_arm_on_all(
     thread yield between. Sequential because the patch's beat observer
     (not the Arm-write latency) defines the recording boundary — the
     per-Live-message latency between arms doesn't affect sample-accurate
-    capture timing. The yield lets Live's parameter-listener cascade
+    capture timing.
+
+    That holds for the latency BETWEEN arms; it does NOT make arming
+    order-independent. The Arm rising edge resets the patch's ``prev_beat``
+    to -1, so an arm issued before a locate makes the start detector fire on
+    the locate instead of on the transport. Callers must arm only after the
+    playhead is parked.
+
+    The yield lets Live's parameter-listener cascade
     drain between writes; without it Live can reject the next write
     with "Changes cannot be triggered by notifications" when an
     analyzer's M4L Arm listener is still flushing.

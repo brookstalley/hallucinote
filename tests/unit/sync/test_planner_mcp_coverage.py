@@ -96,7 +96,7 @@ def conn(tmp_path):
 
 
 @pytest.fixture
-def synthetic_song(conn) -> dict:
+def synthetic_song(conn, tmp_path) -> dict:
     """One row in every domain the planners query.
 
     Returns a dict carrying the IDs the planners and their adapters
@@ -153,6 +153,24 @@ def synthetic_song(conn) -> dict:
         start_bar=5.0, end_bar=7.0,
     )
 
+    # An AUDIO track carrying one audio clip and one placement of it, so the
+    # audio-only planners have a row: the placement's copy is what
+    # plan_push_arrangement_audio_regions bounds. The sample must be on disk —
+    # the arrangement planner refuses a placement whose file is not.
+    (tmp_path / "assets").mkdir(exist_ok=True)
+    (tmp_path / "assets" / "canary.wav").write_bytes(b"RIFF....WAVEfmt ")
+    audio_track_id = M.create_track(
+        conn, song_id=song_id, track_index=3, name="Stem", kind="audio",
+    )
+    audio_clip_id = M.create_audio_clip(
+        conn, track_id=audio_track_id, slot=1, length_beats=8.0,
+        audio_file="assets/canary.wav", name="Stem-1",
+    )
+    audio_placement_id = M.add_arrangement_clip(
+        conn, song_id=song_id, track_id=audio_track_id, clip_id=audio_clip_id,
+        start_bar=1.0, end_bar=3.0,
+    )
+
     # One device on the track's top-level chain (devices planner).
     chain_id = M.create_device_chain(conn, parent_track_id=track_id, position=0)
     M.create_device(
@@ -190,6 +208,14 @@ def synthetic_song(conn) -> dict:
     M.link_db_to_ableton(
         conn, session_id=session_id, db_kind="arrangement_clip",
         db_id=arrangement_clip_id, ableton_index=1, actor="sync",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session_id, db_kind="track", db_id=audio_track_id,
+        ableton_index=3, actor="sync",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session_id, db_kind="arrangement_clip",
+        db_id=audio_placement_id, ableton_index=2, actor="sync",
     )
 
     return {
@@ -275,6 +301,16 @@ _ALL_PLANNERS: tuple[PlannerEntry, ...] = (
         name="plan_push_arrangement_clip_notes",
         invoke=lambda conn, **kw: push.plan_push_arrangement_clip_notes(
             conn, clip_id=kw["clip_id"], session_id=kw["session_id"],
+        ),
+        must_emit_calls=True,
+    ),
+    PlannerEntry(
+        # The post-apply pass that bounds a placed audio copy to its authored
+        # span (end_marker / loop_end). Reads the `arrangement_clip` binding,
+        # so the fixture's LINKED audio placement is what makes it emit.
+        name="plan_push_arrangement_audio_regions",
+        invoke=lambda conn, **kw: push.plan_push_arrangement_audio_regions(
+            conn, song_id=kw["song_id"], session_id=kw["session_id"],
         ),
         must_emit_calls=True,
     ),

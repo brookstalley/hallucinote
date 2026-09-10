@@ -168,9 +168,30 @@ git diff vPREV..develop --name-only | grep -E \
 Those paths are `_FINGERPRINT_PATHS`
 (`hallucinote_mcp/src/hallucinote_mcp/__init__.py`). **Any** hit means the fingerprint
 changed → **re-vendor required** (see [§What a release means…](#what-a-release-means-for-the-people-running-it)).
+
+That grep answers the **hard** question — will Live *refuse* the call? It is not the
+whole question, because the install vendors far more of the package into Live than the
+handshake guards: `analyzer/` (which Live *executes* during a render), `resources/`,
+`client.py` and the rest. A release that changes only those leaves the fingerprint
+still and the vendored copy stale, so a `not required` verdict derived from the grep
+alone would be wrong. Ask the **advisory** question too:
+
+```sh
+git diff vPREV..develop --name-only | grep 'hallucinote_mcp/src/hallucinote_mcp/' | grep -vE \
+  '/(cli|tests|m4l)/|/(wire|schema|dispatcher)\.py|/(actions|handlers|remote_script)/|src/hallucinote_mcp/server\.py$'
+```
+
+A hit there and none above is the honest verdict **`Re-vendor: recommended`** — the
+handshake will pass, Live keeps running the previous copy of that code, and consumers
+should re-vendor to get the fix. One exception: hits confined to `server_side/` are
+vendored but never *executed* in Live (they run in the MCP server process), so they
+alone still read **`not required`**. The same distinction is machine-readable at
+`preflight`'s `remote_script.candidates[*].matches_vendored_content` +
+`differing_paths` (advisory) beside `matches_mcp_server` (hard).
+
 Record the verdict in the release commit body and the change-log entry as
-**`Re-vendor: required`** or **`Re-vendor: not required`**, so consumers know without
-having to diff.
+**`Re-vendor: required`**, **`Re-vendor: recommended`** or **`Re-vendor: not
+required`**, so consumers know without having to diff.
 
 ### 6. Distill the public CHANGELOG entry
 
@@ -334,6 +355,7 @@ handshake — is on its **own clock**. Full rationale in
 | **Plugin manifest** | `.claude-plugin/plugin.json` `version` | every release (lockstep) | see `pyproject.toml` |
 | **Engine dunder** (`hallucinote`) | `src/hallucinote/__init__.py` `__version__` | every release (lockstep) | see `pyproject.toml` |
 | **Handshake** | `BASE_VERSION` + content fingerprint, `hallucinote_mcp/src/hallucinote_mcp/__init__.py` | any wire-shape file changes (`_FINGERPRINT_PATHS`) | `0.1.0+<12-hex>` |
+| **Vendored content** (advisory) | `install_paths.vendored_content_fingerprint`, reported by `preflight` | any *vendored* file changes — the wire-shape set plus `analyzer/`, `resources/`, `client.py`, … | `<12-hex>` |
 
 The **Today** column deliberately names the file rather than a number: a literal here
 is a copy of a value that moves every release, and it sat at `1.6.0` through three
@@ -345,6 +367,14 @@ server — and it is computed from file *content*, not from any version string. 
 can bump the product version without flipping the fingerprint (docs/CLI/resources-only)
 **or** flip the fingerprint on a patch bump (any change under `actions/`, `handlers/`,
 `wire.py`, …). Always compute it (step 5); never infer it from the version number.
+
+The last row is the one not to read as a second gate. It is **advisory**: it moves for
+everything the install ships into Live, which is a strict superset of the handshake set,
+so a hard mismatch always implies an advisory one but never the reverse. "Fingerprint
+unchanged" therefore does not mean "the vendored copy is current" — it means Live will
+still *talk* to the server while possibly running last release's `analyzer/`. Nothing
+refuses an install on this signal; it exists so the staleness is visible instead of
+silent.
 
 ## What a release means for the people running it
 
@@ -380,8 +410,15 @@ branch. The two halves update on different channels:
      `remote_script.candidates[*].matches_mcp_server: false`.
 
    - **If the release did not flip the fingerprint** (docs/CLI/resources/engine-only):
-     the auto-updated server and the existing vendored Remote Script still agree —
-     **nothing to do**, calls keep working.
+     the auto-updated server and the existing vendored Remote Script still agree, so
+     **calls keep working**. That is not the same as "nothing to do": the install ships
+     more into Live than the handshake guards, so a release touching `analyzer/`,
+     `resources/` or `client.py` leaves Live running the *previous* copy of that code
+     with every call still green. That is the `Re-vendor: recommended` verdict, and the
+     consumer sees it in the same preflight at
+     `remote_script.candidates[*].matches_vendored_content: false` (with
+     `differing_paths` naming the files). Nothing breaks; they simply don't have the
+     fix until they re-vendor.
 
    This is the asymmetry to internalize: **a fingerprint-flipping release auto-updates
    the consumer's server into a state that no longer matches their Live install, and

@@ -628,6 +628,14 @@ build_state:
 # gone.)
 active_build_plan:
 
+# The canonical suite invocation. Without it the evidence recorder falls back to
+# the hook interpreter's own pytest, which is not this project's environment —
+# `project-preferences.md` is explicit that a "green" claim must come from the
+# locked env, and a fallback run silently is not one. Kept in step with the
+# preferences entry; the xdist grouping is per-directory (tests/conftest.py), so
+# the parallel form is the same suite, not a subset.
+test_command: uv run --frozen pytest -n auto --dist loadgroup --junit-xml={junit_xml} -q
+
 # Test roots for the evidence recorder, which otherwise discovers repo-root
 # `tests/` only. This repo is a two-package layout: the engine's suite is under
 # `tests/`, the MCP server's under `hallucinote_mcp/tests/`, and `examples/`

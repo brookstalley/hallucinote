@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -854,3 +855,218 @@ def test_max_for_live_available_returns_none_for_mvp():
     Pinned as a test so the contract is explicit."""
     assert max_for_live_available() is None
     assert max_for_live_available("12.0.5") is None
+
+
+# --- the advisory vendored-content fingerprint -----------------------------
+#
+# The handshake fingerprint covers only the wire-shape files, but the install
+# ships the whole package into Live. These lock the gap closed: an edit to
+# vendored-but-unfingerprinted code must be VISIBLE (the advisory moves) and
+# must stay NON-BLOCKING (the handshake version does not move).
+
+
+def _write_vendorable_source(root: pathlib.Path) -> pathlib.Path:
+    """A synthetic package with both halves present: fingerprinted wire-shape
+    files, vendored-but-unfingerprinted code (``analyzer/``, ``server_side/``,
+    ``client.py``, ``resources/``), and every exclude shape."""
+    root.mkdir(parents=True)
+    (root / "__init__.py").write_text('BASE_VERSION = "1.2.3"\n', encoding="utf-8")
+    for name in ("wire.py", "schema.py", "dispatcher.py"):
+        (root / name).write_text(f"# {name}\n", encoding="utf-8")
+    for pkg in ("actions", "handlers", "remote_script"):
+        (root / pkg).mkdir()
+        (root / pkg / "__init__.py").write_text(f"# {pkg}\n", encoding="utf-8")
+    (root / "handlers" / "render.py").write_text("# render\n", encoding="utf-8")
+
+    # Vendored into Live, outside _FINGERPRINT_PATHS.
+    (root / "analyzer").mkdir()
+    (root / "analyzer" / "__init__.py").write_text("# analyzer\n", encoding="utf-8")
+    (root / "analyzer" / "setup.py").write_text("# analyzer setup\n", encoding="utf-8")
+    (root / "server_side").mkdir()
+    (root / "server_side" / "__init__.py").write_text("# server_side\n", encoding="utf-8")
+    (root / "server_side" / "analysis.py").write_text("# analysis\n", encoding="utf-8")
+    (root / "client.py").write_text("# client\n", encoding="utf-8")
+    (root / "resources" / "guides").mkdir(parents=True)
+    (root / "resources" / "guides" / "conventions.md").write_text("# guide\n", encoding="utf-8")
+
+    # Never vendored: anchored package-root server.py, the any-position dirs.
+    (root / "server.py").write_text("import fastmcp\n", encoding="utf-8")
+    for excluded in ("cli", "tests", "m4l", "__pycache__"):
+        (root / excluded).mkdir()
+        (root / excluded / "thing.py").write_text("# excluded\n", encoding="utf-8")
+    return root
+
+
+def _vendor_copy(source: pathlib.Path, dest: pathlib.Path) -> pathlib.Path:
+    """Vendor ``source`` to ``dest`` exactly as the installer would."""
+    import shutil as _shutil
+
+    _shutil.copytree(source, dest, ignore=install_paths.vendor_ignore(source))
+    return dest
+
+
+def test_advisory_fingerprint_moves_on_analyzer_edit_while_handshake_does_not(tmp_path):
+    """The acceptance criterion. ``analyzer/setup.py`` runs inside Live during a
+    render, so an edited-but-not-re-vendored copy means Live executes stale
+    code — and the handshake, which covers only the wire-shape files, stays
+    green while it does. The advisory is what makes that visible."""
+    from hallucinote_mcp import compute_version_for
+
+    source = _write_vendorable_source(tmp_path / "source")
+    installed = _vendor_copy(source, tmp_path / "installed")
+
+    handshake_before = compute_version_for(installed)
+    advisory_before = install_paths.vendored_content_fingerprint(installed)
+    assert advisory_before is not None
+
+    (installed / "analyzer" / "setup.py").write_text("# EDITED\n", encoding="utf-8")
+
+    assert install_paths.vendored_content_fingerprint(installed) != advisory_before
+    # The half that must NOT move: the hard fingerprint is unchanged, so the
+    # handshake still passes and no new failure mode appears.
+    assert compute_version_for(installed) == handshake_before
+
+
+def test_advisory_fingerprint_moves_for_every_unfingerprinted_vendored_entry(tmp_path):
+    """``analyzer/`` is not special — the gap is the whole vendored-minus-
+    fingerprinted set, so ``server_side/`` and a package-root module move it too
+    (and still leave the handshake alone)."""
+    from hallucinote_mcp import compute_version_for
+
+    for rel in ("server_side/analysis.py", "client.py", "resources/guides/conventions.md"):
+        source = _write_vendorable_source(tmp_path / f"source-{rel.replace('/', '_')}")
+        installed = _vendor_copy(source, tmp_path / f"installed-{rel.replace('/', '_')}")
+        handshake_before = compute_version_for(installed)
+        advisory_before = install_paths.vendored_content_fingerprint(installed)
+
+        (installed / rel).write_text("# EDITED\n", encoding="utf-8")
+
+        assert install_paths.vendored_content_fingerprint(installed) != advisory_before, rel
+        assert compute_version_for(installed) == handshake_before, rel
+
+
+def test_wire_shape_edit_moves_both_fingerprints(tmp_path):
+    """The hard set is a strict subset of the advisory one, so the two can never
+    disagree in the confusing direction: a handshake mismatch always comes with
+    an advisory mismatch."""
+    from hallucinote_mcp import compute_version_for
+
+    source = _write_vendorable_source(tmp_path / "source")
+    installed = _vendor_copy(source, tmp_path / "installed")
+    handshake_before = compute_version_for(installed)
+    advisory_before = install_paths.vendored_content_fingerprint(installed)
+
+    (installed / "handlers" / "render.py").write_text("# EDITED\n", encoding="utf-8")
+
+    assert compute_version_for(installed) != handshake_before
+    assert install_paths.vendored_content_fingerprint(installed) != advisory_before
+
+
+def test_vendored_content_diff_names_exactly_the_edited_file(tmp_path):
+    """Naming the paths is what replaces a per-path severity registry: the
+    reader tells ``analyzer/setup.py`` (Live runs it) from
+    ``server_side/analysis.py`` (Live only imports it) by reading the list."""
+    source = _write_vendorable_source(tmp_path / "source")
+    installed = _vendor_copy(source, tmp_path / "installed")
+    assert install_paths.vendored_content_diff(source, installed) == ()
+
+    (installed / "analyzer" / "setup.py").write_text("# EDITED\n", encoding="utf-8")
+
+    assert install_paths.vendored_content_diff(source, installed) == ("analyzer/setup.py",)
+
+
+def test_vendored_content_diff_reports_one_sided_entries(tmp_path):
+    """A file the source ships but the install lacks — and a leftover the
+    install still carries — are drift too, not just differing bytes."""
+    source = _write_vendorable_source(tmp_path / "source")
+    installed = _vendor_copy(source, tmp_path / "installed")
+
+    (installed / "client.py").unlink()
+    (installed / "analyzer" / "leftover.py").write_text("# old\n", encoding="utf-8")
+
+    assert install_paths.vendored_content_diff(source, installed) == (
+        "analyzer/leftover.py",
+        "client.py",
+    )
+
+
+def test_bytecode_in_the_installed_tree_is_not_drift(tmp_path):
+    """Live writes ``__pycache__`` next to the code it imports. Those are
+    excluded from the vendored set on both sides, so a running Live must not
+    make its own install read as stale."""
+    source = _write_vendorable_source(tmp_path / "source")
+    installed = _vendor_copy(source, tmp_path / "installed")
+    before = install_paths.vendored_content_fingerprint(installed)
+
+    cache = installed / "handlers" / "__pycache__"
+    cache.mkdir()
+    (cache / "render.cpython-311.pyc").write_bytes(b"\x00compiled\x00")
+    (installed / "analyzer" / "setup.pyc").write_bytes(b"\x00compiled\x00")
+
+    assert install_paths.vendored_content_fingerprint(installed) == before
+    assert install_paths.vendored_content_diff(source, installed) == ()
+
+
+def test_vendored_content_helpers_never_raise_on_an_absent_tree(tmp_path):
+    """Detection helpers report ``None`` rather than raising — preflight runs
+    them against candidate User Libraries that may not exist at all.
+
+    The diff says ``None``, not ``()``: an empty tuple is the real answer for
+    *the two trees agree*, and handing it back for a tree nobody could read
+    would report agreement about a comparison that never happened.
+    """
+    missing = tmp_path / "nope"
+    assert install_paths.vendored_content_fingerprint(missing) is None
+    assert install_paths.vendored_content_diff(missing, tmp_path) is None
+    assert install_paths.vendored_content_diff(tmp_path, missing) is None
+
+
+@pytest.mark.skipif(
+    os.geteuid() == 0, reason="root reads a 0o000 directory, so nothing fails",
+)
+def test_an_unreadable_subdirectory_is_an_error_not_a_shorter_file_list(tmp_path):
+    """``os.walk`` swallows a directory-level error by default, and every caller
+    here reads a short list as a complete one.
+
+    Left swallowed, the fingerprint hashes a PARTIAL tree and returns a
+    normal-looking 12-hex value — so a directory unreadable on both sides makes
+    the two fingerprints agree, ``matches_vendored_content`` reads ``true``, the
+    install skill says "nothing to say", and Live keeps running stale code. That
+    is the silence the advisory exists to end, reproduced by the advisory
+    itself.
+    """
+    source = _write_vendorable_source(tmp_path / "source")
+    whole = install_paths.vendored_content_fingerprint(source)
+    assert whole is not None
+
+    locked = source / "resources" / "guides"
+    assert locked.is_dir()
+    original_mode = locked.stat().st_mode
+    locked.chmod(0o000)
+    try:
+        # Not a different fingerprint — NO fingerprint. A value here would be a
+        # hash of whatever happened to be readable, indistinguishable from an
+        # honest one.
+        assert install_paths.vendored_content_fingerprint(source) is None
+        with pytest.raises(OSError):
+            install_paths.vendored_files(source)
+        # And the same on the diff side, where () would have meant "no files
+        # differ".
+        assert install_paths.vendored_content_diff(source, source) is None
+    finally:
+        locked.chmod(original_mode)
+
+    assert install_paths.vendored_content_fingerprint(source) == whole
+
+
+def test_vendored_files_excludes_exactly_what_the_installer_excludes(tmp_path):
+    """One definition of "what is vendored": the advisory walk enumerates the
+    same set the copy ships, anchored ``server.py`` and all."""
+    source = _write_vendorable_source(tmp_path / "source")
+    listed = {rel for rel, _ in install_paths.vendored_files(source)}
+
+    assert "remote_script/__init__.py" in listed
+    assert "analyzer/setup.py" in listed
+    assert "resources/guides/conventions.md" in listed
+    assert "server.py" not in listed          # anchored package-root exclude
+    assert not any(rel.startswith(("cli/", "tests/", "m4l/", "__pycache__/")) for rel in listed)

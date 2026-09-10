@@ -1751,8 +1751,135 @@ def execute_push(
                     if extra_results:
                         apply_ok = _apply_results(extra_results, phase.name)
 
+        # The arrangement's own convergence: an audio copy's playable region is
+        # written with a `set_property` addressed by an arrangement clip index,
+        # and that index only exists once the placement's result is applied. So
+        # the region pass runs HERE, against the bindings this phase just
+        # recorded — never against a predicted index. Its own planner (not a
+        # re-plan of the phase): re-planning the projection would re-derive a
+        # clear from the lane it has just rebuilt and delete the placements.
+        # The guard is deliberately WEAKER than the devices convergence above.
+        # That one re-plans the whole phase, so it must not run against a
+        # partial result set. This pass addresses each copy by the link apply
+        # just recorded, so a placement whose create failed simply has no link
+        # and the planner skips it. Suppressing the whole pass on one failed
+        # call therefore withheld regions from every copy that DID land, for no
+        # gain: per-placement filtering below gives the same safety precisely.
+        if phase.name == "arrangement" and not connection_lost and apply_ok:
+            from hallucinote.sync.push.arrangement import (
+                plan_push_arrangement_audio_regions,
+            )
+            region_plan = plan_push_arrangement_audio_regions(
+                conn, song_id=song_id, session_id=session_id,
+            )
+            _drain_plan_warnings(region_plan)
+            for reason in getattr(region_plan, "blocked_reasons", ()):
+                if reason not in blocked_reasons:
+                    blocked_reasons.append(reason)
+            # Bound the pass to copies THIS phase actually placed. A region
+            # write addresses an arrangement clip by index, so aiming one at a
+            # link the phase did not just record would land on whatever clip
+            # now holds that index — the failure mode is writing onto the wrong
+            # clip, not a missing write. Filtering per placement is also what
+            # lets the guard above stay weak: one failed create costs that
+            # placement its region and no other.
+            placed_ok = {
+                str(r.get("key", "")).split(":", 1)[1]
+                for r in results
+                if r.get("ok")
+                and str(r.get("key", "")).startswith("arrangement_clip:")
+            }
+            region_calls = [
+                c for c in region_plan.calls
+                if c.key.split(":")[1] in placed_ok
+            ]
+            # Count COPIES, not calls: each copy takes an end_marker and a
+            # loop_end, so counting calls doubles every number the operator
+            # reads.
+            withheld = len({
+                c.key.split(":")[1] for c in region_plan.calls
+            } - placed_ok)
+            if withheld:
+                msg = (
+                    f"arrangement: {withheld} audio copy/copies did NOT get "
+                    "their playable region, because the placement each one "
+                    "targets did not land in this push — those copies play "
+                    "their whole file. Fix what failed the placement and "
+                    "re-push: the arrangement phase rebuilds its projection "
+                    "every run, so the region is written again with it."
+                )
+                if msg not in warning_messages:
+                    warning_messages.append(msg)
+            if region_calls:
+                region_results, connection_lost = _dispatch_calls(
+                    region_calls, phase_name=phase.name,
+                )
+                results.extend(region_results)
+                if region_results:
+                    apply_ok = _apply_results(region_results, phase.name)
+                # Report what actually landed, from the results — a count taken
+                # at plan time would name copies the filter above dropped.
+                bounded = len({
+                    str(r.get("key", "")).split(":")[1]
+                    for r in region_results if r.get("ok")
+                })
+                failed = len({
+                    str(r.get("key", "")).split(":")[1]
+                    for r in region_results if not r.get("ok")
+                })
+                if bounded:
+                    msg = (
+                        f"arrangement: wrote the playable region on {bounded} "
+                        "audio copy/copies — Live ACCEPTED each write. Whether "
+                        "the copy then sounds the authored span is unverified "
+                        "here: only a shrinking marker write has been probed, "
+                        "and a span longer than the sample has not."
+                    )
+                    if msg not in warning_messages:
+                        warning_messages.append(msg)
+                if failed:
+                    msg = (
+                        f"arrangement: {failed} audio copy/copies did NOT get "
+                        "their playable region — Live refused the write — so "
+                        "they still play their whole file. The rest of the push "
+                        "continues: the copies themselves landed, and only the "
+                        "region is missing. Re-push to retry — the arrangement "
+                        "phase rebuilds its projection every run."
+                    )
+                    if msg not in warning_messages:
+                        warning_messages.append(msg)
+        elif phase.name == "arrangement" and not connection_lost and not apply_ok:
+            # Links are what the pass addresses by; without a good apply there
+            # are none to address. Non-fatal, but never silent.
+            msg = (
+                "arrangement: playable-region writes were SKIPPED because the "
+                "phase's results could not be applied, so every audio copy "
+                "plays its whole file rather than the placement's span. "
+                "Resolve the apply failure and re-push."
+            )
+            if msg not in warning_messages:
+                warning_messages.append(msg)
+
         calls_ok = sum(1 for r in results if r.get("ok"))
-        calls_failed = sum(1 for r in results if not r.get("ok"))
+        # A refused playable-region write does NOT halt the phase. Every other
+        # result in this list is the phase's own projection — a clip that did
+        # not land, a property the song depends on — and one of those failing
+        # means the set no longer matches the DB, which is what the halt below
+        # protects. The region write is an enhancement layered onto a copy that
+        # already landed correctly: its failure leaves the copy playing its whole
+        # file, which is exactly what the copy did before this pass existed.
+        # Halting on it would skip `assert_arrangement_materialized` and every
+        # later phase (cues, sections, mix) over a cosmetic refusal — and the
+        # message that branch prints says "Re-push to retry", which a halt makes
+        # false. Worse on repeat: a span authored LONGER than its sample is
+        # unprobed (`docs/capability-truth.md`), so if Live refuses that write
+        # rather than clamping it, halting would wedge every push at this phase
+        # forever while telling the operator to push again.
+        calls_failed = sum(
+            1 for r in results
+            if not r.get("ok")
+            and not str(r.get("key", "")).startswith("arrangement_clip_region:")
+        )
 
         if connection_lost:
             _halt(

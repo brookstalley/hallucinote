@@ -2,7 +2,7 @@
 
 **Audience.** A composer wants to hand a Hallucinote song to a collaborator (mixer, co-producer, mastering engineer) on a different machine. This document walks the round-trip and names the three portability cases that have load-bearing implications.
 
-**Status.** This document covers the current behavior: Case B detection ships today; Case A handling is in progress; Case C is permanently out of scope.
+**Status.** This document covers the current behavior: Case B detection ships today — for third-party plugins and for the samples a song's clips name; Case A handling is in progress; Case C, content a Live *preset* reaches for, is permanently out of scope.
 
 ---
 
@@ -15,7 +15,7 @@ songs/<slug>/
 ├── <slug>.md                   # composer intent + decisions context
 ├── build.py                    # the generative spec — runs to materialize the DB
 ├── captured_session.json       # the mix snapshot — devices, params, sends
-├── REQUIREMENTS.md             # third-party plugin shopping list
+├── REQUIREMENTS.md             # plugins AND samples the song needs
 ├── annotations/                # markdown notes for the composer/agent
 ├── decisions/                  # design-decision history
 └── tests/                      # per-song structural assertions
@@ -50,7 +50,7 @@ single `songs/<slug>/` directory into their own workspace (any folder with a
 
 ### 2. Check the requirements
 
-Before pushing the song into Ableton, the collaborator reads `songs/<slug>/REQUIREMENTS.md`. This file is the **shopping list** the composer left behind — it enumerates any third-party VST/AU plugins the song needs, with every use site (track + chain position) noted.
+Before pushing the song into Ableton, the collaborator reads `songs/<slug>/REQUIREMENTS.md`. This file is the **shopping list** the composer left behind — it enumerates any third-party VST/AU plugins the song needs, with every use site (track + chain position) noted, and the audio samples its clips reference, saying per sample whether it travels with the song (song-relative) or must be supplied by you (absolute).
 
 Three things `REQUIREMENTS.md` does NOT carry:
 
@@ -87,7 +87,7 @@ The skill walks the song into Live across fourteen ordered phases. **Before the 
 
 - The skill probes Live for the installed-plugin list via the MCP browser.
 - It runs the engine's compat check (`hallucinote.cli compat check`) against that list.
-- If the report flags any third-party plugin as missing (in the DB but not in Live's plugin scanner) or unverified (couldn't probe — Live wasn't responsive), the skill stops and asks you to confirm.
+- If the report flags any third-party plugin as missing (in the DB but not in Live's plugin scanner) or unverified (couldn't probe — Live wasn't responsive), the skill stops and asks you to confirm. It stops on **samples** the same way: an audio clip whose file is missing or unreadable on this machine fails the gate on its own, with no device flagged.
 
 If you confirm "no, install missing plugins first": go install them, then rerun. If you confirm "yes, push anyway": push will fail at device-load for the missing plugins (the chain stays empty; nothing is substituted), but other devices, clips, arrangement, automation, and cue points still apply. You can fix the empty chains by hand in Live afterward.
 
@@ -117,15 +117,15 @@ Cross-machine song handoff has three distinct technical problems. Hallucinote tr
 
 **The non-goal.** Hallucinote will **never** substitute plugins. If you need Spitfire LABS and don't have it, the answer is "install Spitfire LABS," not "let me pick a similar-sounding native Live instrument and silently swap." Substitution corrupts the composer's intent in ways that are visible only to the composer's ear — the wrong choice would ship without the collaborator knowing it was wrong.
 
-### Case C — Sample packs, content libraries, missing audio assets
+### Case C — Sample packs and content libraries referenced *inside a preset*
 
-**Symptom.** The song uses Live's "Late Nite Kit" from Live's Core Library Pack, or a Splice loop, or a sample from a third-party content pack. None of those are enumerated as "plugins"; they're audio content referenced by Live presets.
+**Symptom.** The song uses Live's "Late Nite Kit" from Live's Core Library Pack, or a Splice loop, or a sample from a third-party content pack. None of those are enumerated as "plugins"; they're audio content a Live *preset* reaches for, and the song's own data never names the file.
 
-**Status.** **Explicit non-goal.** Hallucinote does not ship audio. It does not check whether you have a specific Live Pack installed. It does not track sample-pack dependencies. If the composer leaned on a specific Drum Rack preset that depends on samples in a third-party pack, the collaborator who doesn't have that pack will hear silence (or default samples) for those slots when they push.
+**Status.** **Explicit non-goal — and read the boundary, because it moved.** A sample the song's own clips reference by path IS checked: the compat gate stops on a missing one exactly as it stops on a missing plugin, and `REQUIREMENTS.md` lists it (Case B above, and §2's shopping list). What stays out of scope is content a *preset* depends on. Hallucinote does not ship audio, does not check whether you have a specific Live Pack installed, and cannot see inside a Drum Rack preset to learn which pack its slots came from — so if the composer leaned on such a preset, the collaborator who lacks that pack hears silence (or default samples) for those slots when they push, with nothing having warned them.
 
-**Why.** Sample packs are large binary artifacts under licenses that vary by vendor. Hallucinote is a metadata layer, not an asset distribution system. Bundling samples is out of scope; checking for sample-pack presence would require deep Live introspection we don't have. The right tool for sample-pack sharing is the vendor's distribution channel (Ableton Pack installer, Splice client, etc.).
+**Why.** Sample packs are large binary artifacts under licenses that vary by vendor. Hallucinote is a metadata layer, not an asset distribution system. Bundling samples is out of scope; and checking for *preset-referenced* pack presence would require deep Live introspection we don't have — which is precisely the difference from a clip's `audio_file`, a path the song itself records and the gate can therefore verify. The right tool for sample-pack sharing is the vendor's distribution channel (Ableton Pack installer, Splice client, etc.).
 
-**Mitigation.** The composer can document content dependencies in `<slug>.md` ("uses Live Core Library Pack 1") for collaborators to read manually. The compat check does not enforce this.
+**Mitigation.** The composer can document *preset-borne* content dependencies in `<slug>.md` ("uses Live Core Library Pack 1") for collaborators to read manually. The compat check does not enforce that half — it enforces the half the song names.
 
 ---
 
@@ -144,7 +144,7 @@ The composer's session id is irrelevant to the collaborator — sessions are per
 
 A short checklist for handoff hygiene.
 
-1. **Regenerate `REQUIREMENTS.md`** after material device changes: `"$PY" -m hallucinote.cli compat write-requirements <slug>` (see [`running-the-engine.md`](running-the-engine.md) for `$PY`), or just ask Claude. Commit the result. (A push whose devices phase applied changes already regenerates it in the same flow — the manual command covers out-of-band edits.)
+1. **Regenerate `REQUIREMENTS.md`** after material device *or sample* changes: `"$PY" -m hallucinote.cli compat write-requirements <slug>` (see [`running-the-engine.md`](running-the-engine.md) for `$PY`), or just ask Claude. Commit the result. (A push whose devices phase applied changes already regenerates it in the same flow — the manual command covers out-of-band edits.)
 2. **Refresh `captured_session.json`** if the mix has moved since the snapshot. See the `/hallucinote:song-snapshot` skill for the diff-and-confirm workflow.
 3. **Verify the song builds clean** in a fresh checkout. Delete the local DB (`rm songs/<slug>/<slug>*.db*`) and rebuild (step 3 above). The tests in `songs/<slug>/tests/` should pass.
 4. **Document content dependencies in `<slug>.md`** if the song needs a specific Live Pack or sample library. Compat check won't catch these (Case C).

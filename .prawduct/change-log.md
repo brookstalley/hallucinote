@@ -32,6 +32,132 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-09-09 — The release blockers: seven defects that would have shipped, and two of them were in the release mechanism
+
+<!-- prawduct: type=fix | scope=RELBLK-V19 -->
+
+The owner asked which backlog items gate a release, ratified the resulting Tier-1
+list, and approved filing the one defect that had no issue. Seven chunks, built by
+delegates on a disjoint partition, plus one bug filed as **#518**.
+
+Two of the seven are defects in the **release mechanism itself**, which is why they
+blocked rather than merely queued. **#310** — eleven entries are vendored into
+Live's User Library but sit outside `_FINGERPRINT_PATHS`, so Live silently runs
+stale code on a green handshake; `docs/release-process.md` step 5 derives the
+consumer-facing `Re-vendor:` verdict from exactly those paths, and its
+consumer-facing section told a release cutter that an unflipped fingerprint meant
+"nothing to do". An advisory content fingerprint now spans the whole vendored set
+beside the hard one, never blocking, and step 5 gained a third verdict,
+`Re-vendor: recommended`. **#518** — the push CLI's version-mismatch recovery told
+the user the `+<sha>` suffix was "the commit it was vendored from" and handed them
+`git worktree add <sha>`. It is a content fingerprint; `git cat-file` rejects it.
+A version mismatch is what a release *causes*, so this was the recovery path for
+the release's own upgrade failure, and that recipe was #388's own shipped
+resolution — a regression against its acceptance, not a gap.
+
+The rest: **#505** a replace that cannot succeed no longer deletes the clip first
+(the fake LOM learned track kind, which is why wave 1 deferred it); **#514**
+capture excludes an untouched default scaffold track, and renumbers survivors by
+dense rank (see the caveat below);
+**#501** the compat check answers for samples through a second entry family whose
+status vocabulary is deliberately disjoint from `DeviceStatus`; **#509** an
+arrangement audio copy is bounded to its authored span; **#498** the render arms
+the analyzers AFTER the locate.
+
+**#498 is a capture that lied by about a beat.** The M4L patch resets `prev_beat`
+to -1 on the arm rising edge, which leaves the start detector's
+`prev_beat < start_at_beat` clause unconditionally true — so an armed patch fires
+on the first `current_song_time` change of ANY kind, and the locate that followed
+the arm was exactly such a change. `sfrecord~` opened at the seek and captured the
+wall clock before the transport rolled, so every per-section window in an affected
+report sat about 1.1 beats early and nothing downstream could notice. It only bit
+when the locate actually moved the playhead, which is why the same set produced
+two good renders and one bad one minutes apart. Moving the arm below the locate
+makes the transport the first post-arm movement. `_set_arm_on_all`'s docstring
+claimed arm timing was irrelevant to the recording boundary — true of the latency
+BETWEEN arms, not of ordering, and that wrong "why" is what made the original
+order look safe.
+
+**#509 was re-scoped by a probe that had already been run.** Row 27 of
+`lom-probe-results.md` records that `end_marker`/`loop_end` are writable on both
+placement routes while `Clip.end_time` has no setter, so the trim the issue
+assumed is unreachable and the block extent is a permanent Live limit, not a gap.
+Every surface that told the user to "trim in Live" was corrected, including
+`capability-truth.md`, which declares itself unable to lag.
+
+**One upgrade boundary is NOT closed, and it is named rather than implied.** The
+dense renumber is what makes the exclusion converge, but it also shifts every real
+track's index — and replay keys on `(song, track_index)` with no name
+reconciliation and no prune. So replaying a post-fix snapshot into a DB built from
+a pre-fix one can take a row's name onto a different row and leave the original
+behind at its old index. The snapshot-refresh joins that carry `browser_path` and
+preset seeds now fall back to a unique track name, and replay WARNS when a rename
+ORPHANS the row the name came from — narrowly, because a rename is ambiguous by
+itself: renaming a track in Live and re-capturing yields the same (index, old,
+new) triple and nothing is wrong on that path. What separates them is whether the
+incoming name also sits at another index, which is the row about to be stranded.
+The reconciliation itself is a design question (is a capture authoritative over
+track layout, or only over the mix?) that a release-blocker cluster is the wrong
+place to settle — tracked as #524. Deleting a user's track rows to fix it would be worse than the
+rename.
+
+**Tests corrected, not weakened** — each encoded the defect its chunk fixes.
+`test_replace_that_fails_to_recreate_says_the_slot_is_now_empty` asserted the clip
+was destroyed on a wrong-kind replace (retargeted to a failure the pre-check
+cannot foresee, so the disclosure contract stays pinned). Three pin recovery tests
+asserted `"git worktree add" in text`. Three chunk-07 tests encoded the pre-probe
+belief. And `test_execute_skips_the_region_pass_when_the_placement_failed` was
+**vacuous**: failing every `ableton_clip:create` halts the session-clips phase, so
+the arrangement phase never ran and the assertion held over a push that could not
+have written a region whatever the code did. It now fails only the arrangement
+create and asserts the phase actually ran.
+
+**The Critic caught a defect in the fix for a Critic finding.** The first review's
+R-9 said the region pass sat behind the devices phase's convergence guard, so one
+failed call withheld the region from every copy that landed. The fix for it added
+three operator warnings that all claimed "re-pushing an unchanged song will not
+retry them" — false, because the arrangement phase is an unconditional
+clear-and-rebuild projection and a re-push does retry. The verify pass blocked on
+it. The counts were wrong in both directions too: the "bounded N" alert was
+emitted before the executor's filter ran, and the withheld count counted calls
+rather than copies, doubling every number.
+
+**Re-vendor: REQUIRED.** `handlers/clip.py`, `actions/clip.py` and
+`handlers/render.py` are all inside `_FINGERPRINT_PATHS` — the tuple names the
+`handlers` and `actions` DIRECTORIES, not a file list — so the handshake
+fingerprint flips away from `6283768de096`, which is what `develop` carries. A
+consumer who skips the re-vendor gets a server that refuses every call.
+
+The post-flip value is deliberately NOT written here. It is a content hash over
+the whole wire-shape tree, so every later commit touching one of those
+directories moves it — it moved twice while this entry was being written, and
+each stale literal was a number an operator would have compared against and
+concluded the handshake was already right. Read it from the code, which cannot
+go stale: `hallucinote_mcp.compute_version_for(<pkg_root>)`.
+`docs/release-process.md` step 5 is where the cut records the value that ships.
+
+The bundle also touches `install_paths.py`, `install_ops.py`, `__init__.py` and
+`resources/guides/error-recovery.md`, which are vendored but NOT fingerprinted.
+Those alone would have been `recommended` — the advisory this release adds is
+exactly what reports them. They do not lower the verdict; the fingerprint-bearing
+pair sets it.
+
+**One change here is not a chunk, and it is the reason the rest can be believed.**
+`project-state.yaml` had no `test_command`, so `test-evidence record` had been
+falling back to the hook interpreter's own pytest — not the locked environment
+`project-preferences.md` says a green claim must come from. The gate that reads
+that evidence is the release gate, and this bundle exists because defects in the
+release mechanism ship quietly. The canonical invocation is declared now, so what
+the recorder runs is what the project calls green.
+
+Follow-ons filed rather than absorbed: **#519** (scaffold returns ship with
+devices, so the untouched predicate can never reach them), **#520**
+(`devices.audio_file` has the identical false-clean), **#521** (the advisory
+compares the invoking interpreter's package, not the running server's), **#522**
+(the region write assumes Live warped the file), **#523** (post-apply dispatch is
+a second `phase.name ==` special case). Nine operator-verification boxes are
+queued: every assertion behind these seven chunks is unit-level.
+
 ## 2026-09-09 — A sample is now something the music can be derived from
 <!-- prawduct: type=feature | scope=SMP-6V2K-W2 -->
 

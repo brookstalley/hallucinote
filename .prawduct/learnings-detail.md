@@ -745,3 +745,20 @@ mix depended on how many hits happened to censor. (2026-09-08, AUD lenses,
 Chunk 03)
 
 **How to apply.** (1) For any interval between two threshold crossings, scan both from the feature you mean (the peak), not from a window boundary. (2) Before trusting a per-section difference, check whether the estimator is bimodal on this material — plot or tabulate the per-hit values, not just the median; a 50/50 split means the median is a coin toss. (3) Sweep the estimator's band edges and thresholds: a number that moves 44 → 15 ms when a filter edge moves 10 Hz is a property of the filter, and its docstring must say so where the FIELD is defined, not only in the skill that reads it. (4) When an estimator censors, censor everything anchored on what it failed to find — a fallback anchor silently changes the geometry of a different measurement.
+
+
+## A delegate in a shared clone must never `git stash`
+
+**Rule.** A subagent working in a `git worktree` of a shared clone must not run `git stash`
+(push, pop, apply or drop). To test a pre-fix baseline, use `git show HEAD:<path> > <path>` and
+restore from a copy — it touches nothing outside the worktree.
+
+**Why.** The stash is per-CLONE, not per-worktree. A delegate's `git stash pop` reaches straight
+into whatever another session left stashed. This happened during RELBLK-V19: a malformed
+`git stash push -m` created no entry, and the follow-up `pop` applied a different session's
+"b-natural-era engine work" stash into the delegate's worktree. It recovered, and the coordinator
+verified nothing was lost (the pop conflicted, so both entries survived) — but two other delegates
+in the same wave used stash-based baselines and were simply lucky.
+
+**How to apply.** Say it in the delegate brief, next to the verification ceiling. The failure is
+silent from the delegate's side: the stash it pops looks like its own work.

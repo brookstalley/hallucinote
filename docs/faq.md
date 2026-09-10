@@ -111,8 +111,8 @@ See the [Quickstart](quickstart.md#4-pull-manual-edits-back-optional).
 
 Mostly yes.
 A song is a directory you commit to git.
-On push, the compat check probes the collaborator's installed plugins and refuses-and-confirms if a third-party plugin is missing, generating a `REQUIREMENTS.md` of what to install.
-Native Live devices and catalog-ID drift are handled automatically; bundling sample packs is out of scope.
+On push, the compat check probes what the song needs and refuses-and-confirms if it isn't there — a missing third-party plugin, or a missing audio sample one of the song's clips names — generating a `REQUIREMENTS.md` of what to install or supply.
+Native Live devices and catalog-ID drift are handled automatically. What stays out of scope is content a Live *preset* reaches for: a Drum Rack slot whose samples come from a Pack you don't have is silence nothing warns you about.
 The three portability cases are spelled out in
 [`docs/collaboration.md`](collaboration.md).
 

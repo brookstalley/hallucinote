@@ -1,12 +1,14 @@
-"""Tests for src/hallucinote/sync/compat.py — W13-B cross-machine portability.
+"""Tests for src/hallucinote/sync/compat.py — cross-machine portability.
 
 Covers all five status branches of classify_device, the song-walk including
 nested rack chains, REQUIREMENTS.md formatting, and the CLI exit-code
-contract that the push-preflight gate keys off.
+contract that the push-preflight gate keys off — and the same three for the
+second family, the samples an audio clip's ``audio_file`` names.
 """
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from pathlib import Path
 from typing import get_args
@@ -407,8 +409,14 @@ def test_compat_report_to_json_shape(conn, song, track_chain, db_path):
         "third_party_ok": 0, "missing": 0, "unverified": 1,
         "preset_query_invalid": 0, "kind_unresolvable": 0,
         "kind_ambiguous": 0, "preset_query_unverified": 0,
+        "samples_total": 0, "samples_ok": 0, "samples_missing": 0,
+        "samples_unreadable": 0, "samples_not_a_file": 0,
+        "samples_unresolvable": 0,
         "has_issues": True,
     }
+    # The device counts still count devices only — the sample family carries
+    # its own numbers rather than widening one of these.
+    assert data["samples"] == []
     assert len(data["entries"]) == 3
     # Entries are dicts after asdict()
     for e in data["entries"]:
@@ -1515,3 +1523,418 @@ def test_classify_preset_query_still_rejects_a_non_null_non_bool_case_sensitive(
     }))
     assert status == "preset_query_invalid"
     assert "case_sensitive" in detail
+
+
+# ---------------------------------------------------------------------------
+# Sample references — classify_sample
+# ---------------------------------------------------------------------------
+#
+# A song whose audio clip points at a moved sample used to pass this check
+# clean and fail at push, where the clips phase resolves the same reference
+# through the same resolver. These pin the second family: its own statuses,
+# its own rendering, and a device path that does not know it exists.
+
+
+_ROOT_READS_EVERYTHING = pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0,
+    reason="root bypasses file permissions, so an unreadable file reads fine",
+)
+
+
+def _audio_track(conn, song, *, name="Vox", index=2) -> str:
+    return M.create_track(
+        conn, song_id=song, track_index=index, name=name, kind="audio",
+    )
+
+
+def _audio_clip(conn, track_id, *, ref, slot=1, name=None) -> str:
+    return M.create_audio_clip(
+        conn, track_id=track_id, slot=slot, length_beats=4.0,
+        audio_file=ref, name=name,
+    )
+
+
+def test_sample_status_vocabulary_is_disjoint_from_device_status():
+    """The two families never share a status string.
+
+    A sample is not a device, and a status that decorated both rows would
+    mean different things depending on which one it landed on — the exact
+    overload this second family exists to avoid.
+    """
+    assert not set(get_args(C.SampleStatus)) & set(get_args(C.DeviceStatus))
+
+
+def test_classify_sample_ok_for_a_readable_file(tmp_path):
+    (tmp_path / "assets").mkdir()
+    wav = tmp_path / "assets" / "line.wav"
+    wav.write_bytes(b"RIFF")
+    status, resolved, detail = C.classify_sample(
+        "assets/line.wav", song_dir=tmp_path,
+    )
+    assert status == "sample_ok"
+    assert resolved == wav
+    assert detail is None
+
+
+def test_classify_sample_missing_names_both_the_ref_and_the_path(tmp_path):
+    status, resolved, detail = C.classify_sample(
+        "assets/gone.wav", song_dir=tmp_path,
+    )
+    assert status == "sample_missing"
+    assert resolved == tmp_path / "assets" / "gone.wav"
+    # Never a bare "None": the reference to re-point AND the path that was
+    # looked for, because which of the two is wrong decides the fix.
+    assert "assets/gone.wav" in detail
+    assert str(tmp_path / "assets" / "gone.wav") in detail
+
+
+@_ROOT_READS_EVERYTHING
+def test_classify_sample_unreadable_is_not_collapsed_into_missing(tmp_path):
+    """A sample that is exactly where the clip expects it but cannot be read
+    is a permissions fix, not a relink — so it carries its own status."""
+    wav = tmp_path / "locked.wav"
+    wav.write_bytes(b"RIFF")
+    wav.chmod(0o000)
+    try:
+        status, resolved, detail = C.classify_sample(
+            "locked.wav", song_dir=tmp_path,
+        )
+    finally:
+        wav.chmod(0o600)
+    assert status == "sample_unreadable"
+    assert resolved == wav
+    assert str(wav) in detail
+
+
+@_ROOT_READS_EVERYTHING
+def test_classify_sample_unreadable_when_a_parent_dir_denies_access(tmp_path):
+    """The file exists; a directory on the way to it does not let us look.
+
+    Without this branch the failed ``stat`` would read as "nothing is there"
+    and send the reader hunting for a file that never moved.
+    """
+    locked_dir = tmp_path / "vault"
+    locked_dir.mkdir()
+    (locked_dir / "line.wav").write_bytes(b"RIFF")
+    locked_dir.chmod(0o000)
+    try:
+        status, resolved, detail = C.classify_sample(
+            "vault/line.wav", song_dir=tmp_path,
+        )
+    finally:
+        locked_dir.chmod(0o700)
+    assert status == "sample_unreadable"
+    assert str(resolved) in detail
+
+
+def test_classify_sample_not_a_file_for_a_directory(tmp_path):
+    (tmp_path / "assets").mkdir()
+    status, resolved, detail = C.classify_sample("assets", song_dir=tmp_path)
+    assert status == "sample_not_a_file"
+    assert resolved == tmp_path / "assets"
+    assert "directory" in detail
+
+
+def test_classify_sample_unresolvable_when_a_relative_ref_has_no_anchor():
+    """No song directory + a song-relative reference = existence unknown.
+
+    Reported as its own status rather than guessed at: calling it missing
+    would raise an alarm about a file that is very likely right where it
+    belongs.
+    """
+    status, resolved, detail = C.classify_sample(
+        "assets/line.wav", song_dir=None,
+    )
+    assert status == "sample_unresolvable"
+    assert resolved is None
+    assert "assets/line.wav" in detail
+
+
+def test_classify_sample_absolute_ref_needs_no_anchor(tmp_path):
+    wav = tmp_path / "outside.wav"
+    wav.write_bytes(b"RIFF")
+    status, resolved, _ = C.classify_sample(str(wav), song_dir=None)
+    assert status == "sample_ok"
+    assert resolved == wav
+
+
+def test_classify_sample_absolute_ref_that_is_gone_is_missing(tmp_path):
+    status, resolved, detail = C.classify_sample(
+        str(tmp_path / "moved.wav"), song_dir=tmp_path,
+    )
+    assert status == "sample_missing"
+    assert str(tmp_path / "moved.wav") in detail
+
+
+# ---------------------------------------------------------------------------
+# Sample references — the song walk
+# ---------------------------------------------------------------------------
+
+
+def test_check_song_flags_a_dangling_audio_file(conn, song, db_path, tmp_path):
+    """The regression: a clip pointing at a sample that is not on disk used to
+    report clean and fail in Live."""
+    track_id = _audio_track(conn, song)
+    _audio_clip(conn, track_id, ref="assets/gone.wav", name="verse take")
+    conn.commit()
+
+    report = C.check_song(db_path)
+
+    assert report.has_issues is True
+    [entry] = report.samples
+    assert entry.status == "sample_missing"
+    assert entry.audio_file == "assets/gone.wav"
+    assert entry.resolved_path == str(tmp_path / "assets" / "gone.wav")
+    assert entry.track_name == "Vox"
+    assert entry.clip_name == "verse take"
+
+
+def test_check_song_clean_when_the_sample_is_on_disk(conn, song, db_path, tmp_path):
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "assets" / "line.wav").write_bytes(b"RIFF")
+    track_id = _audio_track(conn, song)
+    _audio_clip(conn, track_id, ref="assets/line.wav")
+    conn.commit()
+
+    report = C.check_song(db_path)
+
+    assert [e.status for e in report.samples] == ["sample_ok"]
+    assert report.sample_issues == []
+    assert report.has_issues is False
+
+
+@_ROOT_READS_EVERYTHING
+def test_check_song_reports_missing_and_unreadable_separately(
+    conn, song, db_path, tmp_path,
+):
+    """Both are broken; they are not the same brokenness, and the report says
+    which is which rather than collapsing them into one bucket."""
+    (tmp_path / "assets").mkdir()
+    locked = tmp_path / "assets" / "locked.wav"
+    locked.write_bytes(b"RIFF")
+    locked.chmod(0o000)
+    track_id = _audio_track(conn, song)
+    _audio_clip(conn, track_id, ref="assets/gone.wav", slot=1)
+    _audio_clip(conn, track_id, ref="assets/locked.wav", slot=2)
+    conn.commit()
+    try:
+        report = C.check_song(db_path)
+    finally:
+        locked.chmod(0o600)
+
+    by_ref = {e.audio_file: e.status for e in report.samples}
+    assert by_ref == {
+        "assets/gone.wav": "sample_missing",
+        "assets/locked.wav": "sample_unreadable",
+    }
+    assert len(report.samples_missing) == 1
+    assert len(report.samples_unreadable) == 1
+
+
+def test_check_song_does_not_synthesize_a_device_entry_for_a_sample(
+    conn, song, track_chain, db_path,
+):
+    """The device path is unchanged: a sample never becomes a DeviceEntry, and
+    a device's classification never consults a file on disk."""
+    M.create_device(conn, chain_id=track_chain, position=1,
+                    kind="Operator", display_name="Operator")
+    track_id = _audio_track(conn, song)
+    _audio_clip(conn, track_id, ref="assets/gone.wav")
+    conn.commit()
+
+    report = C.check_song(db_path)
+
+    assert [type(e) for e in report.entries] == [C.DeviceEntry]
+    assert [e.status for e in report.entries] == ["native"]
+    assert [type(e) for e in report.samples] == [C.SampleEntry]
+
+
+def test_check_song_reports_one_entry_per_clip_sharing_a_sample(
+    conn, song, db_path,
+):
+    """Two clips on one missing sample are two clips to fix."""
+    track_id = _audio_track(conn, song)
+    _audio_clip(conn, track_id, ref="assets/gone.wav", slot=1)
+    _audio_clip(conn, track_id, ref="assets/gone.wav", slot=2)
+    conn.commit()
+
+    report = C.check_song(db_path)
+
+    assert [e.slot for e in report.samples] == [1, 2]
+    assert {e.status for e in report.samples} == {"sample_missing"}
+
+
+def test_check_song_ignores_midi_clips(conn, song, track, db_path):
+    M.create_clip(conn, track_id=track, slot=1, length_beats=4.0)
+    conn.commit()
+
+    report = C.check_song(db_path)
+
+    assert report.samples == []
+    assert report.has_issues is False
+
+
+def test_check_song_unnamed_clip_is_identified_by_its_slot(
+    conn, song, db_path,
+):
+    """A clip with no name still has to be findable in the report."""
+    track_id = _audio_track(conn, song)
+    _audio_clip(conn, track_id, ref="assets/gone.wav", slot=7)
+    conn.commit()
+
+    [entry] = C.check_song(db_path).samples
+    assert entry.clip_name == "slot 7"
+
+
+def test_compat_report_to_json_carries_the_sample_family(
+    conn, song, db_path, tmp_path,
+):
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "assets" / "line.wav").write_bytes(b"RIFF")
+    track_id = _audio_track(conn, song)
+    _audio_clip(conn, track_id, ref="assets/line.wav", slot=1)
+    _audio_clip(conn, track_id, ref="assets/gone.wav", slot=2)
+    conn.commit()
+
+    data = C.check_song(db_path).to_json()
+
+    assert data["summary"]["samples_total"] == 2
+    assert data["summary"]["samples_ok"] == 1
+    assert data["summary"]["samples_missing"] == 1
+    assert data["summary"]["has_issues"] is True
+    assert data["summary"]["total"] == 0  # devices, and there are none
+    statuses = {e["status"] for e in data["samples"]}
+    assert statuses == {"sample_ok", "sample_missing"}
+    for entry in data["samples"]:
+        assert entry["audio_file"]
+        assert entry["resolved_path"]
+
+
+# ---------------------------------------------------------------------------
+# Sample references — REQUIREMENTS.md
+# ---------------------------------------------------------------------------
+
+
+def test_format_requirements_md_lists_referenced_samples(
+    conn, song, db_path, tmp_path,
+):
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "assets" / "line.wav").write_bytes(b"RIFF")
+    track_id = _audio_track(conn, song)
+    _audio_clip(conn, track_id, ref="assets/line.wav", name="verse take")
+    conn.commit()
+
+    md = C.format_requirements_md(C.check_song(db_path))
+
+    assert "## Referenced samples" in md
+    assert "`assets/line.wav`" in md
+    assert "Vox / verse take (slot 1)" in md
+    assert "travels with the song" in md
+
+
+def test_format_requirements_md_says_an_absolute_sample_does_not_travel(
+    conn, song, db_path, tmp_path,
+):
+    outside = tmp_path / "library" / "kick.wav"
+    outside.parent.mkdir()
+    outside.write_bytes(b"RIFF")
+    track_id = _audio_track(conn, song)
+    _audio_clip(conn, track_id, ref=str(outside))
+    conn.commit()
+
+    md = C.format_requirements_md(C.check_song(db_path))
+
+    assert "supply this file yourself" in md
+
+
+def test_format_requirements_md_no_samples_says_so(
+    conn, song, track_chain, db_path,
+):
+    M.create_device(conn, chain_id=track_chain, position=1,
+                    kind="Operator", display_name="Operator")
+    conn.commit()
+
+    md = C.format_requirements_md(C.check_song(db_path))
+
+    assert "## Referenced samples" in md
+    assert "No clip in this song plays a file from disk." in md
+
+
+def test_format_requirements_md_names_a_missing_sample_and_its_path(
+    conn, song, db_path, tmp_path,
+):
+    track_id = _audio_track(conn, song)
+    _audio_clip(conn, track_id, ref="assets/gone.wav")
+    conn.commit()
+
+    md = C.format_requirements_md(C.check_song(db_path))
+
+    assert "sample_missing" in md
+    assert str(tmp_path / "assets" / "gone.wav") in md
+
+
+def test_format_requirements_md_names_every_sample_status():
+    """The SampleStatus caller contract, the mirror of the device one: no
+    status may render to silence.
+
+    Built by hand rather than from a walk because one of the statuses
+    (``sample_unresolvable``) cannot arise from a DB that lives on disk — the
+    rendering contract holds for every value of the enum regardless.
+    """
+    report = C.CompatReport(song_slug="test-song", song_title="Test Song")
+    for index, status in enumerate(get_args(C.SampleStatus), start=1):
+        report.samples.append(C.SampleEntry(
+            track_name="Vox",
+            clip_name=f"take {index}",
+            slot=index,
+            audio_file=f"assets/{status}.wav",
+            resolved_path=f"/songs/test-song/assets/{status}.wav",
+            status=status,
+            detail=None if status == "sample_ok" else f"why {status} happened",
+        ))
+
+    md = C.format_requirements_md(report)
+
+    for status in get_args(C.SampleStatus):
+        assert f"assets/{status}.wav" in md, f"{status} renders to silence"
+        if status != "sample_ok":
+            assert status in md, f"{status} is not named in the file"
+            assert f"why {status} happened" in md
+
+
+def test_format_requirements_md_redacts_the_home_directory(tmp_path):
+    """REQUIREMENTS.md is checked in beside the song; the author's home
+    directory has no business travelling with it."""
+    ref = str(Path.home() / "Library" / "Samples" / "kick.wav")
+    report = C.CompatReport(song_slug="test-song", song_title="Test Song")
+    report.samples.append(C.SampleEntry(
+        track_name="Drums", clip_name="hit", slot=1,
+        audio_file=ref, resolved_path=ref, status="sample_missing",
+        detail=f"audio_file={ref!r} resolves to {ref}, where nothing is",
+    ))
+
+    md = C.format_requirements_md(report)
+
+    assert str(Path.home()) not in md
+    assert "~/Library/Samples/kick.wav" in md
+
+
+# ---------------------------------------------------------------------------
+# Sample references — CLI gate
+# ---------------------------------------------------------------------------
+
+
+def test_cli_check_exits_one_on_a_dangling_sample(
+    monkeypatch, capsys, conn, song, db_path,
+):
+    track_id = _audio_track(conn, song)
+    _audio_clip(conn, track_id, ref="assets/gone.wav")
+    conn.commit()
+    monkeypatch.setattr(C, "resolve_db_path", lambda slug, **kw: db_path)
+
+    rc = C.main(["check", "test-song"])
+
+    assert rc == 1
+    data = json.loads(capsys.readouterr().out)
+    assert data["summary"]["samples_missing"] == 1
+    assert data["samples"][0]["audio_file"] == "assets/gone.wav"

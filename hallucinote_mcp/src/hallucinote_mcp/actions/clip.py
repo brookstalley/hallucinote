@@ -128,7 +128,9 @@ register(
             "create-and-populate (single round-trip); kind='audio' takes "
             "audio_path (absolute) and gets its length from the file. Pass "
             "replace=True (session only) to delete the existing slot's clip "
-            "before creating, in one call."
+            "before creating, in one call. A replace whose kind cannot "
+            "match the track REFUSES before deleting, so the existing "
+            "clip survives."
         ),
         params=(
             ParamSpec(name="track_index", type="int", minimum=1),
@@ -215,7 +217,8 @@ register(
         tips=(
             "Pass notes to create-and-populate in one call (MIDI only — "
             "an audio clip has no note array).",
-            "Pass replace=True (session only) for atomic delete-and-recreate.",
+            "Pass replace=True (session only) for atomic delete-and-recreate; "
+            "a kind mismatch refuses before the delete, leaving the clip intact.",
             "Audio clips load for real in BOTH locations: session goes "
             "through ClipSlot.create_audio_clip(path), arrangement through "
             "Track.create_audio_clip(path, start_beats). Live 12.4 is the "

@@ -35,6 +35,14 @@ BASE_VERSION = "0.1.0"
 #     not flip the handshake and force a needless re-vendor. Isolation is
 #     enforced by ``tests/unit/test_server_side_isolation.py``: no Live-side
 #     handler may import from ``server_side``.
+#
+# Much more than this set is *vendored* into Live (``analyzer/``, ``resources/``,
+# ``client.py``, …). Do NOT widen this tuple to cover it: every path added here
+# forces a full Live restart on every edit, which is the over-trigger the
+# ``server_side`` split exists to stop. Vendored-but-not-fingerprinted drift is
+# reported instead by the *advisory* fingerprint
+# (:func:`hallucinote_mcp.install_paths.vendored_content_fingerprint`), which
+# preflight surfaces beside ``matches_mcp_server`` and which never blocks.
 _FINGERPRINT_PATHS: tuple[str, ...] = (
     "wire.py",
     "schema.py",
@@ -68,7 +76,7 @@ def _compute_content_fingerprint(pkg_root: Path | None = None) -> str:
         for entry in _FINGERPRINT_PATHS:
             target = pkg_root / entry
             if target.is_file():
-                _hash_file(hasher, target, entry)
+                hash_path_into(hasher, target, entry)
             elif target.is_dir():
                 for path in sorted(target.rglob("*")):
                     if not path.is_file():
@@ -79,7 +87,7 @@ def _compute_content_fingerprint(pkg_root: Path | None = None) -> str:
                     if "__pycache__" in path.parts:
                         continue
                     rel = path.relative_to(pkg_root).as_posix()
-                    _hash_file(hasher, path, rel)
+                    hash_path_into(hasher, path, rel)
             # If neither file nor dir: tolerate (e.g., partial install).
             # The fingerprint will still differ from the other side if
             # those files exist there.
@@ -88,8 +96,13 @@ def _compute_content_fingerprint(pkg_root: Path | None = None) -> str:
     return hasher.hexdigest()[:12]
 
 
-def _hash_file(hasher: "hashlib._Hash", path: Path, rel: str) -> None:
+def hash_path_into(hasher: "hashlib._Hash", path: Path, rel: str) -> None:
     """Mix one file's path + content into the running hash.
+
+    Public because it is the *shared* normalization: the hard wire-shape
+    fingerprint above and the advisory vendored-content fingerprint in
+    :mod:`hallucinote_mcp.install_paths` both hash through here, so the two
+    can never drift on line endings or on how a path is keyed into the hash.
 
     Line endings are normalized (CRLF → LF) before hashing so the
     fingerprint is stable across Windows (or any git checkout with
@@ -205,5 +218,6 @@ __all__ = [
     "__version__",
     "BASE_VERSION",
     "compute_version_for",
+    "hash_path_into",
     "stale_server_process_hint",
 ]

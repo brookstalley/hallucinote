@@ -13,6 +13,11 @@ import sys
 from .. import __version__
 from .. import install_paths as P
 
+# The advisory diff names files so the reader can weigh them; past a couple of
+# dozen the list stops informing and the exact `differing_count` carries the
+# scale instead.
+_DIFFERING_PATHS_CAP = 20
+
 
 def _build_report(*, server_version_override: str | None = None) -> dict:
     """Collect every detection the install / uninstall skills consume.
@@ -41,12 +46,52 @@ def _build_report(*, server_version_override: str | None = None) -> dict:
     remote_script_candidates: list[dict] = []
     analyzer_source_fp = P.analyzer_source_fingerprint()
     analyzer_candidates: list[dict] = []
+    # Advisory: the fingerprint of the WHOLE vendored tree, not just the
+    # wire-shape files the handshake guards. Computed from the invoking
+    # interpreter's package — when `coexistence_divergence` is true the source
+    # of truth for the handshake is the running server's copy, which this
+    # process cannot read, so treat the advisory as being about the invoking
+    # copy in that case.
+    source_content_fp = P.vendored_content_fingerprint(pkg_root)
     for cand in P.candidate_user_libraries():
         rs_dir = P.remote_script_install_dir(cand)
-        installed = (rs_dir / "hallucinote_mcp").is_dir()
+        vendored_pkg = rs_dir / "hallucinote_mcp"
+        installed = vendored_pkg.is_dir()
         vendored_version = (
             P.installed_remote_script_version(cand) if installed else None
         )
+        content_fp = (
+            P.vendored_content_fingerprint(vendored_pkg) if installed else None
+        )
+        # `None` means "nothing to compare", and the two ways to get there are
+        # NOT the same news. No install is benign. An install that exists but
+        # cannot be read is the advisory failing silently on the one tree it was
+        # built to watch — reported as nothing-to-compare, it reads as benign and
+        # Live keeps running stale code, which is the exact silence this advisory
+        # exists to end. Keep the never-raise discipline; separate the causes.
+        matches_content = (
+            content_fp == source_content_fp
+            if (content_fp is not None and source_content_fp is not None)
+            else None
+        )
+        content_read_error = (
+            "installed_tree_unreadable" if (installed and content_fp is None)
+            else "source_tree_unreadable" if (
+                content_fp is not None and source_content_fp is None
+            )
+            else None
+        )
+        # Which files moved — only worth walking when they did. `None` back
+        # means the walk could not read a tree that was readable moments ago
+        # when the fingerprints were taken; it is not "no files differ", and
+        # the report must not spell it that way.
+        differing = (
+            P.vendored_content_diff(pkg_root, vendored_pkg)
+            if matches_content is False
+            else ()
+        )
+        if differing is None:
+            content_read_error = "diff_unreadable"
         remote_script_candidates.append({
             "user_library": str(cand),
             "remote_script_dir": str(rs_dir),
@@ -55,6 +100,25 @@ def _build_report(*, server_version_override: str | None = None) -> dict:
             "matches_mcp_server": (
                 vendored_version == server_version if vendored_version else None
             ),
+            "content_fingerprint": content_fp,
+            "matches_vendored_content": matches_content,
+            # Non-None whenever a comparison could not be made, and it says
+            # WHICH one: the two fingerprint-side causes (an install that could
+            # not be read, a checkout that could not be read) leave
+            # `matches_vendored_content` null, and `diff_unreadable` leaves it
+            # False with no usable file list. A consumer can tell all three from
+            # benign absence, which is what a plain null could never do.
+            "content_read_error": content_read_error,
+            # Capped so a wholly-stale install doesn't flood the report; the
+            # count stays exact so the reader knows the list was truncated.
+            "differing_paths": (
+                [] if differing is None
+                else list(differing[:_DIFFERING_PATHS_CAP])
+            ),
+            # `null`, never 0, when the comparison could not run — an empty list
+            # beside a 0 count reads as "the trees agree", which is the one
+            # thing this branch does NOT know.
+            "differing_count": None if differing is None else len(differing),
         })
         installed_fp = P.installed_analyzer_fingerprint(cand)
         analyzer_candidates.append({
@@ -128,6 +192,14 @@ def _build_report(*, server_version_override: str | None = None) -> dict:
         # skill uses ``matches_mcp_server`` to suggest re-running install
         # when the vendored copy is stale (W12-D MCP/Live drift visibility).
         "remote_script": {
+            # What the current source WOULD vendor. Compare a candidate's
+            # `content_fingerprint` against it: equal means Live is running the
+            # code this package holds; different means it is not, even when
+            # `matches_mcp_server` is true — the handshake only covers the
+            # wire-shape files, and `analyzer/`, `resources/`, `client.py` and
+            # the rest ship into Live outside it. Advisory only: a difference is
+            # a re-vendor recommendation (`--force`), never a refusal.
+            "source_content_fingerprint": source_content_fp,
             "candidates": remote_script_candidates,
         },
         # M4L analyzer device drift, parity with `remote_script` above. The

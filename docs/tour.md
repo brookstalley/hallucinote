@@ -62,7 +62,7 @@ A song is a directory, and the sound ships with it — device chains are authors
 examples/punk-fate/
 ├── build.py                  # every note, as code
 ├── captured_session.json     # instruments, device chains, the dialed mix
-├── REQUIREMENTS.md           # third-party plugins needed (here: none)
+├── REQUIREMENTS.md           # plugins + samples the song needs (here: none)
 ├── annotations/              # scoped intent (the brief, melody intent)
 ├── decisions/                # why, dated — ADR-shaped records
 ├── attempts/                 # what was tried, including what was reverted

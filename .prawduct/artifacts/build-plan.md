@@ -12,7 +12,12 @@ governed_by:
     dispositions:
       - "Refuse-and-teach over silent wrong behavior, at every boundary → conforms (all three chunks ARE this norm applied: 01 stops a wrong-device write and stops calling a failed restore success, 03 replaces silent sidechain-source loss with a named warning)"
       - "Errors teach — structured recovery information, never a bare string → conforms (01's shortfall exit names what was captured vs restored and that the journal is retained; 03's warning names track and device)"
-      - "The MCP surface is versioned by content fingerprint, never a hand-maintained number → conforms (02 changes a hashed path and relies on the fingerprint to force the re-vendor; no number is bumped by hand)"
+      - "The MCP surface is versioned by content fingerprint, never a hand-maintained number → conforms (02 touches server.py, which is NOT a fingerprint path, and bumps no number by hand; the release's re-vendor comes from other work)"
+      - "No compatibility shims for consumers that cannot exist; one-major-version aliases → conforms (JOURNAL_VERSION goes 1→2 and a version-1 journal is REFUSED with a teaching error rather than read through a shim — the journal is an internal recovery file with no external consumer, and guessing its missing positions is the defect)"
+      - "Mutator signatures are keyword-only after conn, and every mutator accepts actor/reason → conforms (01 keeps writing links through M.link_db_to_ableton with actor and reason unchanged; only the index VALUE it passes changes)"
+      - "Timing transforms stay in the engine and off the MCP surface → inapplicable because no chunk touches timing"
+      - "The MCP tool surface stays inside the band where tool-selection accuracy holds → conforms (02 retypes one existing parameter; no tool or action is added)"
+      - "These interfaces stay internally scoped → inapplicable because no chunk changes what is published"
 partition: >
   delegated — three chunks, disjoint file ownership by construction, one
   coordinator-created worktree each. 01 owns `sync/chain_rebuild.py` +

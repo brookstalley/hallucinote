@@ -83,7 +83,7 @@ from .push.devices import (
 )
 
 
-JOURNAL_VERSION = 1
+JOURNAL_VERSION = 2
 # Deliberately NOT added to a song's .gitignore. A journal exists only between
 # the first delete and a passing verify, so one still sitting here means a
 # rebuild died holding a chain's captured state — exactly the thing an operator
@@ -99,6 +99,13 @@ PHASE_DEMOLISHED = "demolished"
 PHASE_REBUILT = "rebuilt"
 PHASE_RESTORED = "restored"
 PHASE_VERIFIED = "verified"
+_ROUTING_SLOT = "\u2039input routing\u203a"
+"""Accounting key for a device's input routing — the sidechain source — inside
+the restore's ``expected`` / ``written`` sets. Bracketed so it can never collide
+with a real Live parameter name, since those sets are keyed by
+``(position, parameter_name)`` and a device is free to own a parameter called
+anything at all."""
+
 PHASE_SHORTFALL = "shortfall"
 """The rebuild finished and rebound its links, and some captured parameters
 never landed. Distinct from the phases above because it describes a chain that
@@ -322,17 +329,28 @@ def _entry_position(
 ) -> int:
     """The journal entry's DB position — never the physical index it also holds.
 
-    The capture writes ``position`` alongside ``device_index``. A journal written
-    before it did carries only the index, so the position is re-derived from the
-    entry's ORDER: ``captured`` is ascending and starts at ``from_position``,
-    which is the same number. The journal version is unchanged because the shape
-    is unchanged — a key was added, and a reader that does not find it has a
-    correct answer without it.
+    Required, not inferred. An earlier reading re-derived a missing ``position``
+    from the entry's ORDER (``from_position + offset``), on the reasoning that
+    ``captured`` is ascending and starts at the same number. That is true only
+    when the captured span held nothing but authored devices — and a journal
+    written before ``position`` existed is exactly a journal written by the code
+    that could not see a surviving analyzer, so replaying one onto a chain whose
+    tap now sits at the head reproduces the off-by-one this module was changed to
+    end. ``JOURNAL_VERSION`` carries the requirement: a journal without
+    ``position`` is version 1, and :func:`read_journal` refuses it with a
+    teaching error rather than guessing.
     """
     position = entry.get("position")
     if isinstance(position, int):
         return position
-    return from_position + offset
+    raise RebuildRefused(
+        f"rebuild journal entry for {entry.get('class', '<unknown>')!r} carries "
+        f"no DB position, so which device it describes cannot be established "
+        f"without assuming the chain held no unauthored device — the assumption "
+        f"that put every restored value one slot off. Rebuild the chain from the "
+        f"DB instead of replaying this journal, and read the file first: it "
+        f"still holds the captured values."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -953,9 +971,17 @@ def _restore(
             if channel_display:
                 params["channel_display_name"] = channel_display
             if len(params) > len(flat) + 1:
+                # The sidechain SOURCE is captured mix work like any parameter,
+                # so it is accounted like one: a refusal here has to reach the
+                # shortfall (and keep the journal), or the one value #536 and
+                # #291's sidechain box both care about is the single thing this
+                # module can still lose while exiting 0.
+                expected.add((position, _ROUTING_SLOT))
                 ok, _, error = _send(
                     send_fn, "ableton_device", "set_input_routing", params,
                 )
+                if ok:
+                    written.add((position, _ROUTING_SLOT))
                 if not ok:
                     alerts.append(
                         f"chain-rebuild: restoring the input routing of "
@@ -1438,9 +1464,19 @@ def _destructive_body(
     write_journal(journal_path, journal)
 
     if conn is not None and session_id is not None:
+        # Read the chain ONE more time rather than trusting the pre-delete
+        # indices: the links are addresses the next push writes through, and
+        # the whole of #532 is that a surviving device makes the captured index
+        # and the real one disagree.
+        index_by_position = {
+            e["position"]: e["device_index"]
+            for e in _logical_chain(_probe_chain(
+                send_fn, parent_kind=parent_kind, parent_index=parent_index,
+            ))
+        }
         result.notes.extend(_rebind_links(
-            conn, journal=journal, session_id=session_id, actor=actor,
-            reason=reason,
+            conn, journal=journal, index_by_position=index_by_position,
+            session_id=session_id, actor=actor, reason=reason,
         ))
     else:
         result.alerts.append(
@@ -1493,32 +1529,57 @@ def _rebind_links(
     conn: sqlite3.Connection,
     *,
     journal: dict[str, Any],
+    index_by_position: dict[int, int],
     session_id: str,
     actor: str,
     reason: str | None,
 ) -> list[str]:
-    """Re-record ``ableton_links`` from the rebuilt chain's positions.
+    """Re-record ``ableton_links`` against the rebuilt chain's PHYSICAL indices.
 
     Written through the standard mutators (``M.link_db_to_ableton``), so the
     event log stays complete and no schema changes. This is what makes a SECOND
     push after a reconcile emit no drift note for this parent (#323): the next
     probe finds each DB device already linked and class-matched at its position,
     so it neither re-emits the note nor re-plans a load.
+
+    ``ableton_index`` is consumed as a **physical** device index — it is what
+    ``plan_push_devices`` hands ``set_parameter`` as ``device_index`` — so this
+    writes the index the device actually answers to, taken from a post-rebuild
+    chain read, NOT its DB ``position``. The two agree only while the analyzer
+    is terminal, which is exactly what a rebuild has temporarily undone: with
+    the tap surviving at the head, position *q* answers to index *q+1*, and
+    writing the position here pointed every link one device short. That is #532
+    again, one layer out — the restore addressed the right device and the links
+    sent the next push to the wrong one, including the
+    ``push execute --only devices`` that the shortfall alert recommends.
+
+    A position with no entry in ``index_by_position`` is not linked and says so:
+    a link is an address, and an address nobody verified is the thing this whole
+    module exists to stop writing.
     """
     notes: list[str] = []
     parent_kind = journal["parent_kind"]
     parent_index = journal["parent_index"]
     for entry in journal["plan_devices"]:
+        physical = index_by_position.get(entry["position"])
+        if physical is None:
+            notes.append(
+                f"chain-rebuild: position {entry['position']} on {parent_kind} "
+                f"#{parent_index} is not in the post-rebuild chain, so its DB "
+                f"device link was NOT rebound — the next push will re-probe and "
+                f"bind it, or refuse."
+            )
+            continue
         M.link_db_to_ableton(
             conn,
             session_id=session_id,
             db_kind="device",
             db_id=entry["db_id"],
-            ableton_index=entry["position"],
+            ableton_index=physical,
             actor=actor,
             reason=reason or (
                 f"chain-rebuild: {parent_kind}#{parent_index} position "
-                f"{entry['position']}"
+                f"{entry['position']} at device_index {physical}"
             ),
         )
         notes.append(

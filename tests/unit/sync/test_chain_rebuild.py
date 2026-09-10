@@ -1691,3 +1691,113 @@ def test_a_mid_flight_journal_classifies_as_mid_flight(song_dir):
     mid_flight, shortfall = chain_rebuild.partition_journals(song_dir)
     assert len(mid_flight) == 4 and shortfall == []
 
+
+# ---------- the links are addresses, not positions (#532, one layer out) ----------
+
+
+def test_the_links_address_the_post_rebuild_chain_when_the_tap_survives(
+    conn, song, session, revoice, live, song_dir,
+):
+    """`ableton_links.ableton_index` is consumed as a PHYSICAL device index —
+    `plan_push_devices` hands it straight to `set_parameter` as `device_index`.
+
+    With the analyzer surviving at the head, DB position q answers to physical
+    index q+1, so recording the position pointed every link one device short. The
+    restore landed correctly and the next push then wrote authored values onto
+    the neighbour — including `push execute --only devices`, which is the
+    recovery the shortfall alert and the conventions guide both recommend. This
+    is the same defect as #532 one layer out, and it survived the fix to the
+    restore.
+    """
+    live.chains[("track", 3)].append(_analyzer_device())
+
+    _rebuild(conn, song, session, live, song_dir)
+
+    chain = live.chain(("track", 3))
+    assert [d.name for d in chain][0] == ANALYZER_DEVICE_NAME, (
+        "the tap must survive at the HEAD for this test to mean anything"
+    )
+    physical = {d.name: i for i, d in enumerate(chain, start=1)}
+    assert physical["EQ Eight"] == 3 and physical["Erosion"] == 4
+
+    for kind in ("Operator", "EQ Eight", "Erosion"):
+        assert Q.get_ableton_link(
+            conn, session_id=session, db_kind="device",
+            db_id=revoice["device_ids"][kind],
+        ) == physical[kind], (
+            f"{kind}'s link must address the device Live answers to, not its "
+            f"DB position"
+        )
+
+
+# ---------- a refused sidechain source is captured mix work too ----------
+
+
+def test_a_refused_input_routing_restore_is_a_shortfall(
+    conn, song, session, revoice, live, song_dir,
+):
+    """The sidechain SOURCE is the one value this module could still lose while
+    exiting 0: it was alerted about but never counted, so the run reported
+    success and then deleted the journal holding it.
+
+    That is precisely what #536 exists to stop being silent and what #291's
+    sidechain box is queued to witness, so it has to reach the shortfall.
+    """
+    # The capture only journals routing for a device that HAS a routing
+    # surface, so the compressor has to carry one for this path to be reached.
+    live.device_at(("track", 3), 2).routing = {
+        "current_type": "Drums", "current_channel": "Post Mixer",
+    }
+    original = live._ableton_device__set_input_routing
+
+    def _refuse(params):
+        return _Resp(ok=False, error="no input routing on this device")
+
+    live._ableton_device__set_input_routing = _refuse
+    try:
+        result = _rebuild(conn, song, session, live, song_dir)
+    finally:
+        live._ableton_device__set_input_routing = original
+
+    assert any("input routing" in a and "FAILED" in a for a in result.alerts), (
+        result.alerts
+    )
+    assert not result.ok, "a lost sidechain source is not a successful rebuild"
+    journal = chain_rebuild.journal_path_for(song_dir, "track", 3)
+    assert journal.exists(), "the captured routing is only in the journal now"
+    assert chain_rebuild.journal_phase(journal) == chain_rebuild.PHASE_SHORTFALL
+
+
+# ---------- a journal from before positions existed cannot be replayed ----------
+
+
+def test_a_journal_without_positions_is_refused_rather_than_guessed(song_dir):
+    """The old reader re-derived a missing `position` from entry ORDER, which is
+    right only if the captured span held nothing but authored devices — and a
+    journal written before `position` existed is by definition one written by the
+    code that could not see a surviving analyzer. Replaying it onto a chain whose
+    tap now sits at the head reproduces the off-by-one exactly.
+
+    So it is refused, and JOURNAL_VERSION carries the requirement.
+    """
+    path = chain_rebuild.journal_path_for(song_dir, "track", 3)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "version": 1,
+        "phase": chain_rebuild.PHASE_DEMOLISHED,
+        "parent_kind": "track", "parent_index": 3, "from_position": 1,
+        "captured": [], "plan_devices": [],
+    }))
+
+    with pytest.raises(chain_rebuild.RebuildRefused) as exc:
+        chain_rebuild.read_journal(path)
+    assert "version" in str(exc.value)
+
+
+def test_an_entry_without_a_position_refuses_instead_of_inferring_one():
+    """The guard below `read_journal`, for a version-2 journal whose entries are
+    somehow short a position — refuse, never fall back to entry order."""
+    with pytest.raises(chain_rebuild.RebuildRefused) as exc:
+        chain_rebuild._entry_position({"class": "EQ Eight"}, 0, 1)
+    assert "one slot off" in str(exc.value)
+

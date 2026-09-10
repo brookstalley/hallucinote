@@ -178,6 +178,18 @@ CREATE TABLE IF NOT EXISTS arrangement_clips (
     clip_id                     TEXT NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
     start_bar                   REAL NOT NULL CHECK (start_bar >= 1.0),
     end_bar                     REAL NOT NULL,
+    -- Which BAR RULER this row's position was authored against (#496). Two
+    -- rulers exist: `uniform` — bars accumulated against ONE beats_per_bar by
+    -- `hallucinote.arrangement`, which never reads `time_signature_map`; and
+    -- `map` — a position authored directly against the meter map, which is how
+    -- push resolves every bar position. They agree until a meter change. NULL
+    -- means the provenance was never recorded (a row written before this
+    -- column); the push planner reports that as unrecorded rather than
+    -- guessing. `map` is the mutator default, so a writer that knows nothing
+    -- about this column is correct by construction; only `Arrangement.materialize`
+    -- opts into `uniform`. Keep this CHECK byte-identical to connection.py's
+    -- _ADDED_COLUMNS entry — the schema canary compares column presence only.
+    bar_ruler                   TEXT CHECK (bar_ruler IS NULL OR bar_ruler IN ('uniform','map')),
     CHECK (end_bar > start_bar)
 );
 
@@ -217,6 +229,8 @@ CREATE TABLE IF NOT EXISTS sections (
     -- rows to rank declared intent against measured per-section intensity;
     -- NULL rows are excluded from the correlation, never coerced to a value.
     energy          REAL CHECK (energy IS NULL OR (energy >= 0.0 AND energy <= 1.0)),
+    -- Bar-ruler provenance (#496) — see arrangement_clips.bar_ruler.
+    bar_ruler       TEXT CHECK (bar_ruler IS NULL OR bar_ruler IN ('uniform','map')),
     CHECK (end_bar > start_bar)
 );
 
@@ -251,7 +265,9 @@ CREATE TABLE IF NOT EXISTS cue_points (
     song_id         TEXT NOT NULL REFERENCES songs(id) ON DELETE CASCADE,
     position_bar    REAL NOT NULL CHECK (position_bar >= 1.0),
     name            TEXT,
-    color           INTEGER
+    color           INTEGER,
+    -- Bar-ruler provenance (#496) — see arrangement_clips.bar_ruler.
+    bar_ruler       TEXT CHECK (bar_ruler IS NULL OR bar_ruler IN ('uniform','map'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_cue_points_song ON cue_points(song_id, position_bar);

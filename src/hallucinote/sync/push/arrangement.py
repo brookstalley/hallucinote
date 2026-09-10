@@ -292,6 +292,72 @@ def _divergence_bars(diverging: list[tuple[float, float, float]]) -> str:
     return ", ".join(shown) + f", and {len(bars) - 8} more"
 
 
+# The value `hallucinote.arrangement`'s `materialize` stamps on every row it
+# writes; the mutators default every other writer to `"map"`. A NULL is a row
+# written before the column existed — a third state, and load-bearing: it is
+# the one case where this planner genuinely does not know.
+_UNIFORM_RULER = "uniform"
+
+
+def _divergences_by_bar_ruler(
+    rows: list[sqlite3.Row],
+    position_of,
+    ts_points: list[sqlite3.Row],
+) -> tuple[
+    list[tuple[float, float, float]], list[tuple[float, float, float]],
+]:
+    """Split a table's bar positions by the ruler that authored them, then run
+    the divergence detector once per group (#496).
+
+    Returns ``(uniform_diverging, unrecorded_diverging)``.
+
+    Rows stamped ``map`` are DROPPED, silently and on purpose. A `map` position
+    was authored against the very `time_signature_map` push resolves it
+    through, so the two rulers "disagreeing" about it is not a defect — it is
+    the meter change doing its job. That is the whole false positive: a
+    deliberately-authored 7/4 song used to raise this alert on every push
+    forever, and an alert that fires on correct work every time is one an
+    operator learns to skip.
+
+    ``uniform_bar_math_divergences`` itself stays pure and unchanged: this
+    hands it two lists instead of one.
+    """
+    uniform_positions: list[float] = []
+    unrecorded_positions: list[float] = []
+    for row in rows:
+        ruler = row["bar_ruler"]
+        if ruler == _UNIFORM_RULER:
+            uniform_positions.append(float(position_of(row)))
+        elif ruler is None:
+            unrecorded_positions.append(float(position_of(row)))
+    return (
+        uniform_bar_math_divergences(uniform_positions, ts_points),
+        uniform_bar_math_divergences(unrecorded_positions, ts_points),
+    )
+
+
+def _unrecorded_ruler_alert(diverging, *, total: int, subject: str) -> str:
+    """The R6 alert: provenance is unrecorded, so this push cannot judge.
+
+    Kept SEPARATE from the uniform-math alert on purpose. Merging them would
+    put "these are wrong" and "we cannot tell whether these are wrong" in one
+    sentence, and the operator would have to guess which half applied to their
+    song — which is exactly the hedge #496 removed.
+    """
+    return (
+        f"PROVISIONAL — {len(diverging)} of {total} {subject} sit after a "
+        f"meter change and carry NO record of which bar ruler authored them "
+        f"(their `bar_ruler` is unset, so the rows predate this DB column). "
+        f"This push therefore cannot tell a position authored against the "
+        f"time_signature_map (correct, nothing to do) from one accumulated "
+        f"with a single beats_per_bar (misplaced). Affected bars: "
+        f"{_divergence_bars(diverging)}. Re-run the song's build — "
+        f"`python songs/<slug>/build.py` — to stamp every row with its ruler, "
+        f"then push again: this line goes away and anything genuinely "
+        f"misplaced is named exactly."
+    )
+
+
 def plan_push_arrangement(
     conn: sqlite3.Connection,
     *,
@@ -388,23 +454,34 @@ def plan_push_arrangement(
     # `push execute --only arrangement` runs. It reports placements, not the
     # mere presence of a meter change — a song whose every clip sits before
     # the first change diverges nowhere and gets no alert.
-    diverging = uniform_bar_math_divergences(
-        [float(r["start_bar"]) for r in arr_rows], ts_points,
+    #
+    # #496: and it reports them by PROVENANCE. Only a position that uniform bar
+    # math authored can be misplaced by a meter change; one authored against
+    # the map is simply correct. Rows are partitioned before the detector runs,
+    # so a deliberate 7/4 song raises nothing at all.
+    uniform_diverging, unrecorded_diverging = _divergences_by_bar_ruler(
+        arr_rows, lambda r: r["start_bar"], ts_points,
     )
-    if diverging:
-        first_bar, mapped, uniform = diverging[0]
+    if uniform_diverging:
+        first_bar, mapped, uniform = uniform_diverging[0]
         plan.alert(
-            f"{len(diverging)} of {len(arr_rows)} arrangement placements sit "
-            f"after a meter change, where this codebase's two bar rulers "
-            f"disagree: push resolves bar positions through the "
-            f"time_signature_map, while hallucinote.arrangement accumulates "
-            f"whole bars against one uniform beats_per_bar and never reads "
-            f"the map. Affected bars: {_divergence_bars(diverging)}. "
-            f"Bar {first_bar:g} goes to beat {mapped:g} here; "
-            f"uniform math would put it at {uniform:g}. If build.py computed "
-            f"these positions with a single beats_per_bar, they will land "
-            f"somewhere other than where it intended."
+            f"{len(uniform_diverging)} of {len(arr_rows)} arrangement "
+            f"placements were authored with UNIFORM bar math — whole bars "
+            f"accumulated against one beats_per_bar, which never reads the "
+            f"song's time_signature_map — and they sit after a meter change, "
+            f"so they will NOT land where the build intended: push resolves "
+            f"every bar position through the map. Affected bars: "
+            f"{_divergence_bars(uniform_diverging)}. Bar {first_bar:g} goes "
+            f"to beat {mapped:g} here; the uniform math that authored it put "
+            f"it at {uniform:g}. Author these positions against the meter map "
+            f"(or move them before the meter change) and re-push."
         )
+    if unrecorded_diverging:
+        plan.alert(_unrecorded_ruler_alert(
+            unrecorded_diverging,
+            total=len(arr_rows),
+            subject="arrangement placements",
+        ))
 
     if live_arrangement_clips_by_track is None:
         plan.alert(
@@ -918,21 +995,31 @@ def plan_push_cue_points(
 
     # A cue's position resolves through the meter map below, so it diverges from
     # uniform bar math for exactly the same reason an arrangement placement does
-    # (see plan_push_arrangement). Cues + placements are the whole surface:
-    # clip lengths come from length_beats, and plan_push_sections emits no calls.
-    diverging = uniform_bar_math_divergences(
-        [float(r["position_bar"]) for r in rows], ts_points,
+    # — and is partitioned by the same recorded provenance (see
+    # plan_push_arrangement and :func:`_divergences_by_bar_ruler`). Cues +
+    # placements are the whole surface: clip lengths come from length_beats, and
+    # plan_push_sections emits no calls.
+    uniform_diverging, unrecorded_diverging = _divergences_by_bar_ruler(
+        rows, lambda r: r["position_bar"], ts_points,
     )
-    if diverging:
-        first_bar, mapped, uniform = diverging[0]
+    if uniform_diverging:
+        first_bar, mapped, uniform = uniform_diverging[0]
         plan.alert(
-            f"{len(diverging)} of {len(rows)} cue points sit after a meter "
-            f"change, where push's meter-map bar→beat translation and "
-            f"hallucinote.arrangement's uniform beats_per_bar disagree. "
-            f"Affected bars: {_divergence_bars(diverging)}. Bar "
-            f"{first_bar:g} goes to beat {mapped:g} here; uniform math would "
-            f"put it at {uniform:g}."
+            f"{len(uniform_diverging)} of {len(rows)} cue points were "
+            f"authored with UNIFORM bar math — whole bars accumulated against "
+            f"one beats_per_bar, which never reads the song's "
+            f"time_signature_map — and they sit after a meter change, so they "
+            f"will NOT land where the build intended: push resolves every bar "
+            f"position through the map. Affected bars: "
+            f"{_divergence_bars(uniform_diverging)}. Bar {first_bar:g} goes "
+            f"to beat {mapped:g} here; the uniform math that authored it put "
+            f"it at {uniform:g}. Author these positions against the meter map "
+            f"(or move them before the meter change) and re-push."
         )
+    if unrecorded_diverging:
+        plan.alert(_unrecorded_ruler_alert(
+            unrecorded_diverging, total=len(rows), subject="cue points",
+        ))
 
     # SYN-6B4Q: partition cues against the DB's composed song length.
     #

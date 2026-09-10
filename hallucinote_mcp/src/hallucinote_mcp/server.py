@@ -24,7 +24,7 @@ import inspect
 import logging
 import os
 import pathlib
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any, Optional, Union
 
 import anyio
 from mcp.server.fastmcp import FastMCP
@@ -35,6 +35,25 @@ from .dispatcher import dispatch
 from .wire import Request, Response
 
 
+# "Any JSON value", spelled out branch by branch — the annotation behind
+# ``ParamSpec(type="any")`` (today: ableton_probe set's ``value``).
+#
+# Annotating such a param ``typing.Any`` made pydantic emit
+# ``anyOf: [{}, {"type": "null"}]``, and the empty ``{}`` branch tells a
+# calling client NOTHING about how to serialize the value. A client then
+# emits a string bare — unquoted — and it dies in the client's own JSON
+# parse before any request reaches the server, so a string could never be
+# sent at all. Every JSON type therefore gets its own explicit branch.
+#
+# ``bool`` leads because bool is an int subclass; ``int`` stays in the union
+# so an integer is never widened to float (Live's C++ setters reject a float
+# where the signature wants an int). The union admits exactly the JSON value
+# space ``Any`` already admitted — this makes the declared schema honest, it
+# does not narrow what ``probe set`` accepts, and it leaves the handler-side
+# ``coerce_wire_value`` (which still sees raw strings verbatim) untouched.
+_JSON_VALUE = Union[bool, int, float, str, dict, list, None]
+
+
 # Param.type → Python type used for FastMCP's pydantic-derived JSONSchema.
 _PARAM_TYPE_MAP: dict[str, Any] = {
     "str": str,
@@ -43,7 +62,7 @@ _PARAM_TYPE_MAP: dict[str, Any] = {
     "bool": bool,
     "list": list,
     "dict": dict,
-    "any": Any,  # polymorphic params (ableton_probe set's value)
+    "any": _JSON_VALUE,  # polymorphic params (ableton_probe set's value)
 }
 
 

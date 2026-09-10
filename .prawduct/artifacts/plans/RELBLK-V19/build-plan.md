@@ -233,3 +233,42 @@ Under `coexistence_divergence: true` the advisory compares the vendored tree aga
 copy, which the preflight process cannot read — `preflight` has `--server-version` but no
 server-root override. Out of scope for #310 and correctly left alone; it is a real gap in the
 advisory's honesty under a divergent-coexistence install.
+
+## Chunk 05: what it closed, and the residue it did not
+
+**Closed.** The defect was reduced to a runnable repro before any code changed, per the brief:
+pre-fix, all four scaffold tracks are captured, `probe_and_link` matches them all by name,
+`unmatched_live_tracks` empties and the W18-D classifier is permanently silent. Post-fix the same
+script captures one real track and reports all four in `default_scaffold_unmatched_tracks`.
+
+A second fix rode along and matters independently of #514: survivors are now numbered by **dense
+rank** rather than the raw Live index. `create_track` upserts on `(song_id, track_index)`, so a
+snapshot numbered *around* the scaffold would replay the same song track into a second row once
+the scaffold was deleted.
+
+**`[RESIDUE: the scaffold RETURNS are still captured as song content]`** — not a silent gap, and
+not a defect in this chunk. Live's default `A-Reverb` / `B-Delay` ship WITH devices, so the
+settled untouched predicate (name AND no devices AND no clips) can never fire on them; applying
+it to returns would be dead code, and a name-only return exclusion would drop a claimed return's
+captured mix and break replay, since a surviving track's `sends` map would name a return the
+snapshot no longer defines. Track-only satisfies the issue's Expected clause and all three
+Done-when items. But the consequence stands: on a pre-cleanup capture the scaffold returns still
+become permanent song content, and push-side return cleanup can never fire on them either.
+**Follow-up item owed at close** — this is part of #514's problem statement that #514's settled
+predicate cannot reach.
+
+**Two deliberate non-changes, both reasoned rather than skipped.** `compile_snapshot` does not
+filter, because deciding "untouched" needs a clip inventory it never sees, and a name-only drop
+there would silently discard a `3-Audio` track carrying a user's audio clip and no device — a
+real shape on the `/song-pick-instruments` hand-assembly path. The reason is written into the
+docstring, not just the report.
+
+## Integration debt (coordinator)
+
+- **`docs/snapshot-schema.md` documents the analyzer capture exclusion but not this one.** Genuine
+  artifact drift, outside every delegate's ownership. One paragraph, owed at integration.
+- **Layering nit for the Critic's judgment:** chunk 05 adds a `capture.py` → `sync.push.probe`
+  import to keep one source of truth for the canonical scaffold names. That edge is slightly
+  backwards. The SNP-8R4K precedent solved the same shape by extracting `analyzer_identity.py` to
+  the top level; the parallel move is a `hallucinote/default_scaffold.py`. Creating a new module
+  was outside the owned set, so it was flagged rather than taken.

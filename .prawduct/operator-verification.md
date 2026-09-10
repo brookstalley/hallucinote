@@ -15,7 +15,7 @@ pending entries when `operator_verification_required: true`.
 
 ---
 
-## #322 — does the fence hold against a real Live, and does it ever wedge? (2026-09-10)
+## #322 — does the fence hold against a real Live, and does it ever wedge? (2026-09-10) — **RUN 2026-09-10 on Live 12.4.5. TWO BOXES PASS, THE OTHER FOUR ARE UNREACHABLE, AND THE SITTING FOUND A DEFECT THE FAKES CANNOT SEE.**
 
 Backlog **#322** (with **#324** folded in). Needs Live 12.4.x, the Remote Script re-vendored,
 and something genuinely slow to load — the ~490 KB `HallucinoteAnalyzer.amxd` that produced the
@@ -27,30 +27,81 @@ this could introduce — occupancy never released, server bricked — is recover
 someone who knows to look. That is the trade the issue chose; this sitting is what tells you
 whether it was right.
 
-- [ ] **Reproduce the original.** Load the analyzer device directly and let it exceed the
-  ceiling. The call must come back `ok=True` with `code=work_escalated` and a job id — not a
-  `TimeoutError` — and a second caller arriving during the wait must be refused with
-  `LiveBusyError` naming the still-running operation and its elapsed time.
-- [ ] **Then the half that used to be open**: a caller arriving *after* the give-up must ALSO
-  be refused, not admitted. That admission is what let retries stack work behind an op still
-  running, and it is the specific mechanism behind the beachball.
-- [ ] **Does the runner actually signal?** Poll the job to a terminal state and confirm
-  `done` carries the call's real result (a polled `device.load` must yield
-  `loaded_class_name`). If Live ever *drops* a scheduled callback rather than delivering it
-  late, the bout stays occupied forever — this is the residual risk, and only a real session
-  shows it.
-- [ ] **`abandon_bout` releases**, marks the job failed, and warns that the work may still be
-  running in Live. Then the next call is admitted.
-- [ ] **R9 over a real socket.** The margin between the client's read timeout and the Live-side
-  ceiling is pinned arithmetically and has never been *observed* — confirm the escalation reply
-  actually arrives before the client stops listening. If it does not, the fix is invisible from
-  the client and everything above reads as a plain timeout.
-- [ ] **R8's reachability caveat.** `info` is main-thread-wrapped, so its `main_thread_bout`
-  block is only reachable from inside a nested bout; `ableton_session(action='bout_status')` is
-  the surface that answers while the fence is closed. Confirm `bout_status` works from a fresh
-  caller during an occupied bout — that is the one an operator will actually reach for.
+### What the sitting found
 
-## #291 — the `alien` witness: does a real chain survive a rebuild? (2026-09-10)
+**The instrument named above no longer works.** On this machine (Live 12.4.5, server
+`0.1.0+6025d7a7e0af`) the analyzer loads in **1.95 s cold, 0.89 s warm** against a 120 s
+`device.load` ceiling. Nothing available gets near any ceiling: every browser-root inventory
+walk is sub-second (packs 9609 entries / 0.86 s, drums 3788 / 0.70 s), and the worst load
+measured across Core Kits, pianos and the analyzer was **2.38 s**. The "tens of seconds"
+premise in `client.py`'s comment is stale for this hardware.
+
+**Three operator wedges do NOT block the Remote Script's scheduler.** Preferences open (42
+calls, all ~0.5 s), a menu-bar menu held down ~20 s, and a click-held mixer fader ~20 s all
+left calls answering normally. Live 12.4.5 keeps draining scheduled messages through UI
+tracking loops — the scheduler is decoupled from the UI run loop.
+
+**A real Ableton export DOES block it, and that is where the fence fails.** Operator ran an
+mp3 export of `alien`; Live's log shows exactly one break in served calls,
+**09:45:05 → 09:46:06, a 61.5 s gap** — four times the 15 s default ceiling. Two in-flight
+`ableton_track('list')` calls died as bare `FrameError: socket read timed out after 20.0s`.
+No `work_escalated`, no job id, no `LiveBusyError`. A third call, started 14 s before the
+block lifted, completed in 15.3 s.
+
+A follow-up run polled both surfaces through a second export and settled the mechanism:
+
+- `bout_status` reported `occupied=False` on both sides of the block and answered nothing
+  inside it, so the bout state *during* the block was not directly observed. The inference
+  that **no bout is ever taken** rests on the absence of escalation: had a bout been taken and
+  waited on, `done.wait(timeout=15)` would have expired and escalated ~45 s before the block
+  lifted. It did not, for either victim. So the worker never reaches the wait, and the ceiling
+  is unreachable by construction rather than mis-tuned. **Pinning the exact blocking call
+  needs Live-side instrumentation (a scratch re-vendor); it was not done.**
+- **`bout_status` itself timed out (30 s) inside the block.** Its action docstring promises
+  "Safe to call while the main thread is fenced: this action runs on the worker thread and
+  never takes a bout." That holds against a *bout-fenced* main thread and fails against a
+  *genuinely blocked* one. Only the first condition was ever tested.
+
+The conclusion the fakes cannot reach: **the whole request path stalls on Live's main thread
+before any fence logic runs, regardless of `runs_on_worker`.** The fence bounds a slow *Live
+API call*; it does nothing about a *blocked Live*, which is the condition that produced the
+original beachball. From the client the shipped fix is invisible — exactly the outcome R9 was
+written to detect.
+
+### Box results
+
+- [x] **Reproduce the original — NOT REPRODUCIBLE AS WRITTEN, and the escalation half FAILS.**
+  The analyzer is no longer slow enough to exceed any ceiling (1.95 s cold). Under the
+  condition that *does* block Live (a 61.5 s export) the call does **not** come back
+  `ok=True` with `code=work_escalated` and a job id — it dies as a plain 20 s socket timeout.
+  The **second clause PASSES** and was verified separately: 12 concurrent `device.load` calls
+  produced 5 `LiveBusyError` refusals naming the running operation and its elapsed time
+  (`Live's main thread is busy with ableton_device('load') (running 0.3s); this request was
+  refused rather than queued behind it`), arriving at 2.3–2.8 s, consistent with the 2.0 s
+  `_BUSY_ADMIT_WAIT_S`. No queue formed; the other 7 completed normally.
+- [ ] **A caller arriving after the give-up must ALSO be refused — UNREACHABLE.** Requires an
+  escalation; none can be produced. Planner/fake-tested only.
+- [ ] **Does the runner actually signal? — UNREACHABLE.** Same reason. The residual risk this
+  box exists to probe (Live *dropping* a scheduled callback) is still unmeasured.
+- [ ] **`abandon_bout` releases — UNREACHABLE.** Same reason.
+- [ ] **R9 over a real socket — FAILS.** The escalation reply does not arrive before the client
+  stops listening, because no escalation is generated at all. Both victims hit the 20 s policy
+  read timeout (15 s ceiling + 5 s margin) with no reply. "Everything above reads as a plain
+  timeout" is the observed behaviour, not the hypothetical.
+- [x] **R8's reachability caveat — PASSES against a fenced bout, FAILS against a blocked main
+  thread.** During a real occupied bout, 6 concurrent `bout_status` callers all answered in
+  <0.9 s with `occupied: true` plus the bout's label and elapsed time. During the export block
+  the same call timed out at 30 s. The surface an operator reaches for works only in the
+  cheaper of the two cases.
+
+### What this means for the release
+
+`#322` shipped inside the release-pending `BUGSWEEP-0910` scope. The fix is real for the case
+it models (a long-running Live API call) and inert for the case in the original report (Live
+blocked by its own modal work). The scope should not claim the beachball is fixed without
+either re-scoping the claim or landing a follow-up. Filed as **#531** (`mcp: the fence is inert when Live itself blocks the main thread`, stage:research — the exact blocking call is not yet pinned).
+
+## #291 — the `alien` witness: does a real chain survive a rebuild? (2026-09-10) — **RUN 2026-09-10 on Live 12.4.5. THE WITNESS FAILED, TWICE, FOR TWO INDEPENDENT REASONS. Boxes 3-6 not run (see below).**
 
 Backlog **#291** (with **#323** folded in). Needs Live 12.4.x, the Remote Script re-vendored
 (the same one the sweep's other checks need — batch it), and the song `alien`. One sitting.
@@ -60,30 +111,110 @@ that matters — a freshly loaded device comes back at class defaults, so "forgo
 a detectable state. What it cannot model is Live's own float and enum behaviour, which is where
 this either works or quietly does not.
 
-**The witness the issue names, and the highest-value check here:**
+**It quietly does not.** Both defects below are invisible to the fake and were found on the
+first contact with a real chain.
 
-- [ ] On `alien`'s Alien Voice track, swap the position-1 instrument (Analog → Operator) with
-  `hallucinote chain-rebuild`. EQ Eight and Erosion must still be downstream, in order, with
-  **every non-default parameter unchanged**. Record the before/after parameter values, not just
-  a pass/fail — a rebuild that restores 19 of 20 params looks identical to one that restores 20
-  unless you compare.
-- [ ] **`_PARAM_EPSILON = 1e-6` is the number most likely to be wrong.** It is the tolerance the
-  verify pass compares read-back values against, and it was reasoned, not measured. Too tight
-  gives false verify failures on a real chain; too loose misses a parameter left near its
-  default. The run above produces the data that settles it.
-- [ ] **Sidechain restore.** The rebuild restores a sidechain *source* through
-  `get_input_routing` → `set_input_routing` rather than `set_sidechain`. Unproven against a real
-  Compressor with a live sidechain source — try one.
-- [ ] **R4's refusal is narrower than it reads.** It catches "the DB names nothing loadable"; it
-  cannot catch "the DB names a plugin this machine does not have". That case surfaces at load
-  time as a verify failure with the journal intact — safe, but after the delete rather than
-  before it. Worth one deliberate try on a machine missing a plugin the song uses.
-- [ ] **R5 — does `mute` actually silence the window?** Rebuild during playback and listen. On
-  the master the module alerts rather than pretending; confirm that is what happens.
-- [ ] **R7 + the #323 criterion.** `push execute --reconcile-chains` against a set with a real
-  occupied slot, then a SECOND push: it must emit **no** drift note for that parent. The DB-side
-  half is pinned by a test that runs the real `probe_and_link` after a real rebuild; the
-  Live-side half is not.
+### Defect A — a device in Live that the DB does not author shifts the whole rebuild
+
+`alien`'s Alien Voice track carried a `HallucinoteAnalyzer` at position 4, placed by the render
+path and *not* authored in the DB. `chain-rebuild --track 4` deleted only the three DB-known
+devices, so the analyzer survived at position 1, and the reload inserted around it:
+
+    before:  Analog | EQ Eight | Erosion | HallucinoteAnalyzer
+    after:   Operator | HallucinoteAnalyzer | EQ Eight | Erosion
+
+The restore pass then compared DB position 2 against the analyzer and DB position 3 against
+EQ Eight, producing **0 parameter(s) restored** and three alerts that name phantom class
+changes rather than the intruder:
+
+    ALERT: nothing sits at position 2 on track #4 after the rebuild, so the captured state
+           of 'EQ Eight' was NOT restored.
+    ALERT: position 3 on track #4 changed class from 'Erosion' to 'EQ Eight' ...
+
+Measured cost on a real mix: **EQ Eight lost 7 of 84 parameters**, two of them musical —
+`3 Gain A` −1.99951 dB → 0.0 and `4 Gain A` −2.50488 dB → 0.0. Two EQ cuts silently gone.
+Erosion survived only because it happened to land where its captured state still matched.
+
+The safety property held — it refused to report success and it alerted. The correctness
+property did not, and the alerts point at the wrong cause.
+
+**Same root cause as `incoming-bugs/2026-09-10-sidechain-authoring-blockers.md` item 1.** That
+report (filed independently, while authoring sidechains on this same song) hit the analyzer tap
+from the other direction: `ableton_device(action='load')` appends to the chain END, which on any
+rendered track is *after* the analyzer, so the new device is silently excluded from stem capture
+while still reaching the master — a stem-vs-master divergence `sum_reconciliation` would flag
+with nothing pointing at the cause.
+
+Two symptoms, one gap: **the HallucinoteAnalyzer is a device present in Live that no DB models,
+and the device layer does not account for it.** `chain-rebuild` shifts around it; `load` hides
+behind it. Fixing this at the device layer (the tap is always last, and every position-taking
+operation knows it) closes both; three point patches at three call sites would not.
+
+### Defect B — the restore path cannot write a single continuous parameter
+
+With the analyzer removed and the chain clean, a second rebuild (Operator → Analog) attempted
+the restore properly and **every parameter failed with the same type error**:
+
+    ALERT: restoring '5 Gain B' on 'EQ Eight' (position 2, track #4) FAILED
+           (ableton_device('set_parameter'): param 'value' must be str, got float)
+           — the captured value is in the journal and was not applied.
+
+Repeated for all 41 EQ Eight params and all 5 Erosion params. `chain-rebuild`'s restore passes
+a float where the wire schema requires `value` as a string, so **it has never been able to
+restore any continuous parameter and cannot**. This is also the true cause of the "0 restored"
+in Defect A's run; the position shift merely hid it behind class-mismatch alerts.
+
+The song was returned to its authored state with `push execute --only devices` (the alert's own
+suggested recovery), which restored both lost gain cuts.
+
+### Box results
+
+- [ ] **The witness (Analog → Operator, downstream state survives) — FAILED.** Both defects
+  above. Before/after values recorded per the box's requirement, not just a pass/fail:
+  EQ Eight 7 of 84 params changed (two real gain cuts to 0.0), Erosion 0 of 6. Re-run this box
+  once A and B are fixed.
+- [x] **`_PARAM_EPSILON = 1e-6` — SETTLED, and it is wrong in two independent ways.** Measured
+  by perturbing writes (offset 0.137 of range) followed by read-back on Analog, EQ Eight and
+  Erosion:
+  - **The float32 round-trip error is RELATIVE, and the epsilon is ABSOLUTE.** Normalized 0-1
+    params round-trip at 5e-9 to 2e-8; `1 Gain A` written at 4.11 round-trips at **1.335e-07**.
+    That is float32's ~1.2e-7 relative error scaling with magnitude — so any parameter whose
+    raw range is large (a dB gain, a Hz frequency, a 0-48 bend range) will breach an absolute
+    1e-6 on a perfectly correct write. Today's values pass only because most params are
+    normalized.
+  - **Integer-stepped params exposed as continuous break it outright.** `Note PB Range` wrote
+    41.424 read 41 (|d| 4.2e-01); `Semitone` wrote 3.288 read 3 (|d| 2.9e-01); `Octave` wrote
+    0.822 read 0 (|d| 8.2e-01). An absolute 1e-6 flags every one of these as a verify failure
+    when Live did exactly the right thing.
+
+    **Recommendation:** a relative tolerance (scaled to the parameter's range or magnitude)
+    plus explicit step-awareness for quantized params. A single absolute constant cannot serve
+    both a normalized filter Q and a 0-48 integer bend range.
+
+    *Method note:* a first pass that re-wrote each param's EXISTING value round-tripped at
+    exactly 0.0 for all 29 params tried — that test is worthless because Live short-circuits an
+    unchanged write. The numbers above come from the perturbing pass, which is the honest one.
+- [ ] **Sidechain restore — NOT RUN.** No device anywhere in `alien` had a sidechain source
+  (`select … where sidechain_source_track_id is not null` returned nothing), so the song could
+  not witness it. The operator is composing a sidechain the song legitimately wants; run this
+  box against that once it lands, rather than against a fabricated one.
+- [ ] **R4's refusal (DB names a plugin this machine lacks) — NOT RUN.** Needs a machine
+  missing a plugin the song uses.
+- [ ] **R5 — does `mute` actually silence the window? — NOT RUN.** Needs a rebuild during
+  playback with the operator listening. Blocked behind Defects A and B: a rebuild that restores
+  nothing is not a fair test of the audible window.
+- [ ] **R7 + the #323 criterion (second push emits no drift note) — NOT RUN, and deliberately
+  not attempted.** A concurrent authoring agent began adding Compressors to `alien` mid-sitting
+  (the devices phase reported Live holding `Compressor` devices the DB does not author on
+  tracks 2, 3, 4 and 5). Two writers on one Live set and one song DB invalidates a drift check
+  by construction. Re-run when `alien` has a single writer.
+
+### Coordination hazard worth recording
+
+This sitting mutates a real song. It ran while an authoring agent was also editing `alien`,
+and the collision was only caught because `push execute` prints a devices-integrity warning
+naming devices Live has that the DB does not. Any future run of this sitting should confirm
+`alien` has one writer before it starts.
 
 ## The open-bug sweep's re-vendor sitting (2026-09-10) — **FULLY DISCHARGED 2026-09-10, Live 12.4.5, all four passed**
 

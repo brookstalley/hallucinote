@@ -403,6 +403,55 @@ def test_a_failed_rebuild_does_not_leave_the_parent_muted(
     )
 
 
+def test_a_second_rebuild_refuses_rather_than_overwriting_the_journal(
+    conn, song, session, revoice, live, song_dir,
+):
+    """The journal of an interrupted run is the ONLY record of what that chain
+    held before it started deleting from it.
+
+    Running the command again is the operator's most likely next action, and
+    starting over would capture the chain THAT run left — half-demolished, or
+    fully gutted — and write it over the record. The refusal has to name the
+    resume path, or it just moves the operator's problem sideways.
+    """
+    live.fail[("ableton_device", "delete")] = "wedged"
+    with pytest.raises(Exception):
+        _rebuild(conn, song, session, live, song_dir)
+    journals = chain_rebuild.stranded_journals(song_dir)
+    assert journals, "fixture precondition: the interrupted run left a journal"
+    before = journals[0].read_text()
+
+    with pytest.raises(chain_rebuild.RebuildRefused) as caught:
+        _rebuild(conn, song, session, live, song_dir)
+
+    assert "--resume" in str(caught.value), "the refusal must name the way out"
+    assert journals[0].read_text() == before, "the record was overwritten"
+
+
+def test_resume_is_not_blocked_by_the_journal_it_exists_to_replay(
+    conn, song, session, revoice, live, song_dir,
+):
+    """The guard is on STARTING OVER, not on finishing.
+
+    `resume` reaches the destructive phases directly, so it bypasses the
+    refusal by construction — correct today, and exactly the coupling a later
+    refactor breaks silently. Pinning it means the guard cannot grow into the
+    one path that must be allowed through.
+    """
+    live.fail[("ableton_device", "delete")] = "wedged"
+    with pytest.raises(Exception):
+        _rebuild(conn, song, session, live, song_dir)
+    journal = chain_rebuild.stranded_journals(song_dir)[0]
+    live.fail.clear()
+
+    result = chain_rebuild.resume(journal, send_fn=live.send, conn=conn)
+
+    assert result.ok, result.alerts
+    assert not chain_rebuild.stranded_journals(song_dir), (
+        "a passing resume clears the journal"
+    )
+
+
 # ---------------------------------------------------------------------------
 # The escalation wire contract
 # ---------------------------------------------------------------------------

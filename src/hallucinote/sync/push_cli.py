@@ -79,6 +79,13 @@ def _resolve_send_fn():
     imported anywhere, ``hallucinote_mcp`` already holds a bound
     ``client`` attribute that a ``sys.modules`` replacement doesn't reach.
     A module-level seam sidesteps that entirely.
+
+    Deliberately NOT escalation-aware, unlike every other send resolved in this
+    module. This one feeds ``push_execute``, which resolves an escalated reply
+    itself — it has a push report with an operator channel to say "this outran
+    Live's ceiling and was polled to completion" on, and it must route a
+    connection failure during that polling to the same halt as any other. Both
+    are lost if the wrapper swallows the handle first.
     """
     from hallucinote_mcp import client as _client  # type: ignore[import-not-found]
     return _client.send
@@ -118,8 +125,12 @@ def _probe_live_via_mcp(
     to be installed (mirrors :func:`push_execute.execute_push`).
     """
     if send_fn is None:
-        from hallucinote_mcp import client as _client  # type: ignore[import-not-found]
-        send_fn = _client.send
+        # Escalation-aware: a call that outruns Live's ceiling returns ok=True
+        # with a job handle, and reading that as a result books work that has
+        # not landed. See sync/live_escalation.
+        from hallucinote.sync.live_escalation import resolve_client_send
+
+        send_fn = resolve_client_send()
     from hallucinote_mcp.wire import Request  # type: ignore[import-not-found]
 
     track_resp = send_fn(Request(tool="ableton_track", action="list", params={}))
@@ -171,8 +182,12 @@ def _probe_live_devices_via_mcp(
     cost is the same shape.
     """
     if send_fn is None:
-        from hallucinote_mcp import client as _client  # type: ignore[import-not-found]
-        send_fn = _client.send
+        # Escalation-aware: a call that outruns Live's ceiling returns ok=True
+        # with a job handle, and reading that as a result books work that has
+        # not landed. See sync/live_escalation.
+        from hallucinote.sync.live_escalation import resolve_client_send
+
+        send_fn = resolve_client_send()
     from hallucinote_mcp.wire import Request  # type: ignore[import-not-found]
 
     by_parent: dict[tuple[str, int], list[dict]] = {}
@@ -231,8 +246,12 @@ def _probe_live_session_clips_via_mcp(
     A per-track failure degrades that one track rather than aborting the run.
     """
     if send_fn is None:
-        from hallucinote_mcp import client as _client  # type: ignore[import-not-found]
-        send_fn = _client.send
+        # Escalation-aware: a call that outruns Live's ceiling returns ok=True
+        # with a job handle, and reading that as a result books work that has
+        # not landed. See sync/live_escalation.
+        from hallucinote.sync.live_escalation import resolve_client_send
+
+        send_fn = resolve_client_send()
     from hallucinote_mcp.wire import Request  # type: ignore[import-not-found]
 
     by_track: dict[int, list[dict]] = {}
@@ -279,8 +298,12 @@ def _probe_live_arrangement_clips_via_mcp(
     a different track).
     """
     if send_fn is None:
-        from hallucinote_mcp import client as _client  # type: ignore[import-not-found]
-        send_fn = _client.send
+        # Escalation-aware: a call that outruns Live's ceiling returns ok=True
+        # with a job handle, and reading that as a result books work that has
+        # not landed. See sync/live_escalation.
+        from hallucinote.sync.live_escalation import resolve_client_send
+
+        send_fn = resolve_client_send()
     from hallucinote_mcp.wire import Request  # type: ignore[import-not-found]
 
     by_track: dict[int, list[dict]] = {}

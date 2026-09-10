@@ -88,8 +88,13 @@ def _resolve_send_fn():
     inject a fake via ``monkeypatch.setattr(capture_cli, "_resolve_send_fn",
     lambda: fake)``.
     """
-    from hallucinote_mcp import client as _client  # type: ignore[import-not-found]
-    return _client.send
+    # Escalation-aware: a call that outruns Live's main-thread ceiling comes
+    # back ok=True carrying a job handle, and reading that as the call's result
+    # books work that has not landed. Resolving through the shared helper is
+    # what makes that true here without this module knowing the contract.
+    from hallucinote.sync.live_escalation import resolve_client_send
+
+    return resolve_client_send()
 
 
 def _make_probe(send_fn):

@@ -163,6 +163,62 @@ def await_escalated(
         time.sleep(ESCALATION_POLL_INTERVAL_S)
 
 
+def escalation_aware(
+    send_fn: Callable[..., Any],
+    *,
+    progress_fn: Callable[[str], None] | None = None,
+) -> Callable[..., Any]:
+    """Wrap a raw ``send_fn`` so an escalated reply never reaches the caller.
+
+    The caller sees the call's REAL outcome — its own result when the work
+    lands, Live's error when it fails — and never a handle it might mistake for
+    one. That is the point: an unwrapper that reads ``ok`` and returns
+    ``result`` books a write that has not landed, and the mistake is invisible
+    because the reply is a success.
+
+    Wrapping at the point the client send is RESOLVED, rather than at each of
+    the sites that use it, is what makes this hold for a module nobody has
+    written yet. A caller that needs the escalation in its own reporting
+    channels resolves the raw send itself and handles it — ``push_execute``
+    does, because a push report has an operator channel to say it on, and
+    ``chain_rebuild`` does, because it must not book a device as loaded
+    mid-load. Everything else gets this.
+    """
+    sink = progress_fn or (lambda _msg: None)
+
+    def _send(req: Any, **kwargs: Any) -> Any:
+        resp = send_fn(req, **kwargs)
+        job_id = escalated_job_id(resp)
+        if job_id is None:
+            return resp
+        from hallucinote_mcp.wire import Request  # type: ignore[import-not-found]
+
+        return await_escalated(
+            job_id=job_id,
+            label=f"{getattr(req, 'tool', '?')}({getattr(req, 'action', '?')!r})",
+            send_fn=send_fn,
+            request_cls=Request,
+            progress_fn=sink,
+            warnings_sink=sink,
+        )
+
+    return _send
+
+
+def resolve_client_send(
+    *, progress_fn: Callable[[str], None] | None = None,
+) -> Callable[..., Any]:
+    """The MCP client's send, already escalation-aware.
+
+    The lazy import is the same one every engine module does by hand: this
+    package must import without `hallucinote_mcp` present, and only a call that
+    actually reaches Live needs it.
+    """
+    from hallucinote_mcp import client as _client  # type: ignore[import-not-found]
+
+    return escalation_aware(_client.send, progress_fn=progress_fn)
+
+
 __all__ = [
     "ESCALATION_CODE",
     "ESCALATION_POLL_CEILING_S",
@@ -170,4 +226,6 @@ __all__ = [
     "PolledResponse",
     "await_escalated",
     "escalated_job_id",
+    "escalation_aware",
+    "resolve_client_send",
 ]

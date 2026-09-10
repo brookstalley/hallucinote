@@ -2741,6 +2741,68 @@ def test_cli_cleanup_default_scaffold_refuses_on_non_canonical(
     assert deletes == []
 
 
+# ---------- a stranded chain rebuild blocks the push ----------
+
+
+def test_cli_execute_refuses_while_a_chain_rebuild_is_stranded(
+    conn, song, session, db_path, monkeypatch, capsys, tmp_path,
+):
+    """A journal under the song's `.rebuild/` means a rebuild gutted a chain and
+    did not finish, so the DB's device links describe a chain Live no longer
+    holds. Pushing plans every device decision against that fiction and reports
+    ok over it.
+
+    This also makes the journal a real recovery mechanism rather than a file:
+    the operator who needs it is exactly the one who does not know it exists,
+    and `push execute` is what they reach for next.
+    """
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", lambda send_fn=None: ([], []))
+    monkeypatch.setattr(
+        push_cli.push_execute, "execute_push",
+        lambda **kw: pytest.fail("push ran despite a stranded rebuild journal"),
+    )
+    rebuild_dir = tmp_path / ".rebuild"
+    rebuild_dir.mkdir()
+    (rebuild_dir / "track-3.json").write_text("{}")
+    monkeypatch.setattr(push_cli.paths, "song_dir_for_conn", lambda _conn: tmp_path)
+
+    rc = push_cli.main([
+        "execute", session, "--db", str(db_path),
+        "--no-coherence-check", "--state-dir", str(tmp_path),
+    ])
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "unfinished chain rebuild" in err
+    assert "track-3.json" in err, "the refusal must name the file"
+    assert "--resume" in err, "and the way out"
+
+
+def test_cli_execute_proceeds_when_no_rebuild_is_stranded(
+    conn, song, session, db_path, monkeypatch, tmp_path,
+):
+    """The guard must not fire on the ordinary path — a check that blocks every
+    push is worse than the state it guards against."""
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", lambda send_fn=None: ([], []))
+    monkeypatch.setattr(push_cli.paths, "song_dir_for_conn", lambda _conn: tmp_path)
+    ran = {"yes": False}
+
+    def _fake_execute(**kwargs):
+        from hallucinote.sync.push_execute import ExecuteResult
+        ran["yes"] = True
+        return ExecuteResult(
+            outcome="ok", exit_code=0, phase_halted=None,
+            phases=[], state_file=None, errors_file=None,
+        )
+    monkeypatch.setattr(push_cli.push_execute, "execute_push", _fake_execute)
+
+    rc = push_cli.main([
+        "execute", session, "--db", str(db_path),
+        "--no-coherence-check", "--state-dir", str(tmp_path),
+    ])
+    assert rc == 0 and ran["yes"]
+
+
 # ---------- A1-resid — _cmd_execute default coherence-check hardening ----------
 
 

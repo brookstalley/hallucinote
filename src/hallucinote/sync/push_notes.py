@@ -184,8 +184,12 @@ def push_notes(
     that point so a re-run skips them.
     """
     if send_fn is None:
-        from hallucinote_mcp import client as _client  # type: ignore[import-not-found]
-        send_fn = _client.send
+        # Escalation-aware: a call that outruns Live's ceiling returns ok=True
+        # with a job handle, and reading that as a result books work that has
+        # not landed. See sync/live_escalation.
+        from hallucinote.sync.live_escalation import resolve_client_send
+
+        send_fn = resolve_client_send()
     from hallucinote_mcp.wire import Request  # type: ignore[import-not-found]
     try:
         from hallucinote_mcp.client import (  # type: ignore[import-not-found]

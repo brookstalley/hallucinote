@@ -272,3 +272,47 @@ docstring, not just the report.
   backwards. The SNP-8R4K precedent solved the same shape by extracting `analyzer_identity.py` to
   the top level; the parallel move is a `hallucinote/default_scaffold.py`. Creating a new module
   was outside the owned set, so it was flagged rather than taken.
+
+## Incident: `git stash` is shared across every worktree of a clone
+
+A chunk 06 delegate tried to stash its own source file to prove a pre-fix failure. Its
+`git stash push -m` was malformed and created nothing, so the follow-up `git stash pop` applied
+**another session's** stash into its worktree. It recovered by copying its two files aside and
+running `git reset --hard`.
+
+**Verified by the coordinator, not taken on the delegate's word:** both entries are still present
+and intact — `stash@{0}` (12 files, 433 insertions) and `stash@{1}` (2 files). The pop conflicted,
+so the entry was kept. Chunk 06's commit is exactly its two owned files, and every worktree is
+clean. Nothing was lost.
+
+**Rule this earns, and it belongs in `learnings.md` at close:** a delegate in a shared clone must
+never use `git stash` — the stash is per-clone, not per-worktree, so it reaches straight across
+into other sessions' uncommitted work. The safe way to test a pre-fix baseline is
+`git show HEAD:<path> > <path>`, which touches nothing outside the worktree. Chunk 01 and chunk 02
+both used stash-based baselines too, and were lucky.
+
+**Owed to the owner:** the other worktrees' sessions should be told a pop was attempted against
+their entry, even though it did not land.
+
+## Chunk 06: the #501-ahead-of-#222 assumption held
+
+No code-level dependency on #222 exists — the recorded `[ASSUMPTION]` is discharged, not merely
+unfalsified. The sample vocabulary is deliberately disjoint from `DeviceStatus`, and
+`test_sample_status_vocabulary_is_disjoint_from_device_status` will fail loudly if #222 later
+reuses a sample status string. The shape #222 should mirror: family-prefixed status values, a
+second list on the report rather than a widened `entries`, a `*_issues` property defined as
+"not ok" so a later status is an issue by default, and its own REQUIREMENTS section.
+
+## Integration debt and backlog candidates from chunk 06
+
+- **`skills/ableton-push/SKILL.md` is now incomplete** — it enumerates the device buckets and
+  phrases the exit-1 prompt as "Some devices won't load cleanly on this machine". The gate can now
+  fail on a sample. Coordinator's at integration.
+- **`examples/punk-fate/REQUIREMENTS.md` is stale generated output** — missing the new section.
+  Regenerating needs a build of the example song.
+- **`devices.audio_file` carries the identical false-clean** (sampler samples) and is NOT covered
+  — the issue names clips only. The `SampleEntry` family would absorb it with one added
+  "referenced by" field. Backlog item, not silent scope creep.
+- **A `kind='audio'` clip with a NULL/empty `audio_file` still passes compat clean.** Push refuses
+  it by name; it is a different defect with no path to an existence check. Skipped deliberately
+  and said so in the code, not just the report.

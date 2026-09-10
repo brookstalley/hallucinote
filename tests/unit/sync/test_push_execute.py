@@ -3099,3 +3099,92 @@ def test_partially_blocked_arrangement_never_reports_clean(
     state = json.loads((state_dir / ".last-push-state.json").read_text())
     by_name = {p["name"]: p for p in state["phases"]}
     assert by_name["arrangement"]["blocked_reasons"]
+
+
+# ---------------------------------------------------------------------------
+# The arrangement's playable-region pass (probe row 27)
+# ---------------------------------------------------------------------------
+
+
+def test_execute_bounds_a_placed_audio_copy_after_the_placement_applies(
+    conn, db_path, song, session, state_dir, tmp_path,
+):
+    """Multi-hop, and the hop is the whole point: a `set_property` addresses an
+    arrangement clip by an index that only exists in the create's RESULT, so the
+    region write cannot be planned with the placement. The executor runs the
+    region pass after the arrangement phase applies, and it addresses the copy
+    at the index Live actually returned — never a predicted one.
+
+    Live's `Clip.end_time` has no setter, so the block the copy occupies is NOT
+    written here and cannot be: this asserts the reachable half lands.
+    """
+    (tmp_path / "assets").mkdir(exist_ok=True)
+    (tmp_path / "assets" / "line.wav").write_bytes(b"RIFF....WAVEfmt ")
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Dlg", kind="audio")
+    cid = M.create_audio_clip(
+        conn, track_id=tid, slot=1, length_beats=8.0,
+        audio_file="assets/line.wav", name="line",
+    )
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4,
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=tid, clip_id=cid,
+        start_bar=1.0, end_bar=5.0,   # 4 bars = 16 beats
+    )
+
+    send_fn = _make_send_fn()
+    push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn,
+    )
+
+    arrangement_calls = [
+        c for c in send_fn.call_log
+        if c["tool"] == "ableton_clip" and c["params"].get("location") == "arrangement"
+    ]
+    actions = [c["action"] for c in arrangement_calls]
+    assert "create" in actions, actions
+    region = [c for c in arrangement_calls if c["action"] == "set_property"]
+    assert [c["params"]["property"] for c in region] == ["end_marker", "loop_end"]
+    assert all(c["params"]["value"] == 16.0 for c in region), region
+    # After the create, never before — the index it uses is the create's result.
+    assert actions.index("create") < actions.index("set_property")
+    created_index = 1
+    assert all(c["params"]["clip_index"] == created_index for c in region), region
+
+
+def test_execute_skips_the_region_pass_when_the_placement_failed(
+    conn, db_path, song, session, state_dir, tmp_path,
+):
+    """The pass writes onto a copy the arrangement phase just placed. If the
+    placement did not land, there is no copy to bound — and a region write
+    aimed at a stale link would land on whatever clip now holds that index."""
+    (tmp_path / "assets").mkdir(exist_ok=True)
+    (tmp_path / "assets" / "line.wav").write_bytes(b"RIFF....WAVEfmt ")
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Dlg", kind="audio")
+    cid = M.create_audio_clip(
+        conn, track_id=tid, slot=1, length_beats=8.0,
+        audio_file="assets/line.wav", name="line",
+    )
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4,
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=tid, clip_id=cid,
+        start_bar=1.0, end_bar=5.0,
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="arrangement_clip",
+        db_id=Q.get_arrangement_for_song(conn, song)[0]["id"], ableton_index=1,
+    )
+
+    send_fn = _make_send_fn(fail_keys={"ableton_clip:create"})
+    push_execute.execute_push(
+        conn=conn, song_id=song, session_id=session,
+        state_dir=state_dir, send_fn=send_fn,
+    )
+    assert not [
+        c for c in send_fn.call_log
+        if c["action"] == "set_property" and c["params"].get("location") == "arrangement"
+    ], "a failed placement must not be followed by a write onto a stale index"

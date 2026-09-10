@@ -1751,6 +1751,38 @@ def execute_push(
                     if extra_results:
                         apply_ok = _apply_results(extra_results, phase.name)
 
+        # The arrangement's own convergence: an audio copy's playable region is
+        # written with a `set_property` addressed by an arrangement clip index,
+        # and that index only exists once the placement's result is applied. So
+        # the region pass runs HERE, against the bindings this phase just
+        # recorded — never against a predicted index. Its own planner (not a
+        # re-plan of the phase): re-planning the projection would re-derive a
+        # clear from the lane it has just rebuilt and delete the placements.
+        if (
+            phase.name == "arrangement"
+            and not connection_lost
+            and apply_ok
+            and results
+            and all(r.get("ok") for r in results)
+        ):
+            from hallucinote.sync.push.arrangement import (
+                plan_push_arrangement_audio_regions,
+            )
+            region_plan = plan_push_arrangement_audio_regions(
+                conn, song_id=song_id, session_id=session_id,
+            )
+            _drain_plan_warnings(region_plan)
+            for reason in getattr(region_plan, "blocked_reasons", ()):
+                if reason not in blocked_reasons:
+                    blocked_reasons.append(reason)
+            if region_plan.calls:
+                region_results, connection_lost = _dispatch_calls(
+                    region_plan.calls, phase_name=phase.name,
+                )
+                results.extend(region_results)
+                if region_results:
+                    apply_ok = _apply_results(region_results, phase.name)
+
         calls_ok = sum(1 for r in results if r.get("ok"))
         calls_failed = sum(1 for r in results if not r.get("ok"))
 

@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from hallucinote.db import init_db, mutations as M
+from hallucinote.db import init_db, mutations as M, queries as Q
 from hallucinote.sync import push
 
 
@@ -682,10 +682,13 @@ def test_envelope_hosting_audio_placement_takes_the_duplicate_route(
     # The conform travelled with the duplicate — no gap is reported for it.
     assert not any("did NOT travel" in b for b in plan.blocked_reasons)
     assert not any("did NOT travel" in a for a in plan.alerts)
-    # The extent still did not (the duplicate is the session clip's length) —
-    # said on the operator channel, once for the phase, naming the placement.
-    extent = [a for a in plan.alerts if "EXTENT" in a]
-    assert len(extent) == 1 and "duplicate" in extent[0], plan.alerts
+    # The BLOCK still does not travel (it is the session clip's length, and
+    # Live's Clip.end_time has no setter) — said on the operator channel, once
+    # for the phase, naming the placement and the route that placed it. The
+    # copy's playable REGION does travel, in the post-apply region pass.
+    block = [a for a in plan.alerts if "BLOCK each copy occupies" in a]
+    assert len(block) == 1 and "duplicate route" in block[0], plan.alerts
+    assert "region set to the authored span" in block[0], block[0]
     # The summary counts it as both a duplicate and an audio placement.
     assert any("duplicated 1" in n and "placed 1 audio" in n for n in plan.notes), plan.notes
 
@@ -1028,21 +1031,29 @@ def test_a_track_missing_from_the_probe_map_plans_nothing_destructive(
 def test_extent_gap_is_reported_even_with_nothing_authored_and_does_not_block(
     conn, song, session, audio_track, sample, song_dir,
 ):
-    """The arrangement copy's EXTENT never travels, and that must be said even
+    """The arrangement copy's BLOCK never travels, and that must be said even
     when the row authors no conform columns at all.
 
-    `Track.create_audio_clip` takes a path and a position and no length, so the
-    copy plays the whole file however long the placement is. The notice used to
-    be gated on some conform column being authored, which hid the case with the
+    `Track.create_audio_clip` takes a path and a position and no length, and
+    Live exposes `Clip.end_time` with NO SETTER, so the block the copy occupies
+    is the file's length and no later write moves it. The notice used to be
+    gated on some conform column being authored, which hid the case with the
     loudest symptom: a bare placement with an end_bar simply ran long, silently.
 
-    It is an ALERT, not a block, and that split is the point. Extent is true of
-    every audio placement ever planned; routing it as blocked would make every
-    song carrying a stem exit non-zero forever. An authored conform that did not
-    travel is a different fact — the song asked for something it did not get —
-    and that one does block. And it is an alert rather than a note because
-    `notes` is the channel the executor discards: a fact the operator must act
-    on (trim in Live) that never reaches them is the silent-drop failure.
+    Updated against probe row 27 (Live 12.4.5), which disproved the belief this
+    test used to encode — that nothing about the copy's length was reachable.
+    `end_marker` and `loop_end` ARE writable on a placed clip, so the alert now
+    has to say the two-part truth: the playable region travels, the block does
+    not.
+
+    It is an ALERT, not a block, and that split is the point. The block extent
+    is true of every audio placement ever planned; routing it as blocked would
+    make every song carrying a stem exit non-zero forever. An authored conform
+    that did not travel is a different fact — the song asked for something it
+    did not get — and that one does block. And it is an alert rather than a note
+    because `notes` is the channel the executor discards: a fact the operator
+    may have to act on (shorten the block in Live) that never reaches them is
+    the silent-drop failure.
     """
     cid = M.create_audio_clip(          # no gain / pitch / warp / markers
         conn, track_id=audio_track, slot=1, length_beats=8.0,
@@ -1058,17 +1069,22 @@ def test_extent_gap_is_reported_even_with_nothing_authored_and_does_not_block(
         live_arrangement_clips_by_track={4: []},
     )
     assert plan.blocked_reasons == [], plan.blocked_reasons
-    extent = [a for a in plan.alerts if "EXTENT" in a]
-    assert len(extent) == 1, plan.alerts
-    assert "end_bar (7)" in extent[0], extent[0]
-    assert not any("EXTENT" in n for n in plan.notes), "operator channel, not notes"
+    block = [a for a in plan.alerts if "BLOCK each copy occupies" in a]
+    assert len(block) == 1, plan.alerts
+    assert "placement end_bar 7" in block[0], block[0]
+    # Both halves of the truth, each said exactly once for the phase.
+    assert block[0].count("PLAYABLE REGION") == 1, block[0]
+    assert block[0].count("Clip.end_time has no setter") == 1, block[0]
+    assert not any(
+        "BLOCK each copy occupies" in n for n in plan.notes
+    ), "operator channel, not notes"
 
 
 def test_extent_alert_is_one_per_phase_not_one_per_placement(
     conn, song, session, audio_track, sample,
 ):
     """A stem-heavy song must not bury its report under one alert per
-    placement: the extent gap is said ONCE for the phase, naming each
+    placement: the block-extent limit is said ONCE for the phase, naming each
     placement (capped, with the cap stated)."""
     cid = M.create_audio_clip(
         conn, track_id=audio_track, slot=1, length_beats=8.0,
@@ -1081,10 +1097,10 @@ def test_extent_alert_is_one_per_phase_not_one_per_placement(
         conn, song_id=song, session_id=session,
         live_arrangement_clips_by_track={4: []},
     )
-    extent = [a for a in plan.alerts if "EXTENT" in a]
-    assert len(extent) == 1, plan.alerts
-    assert "10 audio placement(s)" in extent[0]
-    assert "and 2 more" in extent[0]
+    block = [a for a in plan.alerts if "BLOCK each copy occupies" in a]
+    assert len(block) == 1, plan.alerts
+    assert "10 audio placement(s)" in block[0]
+    assert "and 2 more" in block[0]
 
 
 # ---------------------------------------------------------------------------
@@ -1147,3 +1163,282 @@ def test_unlinked_row_into_an_empty_or_unprobed_slot_is_silent(
         assert plan.calls[0].args["action"] == "create"
         assert plan.calls[0].args["replace"] is True
         assert not any("DELETED" in a for a in plan.alerts), plan.alerts
+
+
+# ---------------------------------------------------------------------------
+# The playable-region pass — what Live DOES let a push write on a placed copy
+# ---------------------------------------------------------------------------
+
+
+def _link_placement(conn, *, session, placement_id, index):
+    """Record the binding `apply_push_results` writes from the create's
+    ``arrangement_clip_index``. The region pass reads THIS, never a position."""
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="arrangement_clip",
+        db_id=placement_id, ableton_index=index,
+    )
+
+
+def test_the_region_pass_bounds_a_placed_copy_to_the_authored_span(
+    conn, song, session, audio_track, sample,
+):
+    """Probe row 27 (Live 12.4.5): ``end_marker`` and ``loop_end`` ARE writable
+    on a placed arrangement clip, on both routes. So the copy's PLAYABLE REGION
+    reaches the arrangement even though its block cannot.
+
+    Both properties, not one: a clip that runs once is bounded by the marker, a
+    LOOPING one repeats its brace instead (row 27's clip was ``looping=true``),
+    and the planner cannot see which state Live left the copy in — so it moves
+    both and the copy sounds the authored span either way.
+    """
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="line",
+    )
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4,
+    )
+    aid = _place(conn, song=song, track=audio_track, clip=cid,
+                 start_bar=3.0, end_bar=7.0)  # 4 bars = 16 beats
+    _link_placement(conn, session=session, placement_id=aid, index=2)
+
+    plan = push.plan_push_arrangement_audio_regions(
+        conn, song_id=song, session_id=session,
+    )
+    assert plan.blocked_reasons == [], plan.blocked_reasons
+    assert [c.args["property"] for c in plan.calls] == ["end_marker", "loop_end"]
+    for call in plan.calls:
+        assert call.tool == "ableton_clip"
+        assert call.args["action"] == "set_property"
+        assert call.args["location"] == "arrangement"
+        assert call.args["track_index"] == 4
+        assert call.args["clip_index"] == 2
+        assert call.args["value"] == 16.0
+        assert call.key.startswith(f"arrangement_clip_region:{aid}:")
+
+
+def test_the_region_pass_addresses_the_copy_by_its_link_never_by_position(
+    conn, song, session, audio_track, sample,
+):
+    """The whole reason this is a second pass: an arrangement clip's index
+    exists only in the create's RESULT. Live's index for a placement need not
+    match its ordinal among the song's placements — the region pass reads the
+    recorded binding, so a copy Live put at index 9 is addressed at 9."""
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="line",
+    )
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4,
+    )
+    first = _place(conn, song=song, track=audio_track, clip=cid,
+                   start_bar=1.0, end_bar=3.0)
+    second = _place(conn, song=song, track=audio_track, clip=cid,
+                    start_bar=9.0, end_bar=13.0)
+    _link_placement(conn, session=session, placement_id=first, index=9)
+    _link_placement(conn, session=session, placement_id=second, index=3)
+
+    plan = push.plan_push_arrangement_audio_regions(
+        conn, song_id=song, session_id=session,
+    )
+    by_placement = {}
+    for call in plan.calls:
+        by_placement.setdefault(call.key.split(":")[1], set()).add(
+            (call.args["clip_index"], call.args["value"])
+        )
+    assert by_placement[first] == {(9, 8.0)}, "8 beats = 2 bars, at Live's 9"
+    assert by_placement[second] == {(3, 16.0)}, "16 beats = 4 bars, at Live's 3"
+
+
+def test_the_region_pass_starts_at_the_conformed_start_marker_on_the_duplicate_route(
+    conn, song, session, audio_track, sample,
+):
+    """The write moves the END of the playable region and nothing else, so it
+    has to start from where that region already starts. The duplicate route
+    carries the session clip's conformed ``start_marker`` onto the copy, so the
+    authored span runs from there — not from Live's 0."""
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="line", start_marker=2.0, end_marker=8.0,
+    )
+    _link_clip(conn, session=session, clip_id=cid, index=1)
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4,
+    )
+    _host_a_ride(conn, song=song, track=audio_track, clip=cid, start_bar=1.0)
+    aid = Q.get_arrangement_for_song(conn, song)[0]["id"]
+    _link_placement(conn, session=session, placement_id=aid, index=1)
+
+    plan = push.plan_push_arrangement_audio_regions(
+        conn, song_id=song, session_id=session,
+    )
+    # _host_a_ride places bars 1→5 (16 beats), and the copy's region already
+    # starts at 2.0.
+    assert {c.args["value"] for c in plan.calls} == {18.0}
+
+
+def test_the_direct_create_region_starts_at_zero_because_the_conform_did_not_travel(
+    conn, song, session, audio_track, sample,
+):
+    """The mirror of the duplicate case, and the reason the two are not one
+    rule: on the direct-create route the authored ``start_marker`` stays on the
+    session clip (that is the conform gap the arrangement phase reports), so the
+    copy sits at Live's own 0 and the span must be measured from there."""
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="line", start_marker=2.0, end_marker=8.0,
+    )
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4,
+    )
+    aid = _place(conn, song=song, track=audio_track, clip=cid,
+                 start_bar=1.0, end_bar=5.0)
+    _link_placement(conn, session=session, placement_id=aid, index=1)
+
+    plan = push.plan_push_arrangement_audio_regions(
+        conn, song_id=song, session_id=session,
+    )
+    assert {c.args["value"] for c in plan.calls} == {16.0}
+
+
+def test_the_region_pass_refuses_the_beats_domain_on_an_unwarped_clip(
+    conn, song, session, audio_track, sample,
+):
+    """Live's markers carry a dual unit — beats when the clip is warped,
+    SECONDS when it is not. A row that authors ``warping = 0`` is saying the
+    copy reads seconds, and the authored span is in bars, so the write is
+    skipped and said rather than made wrong."""
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="line", warping=0,
+    )
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4,
+    )
+    aid = _place(conn, song=song, track=audio_track, clip=cid)
+    _link_placement(conn, session=session, placement_id=aid, index=1)
+
+    plan = push.plan_push_arrangement_audio_regions(
+        conn, song_id=song, session_id=session,
+    )
+    assert plan.calls == []
+    assert any("warping=0" in a and "seconds" in a for a in plan.alerts), plan.alerts
+    # And the arrangement phase's own line says the same thing, so the operator
+    # is not told the region travelled and then told it did not.
+    arr = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track={4: []},
+    )
+    block = [a for a in arr.alerts if "BLOCK each copy occupies" in a]
+    assert len(block) == 1 and "region NOT set" in block[0], arr.alerts
+
+
+def test_the_region_pass_says_which_copies_it_could_not_reach(
+    conn, song, session, audio_track, sample,
+):
+    """A placement with no recorded copy did not materialize. The pass says so
+    on the operator channel — a copy left playing its whole file must never be
+    a silent surprise — but does NOT block: the arrangement phase already
+    reported the reason, and raising it twice would double-count one failure."""
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="line",
+    )
+    _place(conn, song=song, track=audio_track, clip=cid)
+
+    plan = push.plan_push_arrangement_audio_regions(
+        conn, song_id=song, session_id=session,
+    )
+    assert plan.calls == []
+    assert plan.blocked_reasons == []
+    assert any("no recorded arrangement clip" in a for a in plan.alerts), plan.alerts
+
+
+def test_a_song_with_no_audio_placements_plans_no_region_work(
+    conn, song, session, audio_track, sample,
+):
+    """A MIDI-only arrangement is not this pass's business, and an empty plan
+    from it must read as 'nothing to do', never as blocked work."""
+    midi_track = M.create_track(
+        conn, song_id=song, track_index=2, name="Keys", kind="midi",
+    )
+    cid = M.create_clip(conn, track_id=midi_track, slot=1, length_beats=8.0)
+    _place(conn, song=song, track=midi_track, clip=cid)
+
+    plan = push.plan_push_arrangement_audio_regions(
+        conn, song_id=song, session_id=session,
+    )
+    assert plan.calls == []
+    assert plan.blocked_reasons == [] and plan.alerts == []
+
+
+def test_the_region_key_kind_resolves_in_the_apply_layer(
+    conn, song, session, audio_track, sample,
+):
+    """Multi-hop: the pass's results come back to ``apply_push_results``, which
+    raises on any key kind nobody declared — the bug class that shipped twice
+    as ``device_param_override`` / ``device_chain_props``. A region write
+    records no binding (the copy's link is what it addressed), so it must
+    resolve as an ack, and the link it used must survive the round trip."""
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="line",
+    )
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4,
+    )
+    aid = _place(conn, song=song, track=audio_track, clip=cid)
+    _link_placement(conn, session=session, placement_id=aid, index=5)
+
+    plan = push.plan_push_arrangement_audio_regions(
+        conn, song_id=song, session_id=session,
+    )
+    assert plan.calls, "fixture precondition"
+    push.apply_push_results(
+        conn,
+        [{"key": c.key, "ok": True, "tool": c.tool, "result": {}}
+         for c in plan.calls],
+        session_id=session, actor="sync", reason="test",
+    )
+    assert Q.get_ableton_link(
+        conn, session_id=session, db_kind="arrangement_clip", db_id=aid,
+    ) == 5
+
+
+def test_every_emitted_region_call_validates_against_the_real_mcp_surface(
+    conn, song, session, audio_track, sample,
+):
+    """The wire boundary for the new pass: a region write that the MCP's
+    ``set_property`` would reject is a planner that drifted from the surface it
+    is addressing."""
+    from hallucinote_mcp import schema, wire
+    from hallucinote_mcp import actions as _actions  # noqa: F401 — populates the registry
+    from hallucinote_mcp.dispatcher import dispatch
+
+    schema.register_help_actions()
+
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="line",
+    )
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4,
+    )
+    aid = _place(conn, song=song, track=audio_track, clip=cid)
+    _link_placement(conn, session=session, placement_id=aid, index=1)
+
+    calls = push.plan_push_arrangement_audio_regions(
+        conn, song_id=song, session_id=session,
+    ).calls
+    assert calls, "fixture precondition"
+    for call in calls:
+        args = dict(call.args)
+        action = args.pop("action")
+        resp = dispatch(
+            wire.Request(tool=call.tool, action=action, params=args),
+            context=None,
+        )
+        assert getattr(resp, "needs_remote", False) or resp.ok, (
+            f"{call.tool}({action}) rejected by the MCP dispatcher: "
+            f"{getattr(resp, 'error', None)}"
+        )

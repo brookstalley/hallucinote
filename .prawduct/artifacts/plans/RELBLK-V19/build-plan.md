@@ -106,11 +106,11 @@ docstring is corrected where it claimed arm timing was irrelevant to the recordi
 issue's second half — with the arm after the locate, the `start_at_beat = 0` pre-roll clamp is no
 longer harmful, because the first post-arm movement is the transport itself.
 
-The branch is unpushed and unintegrated, and its worktree still exists, so it may belong to a
-live session. **Left for its owner rather than absorbed** — folding another session's in-flight
-branch into this one is the owner's call, not the coordinator's. It is one of roughly 25 local
-branches awaiting integration; that backlog is a release problem in its own right, separate from
-this plan.
+**Folded in by the owner 2026-09-09**, at the release-landing turn rather than during the build —
+absorbing another session's in-flight branch was never the coordinator's call to take. The merge
+was clean and the fix's 72 lines of order-asserting tests now run in this suite. It leaves the
+wider integration backlog (roughly 25 local branches) untouched; that is a release problem in its
+own right, separate from this plan.
 
 ### Chunk 05: #514 — capture must exclude an untouched default scaffold
 Capture ingests Live's brand-new-set scaffold as song content, `probe-and-link` then matches it,
@@ -170,16 +170,17 @@ re-scope rather than leaving the answered design questions standing.
 - [x] Chunk 01: #310 — the vendored-content advisory fingerprint
 - [x] Chunk 02: #518 — the pin-recovery recipe names a commit that does not exist
 - [x] Chunk 03: #505 — a failed replace must not destroy the clip first
-- [ ] Chunk 04: #498 — the capture starts a beat early *(built on `fix/rnd-capture-arm-order`, NOT on this branch)*
+- [x] Chunk 04: #498 — the capture starts a beat early
 - [x] Chunk 05: #514 — capture must exclude an untouched default scaffold
 - [x] Chunk 06: #501 — the compat check must verify clips.audio_file exists
 - [x] Chunk 07: #509 — an audio placement's extent never reaches the arrangement
 
-Chunk 04 stays UNTICKED deliberately, and the box is the honest one: its fix exists, but on
-another branch that this one does not contain, so this plan's work is not done. Ticking it would
-tell `lib/buildplan_refs.py` — which reads these boxes to answer "are all chunks done" — that a
-branch carrying the fix is ready when it is not. A session resuming here is meant to land on 04
-and read the prose above, which says the code is written and the merge is the owner's call.
+Chunk 04 was built on its own branch (`fix/rnd-capture-arm-order`) and stayed UNTICKED while that
+was true — ticking it would have told `lib/buildplan_refs.py`, which reads these boxes to answer
+"are all chunks done", that a branch carrying the fix was ready when it did not carry it. The
+owner folded that branch in on 2026-09-09, so the box is now honest in the other direction: the
+fix is in this history, its order-asserting test runs in this suite, and its live check joins the
+RELBLK-V19 queue in `.prawduct/operator-verification.md`.
 
 The earlier compact form of this roster (`- \`[x]\` 01 · …`) was never machine-read at all:
 `_iter_status_section_items` matches `- [ ]` / `- [x]` at line start, so backtick-wrapped boxes

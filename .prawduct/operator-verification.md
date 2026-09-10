@@ -2119,12 +2119,12 @@ did not.
 ## RELBLK-V19 — the release blockers (2026-09-09) — **PENDING**
 
 Plan: `.prawduct/artifacts/plans/RELBLK-V19/build-plan.md`. Backlog **#310**, **#518**, **#505**,
-**#514**, **#501**, **#509**. Every assertion behind these boxes is unit-level; each box below is
-a claim only a real Live session can settle.
+**#498**, **#514**, **#501**, **#509**. Every assertion behind these boxes is unit-level; each box
+below is a claim only a real Live session can settle.
 
-**Re-vendor first.** Chunk 03 edits `handlers/clip.py` and chunk 07's siblings touch the push
-path, so the wire fingerprint flips: `/hallucinote:ableton-mcp-install`, then fully quit and
-reopen Live before any box below.
+**Re-vendor first.** Chunk 03 edits `handlers/clip.py`, chunk 04 edits `handlers/render.py`, and
+chunk 07's siblings touch the push path, so the wire fingerprint flips: `/hallucinote:ableton-mcp-install`,
+then fully quit and reopen Live before any box below.
 
 - [ ] **#509 — the region write actually bounds playback.** An audio placement's arrangement copy
   plays only the authored span. Both routes: duplicate-of-session (region starts at the conformed
@@ -2155,6 +2155,14 @@ reopen Live before any box below.
   refuses the marker (and the arrangement phase now fails a push that used to report ok-with-an-
   alert), or Live accepts it and the copy does not in fact sound the authored span. The answer
   decides whether the write should be emitted at all in the growing case.
+- [ ] **#498 — the capture no longer starts before the transport rolls.** The arm now follows the
+  locate, so the M4L patch's first post-arm `current_song_time` change should be the transport
+  itself rather than the seek. Park Live's start position at a distant bar (the locate must
+  actually MOVE the playhead — that is the only condition under which the old order bit), render,
+  and confirm the capture's first sample is the downbeat and every per-section window lands where
+  the arrangement says. The unit test asserts call ORDER against a fake; only a real render can
+  say the wall-clock beat is gone.
+
 - [ ] **#514 — capture→cleanup→capture converges on a real set.** Open a set still holding the
   default scaffold, capture, accept the cleanup offer, capture again: the second round must emit
   zero net link changes. Then confirm a scaffold-NAMED track carrying a device survives capture.

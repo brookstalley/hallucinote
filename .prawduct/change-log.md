@@ -32,15 +32,15 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
-## 2026-09-09 — The release blockers: six defects that would have shipped, and two of them were in the release mechanism
+## 2026-09-09 — The release blockers: seven defects that would have shipped, and two of them were in the release mechanism
 
 <!-- prawduct: type=fix | scope=RELBLK-V19 -->
 
 The owner asked which backlog items gate a release, ratified the resulting Tier-1
-list, and approved filing the one defect that had no issue. Six chunks, built by
+list, and approved filing the one defect that had no issue. Seven chunks, built by
 delegates on a disjoint partition, plus one bug filed as **#518**.
 
-Two of the six are defects in the **release mechanism itself**, which is why they
+Two of the seven are defects in the **release mechanism itself**, which is why they
 blocked rather than merely queued. **#310** — eleven entries are vendored into
 Live's User Library but sit outside `_FINGERPRINT_PATHS`, so Live silently runs
 stale code on a green handshake; `docs/release-process.md` step 5 derives the
@@ -61,7 +61,22 @@ capture excludes an untouched default scaffold track, and renumbers survivors by
 dense rank (see the caveat below);
 **#501** the compat check answers for samples through a second entry family whose
 status vocabulary is deliberately disjoint from `DeviceStatus`; **#509** an
-arrangement audio copy is bounded to its authored span.
+arrangement audio copy is bounded to its authored span; **#498** the render arms
+the analyzers AFTER the locate.
+
+**#498 is a capture that lied by about a beat.** The M4L patch resets `prev_beat`
+to -1 on the arm rising edge, which leaves the start detector's
+`prev_beat < start_at_beat` clause unconditionally true — so an armed patch fires
+on the first `current_song_time` change of ANY kind, and the locate that followed
+the arm was exactly such a change. `sfrecord~` opened at the seek and captured the
+wall clock before the transport rolled, so every per-section window in an affected
+report sat about 1.1 beats early and nothing downstream could notice. It only bit
+when the locate actually moved the playhead, which is why the same set produced
+two good renders and one bad one minutes apart. Moving the arm below the locate
+makes the transport the first post-arm movement. `_set_arm_on_all`'s docstring
+claimed arm timing was irrelevant to the recording boundary — true of the latency
+BETWEEN arms, not of ordering, and that wrong "why" is what made the original
+order look safe.
 
 **#509 was re-scoped by a probe that had already been run.** Row 27 of
 `lom-probe-results.md` records that `end_marker`/`loop_end` are writable on both
@@ -107,11 +122,12 @@ it. The counts were wrong in both directions too: the "bounded N" alert was
 emitted before the executor's filter ran, and the withheld count counted calls
 rather than copies, doubling every number.
 
-**Re-vendor: REQUIRED.** `handlers/clip.py` and `actions/clip.py` are both inside
-`_FINGERPRINT_PATHS` — the tuple names the `handlers` and `actions` DIRECTORIES,
-not a file list — so the handshake fingerprint flips: `6283768de096` on `develop`
-becomes `b277dc550592` here, computed from clean checkouts of both. A consumer who
-skips the re-vendor gets a server that refuses every call.
+**Re-vendor: REQUIRED.** `handlers/clip.py`, `actions/clip.py` and
+`handlers/render.py` are all inside `_FINGERPRINT_PATHS` — the tuple names the
+`handlers` and `actions` DIRECTORIES, not a file list — so the handshake
+fingerprint flips: `6283768de096` on `develop` becomes `1654fdee47ec` here,
+computed from clean checkouts of both. A consumer who skips the re-vendor gets a
+server that refuses every call.
 
 The bundle also touches `install_paths.py`, `install_ops.py`, `__init__.py` and
 `resources/guides/error-recovery.md`, which are vendored but NOT fingerprinted.
@@ -124,8 +140,8 @@ devices, so the untouched predicate can never reach them), **#520**
 (`devices.audio_file` has the identical false-clean), **#521** (the advisory
 compares the invoking interpreter's package, not the running server's), **#522**
 (the region write assumes Live warped the file), **#523** (post-apply dispatch is
-a second `phase.name ==` special case). Seven operator-verification boxes are
-queued: every assertion behind these six chunks is unit-level.
+a second `phase.name ==` special case). Nine operator-verification boxes are
+queued: every assertion behind these seven chunks is unit-level.
 
 ## 2026-09-09 — A sample is now something the music can be derived from
 <!-- prawduct: type=feature | scope=SMP-6V2K-W2 -->

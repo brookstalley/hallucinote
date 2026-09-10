@@ -1775,3 +1775,60 @@ def test_analysis_names_both_workspaces_when_two_hold_the_song(
         assert str(root.resolve()) in msg, msg
     assert "HALLUCINOTE_SONGS_ROOT" in msg, msg
     assert "--reset" not in msg, msg
+
+
+def test_analyze_handler_summary_carries_the_master_refusal(synthetic_song: Path):
+    """The refusal must reach the SUMMARY, not only the report JSON.
+
+    The two significant-delta counts are what a summary reader acts on, and a
+    disqualified comparison makes them SMALLER because the master rows were
+    withheld — so without this key a refused comparison reads as a quieter
+    render, which is the opposite of the truth. Exercised through the handler
+    because `server_side/analysis.py` copies a fixed key set: a compare-level
+    test cannot see a key that copier drops.
+
+    The baseline side is the one tampered with here: it needs no control over
+    what the analyzer measures, and it is the case that outlives the bad
+    capture — a stored report stays the baseline until a newer one replaces it.
+    """
+    first = _write_captures(
+        synthetic_song / "captures" / "20260610T030000Z",
+        song_slug="test-song",
+    )
+    _tag_manifest_db_seq(first, 1)
+    baseline_result = analysis_handlers.analyze_handler(
+        None, song_slug="test-song", captures_dir=str(first),
+    )
+
+    baseline_path = Path(baseline_result["report_path"])
+    baseline_doc = json.loads(baseline_path.read_text(encoding="utf-8"))
+    baseline_doc["findings"].append({
+        "kind": "master_not_stem_sum",
+        "severity": "blocking",
+        "subject": "master",
+        "metric": "stem_sum_correlation",
+        "observed": 0.159,
+        "expected": 0.5,
+        "db_reference": "the captured master is not the sum of the captured stems",
+    })
+    baseline_path.write_text(json.dumps(baseline_doc), encoding="utf-8")
+
+    second = _write_captures(
+        synthetic_song / "captures" / "20260610T040000Z",
+        song_slug="test-song",
+    )
+    _tag_manifest_db_seq(second, 2)
+    result = analysis_handlers.analyze_handler(
+        None, song_slug="test-song", captures_dir=str(second), compare_to=1,
+    )
+
+    refused = result["summary"]["compare_to"]["master_deltas_refused"]
+    assert refused["reason"] == "master_not_stem_sum"
+    assert refused["side"] == "baseline"
+    assert refused["observed"] == pytest.approx(0.159)
+
+    # And the report itself withheld the master rows the summary now explains.
+    report = json.loads(Path(result["report_path"]).read_text(encoding="utf-8"))
+    assert not [
+        d for d in report["compare_to"]["deltas"] if d["track_id"] == "master"
+    ]

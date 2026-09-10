@@ -33,6 +33,71 @@ pending entries when `operator_verification_required: true`.
 
 ---
 
+## RENDERGUARD-0910 — the solo refusal fires against a real Live mixer (2026-09-10) — PENDING
+
+Issue **#548**. The refusal reads `solo` and `mute` off Live's own track objects, across
+`song.tracks` AND `song.return_tracks`, which the unit suite can only model: the fake sets the attribute the handler
+reads, so it proves the handler's logic and nothing about Live's. Needs Live 12.4.x and
+any song with 3+ tracks. **Visual change: no.**
+
+**Fingerprint flip: YES.** `handlers/render.py` is inside `_FINGERPRINT_PATHS`, so the
+vendored Remote Script is stale until re-vendored — Live keeps running the old code and
+this refusal silently does not exist. Re-vendor via `/ableton-mcp-install`, quit Live
+completely and reopen (Live caches Control Surface modules at launch), then `/mcp`.
+
+- [ ] **A soloed track refuses the render.** Solo one track by hand, then
+  `ableton_render(action='start', song_slug=<slug>)`. **The start call returns a job
+  handle and the poll instruction — that is NOT a pass or a fail.** The guard runs at
+  the top of the detached worker, so the refusal arrives through `action='status'`:
+  poll once and expect `state: failed` with the message naming that track by index and
+  name. Pass = that, the transport never moved, and the captures directory holds no
+  WAVs. Reading the start call's own return as "it started anyway" is the trap this box
+  exists to avoid.
+- [ ] **Two soloed tracks are both named.** Live's solo is exclusive by default
+  (soloing one clears another) — hold ⌘ to solo a second. If this Live cannot hold two
+  solos, record that and the box is N/A rather than failed.
+- [ ] **A muted track warns and proceeds.** Mute one track, render. Pass = the render
+  RUNS, the manifest's `muted_tracks` names it, and `mixer_state` carries
+  `mute: true` for that row. A mute is a plausible authoring choice; refusing it would
+  train the operator to work around the guard.
+- [ ] **The mixer state is recorded on a clean render.** Clear every solo and mute and
+  render. Pass = `manifest.mixer_state` has one row per track AND one per return, each
+  carrying `surface_kind` / `surface_index` / `surface_name` / `track_id`,
+  `solo: false`, `mute: false` and a `volume` matching Live's fader. Check one
+  `track_id` against the matching entry in `tracks[]` — the join is the point of the
+  field. This is the half that makes an
+  OLD report auditable — without it, the incident could only be diagnosed by probing a
+  Live session that had already moved on.
+- [ ] **A soloed RETURN refuses too, and a clean song with returns does not.** Solo
+  one return by hand and render — pass = the same `state: failed` on poll, the message
+  naming `return N`. Then
+  clear it and confirm the same song renders clean. Both halves matter: a return is a
+  Track in Live and carries solo, and a guard that false-fires on a healthy song is
+  worse than none.
+
+- [ ] **An unreadable solo attribute refuses.** Cannot be staged by hand on a healthy
+  Live — record N/A unless a Live version turns up whose Track lacks `solo`/`mute`.
+  Noted because the code now refuses rather than assuming clear, so an operator who
+  ever sees `could not read solo/mute` should know it is the guard working, not a bug.
+
+- [ ] **The stem-sum gate does NOT fire on a healthy song with a hard-working master
+  chain.** The negative control, and the box that prices the false positive: a limiter,
+  saturator or bus compressor on the master produces a residual no linear sum cancels,
+  which is exactly the ambiguity `reconcile.py`'s module doc spends its length on.
+  Render a normal, un-soloed song whose master chain is working, and read
+  `sum_reconciliation.correlation` and `gain_offset_db` from the report. Pass = no
+  `master_not_stem_sum` finding, and both numbers far from the thresholds (0.5 /
+  ±12 dB). **Record the two values whatever the outcome** — the thresholds were drawn
+  from ONE incident (0.159 vs a healthy 0.959) and no second song has exercised them,
+  so this box is the only evidence that the gate does not suppress a legitimate master
+  diff. If either number lands near a threshold on a healthy render, the gate is too
+  tight and that is worse than the failure it prevents.
+
+**Why it can't be headless-verified:** the fake sets `solo` because the handler reads
+`solo`. Only Live can say whether a real soloed track presents that attribute the way
+this assumes, and whether Live's exclusive-solo behaviour leaves the second box
+reachable at all.
+
 ## RELBLK-0910 — the release blockers, against a real chain (2026-09-10) — PENDING
 
 Issues **#532** (Symptom A), **#538**, **#536**, **#537**. Needs Live 12.4.x and the

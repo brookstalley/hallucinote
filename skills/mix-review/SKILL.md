@@ -97,12 +97,23 @@ as offset by roughly the excess. If a surface shows damage, say so and treat tha
 surface's musical readings as suspect until it is re-rendered — do not open a
 feel conversation about a part whose capture has a hole in it.
 
-These two are also the only lenses that may state a defect **as a defect**. Every
+These two, and `master_not_stem_sum`, are the only lenses that may state a defect
+**as a defect**. Every
 musical lens here reports against declared intent and never grades; a sample
 discontinuity and a capture that is not the length it claims both have physical
 ground truth, so they are named plainly. Do not intent-relativize or hedge a
 `capture_span_mismatch` — its whole purpose is to stop the rest of the report
 being believed.
+
+`master_not_stem_sum` is the strongest of the three and the one to read FIRST. It
+says the captured master is not the sum of the captured stems — so it is not the
+mix, and every master reading in the report (LUFS per section, sharpness, master
+imaging, delivered true peak) describes something else. Do not open a loudness or
+tonal-balance conversation about the master on a report carrying it; the finding
+names what to check (a soloed or muted track, a track routed away from Main, a
+missing stem) and the answer is to fix that and re-render. The stems on such a
+report are still good — that is what makes the master the odd one out — so a
+per-part conversation remains legitimate.
 
 Read the latest report JSON under `songs/<slug>/analysis/` (or run the analysis
 first — see "Refreshing the analysis"). At the **top level**, describing the
@@ -152,7 +163,13 @@ render rather than any section:
   genuine uncompensated plugin delay sits above 0.9 and IS worth chasing,
   because the timing lens will otherwise report it as laid-back feel.
 - `sum_reconciliation` — do the captured surfaces sum to the captured master?
-  The one check that validates the capture *set* rather than its members. A
+  The one check that validates the capture *set* rather than its members.
+  **Two of its axes now gate**: a `correlation` below 0.5 or a
+  `gain_offset_db` beyond ±12 dB raises a `blocking` `master_not_stem_sum`
+  finding, because that is no longer "an ambiguous residual" but a master that
+  is not built from these stems (the 2026-09-10 `alien` renders read 0.159
+  against a healthy 0.959 — a track had been left soloed). Everything below
+  still applies to a report that does NOT trip those two. A
   non-zero `residual_db` is **not** by itself a fault: a nonlinear master chain
   produces one legitimately, and `gains_assumed_unity` tells you whether fader
   volumes were modelled at all. Read `band_residuals` **against each other**,
@@ -543,10 +560,24 @@ push mislabels the report's own audio), then re-render + re-analyze with
 families — **loudness**, **timbre** (centroid / flatness / rolloff /
 `sharpness_acum`) and **stereo** (`correlation`, `mono_sum_loss_db`) — plus
 `section_deltas`: the same **timbre** family PER SECTION on every surface the
-window measured — stems, returns AND the master, so a whole-mix "is chorus 3
+window measured — stems, returns and (unless withheld, below) the master, so
+a whole-mix "is chorus 3
 less shrill?" has a row — and the **transient** shape per part per section
 (`rise_ms`, `t20_ms`, `click_minus_sub_db`, `low_minus_sub_db`), matched by
-section name then `track_id`. The summary counts these as
+section name then `track_id`. **Check `master_deltas_refused` before reading any of these counts.** When it
+is present, the master was measured as not the sum of its stems on the side it
+names, and every master row — surface AND section — plus the overshoot
+significance was WITHHELD. The counts beside it are therefore smaller for that
+reason, not because the render was quieter: reading them without it inverts
+their meaning. **The baseline case is the one to watch**, because it has no
+other signal: when the disqualified side is `"baseline"`, the CURRENT report is
+fine and carries no `master_not_stem_sum` finding of its own, so this key is the
+only indication that the comparison is not what it appears. Say so plainly, do
+not offer a master-level A/B verdict, and treat re-rendering the disqualified
+side as the next step. Stem deltas stay trustworthy either way — they are what
+proves the master is the odd one out.
+
+The summary counts these as
 `significant_section_delta_count`, separate from the surface-level
 `significant_delta_count`; zero there while the surface count is nonzero means
 the change did not land where it was made. That is where a "de-shrill chorus 3" or "sharpen the kick" edit

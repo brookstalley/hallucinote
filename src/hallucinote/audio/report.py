@@ -841,6 +841,58 @@ class EnergyRealization:
     skipped: list[str]
 
 
+# Which MixReport block feeds a Finding, and which is evidence a reader
+# interprets. Every measurement block on MixReport must appear in exactly one
+# of these two maps — `test_every_lens_block_declares_whether_it_gates` fails
+# on a block that is in neither, so a new lens cannot ship without the author
+# deciding which it is.
+#
+# This exists because `sum_reconciliation` shipped in neither state: computed
+# on every report, serialized on every report, and read by nothing. Its tests
+# asserted the number was present and correct, which is exactly what a lens
+# that gates nothing also looks like — so the suite stayed green while three
+# `alien` renders reported a master that was one soloed stem as a mix change.
+#
+# The split is `gate-verdict-policy.md`'s, and the exemption that lets a defect
+# lens block is design decision 2 of `build-plan-render-integrity.md` — neither
+# is new here: a DEFECT lens has
+# physical ground truth (is this audio damaged, does this capture contradict
+# itself) and may legitimately block; an INTENT lens ranks authored intent
+# against what was rendered, which is an aesthetic judgement and never fails a
+# build.
+FINDING_BEARING_BLOCKS: dict[str, str] = {
+    # MixReport field  ->  the _derive_findings parameter that consumes it
+    "master": "master",
+    "stems": "stems",
+    "overshoots": "overshoots",
+    "reverb_verifications": "reverbs",
+    "automation_verifications": "automation",
+    "per_section": "sections",
+    "integrity": "integrity",
+    "phase_relations": "phase_relations",
+    "alignment": "capture_span",
+    "sum_reconciliation": "sum_reconciliation",
+}
+
+EVIDENCE_ONLY_BLOCKS: dict[str, str] = {
+    # MixReport field  ->  why it does not gate
+    "returns": (
+        "per-return measurements; the judgements drawn from them belong to the "
+        "reverb and phase lenses, which do gate and take these as input"
+    ),
+    "width_realizations": (
+        "an INTENT lens — it ranks declared stereo width against the rendered "
+        "width, which is an aesthetic judgement; its own recognition limits "
+        "ride in skipped_analyses so an absence is never read as a verdict"
+    ),
+    "energy_realization": (
+        "an INTENT lens — declared per-section intensity ranked against "
+        "rendered LUFS-S and onset density; a low correlation is a "
+        "conversation about the arrangement, never a build failure"
+    ),
+}
+
+
 @dataclass(frozen=True)
 class Finding:
     """Structured intent-keyed observation from the analysis pass.

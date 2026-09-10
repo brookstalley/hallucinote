@@ -162,6 +162,87 @@ the content fingerprint a commit. A fourth report was a leftover stub carrying a
 unrelated bug under an archived report's filename — refiled under its own name, which
 is where the capture-playhead fix above came from.
 
+## 2026-09-10 — A render under a soloed track is refused, and a master that is not the mix cannot be reported as a changed mix
+
+<!-- prawduct: type=fix | scope=RENDERGUARD-0910 -->
+
+Three consecutive renders of `alien` reported `render_status: ok`, every surface
+terminal, and a `compare_to` advertising "26 significant deltas / 112 section-level
+deltas" against a song nobody had touched. The master measured −22.6 LUFS-I against a
+−8.6 baseline. **Track 3 was left soloed.** The capture was faithful; the mix was
+wrong — the master bus carried one part, the ~11 dB gap was that track's own −10 dB
+fader against a pre-fader stem tap, the B-Delay return went silent because solo killed
+the Voice feeding it, and it survived a full Live restart because solo is saved in the
+`.als`. That determinism is what made it read as an engine fault; the first
+investigation concluded the master capture surface was bound to the wrong track, and
+that reading is retracted in the report itself.
+
+**#549 — the engine detected it and told nobody.** `sum_reconciliation` measured
+`correlation` 0.159 against a healthy 0.959 and `gain_offset_db` −32.65 — it knew the
+master was not the sum of its stems — and was computed, serialized, and read by
+nothing. `_derive_findings` never took it. Now a disqualified master is a `blocking`
+`master_not_stem_sum` finding, and `compare.py` withholds master and master-section
+deltas rather than reporting them as changes. Both sides are checked: a stored report
+is re-used as a baseline for as long as it is the newest, so a capture made under a
+solo does not stop being wrong once later renders are measured against it. Stem deltas
+are untouched — every stem was within 0.4 dB, which is the evidence that proves the
+master is the odd one out. The refusal reaches the operator's summary too, because a
+disqualified comparison yields SMALLER counts and would otherwise read as a quieter
+render.
+
+**#548 — nothing refused the render.** `ableton_render(start)` now reads solo and mute
+across `song.tracks` **and** `song.return_tracks` before arming, refuses on any solo
+naming each offending surface, warns on mute, and records per-surface `solo` / `mute` /
+`volume` in the manifest so an old report stays auditable after Live has moved on.
+Returns are in because a return is a Track in Live and carries solo: soloing one
+silences every regular track's direct output — the same wrong mix through the
+collection that is easy to miss. `handlers/` is fingerprinted, so this does not exist
+in Live until the Remote Script is re-vendored and Live fully restarted; the boxes for it
+are queued in `operator-verification.md`. The read-side half is not on that clock —
+`server_side/` sits outside the fingerprint, so the summary change takes effect at once.
+
+**The tests were the third defect, and the user named it: *"tests are suspect if that
+shipped."*** They were. The `sum_reconciliation` tests asserted it was present, that
+`skipped` was None, and that it serialized — every one pinning that the number EXISTS
+and is CORRECT, none that anything ACTS on it, which is indistinguishable from a lens
+that gates nothing by design. The suite stayed green across the whole render-integrity
+build with the defect inside it. `report.py` now carries `FINDING_BEARING_BLOCKS` and
+`EVIDENCE_ONLY_BLOCKS` — every `MixReport` measurement block must declare which it is,
+against `gate-verdict-policy.md`'s existing split (defect lenses may block; intent
+lenses never fail a build) — and a new test file fails on a block in neither. Deleting
+`sum_reconciliation` from the gating map reproduces the original defect as a test
+failure. It does not catch a parameter that exists and is ignored in the body; that
+guarantee is not claimed.
+
+**Three further defects surfaced in review, all in the guards themselves.** The solo
+guard **failed open**: `getattr(track, "solo", False)` made "not soloed" and "did not
+answer" indistinguishable, and the manifest then wrote `solo: false` as a fact
+`boundary-patterns.md` tells consumers to trust — both flags are `null` now when Live
+does not present them, and a null refuses the render. The inert-lens tripwire proved a
+parameter NAME, not the wiring: every finding-bearing parameter has a default, so
+dropping a keyword from the one `_derive_findings` call reproduced the original defect
+with the new test file green — it parses the call site now. And the baseline half could
+not see a report written before the gate existed (those carry `sum_reconciliation` and
+no finding, and `resolve_baseline` filters on `db_seq` alone), so the three stored
+`alien` reports would have stayed diffable as baselines forever; the predicate moved to
+`reconcile.py` as the one owner both readers share. `overshoot_count` — a master-bus
+true-peak window, so a master delta by another name — also survived the disqualification
+and fed the headline count.
+
+`reconcile.py` documented in bold that it holds no threshold and must never be read as a
+verdict. This work put one there. The module doc records that as a narrow, reasoned
+exception — it decides whether the master IS the mix, not whether it is good — rather
+than leaving the contract silently false. A real-render negative control on a song with
+a hard-working master chain is queued in `operator-verification.md`: the thresholds come
+from one incident, and nothing yet prices the false positive.
+
+The Critic caught the returns gap, the baseline half of the gate, and the summary key —
+then, on the verification round, caught that the summary passthrough had shipped with no
+test reaching it through the handler, which is the same shape of gap this entry retracts
+two paragraphs above. Rack-chain solo is a real hole in the same guard and is filed as
+#550 rather than accepted: a soloed chain silences siblings inside one rack, not the
+song, so it is weaker than a track or return solo and is its own scope.
+
 ## 2026-09-10 — The release blockers: a restore that lands on the right device, and a failure that says so
 
 <!-- prawduct: type=fix | scope=RELBLK-0910 -->

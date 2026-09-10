@@ -1906,3 +1906,102 @@ def test_analyze_mix_distinguishes_a_missing_tempo_map_from_a_late_first_point(
 
     assert "no tempo_map rows" in _reason(absent)
     assert "before the song's first tempo point" in _reason(late)
+
+
+from hallucinote.audio.analyze import _derive_findings
+from hallucinote.audio.reconcile import SumReconciliation, master_is_not_stem_sum
+
+# --- the stem-sum residual reaches a finding -----------------------------
+#
+# Regression for the 2026-09-10 `alien` incident: `sum_reconciliation` was
+# computed and serialized on every report and read by nothing, so three
+# renders made under a soloed track each shipped `render_status: ok` with a
+# master that was one stem.
+
+
+def _stem_metrics(track_id: str = "master") -> "StemMetrics":
+    from hallucinote.audio.report import LoudnessMetrics, StemMetrics
+    return StemMetrics(
+        track_id=track_id,
+        surface_kind="master" if track_id == "master" else "track",
+        surface_name="Main",
+        loudness=LoudnessMetrics(-12.0, -14.0, -8.0, -1.0),
+    )
+
+
+def _reconciliation(
+    *, correlation: float = 0.959,
+    gain_offset_db: float = -1.2,
+    skipped: str | None = None,
+) -> SumReconciliation:
+    return SumReconciliation(
+        residual_db=-18.0,
+        correlation=correlation,
+        best_lag_samples=64,
+        gain_offset_db=gain_offset_db,
+        band_residuals=[],
+        worst_offender=None,
+        skipped=skipped,
+    )
+
+
+def test_a_healthy_reconciliation_disqualifies_nothing():
+    assert master_is_not_stem_sum(_reconciliation()) is None
+
+
+def test_the_incident_correlation_disqualifies_the_master():
+    """The measured values from the faulty `alien` renders."""
+    verdict = master_is_not_stem_sum(
+        _reconciliation(correlation=0.159, gain_offset_db=-32.65)
+    )
+    assert verdict is not None
+    metric, observed, _expected = verdict
+    assert metric == "stem_sum_correlation"
+    assert observed == pytest.approx(0.159)
+
+
+def test_a_wild_gain_offset_disqualifies_even_when_correlated():
+    """A master that tracks the stem sum but sits 30 dB away from it is not
+    the mix either — one stem soloed correlates poorly, but a master captured
+    through the wrong tap can correlate well and be at the wrong level."""
+    verdict = master_is_not_stem_sum(
+        _reconciliation(correlation=0.98, gain_offset_db=-31.7)
+    )
+    assert verdict is not None
+    assert verdict[0] == "stem_sum_gain_offset_db"
+
+
+def test_a_skipped_reconciliation_is_not_a_disqualification():
+    """The lens declining to measure says nothing about whether the master is
+    the mix; treating it as failure would make every report that could not run
+    the lens unreadable."""
+    assert master_is_not_stem_sum(
+        _reconciliation(correlation=float("nan"), skipped="no_stems")
+    ) is None
+    assert master_is_not_stem_sum(None) is None
+
+
+def test_a_disqualified_master_produces_a_blocking_finding():
+    findings = _derive_findings(
+        master=_stem_metrics("master"),
+        stems=[],
+        overshoots=[],
+        reverbs=[],
+        sum_reconciliation=_reconciliation(correlation=0.159, gain_offset_db=-32.65),
+    )
+    hits = [f for f in findings if f.kind == "master_not_stem_sum"]
+    assert len(hits) == 1
+    assert hits[0].severity == "blocking"
+    assert hits[0].subject == "master"
+    assert hits[0].observed == pytest.approx(0.159)
+
+
+def test_a_healthy_reconciliation_produces_no_such_finding():
+    findings = _derive_findings(
+        master=_stem_metrics("master"),
+        stems=[],
+        overshoots=[],
+        reverbs=[],
+        sum_reconciliation=_reconciliation(),
+    )
+    assert not [f for f in findings if f.kind == "master_not_stem_sum"]

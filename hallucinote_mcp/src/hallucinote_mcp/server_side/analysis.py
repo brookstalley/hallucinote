@@ -975,6 +975,15 @@ def analyze_handler(
             "added_surfaces": diff["added_surfaces"],
             "missing_surfaces": diff["missing_surfaces"],
         }
+        # The two counts above are exactly the headline a summary reader acts
+        # on. When the master was disqualified they are SMALLER, because the
+        # master rows were withheld — so without this key a refused comparison
+        # reads as a quieter one, which is the opposite of the truth. Present
+        # only when something was withheld, so a healthy summary is unchanged.
+        if diff.get("master_deltas_refused") is not None:
+            summary["compare_to"]["master_deltas_refused"] = (
+                diff["master_deltas_refused"]
+            )
     return {
         "report_path": str(report_path),
         "schema_version": report_dict["schema_version"],

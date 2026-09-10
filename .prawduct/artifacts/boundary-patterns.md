@@ -248,6 +248,26 @@ When changing this surface:
   `make_demo_media` refuses on an explicit bad value and requires
   `--allow-incomplete` to override. **Absence is not failure** — manifests
   predating these fields omit them and must still be readable.
+- **`mixer_state` and `muted_tracks` record the mix the capture was made
+  under**, one row per track AND per return, in the manifest's own surface
+  vocabulary (`surface_kind` / `surface_index` / `surface_name` / `track_id`,
+  so a row joins to the stem entry it explains): `solo`, `mute` and the
+  normalized fader `volume`. **`solo` and `mute` are `null`, never `false`,
+  when Live did not present the attribute** — and a null refuses the render,
+  because a guard that cannot see the mixer must say so rather than pass
+  everything. Returns are in because a return is a
+  Track in Live and carries solo like any other — soloing one silences every
+  regular track's direct output. Unlike the trust
+  flags above they do not describe the capture's fidelity — the capture is
+  faithful; they describe whether the thing captured was the song. A report is
+  read long after Live has moved on, so without them a surprising master can
+  only be diagnosed by probing a session that no longer holds the state that
+  produced it. `solo` cannot be true here: a soloed track or return is refused
+  before the transport rolls, because solo silences everything else and the
+  master bus then carries a fraction of the song while every unsoloed stem
+  captures silence. A mute is not refused — it is a plausible authoring choice for one
+  render — so `muted_tracks` names them and the render proceeds. Absence is
+  not failure here either: manifests predating these fields omit them.
 - **Deleter**: `hallucinote/takes.py` (`plan_sweep`/`execute_sweep`), driven
   automatically from `server._sweep_stale_takes` at render start and manually
   from `hallucinote captures prune`. This is the manifest's only *destructive*

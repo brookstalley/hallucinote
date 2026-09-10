@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from .automation import CORRELATION_ABS_THRESHOLD
+from .reconcile import SumReconciliation, master_is_not_stem_sum
 
 # Calibrated significance floors (dB). See module docstring for evidence.
 SIGNIFICANCE_DEFAULT_DB = 0.5
@@ -145,7 +146,21 @@ def diff_reports(
         baseline_ref=baseline_ref,
     )
 
-    deltas = _surface_deltas(current["master"], baseline["master"])
+    # A master the analyzer measured as not-the-sum-of-its-stems is not the
+    # mix, so a master delta would report the difference between one wrong
+    # reading and one right one as though the mix had moved. On the 2026-09-10
+    # `alien` incident that produced "26 significant deltas / 112 section-level
+    # deltas" against a song nobody had touched. The stems stay: on that same
+    # incident every stem was within 0.4 dB, which is the evidence that proves
+    # the master is the odd one out.
+    master_disqualified = (
+        _master_disqualification(current, side="current")
+        or _master_disqualification(baseline, side="baseline")
+    )
+
+    deltas: list[dict[str, Any]] = []
+    if master_disqualified is None:
+        deltas.extend(_surface_deltas(current["master"], baseline["master"]))
 
     current_surfaces = _by_track_id(current)
     baseline_surfaces = _by_track_id(baseline)
@@ -157,7 +172,9 @@ def diff_reports(
     overshoots_before = len(baseline.get("overshoots", []))
     overshoots_after = len(current.get("overshoots", []))
 
-    section_deltas = _section_deltas(current, baseline)
+    section_deltas = _section_deltas(
+        current, baseline, include_master=master_disqualified is None,
+    )
 
     return {
         "baseline": {
@@ -171,8 +188,19 @@ def diff_reports(
             "before": overshoots_before,
             "after": overshoots_after,
             "delta": overshoots_after - overshoots_before,
-            # An overshoot appearing or disappearing is always worth a look.
-            "significant": overshoots_after != overshoots_before,
+            # An overshoot appearing or disappearing is always worth a look —
+            # UNLESS the master it was measured from is disqualified. An
+            # overshoot is a master-bus true-peak window, so this is a master
+            # delta by another name: on the incident's numbers the soloed
+            # master sat ~14 dB low and every overshoot vanished, which would
+            # report a real headline change sourced entirely from a capture
+            # the same payload has just declared is not the mix. The counts
+            # stay (they are evidence); only the claim that the change means
+            # something is withheld.
+            "significant": (
+                overshoots_after != overshoots_before
+                if master_disqualified is None else False
+            ),
         },
         "added_surfaces": sorted(current_surfaces.keys() - baseline_surfaces.keys()),
         "missing_surfaces": sorted(baseline_surfaces.keys() - current_surfaces.keys()),
@@ -183,15 +211,121 @@ def diff_reports(
         # part. Surfaces-only deltas above cannot carry either (they average the
         # whole song; transients exist only per section). See _section_deltas.
         "section_deltas": section_deltas,
+        # Present only when the master was disqualified, and then it is the
+        # reason there are no master deltas above to read. Absent on a healthy
+        # comparison rather than null, so a consumer that does not know about
+        # this key behaves exactly as before.
+        **(
+            {"master_deltas_refused": master_disqualified}
+            if master_disqualified is not None
+            else {}
+        ),
     }
 
 
-def _section_surfaces(section: dict[str, Any]) -> list[dict[str, Any]]:
+def _master_disqualification(
+    report: dict[str, Any], *, side: str,
+) -> dict[str, Any] | None:
+    """Why this report's master cannot be diffed, or ``None``.
+
+    Checked on BOTH sides. A stored report is re-used as a baseline for as
+    long as it is the newest good one, so a capture made under a solo does not
+    stop being wrong when it becomes the thing later renders are measured
+    against — the next healthy render diffed against it would reproduce the
+    same wall of false master deltas, with the sign flipped and nothing to say
+    why. A diff is only as honest as its worse side.
+
+    Prefers the report's own ``master_not_stem_sum`` finding and falls back to
+    judging its stored ``sum_reconciliation`` through the same lens in
+    ``reconcile``. Both routes end at one owner, which is the point: a second
+    threshold here would be free to disagree with the report's own findings
+    about the same numbers.
+    """
+    verdict: tuple[str, float, float] | None = None
+    for finding in report.get("findings", []) or []:
+        if isinstance(finding, dict) and finding.get("kind") == "master_not_stem_sum":
+            verdict = (
+                finding.get("metric"),
+                finding.get("observed"),
+                finding.get("expected"),
+            )
+            break
+    else:
+        # A report written before this gate existed carries a fully populated
+        # `sum_reconciliation` and no finding — and `resolve_baseline` filters
+        # on `db_seq` alone, so those reports stay selectable as baselines
+        # indefinitely. The three stored `alien` reports that motivated this
+        # work are exactly that case. Judge them through the SAME lens rather
+        # than a second threshold here, so an old baseline and a new one cannot
+        # disagree about the same numbers.
+        verdict = master_is_not_stem_sum(
+            _reconciliation_from_json(report.get("sum_reconciliation"))
+        )
+    if verdict is not None:
+        metric, observed, expected = verdict
+        return {
+            "reason": "master_not_stem_sum",
+            "side": side,
+            "metric": metric,
+            "observed": observed,
+            "expected": expected,
+            "detail": (
+                f"the {side} report's master is not the sum of its stems, "
+                "so a master delta would compare a capture of something "
+                "other than the mix against one of the mix. Stem deltas "
+                "below are unaffected."
+            ),
+        }
+    return None
+
+
+def _reconciliation_from_json(raw: Any) -> SumReconciliation | None:
+    """Rehydrate just enough of a serialized reconciliation to judge it.
+
+    Only the fields the lens reads are needed; the band residuals and the
+    worst offender are evidence for a human, not inputs to the verdict. A
+    payload missing either judged field is not a disqualification — the same
+    rule the lens applies to a skipped measurement.
+    """
+    if not isinstance(raw, dict):
+        return None
+    try:
+        correlation = float(raw["correlation"])
+        gain_offset_db = float(raw["gain_offset_db"])
+        # Inside the try with the other two so a rehydration cannot raise on a
+        # field the verdict never reads. `is not None` rather than a truthiness
+        # test: a stored residual of exactly 0.0 is a real measurement, and
+        # `or` would silently turn it into NaN.
+        raw_residual = raw.get("residual_db")
+        residual_db = (
+            float(raw_residual) if raw_residual is not None else float("nan")
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+    return SumReconciliation(
+        residual_db=residual_db,
+        correlation=correlation,
+        best_lag_samples=int(raw.get("best_lag_samples", 0) or 0),
+        gain_offset_db=gain_offset_db,
+        band_residuals=[],
+        worst_offender=raw.get("worst_offender"),
+        skipped=raw.get("skipped"),
+    )
+
+
+def _section_surfaces(
+    section: dict[str, Any], *, include_master: bool = True,
+) -> list[dict[str, Any]]:
     """Every surface a section window measured: its stems, its returns, and its
-    master. All three carry the timbre family; only stems carry transients."""
+    master. All three carry the timbre family; only stems carry transients.
+
+    ``include_master=False`` drops the master rows for a report whose master was
+    disqualified — the per-section master readings come from the same capture as
+    the whole-song one and are wrong in the same way.
+    """
     out = list(section.get("stems", []) or [])
     out.extend(section.get("returns", []) or [])
-    master = section.get("master")
+    master = section.get("master") if include_master else None
     if isinstance(master, dict) and master.get("track_id"):
         out.append(master)
     return out
@@ -199,6 +333,7 @@ def _section_surfaces(section: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _section_deltas(
     current: dict[str, Any], baseline: dict[str, Any],
+    *, include_master: bool = True,
 ) -> list[dict[str, Any]]:
     """Per-section, per-surface deltas: timbre (sharpness and the rest) on every
     surface the window measured — stems, returns AND the master — plus transient
@@ -217,8 +352,14 @@ def _section_deltas(
         # is judged on, and a return's is how a send bus moved. `_measure_window`
         # produces all three; iterating stems alone left the two that carry the
         # section's summary with no A/B row at all.
-        cstems = {s["track_id"]: s for s in _section_surfaces(cs)}
-        bstems = {s["track_id"]: s for s in _section_surfaces(bs)}
+        cstems = {
+            s["track_id"]: s
+            for s in _section_surfaces(cs, include_master=include_master)
+        }
+        bstems = {
+            s["track_id"]: s
+            for s in _section_surfaces(bs, include_master=include_master)
+        }
         for tid in [t for t in cstems if t in bstems]:
             for row in _family_deltas(cstems[tid], bstems[tid], "timbre",
                                       SIGNIFICANCE_TIMBRE, provisional=True):

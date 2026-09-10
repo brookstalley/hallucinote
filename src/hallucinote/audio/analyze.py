@@ -53,7 +53,11 @@ from .imaging import measure_imaging
 from .integrity import SurfaceIntegrity, measure_integrity
 from .onsets import detect_onset_samples, to_mono
 from .phase import PhaseRelation, measure_phase_relations
-from .reconcile import reconcile_stem_sum
+from .reconcile import (
+    SumReconciliation,
+    master_is_not_stem_sum,
+    reconcile_stem_sum,
+)
 from .stereo import measure_stereo
 from .timbre import measure_timbre
 from .cross_rhythm import (
@@ -547,6 +551,7 @@ def analyze_mix(
         automation=automation_verifications,
         sections=sections,
         capture_span=capture_span,
+        sum_reconciliation=sum_reconciliation,
     )
 
     report = MixReport(
@@ -1393,6 +1398,7 @@ def _derive_findings(
     integrity: Sequence[SurfaceIntegrity] = (),
     phase_relations: Sequence[PhaseRelation] = (),
     capture_span: CaptureSpan | None = None,
+    sum_reconciliation: "SumReconciliation | None" = None,
 ) -> list[Finding]:
     """Translate raw metrics into structured findings.
 
@@ -1432,6 +1438,30 @@ def _derive_findings(
             observed=capture_span.declared_beats + capture_span.excess_beats,
             expected=capture_span.declared_beats,
             db_reference=capture_span.human_summary,
+        ))
+
+    # Before any master finding below, because it decides whether they mean
+    # anything: a master that is not the sum of its stems is not the mix, and
+    # every master number in this report describes something else. The 2026-09-10
+    # `alien` renders are the case — a soloed track put one stem on the bus, and
+    # the loudness, sharpness and imaging findings that followed all described
+    # that stem while naming the song.
+    disqualified = master_is_not_stem_sum(sum_reconciliation)
+    if disqualified is not None:
+        metric, observed, expected = disqualified
+        findings.append(Finding(
+            kind="master_not_stem_sum",
+            severity="blocking",
+            subject="master",
+            metric=metric,
+            observed=observed,
+            expected=expected,
+            db_reference=(
+                "the captured master is not the sum of the captured stems, so "
+                "every master measurement in this report describes something "
+                "other than the mix. Check for a soloed or muted track, a "
+                "track routed away from Main, or a missing stem, then re-render."
+            ),
         ))
 
     for o in overshoots:

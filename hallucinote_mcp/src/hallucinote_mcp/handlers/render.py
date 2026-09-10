@@ -53,6 +53,10 @@ from ..analyzer import (
     ensure_analyzers_loaded,
     strip_analyzers,
 )
+# The canonical surface -> track_id spelling. Imported rather than re-spelled
+# inline so `mixer_state` rows and the per-surface capture entries they are
+# meant to join to cannot drift apart.
+from ..analyzer.setup import track_id_for_surface
 from ..analyzer.osc import AnalyzerOSC
 from ..analyzer.sidecar import OSCSidecar, shared_sidecar
 from ..dispatcher import LiveContext
@@ -208,6 +212,130 @@ def _write_status_json(captures_dir: Path, status: dict[str, Any]) -> None:
         )
     except OSError:
         pass
+
+
+class SoloedTrackError(RuntimeError):
+    """A render was requested while a track is soloed.
+
+    Solo silences every track that is not soloed, so the master bus carries a
+    fraction of the song and every stem that is not soloed captures silence.
+    The capture is faithful — it is the mix that is wrong — which is why
+    nothing downstream can detect it from the audio alone, and why this is
+    caught before the transport rolls rather than after three renders.
+    """
+
+
+def _mixer_state(context: Any) -> list[dict[str, Any]]:
+    """Per-surface solo / mute / volume, read on the main thread.
+
+    Covers regular tracks AND return tracks. A return is a Track in Live and
+    carries solo like any other: soloing one silences every regular track's
+    direct output, so the master bus carries only what the returns are fed —
+    the same wrong mix a soloed track produces, arriving through a collection
+    that is easy to miss because it is not ``song.tracks``.
+
+    Recorded on every render, not only a refused one: a report is read long
+    after the mixer has moved on, and without this there is no way to tell
+    afterwards whether the capture was made under a solo or a mute.
+    """
+    def _flag(track: Any, name: str) -> bool | None:
+        value = getattr(track, name, None)
+        return None if value is None else bool(value)
+
+    def _row(kind: str, index: int, track: Any) -> dict[str, Any]:
+        mixer = getattr(track, "mixer_device", None)
+        volume = getattr(mixer, "volume", None) if mixer is not None else None
+        return {
+            # The manifest's existing surface vocabulary (`_track_manifest_entry`,
+            # `_instance_to_dict`), not a second one: the whole point of this
+            # field is being joined to a stem entry after the fact ("was this
+            # capture made under a mute?"), and a consumer should not have to
+            # know two spellings and join on a pair when every other surface in
+            # the file carries a `track_id`.
+            "surface_kind": kind,
+            "surface_index": index,
+            "surface_name": getattr(track, "name", "") or "<unnamed>",
+            "track_id": track_id_for_surface(kind, index),
+            # `None` when Live did not present the attribute at all, NEVER
+            # False. Defaulting a missing `solo` to False would make "this
+            # surface is not soloed" and "this object did not answer"
+            # indistinguishable — in the one guard whose entire purpose is
+            # that a wrong mix must not pass as a right one. It would also
+            # write `solo: false` into the manifest as a fact consumers are
+            # told to trust. An unknown is refused below, not waved through.
+            "solo": _flag(track, "solo"),
+            "mute": _flag(track, "mute"),
+            # Live's normalized 0..1 fader, the same convention
+            # `master_fader_volume` uses on the report side.
+            "volume": (
+                float(volume.value) if volume is not None
+                and getattr(volume, "value", None) is not None else None
+            ),
+        }
+
+    def _read() -> list[dict[str, Any]]:
+        rows = [
+            _row("track", i, t)
+            for i, t in enumerate(context.song.tracks, start=1)
+        ]
+        rows.extend(
+            _row("return", i, r)
+            for i, r in enumerate(
+                getattr(context.song, "return_tracks", ()) or (), start=1
+            )
+        )
+        return rows
+    return context.run_on_main(_read)
+
+
+def _refuse_under_solo(mixer_state: list[dict[str, Any]]) -> list[str]:
+    """Refuse on solo; return the names of muted surfaces to warn about.
+
+    The asymmetry is deliberate. A solo is never a mix the author meant to
+    render — it is a working state left engaged, and it invalidates the
+    capture completely. A mute can be exactly what the author meant (a part
+    switched out for this render), so it is named and the render proceeds.
+
+    Both apply to returns as well as tracks: ``mixer_state`` carries them, and
+    a soloed return is as fatal to the mix as a soloed track.
+    """
+    # An unreadable flag is refused, not assumed clear. This guard's premise —
+    # that a Live Track presents `solo` and `mute` — is recorded as UNVERIFIED
+    # in operator-verification, so the honest failure is to stop rather than to
+    # proceed on an assumption the record itself declines to make.
+    unknown = [t for t in mixer_state if t["solo"] is None or t["mute"] is None]
+    if unknown:
+        named = ", ".join(
+            f"{t['surface_kind']} {t['surface_index']} ({t['surface_name']!r})"
+            for t in unknown
+        )
+        raise SoloedTrackError(
+            f"render refused: could not read solo/mute on {len(unknown)} "
+            f"surface(s) — {named}. The guard that keeps a soloed mix from "
+            "being captured cannot confirm it is safe to render, and a guard "
+            "that cannot see the mixer must say so rather than pass "
+            "everything. This usually means Live's track API changed shape. "
+            "Nothing was captured."
+        )
+
+    soloed = [t for t in mixer_state if t["solo"]]
+    if soloed:
+        named = ", ".join(
+            f"{t['surface_kind']} {t['surface_index']} ({t['surface_name']!r})"
+            for t in soloed
+        )
+        raise SoloedTrackError(
+            f"render refused: {len(soloed)} surface(s) are SOLOED — {named}. "
+            "Solo silences everything else, so the master bus would carry "
+            "only the soloed part and every other stem would capture silence. "
+            "The capture would be faithful to a mix nobody meant to render, "
+            "and the report would read as a large mix change. Clear solo in "
+            "Live and re-render. Nothing was captured."
+        )
+    return [
+        f"{t['surface_kind']} {t['surface_index']} ({t['surface_name']!r})"
+        for t in mixer_state if t["mute"]
+    ]
 
 
 def _wav_filename(inst: AnalyzerInstance) -> str:
@@ -461,6 +589,12 @@ def render_handler(
           "status": "ok" | "incomplete",
         }
     """
+    # Before anything is loaded or moved: a render made under a solo cannot be
+    # valid, and the cheapest place to say so is before the analyzer sweep
+    # pays an M4L reload on every surface.
+    mixer_state = _mixer_state(context)
+    muted_tracks = _refuse_under_solo(mixer_state)
+
     sidecar = _sidecar if _sidecar is not None else shared_sidecar()
     layout = ensure_analyzers_loaded(context, emit_port=sidecar.port)
 
@@ -738,6 +872,14 @@ def render_handler(
             # Per-render terminal-tap health (SNP-8R4K). Empty list = every tapped
             # surface had the analyzer strictly last (the healthy, common case).
             "analyzer_not_terminal": analyzer_not_terminal,
+            # The mixer state this capture was made under. A report is read
+            # long after Live has moved on, so without this there is no way to
+            # establish afterwards whether a surprising master was a real mix
+            # change or a mute left engaged. Covers returns as well as
+            # tracks. Solo cannot appear here — a soloed track OR return is
+            # refused before the transport rolls.
+            "mixer_state": mixer_state,
+            "muted_tracks": muted_tracks,
             # The ACTUAL ring-out recorded (record_stop_beat is integer-beat — the
             # analyzer's stop is `/stop_at_beat <int>`), not the requested float.
             # The read side trusts this to span [stop_at_beat, stop+ring_out] onto

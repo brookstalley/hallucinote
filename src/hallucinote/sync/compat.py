@@ -1,4 +1,12 @@
-"""Cross-machine portability: detect third-party plugins a song requires.
+"""Cross-machine portability: what a song needs that this machine may not have.
+
+Two independent families, each with its own status vocabulary and its own
+section of ``REQUIREMENTS.md``: **devices** (third-party plugins and the
+``preset_query`` selectors that load them) and **samples** (the files
+``clips.audio_file`` points at). They are kept apart deliberately — a clip is
+not a device, so folding one into the other would mean either a synthesized
+``DeviceEntry`` for something that is not a device or a status enum whose
+meaning depends on which row it decorates.
 
 W13-B (v0.9.0). The DB-as-source-of-truth model means a song travels as a
 DB + a captured snapshot — but Live devices reference plugins (VST/AU) that
@@ -14,10 +22,16 @@ If a plugin is missing, the consumer installs it. REQUIREMENTS.md (written
 by ``write_requirements``) is the shopping list the song's author leaves
 for collaborators.
 
+A sample is checked for **existence and readability only**. Live's own
+missing-media flow relinks a moved sample and the asset manifest verifies
+content; a compat check that guessed at either would report failures it has
+no standing to make.
+
 Two CLI subcommands:
 - ``compat check <slug> [--installed-plugins FILE] [--probe]`` — print JSON
   report + exit 1 if items need user attention (missing or unverified
-  third-party, structurally invalid preset_query, or — with ``--probe`` —
+  third-party, structurally invalid preset_query, a sample an audio clip
+  names that is not a readable file, or — with ``--probe`` —
   preset_query that resolves to 0 or 2+ matches in Live's browser).
   Called by the ``/ableton-push`` skill as a preflight gate.
 - ``compat write-requirements <slug>`` — (re)generate
@@ -41,13 +55,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sqlite3
+import stat
 import sys
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Literal
 
 from hallucinote.db import init_db, queries as Q, resolve_db_path
+from hallucinote.paths import (
+    portable_text,
+    resolve_audio_path,
+    song_dir_for_conn,
+)
 from hallucinote.preset_query import BROWSER_ROOTS as _VALID_BROWSER_ROOTS
 from hallucinote.preset_query import SEARCH_MODES as _VALID_MATCH_MODES
 from hallucinote.workspace import resolve_song_dir
@@ -155,6 +176,45 @@ class DeviceEntry:
     detail: str | None = None
 
 
+# The sample family's own status vocabulary. Separate from ``DeviceStatus``
+# by design and prefixed so a status string carries its family with it: the
+# two enums land side by side in one JSON report, and a bare "missing" that
+# could mean either a plugin or a file is the ambiguity this split exists to
+# prevent. Same caller contract as ``DeviceStatus`` — every value is rendered
+# somewhere, and a reader may not collapse the set into present/absent.
+
+SampleStatus = Literal[
+    "sample_ok",            # Resolved to a regular file this account can read.
+    "sample_missing",       # Nothing is at the resolved path.
+    "sample_unreadable",    # Something is there; this account cannot read it.
+    "sample_not_a_file",    # Something is there; it is not a regular file.
+    "sample_unresolvable",  # Song-relative ref with no song directory to anchor it.
+]
+
+
+@dataclass
+class SampleEntry:
+    """One row in the sample half of the report — per audio clip that names a
+    file in ``clips.audio_file``.
+
+    ``audio_file`` is the reference exactly as the DB carries it (song-relative
+    POSIX or absolute); ``resolved_path`` is what it resolved to on this
+    machine, and is None only when there was no anchor to resolve it against.
+    Both are reported because a reader fixing a dangling sample needs the
+    reference to re-point AND the path that was looked for.
+    """
+    track_name: str
+    clip_name: str
+    slot: int
+    audio_file: str
+    resolved_path: str | None
+    status: SampleStatus
+    # Non-None for every status but ``sample_ok``: naming the fault without
+    # naming the path leaves the reader to re-derive the resolution that
+    # produced it, which is the report's whole job.
+    detail: str | None = None
+
+
 @dataclass
 class CompatReport:
     """Structured result of one ``check_song`` run.
@@ -166,6 +226,11 @@ class CompatReport:
     song_slug: str
     song_title: str | None
     entries: list[DeviceEntry] = field(default_factory=list)
+    # The second family. Kept in its own list rather than mixed into
+    # ``entries`` so every device-side property, the JSON shape and the
+    # REQUIREMENTS section that read ``entries`` keep meaning exactly what
+    # they meant: devices, and only devices.
+    samples: list[SampleEntry] = field(default_factory=list)
     installed_provided: bool = False  # Was --installed-plugins given?
     # R-2.1: was --browser-dry-runs (or the in-process equivalent) given?
     # Mirrors ``installed_provided``: when False, preset_query devices
@@ -209,6 +274,37 @@ class CompatReport:
         return [e for e in self.entries if e.status == "preset_query_unverified"]
 
     @property
+    def samples_ok(self) -> list[SampleEntry]:
+        return [e for e in self.samples if e.status == "sample_ok"]
+
+    @property
+    def samples_missing(self) -> list[SampleEntry]:
+        return [e for e in self.samples if e.status == "sample_missing"]
+
+    @property
+    def samples_unreadable(self) -> list[SampleEntry]:
+        return [e for e in self.samples if e.status == "sample_unreadable"]
+
+    @property
+    def samples_not_a_file(self) -> list[SampleEntry]:
+        return [e for e in self.samples if e.status == "sample_not_a_file"]
+
+    @property
+    def samples_unresolvable(self) -> list[SampleEntry]:
+        return [e for e in self.samples if e.status == "sample_unresolvable"]
+
+    @property
+    def sample_issues(self) -> list[SampleEntry]:
+        """Every sample row the push gate must stop on.
+
+        Defined as "not ``sample_ok``" rather than as a list of the bad
+        statuses: a status added later is then an issue until someone
+        deliberately says otherwise, instead of passing silently through a
+        gate that was never taught about it.
+        """
+        return [e for e in self.samples if e.status != "sample_ok"]
+
+    @property
     def has_issues(self) -> bool:
         """True iff the push-preflight gate should refuse-and-confirm.
 
@@ -223,6 +319,11 @@ class CompatReport:
         is an issue for the same reason ``third_party_unverified`` is:
         the operator should explicitly confirm rather than discover at
         load time.
+
+        A sample that is not ``sample_ok`` is an issue too: the clips phase
+        refuses a row whose file it cannot resolve to something on disk, so
+        every one of these is a push that stops partway through unless the
+        operator has seen it first.
         """
         return bool(
             self.missing or self.unverified
@@ -230,6 +331,7 @@ class CompatReport:
             or self.kind_unresolvable
             or self.kind_ambiguous
             or self.preset_query_unverified
+            or self.sample_issues
         )
 
     def to_json(self) -> dict:
@@ -239,7 +341,12 @@ class CompatReport:
             "installed_provided": self.installed_provided,
             "browser_dry_runs_provided": self.browser_dry_runs_provided,
             "entries": [asdict(e) for e in self.entries],
+            "samples": [asdict(e) for e in self.samples],
             "summary": {
+                # ``total`` and every bucket beside it count DEVICES; the
+                # sample family carries its own ``samples_*`` counts rather
+                # than widening a device number into something a reader would
+                # have to know the history of to interpret.
                 "total": len(self.entries),
                 "native": len(self.native),
                 "placeholders": len(self.placeholders),
@@ -250,6 +357,12 @@ class CompatReport:
                 "kind_unresolvable": len(self.kind_unresolvable),
                 "kind_ambiguous": len(self.kind_ambiguous),
                 "preset_query_unverified": len(self.preset_query_unverified),
+                "samples_total": len(self.samples),
+                "samples_ok": len(self.samples_ok),
+                "samples_missing": len(self.samples_missing),
+                "samples_unreadable": len(self.samples_unreadable),
+                "samples_not_a_file": len(self.samples_not_a_file),
+                "samples_unresolvable": len(self.samples_unresolvable),
                 "has_issues": self.has_issues,
             },
         }
@@ -430,6 +543,151 @@ def classify_device(
 
 
 # ---------------------------------------------------------------------------
+# Sample references
+# ---------------------------------------------------------------------------
+
+
+def _is_absolute_ref(ref: str) -> bool:
+    """Whether a ``clips.audio_file`` reference names an absolute path.
+
+    Both spellings, exactly as :func:`hallucinote.paths.resolve_audio_path`
+    tests them — the column is POSIX by contract but is read back on whatever
+    platform the consumer runs, and a gate that disagreed with the resolver
+    about which references need an anchor would refuse songs that push fine.
+    """
+    return PurePosixPath(ref).is_absolute() or Path(ref).is_absolute()
+
+
+def classify_sample(
+    ref: str,
+    *,
+    song_dir: Path | None,
+) -> tuple[SampleStatus, Path | None, str | None]:
+    """Classify one ``clips.audio_file`` reference by what is at its path.
+
+    Existence and readability only. A present, readable file is
+    ``sample_ok`` whatever its bytes hold: verifying content is the asset
+    manifest's job and finding a moved sample is Live's, and a compat check
+    that attempted either would report failures it cannot stand behind.
+
+    Resolution goes through :func:`hallucinote.paths.resolve_audio_path` —
+    the same resolver the clips push phase uses — so this gate and the phase
+    it gates cannot disagree about which file a reference names.
+
+    ``song_dir`` anchors a song-relative reference. ``None`` means the caller
+    had no anchor: an absolute reference is still checkable, a relative one is
+    not, and ``sample_unresolvable`` says so rather than guessing at a
+    directory and reporting a missing file that may well exist.
+
+    Returns ``(status, resolved_path, detail)``. ``detail`` is None only for
+    ``sample_ok``; every other status names the reference AND the path it
+    resolved to, because the fix differs by which of the two is wrong.
+    """
+    if _is_absolute_ref(ref):
+        resolved = Path(ref)
+    elif song_dir is None:
+        return (
+            "sample_unresolvable",
+            None,
+            f"audio_file={ref!r} is song-relative and no song directory was "
+            "available to resolve it against, so whether the sample exists "
+            "could not be determined. Open the song through its own DB file "
+            "(songs/<slug>/<slug>.db) and re-run.",
+        )
+    else:
+        resolved = resolve_audio_path(song_dir, ref)
+    try:
+        st = resolved.stat()
+    except (FileNotFoundError, NotADirectoryError):
+        return (
+            "sample_missing",
+            resolved,
+            f"audio_file={ref!r} resolves to {resolved}, where nothing is: "
+            "the sample was moved or deleted after the clip was authored. "
+            "Restore the file at that path, or re-point the clip.",
+        )
+    except PermissionError as exc:
+        return (
+            "sample_unreadable",
+            resolved,
+            f"audio_file={ref!r} resolves to {resolved}, which cannot even "
+            f"be inspected: {exc.strerror}. A directory on the way to it "
+            "denies access — this is a permissions fix, not a missing file.",
+        )
+    except OSError as exc:
+        return (
+            "sample_unreadable",
+            resolved,
+            f"audio_file={ref!r} resolves to {resolved}, which the "
+            f"filesystem refused to describe: {exc}.",
+        )
+    if not stat.S_ISREG(st.st_mode):
+        what = "a directory" if stat.S_ISDIR(st.st_mode) else "not a regular file"
+        return (
+            "sample_not_a_file",
+            resolved,
+            f"audio_file={ref!r} resolves to {resolved}, which is {what}. "
+            "A clip plays one file; point it at the sample itself.",
+        )
+    # Existence is not readability: a file restored from an archive, or
+    # copied out of another user's tree, sits exactly where the clip expects
+    # it and still cannot be opened. Reported apart from `sample_missing`
+    # because the fix is a permission, not a file.
+    if not os.access(resolved, os.R_OK):
+        return (
+            "sample_unreadable",
+            resolved,
+            f"audio_file={ref!r} resolves to {resolved}, which exists but "
+            f"this account cannot read (mode {stat.filemode(st.st_mode)}). "
+            "Fix the permissions; the file is where the clip expects it.",
+        )
+    return "sample_ok", resolved, None
+
+
+def _collect_sample_entries(
+    conn: sqlite3.Connection,
+    song_id: str,
+    *,
+    song_dir: Path | None,
+) -> list[SampleEntry]:
+    """Every ``clips.audio_file`` reference in the song, classified.
+
+    One row per reference SITE, not per unique file: two clips pointing at
+    the same moved sample are two clips to fix, and the REQUIREMENTS
+    generator groups them back together for the reader.
+
+    Rows with no reference are skipped rather than reported. A ``kind='audio'``
+    clip that names no file is a different defect with a different fix (the
+    row does not say what it plays), and the clips phase already refuses it by
+    name; there is no path here to check the existence of.
+    """
+    rows = conn.execute(
+        """SELECT c.slot AS slot, c.name AS clip_name,
+                  c.audio_file AS audio_file, t.name AS track_name
+             FROM clips c
+             JOIN tracks t ON t.id = c.track_id
+            WHERE t.song_id = ?
+              AND c.audio_file IS NOT NULL AND TRIM(c.audio_file) != ''
+            ORDER BY t.track_index, c.slot""",
+        (song_id,),
+    ).fetchall()
+    entries: list[SampleEntry] = []
+    for row in rows:
+        ref = str(row["audio_file"])
+        status, resolved, detail = classify_sample(ref, song_dir=song_dir)
+        entries.append(SampleEntry(
+            track_name=row["track_name"],
+            clip_name=row["clip_name"] or f"slot {row['slot']}",
+            slot=row["slot"],
+            audio_file=ref,
+            resolved_path=str(resolved) if resolved is not None else None,
+            status=status,
+            detail=detail,
+        ))
+    return entries
+
+
+# ---------------------------------------------------------------------------
 # Song walk
 # ---------------------------------------------------------------------------
 
@@ -440,7 +698,7 @@ def check_song(
     installed_plugins: list[dict] | None = None,
     browser_dry_runs: dict[_DryRunKey, int] | None = None,
 ) -> CompatReport:
-    """Walk the song's DB and classify every device.
+    """Walk the song's DB and classify every device and every sample.
 
     Recurses into nested rack chains so plugin-inside-rack ("an FX rack
     wrapping a Spitfire VST") is detected — top-level-only would miss
@@ -460,6 +718,10 @@ def check_song(
     (mirrors the ``third_party_unverified`` design). When provided, the
     match count drives ``kind_unresolvable`` (0) /
     ``kind_ambiguous`` (2+) / native (1).
+
+    The sample pass needs no parameter: a ``clips.audio_file`` reference is
+    checked against the filesystem the caller is already running on, anchored
+    to the song directory the DB itself names.
     """
     # Open via init_db (not bare connect) so a song DB built by an earlier
     # release is migrated to the current schema first — check_song reads
@@ -516,6 +778,13 @@ def check_song(
                     report=report, installed_names=installed_names,
                     browser_dry_runs=browser_dry_runs,
                 )
+
+        # The sample pass is a flat query over the song's clips rather than a
+        # second walk: a sample hangs off a clip, which hangs off a track, and
+        # nothing about it nests the way a device inside a rack does.
+        report.samples = _collect_sample_entries(
+            conn, song_id, song_dir=song_dir_for_conn(conn),
+        )
 
         return report
     finally:
@@ -659,6 +928,14 @@ def format_requirements_md(report: CompatReport) -> str:
     "link, don't summarize" learning, the file points the consumer at
     the song's DB for authoritative device counts/positions rather than
     restating them here.
+
+    Both families are rendered, each in its own section and out of its own
+    status vocabulary: devices the consumer installs, samples the consumer
+    must have on disk. The sample section is the one place a machine-absolute
+    path can reach this file, so its references and details go through
+    :func:`hallucinote.paths.portable_text` — REQUIREMENTS.md is checked in
+    beside the song, and the author's home directory has no business
+    travelling with it.
     """
     title = report.song_title or report.song_slug
     lines: list[str] = [
@@ -666,10 +943,12 @@ def format_requirements_md(report: CompatReport) -> str:
         "",
         f"Song slug: `{report.song_slug}`",
         "",
-        "This file lists the third-party plugins this song uses. Install them "
-        "in Ableton Live before pushing the song. Generated by "
+        "This file lists what this song needs that your machine may not "
+        "have: the third-party plugins to install in Ableton Live, and the "
+        "samples its audio clips play. Read it before pushing the song. "
+        "Generated by "
         '`"<python>" -m hallucinote.cli compat write-requirements <slug>` '
-        "— re-run after material changes to the song's device list.",
+        "— re-run after material changes to the song's devices or samples.",
         "",
     ]
 
@@ -710,6 +989,63 @@ def format_requirements_md(report: CompatReport) -> str:
         lines.append(
             "None. This song uses only Live's built-in devices — no "
             "additional installs needed."
+        )
+        lines.append("")
+
+    # The second family. A song-relative reference travels inside the song
+    # directory; an absolute one does not, and the consumer has to supply that
+    # file themselves — which is precisely what this section exists to say
+    # before they push and watch the clips phase refuse. Statuses appear here
+    # too: a reference already broken on the authoring machine is the author's
+    # to fix before the song ships.
+    lines.append("## Referenced samples")
+    lines.append("")
+    if report.samples:
+        lines.append(
+            "These audio clips play files from disk. A song-relative path "
+            "(canonically under `assets/`) travels with the song directory; "
+            "an absolute path does NOT — obtain that file yourself and "
+            "re-point the clip, or ask the author to move it under "
+            "`assets/`."
+        )
+        lines.append("")
+        by_ref: dict[str, list[SampleEntry]] = {}
+        for sample in report.samples:
+            by_ref.setdefault(sample.audio_file, []).append(sample)
+        for ref in sorted(by_ref):
+            sample_uses = by_ref[ref]
+            note = (
+                "not part of the song; supply this file yourself"
+                if _is_absolute_ref(ref)
+                else "travels with the song"
+            )
+            lines.append(f"- `{portable_text(ref)}` — {note}")
+            for sample in sample_uses:
+                lines.append(
+                    f"  - {sample.track_name} / {sample.clip_name} "
+                    f"(slot {sample.slot})"
+                )
+            # One line per distinct fault, not per clip: every use of one
+            # reference resolves to one path and so fails the same way.
+            faults: dict[str, str | None] = {}
+            for sample in sample_uses:
+                if sample.status != "sample_ok":
+                    faults.setdefault(sample.status, sample.detail)
+            for status, detail in faults.items():
+                lines.append(f"  - **{status}** — {portable_text(detail or '')}")
+        lines.append("")
+        if report.sample_issues:
+            lines.append(
+                "Any status above was read off the machine that generated "
+                "this file: a sample flagged there was already broken before "
+                "the song shipped. Re-run "
+                '`"<python>" -m hallucinote.cli compat write-requirements '
+                "<slug>` once it is fixed."
+            )
+            lines.append("")
+    else:
+        lines.append(
+            "None. No clip in this song plays a file from disk."
         )
         lines.append("")
 
@@ -981,7 +1317,9 @@ def regen_requirements(song_slug: str) -> Path:
     Author-side: ``installed_plugins`` is ignored (REQUIREMENTS.md is
     consumer-side-agnostic). All third-party plugins surface as
     'third_party_unverified' which the formatter treats identically to
-    missing/ok in the required-plugins section.
+    missing/ok in the required-plugins section. Samples are the one thing
+    this file CAN report from the author's own machine — a reference that
+    does not resolve here was broken before the song shipped.
 
     Callable seam for DOC-5W8B (auto-regen after a device-changing push)
     and the ``write-requirements`` CLI command. Returns the written path;
@@ -1009,8 +1347,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="hallucinote.sync.compat",
         description=(
-            "Detect third-party plugins a song needs and generate "
-            "REQUIREMENTS.md (W13-B). Both subcommands resolve the song's "
+            "Detect what a song needs that this machine may not have — "
+            "third-party plugins and the samples its audio clips play — and "
+            "generate REQUIREMENTS.md. Both subcommands resolve the song's "
             "DB and write REQUIREMENTS.md relative to the current working "
             "directory — run from the repo root."
         ),
@@ -1020,8 +1359,9 @@ def main(argv: list[str] | None = None) -> int:
     p_check = sub.add_parser(
         "check",
         help=(
-            "Classify every device in the song; exit 1 if items need "
-            "user attention (missing/unverified third-party)."
+            "Classify every device and every referenced sample in the song; "
+            "exit 1 if items need user attention (missing/unverified "
+            "third-party, or a sample that is not a readable file)."
         ),
     )
     p_check.add_argument("song", help="song slug")

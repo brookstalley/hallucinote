@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from hallucinote.analyzer_identity import is_analyzer_device
+from hallucinote.capture import is_sidechain_enable_param
 from hallucinote.db import queries as Q
 from hallucinote.paths import resolve_audio_path, same_file_path, song_dir_for_conn
 
@@ -1098,6 +1099,28 @@ def _emit_chain_property_calls(
     ))
 
 
+def sidechain_armed_in_db(
+    conn: sqlite3.Connection, device_id: str,
+) -> bool:
+    """True when the DB's stored parameters show this device's sidechain ENABLED.
+
+    Only DIALED parameters are stored (defaults are implied by absence), so an
+    absent enable param means off. A stored one is read off whichever numeric
+    channel carries it — ``value_normalized`` / ``value_raw`` — falling back to
+    the display string for an enum-shaped row with no numeric form.
+    """
+    for row in Q.get_device_parameters(conn, device_id):
+        if not is_sidechain_enable_param(row["name"]):
+            continue
+        keys = row.keys()
+        for field in ("value_normalized", "value_raw"):
+            if field in keys and row[field] is not None:
+                return float(row[field]) > 0.5
+        display = str(row["value_display"] or "").strip().lower()
+        return display in {"on", "1", "true", "enabled", "yes"}
+    return False
+
+
 def plan_push_device_sidechain(
     conn: sqlite3.Connection,
     *,
@@ -1118,6 +1141,13 @@ def plan_push_device_sidechain(
     to record back. A device whose source FK doesn't resolve to a song track is
     ALERTed (operator-actionable); an unlinked device is deferred to the
     devices-convergence re-plan.
+
+    #536: the phase also emits a READ — ``get_input_routing``, keyed
+    ``device_sidechain_probe:<device id>`` — for each device whose sidechain is
+    ARMED but carries no source. ``has_input_routing`` is a Live fact the DB
+    cannot hold, and it is the only thing that separates "the source is simply
+    unset" from "the source can never be captured, so this push just erased it";
+    ``apply_push_results`` turns a ``False`` into the operator warning.
     """
     plan = PushPlan()
     by_id = {t["id"]: t for t in Q.get_tracks_for_song(conn, song_id)}
@@ -1130,7 +1160,43 @@ def plan_push_device_sidechain(
             if "sidechain_source_track_id" in keys else None
         )
         if src_id is None:
-            return  # no sidechain source authored on this device
+            # No source authored. Usually nothing to do — but #536: a device
+            # whose sidechain is ARMED and which exposes no input-routing
+            # surface can never HAVE a captured source, so this rebuild
+            # materializes it armed and pointed at nothing, silently undoing
+            # whatever the operator set by hand in Live. Whether the surface
+            # exists is a LIVE fact (`has_input_routing`), not a DB one, so ask
+            # Live for it and let the apply step say so. Asking only for armed
+            # devices is what keeps the Compressor path (#374, the common case)
+            # silent: a warning that fired there would train the operator to
+            # ignore all of them.
+            if not sidechain_armed_in_db(conn, device["id"]):
+                return
+            device_at = Q.get_ableton_link(
+                conn, session_id=session_id, db_kind="device", db_id=device["id"]
+            )
+            if device_at is None:
+                plan.warn(
+                    f"device {device['display_name']!r} on {parent_kind} "
+                    f"{parent_name!r} not linked yet; sidechain-surface check "
+                    "deferred to the devices-convergence re-plan"
+                )
+                return
+            plan.add(ToolCall(
+                tool="ableton_device",
+                args={
+                    **parent_kv,
+                    "action": "get_input_routing",
+                    "device_index": device_at,
+                },
+                key=f"device_sidechain_probe:{device['id']}",
+                purpose=(
+                    f"check whether {device['display_name']!r} on {parent_kind} "
+                    f"{parent_name!r} exposes a sidechain SOURCE surface — its "
+                    "sidechain is armed but the DB carries no source"
+                ),
+            ))
+            return
         src = by_id.get(src_id)
         if src is None:
             plan.alert(

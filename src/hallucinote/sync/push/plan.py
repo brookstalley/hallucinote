@@ -6,7 +6,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any
 
-from hallucinote.db import mutations as M
+from hallucinote.capture import unreadable_sidechain_source_warning
+from hallucinote.db import mutations as M, queries as Q
 from hallucinote.db.connection import transaction
 
 from ._core import PushPlan
@@ -501,10 +502,9 @@ _LINK_KINDS: dict[str, tuple[str, str]] = {
 # Key kinds that have no DB binding to record but are valid acks — the planner
 # emits them and the agent reports success/failure, but hallucinote has nothing
 # to write. Membership here is a contract: every key kind the planner emits
-# MUST appear in `_LINK_KINDS`, `_ACK_ONLY_KINDS`, or the explicit
-# `perform_batch` branch in `apply_push_results` (ENV-9P4T per-arc
-# performed-state recording), or `apply_push_results` raises. This makes the
-# dispatch surface auditable: when
+# MUST appear in `_LINK_KINDS`, `_ACK_ONLY_KINDS`, or `_DEDICATED_BRANCH_KINDS`
+# (a branch in `apply_push_results` that reads the result payload itself), or
+# `apply_push_results` raises. This makes the dispatch surface auditable: when
 # a planner grows a new key kind, the developer is forced to declare its
 # resolution here, which surfaces silent-drop bugs at write time.
 _ACK_ONLY_KINDS: frozenset[str] = frozenset({
@@ -635,9 +635,19 @@ _ACK_ONLY_KINDS: frozenset[str] = frozenset({
 })
 
 
+# Kinds resolved by a DEDICATED branch in `apply_push_results` — neither a link
+# binding nor a bare ack, because the result payload itself has to be read
+# (`perform_batch`'s per-arc state; the #536 sidechain-surface probe's
+# `has_input_routing`). Named once so the registry below and the static
+# emitted-kind guard both read the same list.
+_DEDICATED_BRANCH_KINDS: frozenset[str] = frozenset({
+    "perform_batch",
+    "device_sidechain_probe",
+})
+
 # SYN-8Q3F (c): the ONE registry of result key kinds the apply layer resolves —
-# `_LINK_KINDS` (binding writes) + `_ACK_ONLY_KINDS` (no DB write) + the
-# dedicated `perform_batch` branch. Three layers keep this exhaustive so the
+# `_LINK_KINDS` (binding writes) + `_ACK_ONLY_KINDS` (no DB write) +
+# `_DEDICATED_BRANCH_KINDS`. Three layers keep this exhaustive so the
 # twice-shipped unknown-kind halt class (`device_param_override` 2026-06-18,
 # `device_chain_props` 2026-06-20) stays closed:
 #   1. the static emitted-kind guard (test_push.py
@@ -650,7 +660,7 @@ _ACK_ONLY_KINDS: frozenset[str] = frozenset({
 #      (push_execute._apply_results) — state file written, request closed —
 #      instead of the raw traceback it used to be (contract artifact, V4).
 KNOWN_RESULT_KEY_KINDS: frozenset[str] = (
-    frozenset(_LINK_KINDS) | _ACK_ONLY_KINDS | frozenset({"perform_batch"})
+    frozenset(_LINK_KINDS) | _ACK_ONLY_KINDS | _DEDICATED_BRANCH_KINDS
 )
 
 
@@ -684,6 +694,31 @@ def _describe_arc_outcome(arc: dict[str, Any], *, fingerprinted: bool) -> str:
     )
 
 
+def _device_and_parent_labels(
+    conn: sqlite3.Connection, device_id: str,
+) -> tuple[str, str]:
+    """``("<device display_name>", "<track|return|master> '<name>'")`` for one
+    device id — the NAMES an operator recognizes, not the Live indices a tool
+    result carries. Falls back to the id / ``"unknown parent"`` for a row that
+    has since been deleted, because a warning naming less is still better than
+    no warning."""
+    device = Q.get_device(conn, device_id)
+    device_label = str(device["display_name"]) if device is not None else device_id
+    chain = Q.get_device_parent_chain(conn, device_id)
+    if chain is None:
+        return device_label, "unknown parent"
+    if chain["parent_track_id"]:
+        track = Q.get_track(conn, chain["parent_track_id"])
+        if track is not None:
+            kind = "master" if track["kind"] == "master" else "track"
+            return device_label, f"{kind} {track['name']!r}"
+    if chain["parent_return_id"]:
+        ret = Q.get_return(conn, chain["parent_return_id"])
+        if ret is not None:
+            return device_label, f"return {ret['name']!r}"
+    return device_label, "unknown parent"
+
+
 def apply_push_results(
     conn: sqlite3.Connection,
     results: list[dict[str, Any]],
@@ -708,9 +743,11 @@ def apply_push_results(
         }
 
     Dispatch is table-driven: see `_LINK_KINDS` (writes a link binding),
-    `_ACK_ONLY_KINDS` (no DB write), and the `perform_batch` branch (per-arc
-    performed-automation state). An unknown kind raises `ValueError` so a new
-    planner-emitted key kind can't silently no-op past this layer.
+    `_ACK_ONLY_KINDS` (no DB write), and `_DEDICATED_BRANCH_KINDS` (a branch
+    that reads the result payload — `perform_batch`'s per-arc performed
+    automation state, `device_sidechain_probe`'s `has_input_routing`). An
+    unknown kind raises `ValueError` so a new planner-emitted key kind can't
+    silently no-op past this layer.
 
     Failed results (`ok=False`) are skipped — the agent layer is the source
     of truth for tool-side errors; hallucinote records nothing for them.
@@ -724,8 +761,11 @@ def apply_push_results(
     benign channel it already has.
 
     Returns apply-layer warnings (empty when everything recorded cleanly).
-    Today these come from the `perform_batch` branch: for any arc the handler
-    could not confirm it recorded, the apply layer records nothing for that
+    One comes from the `device_sidechain_probe` branch: a device whose armed
+    sidechain Live exposes no source surface for (#536) — nothing failed, but
+    the source the operator set by hand did not survive this rebuild and must
+    be re-set. The rest come from the `perform_batch` branch: for any arc the
+    handler could not confirm it recorded, the apply layer records nothing for that
     arc and the warning says so (never a silent skip; the next push retries
     just that arc). `record_perform_result` states the gate that decides
     that — restating it here is how this paragraph went stale once already.
@@ -743,6 +783,27 @@ def apply_push_results(
                 raise ValueError(f"push result missing 'key': {r!r}")
 
             if kind in _ACK_ONLY_KINDS:
+                continue
+
+            if kind == "device_sidechain_probe":
+                # #536: the device's sidechain is ARMED and the planner could
+                # not tell from the DB whether Live exposes a source surface for
+                # it. `has_input_routing: False` means it never can — so this
+                # push materialized the device armed and pointed at nothing, and
+                # any source the operator set by hand in Live is gone. Say so on
+                # the warnings channel (the push still succeeded; nothing here
+                # failed). `True` is the #374 Compressor path: stay silent.
+                res = r.get("result") or {}
+                if res.get("has_input_routing") is False:
+                    device_label, parent_label = _device_and_parent_labels(
+                        conn, db_id,
+                    )
+                    warnings.append(
+                        "device_sidechain: "
+                        + unreadable_sidechain_source_warning(
+                            [f"{device_label!r} on {parent_label}"]
+                        )
+                    )
                 continue
 
             if kind == "perform_batch":

@@ -1871,7 +1871,7 @@ def _assert_every_emitted_kind_is_declared(
 def test_every_emitted_push_key_kind_is_declared():
     """Every key kind the push planners emit MUST resolve in
     ``apply_push_results`` — i.e. appear in ``_LINK_KINDS``, ``_ACK_ONLY_KINDS``,
-    or the dedicated ``perform_batch`` branch. Otherwise a full push CRASHES in
+    or ``_DEDICATED_BRANCH_KINDS``. Otherwise a full push CRASHES in
     the result-apply step the moment that key is produced, halting every phase
     after it (the song never finishes materializing).
 
@@ -1889,7 +1889,10 @@ def test_every_emitted_push_key_kind_is_declared():
     declared = (
         set(plan._LINK_KINDS)
         | set(plan._ACK_ONLY_KINDS)
-        | {"perform_batch"}  # dedicated branch in apply_push_results
+        # Dedicated branches in apply_push_results, read from the registry the
+        # apply step itself dispatches on rather than re-listed here — a second
+        # hand-maintained list is a place for the two to disagree.
+        | set(plan._DEDICATED_BRANCH_KINDS)
     )
     _assert_every_emitted_kind_is_declared(
         planner_dir=pathlib.Path(plan.__file__).parent,

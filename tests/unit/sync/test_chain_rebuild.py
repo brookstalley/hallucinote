@@ -1675,7 +1675,17 @@ def test_an_unreadable_journal_is_treated_as_mid_flight(song_dir):
 
 
 def test_a_mid_flight_journal_classifies_as_mid_flight(song_dir):
-    """The phases a rebuild passes through before it can possibly be short."""
+    """Every phase that is not a shortfall, including the one that is a judgement
+    rather than a leftover.
+
+    ``verified`` is the interesting member: the verify is stamped BEFORE the final
+    chain read and the link rebind, so a disconnect in that window leaves a chain
+    that is correct while the DB's links still address the pre-rebuild one. The
+    chain being right is what makes it dangerous — a push would plan against
+    stale indices and report ok — so it groups here, with ``--resume`` as its
+    remedy. The code says only ``else mid_flight``, so without this element the
+    grouping is asserted by a docstring and pinned by nothing.
+    """
     d = chain_rebuild.journal_dir_for(song_dir)
     d.mkdir(parents=True, exist_ok=True)
     for i, phase in enumerate((
@@ -1683,13 +1693,14 @@ def test_a_mid_flight_journal_classifies_as_mid_flight(song_dir):
         chain_rebuild.PHASE_DEMOLISHED,
         chain_rebuild.PHASE_REBUILT,
         chain_rebuild.PHASE_RESTORED,
+        chain_rebuild.PHASE_VERIFIED,
     )):
         (d / f"track-{i}.json").write_text(
             json.dumps({"version": chain_rebuild.JOURNAL_VERSION, "phase": phase})
         )
 
     mid_flight, shortfall = chain_rebuild.partition_journals(song_dir)
-    assert len(mid_flight) == 4 and shortfall == []
+    assert len(mid_flight) == 5 and shortfall == []
 
 
 # ---------- the links are addresses, not positions (#532, one layer out) ----------
@@ -1876,7 +1887,9 @@ def test_resume_auto_declines_a_shortfall_journal_and_says_what_to_do_instead(
     ])
 
     err = capsys.readouterr().err
-    assert rc != 0
+    # 2 is this module's "declined before touching anything" code, asserted
+    # exactly by its four sibling CLI tests — `!= 0` would accept a crash.
+    assert rc == 2
     assert "no unfinished rebuild to resume" in err
     assert str(journal) in err
     assert "push execute --only devices" in err

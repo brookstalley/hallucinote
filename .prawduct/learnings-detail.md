@@ -762,3 +762,36 @@ in the same wave used stash-based baselines and were simply lucky.
 
 **How to apply.** Say it in the delegate brief, next to the verification ceiling. The failure is
 silent from the delegate's side: the stash it pops looks like its own work.
+
+
+## An `*_index` field crossing layers must say PHYSICAL or ORDINAL
+
+**Rule.** When a persisted integer is used to address an object in an external system, the
+boundary artifact that specifies the field must state which number it holds: the external
+system's own address, or the ordinal the field's producer assigns. Name it where the contract
+is written, not only in the producer's docstring.
+
+**Why.** `ableton_links` was specified as `(session_id, db_kind, db_id) -> ableton_index`.
+For devices that value is Live's **physical** `device_index` — what `plan_push_devices` hands
+`set_parameter` — but `chain_rebuild._rebind_links` wrote the DB `position` instead, and every
+reader accepted it, because the two numbers are equal whenever the chain's unauthored devices
+(in practice the `HallucinoteAnalyzer`) sit after the authored ones. A chain rebuild breaks that
+for exactly one window: the analyzer survives the demolish at the HEAD, so position *q* addresses
+index *q+1*. In that window `push execute --only devices` wrote authored values onto the
+neighbouring device — the same wrong-device failure as #532, one layer out, reached through the
+recovery the tool's own alert recommends.
+
+Two things made it survive. `reconcile_device_links`' stale-drop **keeps** an off-by-one link
+because the index exists, and its positional bind then finds a class mismatch and declines to
+rebind — so the wrong value is preserved rather than corrected. And the defect is invisible in the
+common case: every test whose chain held no unauthored device passed identically either way.
+
+**How to apply.** (1) In the boundary artifact, write which number the field holds and what makes
+the two coincide — the coincidence condition is the thing a reader needs, because it is what will
+stop being true. (2) A producer holding only ordinals must read the live order and map
+(`chain_rebuild._logical_chain` keeps both numbers per device); it may not assume agreement.
+(3) Write the test for the disagreeing state. Here that meant teaching the fake to hold a device
+the DB does not author, which the fakes could not represent at all — the scenario was
+unrepresentable, not merely untested, which is why it survived the module's whole life.
+(4) Suspect any reconcile pass that validates an address by EXISTENCE: "the index is occupied" is
+not "the index is right".

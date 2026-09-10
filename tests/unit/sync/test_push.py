@@ -1146,6 +1146,129 @@ def test_plan_push_arrangement_audio_track_without_placements_untouched(
     assert any("Vox" in a and "UNTOUCHED" in a for a in plan.alerts)
 
 
+def test_the_summary_counts_what_was_placed_not_what_was_considered(
+    conn, song, session, track, clip, monkeypatch
+):
+    """#506. The counters used to rise during per-placement VALIDATION, and
+    `skip_reason` was only consulted after — so a track skipped entirely (no
+    clear, no rebuild, §6a) still contributed everything it had validated
+    before the failure. The operator read a summary naming work nobody
+    attempted.
+
+    A sibling track that DOES commit keeps the summary line present, which is
+    what makes the number readable: 1, from the one track that was built."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=2,
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip,
+        start_bar=1.0, end_bar=5.0,
+    )
+    # The doomed track: its FIRST placement validates (a note-only create), its
+    # second cannot resolve, so the whole track is skipped.
+    doomed = M.create_track(
+        conn, song_id=song, track_index=2, name="Keys", kind="midi",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=doomed, ableton_index=3,
+    )
+    plain = M.create_clip(conn, track_id=doomed, slot=1, length_beats=16.0, name="a")
+    linked_host = M.create_clip(
+        conn, track_id=doomed, slot=2, length_beats=16.0, name="b",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="clip", db_id=linked_host,
+        ableton_index=2,
+    )
+    orphan_host = M.create_clip(
+        conn, track_id=doomed, slot=3, length_beats=16.0, name="c",
+    )
+    for cid, start in ((plain, 1.0), (linked_host, 5.0), (orphan_host, 9.0)):
+        M.add_arrangement_clip(
+            conn, song_id=song, track_id=doomed, clip_id=cid,
+            start_bar=start, end_bar=start + 4.0,
+        )
+    # All three counters are exercised on the one doomed track: `plain` would
+    # have counted a create, `linked_host` a duplicate, and `orphan_host` — an
+    # envelope host with no session link — is what takes the whole track down.
+    monkeypatch.setattr(
+        "hallucinote.sync.push.arrangement.envelope_hosting_clip_ids",
+        lambda conn, song_id: {linked_host, orphan_host},
+    )
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track={2: [], 3: []},
+    )
+    assert any("skipping track" in b for b in plan.blocked_reasons), (
+        plan.blocked_reasons
+    )
+    assert [c.args["track_index"] for c in plan.calls] == [2], (
+        "the doomed track emits nothing at all — no clear, no create"
+    )
+    summary = next(n for n in plan.notes if "arrangement projection" in n)
+    assert "created+filled 1" in summary, summary
+    assert "duplicated 0" in summary, summary
+    assert "across 1 track(s)" in summary, summary
+
+
+def test_the_summary_counts_no_audio_for_a_track_it_did_not_build(
+    conn, song, session, track, clip, tmp_path
+):
+    """#506, the audio half. `placed_audio` and `duplicated` follow the same
+    rule as `created`, which is why all three moved together: the newest
+    counter deliberately copied the existing pattern rather than diverging
+    from it, so fixing one and not the others would leave two thirds of the
+    defect in place."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=2,
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip,
+        start_bar=1.0, end_bar=5.0,
+    )
+    (tmp_path / "assets").mkdir(exist_ok=True)
+    (tmp_path / "assets" / "here.wav").write_bytes(b"RIFF")
+    atrack = M.create_track(
+        conn, song_id=song, track_index=3, name="Vox", kind="audio",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=atrack, ableton_index=3,
+    )
+    present = M.create_audio_clip(
+        conn, track_id=atrack, slot=1, length_beats=16.0,
+        audio_file="assets/here.wav", name="here",
+    )
+    absent = M.create_audio_clip(
+        conn, track_id=atrack, slot=2, length_beats=16.0,
+        audio_file="assets/gone.wav", name="gone",
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=atrack, clip_id=present,
+        start_bar=1.0, end_bar=5.0,
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=atrack, clip_id=absent,
+        start_bar=5.0, end_bar=9.0,
+    )
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track={2: [], 3: []},
+    )
+    assert any("skipping track" in b for b in plan.blocked_reasons), (
+        plan.blocked_reasons
+    )
+    summary = next(n for n in plan.notes if "arrangement projection" in n)
+    assert "placed 0 audio" in summary, summary
+    assert "duplicated 0" in summary, summary
+    assert "created+filled 1" in summary, summary
+
+
 def test_plan_push_arrangement_sibling_track_unaffected_by_skip(
     conn, song, session, track, clip
 ):

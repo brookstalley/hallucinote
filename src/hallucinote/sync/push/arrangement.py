@@ -556,6 +556,13 @@ def plan_push_arrangement(
         placement_calls: list[ToolCall] = []
         pending_gaps: list[str] = []
         pending_extent_notes: list[tuple[str, bool]] = []
+        # #506: the summary counts what was PLACED, not what was considered.
+        # These ride with the calls through validation and are folded into the
+        # phase totals only where the track commits — the same boundary the
+        # gaps and the extent notes already wait for, and for the same reason:
+        # a track that ends up skipped entirely emits no clear and no create,
+        # so anything it contributed to a total names work nobody attempted.
+        pending_created = pending_duplicated = pending_placed_audio = 0
         skip_reason: str | None = None
         for row in rows:
             clip_row = Q.get_clip(conn, row["clip_id"])
@@ -600,7 +607,7 @@ def plan_push_arrangement(
                     )
                     if authored_gap is not None:
                         pending_gaps.append(authored_gap)
-                placed_audio += 1
+                pending_placed_audio += 1
                 continue
 
             if hosts_envelope:
@@ -636,9 +643,9 @@ def plan_push_arrangement(
                         + "; cleared region first — no B-24)"
                     ),
                 ))
-                duplicated += 1
+                pending_duplicated += 1
                 if is_audio:
-                    placed_audio += 1
+                    pending_placed_audio += 1
                     # The block is the session clip's length on this route, and
                     # is just as unmovable as on the direct create — but the
                     # copy's playable region is written by the same post-apply
@@ -673,7 +680,7 @@ def plan_push_arrangement(
                         f"({len(notes)} notes from DB)"
                     ),
                 ))
-                created += 1
+                pending_created += 1
 
         if skip_reason is not None:
             msg = (
@@ -738,6 +745,9 @@ def plan_push_arrangement(
         for gap in pending_gaps:
             plan.blocked(f"arrangement: {gap}.")
         extent_notes.extend(pending_extent_notes)
+        created += pending_created
+        duplicated += pending_duplicated
+        placed_audio += pending_placed_audio
 
     if extent_notes:
         shown = [line for line, _ in extent_notes[:8]]

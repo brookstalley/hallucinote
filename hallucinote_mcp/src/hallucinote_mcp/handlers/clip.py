@@ -420,9 +420,14 @@ def _create_audio_clip(
 def _definite_track_kind(track: Any) -> str | None:
     """Return ``"midi"`` / ``"audio"`` only when Live states the kind, else None.
 
-    Live types a track by its input side: a MIDI track reports
-    ``has_midi_input`` true and ``has_audio_input`` false, an audio track the
-    reverse (lom-probe-results row "describe Track"). This is deliberately
+    Live types a track by its input side: an audio track reports
+    ``has_audio_input`` true and ``has_midi_input`` false — that direction is
+    probe-confirmed (``lom-probe-results`` row "describe Track", ``PROBE-AUDIO``
+    at ``song.tracks[4]``). The MIDI direction is the mirror image and is
+    INFERRED, not probed: no record carries a MIDI track's flags, and the unit
+    fake models what we assume Live does. It is the direction the caller refuses
+    an audio-onto-MIDI replace on, so the live check for it is queued rather than
+    claimed (``operator-verification.md``, the #505 box). This is deliberately
     NOT ``handlers/track.py``'s ``_kind_of``, which must always produce a
     label for the wire and so falls back to ``"midi"`` when it can read
     nothing. A fallback is exactly wrong here: the caller of this function

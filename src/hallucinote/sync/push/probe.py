@@ -25,23 +25,15 @@ from hallucinote.db import mutations as M, queries as Q
 # ---------------------------------------------------------------------------
 
 
-# W18-D: Live 12.x's brand-new-set scaffold ships these track names. Detection
-# of the "first push onto a fresh default set" case keys off this exact set —
-# any drift (rename, locale change, user customization) means the tracks are
-# no longer recognisable defaults and we fall back to the standard "continue
-# alongside?" confirmation.
-CANONICAL_DEFAULT_SCAFFOLD_TRACK_NAMES: frozenset[str] = frozenset({
-    "1-MIDI", "2-MIDI", "3-Audio", "4-Audio",
-})
-
-# Returns in Live's brand-new-set ship under these prefixed names. The
-# probe-and-link returns matcher strips the ``[A-Z]-`` slot prefix and
-# matches against the DB's stripped form (W4-C); cleanup keys off the
-# raw Live names because cleanup is about deleting Live-side defaults
-# the song hasn't claimed, not matching by stripped name.
-CANONICAL_DEFAULT_SCAFFOLD_RETURN_NAMES: frozenset[str] = frozenset({
-    "A-Reverb", "B-Delay",
-})
+# W18-D: detection of the "first push onto a fresh default set" case keys off
+# these exact names. They live in a neutral module because capture reads them
+# too, from the other side of the Live↔model boundary — see
+# :mod:`hallucinote.default_scaffold` for why they are not defined here, and
+# re-exported so every existing reader of `sync.push.probe` keeps working.
+from hallucinote.default_scaffold import (  # noqa: F401  (re-export)
+    CANONICAL_DEFAULT_SCAFFOLD_RETURN_NAMES,
+    CANONICAL_DEFAULT_SCAFFOLD_TRACK_NAMES,
+)
 
 
 # ---------------------------------------------------------------------------

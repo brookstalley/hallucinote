@@ -1,3 +1,11 @@
+---
+artifact: build-plan
+version: 1
+scope: RELBLK-V19
+branch: fix/release-blockers-v19
+last_validated: 2026-09-09
+---
+
 # Build plan — RELBLK-V19: the release blockers
 
 **Scope tag:** `RELBLK-V19` · **Branch:** `fix/release-blockers-v19` (off `develop`)

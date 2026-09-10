@@ -3343,8 +3343,22 @@ def test_a_failed_region_write_is_reported_and_says_re_push(
     )
 
     said = " ".join(result.warnings)
-    assert "did NOT land" in said, result.warnings
+    assert "did NOT get" in said, result.warnings
     assert "re-push" in said.lower(), said
     assert "will not retry" not in said.lower(), said
     # Copies, not calls: the copy took two writes and both failed.
-    assert "1 playable-region write(s)" in said, said
+    assert "1 audio copy/copies did NOT get" in said, said
+
+    # The message says the run continued, and it has to be TRUE. A region write
+    # is an enhancement on a copy that already landed; halting the phase over it
+    # would skip the arrangement integrity assert and every later phase while
+    # telling the operator to re-push. Assert the outcome, not just the prose —
+    # the prose is what was wrong before, and only these two lines can tell.
+    assert result.outcome == "ok", (result.outcome, result.warnings)
+    assert result.exit_code == 0, result.exit_code
+    phases_run = [p.name for p in result.phases]
+    assert "arrangement" in phases_run, phases_run
+    assert phases_run[-1] != "arrangement", (
+        "the push stopped at the arrangement phase, so a refused region write "
+        f"halted it after all: {phases_run}"
+    )

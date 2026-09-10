@@ -348,6 +348,35 @@ def test_an_unreadable_installed_tree_is_not_reported_as_no_install(tmp_path, mo
     assert entry["content_read_error"] == "installed_tree_unreadable", entry
 
 
+def test_a_diff_that_could_not_run_is_not_reported_as_no_files_differ(tmp_path, monkeypatch):
+    """Both fingerprints read, and they disagree — so the trees DO differ. If
+    the walk that names the files then fails, `differing_paths: []` beside
+    `differing_count: 0` would read as "nothing differs" while
+    `matches_vendored_content` says False: a report contradicting itself, and
+    the half a reader believes is the concrete list.
+    """
+    from hallucinote_mcp.cli import preflight as PF
+    from hallucinote_mcp import install_paths as P
+
+    lib = tmp_path / "UserLib"
+    rs = P.remote_script_install_dir(lib)
+    (rs / "hallucinote_mcp").mkdir(parents=True)
+
+    monkeypatch.setattr(P, "candidate_user_libraries", lambda: [lib])
+    monkeypatch.setattr(P, "vendored_content_fingerprint",
+                        lambda pkg_root: "src-fp" if pkg_root == P.package_root() else "other-fp")
+    monkeypatch.setattr(P, "vendored_content_diff", lambda source, installed: None)
+
+    entry = next(
+        c for c in PF._build_report()["remote_script"]["candidates"]
+        if c["user_library"] == str(lib)
+    )
+    assert entry["matches_vendored_content"] is False
+    assert entry["content_read_error"] == "diff_unreadable", entry
+    assert entry["differing_count"] is None, entry
+    assert entry["differing_paths"] == [], entry
+
+
 def test_an_unreadable_source_tree_is_named_as_the_source_side(tmp_path, monkeypatch):
     """The mirror of the installed-tree case, and it points the other way: if
     the SOURCE cannot be read, re-vendoring from it would ship whatever could

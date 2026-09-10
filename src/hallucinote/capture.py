@@ -85,10 +85,10 @@ from hallucinote.analyzer_identity import is_analyzer_device
 from hallucinote.db import mutations as M, queries as Q
 from hallucinote.paths import audio_file_ref
 from hallucinote.return_naming import normalize_live_return_name
-# The canonical brand-new-set track names live with the push-side cleanup
-# planner that acts on them; capture reads the same set so the two sides can
-# never disagree about what "Live's default scaffold" is.
-from hallucinote.sync.push.probe import CANONICAL_DEFAULT_SCAFFOLD_TRACK_NAMES
+# One definition of what Live's default scaffold IS, read by both sides that
+# have to recognize it — capture (exclude it from the snapshot) and the push
+# cleanup planner (offer to delete it) — so the two can never disagree.
+from hallucinote.default_scaffold import CANONICAL_DEFAULT_SCAFFOLD_TRACK_NAMES
 
 # SNP-8R4K chunk 2 — snapshot schema version stamped on every compiled snapshot
 # (`compile_snapshot`) and asserted by the at-rest cleanup (`migrate_snapshot`).

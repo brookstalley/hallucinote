@@ -1839,10 +1839,12 @@ def execute_push(
                         warning_messages.append(msg)
                 if failed:
                     msg = (
-                        f"arrangement: {failed} playable-region write(s) did "
-                        "NOT land, so those copies still play their whole "
-                        "file. Re-push to retry — the arrangement phase "
-                        "rebuilds its projection every run."
+                        f"arrangement: {failed} audio copy/copies did NOT get "
+                        "their playable region — Live refused the write — so "
+                        "they still play their whole file. The rest of the push "
+                        "continues: the copies themselves landed, and only the "
+                        "region is missing. Re-push to retry — the arrangement "
+                        "phase rebuilds its projection every run."
                     )
                     if msg not in warning_messages:
                         warning_messages.append(msg)
@@ -1859,7 +1861,25 @@ def execute_push(
                 warning_messages.append(msg)
 
         calls_ok = sum(1 for r in results if r.get("ok"))
-        calls_failed = sum(1 for r in results if not r.get("ok"))
+        # A refused playable-region write does NOT halt the phase. Every other
+        # result in this list is the phase's own projection — a clip that did
+        # not land, a property the song depends on — and one of those failing
+        # means the set no longer matches the DB, which is what the halt below
+        # protects. The region write is an enhancement layered onto a copy that
+        # already landed correctly: its failure leaves the copy playing its whole
+        # file, which is exactly what the copy did before this pass existed.
+        # Halting on it would skip `assert_arrangement_materialized` and every
+        # later phase (cues, sections, mix) over a cosmetic refusal — and the
+        # message that branch prints says "Re-push to retry", which a halt makes
+        # false. Worse on repeat: a span authored LONGER than its sample is
+        # unprobed (`docs/capability-truth.md`), so if Live refuses that write
+        # rather than clamping it, halting would wedge every push at this phase
+        # forever while telling the operator to push again.
+        calls_failed = sum(
+            1 for r in results
+            if not r.get("ok")
+            and not str(r.get("key", "")).startswith("arrangement_clip_region:")
+        )
 
         if connection_lost:
             _halt(

@@ -2,7 +2,7 @@
 
 **Audience.** A composer wants to hand a Hallucinote song to a collaborator (mixer, co-producer, mastering engineer) on a different machine. This document walks the round-trip and names the three portability cases that have load-bearing implications.
 
-**Status.** This document covers the current behavior: Case B detection ships today; Case A handling is in progress; Case C is permanently out of scope.
+**Status.** This document covers the current behavior: Case B detection ships today — for third-party plugins and for the samples a song's clips name; Case A handling is in progress; Case C, content a Live *preset* reaches for, is permanently out of scope.
 
 ---
 
@@ -117,15 +117,15 @@ Cross-machine song handoff has three distinct technical problems. Hallucinote tr
 
 **The non-goal.** Hallucinote will **never** substitute plugins. If you need Spitfire LABS and don't have it, the answer is "install Spitfire LABS," not "let me pick a similar-sounding native Live instrument and silently swap." Substitution corrupts the composer's intent in ways that are visible only to the composer's ear — the wrong choice would ship without the collaborator knowing it was wrong.
 
-### Case C — Sample packs, content libraries, missing audio assets
+### Case C — Sample packs and content libraries referenced *inside a preset*
 
-**Symptom.** The song uses Live's "Late Nite Kit" from Live's Core Library Pack, or a Splice loop, or a sample from a third-party content pack. None of those are enumerated as "plugins"; they're audio content referenced by Live presets.
+**Symptom.** The song uses Live's "Late Nite Kit" from Live's Core Library Pack, or a Splice loop, or a sample from a third-party content pack. None of those are enumerated as "plugins"; they're audio content a Live *preset* reaches for, and the song's own data never names the file.
 
-**Status.** **Explicit non-goal.** Hallucinote does not ship audio. It does not check whether you have a specific Live Pack installed. It does not track sample-pack dependencies. If the composer leaned on a specific Drum Rack preset that depends on samples in a third-party pack, the collaborator who doesn't have that pack will hear silence (or default samples) for those slots when they push.
+**Status.** **Explicit non-goal — and read the boundary, because it moved.** A sample the song's own clips reference by path IS checked: the compat gate stops on a missing one exactly as it stops on a missing plugin, and `REQUIREMENTS.md` lists it (Case B above, and §2's shopping list). What stays out of scope is content a *preset* depends on. Hallucinote does not ship audio, does not check whether you have a specific Live Pack installed, and cannot see inside a Drum Rack preset to learn which pack its slots came from — so if the composer leaned on such a preset, the collaborator who lacks that pack hears silence (or default samples) for those slots when they push, with nothing having warned them.
 
-**Why.** Sample packs are large binary artifacts under licenses that vary by vendor. Hallucinote is a metadata layer, not an asset distribution system. Bundling samples is out of scope; checking for sample-pack presence would require deep Live introspection we don't have. The right tool for sample-pack sharing is the vendor's distribution channel (Ableton Pack installer, Splice client, etc.).
+**Why.** Sample packs are large binary artifacts under licenses that vary by vendor. Hallucinote is a metadata layer, not an asset distribution system. Bundling samples is out of scope; and checking for *preset-referenced* pack presence would require deep Live introspection we don't have — which is precisely the difference from a clip's `audio_file`, a path the song itself records and the gate can therefore verify. The right tool for sample-pack sharing is the vendor's distribution channel (Ableton Pack installer, Splice client, etc.).
 
-**Mitigation.** The composer can document content dependencies in `<slug>.md` ("uses Live Core Library Pack 1") for collaborators to read manually. The compat check does not enforce this.
+**Mitigation.** The composer can document *preset-borne* content dependencies in `<slug>.md` ("uses Live Core Library Pack 1") for collaborators to read manually. The compat check does not enforce that half — it enforces the half the song names.
 
 ---
 

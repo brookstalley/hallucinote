@@ -97,7 +97,7 @@ The snapshot is a JSON document describing the mix layout of an Ableton Live set
 ]
 ```
 
-- `index` is 1-based, matching Live's track slot ordering.
+- `index` is a 1-based rank over **the tracks this snapshot carries** — equal to Live's track slot ordering only when capture filtered nothing out. Capture excludes an untouched default scaffold track and dense-ranks the survivors (see *What capture filters out before the snapshot exists* below), so a set whose scaffold was still present gives a snapshot whose `index` values are contiguous and no longer line up with Live's slots. Join on it only within one snapshot; joining a snapshot's `index` against something built from a different capture of the same set is what silently dropped every `browser_path` and preset seed once the scaffold filter shifted them.
 - `type` ∈ `{"midi", "audio", "group"}`. The legacy `"return"` value was dropped V1 close-out — real returns live in the `returns` array (different shape: no slots, no instrument).
 - `volume` (0.0–1.0), `panning` (-1.0–1.0): nullable; `null` means "user never set" — push skips emission until set.
 - `mute` / `solo` / `arm`: nullable booleans.

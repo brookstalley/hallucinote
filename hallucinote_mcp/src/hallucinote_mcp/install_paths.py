@@ -107,7 +107,20 @@ def vendored_files(root: pathlib.Path | str) -> list[tuple[str, pathlib.Path]]:
     root = pathlib.Path(root)
     ignore = vendor_ignore(root)
     out: list[tuple[str, pathlib.Path]] = []
-    for dirpath, dirnames, filenames in os.walk(root):
+
+    def _reraise(err: OSError) -> None:
+        # os.walk's default is to SWALLOW a directory-level error, which here
+        # would silently shrink the file list — and every caller reads a short
+        # list as a complete one. The fingerprint would hash a partial tree and
+        # return a normal-looking value, so an unreadable directory present on
+        # BOTH sides makes the two fingerprints agree and the advisory reports
+        # "nothing to say" over a Live that is running stale code: the exact
+        # silence this module exists to end. Re-raising turns it into the
+        # OSError the callers already catch, which is what becomes
+        # `content_read_error` in preflight.
+        raise err
+
+    for dirpath, dirnames, filenames in os.walk(root, onerror=_reraise):
         ignored = ignore(dirpath, list(dirnames) + list(filenames))
         dirnames[:] = [d for d in dirnames if d not in ignored]
         for fn in filenames:
@@ -168,7 +181,7 @@ def vendored_content_fingerprint(pkg_root: pathlib.Path | str) -> str | None:
 def vendored_content_diff(
     source_root: pathlib.Path | str,
     installed_pkg: pathlib.Path | str,
-) -> tuple[str, ...]:
+) -> tuple[str, ...] | None:
     """Vendored-relative paths whose bytes differ between source and install.
 
     Sorted, and covering both content drift and one-sided presence (a file the
@@ -177,14 +190,18 @@ def vendored_content_diff(
     runs — from ``server_side/analysis.py``, which Live only imports, without a
     per-path severity table anyone would have to maintain.
 
-    Returns ``()`` when either side isn't a readable directory, for the same
-    never-raise reason as :func:`vendored_content_fingerprint`.
+    Returns ``None`` — never ``()`` — when either side isn't a readable
+    directory, keeping :func:`vendored_content_fingerprint`'s never-raise
+    discipline without inheriting the ambiguity an empty tuple would carry:
+    ``()`` is a real answer meaning *the two trees agree*, and a caller handed
+    it for an unreadable tree would report "nothing differs" about a comparison
+    that never happened.
     """
     source_root = pathlib.Path(source_root)
     installed_pkg = pathlib.Path(installed_pkg)
     try:
         if not source_root.is_dir() or not installed_pkg.is_dir():
-            return ()
+            return None
         src = dict(vendored_files(source_root))
         dst = dict(vendored_files(installed_pkg))
         differing = set(src) ^ set(dst)
@@ -192,7 +209,7 @@ def vendored_content_diff(
             if _vendored_file_digest(src[rel], rel) != _vendored_file_digest(dst[rel], rel):
                 differing.add(rel)
     except OSError:
-        return ()
+        return None
     return tuple(sorted(differing))
 
 

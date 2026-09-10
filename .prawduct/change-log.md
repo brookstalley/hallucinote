@@ -125,9 +125,16 @@ rather than copies, doubling every number.
 **Re-vendor: REQUIRED.** `handlers/clip.py`, `actions/clip.py` and
 `handlers/render.py` are all inside `_FINGERPRINT_PATHS` — the tuple names the
 `handlers` and `actions` DIRECTORIES, not a file list — so the handshake
-fingerprint flips: `6283768de096` on `develop` becomes `1654fdee47ec` here,
-computed from clean checkouts of both. A consumer who skips the re-vendor gets a
-server that refuses every call.
+fingerprint flips away from `6283768de096`, which is what `develop` carries. A
+consumer who skips the re-vendor gets a server that refuses every call.
+
+The post-flip value is deliberately NOT written here. It is a content hash over
+the whole wire-shape tree, so every later commit touching one of those
+directories moves it — it moved twice while this entry was being written, and
+each stale literal was a number an operator would have compared against and
+concluded the handshake was already right. Read it from the code, which cannot
+go stale: `hallucinote_mcp.compute_version_for(<pkg_root>)`.
+`docs/release-process.md` step 5 is where the cut records the value that ships.
 
 The bundle also touches `install_paths.py`, `install_ops.py`, `__init__.py` and
 `resources/guides/error-recovery.md`, which are vendored but NOT fingerprinted.

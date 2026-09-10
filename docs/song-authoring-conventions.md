@@ -680,9 +680,12 @@ R6.2 was decided on 2026-09-09 in favour of Rubber Band, which prices in the
 An arrangement copy's BLOCK is fixed when Live places it — `Clip.end_time` has no
 setter, so this is a permanent Live limit rather than work outstanding, and it is
 not in the list above. What the push DOES control is the copy's playable region:
-`end_marker` and `loop_end` are written to the authored span after the placements
-apply, so the copy is meant to sound `end_bar` even while sitting in a longer
-block. That write is built and unit-tested but **not yet confirmed against a real
+on a WARPED row, `end_marker` and `loop_end` are written to the authored span
+after the placements apply, so the copy is meant to sound `end_bar` even while
+sitting in a longer block. A row authoring `warping = 0` is skipped — Live keeps
+that clip's markers in seconds while the arrangement is authored in bars, so the
+copy keeps its full region and the run names it rather than trimming to the wrong
+place. That write is built and unit-tested but **not yet confirmed against a real
 set** — only a shrinking marker write was ever probed. Author
 accordingly — a placement much shorter than its sample leaves a silent tail that
 can overlap what follows it on the same track. Sampler assignment and reverse-via-derived

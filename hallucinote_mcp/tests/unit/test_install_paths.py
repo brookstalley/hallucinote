@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -1007,12 +1008,55 @@ def test_bytecode_in_the_installed_tree_is_not_drift(tmp_path):
 
 
 def test_vendored_content_helpers_never_raise_on_an_absent_tree(tmp_path):
-    """Detection helpers report ``None``/``()`` rather than raising — preflight
-    runs them against candidate User Libraries that may not exist at all."""
+    """Detection helpers report ``None`` rather than raising — preflight runs
+    them against candidate User Libraries that may not exist at all.
+
+    The diff says ``None``, not ``()``: an empty tuple is the real answer for
+    *the two trees agree*, and handing it back for a tree nobody could read
+    would report agreement about a comparison that never happened.
+    """
     missing = tmp_path / "nope"
     assert install_paths.vendored_content_fingerprint(missing) is None
-    assert install_paths.vendored_content_diff(missing, tmp_path) == ()
-    assert install_paths.vendored_content_diff(tmp_path, missing) == ()
+    assert install_paths.vendored_content_diff(missing, tmp_path) is None
+    assert install_paths.vendored_content_diff(tmp_path, missing) is None
+
+
+@pytest.mark.skipif(
+    os.geteuid() == 0, reason="root reads a 0o000 directory, so nothing fails",
+)
+def test_an_unreadable_subdirectory_is_an_error_not_a_shorter_file_list(tmp_path):
+    """``os.walk`` swallows a directory-level error by default, and every caller
+    here reads a short list as a complete one.
+
+    Left swallowed, the fingerprint hashes a PARTIAL tree and returns a
+    normal-looking 12-hex value — so a directory unreadable on both sides makes
+    the two fingerprints agree, ``matches_vendored_content`` reads ``true``, the
+    install skill says "nothing to say", and Live keeps running stale code. That
+    is the silence the advisory exists to end, reproduced by the advisory
+    itself.
+    """
+    source = _write_vendorable_source(tmp_path / "source")
+    whole = install_paths.vendored_content_fingerprint(source)
+    assert whole is not None
+
+    locked = source / "resources" / "guides"
+    assert locked.is_dir()
+    original_mode = locked.stat().st_mode
+    locked.chmod(0o000)
+    try:
+        # Not a different fingerprint — NO fingerprint. A value here would be a
+        # hash of whatever happened to be readable, indistinguishable from an
+        # honest one.
+        assert install_paths.vendored_content_fingerprint(source) is None
+        with pytest.raises(OSError):
+            install_paths.vendored_files(source)
+        # And the same on the diff side, where () would have meant "no files
+        # differ".
+        assert install_paths.vendored_content_diff(source, source) is None
+    finally:
+        locked.chmod(original_mode)
+
+    assert install_paths.vendored_content_fingerprint(source) == whole
 
 
 def test_vendored_files_excludes_exactly_what_the_installer_excludes(tmp_path):

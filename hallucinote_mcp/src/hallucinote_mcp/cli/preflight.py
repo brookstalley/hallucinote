@@ -81,12 +81,17 @@ def _build_report(*, server_version_override: str | None = None) -> dict:
             )
             else None
         )
-        # Which files moved — only worth walking when they did.
+        # Which files moved — only worth walking when they did. `None` back
+        # means the walk could not read a tree that was readable moments ago
+        # when the fingerprints were taken; it is not "no files differ", and
+        # the report must not spell it that way.
         differing = (
             P.vendored_content_diff(pkg_root, vendored_pkg)
             if matches_content is False
             else ()
         )
+        if differing is None:
+            content_read_error = "diff_unreadable"
         remote_script_candidates.append({
             "user_library": str(cand),
             "remote_script_dir": str(rs_dir),
@@ -97,14 +102,23 @@ def _build_report(*, server_version_override: str | None = None) -> dict:
             ),
             "content_fingerprint": content_fp,
             "matches_vendored_content": matches_content,
-            # Non-None ONLY when `matches_vendored_content` is null for a reason
-            # that is not "no install" — so a consumer can tell benign absence
-            # from a check that could not run.
+            # Non-None whenever a comparison could not be made, and it says
+            # WHICH one: the two fingerprint-side causes (an install that could
+            # not be read, a checkout that could not be read) leave
+            # `matches_vendored_content` null, and `diff_unreadable` leaves it
+            # False with no usable file list. A consumer can tell all three from
+            # benign absence, which is what a plain null could never do.
             "content_read_error": content_read_error,
             # Capped so a wholly-stale install doesn't flood the report; the
             # count stays exact so the reader knows the list was truncated.
-            "differing_paths": list(differing[:_DIFFERING_PATHS_CAP]),
-            "differing_count": len(differing),
+            "differing_paths": (
+                [] if differing is None
+                else list(differing[:_DIFFERING_PATHS_CAP])
+            ),
+            # `null`, never 0, when the comparison could not run — an empty list
+            # beside a 0 count reads as "the trees agree", which is the one
+            # thing this branch does NOT know.
+            "differing_count": None if differing is None else len(differing),
         })
         installed_fp = P.installed_analyzer_fingerprint(cand)
         analyzer_candidates.append({

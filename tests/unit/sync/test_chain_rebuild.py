@@ -11,6 +11,12 @@ CLASS DEFAULTS, so a rebuild that forgets to restore produces exactly the
 audibly-wrong chain that a call-level "every call returned ok" would report as
 success.
 
+It also holds devices the DB does not author — see :func:`_analyzer_device`.
+That is the second thing it has to model, and until #532 it did not: a chain
+built only from the DB's own rows cannot express the device that survives the
+delete, so the whole failure was unrepresentable here while being the first thing
+a real `alien` hit.
+
 What the fake cannot prove is named in the module docstring of each test that
 depends on Live's own behaviour (browser resolution, real parameter curves,
 whether Live actually silences a muted track mid-rebuild).
@@ -25,6 +31,7 @@ import hallucinote_mcp.actions  # noqa: F401  — registers every Action
 from hallucinote_mcp import schema as mcp_schema
 from hallucinote_mcp.dispatcher import validate_params
 
+from hallucinote.analyzer_identity import ANALYZER_DEVICE_NAME
 from hallucinote.db import init_db, mutations as M, queries as Q
 from hallucinote.sync import chain_rebuild, live_escalation
 from hallucinote.sync.push import devices as push_devices
@@ -285,6 +292,24 @@ def _cont(value, display=None, *, enabled=None):
     return entry
 
 
+def _analyzer_device():
+    """The HallucinoteAnalyzer as Live reports it — an UNAUTHORED device the fake
+    can now hold.
+
+    Until this existed the fake's chains were built from the DB's own rows, so a
+    live chain carrying a device the DB does not author was not merely untested
+    but *unrepresentable* — which is why #532 survived the module's entire life
+    and was found on first contact with a real `alien`.
+
+    The identity is the render-stamped NAME; the class display name is the
+    generic one every Max audio effect shares, so a fake that modelled only the
+    class could not tell the tap from any other M4L device. That asymmetry is
+    `analyzer_identity`'s, not this fake's, and the fake has to carry it to be
+    worth anything here.
+    """
+    return FakeDevice("Max Audio Effect", name=ANALYZER_DEVICE_NAME)
+
+
 # ---------------------------------------------------------------------------
 # The song under test — the `alien` witness, in miniature
 # ---------------------------------------------------------------------------
@@ -362,10 +387,10 @@ def live(revoice):
     return fake
 
 
-def _rebuild(conn, song, session, live, song_dir, **kwargs):
+def _rebuild(conn, song, session, live, song_dir, *, from_position=1, **kwargs):
     return chain_rebuild.rebuild_chain(
         conn, song_id=song, session_id=session, parent_kind="track",
-        parent_index=3, from_position=1, send_fn=live.send,
+        parent_index=3, from_position=from_position, send_fn=live.send,
         song_dir=song_dir, **kwargs,
     )
 
@@ -529,6 +554,229 @@ def test_a_slow_load_is_polled_to_completion_not_booked_as_one(
 
 
 # ---------------------------------------------------------------------------
+# #532 — an unauthored device survives the rebuild, and must not move the
+# restore with it
+#
+# The `alien` witness failed here on 2026-09-10 against a real Live: the
+# HallucinoteAnalyzer the render had left at position 4 survived the delete
+# (correctly — the render owns it), the reloads tail-appended behind it, and the
+# tap that sat at the TAIL now sat at the HEAD. Every authored device had moved
+# down one physical slot while the journal still named the old one, so EQ Eight
+# was restored onto Operator and Erosion onto EQ Eight. Measured cost: EQ Eight
+# lost 7 of 84 parameters, two of them real gain cuts (`3 Gain A` −1.99951 dB
+# and `4 Gain A` −2.50488 dB, both to 0.0).
+# ---------------------------------------------------------------------------
+
+
+def test_a_surviving_analyzer_does_not_shift_the_restore_onto_the_next_device(
+    conn, song, session, revoice, live, song_dir,
+):
+    """The witness, with the tap in the chain: every captured parameter still
+    lands on the device it was read from.
+
+    The analyzer is unauthored, so the demolish leaves it and the reloads arrive
+    behind it — the one arrangement in which the pre-delete index and the
+    post-rebuild index are guaranteed to differ. Addressing by the journal's
+    index restores real dialed values onto whatever now occupies that slot, which
+    is worse than restoring nothing: it is the same class of device often enough
+    that the write succeeds.
+    """
+    live.chains[("track", 3)].append(_analyzer_device())
+
+    result = _rebuild(conn, song, session, live, song_dir)
+
+    # The render's tap survived, at the head, and the authored chain is in the
+    # DB's order behind it.
+    assert [d.name for d in live.chain(("track", 3))] == [
+        ANALYZER_DEVICE_NAME, "Operator", "EQ Eight", "Erosion",
+    ]
+    eq = live.device_at(("track", 3), 3)
+    assert eq.params["1 Frequency A"]["value"] == pytest.approx(0.42)
+    assert eq.params["1 Gain A"]["value"] == pytest.approx(0.73)
+    erosion = live.device_at(("track", 3), 4)
+    assert erosion.params["Amount"]["value"] == pytest.approx(0.77)
+    assert erosion.params["Mode"]["value_display"] == "Sine"
+    assert result.ok, result.alerts
+    assert result.restored_params == 4
+    # Nothing was written onto the tap itself.
+    assert not any(
+        c[1] == "set_parameter" and c[2]["node"]["device_index"] == 1
+        for c in live.calls
+    )
+
+
+def test_the_alerts_name_no_class_change_that_did_not_happen(
+    conn, song, session, revoice, live, song_dir,
+):
+    """The one-slot shift did not only lose parameters — it reported the loss as
+    three phantom class changes, which sent the operator looking at their own
+    chain instead of at the intruder.
+
+    An alert that names the wrong cause is worse than the silence it replaced,
+    so the only class change reported is the one that really happened: the
+    re-voice at position 1 the operator asked for.
+    """
+    live.chains[("track", 3)].append(_analyzer_device())
+
+    result = _rebuild(conn, song, session, live, song_dir)
+
+    changes = [a for a in result.alerts if "changed class" in a]
+    assert len(changes) == 1, changes
+    assert "changed class from 'Analog' to 'Operator'" in changes[0]
+    assert not any("nothing sits at position" in a for a in result.alerts)
+
+
+def test_an_analyzer_already_at_the_head_restores_every_captured_parameter(
+    conn, song, session, revoice, live, song_dir,
+):
+    """The chain a SECOND rebuild meets, with the whole span in play.
+
+    The first rebuild left the tap at the head, so every captured device answers
+    to an index one above its position — the mirror of the tail case, and the one
+    the pre-fix code happened to get right: the offset was constant across
+    capture and re-read, so the two wrongs cancelled. Pinning it keeps the
+    mapping honest rather than arithmetic, and stops a "subtract one" shortcut
+    from passing for a fix.
+    """
+    live.chains[("track", 3)].insert(0, _analyzer_device())
+
+    result = _rebuild(conn, song, session, live, song_dir)
+
+    assert [d.name for d in live.chain(("track", 3))] == [
+        ANALYZER_DEVICE_NAME, "Operator", "EQ Eight", "Erosion",
+    ]
+    assert live.device_at(("track", 3), 3).params["1 Gain A"]["value"] == (
+        pytest.approx(0.73)
+    )
+    assert live.device_at(("track", 3), 4).params["Amount"]["value"] == (
+        pytest.approx(0.77)
+    )
+    assert result.ok, result.alerts
+    assert (result.restored_params, result.expected_params) == (4, 4)
+
+
+def test_a_device_below_the_span_survives_an_analyzer_at_the_head(
+    conn, song, session, revoice, live, song_dir,
+):
+    """A rebuild of part of a chain selects its span by DB POSITION, never by
+    Live's index.
+
+    This is the chain a second rebuild meets: the first one left the tap at the
+    head, so every authored device answers to an index one higher than its
+    position. Reading `--from-position 2` as "index 2 and down" takes out the
+    instrument at position 1 — which the plan never reloads, because the DB does
+    not author anything before position 2 — and the class order still verifies,
+    so the loss reports as a success.
+    """
+    live.chains[("track", 3)].insert(0, _analyzer_device())
+
+    result = _rebuild(conn, song, session, live, song_dir, from_position=2)
+
+    assert [d.name for d in live.chain(("track", 3))] == [
+        ANALYZER_DEVICE_NAME, "Analog", "EQ Eight", "Erosion",
+    ], "the instrument below the span was deleted and never reloaded"
+    # Untouched, dialed state and all.
+    assert live.device_at(("track", 3), 2).params["Volume"]["value"] == (
+        pytest.approx(0.61)
+    )
+    assert result.ok, result.alerts
+    assert result.restored_params == 4
+    assert result.deleted == ["EQ Eight", "Erosion"]
+
+
+def test_a_device_the_rebuild_cannot_address_refuses_before_any_delete(
+    conn, song, session, revoice, live, song_dir,
+):
+    """Only the analyzer earns the tolerance.
+
+    Any other device the rebuild would skip survives the delete just the same and
+    shifts every later slot, so the restore would write onto the device next
+    door. There is no safe way to carry that, and the refusal is the same bright
+    line as a device that cannot be reloaded: it names the intruder and runs
+    before anything is deleted, while the operator still has the chain in front
+    of them.
+    """
+    original = live._ableton_device__list
+
+    def _with_an_unaddressable_device(params):
+        resp = original(params)
+        if resp.ok and live.key(params) == ("track", 3):
+            resp.result["devices"].append({
+                "device_index": None,
+                "name": "Mystery",
+                "class_name": "Compressor2",
+                "class_display_name": "Compressor",
+            })
+        return resp
+
+    live._ableton_device__list = _with_an_unaddressable_device
+
+    with pytest.raises(chain_rebuild.RebuildRefused) as caught:
+        _rebuild(conn, song, session, live, song_dir)
+
+    message = str(caught.value)
+    assert "'Mystery'" in message, message
+    assert "HallucinoteAnalyzer" in message
+    assert not any(c[1] == "delete" for c in live.calls)
+    assert not chain_rebuild.stranded_journals(song_dir)
+    assert live.classes(("track", 3)) == ["Analog", "EQ Eight", "Erosion"]
+
+
+def test_a_shortfall_exit_is_non_zero_and_keeps_the_journal(
+    conn, song, session, revoice, live, song_dir, monkeypatch, capsys,
+):
+    """#538's exit contract, through the entry point an operator actually runs.
+
+    `main` returned 0 unconditionally, so re-running #291's witness box after a
+    fix produced an exit code that meant nothing — which is why this ships with
+    #532 rather than after it. The exit names what was captured, what was
+    restored and where the journal still is; a bare 1 would send the operator
+    back to the scrollback.
+    """
+    monkeypatch.setattr(chain_rebuild, "_cli_send_fn", lambda: live.send)
+    original = live._ableton_device__set_parameter
+
+    def _refuse_amount(params):
+        if params["parameter_name"] == "Amount":
+            return _Resp(ok=False, error="parameter is automated")
+        return original(params)
+
+    live._ableton_device__set_parameter = _refuse_amount
+
+    rc = chain_rebuild.main([
+        session, "--db", str(song_dir / "alien.db"), "--track", "3",
+    ])
+
+    captured = capsys.readouterr()
+    out, err = captured.out, captured.err
+    assert rc == 1
+    assert "restored 3 of 4 writable parameter(s)" in err, err
+    journal = chain_rebuild.journal_path_for(song_dir, "track", 3)
+    assert str(journal) in err
+    assert journal.exists()
+    assert "SHORTFALL" in out
+
+
+def test_a_restore_that_lands_nothing_exits_non_zero_from_the_cli(
+    conn, song, session, revoice, live, song_dir, monkeypatch, capsys,
+):
+    """The wholly-failed restore, end to end: exit 1, the journal named, and the
+    chain left for `--resume` rather than reported rebuilt."""
+    monkeypatch.setattr(chain_rebuild, "_cli_send_fn", lambda: live.send)
+    live.fail[("ableton_device", "set_parameter")] = "parameter is automated"
+
+    rc = chain_rebuild.main([
+        session, "--db", str(song_dir / "alien.db"), "--track", "3",
+    ])
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "VERIFY FAILED" in err
+    assert "--resume auto" in err
+    assert chain_rebuild.journal_path_for(song_dir, "track", 3).exists()
+
+
+# ---------------------------------------------------------------------------
 # R2 — the journal is durable and pre-delete
 # ---------------------------------------------------------------------------
 
@@ -671,7 +919,12 @@ def test_a_locked_parameter_alerts_instead_of_being_dropped(
 ):
     """R3. ``is_enabled=False`` is a macro-mapped or locked parameter: Live
     reads it fine and refuses every write. Skipping it quietly would hand back a
-    chain that is wrong in a way nothing announced."""
+    chain that is wrong in a way nothing announced.
+
+    It is also NOT a shortfall (#538): it was never writable, so counting it
+    against the restore would make every chain carrying one macro exit non-zero
+    for ever, and an exit code that is always 1 says nothing.
+    """
     live.chains[("track", 3)][1].params["1 Gain A"] = _cont(
         0.73, "+4.1 dB", enabled=False,
     )
@@ -687,6 +940,9 @@ def test_a_locked_parameter_alerts_instead_of_being_dropped(
         c[1] == "set_parameter" and c[2].get("parameter_name") == "1 Gain A"
         for c in live.calls
     )
+    assert (result.restored_params, result.expected_params) == (3, 3)
+    assert not any("SHORTFALL" in a for a in result.alerts)
+    assert not chain_rebuild.journal_path_for(song_dir, "track", 3).exists()
 
 
 def test_a_parameter_whose_read_failed_is_alerted_and_not_invented(
@@ -702,13 +958,18 @@ def test_a_parameter_whose_read_failed_is_alerted_and_not_invented(
     assert result.restored_params == 0
 
 
-def test_a_refused_restore_write_alerts_without_gutting_the_run(
+def test_a_refused_restore_write_alerts_and_finishes_but_is_not_success(
     conn, song, session, revoice, live, song_dir,
 ):
-    """One parameter Live refuses to write is an ALERT (R3), not a verify
-    failure: R6 gates every parameter the restore RESTORED, and this one was
-    not. Halting here would strand the journal over a chain that is as correct
-    as Live let it be — while saying nothing would hide a real loss."""
+    """One parameter Live refuses to write does not HALT the run — R6 gates
+    every parameter the restore RESTORED, and this one was not, so raising
+    would abandon a chain that is as correct as Live let it be.
+
+    It is not a success either (#538). The captured value is real mix work that
+    is now only in the journal, so the run finishes, rebinds its links and
+    reports — and then says SHORTFALL, keeps the journal and exits non-zero.
+    Both halves matter: the chain is left usable, and nothing calls it done.
+    """
     original = live._ableton_device__set_parameter
 
     def _refuse_amount(params):
@@ -719,14 +980,48 @@ def test_a_refused_restore_write_alerts_without_gutting_the_run(
     live._ableton_device__set_parameter = _refuse_amount
     result = _rebuild(conn, song, session, live, song_dir)
 
-    assert result.ok
     assert any("restoring 'Amount'" in a and "FAILED" in a
                for a in result.alerts), result.alerts
-    # Everything else still landed.
+    # Everything else still landed — the run was not gutted.
     assert live.device_at(("track", 3), 2).params["1 Frequency A"]["value"] == (
         pytest.approx(0.42)
     )
     assert live.device_at(("track", 3), 3).params["Amount"]["value"] == 0.0
+    assert live.classes(("track", 3)) == ["Operator", "EQ Eight", "Erosion"]
+    # …and it is reported as the shortfall it is, with the record retained.
+    assert not result.ok
+    assert (result.restored_params, result.expected_params) == (3, 4)
+    assert any("SHORTFALL" in a for a in result.alerts), result.alerts
+    journal = chain_rebuild.journal_path_for(song_dir, "track", 3)
+    assert journal.exists(), (
+        "the values that did not land are only in the journal"
+    )
+    assert result.journal_path == journal
+
+
+def test_a_restore_that_lands_nothing_fails_verify_instead_of_passing_on_zero(
+    conn, song, session, revoice, live, song_dir,
+):
+    """#538. The read-back is scoped to what the restore WROTE, so a restore
+    that wrote nothing compares nothing — and `continue`d past every device,
+    reported ok and unlinked the journal.
+
+    That is precisely the shape of the failure it exists to catch: a chain
+    sitting at its class DEFAULTS passes a comparison over an empty set. So
+    "landed none of them" is a verify failure, and the journal — which this
+    module's own docstring calls the only way back — survives it.
+    """
+    live.fail[("ableton_device", "set_parameter")] = "parameter is automated"
+
+    with pytest.raises(chain_rebuild.RebuildVerifyFailed) as caught:
+        _rebuild(conn, song, session, live, song_dir)
+
+    message = str(caught.value)
+    assert "VERIFY FAILED" in message
+    assert "landed NONE of the 4 writable parameter(s)" in message
+    assert chain_rebuild.journal_path_for(song_dir, "track", 3).exists()
+    # And the chain really is at its defaults — the state this used to call ok.
+    assert live.device_at(("track", 3), 2).params["1 Frequency A"]["value"] == 0.0
 
 
 # ---------------------------------------------------------------------------

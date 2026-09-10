@@ -142,6 +142,14 @@ Those alone would have been `recommended` — the advisory this release adds is
 exactly what reports them. They do not lower the verdict; the fingerprint-bearing
 pair sets it.
 
+**One change here is not a chunk, and it is the reason the rest can be believed.**
+`project-state.yaml` had no `test_command`, so `test-evidence record` had been
+falling back to the hook interpreter's own pytest — not the locked environment
+`project-preferences.md` says a green claim must come from. The gate that reads
+that evidence is the release gate, and this bundle exists because defects in the
+release mechanism ship quietly. The canonical invocation is declared now, so what
+the recorder runs is what the project calls green.
+
 Follow-ons filed rather than absorbed: **#519** (scaffold returns ship with
 devices, so the untouched predicate can never reach them), **#520**
 (`devices.audio_file` has the identical false-clean), **#521** (the advisory

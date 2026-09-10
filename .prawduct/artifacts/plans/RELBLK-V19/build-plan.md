@@ -62,11 +62,13 @@ The issue carries a complete design; follow it, including its rejected alternati
 **Done when:** editing `analyzer/setup.py` flips the advisory to false while
 `compute_version_for` is unchanged, and `differing_paths` names exactly that file.
 
-### `[ ]` 02 — the pin-recovery recipe names a commit that does not exist
+### `[ ]` 02 — #518: the pin-recovery recipe names a commit that does not exist
 `_version_mismatch_recovery` (`src/hallucinote/sync/push_cli.py:663`) tells the user the `+<sha>`
 suffix "is the commit it was vendored from" and hands them `git worktree add /tmp/hallucinote-pin
 <sha>`. It is `_compute_content_fingerprint` output — `git cat-file -t` rejects it and the recipe
-cannot work. `resources/guides/error-recovery.md:72-77` carries the same false recipe. Replace
+cannot work. `resources/guides/error-recovery.md:72-77` carries the same false recipe.
+The worktree recipe was #388's *own shipped resolution*, so #518 is a regression against #388's
+acceptance rather than a gap. Replace
 both with the overlay-from-the-vendored-copy pin that was actually verified to work, and fix the
 test that currently asserts the wrong recipe (it is a test encoding a defect, so correcting it is
 not weakening it — say so in the change-log).

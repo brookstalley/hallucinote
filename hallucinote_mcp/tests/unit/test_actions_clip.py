@@ -27,6 +27,11 @@ LIVE_BAD_PATH_ERROR = (
 # pre-check normally refuses a relative path first, so the fake filesystem
 # never raises this — it is exercised directly against the mapper.
 LIVE_RELATIVE_PATH_ERROR = "Please provide an absolute path"
+# The mirror refusal — a MIDI clip on an audio track. NOT probed verbatim:
+# the audio-first-class probes only ever called ``create_audio_clip``. The
+# fake models that Live refuses, not what it says, and no handler code reads
+# this string.
+LIVE_WRONG_TRACK_MIDI_ERROR = "MIDI clips can only be created on MIDI tracks"
 
 # The one path the fake "filesystem" holds. Anything else refuses the way
 # Live refuses a missing or undecodable file.
@@ -117,6 +122,15 @@ class FakeClipSlot:
         self._audio_files = audio_files
 
     def create_clip(self, length: float) -> None:
+        """Live 's ``ClipSlot.create_clip(length)`` — MIDI only.
+
+        Refuses on an audio track the way Live does. The message is NOT a
+        probed verbatim (the audio-first-class probes only ever exercised
+        ``create_audio_clip``'s refusals, rows 1c and 17); only the refusal
+        itself is modelled, and nothing in the handler reads this string.
+        """
+        if self._track_kind != "midi":
+            raise RuntimeError(LIVE_WRONG_TRACK_MIDI_ERROR)
         if self.clip is not None:
             raise RuntimeError("slot already has a clip")
         self.clip = FakeClip(length=length)
@@ -190,6 +204,19 @@ class FakeTrack:
         self.name = name
         self._kind = kind
         self._audio_files = audio_files
+        # Live types a track by its INPUT side, and that is the only reading
+        # available before a create is attempted: an audio track reports
+        # has_audio_input true / has_midi_input false (lom-probe-results,
+        # "describe Track" on PROBE-AUDIO), a MIDI track the reverse. The
+        # handler's pre-delete kind check reads exactly these, so the fake
+        # has to carry them or the check is untestable — and untested, it
+        # silently degrades to "kind unknown, delete anyway".
+        self.has_midi_input = (kind == "midi")
+        self.has_audio_input = (kind == "audio")
+        # A group track's input flags describe what is folded into it, not a
+        # clip-holding slot; these fakes are never groups.
+        self.is_foldable = False
+        self.is_grouped = False
         self.clip_slots = [
             FakeClipSlot(track_kind=kind, audio_files=audio_files)
             for _ in range(slots)
@@ -2612,20 +2639,21 @@ def test_set_property_gain_domain_matches_live_and_the_db(loaded_actions):
 
 
 def test_replace_that_fails_to_recreate_says_the_slot_is_now_empty(loaded_actions):
-    """A slot holds one clip, so replace=True deletes before it creates, and
-    Live only refuses a wrong-kind create after that point. The old clip is
-    gone either way; what the caller must not get is an error that reads like
-    a rejected call which changed nothing.
+    """A slot holds one clip, so replace=True deletes before it creates, and a
+    path Live will not load is refused only after that point — the pre-check
+    reads track kind, not the filesystem. The old clip is gone; what the
+    caller must not get is an error that reads like a rejected call which
+    changed nothing.
     """
     ctx = FakeCtx()
-    midi_track = ctx.song.tracks[0]
-    slot = midi_track.clip_slots[0]
-    slot.clip = FakeClip(kind="midi")
+    audio_track = ctx.song.tracks[1]
+    slot = audio_track.clip_slots[0]
+    slot.clip = FakeClip(kind="audio")
     resp = dispatch(
         Request(
             tool="ableton_clip", action="create",
             params={
-                "track_index": 1, "location": "session", "clip_index": 1,
+                "track_index": 2, "location": "session", "clip_index": 1,
                 "kind": "audio", "audio_path": "/tmp/line.wav",
                 "replace": True,
             },
@@ -2635,8 +2663,129 @@ def test_replace_that_fails_to_recreate_says_the_slot_is_now_empty(loaded_action
     assert resp.ok is False
     err = resp.error or ""
     assert "now EMPTY" in err, err
-    assert "audio track" in err, err
+    assert "will not load" in err, err
     assert slot.clip is None
+
+
+def test_replace_of_an_audio_path_onto_a_midi_track_keeps_the_clip(loaded_actions):
+    """The pre-check's whole point: the clip is still THERE and still
+    readable, not merely that an error was raised. Live's track typing says
+    in advance that this create cannot succeed, so nothing is deleted.
+    """
+    ctx = FakeCtx()
+    midi_track = ctx.song.tracks[0]
+    slot = midi_track.clip_slots[0]
+    existing = FakeClip(name="Keep me", kind="midi", length=8.0)
+    existing.set_notes(((60, 0.0, 1.0, 100, False),))
+    slot.clip = existing
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="create",
+            params={
+                "track_index": 1, "location": "session", "clip_index": 1,
+                "kind": "audio", "audio_path": PROBE_WAV,
+                "replace": True,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "Nothing was deleted" in err, err
+    assert "MIDI track" in err, err
+    assert "now EMPTY" not in err, err
+    # Present, the SAME clip, and still readable through the bridge.
+    assert slot.clip is existing
+    read = dispatch(
+        Request(
+            tool="ableton_clip", action="list",
+            params={"track_index": 1, "location": "session"},
+        ),
+        context=ctx,
+    )
+    assert read.ok is True, read.error
+    entry = next(c for c in read.result["clips"] if c["clip_index"] == 1)
+    assert entry["name"] == "Keep me"
+    assert entry["length"] == 8.0
+
+
+def test_replace_of_a_midi_clip_onto_an_audio_track_keeps_the_clip(loaded_actions):
+    """The mirror direction. Live refuses a MIDI create on an audio track the
+    same way, so the same pre-check must cover it — an audio-only fix would
+    leave half the data loss in place.
+    """
+    ctx = FakeCtx()
+    audio_track = ctx.song.tracks[1]
+    slot = audio_track.clip_slots[0]
+    existing = FakeClip(name="Keep me too", kind="audio", length=4.0)
+    slot.clip = existing
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="create",
+            params={
+                "track_index": 2, "location": "session", "clip_index": 1,
+                "kind": "midi", "length": 16.0, "replace": True,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "Nothing was deleted" in err, err
+    assert "audio track" in err, err
+    assert "now EMPTY" not in err, err
+    assert slot.clip is existing
+    assert slot.clip.name == "Keep me too"
+
+
+def test_replace_does_not_refuse_when_live_will_not_say_the_track_kind(
+    loaded_actions,
+):
+    """The pre-check must stay silent on a track whose kind it cannot read.
+    Guessing would refuse a create that Live would have accepted, which is a
+    worse failure than the one being prevented: a working call turned into an
+    error the caller cannot act on.
+    """
+    ctx = FakeCtx()
+    track = ctx.song.tracks[1]
+    del track.has_midi_input
+    del track.has_audio_input
+    slot = track.clip_slots[0]
+    slot.clip = FakeClip(kind="audio")
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="create",
+            params={
+                "track_index": 2, "location": "session", "clip_index": 1,
+                "kind": "audio", "audio_path": PROBE_WAV, "replace": True,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert slot.clip.file_path == PROBE_WAV
+
+
+def test_replace_pre_check_does_not_fire_on_an_empty_slot(loaded_actions):
+    """An empty slot has nothing to protect, so a wrong-kind create there must
+    still reach Live and surface Live's own refusal — the pre-check is a guard
+    on the delete, not a second validation layer in front of every create.
+    """
+    ctx = FakeCtx()
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="create",
+            params={
+                "track_index": 1, "location": "session", "clip_index": 1,
+                "kind": "audio", "audio_path": PROBE_WAV, "replace": True,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "not an audio track" in err, err
+    assert "Nothing was deleted" not in err, err
 
 
 def test_replace_failure_disclosure_survives_an_awkward_exception_type(loaded_actions):

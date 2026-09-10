@@ -417,6 +417,66 @@ def _create_audio_clip(
         raise
 
 
+def _definite_track_kind(track: Any) -> str | None:
+    """Return ``"midi"`` / ``"audio"`` only when Live states the kind, else None.
+
+    Live types a track by its input side: a MIDI track reports
+    ``has_midi_input`` true and ``has_audio_input`` false, an audio track the
+    reverse (lom-probe-results row "describe Track"). This is deliberately
+    NOT ``handlers/track.py``'s ``_kind_of``, which must always produce a
+    label for the wire and so falls back to ``"midi"`` when it can read
+    nothing. A fallback is exactly wrong here: the caller of this function
+    refuses a create on the strength of the answer, and guessing "midi" for a
+    track whose kind is unreadable would refuse an audio create that would
+    have succeeded. Unknown must stay unknown.
+
+    A group track (``is_foldable``) is reported unknown too: its input flags
+    describe the tracks folded into it, not a slot that could hold a clip.
+    """
+    if getattr(track, "is_foldable", False):
+        return None
+    has_midi = getattr(track, "has_midi_input", None)
+    if has_midi is True:
+        return "midi"
+    if has_midi is False:
+        return "audio"
+    if getattr(track, "has_audio_input", None) is True:
+        return "audio"
+    return None
+
+
+def _check_replace_track_kind(
+    track: Any, *, track_index: int, kind: str, clip_index: int
+) -> None:
+    """Refuse a wrong-kind session replace BEFORE anything is deleted.
+
+    A slot holds at most one clip, so ``replace=True`` has to delete before it
+    creates — and Live refuses a wrong-kind create only after that point, when
+    the previous clip is already gone and unrecoverable through this bridge.
+    Live's own track typing is readable in advance, so the one case that is
+    certain to fail is caught while the clip is still there.
+
+    Silent when the track's kind cannot be read: a refusal on a guess would
+    block a create that would have worked. Everything this cannot foresee — a
+    path Live will not load, a build that refuses for its own reasons — still
+    falls through to the post-delete disclosure.
+    """
+    actual = _definite_track_kind(track)
+    if actual is None or actual == kind:
+        return
+    if kind == "audio":
+        host, rule = "a MIDI track", "audio clips only on audio tracks"
+    else:
+        host, rule = "an audio track", "MIDI clips only on MIDI tracks"
+    raise ValueError(
+        f"create: track {track_index} is {host}, and Live creates {rule}. "
+        f"Nothing was deleted — the clip in session slot {clip_index} is "
+        f"still there. Make the host track with ableton_track("
+        f"action='create', kind={kind!r}), or address a track that already "
+        f"is one."
+    )
+
+
 def _locate_created_arrangement_clip(
     track: Any, *, start_beats: float, before_starts: Counter[float]
 ) -> tuple[Any, int]:
@@ -479,7 +539,9 @@ def create_handler(
       ``clip_slot.create_audio_clip(audio_path)`` for audio. By default
       errors if the slot already holds a clip; pass ``replace=True`` to
       delete-then-create atomically (the most common Hallucinote iteration
-      shape — gap #2's resolution path).
+      shape — gap #2's resolution path). A replace onto the wrong track
+      kind is refused BEFORE the delete, so the existing clip survives a
+      create Live was always going to reject.
     - **arrangement**: ``start_beats`` is required (Live counts arrangement
       time in beats). The Hallucinote planner converts bar-based song
       positions to beats using its time-signature map before emit; the MCP
@@ -573,15 +635,23 @@ def create_handler(
                     f"already occupied; pass replace=True to delete and "
                     f"recreate atomically"
                 )
+            _check_replace_track_kind(
+                track,
+                track_index=track_index,
+                kind=kind,
+                clip_index=clip_index,
+            )
             slot.delete_clip()
             replaced_existing = True
-        # A slot holds at most one clip, so replace=True must delete BEFORE it
-        # creates — and Live only refuses a wrong-kind or bad-path create after
-        # that point. The old clip is then already gone. Nothing here can give
-        # it back, so the one thing owed is that the caller LEARNS it: a bare
-        # "audio clips can only be created on audio tracks" reads like a
-        # rejected call that changed nothing, which is the reported-OK-without-
-        # determining-state failure wearing an error's clothes.
+        # The pre-check above rules out the one refusal Live's own track typing
+        # can foresee. The rest it cannot: a slot holds at most one clip, so
+        # replace=True must delete BEFORE it creates, and a path Live will not
+        # load is refused only after that point, when the old clip is already
+        # gone. Nothing here can give it back, so the one thing owed is that
+        # the caller LEARNS it — a bare "does not point to a valid audio file"
+        # reads like a rejected call that changed nothing, which is the
+        # reported-OK-without-determining-state failure wearing an error's
+        # clothes.
         try:
             if kind == "audio":
                 create_fn = getattr(slot, "create_audio_clip", None)

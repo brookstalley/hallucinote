@@ -3355,8 +3355,15 @@ def test_execute_bounds_a_placed_audio_copy_after_the_placement_applies(
     actions = [c["action"] for c in arrangement_calls]
     assert "create" in actions, actions
     region = [c for c in arrangement_calls if c["action"] == "set_property"]
-    assert [c["params"]["property"] for c in region] == ["end_marker", "loop_end"]
-    assert all(c["params"]["value"] == 16.0 for c in region), region
+    # `warping` leads, and it is the reason the two markers can be written in
+    # BEATS at all (#522): Live reads a marker in beats on a warped clip and in
+    # seconds on an unwarped one, this row authors no warp state, so the pass
+    # writes one instead of assuming Live's default supplied it.
+    assert [c["params"]["property"] for c in region] == [
+        "warping", "end_marker", "loop_end",
+    ], region
+    assert region[0]["params"]["value"] is True, region[0]
+    assert all(c["params"]["value"] == 16.0 for c in region[1:]), region
     # After the create, never before — the index it uses is the create's result.
     assert actions.index("create") < actions.index("set_property")
     created_index = 1
@@ -3478,8 +3485,13 @@ def test_one_failed_placement_costs_only_its_own_region(
     ]
     # The copy that landed is bounded to its authored 16 beats...
     assert region, "the placement that succeeded must still get its region"
-    assert {c["params"]["property"] for c in region} == {"end_marker", "loop_end"}
-    assert all(c["params"]["value"] == 16.0 for c in region), region
+    assert {c["params"]["property"] for c in region} == {
+        "warping", "end_marker", "loop_end",
+    }
+    assert all(
+        c["params"]["value"] == 16.0 for c in region
+        if c["params"]["property"] != "warping"
+    ), region
     # ...and the one that never materialized is not written onto a stale index.
     assert all(c["params"]["clip_index"] == 1 for c in region), region
 

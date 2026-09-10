@@ -13,7 +13,11 @@ from ._core import (
     _position_bar_to_beats,
     uniform_bar_math_divergences,
 )
-from .clips import AUDIO_CONFORM_PROPERTIES, resolve_authored_sample, resolve_reversed_sample
+from .clips import (
+    _conform_value,
+    resolve_authored_sample,
+    resolve_reversed_sample,
+)
 from .envelopes import envelope_hosting_clip_ids
 
 
@@ -108,6 +112,45 @@ def plan_push_arrangement_clip_notes(
 _REGION_PROPERTIES: tuple[str, ...] = ("end_marker", "loop_end")
 
 
+# The authored conform the post-apply pass writes onto an arrangement COPY, in
+# the order it writes it (#522 / #509). `warping` LEADS, because flipping it
+# changes the unit Live reads every marker in — writing a marker first and the
+# warp state after would set the right number in the wrong domain.
+#
+# `end_marker` is absent on purpose. It is a conform column on the SESSION clip
+# (the sample's own trim), but the copy's end is the PLACEMENT's span, and the
+# region write below owns it. Writing both would be two answers to one
+# question, the later one winning by accident of order.
+#
+# `reverse` is absent because Live exposes no settable reverse; a reversed line
+# is a derived asset the create already points at (see resolve_reversed_sample).
+_COPY_CONFORM_PROPERTIES: tuple[tuple[str, str], ...] = (
+    ("warping",      "warping"),
+    ("warp_mode",    "warp_mode"),
+    ("audio_gain",   "gain"),
+    ("pitch_coarse", "pitch_coarse"),
+    ("pitch_fine",   "pitch_fine"),
+    ("start_marker", "start_marker"),
+)
+
+
+def _copy_is_warped(clip_row: sqlite3.Row) -> bool:
+    """The warp state the arrangement copy WILL be in once this push is done.
+
+    Not a read of Live and not a guess about it: the post-apply pass writes
+    `warping` onto every copy whose row does not author it (#522), so this
+    answer is one the push makes true rather than one it infers. A row that
+    authors `warping = 0` keeps its answer — the song asked for an unwarped
+    clip and gets one.
+    """
+    return clip_row["warping"] is None or clip_row["warping"] != 0
+
+
+def _warp_state_is_authored(clip_row: sqlite3.Row) -> bool:
+    """Whether the SONG chose this copy's warp state, or the push did."""
+    return clip_row["warping"] is not None
+
+
 def _region_is_writable(clip_row: sqlite3.Row) -> bool:
     """Whether the authored region can be written to this clip's copy in the
     BEATS domain the arrangement is authored in.
@@ -116,10 +159,17 @@ def _region_is_writable(clip_row: sqlite3.Row) -> bool:
     when it is not (`clips.warping`, and the wire says the same). A row that
     authors `warping = 0` is saying the copy reads its markers in seconds, so a
     beats-domain region would trim it to the wrong place; the write is skipped
-    and said rather than made wrong. An unauthored `warping` leaves Live's own
-    default in force and the beats domain is the one to write.
+    and said rather than made wrong.
+
+    An UNAUTHORED `warping` used to be answered by assumption: the pass wrote
+    beats on the belief that Live had warped the file, and Live's own default
+    decides that — so the same DB pushed differently on two machines, and when
+    the guess was wrong the copy was trimmed to the wrong point with nothing
+    detecting it (#522). The pass now WRITES the warp state before it writes
+    the region, so the beats domain is true by construction; the choice it made
+    is said on the operator channel rather than made quietly.
     """
-    return clip_row["warping"] != 0
+    return _copy_is_warped(clip_row)
 
 
 def _block_note(
@@ -155,9 +205,9 @@ def _audio_placement_call(
 
     Returns ``(call, refusal, (block_note, conform_gap))``. A ``refusal`` is a reason the
     whole track must be skipped (§6a: the clear is destructive, so a track is
-    materialized only when every placement on it can be rebuilt). A
-    ``conform_gap`` is a placement that WAS planned but whose authored conform
-    could not travel with it — recorded when the track commits.
+    materialized only when every placement on it can be rebuilt). The
+    ``conform_gap`` slot is now always ``None`` — see below — and is kept so the
+    pair keeps saying what a placement's two outcomes are.
 
     The route is ``Track.create_audio_clip(path, start_beats)`` — the call the
     LOM probe confirmed for arrangement placement, reached through
@@ -175,16 +225,16 @@ def _audio_placement_call(
     disk.** Checked before the call is planned; a clip that pushes and then
     plays silence is a phase reporting OK without having determined its state.
 
-    And one thing it plans while saying what did NOT land: the direct create
-    loads a FRESH clip at Live's defaults, so the row's authored gain /
-    transpose / warp / markers stay on the session clip and do not reach the
-    arrangement copy. Nothing in the same plan can conform it — a
-    `set_property` addresses an arrangement clip by index, and that index
-    exists only in the create's RESULT, after apply; predicting it is exactly
-    the positional guess ARR-PROJ diagnosed as a root cause. The copy's
-    PLAYABLE REGION does reach it, in the pass that runs after apply against
-    the recorded link (:func:`plan_push_arrangement_audio_regions`); the rest
-    of the conform is still reported as a gap, never guessed at.
+    What the create itself cannot carry, and where that is answered: the
+    direct create loads a FRESH clip at Live's defaults, so the row's authored
+    gain / transpose / warp / start marker do not arrive with it. Nothing in
+    the same plan can conform it — a `set_property` addresses an arrangement
+    clip by index, and that index exists only in the create's RESULT, after
+    apply; predicting it is exactly the positional guess ARR-PROJ diagnosed as
+    a root cause. It is written by the pass that runs AFTER apply against the
+    recorded link (:func:`plan_push_arrangement_audio_regions`), together with
+    the copy's playable region — so the conform travels late, not never, and
+    nothing here is guessed at.
     """
     row_id = row["id"]
     where = (
@@ -228,11 +278,7 @@ def _audio_placement_call(
         ),
     )
 
-    authored = [
-        prop for column, prop in AUDIO_CONFORM_PROPERTIES
-        if clip_row[column] is not None
-    ]
-    # TWO facts, two severities, because they are two different facts.
+    # ONE fact now, where there used to be two.
     #
     # BLOCK EXTENT is universal and PERMANENT: Track.create_audio_clip takes a
     # path and a position and no length, so the copy's block is the file's
@@ -246,28 +292,21 @@ def _audio_placement_call(
     # the two-part explanation (region travels, block does not) is said once for
     # the phase in `plan_push_arrangement`'s summary alert.
     #
-    # AUTHORED CONFORM is per-song: the song asked for a gain or a warp mode and
-    # did not get it on this copy. That is a run that must not read clean.
     block_note = _block_note(
         where,
         end_bar=float(row["end_bar"]),
         region_travels=_region_is_writable(clip_row),
         route="the file's length",
     )
-    conform_gap = None
-    if authored:
-        conform_gap = (
-            f"{where} was placed, but its authored conform ({', '.join(authored)}) "
-            "did NOT travel with it. Live's Track.create_audio_clip loads a "
-            "FRESH clip at Live's defaults, and the region pass that follows the "
-            "create writes only the copy's PLAYABLE REGION — not its gain, "
-            "transpose, warp or markers. The session clip IS conformed; the "
-            "arrangement copy plays at Live's defaults until the conform reaches "
-            "it. Conform the copy in Live by hand for now; a placement whose clip "
-            "hosts an envelope does not have this gap, because it travels by "
-            "duplicate of the conformed session clip"
-        )
-    return call, None, (block_note, conform_gap)
+    # The authored conform used to be a GAP here: the direct create loads a
+    # FRESH clip at Live's defaults, and nothing in the same plan could address
+    # the copy (its index exists only in the create's RESULT). The post-apply
+    # pass now writes it against the recorded link, the same way it writes the
+    # region (#522 route 2, which is what #509 could only report). Only one
+    # authored column still does not reach the copy — `end_marker`, and it is
+    # SUPERSEDED rather than lost: the copy's end is the placement's span, not
+    # the sample's own trim. So there is nothing left to block on.
+    return call, None, (block_note, None)
 
 
 def _divergence_bars(diverging: list[tuple[float, float, float]]) -> str:
@@ -290,6 +329,72 @@ def _divergence_bars(diverging: list[tuple[float, float, float]]) -> str:
     if len(bars) <= 8:
         return ", ".join(shown)
     return ", ".join(shown) + f", and {len(bars) - 8} more"
+
+
+# The value `hallucinote.arrangement`'s `materialize` stamps on every row it
+# writes; the mutators default every other writer to `"map"`. A NULL is a row
+# written before the column existed — a third state, and load-bearing: it is
+# the one case where this planner genuinely does not know.
+_UNIFORM_RULER = "uniform"
+
+
+def _divergences_by_bar_ruler(
+    rows: list[sqlite3.Row],
+    position_of,
+    ts_points: list[sqlite3.Row],
+) -> tuple[
+    list[tuple[float, float, float]], list[tuple[float, float, float]],
+]:
+    """Split a table's bar positions by the ruler that authored them, then run
+    the divergence detector once per group (#496).
+
+    Returns ``(uniform_diverging, unrecorded_diverging)``.
+
+    Rows stamped ``map`` are DROPPED, silently and on purpose. A `map` position
+    was authored against the very `time_signature_map` push resolves it
+    through, so the two rulers "disagreeing" about it is not a defect — it is
+    the meter change doing its job. That is the whole false positive: a
+    deliberately-authored 7/4 song used to raise this alert on every push
+    forever, and an alert that fires on correct work every time is one an
+    operator learns to skip.
+
+    ``uniform_bar_math_divergences`` itself stays pure and unchanged: this
+    hands it two lists instead of one.
+    """
+    uniform_positions: list[float] = []
+    unrecorded_positions: list[float] = []
+    for row in rows:
+        ruler = row["bar_ruler"]
+        if ruler == _UNIFORM_RULER:
+            uniform_positions.append(float(position_of(row)))
+        elif ruler is None:
+            unrecorded_positions.append(float(position_of(row)))
+    return (
+        uniform_bar_math_divergences(uniform_positions, ts_points),
+        uniform_bar_math_divergences(unrecorded_positions, ts_points),
+    )
+
+
+def _unrecorded_ruler_alert(diverging, *, total: int, subject: str) -> str:
+    """The R6 alert: provenance is unrecorded, so this push cannot judge.
+
+    Kept SEPARATE from the uniform-math alert on purpose. Merging them would
+    put "these are wrong" and "we cannot tell whether these are wrong" in one
+    sentence, and the operator would have to guess which half applied to their
+    song — which is exactly the hedge #496 removed.
+    """
+    return (
+        f"PROVISIONAL — {len(diverging)} of {total} {subject} sit after a "
+        f"meter change and carry NO record of which bar ruler authored them "
+        f"(their `bar_ruler` is unset, so the rows predate this DB column). "
+        f"This push therefore cannot tell a position authored against the "
+        f"time_signature_map (correct, nothing to do) from one accumulated "
+        f"with a single beats_per_bar (misplaced). Affected bars: "
+        f"{_divergence_bars(diverging)}. Re-run the song's build — "
+        f"`python songs/<slug>/build.py` — to stamp every row with its ruler, "
+        f"then push again: this line goes away and anything genuinely "
+        f"misplaced is named exactly."
+    )
 
 
 def plan_push_arrangement(
@@ -388,23 +493,34 @@ def plan_push_arrangement(
     # `push execute --only arrangement` runs. It reports placements, not the
     # mere presence of a meter change — a song whose every clip sits before
     # the first change diverges nowhere and gets no alert.
-    diverging = uniform_bar_math_divergences(
-        [float(r["start_bar"]) for r in arr_rows], ts_points,
+    #
+    # #496: and it reports them by PROVENANCE. Only a position that uniform bar
+    # math authored can be misplaced by a meter change; one authored against
+    # the map is simply correct. Rows are partitioned before the detector runs,
+    # so a deliberate 7/4 song raises nothing at all.
+    uniform_diverging, unrecorded_diverging = _divergences_by_bar_ruler(
+        arr_rows, lambda r: r["start_bar"], ts_points,
     )
-    if diverging:
-        first_bar, mapped, uniform = diverging[0]
+    if uniform_diverging:
+        first_bar, mapped, uniform = uniform_diverging[0]
         plan.alert(
-            f"{len(diverging)} of {len(arr_rows)} arrangement placements sit "
-            f"after a meter change, where this codebase's two bar rulers "
-            f"disagree: push resolves bar positions through the "
-            f"time_signature_map, while hallucinote.arrangement accumulates "
-            f"whole bars against one uniform beats_per_bar and never reads "
-            f"the map. Affected bars: {_divergence_bars(diverging)}. "
-            f"Bar {first_bar:g} goes to beat {mapped:g} here; "
-            f"uniform math would put it at {uniform:g}. If build.py computed "
-            f"these positions with a single beats_per_bar, they will land "
-            f"somewhere other than where it intended."
+            f"{len(uniform_diverging)} of {len(arr_rows)} arrangement "
+            f"placements were authored with UNIFORM bar math — whole bars "
+            f"accumulated against one beats_per_bar, which never reads the "
+            f"song's time_signature_map — and they sit after a meter change, "
+            f"so they will NOT land where the build intended: push resolves "
+            f"every bar position through the map. Affected bars: "
+            f"{_divergence_bars(uniform_diverging)}. Bar {first_bar:g} goes "
+            f"to beat {mapped:g} here; the uniform math that authored it put "
+            f"it at {uniform:g}. Author these positions against the meter map "
+            f"(or move them before the meter change) and re-push."
         )
+    if unrecorded_diverging:
+        plan.alert(_unrecorded_ruler_alert(
+            unrecorded_diverging,
+            total=len(arr_rows),
+            subject="arrangement placements",
+        ))
 
     if live_arrangement_clips_by_track is None:
         plan.alert(
@@ -479,6 +595,13 @@ def plan_push_arrangement(
         placement_calls: list[ToolCall] = []
         pending_gaps: list[str] = []
         pending_extent_notes: list[tuple[str, bool]] = []
+        # #506: the summary counts what was PLACED, not what was considered.
+        # These ride with the calls through validation and are folded into the
+        # phase totals only where the track commits — the same boundary the
+        # gaps and the extent notes already wait for, and for the same reason:
+        # a track that ends up skipped entirely emits no clear and no create,
+        # so anything it contributed to a total names work nobody attempted.
+        pending_created = pending_duplicated = pending_placed_audio = 0
         skip_reason: str | None = None
         for row in rows:
             clip_row = Q.get_clip(conn, row["clip_id"])
@@ -523,7 +646,7 @@ def plan_push_arrangement(
                     )
                     if authored_gap is not None:
                         pending_gaps.append(authored_gap)
-                placed_audio += 1
+                pending_placed_audio += 1
                 continue
 
             if hosts_envelope:
@@ -559,9 +682,9 @@ def plan_push_arrangement(
                         + "; cleared region first — no B-24)"
                     ),
                 ))
-                duplicated += 1
+                pending_duplicated += 1
                 if is_audio:
-                    placed_audio += 1
+                    pending_placed_audio += 1
                     # The block is the session clip's length on this route, and
                     # is just as unmovable as on the direct create — but the
                     # copy's playable region is written by the same post-apply
@@ -596,7 +719,7 @@ def plan_push_arrangement(
                         f"({len(notes)} notes from DB)"
                     ),
                 ))
-                created += 1
+                pending_created += 1
 
         if skip_reason is not None:
             msg = (
@@ -661,6 +784,9 @@ def plan_push_arrangement(
         for gap in pending_gaps:
             plan.blocked(f"arrangement: {gap}.")
         extent_notes.extend(pending_extent_notes)
+        created += pending_created
+        duplicated += pending_duplicated
+        placed_audio += pending_placed_audio
 
     if extent_notes:
         shown = [line for line, _ in extent_notes[:8]]
@@ -733,7 +859,7 @@ def plan_push_arrangement_audio_regions(
     song_id: str,
     session_id: str,
 ) -> PushPlan:
-    """Set each placed audio copy's PLAYABLE REGION to the span the placement
+    """CONFORM each placed audio copy and bound it to the span the placement
     authored — the pass that runs AFTER the arrangement placements apply.
 
     Why it is a separate pass and not part of :func:`plan_push_arrangement`: a
@@ -746,20 +872,41 @@ def plan_push_arrangement_audio_regions(
 
     What it writes, and what it cannot:
 
+    * The authored CONFORM (:data:`_COPY_CONFORM_PROPERTIES`) on the
+      direct-create route, where a fresh clip arrived at Live's defaults and
+      the song's gain / pitch / warp mode / start marker did not travel with
+      it. On the duplicate route the copy came off the conformed session clip,
+      so only the warp state below is ever written.
+    * `warping` on EVERY copy whose row does not author one. This is the fix
+      for the unit the rest of the pass writes in (#522): Live's markers are
+      beats when a clip is warped and SECONDS when it is not, the arrangement
+      is authored in bars, and a copy whose warp state nobody set is whatever
+      Live's own preference made it — so the same DB pushed differently on two
+      machines and the wrong-unit write went undetected. Writing the warp state
+      makes the beats domain true by construction instead of assumed. It is
+      said on the operator channel, because choosing on the song's behalf is a
+      thing an operator may want to overrule (author `warping` on the clip row).
     * `end_marker` and `loop_end` (:data:`_REGION_PROPERTIES`) go to the end of
       the authored span. A clip that runs once is bounded by the marker; a
       LOOPING one repeats its brace instead, so both move together and the copy
-      sounds the authored span in either state.
+      sounds the authored span in either state. This is why the session clip's
+      own authored `end_marker` is NOT in the conform list: the copy's end is
+      the PLACEMENT's span.
     * The BLOCK the copy occupies on the timeline is `Clip.end_time`, which Live
       exposes with no setter. It is fixed when the clip is placed. Nothing here
       changes it and nothing can — the copy plays the right span inside a block
       that may still run to the file's length.
 
+    Order is load-bearing: `warping` is written before any marker, because
+    flipping it changes the unit Live reads every marker in.
+
     A placement is skipped, with a reason on the operator channel, when its copy
     is not addressable (no track or `arrangement_clip` link recorded — the
-    placement did not materialize, and the arrangement phase already said so) or
-    when the row authors `warping = 0`, which puts the copy's markers in seconds
-    while the arrangement is authored in bars (see :func:`_region_is_writable`).
+    placement did not materialize, and the arrangement phase already said so).
+    Its REGION alone is skipped, with its own reason, when the row authors
+    `warping = 0`: the song asked for an unwarped copy, which reads its markers
+    in seconds, and a beats-domain span would trim it to the wrong point. The
+    conform still travels in that case — the unwarped state is part of it.
     """
     plan = PushPlan()
     rows = [
@@ -774,6 +921,7 @@ def plan_push_arrangement_audio_regions(
     host_clip_ids = envelope_hosting_clip_ids(conn, song_id)
     unwarped: list[str] = []
     unlinked: list[str] = []
+    warp_authored_by_push: list[str] = []
 
     for row in rows:
         row_id = row["id"]
@@ -794,7 +942,54 @@ def plan_push_arrangement_audio_regions(
         if clip_row is None:
             unlinked.append(where)
             continue
-        if not _region_is_writable(clip_row):
+        travelled_by_duplicate = row["clip_id"] in host_clip_ids
+        warped = _copy_is_warped(clip_row)
+        if not _warp_state_is_authored(clip_row):
+            warp_authored_by_push.append(where)
+
+        # CONFORM first. On the direct-create route the copy arrived fresh at
+        # Live's defaults and the whole authored conform has to be written; on
+        # the duplicate route it came off the CONFORMED session clip, so the
+        # only thing left to write is a warp state the song never authored —
+        # nothing travelled for a column nobody filled in.
+        for column, prop in _COPY_CONFORM_PROPERTIES:
+            if column == "warping":
+                if _warp_state_is_authored(clip_row) and travelled_by_duplicate:
+                    continue
+                value: object = warped
+            else:
+                if travelled_by_duplicate or clip_row[column] is None:
+                    continue
+                value = _conform_value(column, clip_row[column])
+            plan.add(ToolCall(
+                tool="ableton_clip",
+                args={
+                    "action": "set_property",
+                    "location": "arrangement",
+                    "track_index": track_at,
+                    "clip_index": arr_at,
+                    "property": prop,
+                    "value": value,
+                },
+                # The pass's own key kind, shared with the region writes
+                # below and told apart by the property name. Ack-only: the
+                # value ORIGINATES in the DB and the write records no Live-side
+                # index — the copy's link is what it addressed. Sharing the
+                # kind is what keeps a refused conform from HALTING the phase,
+                # on the same ground as a refused region write: the copy is
+                # then in the state it was in before this pass existed.
+                key=f"arrangement_clip_region:{row_id}:{prop}",
+                purpose=(
+                    f"conform arrangement copy of placement {row_id!r}: "
+                    f"{prop}={value!r}"
+                ),
+            ))
+
+        if not warped:
+            # The song authored an unwarped copy. Its markers are in seconds
+            # and the placement's span is in bars, so the region is skipped and
+            # said rather than written in the wrong domain. The conform above
+            # still travels — the unwarped state is part of what was authored.
             unwarped.append(where)
             continue
 
@@ -802,14 +997,14 @@ def plan_push_arrangement_audio_regions(
             _position_bar_to_beats(row["end_bar"], ts_points)
             - _position_bar_to_beats(row["start_bar"], ts_points)
         )
-        # The region starts where the copy's playable region already starts, so
-        # the write moves the END and nothing else. On the duplicate route the
-        # session clip's conformed `start_marker` travelled with the copy; on
-        # the direct create it did not (that is the conform gap the arrangement
-        # phase reports), so the copy sits at Live's own 0.0.
-        start_marker = 0.0
-        if row["clip_id"] in host_clip_ids and clip_row["start_marker"] is not None:
-            start_marker = float(clip_row["start_marker"])
+        # The region starts where the copy's playable region starts, so the
+        # write moves the END and nothing else. That start is the authored
+        # `start_marker` on BOTH routes now: the duplicate carried the session
+        # clip's conformed one, and the direct create has it written above.
+        start_marker = (
+            float(clip_row["start_marker"])
+            if clip_row["start_marker"] is not None else 0.0
+        )
         region_end = start_marker + region_beats
 
         for prop in _REGION_PROPERTIES:
@@ -838,13 +1033,38 @@ def plan_push_arrangement_audio_regions(
     # create did not land this phase, so a count taken here reports copies that
     # were never written. The executor owns the outcome line, derived from the
     # results it actually got back.
+    if warp_authored_by_push:
+        # Not a warning that something went wrong — a statement that the push
+        # DECIDED something the song left open, and how to take the decision
+        # back. The alternative is what #522 reported: the copy's warp state is
+        # whatever Live's own preference made it, the region is written in beats
+        # regardless, and a file Live loaded unwarped is trimmed to the wrong
+        # point with nothing detecting it — differently on two machines, from
+        # one DB.
+        plan.alert(
+            f"arrangement: {len(warp_authored_by_push)} audio placement(s) "
+            "have no authored `warping`, so this push WARPED their arrangement "
+            "copy. The copy's playable region is written in beats — Live reads "
+            "markers in beats on a warped clip and in seconds on an unwarped "
+            "one — and leaving the warp state to Live's own default would make "
+            "that unit a guess, and the same DB push differently on two "
+            "machines. To keep a copy unwarped, author warping=0 on its clip "
+            "row: the region write is then skipped and said, and the copy plays "
+            "its file at its own rate. Placements: "
+            + " | ".join(warp_authored_by_push[:8])
+            + (
+                f" | and {len(warp_authored_by_push) - 8} more"
+                if len(warp_authored_by_push) > 8 else ""
+            )
+        )
     if unwarped:
         plan.alert(
             f"arrangement: {len(unwarped)} audio placement(s) kept their copy's "
             "FULL playable region — the row authors warping=0, so Live reads the "
             "copy's markers in seconds while the placement is authored in bars, "
-            "and a beats-domain write would trim to the wrong point. Warp the "
-            "clip, or trim the copy in Live. Placements: "
+            "and a beats-domain write would trim to the wrong point. The rest of "
+            "the authored conform still travels; only the region is skipped. "
+            "Warp the clip, or trim the copy in Live. Placements: "
             + " | ".join(unwarped[:8])
             + (f" | and {len(unwarped) - 8} more" if len(unwarped) > 8 else "")
         )
@@ -918,21 +1138,31 @@ def plan_push_cue_points(
 
     # A cue's position resolves through the meter map below, so it diverges from
     # uniform bar math for exactly the same reason an arrangement placement does
-    # (see plan_push_arrangement). Cues + placements are the whole surface:
-    # clip lengths come from length_beats, and plan_push_sections emits no calls.
-    diverging = uniform_bar_math_divergences(
-        [float(r["position_bar"]) for r in rows], ts_points,
+    # — and is partitioned by the same recorded provenance (see
+    # plan_push_arrangement and :func:`_divergences_by_bar_ruler`). Cues +
+    # placements are the whole surface: clip lengths come from length_beats, and
+    # plan_push_sections emits no calls.
+    uniform_diverging, unrecorded_diverging = _divergences_by_bar_ruler(
+        rows, lambda r: r["position_bar"], ts_points,
     )
-    if diverging:
-        first_bar, mapped, uniform = diverging[0]
+    if uniform_diverging:
+        first_bar, mapped, uniform = uniform_diverging[0]
         plan.alert(
-            f"{len(diverging)} of {len(rows)} cue points sit after a meter "
-            f"change, where push's meter-map bar→beat translation and "
-            f"hallucinote.arrangement's uniform beats_per_bar disagree. "
-            f"Affected bars: {_divergence_bars(diverging)}. Bar "
-            f"{first_bar:g} goes to beat {mapped:g} here; uniform math would "
-            f"put it at {uniform:g}."
+            f"{len(uniform_diverging)} of {len(rows)} cue points were "
+            f"authored with UNIFORM bar math — whole bars accumulated against "
+            f"one beats_per_bar, which never reads the song's "
+            f"time_signature_map — and they sit after a meter change, so they "
+            f"will NOT land where the build intended: push resolves every bar "
+            f"position through the map. Affected bars: "
+            f"{_divergence_bars(uniform_diverging)}. Bar {first_bar:g} goes "
+            f"to beat {mapped:g} here; the uniform math that authored it put "
+            f"it at {uniform:g}. Author these positions against the meter map "
+            f"(or move them before the meter change) and re-push."
         )
+    if unrecorded_diverging:
+        plan.alert(_unrecorded_ruler_alert(
+            unrecorded_diverging, total=len(rows), subject="cue points",
+        ))
 
     # SYN-6B4Q: partition cues against the DB's composed song length.
     #

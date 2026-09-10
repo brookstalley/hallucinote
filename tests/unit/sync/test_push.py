@@ -459,13 +459,13 @@ def test_plan_push_arrangement_alerts_only_on_placements_past_a_meter_change(
     # Bar 5 is before the change: map and uniform math both say beat 16.
     M.add_arrangement_clip(
         conn, song_id=song, track_id=track, clip_id=clip,
-        start_bar=5.0, end_bar=9.0,
+        start_bar=5.0, end_bar=9.0, bar_ruler="uniform",
     )
     plan = push.plan_push_arrangement(
         conn, song_id=song, session_id=session,
         live_arrangement_clips_by_track={2: []},
     )
-    assert not any("bar rulers" in a for a in plan.alerts), (
+    assert not any("UNIFORM bar math" in a for a in plan.alerts), (
         "a placement before the meter change diverges nowhere — alerting on "
         "it makes the signal unreadable on every legitimate odd-meter song"
     )
@@ -473,13 +473,13 @@ def test_plan_push_arrangement_alerts_only_on_placements_past_a_meter_change(
     # Bar 13 is four 7/4 bars past the change: 32 + 28 = 60, not 48.
     M.add_arrangement_clip(
         conn, song_id=song, track_id=track, clip_id=clip,
-        start_bar=13.0, end_bar=17.0,
+        start_bar=13.0, end_bar=17.0, bar_ruler="uniform",
     )
     plan = push.plan_push_arrangement(
         conn, song_id=song, session_id=session,
         live_arrangement_clips_by_track={2: []},
     )
-    hit = next(a for a in plan.alerts if "bar rulers" in a)
+    hit = next(a for a in plan.alerts if "UNIFORM bar math" in a)
     assert "1 of 2 arrangement placements" in hit
     assert "beat 60" in hit and "48" in hit
     assert "Affected bars: 13" in hit, (
@@ -507,12 +507,13 @@ def test_plan_push_arrangement_alert_enumerates_every_diverging_bar(
         M.add_arrangement_clip(
             conn, song_id=song, track_id=track, clip_id=clip,
             start_bar=float(start), end_bar=float(start) + 1.0,
+            bar_ruler="uniform",
         )
     plan = push.plan_push_arrangement(
         conn, song_id=song, session_id=session,
         live_arrangement_clips_by_track={2: []},
     )
-    hit = next(a for a in plan.alerts if "bar rulers" in a)
+    hit = next(a for a in plan.alerts if "UNIFORM bar math" in a)
     assert "Affected bars: 10, 11, 12, 13, 14" in hit
     assert "more" not in hit, "five bars is under the cap; nothing was dropped"
 
@@ -521,12 +522,13 @@ def test_plan_push_arrangement_alert_enumerates_every_diverging_bar(
         M.add_arrangement_clip(
             conn, song_id=song, track_id=track, clip_id=clip,
             start_bar=float(start), end_bar=float(start) + 1.0,
+            bar_ruler="uniform",
         )
     plan = push.plan_push_arrangement(
         conn, song_id=song, session_id=session,
         live_arrangement_clips_by_track={2: []},
     )
-    hit = next(a for a in plan.alerts if "bar rulers" in a)
+    hit = next(a for a in plan.alerts if "UNIFORM bar math" in a)
     assert "Affected bars: 10, 11, 12, 13, 14, 15, 16, 17, and 1 more" in hit
 
 
@@ -565,19 +567,19 @@ def test_plan_push_arrangement_alert_collapses_a_bar_shared_across_tracks(
         for b in bars:
             M.add_arrangement_clip(
                 conn, song_id=song, track_id=tid, clip_id=cid,
-                start_bar=b, end_bar=b + 1.0,
+                start_bar=b, end_bar=b + 1.0, bar_ruler="uniform",
             )
     for b in (10.0, 11.0, 12.0, 20.0):
         M.add_arrangement_clip(
             conn, song_id=song, track_id=track, clip_id=clip,
-            start_bar=b, end_bar=b + 1.0,
+            start_bar=b, end_bar=b + 1.0, bar_ruler="uniform",
         )
 
     plan = push.plan_push_arrangement(
         conn, song_id=song, session_id=session,
         live_arrangement_clips_by_track=probe,
     )
-    hit = next(a for a in plan.alerts if "bar rulers" in a)
+    hit = next(a for a in plan.alerts if "UNIFORM bar math" in a)
     # Pin the WHOLE clause, up to its terminating period. A prefix assertion
     # passes on the undeduped list too, because that list happens to start with
     # these same four bars before it begins repeating them.
@@ -587,6 +589,164 @@ def test_plan_push_arrangement_alert_collapses_a_bar_shared_across_tracks(
     )
     # The opening clause still counts placements, not distinct bars.
     assert "10 of 10 arrangement placements" in hit
+
+
+def _seven_four_song(conn, song, session, track):
+    """A song that changes to 7/4 at bar 9, with its one track linked."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=9.0, numerator=7, denominator=4
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=2
+    )
+
+
+def test_a_correctly_authored_multi_meter_song_raises_no_divergence_alert(
+    conn, song, session, track, clip
+):
+    """#496 acceptance 1. A deliberate 7/4 song whose placements were authored
+    against the meter map is CORRECT — every one of them lands where the song
+    asked. The old detector could not see that (nothing recorded which ruler
+    wrote a row), so it fired on every push forever, and an alert that fires on
+    correct work every time is one an operator learns to skip."""
+    _seven_four_song(conn, song, session, track)
+    for start in (10.0, 13.0, 16.0):
+        M.add_arrangement_clip(
+            conn, song_id=song, track_id=track, clip_id=clip,
+            start_bar=start, end_bar=start + 1.0, bar_ruler="map",
+        )
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track={2: []},
+    )
+    assert not any("UNIFORM bar math" in a for a in plan.alerts), plan.alerts
+    assert not any("PROVISIONAL" in a for a in plan.alerts), plan.alerts
+    assert not any("bar ruler" in a for a in plan.notes), plan.notes
+
+
+def test_the_map_default_is_what_makes_an_unwitting_writer_correct(
+    conn, song, session, track, clip
+):
+    """#496 R2, from the writer's side. `map` is the MUTATOR's default, so a
+    caller that has never heard of provenance authors correct rows — the rule
+    cannot be routed around by forgetting it."""
+    _seven_four_song(conn, song, session, track)
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip,
+        start_bar=13.0, end_bar=17.0,
+    )
+    assert Q.get_arrangement_for_song(conn, song)[0]["bar_ruler"] == "map"
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track={2: []},
+    )
+    assert not any("UNIFORM bar math" in a for a in plan.alerts), plan.alerts
+
+
+def test_the_uniform_alert_states_the_provenance_instead_of_hedging_about_it(
+    conn, song, session, track, clip
+):
+    """#496 R4 + R5. The true positive still fires, still on `alerts`, still
+    naming the bars — and it no longer has to guess at its own premise. The old
+    text ended "If build.py computed these positions with a single
+    beats_per_bar, they will land somewhere other than where it intended";
+    the row now SAYS it did, so the message states it."""
+    _seven_four_song(conn, song, session, track)
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip,
+        start_bar=13.0, end_bar=17.0, bar_ruler="uniform",
+    )
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track={2: []},
+    )
+    hit = next(a for a in plan.alerts if "UNIFORM bar math" in a)
+    assert "If build.py" not in hit, hit
+    assert "Affected bars: 13" in hit
+    assert "beat 60" in hit and "48" in hit
+
+
+def test_a_uniform_row_still_alerts_even_when_map_rows_share_the_song(
+    conn, song, session, track, clip
+):
+    """The partition is per ROW, not per song. One badly-authored placement
+    among correct ones is exactly the case the alert exists for, and the count
+    it reports must name the diverging group, not the whole table."""
+    _seven_four_song(conn, song, session, track)
+    for start in (10.0, 11.0):
+        M.add_arrangement_clip(
+            conn, song_id=song, track_id=track, clip_id=clip,
+            start_bar=start, end_bar=start + 1.0, bar_ruler="map",
+        )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip,
+        start_bar=13.0, end_bar=14.0, bar_ruler="uniform",
+    )
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track={2: []},
+    )
+    hit = next(a for a in plan.alerts if "UNIFORM bar math" in a)
+    assert "1 of 3 arrangement placements" in hit
+    assert "Affected bars: 13. " in hit, "only the uniform row is named"
+
+
+def test_an_unrecorded_ruler_raises_its_own_provisional_alert(
+    conn, song, session, track, clip
+):
+    """#496 R6. A row written before the column exists is a third state, and
+    silence on it would hide the very defect the alert is for. It gets its OWN
+    alert, says the provenance is unrecorded, names the one-command fix, and is
+    never merged into the uniform-math message — "these are wrong" and "we
+    cannot tell whether these are wrong" in one sentence is the hedge again."""
+    _seven_four_song(conn, song, session, track)
+    aid = M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip,
+        start_bar=13.0, end_bar=17.0, bar_ruler="uniform",
+    )
+    # The shape a pre-column row migrates in as.
+    conn.execute("UPDATE arrangement_clips SET bar_ruler = NULL WHERE id = ?", (aid,))
+
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track={2: []},
+    )
+    provisional = next(a for a in plan.alerts if "PROVISIONAL" in a)
+    assert "Affected bars: 13" in provisional
+    assert "build.py" in provisional, "the fix has to be nameable"
+    assert "UNIFORM bar math" not in provisional, (
+        "the provisional alert must not claim the uniform-math finding — it is "
+        "the alert for not knowing"
+    )
+    assert not any("UNIFORM bar math" in a for a in plan.alerts), plan.alerts
+
+
+def test_re_running_a_rewritten_build_restamps_the_ruler(
+    conn, song, session, track, clip
+):
+    """Multi-hop: the fix for a uniform-math song is to author it against the
+    map and re-run the build. That second run takes the mutator's existing-row
+    UPDATE branch, so the ruler has to travel with it — a stale `uniform` left
+    standing would keep alerting on a song that has already been repaired."""
+    _seven_four_song(conn, song, session, track)
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip,
+        start_bar=13.0, end_bar=17.0, bar_ruler="uniform",
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip,
+        start_bar=13.0, end_bar=17.0, bar_ruler="map",
+    )
+    rows = Q.get_arrangement_for_song(conn, song)
+    assert len(rows) == 1 and rows[0]["bar_ruler"] == "map"
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track={2: []},
+    )
+    assert not any("UNIFORM bar math" in a for a in plan.alerts), plan.alerts
 
 
 def test_plan_push_arrangement_multiple_placements_create_separate_calls(
@@ -984,6 +1144,129 @@ def test_plan_push_arrangement_audio_track_without_placements_untouched(
     # On the operator channel (alerts), not `notes` — the executor shows the
     # operator alerts only, and "untouched" must not read as "forgotten".
     assert any("Vox" in a and "UNTOUCHED" in a for a in plan.alerts)
+
+
+def test_the_summary_counts_what_was_placed_not_what_was_considered(
+    conn, song, session, track, clip, monkeypatch
+):
+    """#506. The counters used to rise during per-placement VALIDATION, and
+    `skip_reason` was only consulted after — so a track skipped entirely (no
+    clear, no rebuild, §6a) still contributed everything it had validated
+    before the failure. The operator read a summary naming work nobody
+    attempted.
+
+    A sibling track that DOES commit keeps the summary line present, which is
+    what makes the number readable: 1, from the one track that was built."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=2,
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip,
+        start_bar=1.0, end_bar=5.0,
+    )
+    # The doomed track: its FIRST placement validates (a note-only create), its
+    # second cannot resolve, so the whole track is skipped.
+    doomed = M.create_track(
+        conn, song_id=song, track_index=2, name="Keys", kind="midi",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=doomed, ableton_index=3,
+    )
+    plain = M.create_clip(conn, track_id=doomed, slot=1, length_beats=16.0, name="a")
+    linked_host = M.create_clip(
+        conn, track_id=doomed, slot=2, length_beats=16.0, name="b",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="clip", db_id=linked_host,
+        ableton_index=2,
+    )
+    orphan_host = M.create_clip(
+        conn, track_id=doomed, slot=3, length_beats=16.0, name="c",
+    )
+    for cid, start in ((plain, 1.0), (linked_host, 5.0), (orphan_host, 9.0)):
+        M.add_arrangement_clip(
+            conn, song_id=song, track_id=doomed, clip_id=cid,
+            start_bar=start, end_bar=start + 4.0,
+        )
+    # All three counters are exercised on the one doomed track: `plain` would
+    # have counted a create, `linked_host` a duplicate, and `orphan_host` — an
+    # envelope host with no session link — is what takes the whole track down.
+    monkeypatch.setattr(
+        "hallucinote.sync.push.arrangement.envelope_hosting_clip_ids",
+        lambda conn, song_id: {linked_host, orphan_host},
+    )
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track={2: [], 3: []},
+    )
+    assert any("skipping track" in b for b in plan.blocked_reasons), (
+        plan.blocked_reasons
+    )
+    assert [c.args["track_index"] for c in plan.calls] == [2], (
+        "the doomed track emits nothing at all — no clear, no create"
+    )
+    summary = next(n for n in plan.notes if "arrangement projection" in n)
+    assert "created+filled 1" in summary, summary
+    assert "duplicated 0" in summary, summary
+    assert "across 1 track(s)" in summary, summary
+
+
+def test_the_summary_counts_no_audio_for_a_track_it_did_not_build(
+    conn, song, session, track, clip, tmp_path
+):
+    """#506, the audio half. `placed_audio` and `duplicated` follow the same
+    rule as `created`, which is why all three moved together: the newest
+    counter deliberately copied the existing pattern rather than diverging
+    from it, so fixing one and not the others would leave two thirds of the
+    defect in place."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=2,
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip,
+        start_bar=1.0, end_bar=5.0,
+    )
+    (tmp_path / "assets").mkdir(exist_ok=True)
+    (tmp_path / "assets" / "here.wav").write_bytes(b"RIFF")
+    atrack = M.create_track(
+        conn, song_id=song, track_index=3, name="Vox", kind="audio",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=atrack, ableton_index=3,
+    )
+    present = M.create_audio_clip(
+        conn, track_id=atrack, slot=1, length_beats=16.0,
+        audio_file="assets/here.wav", name="here",
+    )
+    absent = M.create_audio_clip(
+        conn, track_id=atrack, slot=2, length_beats=16.0,
+        audio_file="assets/gone.wav", name="gone",
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=atrack, clip_id=present,
+        start_bar=1.0, end_bar=5.0,
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=atrack, clip_id=absent,
+        start_bar=5.0, end_bar=9.0,
+    )
+    plan = push.plan_push_arrangement(
+        conn, song_id=song, session_id=session,
+        live_arrangement_clips_by_track={2: [], 3: []},
+    )
+    assert any("skipping track" in b for b in plan.blocked_reasons), (
+        plan.blocked_reasons
+    )
+    summary = next(n for n in plan.notes if "arrangement projection" in n)
+    assert "placed 0 audio" in summary, summary
+    assert "duplicated 0" in summary, summary
+    assert "created+filled 1" in summary, summary
 
 
 def test_plan_push_arrangement_sibling_track_unaffected_by_skip(

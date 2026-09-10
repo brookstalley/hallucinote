@@ -247,11 +247,12 @@ def _fold_event(conn, kind: str, payload: dict, song_id, clip_id) -> None:
     elif kind == E.ARRANGEMENT_CLIP_ADDED:
         conn.execute(
             "INSERT INTO arrangement_clips "
-            "(id, song_id, track_id, clip_id, start_bar, end_bar) "
-            "VALUES (?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(id) DO UPDATE SET end_bar = excluded.end_bar",
+            "(id, song_id, track_id, clip_id, start_bar, end_bar, bar_ruler) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(id) DO UPDATE SET end_bar = excluded.end_bar, "
+            "bar_ruler = excluded.bar_ruler",
             (p["arrangement_clip_id"], song_id, p["track_id"], p["clip_id"],
-             p["start_bar"], p["end_bar"]),
+             p["start_bar"], p["end_bar"], p["bar_ruler"]),
         )
     elif kind == E.ARRANGEMENT_CLIP_REMOVED:
         conn.execute(

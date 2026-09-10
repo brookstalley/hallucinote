@@ -213,7 +213,9 @@ suggested recovery), which restored both lost gain cuts.
   EQ Eight 7 of 84 params changed (two real gain cuts to 0.0), Erosion 0 of 6. Re-run this box
   once A and B are fixed.
 
-  **Defect B is fixed** (PR #540, `scope=CHAIN-RESTORE-STR`): the restore now hands the wire a
+  **Defect B is fixed** (the one-line fix in PR #540; its `scope=CHAIN-RESTORE-STR`
+  change-log entry landed separately in PR #542, which repaired #540's incomplete
+  merge): the restore now hands the wire a
   string, so a continuous parameter can be carried at all. **Defect A is not** — #532 is open,
   and until it lands the restore still addresses devices by their pre-delete physical index.
   So this box stays unticked and is **blocked behind #532, not behind #533**: re-running it now

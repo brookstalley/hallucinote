@@ -3678,3 +3678,199 @@ def test_cli_execute_regenerates_requirements_exactly_once_when_both_applied(
     rc = push_cli.main(["execute", session, "--song", "t", "--no-coherence-check"])
     assert rc == 0
     assert calls == ["t"], f"expected exactly one regen, got {len(calls)}"
+
+
+# ---------------------------------------------------------------------------
+# DEV-5R8Q — `execute --reconcile-chains`: opt-in, never automatic
+#
+# The reconcile deletes and reloads real devices and holds Live for real
+# wall-clock time. The flag is the operator's authorization of that; without it
+# the devices phase's occupied-slot halt stands and its message names the
+# remedy. These pin BOTH halves — an automatic reconcile would be exactly the
+# destructive operation nobody asked for.
+# ---------------------------------------------------------------------------
+
+
+def _stub_execute(monkeypatch):
+    """Replace the fourteen-phase dispatch with a clean ok, so these tests
+    observe only what happens BEFORE it."""
+    def _fake_execute(**kwargs):
+        from hallucinote.sync.push_execute import ExecuteResult
+        return ExecuteResult(
+            outcome="ok", exit_code=0, phase_halted=None,
+            phases=[], state_file=None, errors_file=None,
+        )
+    monkeypatch.setattr(push_cli.push_execute, "execute_push", _fake_execute)
+
+
+def test_cli_execute_without_the_flag_never_reconciles(
+    conn, song, session, db_path, monkeypatch, tmp_path,
+):
+    """The default push must not start a rebuild. Nothing here even reaches
+    `reconcile_chains` — the flag is the only door to it."""
+    from hallucinote.sync import chain_rebuild
+
+    monkeypatch.setattr(push, "check_coherence",
+                        lambda *a, **kw: push.CoherenceResult(ok=True))
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp",
+                        lambda send_fn=None: ([], []))
+    _stub_execute(monkeypatch)
+    called = {"n": 0}
+    monkeypatch.setattr(
+        chain_rebuild, "reconcile_chains",
+        lambda *a, **kw: called.__setitem__("n", called["n"] + 1) or [],
+    )
+
+    rc = push_cli.main([
+        "execute", session, "--db", str(db_path), "--probe",
+        "--state-dir", str(tmp_path),
+    ])
+    assert rc == 0
+    assert called["n"] == 0
+
+
+def test_cli_execute_reconcile_chains_runs_before_the_phases(
+    conn, song, session, db_path, monkeypatch, tmp_path, capsys,
+):
+    """With the flag, the rebuild runs BEFORE the phase dispatch — so the
+    devices planner then sees a linked, in-order chain and emits no load at
+    all. Ordering is the assertion; running it after would be useless."""
+    from hallucinote.sync import chain_rebuild
+
+    monkeypatch.setattr(push, "check_coherence",
+                        lambda *a, **kw: push.CoherenceResult(ok=True))
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp",
+                        lambda send_fn=None: ([], []))
+    monkeypatch.setattr(push_cli, "_probe_live_devices_via_mcp",
+                        lambda **kw: {("track", 3): []})
+    monkeypatch.setattr(push_cli, "_resolve_send_fn", lambda: (lambda req: None))
+    order: list[str] = []
+
+    def _fake_reconcile(*args, **kwargs):
+        order.append("reconcile")
+        return [chain_rebuild.RebuildResult(
+            parent_kind="track", parent_index=3, parent_name="Alien Voice",
+            from_position=1, deleted=["Analog"], loaded=["Operator"],
+            restored_params=4,
+        )]
+    monkeypatch.setattr(chain_rebuild, "reconcile_chains", _fake_reconcile)
+
+    def _fake_execute(**kwargs):
+        order.append("execute")
+        from hallucinote.sync.push_execute import ExecuteResult
+        return ExecuteResult(
+            outcome="ok", exit_code=0, phase_halted=None,
+            phases=[], state_file=None, errors_file=None,
+        )
+    monkeypatch.setattr(push_cli.push_execute, "execute_push", _fake_execute)
+
+    rc = push_cli.main([
+        "execute", session, "--db", str(db_path), "--probe",
+        "--reconcile-chains", "--state-dir", str(tmp_path),
+    ])
+    assert rc == 0
+    assert order == ["reconcile", "execute"]
+    err = capsys.readouterr().err
+    assert "reconciled" in err
+    assert "Alien Voice" in err
+
+
+def test_cli_execute_reconcile_failure_stops_the_push(
+    conn, song, session, db_path, monkeypatch, tmp_path, capsys,
+):
+    """A rebuild that refused or failed its read-back leaves the set
+    half-reconciled. Pushing into that is worse than not pushing, so the run
+    stops with the journal named rather than dispatching phases over it."""
+    from hallucinote.sync import chain_rebuild
+
+    monkeypatch.setattr(push, "check_coherence",
+                        lambda *a, **kw: push.CoherenceResult(ok=True))
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp",
+                        lambda send_fn=None: ([], []))
+    monkeypatch.setattr(push_cli, "_probe_live_devices_via_mcp",
+                        lambda **kw: {})
+    monkeypatch.setattr(push_cli, "_resolve_send_fn", lambda: (lambda req: None))
+    dispatched = {"n": 0}
+
+    def _boom(*args, **kwargs):
+        raise chain_rebuild.RebuildVerifyFailed("VERIFY FAILED on track #3")
+    monkeypatch.setattr(chain_rebuild, "reconcile_chains", _boom)
+
+    def _fake_execute(**kwargs):
+        dispatched["n"] += 1
+        from hallucinote.sync.push_execute import ExecuteResult
+        return ExecuteResult(
+            outcome="ok", exit_code=0, phase_halted=None,
+            phases=[], state_file=None, errors_file=None,
+        )
+    monkeypatch.setattr(push_cli.push_execute, "execute_push", _fake_execute)
+
+    rc = push_cli.main([
+        "execute", session, "--db", str(db_path), "--probe",
+        "--reconcile-chains", "--state-dir", str(tmp_path),
+    ])
+    assert rc == 1
+    assert dispatched["n"] == 0
+    err = capsys.readouterr().err
+    assert "VERIFY FAILED" in err
+    assert "chain-rebuild --resume" in err
+
+
+def test_cli_execute_reconcile_says_so_when_there_is_nothing_to_do(
+    conn, song, session, db_path, monkeypatch, tmp_path, capsys,
+):
+    """"Nothing was occupied" must read differently from "something was
+    rebuilt" — an operator who passed a destructive flag is owed the
+    difference."""
+    from hallucinote.sync import chain_rebuild
+
+    monkeypatch.setattr(push, "check_coherence",
+                        lambda *a, **kw: push.CoherenceResult(ok=True))
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp",
+                        lambda send_fn=None: ([], []))
+    monkeypatch.setattr(push_cli, "_probe_live_devices_via_mcp",
+                        lambda **kw: {})
+    monkeypatch.setattr(push_cli, "_resolve_send_fn", lambda: (lambda req: None))
+    monkeypatch.setattr(chain_rebuild, "reconcile_chains",
+                        lambda *a, **kw: [])
+    _stub_execute(monkeypatch)
+
+    rc = push_cli.main([
+        "execute", session, "--db", str(db_path), "--probe",
+        "--reconcile-chains", "--state-dir", str(tmp_path),
+    ])
+    assert rc == 0
+    assert "nothing to rebuild" in capsys.readouterr().err
+
+
+def test_cli_execute_reconcile_refuses_when_live_cannot_be_read(
+    conn, song, session, db_path, monkeypatch, tmp_path, capsys,
+):
+    """A chain the probe could not read is one the rebuild must not touch: the
+    capture it would journal is the read that just failed."""
+    monkeypatch.setattr(push, "check_coherence",
+                        lambda *a, **kw: push.CoherenceResult(ok=True))
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp",
+                        lambda send_fn=None: ([], []))
+
+    def _blow_up(**kwargs):
+        raise OSError("connection reset")
+    monkeypatch.setattr(push_cli, "_probe_live_devices_via_mcp", _blow_up)
+    dispatched = {"n": 0}
+
+    def _fake_execute(**kwargs):
+        dispatched["n"] += 1
+        from hallucinote.sync.push_execute import ExecuteResult
+        return ExecuteResult(
+            outcome="ok", exit_code=0, phase_halted=None,
+            phases=[], state_file=None, errors_file=None,
+        )
+    monkeypatch.setattr(push_cli.push_execute, "execute_push", _fake_execute)
+
+    rc = push_cli.main([
+        "execute", session, "--db", str(db_path), "--probe",
+        "--reconcile-chains", "--state-dir", str(tmp_path),
+    ])
+    assert rc == 1
+    assert dispatched["n"] == 0
+    assert "could not read Live's device chains" in capsys.readouterr().err

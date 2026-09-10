@@ -1030,7 +1030,10 @@ def _bind_parent_devices(
                 f"device drift at {parent_kind}#{ableton_index} "
                 f"position {pos}: DB has {db_class!r}, Live has "
                 f"{live_class!r}; not linking (the devices planner refuses "
-                f"rather than loading a duplicate over the top)"
+                f"rather than loading a duplicate over the top). Re-snapshot "
+                f"to accept Live's order, or run `hallucinote chain-rebuild "
+                f"--from-position {pos}` to make the DB's order true without "
+                f"losing the downstream devices' dialed state"
             )
             continue
         M.link_db_to_ableton(
@@ -1078,9 +1081,15 @@ def _match_devices_for_linked_parents(
 
     Match rule: position equality (DB ``devices.position`` = Live
     ``device_index``) AND class equality (DB ``devices.kind`` =
-    Live ``class_name``). Mismatched class at the same position is a
-    drift note — push will still load over the wrong device, but the
-    note surfaces the situation so the user can rename or rebuild.
+    Live ``class_name``). Mismatched class at the same position writes NO link
+    and emits a drift note. Push does not load over the mismatched device — the
+    devices planner refuses the whole phase rather than tail-appending a
+    duplicate (PSH-DEVDUP) — so the note is a description of a chain that needs
+    reconciling, and its remedy is either to re-snapshot the set (accept Live's
+    order) or to run ``hallucinote chain-rebuild`` / ``push execute
+    --reconcile-chains`` (make the DB's order true, carrying the downstream
+    devices' dialed state across). A reconcile re-records the links from the
+    rebuilt positions, so the note fires once and not on every push forever.
 
     Nested rack-chain devices are not LINKED here — only top-level devices
     carry an ableton_link binding. (DEEP-RACK-ADDR: their dialed params ARE

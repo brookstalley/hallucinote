@@ -24,7 +24,14 @@ partition: >
   update). Chunk 01 owns `recurrence/{lens,economy}.py` +
   `tools/recurrence_lens.py` + their tests; chunk 02 owns
   `tools/capture_cli.py` + `skills/song-snapshot/SKILL.md` + its tests. No file
-  is named by both.
+  is named by both. THREE FILES SHIPPED OUTSIDE THIS PARTITION and are named here
+  rather than left to the change-log to narrate: `recurrence/match.py` (the
+  `derived` tier flag had to reach the exported wrapper — chunk 01's mechanism was
+  incomplete without it), `tools/melody_lens.py` and `skills/compose-review/SKILL.md`
+  (both carried prose the two chunks invalidated). All three arrived through the
+  cumulative review, not through a chunk; `capture.py` is the fourth and has its own
+  scope-extension record below because it changed what the work PROMISES, where these
+  three only follow it.
 last_validated: 2026-09-10
 ---
 

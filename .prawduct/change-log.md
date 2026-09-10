@@ -79,10 +79,11 @@ under an automation envelope reads at whatever value the envelope holds *at the
 playhead*, and after any render or performed-automation push the playhead sits at the
 end of the arrangement. Captured there, that value becomes the device's dialed
 baseline and `replay_capture` re-asserts it on every subsequent build — permanently
-redefining the value every envelope rides from. Hit three times in one session on
-`alien`, silently each time: A-Reverb return volume 0.95 for 0.85, its `Decay Time`
-6.87 s for 2.50 s, the Voice Shifter's `Dry/Wet` 72 % for 0 %. The diff shows each as
-an ordinary field change, indistinguishable from a deliberate by-ear tweak.
+redefining the value every envelope rides from. Hit five times in one session on
+`alien`, silently each time: A-Reverb return volume 0.95 for 0.85 and its `Decay Time`
+6.87 s for 2.50 s, the Voice Shifter's `Dry/Wet` 72 % for 0 % and `RM Coarse` 283 Hz
+for 220 Hz, the Noise Auto Filter's `Frequency` 893 Hz for 2.52 kHz. The diff shows
+each as an ordinary field change, indistinguishable from a deliberate by-ear tweak.
 
 `capture execute` now reads the transport before it probes anything, seeks to beat 0
 when the playhead is elsewhere, and confirms the seek settled there before the walk

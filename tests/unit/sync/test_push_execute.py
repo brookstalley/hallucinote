@@ -15,6 +15,7 @@ import pytest
 
 from hallucinote.db import init_db, mutations as M, queries as Q
 from hallucinote.sync import push_execute
+from hallucinote.sync import live_escalation
 
 
 _LINK_FIELDS: dict[str, str] = {
@@ -1165,8 +1166,10 @@ def test_execute_fallback_routes_by_captured_browser_root(
             "path": ["audio_effects", "Hybrid Reverb", "Hybrid Reverb"],
             "is_loadable": True,
         }],
+        # `loaded_class_name` is built from Live's class_display_name, so the
+        # fake speaks the browser namespace the loader really speaks.
         succeed_on_fallback_uri="query:Audio#FileId_CONSUMER",
-        loaded_class_name="HybridReverb",
+        loaded_class_name="Hybrid Reverb",
     )
     result = push_execute.execute_push(
         conn=conn, song_id=song, session_id=session,
@@ -1218,7 +1221,7 @@ def test_execute_fallback_prefers_the_captured_browser_path(
             },
         ],
         succeed_on_fallback_uri="query:Instruments#FileId_PACK",
-        loaded_class_name="Electric",
+        loaded_class_name="Electric",  # display name == class name for this one
     )
     result = push_execute.execute_push(
         conn=conn, song_id=song, session_id=session,
@@ -1278,7 +1281,14 @@ def test_execute_fallback_refuses_a_load_of_the_wrong_class(
 def test_execute_fallback_accepts_a_load_of_the_authored_class(
     conn, song, session, state_dir,
 ):
-    """The class check passes what it should: same class, different URI."""
+    """The class check passes what it should: same device, different URI.
+
+    The fixture's `kind` and `class_name` differ on purpose — "Hybrid Reverb"
+    is the browser display name, "HybridReverb" Live's internal identifier —
+    because a check that compared the loader's answer against the wrong one of
+    those would refuse every CORRECT substitution and silently disable the
+    cross-machine recovery. It reads as a stricter guard and is a broken one.
+    """
     tid = M.create_track(
         conn, song_id=song, track_index=1, name="Pad", kind="midi",
     )
@@ -1297,8 +1307,10 @@ def test_execute_fallback_accepts_a_load_of_the_authored_class(
             "path": ["audio_effects", "Hybrid Reverb", "Hybrid Reverb"],
             "is_loadable": True,
         }],
+        # `loaded_class_name` is built from Live's class_display_name, so the
+        # fake speaks the browser namespace the loader really speaks.
         succeed_on_fallback_uri="query:Audio#FileId_CONSUMER",
-        loaded_class_name="HybridReverb",
+        loaded_class_name="Hybrid Reverb",
     )
     result = push_execute.execute_push(
         conn=conn, song_id=song, session_id=session,
@@ -3642,7 +3654,7 @@ def test_escalated_call_is_polled_to_done_and_applied(
     """The clip create outran the ceiling, then landed. The step succeeds with
     the CALL'S OWN result — the link index Live actually produced — not with
     the handle, and the push reads clean."""
-    monkeypatch.setattr(push_execute, "_ESCALATION_POLL_INTERVAL_S", 0.0)
+    monkeypatch.setattr(live_escalation, "ESCALATION_POLL_INTERVAL_S", 0.0)
     send_fn = _escalating_send_fn(
         escalate_on="ableton_clip:create",
         job_states=[
@@ -3676,7 +3688,7 @@ def test_escalation_is_recognised_from_either_signal(
     ``escalated`` flag is what survives a transport that does not carry
     ``code`` through on the ok path. Either one alone has to be enough — the
     cost of missing it is applying a write that has not landed."""
-    monkeypatch.setattr(push_execute, "_ESCALATION_POLL_INTERVAL_S", 0.0)
+    monkeypatch.setattr(live_escalation, "ESCALATION_POLL_INTERVAL_S", 0.0)
     for carry_code in (True, False):
         c = init_db(state_dir / f"code-{carry_code}.db")
         try:
@@ -3706,7 +3718,7 @@ def test_escalated_call_that_fails_in_live_fails_the_step(
 ):
     """Polled to ``failed`` — Live's own error is what reaches the operator,
     and the phase halts on it like any other failure."""
-    monkeypatch.setattr(push_execute, "_ESCALATION_POLL_INTERVAL_S", 0.0)
+    monkeypatch.setattr(live_escalation, "ESCALATION_POLL_INTERVAL_S", 0.0)
     send_fn = _escalating_send_fn(
         escalate_on="ableton_clip:create",
         job_states=[{"state": "failed", "error": "clip slot occupied"}],
@@ -3732,8 +3744,8 @@ def test_an_escalation_that_never_lands_is_not_counted_as_a_success(
     running; we stopped watching. That must read as a failed step naming the
     job — never as ``calls_ok``, which would record a write that has not
     happened."""
-    monkeypatch.setattr(push_execute, "_ESCALATION_POLL_INTERVAL_S", 0.0)
-    monkeypatch.setattr(push_execute, "_ESCALATION_POLL_CEILING_S", 0.0)
+    monkeypatch.setattr(live_escalation, "ESCALATION_POLL_INTERVAL_S", 0.0)
+    monkeypatch.setattr(live_escalation, "ESCALATION_POLL_CEILING_S", 0.0)
     send_fn = _escalating_send_fn(
         escalate_on="ableton_clip:create",
         job_states=[{"state": "running"}],

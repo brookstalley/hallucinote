@@ -82,7 +82,6 @@ from .clips import (
 from .devices import (
     BREAKPOINT_CURVE_KINDS,
     ENVELOPE_TARGET_KINDS,
-    NOTE_EXPRESSION_AXES,
     add_breakpoint,
     create_device,
     create_device_chain,
@@ -231,7 +230,6 @@ __all__ = [
     # devices + automation
     "BREAKPOINT_CURVE_KINDS",
     "ENVELOPE_TARGET_KINDS",
-    "NOTE_EXPRESSION_AXES",
     "add_breakpoint",
     "create_device",
     "create_device_chain",

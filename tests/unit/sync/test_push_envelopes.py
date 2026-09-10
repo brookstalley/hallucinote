@@ -146,6 +146,27 @@ def _calls_by_target_kind(plan) -> dict[str, list]:
 # ---------- empty / no-targets ----------
 
 
+
+def _legacy_note_expression_envelope(conn, *, song_id, note_id, axis="pitch"):
+    """Insert a `note_expression` envelope the way a DB predating its
+    retirement holds one.
+
+    The mutator refuses this kind now — Live exposes no per-note expression
+    surface, so authoring a new one only defers the refusal to push time. The
+    planner refusals below exist for rows that were already written, so the
+    fixture has to write one the way those rows got there, not through the door
+    that is now closed.
+    """
+    import uuid
+    eid = uuid.uuid4().hex
+    conn.execute(
+        "INSERT INTO envelopes (id, song_id, target_kind, target_note_id, "
+        "parameter_path) VALUES (?, ?, 'note_expression', ?, ?)",
+        (eid, song_id, note_id, axis),
+    )
+    return eid
+
+
 def test_empty_song_warns(conn, song, session):
     plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
     assert plan.calls == []
@@ -223,9 +244,8 @@ def test_note_expression_is_refused_at_plan_time(
     only ever be refused; the contract is now the refusal, and it arrives
     before the phase starts rather than partway through it.
     """
-    eid = M.create_envelope(
-        conn, song_id=song, target_kind="note_expression",
-        target_note_id=note, parameter_path="pitch",
+    eid = _legacy_note_expression_envelope(
+        conn, song_id=song, note_id=note, axis="pitch",
     )
     M.replace_breakpoints(
         conn, envelope_id=eid,

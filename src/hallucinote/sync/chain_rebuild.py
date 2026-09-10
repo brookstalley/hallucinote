@@ -50,6 +50,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -58,6 +59,7 @@ from typing import Any, Callable
 from hallucinote.analyzer_identity import is_analyzer_device
 from hallucinote.db import mutations as M, queries as Q
 from hallucinote.paths import song_dir_for_conn
+from hallucinote.sync.live_escalation import await_escalated, escalated_job_id
 
 from .push._core import build_node_addr
 from .push.devices import (
@@ -86,7 +88,7 @@ PHASE_VERIFIED = "verified"
 
 
 class RebuildRefused(Exception):
-    """R4: the rebuild declined BEFORE touching anything.
+    """The rebuild declined BEFORE touching anything.
 
     Every refusal reaches this exception with nothing deleted, nothing muted and
     no journal on disk. Deleting a device that cannot be put back is
@@ -95,7 +97,7 @@ class RebuildRefused(Exception):
 
 
 class RebuildVerifyFailed(Exception):
-    """R6: the post-rebuild read-back disagreed with what was asked for.
+    """The post-rebuild read-back disagreed with what was asked for.
 
     Carries the journal path, which is deliberately still on disk: the chain is
     in an unknown state and the record of what it held is the only way back.
@@ -110,7 +112,7 @@ class RebuildVerifyFailed(Exception):
 class RebuildResult:
     """What one rebuild did, and everything it could not carry across.
 
-    ``alerts`` is the R3 channel: a parameter that could not be restored is
+    ``alerts`` is where a parameter that could not be restored is
     named here, never dropped. ``ok`` is False only on a path that also raised.
     """
     parent_kind: str
@@ -174,14 +176,44 @@ def _send(send_fn: Callable[[Any], Any], tool: str, action: str,
     Constructing the ``Request`` here (rather than making callers do it) keeps
     the lazy ``hallucinote_mcp`` import in one place: this module must import
     without the MCP package present, exactly like ``push_cli``.
+
+    **An escalation is resolved here, not returned as success.** A call that
+    outran Live's main-thread ceiling comes back ``ok=True`` carrying a job
+    handle, and the work is still running. Booking that as a completed call is
+    unusually costly in THIS module: a device load recorded as landed while
+    Live is still loading it makes the very next call hit the occupied bout and
+    be refused — raising partway through the one sequence that must not fail
+    partway through, with the chain already gutted. So the handle is polled to
+    a terminal state and the real outcome is what every caller sees.
     """
     from hallucinote_mcp.wire import Request  # type: ignore[import-not-found]
 
     resp = send_fn(Request(tool=tool, action=action, params=params))
+    job_id = escalated_job_id(resp)
+    if job_id is not None:
+        resp = await_escalated(
+            job_id=job_id,
+            label=f"{tool}({action!r})",
+            send_fn=send_fn,
+            request_cls=Request,
+            progress_fn=_escalation_progress,
+            warnings_sink=_escalation_progress,
+        )
     ok = bool(getattr(resp, "ok", False))
     result = getattr(resp, "result", None)
     error = getattr(resp, "error", None) or ""
     return ok, result, error
+
+
+def _escalation_progress(message: str) -> None:
+    """Where an escalation's progress and completion notes go.
+
+    stderr, not stdout: a rebuild's stdout is its report, and a caller
+    redirecting it should not have a Live-slowness note land in the middle of
+    one. The operator still sees it — waiting minutes on a wedged main thread
+    with no output is the case this exists to avoid.
+    """
+    print(message, file=sys.stderr)
 
 
 def _live_class(device: dict[str, Any]) -> str:
@@ -332,7 +364,7 @@ def capture_chain(
 
 
 # ---------------------------------------------------------------------------
-# Phase 0 — the refusal gate (R4)
+# Phase 0 — the refusal gate
 # ---------------------------------------------------------------------------
 
 
@@ -356,7 +388,7 @@ def plan_rebuild(
     parent_index: int,
     from_position: int,
 ) -> RebuildPlan:
-    """Resolve the DB span into loadable devices, or REFUSE (R4).
+    """Resolve the DB span into loadable devices, or REFUSE.
 
     Every device the rebuild will have to put back is resolved here, before
     anything is deleted, because a device that cannot be reloaded is one whose
@@ -496,7 +528,7 @@ def _set_parent_mute(
     send_fn: Callable[[Any], Any], *, parent_kind: str, parent_index: int,
     muted: bool,
 ) -> tuple[bool, str]:
-    """R5. Returns ``(applied, note)``; the master has no mute, so it reports
+    """Returns ``(applied, note)``; the master has no mute, so it reports
     ``False`` with the reason rather than pretending."""
     if parent_kind == "master":
         return False, (
@@ -605,7 +637,7 @@ def _param_write_kwargs(param: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _restorable(param: dict[str, Any]) -> bool:
-    """R3's writability gate.
+    """Can this parameter be written at all?
 
     ``is_enabled=False`` means macro-mapped or otherwise locked: Live reads it
     fine and refuses every write with "Value cannot be set, the parameter is
@@ -637,9 +669,9 @@ def _restore(
 
     Returns ``(written, alerts)`` where ``written`` names every
     ``(device_index, parameter_name)`` the restore actually landed. The verify
-    pass reads back exactly that set and no more — R6 gates "every RESTORED
+    pass reads back exactly that set and no more — the verify gates "every RESTORED
     parameter", and a parameter whose write was REFUSED was not restored. It is
-    an alert instead (R3): one automated or locked parameter refusing a write
+    an alert instead: one automated or locked parameter refusing a write
     should not gut an otherwise correct chain and strand its journal, but it
     must never pass unmentioned.
     """
@@ -814,7 +846,7 @@ def verify_rebuild(
     journal: dict[str, Any], parent_kind: str, parent_index: int,
     from_position: int, written: set[tuple[int, str]],
 ) -> list[dict[str, Any]]:
-    """R6 — the gate, not a log line.
+    """The gate, not a log line.
 
     The regression this exists to catch is a chain rebuilt with DEFAULT
     parameters: an audibly wrong track that push reports as ``ok``. So success
@@ -862,7 +894,7 @@ def verify_rebuild(
 
 # Live's parameter values are floats round-tripped through the wire; an exact
 # equality test would fail on representation alone. This is tight enough that a
-# parameter left at its DEFAULT — the regression R6 exists to catch — is always
+# parameter left at its DEFAULT — the regression the verify exists to catch — is always
 # outside it, and loose enough that a faithful round trip is always inside.
 _PARAM_EPSILON = 1e-6
 
@@ -951,9 +983,9 @@ def rebuild_chain(
     dialed state across.
 
     The five phases in order, with the two properties that make it safe: nothing
-    is deleted until every DB device in the span has been proved loadable (R4)
-    and the full capture is on disk (R2), and nothing is reported successful
-    until Live has been re-read and agrees (R6).
+    is deleted until every DB device in the span has been proved loadable and
+    the full capture is on disk, and nothing is reported successful until Live
+    has been re-read and agrees.
 
     Raises :class:`RebuildRefused` when it declines before touching anything, and
     :class:`RebuildVerifyFailed` when it started and could not finish — the
@@ -971,7 +1003,7 @@ def rebuild_chain(
             "the failure mode this command exists to remove. Pass an explicit "
             "song_dir, or run against the song's on-disk DB."
         )
-    # R4 — the refusals all run before the chain is touched, so this is the
+    # The refusals all run before the chain is touched, so this is the
     # last of them and still ahead of the first read.
     plan = plan_rebuild(
         conn, song_id=song_id, session_id=session_id,
@@ -997,6 +1029,23 @@ def rebuild_chain(
     )
 
     journal_path = journal_path_for(Path(song_dir), parent_kind, parent_index)
+    # A journal already here is an INTERRUPTED rebuild's only record of what
+    # that chain held. Overwriting it with a capture of the chain that run left
+    # behind — half-demolished, or fully gutted — destroys exactly the thing
+    # the journal exists to preserve, and does it silently on the operator's
+    # most likely next action: running the command again. Refuse and name the
+    # resume path.
+    if journal_path.exists():
+        raise RebuildRefused(
+            f"chain-rebuild: a journal for {parent_kind} #{parent_index} is "
+            f"already on disk at {journal_path}. That means an earlier rebuild "
+            f"started on this chain and did not finish, and the file is the "
+            f"only record of what the chain held before it did. Starting over "
+            f"now would capture the chain THAT run left and overwrite it.\n"
+            f"  Resume it:  hallucinote chain-rebuild --resume {journal_path}\n"
+            f"If you are certain the chain is already correct, delete the "
+            f"journal by hand — but read it first."
+        )
     journal = {
         "version": JOURNAL_VERSION,
         "written_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -1011,7 +1060,7 @@ def rebuild_chain(
         "captured": captured,
         "plan_devices": plan.devices,
     }
-    # R2: on disk BEFORE the first delete. Everything after this line can crash
+    # On disk BEFORE the first delete. Everything after this line can crash
     # without the operator losing the record of what the chain held.
     write_journal(journal_path, journal)
     result.journal_path = journal_path
@@ -1048,13 +1097,54 @@ def _run_destructive_phases(
     """
     parent_kind = journal["parent_kind"]
     parent_index = journal["parent_index"]
-    from_position = journal["from_position"]
 
     muted, mute_note = _set_parent_mute(
         send_fn, parent_kind=parent_kind, parent_index=parent_index, muted=True,
     )
     if mute_note:
         result.alerts.append(mute_note)
+
+    try:
+        return _destructive_body(
+            conn, journal=journal, journal_path=journal_path,
+            demolish_targets=demolish_targets, send_fn=send_fn, result=result,
+            session_id=session_id, actor=actor, reason=reason,
+        )
+    finally:
+        # The mute we installed comes off on EVERY exit, not just the happy
+        # one. A rebuild that raises used to leave the parent silenced with
+        # nothing saying so, and an operator hunting a silent track is hunting
+        # a problem the tool created. Restoring it costs one call and cannot
+        # make a failure worse.
+        if muted:
+            _, unmute_note = _set_parent_mute(
+                send_fn, parent_kind=parent_kind, parent_index=parent_index,
+                muted=bool(journal.get("parent_was_muted")),
+            )
+            if unmute_note:
+                result.alerts.append(unmute_note)
+
+
+def _destructive_body(
+    conn: sqlite3.Connection | None,
+    *,
+    journal: dict[str, Any],
+    journal_path: Path,
+    demolish_targets: list[dict[str, Any]],
+    send_fn: Callable[[Any], Any],
+    result: RebuildResult,
+    session_id: str | None,
+    actor: str,
+    reason: str | None,
+) -> RebuildResult:
+    """The phases themselves. Split out so the caller's `finally` owns the mute.
+
+    Every raise from here leaves the journal on disk deliberately — that is the
+    recovery record — but must NOT leave the parent silenced.
+    """
+    parent_kind = journal["parent_kind"]
+    parent_index = journal["parent_index"]
+    from_position = journal["from_position"]
 
     result.deleted = _demolish(
         send_fn, parent_kind=parent_kind, parent_index=parent_index,
@@ -1082,7 +1172,7 @@ def _run_destructive_phases(
     journal["phase"] = PHASE_RESTORED
     write_journal(journal_path, journal)
 
-    # R6 — raises with the journal intact if Live disagrees.
+    # Raises with the journal intact if Live disagrees.
     verify_rebuild(
         send_fn, plan_devices=journal["plan_devices"], journal=journal,
         parent_kind=parent_kind, parent_index=parent_index,
@@ -1104,17 +1194,12 @@ def _run_destructive_phases(
             "the next push, or it will plan against stale indices."
         )
 
-    # R5: put the parent's mute back to what the operator had, read from the
-    # journal — not to "unmuted", which would un-silence a track they had muted.
-    if muted:
-        _, unmute_note = _set_parent_mute(
-            send_fn, parent_kind=parent_kind, parent_index=parent_index,
-            muted=bool(journal.get("parent_was_muted")),
-        )
-        if unmute_note:
-            result.alerts.append(unmute_note)
+    # The mute comes off in the caller's `finally` — every exit path, not just
+    # this one. It reads the operator's own prior state from the journal rather
+    # than forcing "unmuted", which would un-silence a track they had muted.
 
-    # R2's other half: the journal is removed ONLY now, past the verify.
+    # The journal is removed ONLY now, past the verify — the other half of
+    # writing it before the first delete.
     journal_path.unlink(missing_ok=True)
     result.journal_path = None
     result.ok = True
@@ -1233,7 +1318,7 @@ def reconcile_chains(
     actor: str = "sync",
     reason: str | None = None,
 ) -> list[RebuildResult]:
-    """R7's second caller: rebuild every chain the devices phase would refuse on.
+    """The push-side caller: rebuild every chain the devices phase would refuse on.
 
     Fires on exactly the occupied-slot condition ``plan_push_devices`` refuses
     on (:func:`~hallucinote.sync.push.devices.occupied_slots` is that branch's

@@ -1536,6 +1536,14 @@ PERFORM_TARGET_KINDS: tuple[str, ...] = (
 # arc). That rate still read as faithful across all 5 S-7 arc families —
 # Live interpolates between recorded points. Tune here if a future arc
 # surfaces audible stepping; the floor is scheduling, not this constant.
+#
+# CHANGING THIS MOVES A NUMBER THE ENGINE ALSO HOLDS. The push planner
+# (`hallucinote.sync.push.perform`) refuses an authored automation edge shorter
+# than one tick and prescribes the `slowdown_factor` that would carry it, and
+# it computes both from its own mirrored ~2.5 Hz figure. Retune here without
+# retuning there and push keeps refusing edges against a rate Live no longer
+# runs at — the refusal reads authoritative and is arithmetic on a stale
+# constant.
 _PERFORM_UPDATE_PERIOD_S = 0.1
 
 # Settle-poll cadence for async Song state (record_mode — probe 10).

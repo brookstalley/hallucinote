@@ -1,9 +1,13 @@
 # Error recovery
 
 The server returns structured errors with teaching hints. Read the message and
-fix the input — retrying the same call with the same params will fail the same
-way. The error fields (`valid_actions`, `required`, `optional`, `example`,
-`hint`) tell you exactly what to change.
+fix the input — for the errors on this page, retrying the same call with the
+same params will fail the same way. The error fields (`valid_actions`,
+`required`, `optional`, `example`, `hint`) tell you exactly what to change.
+
+**Two replies are exceptions to that rule, and both are about Live being busy
+rather than about your call.** Read *Live is busy* below before you treat
+either as something to fix.
 
 ## Validation errors (param-level)
 
@@ -136,7 +140,42 @@ workarounds. The teaching errors will point you at that doc too.
 - **`<tool>('<action>') executor referenced unknown param 'X'; this is a
   schema bug`** — server-side bug; report it.
 
+## Live is busy — the two replies that are NOT about your call
+
+Everything else on this page is a defect in the request. These two are not, and
+the fix for each is to wait rather than to change anything.
+
+### `ok=false` — the request was refused, not attempted
+
+The message names an operation already running on Live's main thread and how
+long it has been going. Live's main thread serves one caller at a time, and
+this refusal is deliberate: queueing you behind it is what turns one slow
+operation into an unresponsive DAW.
+
+**Your call never ran.** Nothing partial happened, so there is nothing to undo.
+Poll `ableton_session(action='bout_status')` until it is clear, then send the
+same call unchanged — same params, and this time it succeeds. This is the one
+place on this page where an identical retry is the correct move; do not "fix"
+the request, because nothing was wrong with it.
+
+### `ok=true` with `code='work_escalated'` — a handle, not a result
+
+The call outran Live's main-thread ceiling. **It did not fail and it is still
+running** — Python cannot interrupt a Live API call, so the reply reports that
+the server stopped waiting, not that the work stopped. The `result` carries
+`job_id`, `label` and `elapsed_s` instead of the call's own return value.
+
+Treating this as success is the mistake it exists to prevent: it books a write
+that has not landed, and your next call queues behind the one still executing.
+
+Poll `ableton_session(action='bout_status', job_id=...)` to a terminal state —
+`done` carries the call's real result, `failed` carries Live's own error. If it
+never terminates, `ableton_session(action='abandon_bout', job_id=...)` clears
+the occupancy; the work may still be running in Live, and abandoning does not
+stop it.
+
 ## Don't retry silently
 
 If a call fails with a teaching error, the structured response tells you
-what to change. Same params → same failure.
+what to change. Same params → same failure. The busy refusal above is the
+stated exception: there, same params → success once the main thread is free.

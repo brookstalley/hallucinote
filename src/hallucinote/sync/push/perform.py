@@ -67,10 +67,19 @@ _PERFORM_READ_CEILING_BUFFER_S = 90.0
 # The perform route's fixed record tick. The handler's ramp is scheduling-bound
 # at ~2.5 Hz — one breakpoint laid down per 400 ms of WALL-CLOCK — and denser
 # authoring cannot make it denser (only a slower transport can, which is what
-# ``slowdown_factor`` is for). Mirrors
-# ``hallucinote_mcp.handlers.automation``'s ramp scheduler; the engine does not
-# import the MCP package (they ship and version separately), so the number is
-# the contract, the same way ``PERFORM_OUTCOME_RECORDED`` is.
+# ``slowdown_factor`` is for).
+#
+# THIS IS A MIRROR, NOT A CONTRACT. The real rate is set by
+# ``hallucinote_mcp.handlers.automation._PERFORM_UPDATE_PERIOD_S``, a private
+# constant whose own comment invites retuning if a future arc surfaces audible
+# stepping — and it is scheduling-bound, so its comment states the achieved
+# rate as a RANGE (~2.5-3 Hz), not a guarantee. The engine cannot import the
+# MCP package (they ship and version separately), so this copy exists; the cost
+# is that a retune there silently makes every refusal computed here arithmetic
+# on a stale number. A note at that constant says so. If the two ever need to
+# agree exactly rather than approximately, the fix is for the handler to REPORT
+# its achieved tick in the perform result, not for this copy to be edited
+# harder.
 _PERFORM_TICK_HZ = 2.5
 _PERFORM_TICK_SECONDS = 1.0 / _PERFORM_TICK_HZ
 

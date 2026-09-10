@@ -20,7 +20,7 @@ import json
 import pytest
 
 from hallucinote.db import init_db, mutations as M, queries as Q
-from hallucinote.sync import chain_rebuild
+from hallucinote.sync import chain_rebuild, live_escalation
 from hallucinote.sync.push import devices as push_devices
 
 
@@ -30,10 +30,14 @@ from hallucinote.sync.push import devices as push_devices
 
 
 class _Resp:
-    def __init__(self, *, ok, result=None, error=None):
+    def __init__(self, *, ok, result=None, error=None, code=None):
         self.ok = ok
         self.result = result
         self.error = error
+        # The escalation discriminator. An escalated reply is ok=True, so
+        # without this a fake cannot express the one case that distinguishes
+        # "the call finished" from "we stopped waiting for it".
+        self.code = code
 
 
 class FakeDevice:
@@ -375,6 +379,81 @@ def test_the_downstream_chain_keeps_its_dialed_state_across_an_instrument_swap(
     assert any(
         "changed class from 'Analog' to 'Operator'" in a for a in result.alerts
     )
+
+
+def test_a_failed_rebuild_does_not_leave_the_parent_muted(
+    conn, song, session, revoice, live, song_dir,
+):
+    """The mute is ours, so taking it off is ours on every path.
+
+    A rebuild silences the parent for the transient-empty-chain window. If a
+    failure exits before the unmute, the operator is left with a silent track
+    and nothing saying why — hunting a mix problem the tool created, while the
+    real message (the journal is on disk) is about something else entirely.
+    """
+    # A write Live accepts and does not apply: the read-back disagrees and
+    # the verify gate raises, which is the failure path that matters here.
+    live.swallow_set_parameter = True
+
+    with pytest.raises(chain_rebuild.RebuildVerifyFailed):
+        _rebuild(conn, song, session, live, song_dir)
+
+    assert live.muted.get(("track", 3)) is not True, (
+        "the rebuild exited leaving the parent silenced"
+    )
+
+
+# ---------------------------------------------------------------------------
+# The escalation wire contract
+# ---------------------------------------------------------------------------
+
+
+def test_a_slow_load_is_polled_to_completion_not_booked_as_one(
+    conn, song, session, revoice, live, song_dir, monkeypatch,
+):
+    """An escalated call is ok=True and the work is STILL RUNNING.
+
+    A device load booked as landed while Live is still loading it makes the
+    next call in the sequence hit the occupied bout and be refused — raising
+    partway through the one operation that must not fail partway through, with
+    the chain already gutted. Loading a large device is precisely the case the
+    escalation exists for, so this module meets it on its most dangerous path.
+    """
+    monkeypatch.setattr(live_escalation, "ESCALATION_POLL_INTERVAL_S", 0.0)
+    escalated: dict[str, int] = {"loads": 0}
+    real_load = live._ableton_device__load
+
+    def _slow_first_load(params):
+        # Serve the load for real, then report it as escalated: the work IS
+        # happening, the caller just was not told it finished.
+        resp = real_load(params)
+        escalated["loads"] += 1
+        if escalated["loads"] == 1 and resp.ok:
+            live._escalated_result = resp.result
+            return _Resp(ok=True, result={
+                "escalated": True, "job_id": "main_thread-abc123",
+                "label": "ableton_device('load')",
+            }, code="work_escalated")
+        return resp
+
+    def _bout_status(params):
+        return _Resp(ok=True, result={"job": {
+            "state": "done", "result": live._escalated_result,
+        }})
+
+    live._ableton_device__load = _slow_first_load
+    live._ableton_session__bout_status = _bout_status
+
+    result = _rebuild(conn, song, session, live, song_dir)
+
+    # The rebuild completed, which it cannot do if the escalation was read as
+    # a finished load: the poll is what supplies the device_index the restore
+    # addresses.
+    assert result.ok, result.alerts
+    assert live.classes(("track", 3)) == ["Operator", "EQ Eight", "Erosion"]
+    assert any(
+        c[:2] == ("ableton_session", "bout_status") for c in live.calls
+    ), "the handle was never polled"
 
 
 # ---------------------------------------------------------------------------

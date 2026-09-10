@@ -27,7 +27,6 @@ import json
 import logging
 import os
 import sqlite3
-import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,6 +36,14 @@ from hallucinote.db import mutations as M
 from hallucinote.db import queries as Q
 from hallucinote.paths import SONG_DIR_IGNORED_FILES, self_ignore_files
 from hallucinote.sync import push
+# MCP-7J2Q: an escalated main-thread call is not a failure and not a
+# success. Shared with chain_rebuild — the wire contract has more than one
+# consumer, and only one of them knowing it is how a destructive sequence
+# books a device as loaded while Live is still loading it.
+from hallucinote.sync.live_escalation import (
+    await_escalated as _await_escalated,
+    escalated_job_id as _escalated_job_id,
+)
 from hallucinote.sync.push.empty_rack_guard import (
     _parent_key,
     partition_doomed_nested_writes,
@@ -53,143 +60,6 @@ logger = logging.getLogger(__name__)
 EXIT_OK = 0
 EXIT_PARTIAL = 1
 EXIT_CONNECTION_LOST = 2
-
-
-# MCP-7J2Q: a main-thread call that outran Live's ceiling comes back as an
-# ESCALATION — ok=True, code='work_escalated', carrying a job handle — because
-# Python cannot interrupt a Live API call, so neither "done" nor "failed" is
-# true yet. The executor must not read that as success (the write has not
-# landed) nor as failure (it may still land): it polls the handle to a terminal
-# state and reports what actually happened.
-_ESCALATION_CODE = "work_escalated"
-# How long to wait between polls, and how long to keep polling before giving
-# up. The ceiling is generous because the escalated operation is uncancellable
-# — a device load of a large Max device is the witnessed case — and because
-# giving up does not stop it. When it expires the step FAILS honestly, naming
-# the job so an operator can keep watching it.
-_ESCALATION_POLL_INTERVAL_S = 2.0
-_ESCALATION_POLL_CEILING_S = 600.0
-
-
-@dataclass
-class _PolledResponse:
-    """Response-shaped stand-in for the terminal outcome of an escalated call.
-
-    The dispatch loop duck-types responses (``ok`` / ``result`` / ``error`` /
-    ``hint``), so the polled outcome substitutes for the escalation reply and
-    every downstream branch — fallbacks, apply, error records — reads the real
-    answer instead of a handle.
-    """
-
-    ok: bool
-    result: Any = None
-    error: str | None = None
-    hint: str | None = None
-    code: str | None = None
-
-
-def _escalated_job_id(resp: Any) -> str | None:
-    """The job id of an escalation reply, or ``None`` for an ordinary one.
-
-    Reads BOTH the ``code`` discriminator and the ``escalated`` flag in the
-    result: the code is the contract, and the payload flag is what survives a
-    client that does not carry ``code`` through on the ok path.
-    """
-    if not bool(getattr(resp, "ok", False)):
-        return None
-    payload = getattr(resp, "result", None)
-    flagged = (
-        isinstance(payload, dict) and payload.get("escalated") is True
-    )
-    if getattr(resp, "code", None) != _ESCALATION_CODE and not flagged:
-        return None
-    job_id = payload.get("job_id") if isinstance(payload, dict) else None
-    return str(job_id) if job_id else None
-
-
-def _await_escalated(
-    *,
-    job_id: str,
-    label: str,
-    send_fn: Callable[..., Any],
-    request_cls: type,
-    progress_fn: Callable[[str], None],
-    warnings_sink: Callable[[str], None],
-) -> _PolledResponse:
-    """Poll an escalated main-thread call to a terminal state.
-
-    Live is still executing the work; ``ableton_session(action='bout_status')``
-    runs on the worker thread precisely so it can answer while the main thread
-    is fenced. Returns the call's real outcome — its own result on ``done``, an
-    error on ``failed``, and an error naming the job if the ceiling passes with
-    the work still running (which is the honest report: we stopped watching,
-    the work did not stop).
-    """
-    deadline = time.monotonic() + _ESCALATION_POLL_CEILING_S
-    progress_fn(
-        f"[escalated] {label} outran Live's ceiling and is still running — "
-        f"polling job {job_id}"
-    )
-    while True:
-        poll = send_fn(request_cls(
-            tool="ableton_session",
-            action="bout_status",
-            params={"job_id": job_id},
-        ))
-        if not bool(getattr(poll, "ok", False)):
-            return _PolledResponse(
-                ok=False,
-                error=(
-                    f"{label} was escalated to job {job_id} and the poll for "
-                    f"it failed: {getattr(poll, 'error', None)}"
-                ),
-                hint=(
-                    "The original call may still be running on Live's main "
-                    "thread. Check ableton_session(action='bout_status') "
-                    "before re-pushing — a retry queues behind work Live "
-                    "cannot cancel."
-                ),
-            )
-        job = (getattr(poll, "result", None) or {}).get("job") or {}
-        state = job.get("state")
-        if state == "done":
-            warnings_sink(
-                f"{label}: outran Live's main-thread ceiling and was polled "
-                f"to completion via job {job_id} — the call succeeded, it was "
-                f"just slower than the ceiling allows"
-            )
-            return _PolledResponse(ok=True, result=job.get("result"))
-        if state == "failed":
-            return _PolledResponse(
-                ok=False,
-                error=(
-                    f"{label} (escalated to job {job_id}) failed in Live: "
-                    f"{job.get('error')}"
-                ),
-                hint=(
-                    "The call outran Live's main-thread ceiling and then "
-                    "failed. The error above is Live's own; the escalation "
-                    "only changed how it was reported."
-                ),
-            )
-        if time.monotonic() >= deadline:
-            return _PolledResponse(
-                ok=False,
-                error=(
-                    f"{label} (escalated to job {job_id}) was STILL RUNNING "
-                    f"after {_ESCALATION_POLL_CEILING_S:.0f}s of polling. It "
-                    f"has not failed — Live cannot be made to abandon it — "
-                    f"but this push stopped waiting for it."
-                ),
-                hint=(
-                    f"Poll it yourself with ableton_session("
-                    f"action='bout_status', job_id='{job_id}'). Do NOT "
-                    f"re-push until it reaches a terminal state: every call "
-                    f"you send now queues behind it, which is how a slow "
-                    f"operation becomes an unresponsive Live."
-                ),
-            )
-        time.sleep(_ESCALATION_POLL_INTERVAL_S)
 
 
 # PSH-3K9D chunk 2: emit a mid-phase progress heartbeat every this-many dispatched
@@ -648,15 +518,23 @@ def _attempt_load_fallback(
         return None
     # The load succeeded — but succeeding is not the same as loading the right
     # device. `loaded_class_name` is the loader's own answer to "what is now in
-    # that slot"; when it disagrees with the class the song authored, the
+    # that slot"; when it disagrees with what the song authored, the
     # substitution is wrong and reporting ok would hide a device swap inside a
     # green push. Refusing hands the operator the original preset_uri error,
     # which names a real, fixable problem.
+    #
+    # Compare against `kind`, NOT `class_name`. Both name a device and they are
+    # different namespaces: `kind` is the browser DISPLAY name ("Hybrid
+    # Reverb"), `class_name` is Live's internal identifier ("HybridReverb").
+    # The loader builds `loaded_class_name` from `class_display_name`, so it
+    # speaks the first. Comparing it against the second makes every correct
+    # substitution look wrong and disables the cross-machine recovery this
+    # whole fallback exists to provide.
     loaded_class = _loaded_class_of(retry_resp)
-    if class_name and loaded_class and loaded_class != class_name:
+    if kind and loaded_class and loaded_class != kind:
         logger.debug(
             "load-fallback loaded %r but the song authored %r — refusing the "
-            "substitution", loaded_class, class_name,
+            "substitution", loaded_class, kind,
         )
         return None
     return retry_resp, fallback_uri

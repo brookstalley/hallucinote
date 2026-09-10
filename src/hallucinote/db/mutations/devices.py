@@ -1111,8 +1111,18 @@ _PARAMETER_PATH_REQUIRED = frozenset({
     "clip_cc", "note_expression", "device_parameter",
 })
 
-# MPE axes accepted in parameter_path for note_expression envelopes.
-NOTE_EXPRESSION_AXES = frozenset({"pitch", "pressure", "timbre"})
+# `note_expression` is retained in the vocabulary above (a DB predating its
+# retirement may hold rows) and refused here, so a build.py cannot author a new
+# one. Live's Python API exposes no per-note expression surface under any name
+# — not a method waiting on the right spelling, and not a gap a Live update is
+# expected to close — so accepting the row only defers the refusal to push
+# time, after the author has written a part around it.
+_NOTE_EXPRESSION_UNAUTHORABLE = (
+    "target_kind='note_expression' cannot be authored: Live's Python API has "
+    "no per-note expression surface under any name, so a polyphonic per-note "
+    "bend cannot be pushed by any route. Author a monophonic glide as a "
+    "`device_parameter` envelope on the instrument's pitch parameter instead."
+)
 
 # Track-hosted target_kinds whose push route depends on the host track's
 # kind (ENV-7G4K eligibility, superseding the W10-F blanket refusal;
@@ -1276,11 +1286,8 @@ def create_envelope(
                 f"(got {parameter_path!r})"
             )
 
-    if target_kind == "note_expression" and parameter_path not in NOTE_EXPRESSION_AXES:
-        raise ValueError(
-            f"note_expression parameter_path {parameter_path!r} not in "
-            f"{sorted(NOTE_EXPRESSION_AXES)}"
-        )
+    if target_kind == "note_expression":
+        raise ValueError(_NOTE_EXPRESSION_UNAUTHORABLE)
 
     if target_kind == "clip_cc":
         try:
@@ -1330,16 +1337,10 @@ def create_envelope(
                     "ride on the source track or group instead."
                 )
 
-    # Provenance: clip envelopes carry their target_clip_id; note_expression
-    # envelopes resolve clip via the note's parent so audit-trail queries by
-    # clip find them too.
+    # Provenance: a clip envelope carries its own target_clip_id. The one kind
+    # that resolved a clip through its note — `note_expression` — is refused
+    # above, so nothing reaches here needing that hop.
     event_clip_id = target_clip_id
-    if target_kind == "note_expression":
-        note_row = conn.execute(
-            "SELECT clip_id FROM notes WHERE id = ?", (target_note_id,),
-        ).fetchone()
-        if note_row is not None:
-            event_clip_id = note_row["clip_id"]
 
     actor, request_id = _resolve_actor_and_request(actor, request_id)
 
@@ -1937,7 +1938,6 @@ def _resolve_enum_value_items(
 __all__ = [
     "BREAKPOINT_CURVE_KINDS",
     "ENVELOPE_TARGET_KINDS",
-    "NOTE_EXPRESSION_AXES",
     "add_breakpoint",
     "create_device",
     "create_device_chain",

@@ -64,7 +64,8 @@ from pathlib import Path
 from typing import Any
 
 from hallucinote.db import init_db, mutations as M, queries as Q, resolve_db_path
-from hallucinote.sync import push, push_execute, push_notes
+from hallucinote import paths
+from hallucinote.sync import chain_rebuild, push, push_execute, push_notes
 from hallucinote.sync.session_resolve import resolve_session_id
 
 
@@ -772,6 +773,42 @@ def _resume_phase_from_state(state_dir: Path) -> str | None:
     return halted if isinstance(halted, str) and halted else None
 
 
+def _refuse_on_stranded_rebuild(conn: sqlite3.Connection) -> int:
+    """Refuse the push when a chain rebuild is stranded mid-flight.
+
+    A journal under the song's ``.rebuild/`` exists only between a rebuild's
+    first delete and its passing verify. While one is there, the DB's device
+    links describe a chain Live no longer holds, so every device-phase decision
+    is made against a fiction — and push would report ok over it.
+
+    Returns 0 when clear, 1 when refusing.
+    """
+    try:
+        song_dir = paths.song_dir_for_conn(conn)
+    except Exception:  # prawduct:allow prawduct/broad-except -- a song dir we cannot resolve is not evidence of a stranded rebuild; the push's own checks own that failure.
+        return 0
+    if song_dir is None:
+        return 0
+    stranded = chain_rebuild.stranded_journals(Path(song_dir))
+    if not stranded:
+        return 0
+    sys.stderr.write(
+        "push_cli execute: refused — an unfinished chain rebuild is on disk.\n"
+    )
+    for journal in stranded:
+        sys.stderr.write(f"  {journal}\n")
+    sys.stderr.write(
+        "Each file is the only record of what that chain held before the "
+        "rebuild started deleting from it, and the DB's device links still "
+        "describe the pre-rebuild chain — so a push now plans against a chain "
+        "Live does not have.\n"
+        "  Finish it:  hallucinote chain-rebuild --resume auto\n"
+        "Then re-run this push. If you are certain the chain is already "
+        "correct, delete the journal by hand — but read it first.\n"
+    )
+    return 1
+
+
 def _reconcile_chains_prepass(
     conn: sqlite3.Connection,
     *,
@@ -949,6 +986,16 @@ def _cmd_execute(args: argparse.Namespace) -> int:
             json.dump(check.to_dict(), sys.stderr, indent=2)
             sys.stderr.write("\n")
             return 1
+
+    # A stranded rebuild journal means an earlier chain rebuild gutted a chain
+    # and did not finish. Push plans against the DB's device links, which then
+    # describe a chain Live no longer has — so this refuses rather than pushing
+    # over it. It is checked here because a journal nobody reads is not a
+    # recovery mechanism: the operator who needs it is exactly the one who does
+    # not know it exists, and `push execute` is what they reach for next.
+    rc = _refuse_on_stranded_rebuild(conn)
+    if rc != 0:
+        return rc
 
     # DEV-5R8Q: the opt-in chain reconcile runs here — after the coherence
     # check has established the links describe this set, and before any phase

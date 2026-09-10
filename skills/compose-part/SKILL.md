@@ -4,7 +4,7 @@ description: Compose a part to a FINISHED audible state via the author-as-code l
 argument-hint: <slug> <what-to-compose> (e.g. "sun-zone-done verse2 bass — busier, walking into the chorus")
 user-invocable: true
 disable-model-invocation: false
-allowed-tools: Read, Write, Edit, Bash, Bash(pytest songs/*), Bash(rg *), Skill(song-context), Skill(ableton-push), mcp__hallucinote-mcp__ableton_clip, mcp__hallucinote-mcp__ableton_track, mcp__hallucinote-mcp__ableton_session
+allowed-tools: Read, Write, Edit, Bash, Bash(rg *), Skill(song-context), Skill(ableton-push), mcp__hallucinote-mcp__ableton_clip, mcp__hallucinote-mcp__ableton_track, mcp__hallucinote-mcp__ableton_session
 ---
 
 # /compose-part

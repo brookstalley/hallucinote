@@ -112,6 +112,145 @@ back to stock when the authored class fails to load? Fix or refute that in code.
 measurement half — *A-Plate's class matches the snapshot after a fresh push* — is enqueued in
 `operator-verification.md` and the item stays open until the owner runs it.
 
+
+## The chunks
+
+Each chunk's requirement and design is written in its GitHub issue — the issue is the
+spec, and nothing below re-derives one. What each row adds is the partition: what this
+chunk owned exclusively, and the narrowest run that proved it.
+
+### Chunk B1: the compat check's blind spots
+
+- **Items:** #222 #520
+- **Deliverables:** `src/hallucinote/sync/compat.py` + `tests/unit/sync/test_compat.py`; the compat / REQUIREMENTS prose in `skills/ableton-push/` and `skills/song-pick-instruments/`
+- **Tests:** `uv run --frozen pytest tests/unit/sync/test_compat.py`, plus a real compat run for the REQUIREMENTS.md output — that output is the user-facing half of #222
+- **Acceptance criteria:** every acceptance box in each item's issue, or an explicit statement of which could not be met here and why
+- **Done when:**
+  1. Acceptance criteria met and the chunk's own tests pass
+  2. Merged here with `--no-ff` and the full suite green
+  3. Backlog item stamped `shipped`, or its remaining half named
+
+### Chunk B2: the automation verifier grades the wrong thing
+
+- **Items:** #325 #481 #465
+- **Deliverables:** `src/hallucinote/audio/` + `tests/unit/audio/`; the `curve_kind` threading and fader provenance in `hallucinote_mcp/.../server_side/analysis.py`; `skills/mix-review/`
+- **Tests:** `tests/unit/audio/test_automation.py` + `test_analyze.py`; no render, capture or analysis run
+- **Acceptance criteria:** every acceptance box in each item's issue, or an explicit statement of which could not be met here and why
+- **Done when:**
+  1. Acceptance criteria met and the chunk's own tests pass
+  2. Merged here with `--no-ff` and the full suite green
+  3. Backlog item stamped `shipped`, or its remaining half named
+
+### Chunk B3: three defects in one arrangement pass
+
+- **Items:** #496 #506 #522
+- **Deliverables:** `sync/push/arrangement.py`, `sync/push/plan.py`, `arrangement.py`, `sync/geometry.py`, `db/mutations/arrangement.py`, `db/schema.sql` + its `_ADDED_COLUMNS` registry
+- **Tests:** `tests/unit/sync/test_push.py`, `tests/unit/test_arrangement.py`, and the schema canary that guards `_ADDED_COLUMNS`
+- **Acceptance criteria:** every acceptance box in each item's issue, or an explicit statement of which could not be met here and why
+- **Done when:**
+  1. Acceptance criteria met and the chunk's own tests pass
+  2. Merged here with `--no-ff` and the full suite green
+  3. Backlog item stamped `shipped`, or its remaining half named
+
+### Chunk B4: capture-replay identity
+
+- **Items:** #519 #524
+- **Deliverables:** `capture.py`, `default_scaffold.py`, `db/mutations/tracks.py`, `db/mutations/links.py`, `tests/unit/capture/`
+- **Tests:** `tests/unit/capture/` plus `test_capture_planner_isolation.py` and the mutator tests touched
+- **Acceptance criteria:** every acceptance box in each item's issue, or an explicit statement of which could not be met here and why
+- **Done when:**
+  1. Acceptance criteria met and the chunk's own tests pass
+  2. Merged here with `--no-ff` and the full suite green
+  3. Backlog item stamped `shipped`, or its remaining half named
+
+### Chunk B5: three MCP defects that report something untrue
+
+- **Items:** #508 #516 #521
+- **Deliverables:** `hallucinote_mcp/.../handlers/probe.py`, `handlers/device.py`, `actions/probe.py`, `cli/preflight.py` + their unit tests
+- **Tests:** the three matching test files, plus one real `preflight` invocation — its output is #521's contract
+- **Acceptance criteria:** every acceptance box in each item's issue, or an explicit statement of which could not be met here and why
+- **Done when:**
+  1. Acceptance criteria met and the chunk's own tests pass
+  2. Merged here with `--no-ff` and the full suite green
+  3. Backlog item stamped `shipped`, or its remaining half named
+
+### Chunk B6: three small, unrelated defects
+
+- **Items:** #328 #475 #503
+- **Deliverables:** `sync/push_notes.py`, `sync/push/perform.py`, `markdown_refs.py` + their tests; the perform section of the `gaps` guide
+- **Tests:** each module's own test file, plus a grep proving `slowdown_factor` is reachable from the perform section
+- **Acceptance criteria:** every acceptance box in each item's issue, or an explicit statement of which could not be met here and why
+- **Done when:**
+  1. Acceptance criteria met and the chunk's own tests pass
+  2. Merged here with `--no-ff` and the full suite green
+  3. Backlog item stamped `shipped`, or its remaining half named
+
+### Chunk B7: a composed variation the recurrence lens could not see
+
+- **Items:** #226
+- **Deliverables:** `src/hallucinote/recurrence/`, `tests/unit/recurrence/`, `skills/compose-review/`
+- **Tests:** `tests/unit/recurrence/` (36 tests, well under the ceiling)
+- **Acceptance criteria:** every acceptance box in each item's issue, or an explicit statement of which could not be met here and why
+- **Done when:**
+  1. Acceptance criteria met and the chunk's own tests pass
+  2. Merged here with `--no-ff` and the full suite green
+  3. Backlog item stamped `shipped`, or its remaining half named
+
+### Chunk B8: replacing an instrument without destroying the chain below it
+
+- **Items:** #291 (+ #323)
+- **Deliverables:** new `sync/chain_rebuild.py` + its test; `sync/push/devices.py`, `sync/push/probe.py`, `sync/push_cli.py`; `docs/song-authoring-conventions.md`, `skills/ableton-push/`
+- **Tests:** `test_chain_rebuild.py`, `test_push_cli.py`, `test_push_devices.py` — all against a fake `send_fn`; Live cannot be driven from here
+- **Acceptance criteria:** every acceptance box in each item's issue, or an explicit statement of which could not be met here and why
+- **Done when:**
+  1. Acceptance criteria met and the chunk's own tests pass
+  2. Merged here with `--no-ff` and the full suite green
+  3. Backlog item stamped `shipped`, or its remaining half named
+
+### Chunk B9: the timeout that was only the caller looking away
+
+- **Items:** #322 (+ #324)
+- **Deliverables:** `hallucinote_mcp/.../remote_script/`, `dispatcher.py`, `wire.py`, `handlers/jobs.py`, `handlers/session.py`, `handlers/render.py`, `actions/session.py`, the `conventions` guide; `sync/push_execute.py` for the consumer half
+- **Tests:** the six test files the issue's plan names, plus `test_push_execute.py`; the socket-margin test must stay green
+- **Acceptance criteria:** every acceptance box in each item's issue, or an explicit statement of which could not be met here and why
+- **Done when:**
+  1. Acceptance criteria met and the chunk's own tests pass
+  2. Merged here with `--no-ff` and the full suite green
+  3. Backlog item stamped `shipped`, or its remaining half named
+
+### Chunk B10: making the scaffold stage's own exit criterion runnable
+
+- **Items:** #476
+- **Deliverables:** a new scaffold-verification module + its test; `skills/song-new/`
+- **Tests:** the module's test plus a real entry-point invocation against a scaffolded fixture song
+- **Acceptance criteria:** every acceptance box in each item's issue, or an explicit statement of which could not be met here and why
+- **Done when:**
+  1. Acceptance criteria met and the chunk's own tests pass
+  2. Merged here with `--no-ff` and the full suite green
+  3. Backlog item stamped `shipped`, or its remaining half named
+
+### Chunk B11: retiring a target kind that cannot exist
+
+- **Items:** #515
+- **Deliverables:** the `note_expression` surface in `hallucinote_mcp/.../actions/automation.py` + handlers; `generators/follow.py`; `docs/dubler.md`; the `gaps` guide
+- **Tests:** `test_actions_automation.py`, the generator test, and a grep proving nothing advertises the kind as loadable
+- **Acceptance criteria:** every acceptance box in each item's issue, or an explicit statement of which could not be met here and why
+- **Done when:**
+  1. Acceptance criteria met and the chunk's own tests pass
+  2. Merged here with `--no-ff` and the full suite green
+  3. Backlog item stamped `shipped`, or its remaining half named
+
+### Chunk B12: is the device-load path reliable?
+
+- **Items:** #275 (code half)
+- **Deliverables:** `sync/push_execute.py`'s cross-machine load fallback + `tests/unit/sync/test_push_execute.py`
+- **Tests:** `test_push_execute.py`; the item's own acceptance is a live measurement and is queued for the operator
+- **Acceptance criteria:** every acceptance box in each item's issue, or an explicit statement of which could not be met here and why
+- **Done when:**
+  1. Acceptance criteria met and the chunk's own tests pass
+  2. Merged here with `--no-ff` and the full suite green
+  3. Backlog item stamped `shipped`, or its remaining half named
+
 ## Status
 
 Merged into `docs/backlog-bug-readiness`. A ticked box means the chunk merged, its own

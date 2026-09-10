@@ -171,6 +171,27 @@ def _live_envelope_reply(
 # ---------------------------------------------------------------------------
 
 
+
+def _legacy_note_expression_envelope(conn, *, song_id, note_id, axis="pitch"):
+    """Insert a `note_expression` envelope the way a DB predating its
+    retirement holds one.
+
+    The mutator refuses this kind now — Live exposes no per-note expression
+    surface, so authoring a new one only defers the refusal to push time. The
+    planner refusals below exist for rows that were already written, so the
+    fixture has to write one the way those rows got there, not through the door
+    that is now closed.
+    """
+    import uuid
+    eid = uuid.uuid4().hex
+    conn.execute(
+        "INSERT INTO envelopes (id, song_id, target_kind, target_note_id, "
+        "parameter_path) VALUES (?, ?, 'note_expression', ?, ?)",
+        (eid, song_id, note_id, axis),
+    )
+    return eid
+
+
 def test_empty_song_warns(conn, song, session):
     plan = pull.plan_pull_envelopes(conn, song_id=song, session_id=session)
     assert plan.calls == []
@@ -220,9 +241,8 @@ def test_note_expression_is_refused_at_plan_time(
     has never shipped, and the LOM exposes no per-note expression surface
     under any name — so no envelope of this kind can exist in Live at all.
     """
-    eid = M.create_envelope(
-        conn, song_id=song, target_kind="note_expression",
-        target_note_id=note, parameter_path="pitch",
+    eid = _legacy_note_expression_envelope(
+        conn, song_id=song, note_id=note, axis="pitch",
     )
     _add_two_breakpoints(conn, eid)
     plan = pull.plan_pull_envelopes(conn, song_id=song, session_id=session)
@@ -239,9 +259,8 @@ def test_note_expression_is_refused_even_when_nothing_is_linked(
     is a fixable condition. This one never becomes fixable, and telling a user
     to link a clip would send them to work that changes nothing.
     """
-    eid = M.create_envelope(
-        conn, song_id=song, target_kind="note_expression",
-        target_note_id=note, parameter_path="pitch",
+    eid = _legacy_note_expression_envelope(
+        conn, song_id=song, note_id=note, axis="pitch",
     )
     _add_two_breakpoints(conn, eid)
     plan = pull.plan_pull_envelopes(conn, song_id=song, session_id=session)
@@ -619,9 +638,8 @@ def test_apply_note_expression_no_offset_translation(
     conn, song, session, linked_track, linked_clip, note,
 ):
     """note_expression breakpoints are clip-local on both sides."""
-    eid = M.create_envelope(
-        conn, song_id=song, target_kind="note_expression",
-        target_note_id=note, parameter_path="pitch",
+    eid = _legacy_note_expression_envelope(
+        conn, song_id=song, note_id=note, axis="pitch",
     )
     M.replace_breakpoints(
         conn, envelope_id=eid, breakpoints=[

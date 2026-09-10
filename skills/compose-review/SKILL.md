@@ -138,9 +138,10 @@ against intent, you don't grade it on its own.
 **Recurrence / recapitulation (run the lens).** The melody lens reads a *single
 line's* shape; the recurrence lens reads *form* — which **registered motifs** recur
 across the whole arrangement (organ / lead / steel / …), where, and **as which
-variation** (an `exact` quote, or a recovered `transpose` / `augment` / `diminish` /
-`invert` / `retrograde` / `fragment`, or a bounded composition like
-`diminish∘fragment`). Run it:
+variation** — a **pitch map** (`exact` / `transpose Δst` / `invert`) composed with a
+**time map** (identity / `augment ×f` / `diminish ×f` / `retrograde` /
+`fragment[a,b)`), joined with `∘` when both moved (`transpose +12 ∘ diminish ×2`,
+`diminish∘fragment ×2`). Run it:
 
 ```
 "$PY" -m hallucinote.cli recurrence <song-slug>          # whole song
@@ -148,7 +149,14 @@ variation** (an `exact` quote, or a recovered `transpose` / `augment` / `diminis
 ```
 
 It reports each recall (motif → section → layer → variation) plus a **motivic-economy
-summary** (cell-set size, recall coverage, a compression-ratio proxy). These are
+summary** (cell-set size, recall coverage, a compression-ratio proxy). Two label
+qualifiers carry real information: **`(durations free)`** (and `duration_match: false`
+in the JSON) means the recall's onsets and pitches landed but its durations were
+freely re-sung — the arrival-statement shape where the rhythm compresses and the
+notes keep their sung lengths, a real recall, not a near-miss; and
+**`derived (<op>, <coverage>)`** names the transform a partial recall nearly matched
+(`derived (transpose +12 ∘ diminish ×2, 0.67)`) — read it as "the attempt is visible
+and breaks off here," which is often exactly the authored narrative. These are
 **neutral facts, never a verdict**: authored recapitulation is not an error, and
 economy is **style-relative** — a through-composed piece is *legitimately* less
 economical than a minimalist one (`research.md` §2 Temperley), so the lens reports
@@ -267,8 +275,8 @@ read you have.
   economy as a raw number — it never says a recall *should* be there or that material
   is "too scattered" (economy is style-relative — Temperley). It reads only
   **registered** motifs and reads realized fact, not declared intent: a recurring
-  free function is invisible (register it), and a `derived` reading means "a partial
-  recall I can't fully name," not "wrong." Grade each recall against the song's
+  free function is invisible (register it), and a `derived (<op>, <coverage>)` reading
+  means "a partial recall of THAT transform," not "wrong." Grade each recall against the song's
   declared recurrence intent and learn the answer back.
 
 ## Exit criteria — this stage is done when

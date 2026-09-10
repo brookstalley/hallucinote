@@ -3,8 +3,9 @@
 The cross-instrument, arrangement-level analog of ``theory.lint`` (harmony),
 ``melody.lens`` (line), and ``performance.lens`` (feel): a pure SYMBOLIC ruler that,
 given an in-memory ``Arrangement``, reports **which registered motifs recur where,
-and as which variation** (an ``exact`` quote, a recovered single op, a bounded 2-op
-composition, or an honest ``derived``), plus a **motivic-economy summary**. It runs
+and as which variation** (an ``exact`` quote, a recovered single op, any composition
+of a pitch map with a time map, or an honest ``derived (<op>, <coverage>)`` partial),
+plus a **motivic-economy summary**. It runs
 on ``NoteDict``s at BUILD time — no audio render, no Live — and it REPORTS; it never
 edits a note and never tells the composer to recall a motif. See
 ``.prawduct/artifacts/arrangement-model.md`` and the ARR-9K4T design.
@@ -30,8 +31,9 @@ choice). The CLI states this plainly.
 
 What is worth registering (DOC-7K3M motif-sizing guidance): register motifs with
 enough length + contour to be *distinctive*. The matcher recovers a transform GROUP
-(transpose / invert / retrograde / augment·diminish / fragment, plus bounded 2-op
-compositions), so a too-short or too-plain motif matches almost any layer and
+(the product of a pitch map — transpose / invert — with a time map — identity /
+augment·diminish / retrograde / fragment — so every composition of the two is
+recovered, not a hand-picked subset), so a too-short or too-plain motif matches almost any layer and
 inflates the recall count without musical meaning — a 2-note fragment, or a
 zero-interval pedal/drone/ostinato (a single repeated pitch — which the matcher
 *does* now recall, REC-4Z8Q), recurs trivially nearly everywhere. Prefer a motif of
@@ -94,9 +96,15 @@ class MotifRecall:
     ``variation`` at ``cell_offset_beats`` within the section.
 
     ``coverage`` is the fraction of the motif's notes accounted for (1.0 for a clean
-    whole-motif op; <1.0 for a fragment or an honest ``derived`` partial).
-    ``is_home`` marks the motif's FIRST (home) section — registered material first
-    sounding is not a recall, so the economy summary excludes home occurrences."""
+    whole-motif op; <1.0 for a fragment or an honest ``derived (<op>, <coverage>)``
+    partial). ``is_home`` marks the motif's FIRST (home) section — registered material
+    first sounding is not a recall, so the economy summary excludes home occurrences.
+
+    ``duration_match`` is False when the recall landed on ``(relative-onset, pitch)``
+    but its durations were freely re-sung — the ``variation`` label then carries a
+    ``(durations free)`` qualifier. The common expressive-recapitulation shape (an
+    arrival statement compresses the rhythm while the notes keep their sung lengths)
+    is REPORTED with the relaxation visible, never dropped as no recall."""
 
     motif: str
     section: str
@@ -105,6 +113,7 @@ class MotifRecall:
     cell_offset_beats: float
     coverage: float
     is_home: bool = False
+    duration_match: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -115,6 +124,7 @@ class MotifRecall:
             "cell_offset_beats": self.cell_offset_beats,
             "coverage": self.coverage,
             "is_home": self.is_home,
+            "duration_match": self.duration_match,
         }
 
 
@@ -238,6 +248,7 @@ def analyze_recurrence(
                         cell_offset_beats=sec.start_beat + res.cell_offset_beats,
                         coverage=res.coverage,
                         is_home=motif_name not in seen_home,
+                        duration_match=res.duration_match,
                     ))
             if found_this_motif:
                 seen_home.add(motif_name)

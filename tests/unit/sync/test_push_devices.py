@@ -1322,7 +1322,12 @@ def test_apply_warns_when_probe_reports_no_routing_surface(
     """The push succeeded and still destroyed something: the device came back
     ARMED and pointed at nothing. The warning names the device and the track by
     NAME (the operator's handles, not Live indices), says what happened, and says
-    what to do."""
+    what to do.
+
+    No ``notes_sink`` here, so this drives the FALLBACK: the warning is never
+    silently dropped just because a caller gave no benign channel. The channel
+    the real push uses is pinned by the test below.
+    """
     did = _armed_device(conn, session, linked_track, display_name="Glue MBD")
     warnings = push.apply_push_results(
         conn,
@@ -1342,6 +1347,40 @@ def test_apply_warns_when_probe_reports_no_routing_surface(
     # sentence under a "capture: " prefix, and the only way the two surfaces can
     # say different things about one condition is if one of them stops using it.
     assert msg == "device_sidechain: " + unreadable_sidechain_source_warning(
+        ["'Glue MBD' on track 'Drums'"]
+    )
+
+
+def test_the_sidechain_warning_rides_the_printed_channel_not_the_errors_file(
+    conn, song, session, linked_track,
+):
+    """Channel, not just content. The returned list becomes `error_records` in
+    `.last-push-errors.json`, which a clean push does not print — and a push
+    whose only finding is this condition IS clean, because nothing failed to
+    record. So the operator's single cue that a hand-set sidechain source is gone
+    would never reach them.
+
+    It goes to `notes_sink`, which feeds the report's "Warnings (push still OK)"
+    section. The queued #291 sidechain box asks for exactly that — "both surfaces
+    name the MBD and its track" — and could not be satisfied from push output
+    otherwise.
+    """
+    did = _armed_device(conn, session, linked_track, display_name="Glue MBD")
+    notes: list[str] = []
+    warnings = push.apply_push_results(
+        conn,
+        [{"key": f"device_sidechain_probe:{did}", "ok": True,
+          "tool": "ableton_device",
+          "result": {"device_index": 2, "has_input_routing": False,
+                     "parent_kind": "track", "track_index": 5}}],
+        session_id=session,
+        notes_sink=notes.append,
+    )
+    assert warnings == [], (
+        "nothing failed to record, so the errors file must stay empty"
+    )
+    assert len(notes) == 1
+    assert notes[0] == "device_sidechain: " + unreadable_sidechain_source_warning(
         ["'Glue MBD' on track 'Drums'"]
     )
 

@@ -1798,6 +1798,6 @@ def test_an_entry_without_a_position_refuses_instead_of_inferring_one():
     """The guard below `read_journal`, for a version-2 journal whose entries are
     somehow short a position — refuse, never fall back to entry order."""
     with pytest.raises(chain_rebuild.RebuildRefused) as exc:
-        chain_rebuild._entry_position({"class": "EQ Eight"}, 0, 1)
+        chain_rebuild._entry_position({"class": "EQ Eight"})
     assert "one slot off" in str(exc.value)
 

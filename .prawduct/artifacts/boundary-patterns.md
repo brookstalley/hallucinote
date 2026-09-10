@@ -174,6 +174,22 @@ When changing this surface:
 - **Contract**: Bindings are `(session_id, db_kind, db_id) -> ableton_index`.
   `db_kind` ∈ `mutations.ABLETON_LINK_KINDS`. Multiple sessions per song are
   intentional — a song can be bound to several Live sets without aliasing.
+- **`ableton_index` is the index LIVE answers to, never the DB's own ordinal.**
+  For `db_kind="device"` that means the **physical** `device_index` — what
+  `plan_push_devices` hands `set_parameter` — and *not* the device's DB
+  `position`. The two are equal only while every unauthored device in the chain
+  sits after the authored ones, which for the `HallucinoteAnalyzer` means while
+  the tap is terminal. A chain rebuild temporarily breaks that: the analyzer
+  survives the demolish at the HEAD, so position *q* answers to index *q+1*.
+  Writing the position there is how authored values reached the neighbouring
+  device through `push execute --only devices` (RELBLK-0910, the same wrong-device
+  class as #532 one layer out). A producer that has only positions to hand must
+  read the live chain and map, as `chain_rebuild._logical_chain` does; it must not
+  assume the two numbers agree.
+  *Why this is written here rather than left to the producer:* the defect arrived
+  through exactly this ambiguity — "index" read as "ordinal" — in a function whose
+  own name says `link_db_to_ableton`, and nothing at the boundary said which
+  number it meant.
 
 When adding a new `db_kind`:
 - Extend `mutations.ABLETON_LINK_KINDS`.

@@ -116,3 +116,41 @@ def test_engine_constant_matches_mcp_constant():
     )
 
     assert ANALYZER_DEVICE_NAME == MCP_ANALYZER_DEVICE_NAME
+
+
+def test_the_sidechain_enable_hints_match_the_mcp_handler_that_owns_them():
+    """#536 R-2/R-7: `capture.SIDECHAIN_ENABLE_PARAM_HINTS` is a mirror of the
+    match `ableton_device(action='set_sidechain')` performs, and the two decide
+    the same question — "is this device's sidechain armed?" — on opposite sides of
+    a package boundary the engine cannot import across.
+
+    The same shape as `ANALYZER_DEVICE_NAME` above, and for the same reason: the
+    dependency direction is MCP→engine, so the engine mirrors and a guard keeps
+    the mirror honest. Without this, a hint added on one side silently changes
+    which devices warn and which are treated as armed, and nothing fails.
+
+    Read from the handler's SOURCE because the MCP side spells the hints inline
+    in an `or` chain rather than naming them. Naming them there and comparing
+    imports is the better shape and is the follow-up; this guard exists so the
+    divergence cannot happen silently in the meantime.
+    """
+    import re
+    from pathlib import Path
+
+    import hallucinote_mcp
+    from hallucinote.capture import SIDECHAIN_ENABLE_PARAM_HINTS
+
+    handler = (
+        Path(hallucinote_mcp.__file__).parent / "handlers" / "device.py"
+    ).read_text()
+    # The enable-param branch, up to the gain-param branch that follows it.
+    start = handler.index("if enable_param is None and (")
+    block = handler[start:handler.index("if gain_param is None and (", start)]
+    in_mcp = set(re.findall(r'"([^"]+)" in lname', block))
+
+    assert in_mcp, "the enable-param match changed shape — re-read this guard"
+    assert in_mcp == set(SIDECHAIN_ENABLE_PARAM_HINTS), (
+        "the engine's sidechain-enable hints and the MCP handler's have "
+        f"diverged: engine-only={set(SIDECHAIN_ENABLE_PARAM_HINTS) - in_mcp}, "
+        f"MCP-only={in_mcp - set(SIDECHAIN_ENABLE_PARAM_HINTS)}"
+    )

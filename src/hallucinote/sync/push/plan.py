@@ -761,10 +761,15 @@ def apply_push_results(
     benign channel it already has.
 
     Returns apply-layer warnings (empty when everything recorded cleanly).
-    One comes from the `device_sidechain_probe` branch: a device whose armed
-    sidechain Live exposes no source surface for (#536) — nothing failed, but
-    the source the operator set by hand did not survive this rebuild and must
-    be re-set. The rest come from the `perform_batch` branch: for any arc the
+    The returned list rides the ERRORS file, so only a genuine failure to record
+    belongs in it. The `device_sidechain_probe` branch is therefore NOT in it:
+    a device whose armed sidechain Live exposes no source surface for (#536)
+    recorded nothing wrong — the push materialized exactly what the DB authors —
+    so it goes to ``notes_sink``, the channel the push report prints as
+    "Warnings (push still OK)". That routing is the difference between the
+    operator seeing that a hand-set source is gone and not seeing it: the errors
+    file is not printed on a clean push, and a push carrying only this condition
+    IS clean. The warnings returned come from the `perform_batch` branch: for any arc the
     handler could not confirm it recorded, the apply layer records nothing for that
     arc and the warning says so (never a silent skip; the next push retries
     just that arc). `record_perform_result` states the gate that decides
@@ -798,12 +803,25 @@ def apply_push_results(
                     device_label, parent_label = _device_and_parent_labels(
                         conn, db_id,
                     )
-                    warnings.append(
+                    # The BENIGN channel, not the returned list. Nothing failed
+                    # here — the push materialized the device exactly as the DB
+                    # authors it — so this must not write the errors file, which
+                    # a clean push has to leave empty. It also has to be PRINTED:
+                    # the operator's only cue that a source they set by hand is
+                    # gone is the report's "Warnings (push still OK)" section,
+                    # which `notes_sink` feeds and the errors file does not.
+                    # Falls back to the returned list only when a caller gave no
+                    # sink, so the warning is never silently dropped.
+                    message = (
                         "device_sidechain: "
                         + unreadable_sidechain_source_warning(
                             [f"{device_label!r} on {parent_label}"]
                         )
                     )
+                    if notes_sink is not None:
+                        notes_sink(message)
+                    else:
+                        warnings.append(message)
                 continue
 
             if kind == "perform_batch":

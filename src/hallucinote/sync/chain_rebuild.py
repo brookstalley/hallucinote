@@ -324,14 +324,14 @@ def _describe_device(device: dict[str, Any]) -> str:
     )
 
 
-def _entry_position(
-    entry: dict[str, Any], offset: int, from_position: int,
-) -> int:
+def _entry_position(entry: dict[str, Any]) -> int:
     """The journal entry's DB position — never the physical index it also holds.
 
-    Required, not inferred. An earlier reading re-derived a missing ``position``
-    from the entry's ORDER (``from_position + offset``), on the reasoning that
-    ``captured`` is ascending and starts at the same number. That is true only
+    Required, not inferred — which is why this reads the entry and nothing else.
+    An earlier version took the span's start and the entry's ordinal too, to
+    re-derive a missing ``position`` from the entry's ORDER, on the reasoning
+    that ``captured`` is ascending and starts at the same number. That is true
+    only
     when the captured span held nothing but authored devices — and a journal
     written before ``position`` existed is exactly a journal written by the code
     that could not see a surviving analyzer, so replaying one onto a chain whose
@@ -496,13 +496,14 @@ def capture_chain(
             f"neither address nor delete: "
             + "; ".join(_describe_device(d) for d in unaddressable)
             + ". Nothing was deleted and no journal was written. A device the "
-            "rebuild does not delete survives it, and every device loaded after "
-            "it then sits one slot further down than the journal says — so the "
-            "restore would write real dialed values onto the wrong device. The "
-            "HallucinoteAnalyzer is the one device allowed to survive (the "
-            "render places it and the authoring model ignores it by identity); "
-            "anything else has to leave the chain, or be named in the DB, "
-            "before a rebuild can be trusted."
+            "rebuild cannot delete survives the demolish, so the chain it "
+            "rebuilds can never match the DB's order — and a device it cannot "
+            "address is one it cannot capture, restore or verify, so it cannot "
+            "say what was lost either. The HallucinoteAnalyzer is the one device "
+            "allowed to survive (the render places it, the authoring model "
+            "ignores it by identity, and the restore maps around it by "
+            "position); anything else has to leave the chain, or be named in the "
+            "DB, before a rebuild can be trusted."
         )
     captured: list[dict[str, Any]] = []
     for logical in _logical_span(live_devices, from_position=from_position):
@@ -777,7 +778,8 @@ def _demolish(
         })
         if not ok:
             raise RebuildVerifyFailed(
-                f"chain-rebuild: deleting {entry['class']!r} at position {idx} "
+                f"chain-rebuild: deleting {entry['class']!r} at device_index "
+                f"{idx} "
                 f"on {parent_kind} #{parent_index} FAILED "
                 f"({error or 'no reason given'}). The chain is now part-way "
                 f"demolished; the journal holds everything that was in it."
@@ -896,8 +898,8 @@ def _restore(
         e["position"]: e
         for e in _logical_span(live_after, from_position=from_position)
     }
-    for offset, entry in enumerate(journal.get("captured", [])):
-        position = _entry_position(entry, offset, from_position)
+    for entry in journal.get("captured", []):
+        position = _entry_position(entry)
         rebuilt = by_position.get(position)
         if rebuilt is None:
             expected |= {
@@ -1192,8 +1194,8 @@ def _verify_parameters(
         e["position"]: e
         for e in _logical_span(live_after, from_position=from_position)
     }
-    for offset, entry in enumerate(journal.get("captured", [])):
-        position = _entry_position(entry, offset, from_position)
+    for entry in journal.get("captured", []):
+        position = _entry_position(entry)
         rebuilt = by_position.get(position)
         if rebuilt is None or _live_class(rebuilt["device"]) != entry["class"]:
             # Not restored, and the restore already alerted about it.
@@ -1316,6 +1318,25 @@ def rebuild_chain(
     # most likely next action: running the command again. Refuse and name the
     # resume path.
     if journal_path.exists():
+        # Two states leave a journal, and telling the operator the wrong one
+        # sends them at the wrong remedy: `--resume` demolishes the chain, which
+        # is recovery for a gutted one and destruction for a correct one.
+        if journal_phase(journal_path) == PHASE_SHORTFALL:
+            raise RebuildRefused(
+                f"chain-rebuild: a SHORTFALL journal for {parent_kind} "
+                f"#{parent_index} is already on disk at {journal_path}. That "
+                f"chain was rebuilt and its links were rebound — it is correct "
+                f"— but some captured values never landed, and this file is the "
+                f"only record of them. Starting over now would capture the "
+                f"chain as it stands and overwrite those values for good.\n"
+                f"  Re-apply what the DB authors:  push execute --only devices\n"
+                f"  Or retry the refused writes:   hallucinote chain-rebuild "
+                f"--resume {journal_path}\n"
+                f"    (that demolishes and rebuilds a chain that is already "
+                f"correct, to re-attempt what Live refused)\n"
+                f"Then delete the journal. Read it first if you want to know "
+                f"which values are at stake."
+            )
         raise RebuildRefused(
             f"chain-rebuild: a journal for {parent_kind} #{parent_index} is "
             f"already on disk at {journal_path}. That means an earlier rebuild "
@@ -1928,20 +1949,35 @@ def _cli_resume_target(spec: str, song_dir: Path | None) -> Path | None:
             "journal path instead.\n"
         )
         return None
-    found = stranded_journals(Path(song_dir))
-    if not found:
+    mid_flight, shortfall = partition_journals(Path(song_dir))
+    if not mid_flight and not shortfall:
         sys.stderr.write(
             f"chain-rebuild: no stranded journal under "
             f"{journal_dir_for(Path(song_dir))} — nothing to resume.\n"
         )
         return None
-    if len(found) > 1:
+    if not mid_flight:
+        # `auto` means "finish the rebuild that stopped". A shortfall journal is
+        # not that: its chain is rebuilt, linked and verified for everything that
+        # landed, so replaying it would demolish a correct chain to retry a
+        # refused write. That can be what the operator wants, but never by
+        # inference — make them name the file.
         sys.stderr.write(
-            "chain-rebuild: several stranded journals; name the one to "
-            "replay:\n" + "".join(f"  {p}\n" for p in found)
+            "chain-rebuild: no unfinished rebuild to resume. What is on disk is "
+            "a SHORTFALL journal, whose chain is already rebuilt and linked:\n"
+            + "".join(f"  {p}\n" for p in shortfall)
+            + "  Re-apply what the DB authors:  push execute --only devices\n"
+            "  To retry the refused writes instead, name the journal: "
+            "--resume <path> (that demolishes and rebuilds a correct chain).\n"
         )
         return None
-    return found[0]
+    if len(mid_flight) > 1:
+        sys.stderr.write(
+            "chain-rebuild: several stranded journals; name the one to "
+            "replay:\n" + "".join(f"  {p}\n" for p in mid_flight)
+        )
+        return None
+    return mid_flight[0]
 
 
 def _cli_send_fn() -> Callable[[Any], Any]:

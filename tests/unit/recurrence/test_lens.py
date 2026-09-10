@@ -80,7 +80,8 @@ def test_to_dict_round_trips_structure():
     # every recall dict carries section + layer + variation
     for s in d["sections"]:
         for r in s["recalls"]:
-            assert {"motif", "section", "layer", "variation", "coverage", "is_home"} <= set(r)
+            assert {"motif", "section", "layer", "variation", "coverage", "is_home",
+                    "duration_match"} <= set(r)
 
 
 # --------------------------------------------------------------------------
@@ -184,3 +185,38 @@ def test_analyze_arrangement_synthetic():
     assert any(r.variation == "augment ×2" and r.layer == "organ" for r in b)
     # the recall's section-relative offset is anchored at section b's start (16 beats)
     assert all(r.cell_offset_beats >= 16.0 for r in b)
+
+
+def test_duration_match_reaches_to_dict_for_a_free_duration_recall():
+    """A recall whose onsets and pitches land but whose durations were freely re-sung
+    reaches the JSON boundary with the relaxation visible: the `(durations free)`
+    qualifier on the label AND `duration_match: False` on the recall dict. Without it
+    a reader could not tell an augmentation (durations scaled with the onsets) from an
+    onset-only compression."""
+    reach = [_n(59, 0.0, 1.5), _n(63, 4.0, 2.0), _n(66, 8.0, 1.5)]
+    coda = [_n(71, 0.0, 1.5), _n(75, 2.0, 1.5), _n(78, 4.0, 1.0)]
+    sections = [
+        SectionRecurrenceInput("verse1", 16.0, {"lead": reach}),
+        SectionRecurrenceInput("coda", 16.0, {"lead": coda}, start_beat=16.0),
+    ]
+    rep = analyze_recurrence(sections, _registry(("reach", reach)), song_slug="syn")
+    coda_recalls = [r for r in rep.recalls if r.section == "coda"]
+    assert coda_recalls, "the composed transpose+diminish recall must be reported"
+    r = coda_recalls[0]
+    assert r.variation == "transpose +12 ∘ diminish ×2 (durations free)"
+    assert r.duration_match is False
+    d = rep.to_dict()["sections"][1]["recalls"][0]
+    assert d["duration_match"] is False
+    assert d["variation"] == "transpose +12 ∘ diminish ×2 (durations free)"
+
+    # A recall whose durations DO scale with its onsets keeps `duration_match: True`.
+    home = [_n(60, 0.0, 0.5), _n(64, 1.0, 0.5), _n(67, 2.0, 0.5)]
+    sections = [
+        SectionRecurrenceInput("home", 16.0, {"lead": home}),
+        SectionRecurrenceInput("outro", 16.0, {"lead": V.augment(home, 2.0)},
+                               start_beat=16.0),
+    ]
+    rep = analyze_recurrence(sections, _registry(("m", home)), song_slug="syn")
+    outro = [r for r in rep.recalls if r.section == "outro"]
+    assert outro and outro[0].variation == "augment ×2"
+    assert all(r.duration_match is True for r in outro)

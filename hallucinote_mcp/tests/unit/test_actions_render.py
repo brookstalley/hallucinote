@@ -537,6 +537,78 @@ def test_render_writes_manifest_and_returns_status_ok(
         assert Path(entry["absolute_path"]).is_absolute()
 
 
+# --- RND: the analyzers must be armed AFTER the locate ----------------
+
+
+def test_arm_happens_after_the_locate_not_before(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, osc_sink, stub_sidecar,
+    monkeypatch,
+):
+    """Arming before the locate silently corrupts every capture.
+
+    The M4L patch resets its ``prev_beat`` to -1 on the Arm RISING EDGE
+    (m4l/HallucinoteAnalyzer.amxd.spec.md), which makes the start detector's
+    ``prev_beat < start_at_beat`` clause unconditionally true. While armed, the
+    detector therefore fires on the FIRST ``current_song_time`` change of any
+    kind -- and a locate is exactly such a change. Arming first opened
+    ``sfrecord~`` at the seek and recorded the wall clock before the transport
+    rolled, putting every per-section window about a beat early, with nothing
+    downstream able to notice.
+
+    So this asserts ORDER, not just that both happened: by the time the arm is
+    written the playhead must already be parked at the seek target, and the
+    transport must not have been started yet.
+    """
+    events: list[tuple[str, float, bool]] = []
+
+    real_arm = render_handlers._set_arm_on_all
+
+    def _recording_arm(context, layout, *, arm):
+        events.append(("arm" if arm else "disarm",
+                       context.song.current_song_time,
+                       context.song.is_playing))
+        return real_arm(context, layout, arm=arm)
+
+    real_locate = render_handlers.locate_start_position
+
+    def _recording_locate(context, beat):
+        result = real_locate(context, beat)
+        events.append(("locate", context.song.current_song_time,
+                       context.song.is_playing))
+        return result
+
+    monkeypatch.setattr(render_handlers, "_set_arm_on_all", _recording_arm)
+    monkeypatch.setattr(render_handlers, "locate_start_position",
+                        _recording_locate)
+
+    result = render_handlers.render_handler(
+        ctx_two_tracks_one_return,
+        output_dir=str(tmp_path / "captures"),
+        song_slug="test-song",
+        start_at_beat=16,
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 999.0,
+        _now_iso=lambda: "20260526T120000Z",
+    )
+    assert result["status"] == "ok"
+
+    kinds = [name for name, _, _ in events]
+    assert "locate" in kinds, "the render never located"
+    assert "arm" in kinds, "the render never armed"
+    assert kinds.index("locate") < kinds.index("arm"), (
+        f"arm must follow the locate; got {kinds}"
+    )
+
+    # The arm must see a playhead already parked, and a transport not yet
+    # rolling -- the two halves of "the next movement is the transport".
+    _, time_at_arm, playing_at_arm = events[kinds.index("arm")]
+    assert time_at_arm > 0.0, (
+        "armed while the playhead was still at 0 -- the locate had not landed"
+    )
+    assert not playing_at_arm, "armed after the transport was already rolling"
+
+
 # --- BUG3: status.json completion heartbeat --------------------------
 
 

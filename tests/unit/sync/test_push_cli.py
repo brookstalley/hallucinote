@@ -17,7 +17,7 @@ import pathlib
 import pytest
 
 from hallucinote.db import init_db, mutations as M, queries as Q
-from hallucinote.sync import push, push_cli
+from hallucinote.sync import live_escalation, push, push_cli
 
 
 _LINK_FIELDS: dict[str, str] = {
@@ -2075,10 +2075,14 @@ class _FakeResp:
     """Minimal stand-in for hallucinote_mcp.wire.Response. The CLI reads
     .ok / .error / .result via getattr, so a SimpleNamespace would do, but
     a named class makes intent obvious in test failures."""
-    def __init__(self, *, ok: bool, result=None, error: str | None = None):
+    def __init__(self, *, ok: bool, result=None, error: str | None = None,
+                 code: str | None = None):
         self.ok = ok
         self.result = result
         self.error = error
+        # An escalated reply is ok=True; `code` is what separates it from a
+        # completed call, so a fake without it cannot express the case.
+        self.code = code
 
 
 def _fake_send(tracks, returns):
@@ -2627,6 +2631,66 @@ def test_plan_cleanup_default_scaffold_nothing_to_do():
     )
     assert plan.can_proceed is False
     assert any(r["kind"] == "nothing_to_do" for r in plan.refusals)
+
+
+def test_cli_cleanup_default_scaffold_polls_a_slow_track_delete(
+    conn, song, session, db_path, capsys, monkeypatch,
+):
+    """The scaffold cleanup deletes tracks by DESCENDING index.
+
+    That order is chosen precisely because a delete shifts every index above
+    it. Booking an unlanded delete as done and firing the next one is how the
+    loop's whole premise breaks — Live is still executing the first while the
+    second is addressed against indexes it is about to move.
+    """
+    M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    pre = [
+        {"track_index": 1, "name": "1-MIDI", "kind": "midi"},
+        {"track_index": 2, "name": "2-MIDI", "kind": "midi"},
+        {"track_index": 3, "name": "Drums", "kind": "midi"},
+    ]
+    calls = {"n": 0}
+
+    def fake_probe(send_fn=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return list(pre), []
+        return [{"track_index": 1, "name": "Drums", "kind": "midi"}], []
+
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", fake_probe)
+    monkeypatch.setattr(
+        push_cli, "_probe_live_devices_via_mcp",
+        lambda *, live_tracks, live_returns, send_fn=None: {},
+    )
+    monkeypatch.setattr(live_escalation, "ESCALATION_POLL_INTERVAL_S", 0.0)
+
+    deletes: list[int] = []
+    polled: list[str] = []
+
+    def _fake_send(req, **kw):
+        if req.tool == "ableton_session" and req.action == "bout_status":
+            polled.append(req.params["job_id"])
+            return _FakeResp(ok=True, result={
+                "job": {"state": "done", "result": {"deleted": True}}})
+        if req.tool == "ableton_track" and req.action == "delete":
+            deletes.append(req.params["track_index"])
+            if len(deletes) == 1:
+                return _FakeResp(ok=True, code="work_escalated", result={
+                    "escalated": True, "job_id": "main_thread-t1"})
+            return _FakeResp(ok=True, result={"deleted": True})
+        return _FakeResp(ok=False, error=f"unexpected: {req.tool}/{req.action}")
+
+    monkeypatch.setattr(push_cli, "_resolve_send_fn", lambda: _fake_send)
+
+    rc = push_cli.main([
+        "cleanup-default-scaffold", session, "--db", str(db_path),
+    ])
+
+    assert rc == 0, capsys.readouterr().err
+    assert deletes == [2, 1], "descending order, both defaults"
+    # Without the wrapper the handle reads as a completed delete and nothing
+    # polls it — so the second delete goes out while the first is still live.
+    assert polled == ["main_thread-t1"]
 
 
 def test_cli_cleanup_default_scaffold_dispatches_descending_deletes(
@@ -3284,6 +3348,96 @@ def test_cli_prune_apply_deletes_only_the_orphan(
     assert out["deleted"] == [{"track_index": 1, "clip_index": 2, "name": "orphan"}]
     # exactly the orphan slot deleted — never the DB-backed slot 1
     assert send.deletes == [{"track_index": 1, "location": "session", "clip_index": 2}]
+
+
+def test_cli_prune_apply_polls_a_slow_delete_instead_of_booking_it(
+    conn, song, session, db_path, capsys, monkeypatch,
+):
+    """A delete that outruns Live's ceiling is ok=True and has NOT happened.
+
+    This loop deletes clips by index. Booking an unlanded delete as done and
+    dispatching the next one sends it against indexes Live is about to shift —
+    and prints both as deleted. The report is what an operator trusts here,
+    because they cannot see the slots.
+    """
+    from tests.unit.sync.test_push_notes import FakeResponse
+
+    send = _make_prune_send_fn(live_clips={1: [
+        {"clip_index": 1, "empty": False, "name": "A"},
+        {"clip_index": 2, "empty": False, "name": "orphan"},
+    ]})
+    _linked_track_with_one_db_clip(conn, song, session)
+    raw = send
+    state = {"escalated": False}
+
+    def _slow_delete(req, **kw):
+        if req.tool == "ableton_session" and req.action == "bout_status":
+            return FakeResponse(ok=True, result={
+                "job": {"state": "done", "result": {"deleted": True}}})
+        if (req.tool, req.action) == ("ableton_clip", "delete") and not state["escalated"]:
+            state["escalated"] = True
+            raw(req, **kw)  # the delete really happens; the caller is not told
+            return FakeResponse(ok=True, code="work_escalated", result={
+                "escalated": True, "job_id": "main_thread-x1"})
+        return raw(req, **kw)
+
+    _slow_delete.deletes = raw.deletes  # type: ignore[attr-defined]
+    polled = []
+    inner = _slow_delete
+
+    def _watched(req, **kw):
+        if req.tool == "ableton_session" and req.action == "bout_status":
+            polled.append(req.params.get("job_id"))
+        return inner(req, **kw)
+
+    _watched.deletes = raw.deletes  # type: ignore[attr-defined]
+    monkeypatch.setattr(push_cli, "_resolve_send_fn", lambda: _watched)
+    monkeypatch.setattr(live_escalation, "ESCALATION_POLL_INTERVAL_S", 0.0)
+
+    rc = push_cli.main(["prune", session, "--db", str(db_path), "--apply"])
+
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["deleted"] == [{"track_index": 1, "clip_index": 2, "name": "orphan"}]
+    assert state["escalated"], "fixture precondition: the escalation fired"
+    # The assertion that bites: without the wrapper the handle is read as a
+    # completed delete and nothing ever polls it.
+    assert polled == ["main_thread-x1"]
+
+
+def test_cli_prune_apply_fails_the_run_when_an_escalated_delete_fails(
+    conn, song, session, db_path, capsys, monkeypatch,
+):
+    """Polling to a terminal state means a FAILED delete fails the run.
+
+    Before, an escalation read as success made a delete Live went on to refuse
+    look identical to one it performed.
+    """
+    from tests.unit.sync.test_push_notes import FakeResponse
+
+    send = _make_prune_send_fn(live_clips={1: [
+        {"clip_index": 1, "empty": False, "name": "A"},
+        {"clip_index": 2, "empty": False, "name": "orphan"},
+    ]})
+    _linked_track_with_one_db_clip(conn, song, session)
+    raw = send
+
+    def _slow_delete(req, **kw):
+        if req.tool == "ableton_session" and req.action == "bout_status":
+            return FakeResponse(ok=True, result={
+                "job": {"state": "failed", "error": "Live refused the delete"}})
+        if (req.tool, req.action) == ("ableton_clip", "delete"):
+            return FakeResponse(ok=True, code="work_escalated", result={
+                "escalated": True, "job_id": "main_thread-x2"})
+        return raw(req, **kw)
+
+    monkeypatch.setattr(push_cli, "_resolve_send_fn", lambda: _slow_delete)
+    monkeypatch.setattr(live_escalation, "ESCALATION_POLL_INTERVAL_S", 0.0)
+
+    rc = push_cli.main(["prune", session, "--db", str(db_path), "--apply"])
+
+    assert rc == 2
+    assert "Live refused the delete" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------

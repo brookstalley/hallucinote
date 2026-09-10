@@ -65,7 +65,13 @@ from typing import Any
 
 from hallucinote.db import init_db, mutations as M, queries as Q, resolve_db_path
 from hallucinote import paths
-from hallucinote.sync import chain_rebuild, push, push_execute, push_notes
+from hallucinote.sync import (
+    chain_rebuild,
+    live_escalation,
+    push,
+    push_execute,
+    push_notes,
+)
 from hallucinote.sync.session_resolve import resolve_session_id
 
 
@@ -80,12 +86,16 @@ def _resolve_send_fn():
     ``client`` attribute that a ``sys.modules`` replacement doesn't reach.
     A module-level seam sidesteps that entirely.
 
-    Deliberately NOT escalation-aware, unlike every other send resolved in this
-    module. This one feeds ``push_execute``, which resolves an escalated reply
-    itself — it has a push report with an operator channel to say "this outran
-    Live's ceiling and was polled to completion" on, and it must route a
-    connection failure during that polling to the same halt as any other. Both
-    are lost if the wrapper swallows the handle first.
+    **Raw — not escalation-aware, and every caller must decide what that means
+    for it.** A reply that outran Live's main-thread ceiling is ``ok=True``
+    carrying a job handle while the work is still running, so a caller that
+    branches on ``ok`` alone books work that has not landed.
+
+    Its one legitimate raw consumer is ``chain_rebuild.reconcile_chains``,
+    which polls the handle itself inside its own ``_send``. Any other caller
+    wraps what it gets back — see the delete loops below, where the cost of
+    not doing so is dispatching an index-based delete while Live is still
+    executing the previous one, against indexes the previous one shifts.
     """
     from hallucinote_mcp import client as _client  # type: ignore[import-not-found]
     return _client.send
@@ -796,6 +806,18 @@ def _resume_phase_from_state(state_dir: Path) -> str | None:
     return halted if isinstance(halted, str) and halted else None
 
 
+def _escalation_aware(send_fn):
+    """Wrap a raw send so an escalated reply is polled to its real outcome.
+
+    Carries a stderr progress sink: the poll can run for minutes on a genuinely
+    slow Live operation, and a CLI that prints nothing for that long is
+    indistinguishable from one that has hung.
+    """
+    return live_escalation.escalation_aware(
+        send_fn, progress_fn=live_escalation.stderr_progress,
+    )
+
+
 def _refuse_on_stranded_rebuild(conn: sqlite3.Connection) -> int:
     """Refuse the push when a chain rebuild is stranded mid-flight.
 
@@ -1228,7 +1250,11 @@ def _cmd_prune(args: argparse.Namespace) -> int:
     conn = _open_db(args)
     _session_for(conn, args, subcmd="prune")
     song_id = _resolve_song_id(conn, args.session_id)
-    send_fn = _resolve_send_fn()
+    # Escalation-aware: this subcommand deletes clips by index in a loop, so a
+    # handle mistaken for a completed delete dispatches the next one while Live
+    # is still executing the previous — against indexes that shift when it
+    # lands.
+    send_fn = _escalation_aware(_resolve_send_fn())
 
     live_tracks, _ = _probe_live_via_mcp(send_fn=send_fn)
     clips_by_track = _probe_live_session_clips_via_mcp(
@@ -1354,7 +1380,10 @@ def _cmd_cleanup_default_scaffold(args: argparse.Namespace) -> int:
     # return deletes (descending). Order within track vs return doesn't
     # matter — Live's track + return lists are separate.
     from hallucinote_mcp.wire import Request  # type: ignore[import-not-found]
-    send_fn = _resolve_send_fn()
+    # Escalation-aware for the same reason as prune: descending index deletes
+    # in a loop, where an unlanded delete taken as done shifts what the next
+    # index means.
+    send_fn = _escalation_aware(_resolve_send_fn())
 
     deleted_tracks: list[dict[str, Any]] = []
     deleted_returns: list[dict[str, Any]] = []

@@ -92,9 +92,14 @@ def _resolve_send_fn():
     # back ok=True carrying a job handle, and reading that as the call's result
     # books work that has not landed. Resolving through the shared helper is
     # what makes that true here without this module knowing the contract.
-    from hallucinote.sync.live_escalation import resolve_client_send
+    from hallucinote.sync.live_escalation import (
+        resolve_client_send,
+        stderr_progress,
+    )
 
-    return resolve_client_send()
+    return resolve_client_send(
+        progress_fn=stderr_progress,
+    )
 
 
 def _make_probe(send_fn):

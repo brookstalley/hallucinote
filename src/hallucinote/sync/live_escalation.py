@@ -23,6 +23,7 @@ importable in a checkout that has no MCP install.
 """
 from __future__ import annotations
 
+import sys
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -163,6 +164,17 @@ def await_escalated(
         time.sleep(ESCALATION_POLL_INTERVAL_S)
 
 
+def stderr_progress(message: str) -> None:
+    """The progress sink for anything a person is watching.
+
+    stderr, not stdout: a CLI's stdout is its report, and a caller redirecting
+    it should not find a Live-slowness note in the middle of one. Named rather
+    than written as a lambda at each call site because ``sys.stderr.write``
+    returns an int, which is not what a ``-> None`` sink is.
+    """
+    sys.stderr.write(message + "\n")
+
+
 def escalation_aware(
     send_fn: Callable[..., Any],
     *,
@@ -178,7 +190,12 @@ def escalation_aware(
 
     Wrapping at the point the client send is RESOLVED, rather than at each of
     the sites that use it, is what makes this hold for a module nobody has
-    written yet. A caller that needs the escalation in its own reporting
+    written yet.
+
+    **Pass ``progress_fn`` from anything a person watches.** Polling runs for
+    up to ``ESCALATION_POLL_CEILING_S``, so a caller with no sink turns a fast
+    wrong answer into a silent ten-minute wait — better, but not by as much as
+    it should be, and indistinguishable from a hang. A caller that needs the escalation in its own reporting
     channels resolves the raw send itself and handles it — ``push_execute``
     does, because a push report has an operator channel to say it on, and
     ``chain_rebuild`` does, because it must not book a device as loaded
@@ -227,5 +244,6 @@ __all__ = [
     "await_escalated",
     "escalated_job_id",
     "escalation_aware",
+    "stderr_progress",
     "resolve_client_send",
 ]

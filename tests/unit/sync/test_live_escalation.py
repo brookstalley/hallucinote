@@ -127,3 +127,40 @@ def test_read_timeout_kwargs_reach_the_raw_send():
 
     live_escalation.escalation_aware(raw)(_Req("t", "a", {}), read_timeout=None)
     assert "read_timeout" in seen and seen["read_timeout"] is None
+
+
+def test_resolve_client_send_composes_the_wrapper_over_the_real_client(
+    monkeypatch,
+):
+    """The two-line composition, pinned.
+
+    Every other test here drives `escalation_aware` directly, and every CLI
+    test monkeypatches its module's own resolver — so a wrong lazy import or a
+    dropped argument in this function would ship without a single test
+    noticing. It is two lines, and it is the two lines every wrapped caller
+    depends on.
+    """
+    import sys as _sys
+    import types
+
+    seen = {}
+
+    def _client_send(req, **kw):
+        seen["req"] = req
+        if getattr(req, "action", None) == "bout_status":
+            return _Resp(ok=True, result={"job": {"state": "done", "result": {"v": 7}}})
+        return _escalation()
+
+    fake_client = types.SimpleNamespace(send=_client_send)
+    fake_wire = types.SimpleNamespace(Request=_Req)
+    monkeypatch.setitem(_sys.modules, "hallucinote_mcp",
+                        types.SimpleNamespace(client=fake_client, wire=fake_wire))
+    monkeypatch.setitem(_sys.modules, "hallucinote_mcp.client", fake_client)
+    monkeypatch.setitem(_sys.modules, "hallucinote_mcp.wire", fake_wire)
+
+    notes = []
+    send = live_escalation.resolve_client_send(progress_fn=notes.append)
+    resp = send(_Req("ableton_device", "load", {}))
+
+    assert resp.result == {"v": 7}, "the composition did not resolve the handle"
+    assert notes, "the progress sink was not carried through"

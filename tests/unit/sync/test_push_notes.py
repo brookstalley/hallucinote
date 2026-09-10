@@ -24,6 +24,10 @@ class FakeResponse:
     result: dict | None = None
     error: str | None = None
     hint: str | None = None
+    # The escalation discriminator. An escalated reply is ok=True, so without
+    # this a fake cannot express the one case that separates "the call
+    # finished" from "we stopped waiting for it".
+    code: str | None = None
 
 
 def _make_send_fn(*, fail_on=frozenset(), raise_on=frozenset()):

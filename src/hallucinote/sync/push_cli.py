@@ -983,10 +983,10 @@ def _cmd_execute(args: argparse.Namespace) -> int:
                 )
         else:
             sys.stderr.write(
-                "push_cli execute: devices changed — REQUIREMENTS.md may be "
-                "stale; re-run `python3 -m hallucinote.sync.compat "
-                "write-requirements <slug>` (no --song given, can't locate "
-                "the song dir)\n"
+                "push_cli execute: devices or clips changed — "
+                "REQUIREMENTS.md may be stale; re-run `python3 -m "
+                "hallucinote.sync.compat write-requirements <slug>` "
+                "(no --song given, can't locate the song dir)\n"
             )
 
     # A5: surface the verbatim recovery command on a non-clean exit so the

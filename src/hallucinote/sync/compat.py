@@ -1321,8 +1321,9 @@ def regen_requirements(song_slug: str) -> Path:
     this file CAN report from the author's own machine — a reference that
     does not resolve here was broken before the song shipped.
 
-    Callable seam for DOC-5W8B (auto-regen after a device-changing push)
-    and the ``write-requirements`` CLI command. Returns the written path;
+    Callable seam for the push CLI's auto-regen (any push that applied device
+    OR clip calls — this file lists both) and the ``write-requirements`` CLI
+    command. Returns the written path;
     raises ``SystemExit`` when the song dir doesn't resolve.
     """
     db_path = _resolve_db(song_slug)

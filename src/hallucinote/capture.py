@@ -1107,17 +1107,30 @@ def replay_capture(
                 sidechain_pending=sidechain_pending,
             )
 
-    if reidentified:
+    # Only the ORPHANING case earns the alarm. A rename is ambiguous on its own:
+    # renaming a track in Live and re-capturing produces the same (index, old,
+    # new) triple as an index shift, and on that path the row is simply correct.
+    # What distinguishes them is whether the incoming name ALSO sits at a
+    # different index in the DB — that is the row about to be left behind.
+    shifted = [
+        (idx, was, now) for idx, was, now in reidentified
+        if existing_names_by_index.get(idx) != now
+        and any(
+            n == now and i != idx for i, n in existing_names_by_index.items()
+        )
+    ]
+    if shifted:
         detail = "; ".join(
-            f"index {idx}: {was!r} -> {now!r}" for idx, was, now in reidentified
+            f"index {idx}: {was!r} -> {now!r}" for idx, was, now in shifted
         )
         warnings.warn(
-            f"capture: replay RENAMED {len(reidentified)} existing track row(s) "
-            f"({detail}). A snapshot's track indices shift when capture excludes "
+            f"capture: replay RENAMED {len(shifted)} existing track row(s) "
+            f"({detail}), and each incoming name ALSO sits at another index in "
+            "this song — so the row it came from is being left behind as a "
+            "duplicate. A snapshot's track indices shift when capture excludes "
             "an untouched default scaffold, and replay keys on "
-            "(song, track_index) with no name reconciliation — so a row can take "
-            "a different track's name, and the row the name came from is left "
-            "behind at its old index. Check the song's tracks before building.",
+            "(song, track_index) with no name reconciliation and no prune. "
+            "Check the song's tracks before building.",
             stacklevel=2,
         )
 

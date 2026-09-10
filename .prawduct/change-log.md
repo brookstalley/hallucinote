@@ -76,10 +76,14 @@ track's index — and replay keys on `(song, track_index)` with no name
 reconciliation and no prune. So replaying a post-fix snapshot into a DB built from
 a pre-fix one can take a row's name onto a different row and leave the original
 behind at its old index. The snapshot-refresh joins that carry `browser_path` and
-preset seeds now fall back to a unique track name, and replay WARNS when it
-renames a row — but the reconciliation itself is a design question (is a capture
-authoritative over track layout?) that a release-blocker cluster is the wrong
-place to settle. Deleting a user's track rows to fix it would be worse than the
+preset seeds now fall back to a unique track name, and replay WARNS when a rename
+ORPHANS the row the name came from — narrowly, because a rename is ambiguous by
+itself: renaming a track in Live and re-capturing yields the same (index, old,
+new) triple and nothing is wrong on that path. What separates them is whether the
+incoming name also sits at another index, which is the row about to be stranded.
+The reconciliation itself is a design question (is a capture authoritative over
+track layout, or only over the mix?) that a release-blocker cluster is the wrong
+place to settle — tracked as #524. Deleting a user's track rows to fix it would be worse than the
 rename.
 
 **Tests corrected, not weakened** — each encoded the defect its chunk fixes.

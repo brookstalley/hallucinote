@@ -434,3 +434,46 @@ def test_an_ordinary_set_gets_no_scaffold_warning(recwarn):
         w for w in recwarn.list
         if "untouched default scaffold" in str(w.message)
     ]
+
+
+# ---------------------------------------------------------------------------
+# Replay's rename guard: the shipped mitigation for the open half of the
+# upgrade boundary (#524). The change-log sells it as that mitigation, so it
+# needs an assertion behind it and not only a sentence.
+# ---------------------------------------------------------------------------
+
+
+def _song_with_tracks(conn, name, tracks):
+    """Seed a song whose track rows sit at the given (index, name) pairs."""
+    song_id = M.create_song(conn, name=name)
+    for idx, tname in tracks:
+        M.create_track(conn, song_id=song_id, track_index=idx, name=tname, kind="midi")
+    return song_id
+
+
+def _snapshot_with_tracks(tracks):
+    return {
+        "session": {"tempo": 120.0, "signature": {"numerator": 4, "denominator": 4}},
+        "tracks": [
+            {"index": i, "name": n, "type": "midi"} for i, n in tracks
+        ],
+        "returns": [],
+    }
+
+
+def test_replay_warns_when_a_rename_orphans_the_row_the_name_came_from(conn):
+    """The index-shift case: 'Drums' was at 5, the post-fix snapshot puts it at
+    1, and row 1 held '1-MIDI'. Replay upserts by index, so row 1 becomes
+    'Drums' and the original 'Drums' is stranded at 5 as a duplicate."""
+    _song_with_tracks(conn, "shifted", [(1, "1-MIDI"), (2, "2-MIDI"), (5, "Drums")])
+    with pytest.warns(UserWarning, match="left behind as a duplicate"):
+        replay_capture(conn, _snapshot_with_tracks([(1, "Drums")]), song_name="shifted")
+
+
+def test_replay_is_quiet_when_a_track_was_simply_renamed_in_live(conn, recwarn):
+    """The ambiguous twin, and the one the guard must NOT alarm on: a user
+    renames a track in Live and re-captures. Same (index, old, new) triple, but
+    the new name sits nowhere else, so no row is orphaned and the DB is right."""
+    _song_with_tracks(conn, "renamed", [(1, "Drums")])
+    replay_capture(conn, _snapshot_with_tracks([(1, "Kit")]), song_name="renamed")
+    assert not [w for w in recwarn.list if "RENAMED" in str(w.message)]

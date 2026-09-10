@@ -715,14 +715,18 @@ def test_envelope_hosting_audio_placement_needs_its_source_clip_linked(
     assert any("not linked" in b and "duplicate route" in b for b in plan.blocked_reasons)
 
 
-def test_envelope_free_audio_placement_keeps_the_direct_create_and_its_gap(
+def test_envelope_free_audio_placement_keeps_the_direct_create(
     conn, song, session, audio_track, sample,
 ):
     """The verdict licenses the envelope case and nothing more: an audio
     placement with no hosted envelope is still a direct
-    ``Track.create_audio_clip`` — its clip need not be linked — and the
-    authored-conform gap keeps firing for it, because the fresh clip is at
-    Live's defaults and the copy cannot be addressed in the same plan."""
+    ``Track.create_audio_clip``, and its clip need not be linked.
+
+    What is no longer true of it is the authored-conform GAP. The fresh clip
+    does arrive at Live's defaults and this plan still cannot address the copy
+    (its index exists only in the create's result) — but the post-apply pass
+    writes the conform against the recorded link, so the phase has nothing to
+    block on (#522 route 2, the remainder #509 could only report)."""
     cid = M.create_audio_clip(
         conn, track_id=audio_track, slot=1, length_beats=8.0,
         audio_file=sample, name="line", gain=0.6,
@@ -735,7 +739,8 @@ def test_envelope_free_audio_placement_keeps_the_direct_create_and_its_gap(
     )
     assert [c.args["action"] for c in plan.calls] == ["create"]
     assert plan.calls[0].args["kind"] == "audio"
-    assert any("did NOT travel" in b and "gain" in b for b in plan.blocked_reasons)
+    assert plan.blocked_reasons == [], plan.blocked_reasons
+    assert not any("did NOT travel" in a for a in plan.alerts), plan.alerts
 
 
 def test_mixed_track_routes_each_audio_placement_by_whether_its_clip_hosts_a_ride(
@@ -782,33 +787,49 @@ def test_arrangement_missing_sample_blocks_the_track_without_clearing_it(
     assert any("not on disk" in b for b in plan.blocked_reasons)
 
 
-def test_arrangement_says_what_the_direct_create_did_not_carry(
+def test_the_direct_creates_authored_conform_travels_in_the_post_apply_pass(
     conn, song, session, audio_track, sample,
 ):
-    """The direct create loads a FRESH clip at Live's defaults, so an authored
-    conform does not reach the arrangement copy — and the planner cannot
-    address that copy in the same plan (its index only exists after apply;
-    predicting it is the positional guess ARR-PROJ diagnosed). The placement
-    still lands; the run says what did not."""
+    """The direct create loads a FRESH clip at Live's defaults, and the planner
+    cannot address that copy in the same plan (its index only exists after
+    apply; predicting it is the positional guess ARR-PROJ diagnosed). The
+    conform is therefore written LATE, not never: the post-apply pass writes it
+    against the link apply recorded. Multi-hop, because the two halves only
+    make sense together — the phase reports no gap precisely because the
+    following pass carries it."""
     cid = M.create_audio_clip(
         conn, track_id=audio_track, slot=1, length_beats=8.0,
         audio_file=sample, name="line", gain=0.6, warp_mode=6,
     )
-    _place(conn, song=song, track=audio_track, clip=cid)
+    aid = _place(conn, song=song, track=audio_track, clip=cid)
     plan = push.plan_push_arrangement(
         conn, song_id=song, session_id=session,
         live_arrangement_clips_by_track={4: []},
     )
     assert any(c.args.get("kind") == "audio" for c in plan.calls)
-    gap = "\n".join(plan.blocked_reasons)
-    assert "did NOT travel" in gap
-    assert "gain" in gap and "warp_mode" in gap
+    assert plan.blocked_reasons == [], plan.blocked_reasons
+
+    _link_placement(conn, session=session, placement_id=aid, index=1)
+    conform = push.plan_push_arrangement_audio_regions(
+        conn, song_id=song, session_id=session,
+    )
+    written = {
+        c.args["property"]: c.args["value"] for c in conform.calls
+    }
+    assert written["gain"] == 0.6
+    assert written["warp_mode"] == 6
+    assert all(
+        c.args["location"] == "arrangement" and c.args["clip_index"] == 1
+        for c in conform.calls
+    ), [c.args for c in conform.calls]
 
 
-def test_conform_gap_is_not_reported_for_a_track_that_was_skipped(
+def test_no_conform_claim_is_made_for_a_track_that_was_skipped(
     conn, song, session, audio_track, sample,
 ):
-    """A gap on a track nobody built would name work nobody attempted."""
+    """A claim about a track nobody built would name work nobody attempted —
+    and the pass that writes the conform addresses copies by their recorded
+    link, which a track that never materialized does not have."""
     good = M.create_audio_clip(
         conn, track_id=audio_track, slot=1, length_beats=8.0,
         audio_file=sample, name="line", gain=0.6,
@@ -1206,15 +1227,22 @@ def test_the_region_pass_bounds_a_placed_copy_to_the_authored_span(
         conn, song_id=song, session_id=session,
     )
     assert plan.blocked_reasons == [], plan.blocked_reasons
-    assert [c.args["property"] for c in plan.calls] == ["end_marker", "loop_end"]
+    # `warping` leads. It is what makes the beats domain the two markers are
+    # written in TRUE rather than assumed (#522): this row authors no warp
+    # state, so the pass writes one instead of trusting Live's own default to
+    # have supplied it.
+    assert [c.args["property"] for c in plan.calls] == [
+        "warping", "end_marker", "loop_end",
+    ]
     for call in plan.calls:
         assert call.tool == "ableton_clip"
         assert call.args["action"] == "set_property"
         assert call.args["location"] == "arrangement"
         assert call.args["track_index"] == 4
         assert call.args["clip_index"] == 2
-        assert call.args["value"] == 16.0
         assert call.key.startswith(f"arrangement_clip_region:{aid}:")
+    assert plan.calls[0].args["value"] is True
+    assert [c.args["value"] for c in plan.calls[1:]] == [16.0, 16.0]
 
 
 def test_the_region_pass_addresses_the_copy_by_its_link_never_by_position(
@@ -1243,6 +1271,8 @@ def test_the_region_pass_addresses_the_copy_by_its_link_never_by_position(
     )
     by_placement = {}
     for call in plan.calls:
+        if call.args["property"] not in ("end_marker", "loop_end"):
+            continue
         by_placement.setdefault(call.key.split(":")[1], set()).add(
             (call.args["clip_index"], call.args["value"])
         )
@@ -1274,16 +1304,33 @@ def test_the_region_pass_starts_at_the_conformed_start_marker_on_the_duplicate_r
     )
     # _host_a_ride places bars 1→5 (16 beats), and the copy's region already
     # starts at 2.0.
-    assert {c.args["value"] for c in plan.calls} == {18.0}
+    markers = [
+        c for c in plan.calls
+        if c.args["property"] in ("end_marker", "loop_end")
+    ]
+    assert {c.args["value"] for c in markers} == {18.0}
+    # The duplicate carried the conform, so the only thing the pass writes on
+    # this route is the warp state the row never authored — writing gain or the
+    # markers again would be round trips for values already on the copy.
+    assert [
+        (c.args["property"], c.args["value"]) for c in plan.calls
+        if c not in markers
+    ] == [("warping", True)]
 
 
-def test_the_direct_create_region_starts_at_zero_because_the_conform_did_not_travel(
+def test_the_direct_create_region_starts_at_the_start_marker_the_pass_writes(
     conn, song, session, audio_track, sample,
 ):
-    """The mirror of the duplicate case, and the reason the two are not one
-    rule: on the direct-create route the authored ``start_marker`` stays on the
-    session clip (that is the conform gap the arrangement phase reports), so the
-    copy sits at Live's own 0 and the span must be measured from there."""
+    """Once the conform travels, the two routes stop being two rules. The
+    authored ``start_marker`` used to stay on the session clip (the conform gap
+    the arrangement phase reported), so the copy sat at Live's own 0 and the
+    span was measured from there. The pass now WRITES that start marker onto the
+    copy, so the span runs from it — exactly as on the duplicate route.
+
+    The session clip's authored ``end_marker`` is the one conform column that
+    still does not travel, and it is superseded rather than lost: the copy's end
+    is the PLACEMENT's span (bars 1→5 = 16 beats from 2.0), not the sample's own
+    trim at 8.0."""
     cid = M.create_audio_clip(
         conn, track_id=audio_track, slot=1, length_beats=8.0,
         audio_file=sample, name="line", start_marker=2.0, end_marker=8.0,
@@ -1298,7 +1345,19 @@ def test_the_direct_create_region_starts_at_zero_because_the_conform_did_not_tra
     plan = push.plan_push_arrangement_audio_regions(
         conn, song_id=song, session_id=session,
     )
-    assert {c.args["value"] for c in plan.calls} == {16.0}
+    written = [(c.args["property"], c.args["value"]) for c in plan.calls]
+    assert ("start_marker", 2.0) in written, written
+    assert [v for p_, v in written if p_ in ("end_marker", "loop_end")] == [
+        18.0, 18.0,
+    ], written
+    assert not any(
+        p_ == "end_marker" and v == 8.0 for p_, v in written
+    ), "the sample's own trim must not overwrite the placement's span"
+    # Order is load-bearing: flipping `warping` changes the unit Live reads
+    # every marker in, so it cannot land after one.
+    props = [p_ for p_, _ in written]
+    assert props.index("warping") < props.index("start_marker")
+    assert props.index("warping") < props.index("end_marker")
 
 
 def test_the_region_pass_refuses_the_beats_domain_on_an_unwarped_clip(
@@ -1321,8 +1380,14 @@ def test_the_region_pass_refuses_the_beats_domain_on_an_unwarped_clip(
     plan = push.plan_push_arrangement_audio_regions(
         conn, song_id=song, session_id=session,
     )
-    assert plan.calls == []
+    # The REGION is skipped. The conform is not: an unwarped copy is what the
+    # song asked for, so the pass writes that state onto it rather than leaving
+    # Live's default to decide.
+    assert [
+        (c.args["property"], c.args["value"]) for c in plan.calls
+    ] == [("warping", False)], [c.args for c in plan.calls]
     assert any("warping=0" in a and "seconds" in a for a in plan.alerts), plan.alerts
+    assert not any("this push WARPED" in a for a in plan.alerts), plan.alerts
     # And the arrangement phase's own line says the same thing, so the operator
     # is not told the region travelled and then told it did not.
     arr = push.plan_push_arrangement(
@@ -1331,6 +1396,95 @@ def test_the_region_pass_refuses_the_beats_domain_on_an_unwarped_clip(
     )
     block = [a for a in arr.alerts if "BLOCK each copy occupies" in a]
     assert len(block) == 1 and "region NOT set" in block[0], arr.alerts
+
+
+def test_an_unset_warp_state_is_written_rather_than_assumed(
+    conn, song, session, audio_track, sample,
+):
+    """#522. Live's markers carry a DUAL unit — beats when the clip is warped,
+    seconds when it is not — and the pass writes them in beats. A row that
+    leaves ``warping`` unset used to be treated as "warped": the region write
+    went out in beats on the assumption that Live had warped the file, which
+    Live's own preference decides. When it had not, the copy was trimmed to the
+    wrong point and nothing detected it — and the same DB pushed differently on
+    two machines.
+
+    The pass now WRITES the warp state before the markers, so the beats domain
+    is true by construction, and says on the operator channel that it chose."""
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="line",
+    )
+    assert Q.get_clip(conn, cid)["warping"] is None, "fixture precondition"
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4,
+    )
+    aid = _place(conn, song=song, track=audio_track, clip=cid,
+                 start_bar=1.0, end_bar=5.0)
+    _link_placement(conn, session=session, placement_id=aid, index=1)
+
+    plan = push.plan_push_arrangement_audio_regions(
+        conn, song_id=song, session_id=session,
+    )
+    written = [(c.args["property"], c.args["value"]) for c in plan.calls]
+    assert written[0] == ("warping", True), written
+    assert [v for p_, v in written if p_ in ("end_marker", "loop_end")] == [
+        16.0, 16.0,
+    ], written
+    chose = next(a for a in plan.alerts if "this push WARPED" in a)
+    assert "warping=0" in chose, "the way to overrule it has to be nameable"
+
+
+def test_an_authored_warp_state_is_written_on_the_direct_create_route(
+    conn, song, session, audio_track, sample,
+):
+    """A row that authors ``warping = 1`` gets it written too — the direct
+    create loads a fresh clip at Live's defaults, so nothing carried it — and
+    the push says nothing about choosing, because it did not."""
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="line", warping=1,
+    )
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4,
+    )
+    aid = _place(conn, song=song, track=audio_track, clip=cid,
+                 start_bar=1.0, end_bar=5.0)
+    _link_placement(conn, session=session, placement_id=aid, index=1)
+
+    plan = push.plan_push_arrangement_audio_regions(
+        conn, song_id=song, session_id=session,
+    )
+    written = [(c.args["property"], c.args["value"]) for c in plan.calls]
+    assert written[0] == ("warping", True), written
+    assert not any("this push WARPED" in a for a in plan.alerts), plan.alerts
+
+
+def test_the_duplicate_route_is_not_re_conformed_when_the_song_authored_it(
+    conn, song, session, audio_track, sample,
+):
+    """The duplicate comes off the CONFORMED session clip, so re-writing every
+    conform column onto it would be round trips for values the copy already
+    carries. Only a warp state the song never authored is pinned — and here it
+    did, so the pass writes nothing but the region."""
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file=sample, name="line", warping=1, gain=0.6,
+    )
+    _link_clip(conn, session=session, clip_id=cid, index=1)
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4,
+    )
+    _host_a_ride(conn, song=song, track=audio_track, clip=cid, start_bar=1.0)
+    aid = Q.get_arrangement_for_song(conn, song)[0]["id"]
+    _link_placement(conn, session=session, placement_id=aid, index=1)
+
+    plan = push.plan_push_arrangement_audio_regions(
+        conn, song_id=song, session_id=session,
+    )
+    assert [c.args["property"] for c in plan.calls] == [
+        "end_marker", "loop_end",
+    ], [c.args for c in plan.calls]
 
 
 def test_the_region_pass_says_which_copies_it_could_not_reach(

@@ -121,3 +121,83 @@ def test_economy_to_dict():
             "recalled_note_mass", "library_note_mass", "occurrence_records",
             "compression_ratio", "never_recalled"} == set(d)
     assert isinstance(econ, MotivicEconomy)
+
+
+# --------------------------------------------------------------------------
+# The coverage floor: a partial is reported, but is not evidence of recall
+# --------------------------------------------------------------------------
+
+
+def _partial(motif, section, *, coverage=0.5, variation="derived (invert, 0.50)"):
+    """A sub-threshold occurrence beyond home — detected and reported by the lens,
+    but below the analysis's coverage floor."""
+    return MotifRecall(
+        motif=motif, section=section, layer="lead", variation=variation,
+        cell_offset_beats=0.0, coverage=coverage, is_home=False, partial=True)
+
+
+def test_a_partial_does_not_put_its_motif_in_the_cell_set():
+    """The defect this floor exists to fix: with the transform group finding a
+    half-matched fragment for nearly every motif x layer pair, EVERY motif read as
+    recurring, coverage read 100%, and never_recalled emptied — which silenced the
+    one coaching question this module may emit."""
+    registered = ["real", "only-partials"]
+    recalls = [
+        _recall("real", "home", is_home=True),
+        _recall("real", "recap", is_home=False),
+        _recall("only-partials", "home", is_home=True),
+        _partial("only-partials", "recap"),
+        _partial("only-partials", "outro", coverage=0.5),
+    ]
+    econ = summarize_economy(registered, recalls, {"real": 9, "only-partials": 8})
+    assert econ.recurring_motifs == 1
+    assert econ.recall_coverage == 0.5
+    assert econ.never_recalled == ("only-partials",)
+
+
+def test_partials_are_excluded_from_note_mass_and_occurrence_records():
+    """Each partial otherwise contributes its coverage-scaled share of a motif's
+    notes, inflating the compression proxy by matches nobody would call a recall."""
+    registered = ["m"]
+    with_partials = summarize_economy(
+        registered,
+        [_recall("m", "home", is_home=True),
+         _recall("m", "recap", is_home=False),
+         _partial("m", "bridge"),
+         _partial("m", "outro")],
+        {"m": 8},
+    )
+    without = summarize_economy(
+        registered,
+        [_recall("m", "home", is_home=True),
+         _recall("m", "recap", is_home=False)],
+        {"m": 8},
+    )
+    assert with_partials.occurrence_records == 1
+    assert with_partials.recalled_note_mass == without.recalled_note_mass
+    assert with_partials.compression_ratio == without.compression_ratio
+
+
+def test_a_motif_recurring_only_as_partials_says_so_and_names_the_best():
+    """"Never recurs" would be untrue of it — it sounded again, just never fully
+    enough to count. The question is the actionable one either way."""
+    registered = ["only-partials"]
+    recalls = [
+        _recall("only-partials", "home", is_home=True),
+        _partial("only-partials", "recap", coverage=0.5),
+        _partial("only-partials", "outro", coverage=0.66),
+    ]
+    findings = economy_finding(registered, recalls)
+    assert len(findings) == 1
+    assert findings[0].kind == "registered-never-recalled"
+    assert findings[0].severity == "info"
+    assert "only as partials" in findings[0].detail
+    assert "66%" in findings[0].detail
+    assert findings[0].detail.rstrip().endswith("?")
+
+
+def test_a_motif_with_no_later_occurrence_keeps_the_never_recurs_wording():
+    findings = economy_finding(
+        ["lonely"], [_recall("lonely", "home", is_home=True)])
+    assert len(findings) == 1
+    assert "never recurs beyond its home section" in findings[0].detail

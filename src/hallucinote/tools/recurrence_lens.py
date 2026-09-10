@@ -15,14 +15,23 @@ Known blind spot (reported plainly): only *registered* motifs are read. A recurr
 free function (never `arr.motif(...)`) is invisible — register it to track its recall
 (an authoring choice, not a lens limitation to paper over).
 
+Occurrences below the analysis's coverage floor are reported as PARTIALS and folded
+into a per-section count in this render (`--all` lists them; `--json` always carries
+them). The matcher finds a low-coverage partial for nearly every motif × layer pair,
+so listing them straight buries the whole-motif recalls that describe the form. What
+is filtered is the reading, never the facts — and the economy summary counts only the
+occurrences that clear the floor, so a motif that recurs only as partials still
+raises its coaching question.
+
 Usage:
-    python3 -m hallucinote.tools.recurrence_lens sun-zone-done
-    python3 -m hallucinote.tools.recurrence_lens sun-zone-done --section integration
-    python3 -m hallucinote.tools.recurrence_lens sun-zone-done --json
+    python3 -m hallucinote.tools.recurrence_lens <slug>
+    python3 -m hallucinote.tools.recurrence_lens <slug> --section integration
+    python3 -m hallucinote.tools.recurrence_lens <slug> --all
+    python3 -m hallucinote.tools.recurrence_lens <slug> --json
 
 Exit codes: 0 = report printed · 2 = no such song · 3 = song has not wired the
-recurrence lens (no `recurrence_report()` in its build.py — add one; see
-sun-zone-done for the pattern).
+recurrence lens (no `recurrence_report()` in its build.py — the exit-3 message
+carries both ways to write one).
 """
 from __future__ import annotations
 
@@ -52,16 +61,38 @@ def _load_build_module(slug: str):
     return mod
 
 
-def render(report, *, section_filter: str | None = None) -> str:
+def render(report, *, section_filter: str | None = None, show_partials: bool = False) -> str:
     """Human-readable rendering of a RecurrenceReport for `/compose-review` to read.
     `section_filter` (if given) limits the per-section block to that one section; the
-    economy summary + header are whole-song facts and always print."""
+    economy summary + header are whole-song facts and always print.
+
+    Sub-threshold partials are FOLDED into a per-section count unless
+    `show_partials`. The transform group finds a low-coverage partial for nearly
+    every (motif × layer) pair, so listing them straight makes the render say every
+    motif recurs everywhere and buries the whole-motif recalls that actually
+    describe the form — on the report that motivated this, by five to one. They are
+    counted and offered, never dropped: the reading is what gets filtered, not the
+    facts."""
     lines: list[str] = []
-    recalls = [r for r in report.recalls if not r.is_home]
+    recalls = [r for r in report.recalls if not r.is_home and not r.partial]
+    # Counted with the same predicate the per-section folds use, so the header's
+    # total and the section lines can't disagree. A partial is not a recall, so the
+    # home/later split that governs `recalls` does not apply to it.
+    partials = [r for r in report.recalls if r.partial]
     n_sections = len({r.section for r in recalls})
+    floor = getattr(report, "min_coverage", None)
+    partial_note = ""
+    if partials and not show_partials:
+        floor_txt = f"below {floor:.0%} coverage; " if floor is not None else ""
+        partial_note = (
+            f", {len(partials)} partial(s) folded ({floor_txt}--all to list)"
+        )
+    elif partials:
+        partial_note = f", {len(partials)} partial(s) listed"
     lines.append(
         f"recurrence lens — {report.song_slug}: {len(recalls)} recall(s) across "
-        f"{n_sections} section(s), {len(report.findings)} coaching question(s)"
+        f"{n_sections} section(s), {len(report.findings)} coaching "
+        f"question(s){partial_note}"
     )
     lines.append(
         "  (neutral measurements, NOT a verdict — read each against the song's "
@@ -77,7 +108,8 @@ def render(report, *, section_filter: str | None = None) -> str:
         f"\neconomy: cell-set {econ.recurring_motifs}/{econ.registered_motifs} motifs "
         f"recur · coverage {econ.recall_coverage:.0%} · "
         f"compression-proxy {econ.compression_ratio:.2f} "
-        f"(COSIATEC empirical band ~2–4; a raw fact, no target)"
+        f"(COSIATEC empirical band ~2–4; a raw fact, no target; counts recalls "
+        f"only — partials are not evidence of recall)"
     )
     if econ.never_recalled:
         lines.append(
@@ -94,9 +126,11 @@ def render(report, *, section_filter: str | None = None) -> str:
         return "\n".join(lines)
 
     for s in sections:
-        later = [r for r in s.recalls if not r.is_home]
-        home = [r for r in s.recalls if r.is_home]
-        if not later and not home:
+        shown = [r for r in s.recalls if show_partials or not r.partial]
+        folded = [] if show_partials else [r for r in s.recalls if r.partial]
+        later = [r for r in shown if not r.is_home]
+        home = [r for r in shown if r.is_home]
+        if not later and not home and not folded:
             continue
         lines.append(f"\n[{s.section}]")
         for r in home:
@@ -105,9 +139,15 @@ def render(report, *, section_filter: str | None = None) -> str:
                 f"[{r.variation}]"
             )
         for r in later:
+            mark = "~" if r.partial else "↩"
             lines.append(
-                f"  ↩ {r.motif} recurs on {r.layer} as {r.variation} "
+                f"  {mark} {r.motif} recurs on {r.layer} as {r.variation} "
                 f"(coverage {r.coverage:.0%}, beat {r.cell_offset_beats:.1f})"
+            )
+        if folded:
+            best = max(r.coverage for r in folded)
+            lines.append(
+                f"  + {len(folded)} partial(s) folded, best coverage {best:.0%}"
             )
 
     for f in report.findings:
@@ -122,6 +162,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--section", help="limit the per-section block to one section")
     parser.add_argument("--json", action="store_true",
                         help="emit the full RecurrenceReport as JSON (report.to_dict())")
+    parser.add_argument("--all", dest="show_partials", action="store_true",
+                        help="list sub-threshold partials inline instead of folding "
+                             "them into a per-section count (they are always in --json)")
     args = parser.parse_args(argv)
 
     try:
@@ -133,11 +176,33 @@ def main(argv: list[str] | None = None) -> int:
 
     report_fn = getattr(mod, "recurrence_report", None)
     if not callable(report_fn):
+        # Two authoring shapes, and naming only the Arrangement one sent songs that
+        # never build an Arrangement (notes authored straight into the DB) chasing a
+        # one-liner they cannot use. Both are spelled out here rather than pointed
+        # at, because a pointer to a song file is a claim about a workspace this
+        # package does not ship and cannot check.
         print(
             f"recurrence-lens: {args.slug!r} has not wired the recurrence lens — its "
-            f"build.py defines no recurrence_report(). Add one (one line via "
-            f"hallucinote.recurrence.analyze_arrangement); see "
-            f"songs/sun-zone-done/build.py.",
+            f"build.py defines no recurrence_report(). Add one, returning a "
+            f"RecurrenceReport:\n"
+            f"  - if the song builds an in-memory Arrangement:\n"
+            f"      from hallucinote.recurrence.lens import analyze_arrangement\n"
+            f"      def recurrence_report():\n"
+            f"          return analyze_arrangement(build_arrangement(), "
+            f"song_slug={args.slug!r})\n"
+            f"  - if its notes go straight to the DB (no Arrangement): build one "
+            f"SectionRecurrenceInput\n"
+            f"    per section and call analyze_recurrence directly:\n"
+            f"      from hallucinote.recurrence.lens import (\n"
+            f"          SectionRecurrenceInput, analyze_recurrence,\n"
+            f"      )\n"
+            f"      def recurrence_report():\n"
+            f"          secs = [SectionRecurrenceInput(name, start_beat, "
+            f"{{layer: notes}}), ...]\n"
+            f"          return analyze_recurrence(secs, motifs, "
+            f"song_slug={args.slug!r})\n"
+            f"  Only REGISTERED motifs are read — `motifs` maps name -> an object "
+            f"with .notes.",
             file=sys.stderr,
         )
         return 3
@@ -158,7 +223,8 @@ def main(argv: list[str] | None = None) -> int:
     else:
         if caveat is not None:
             print(caveat)
-        print(render(report, section_filter=args.section))
+        print(render(report, section_filter=args.section,
+                     show_partials=args.show_partials))
     return 0
 
 

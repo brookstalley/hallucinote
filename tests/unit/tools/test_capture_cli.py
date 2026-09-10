@@ -280,7 +280,8 @@ def test_cmd_execute_writes_refresh_json_and_forwards_old(
     )
 
     rc = cc._cmd_execute(
-        argparse.Namespace(output=str(out), old=str(old), song=None)
+        argparse.Namespace(output=str(out), old=str(old), song=None,
+                           no_seek=False)
     )
     assert rc == 0
     # Writes the side-by-side refresh file, NOT the canonical name — the canonical
@@ -298,6 +299,133 @@ def test_cmd_execute_writes_refresh_json_and_forwards_old(
 
 
 def test_cmd_execute_needs_song_or_output(capsys) -> None:
-    rc = cc._cmd_execute(argparse.Namespace(output=None, old=None, song=None))
+    rc = cc._cmd_execute(
+        argparse.Namespace(output=None, old=None, song=None, no_seek=False))
     assert rc == 2
     assert "needs --song" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------
+# The playhead preflight: a capture away from beat 0 bakes automated values
+# in as baselines, and replay_capture re-asserts them on every rebuild.
+# --------------------------------------------------------------------------
+
+
+class _FakeLive:
+    """A fake bridge that records the probe call order and answers the two
+    transport probes the preflight makes."""
+
+    def __init__(self, *, playing=False, at=0.0, settles_to=0.0):
+        self.playing, self.at, self.settles_to = playing, at, settles_to
+        self.calls: list[tuple] = []
+
+    def send(self, req):
+        self.calls.append((req.tool, req.action))
+        if (req.tool, req.action) == ("ableton_session", "info"):
+            return _Resp(True, {"is_playing": self.playing,
+                                "current_song_time": self.at})
+        if (req.tool, req.action) == ("ableton_session", "seek"):
+            self.at = self.settles_to
+            return _Resp(True, {"settled_beats": self.settles_to})
+        return _Resp(True, {})
+
+
+def _execute_against(live, tmp_path, monkeypatch, *, no_seek=False):
+    """Run `_cmd_execute` against a fake bridge, stubbing the snapshot walk so
+    the test is about the preflight and its ordering, not the walk."""
+    out = tmp_path / "captured_session.refresh.json"
+    probes_seen: list = []
+
+    def fake_assemble(probe, *, old_snapshot=None, song_dir=None):
+        probe("ableton_track", "info", index=1)   # stand-in for the walk
+        probes_seen.append("walk")
+        return {"snapshot_version": 1, "tracks": []}
+
+    monkeypatch.setattr(cc, "_resolve_send_fn", lambda: live.send)
+    monkeypatch.setattr(
+        "hallucinote.capture.assemble_snapshot_via_probes", fake_assemble)
+    rc = cc._cmd_execute(argparse.Namespace(
+        output=str(out), old=None, song=None, no_seek=no_seek))
+    return rc, out, probes_seen
+
+
+def test_a_rolling_transport_refuses_rather_than_capturing(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """No seek can make a capture deterministic while the playhead moves: each
+    parameter would be read at whatever beat its own probe happened to land on."""
+    live = _FakeLive(playing=True, at=17.0)
+    rc, out, walked = _execute_against(live, tmp_path, monkeypatch)
+    assert rc == 2
+    assert not out.exists()
+    assert walked == []
+    err = capsys.readouterr().err
+    assert "transport is rolling" in err
+    assert "--no-seek" in err
+
+
+def test_a_non_zero_playhead_is_parked_before_the_first_capture_probe(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """The ordering is the whole fix: a seek AFTER the walk would read every
+    automated parameter at the old position and record it as the baseline."""
+    live = _FakeLive(at=512.0)
+    rc, out, walked = _execute_against(live, tmp_path, monkeypatch)
+    assert rc == 0
+    assert walked == ["walk"]
+    assert ("ableton_session", "seek") in live.calls
+    seek_at = live.calls.index(("ableton_session", "seek"))
+    walk_at = live.calls.index(("ableton_track", "info"))
+    assert seek_at < walk_at, f"seek must precede the walk; got {live.calls}"
+    assert json.loads(out.read_text()) == {"snapshot_version": 1, "tracks": []}
+    assert "parked it at 0" in capsys.readouterr().err
+
+
+def test_a_seek_that_settles_elsewhere_refuses(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """A seek that did not take is exactly the silent case this guard ends —
+    the settle poll is the evidence, not a read-back of current_song_time."""
+    live = _FakeLive(at=512.0, settles_to=311.0)
+    rc, out, walked = _execute_against(live, tmp_path, monkeypatch)
+    assert rc == 2
+    assert not out.exists()
+    assert walked == []
+    assert "settled at 311.0" in capsys.readouterr().err
+
+
+def test_a_seek_reporting_no_settled_position_refuses(
+    tmp_path, monkeypatch
+) -> None:
+    """An absent `settled_beats` is not evidence the write landed."""
+    live = _FakeLive(at=512.0)
+    live.send = lambda req: (
+        _Resp(True, {"is_playing": False, "current_song_time": 512.0})
+        if req.action == "info" else _Resp(True, {})
+    )
+    rc, out, walked = _execute_against(live, tmp_path, monkeypatch)
+    assert rc == 2
+    assert not out.exists()
+
+
+def test_a_playhead_already_at_zero_writes_nothing_to_live(
+    tmp_path, monkeypatch
+) -> None:
+    """The preflight reads; it only writes when it has to."""
+    live = _FakeLive(at=0.0)
+    rc, out, walked = _execute_against(live, tmp_path, monkeypatch)
+    assert rc == 0
+    assert ("ableton_session", "seek") not in live.calls
+    assert out.exists()
+
+
+def test_no_seek_skips_the_preflight_and_warns(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    live = _FakeLive(at=512.0)
+    rc, out, walked = _execute_against(live, tmp_path, monkeypatch, no_seek=True)
+    assert rc == 0
+    assert ("ableton_session", "info") not in live.calls
+    assert ("ableton_session", "seek") not in live.calls
+    assert out.exists()
+    assert "--no-seek" in capsys.readouterr().err

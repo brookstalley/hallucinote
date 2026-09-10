@@ -96,3 +96,96 @@ def test_main_json_carries_tuning_caveat_field(capsys, synth_songs):
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert "tuning_caveat" in payload and "19-edo" in payload["tuning_caveat"]
+
+
+@pytest.fixture
+def partial_heavy_songs(tmp_path, monkeypatch):
+    """A synthetic song whose later section yields a SUB-THRESHOLD DERIVED reading
+    (half of the motif's notes recoverable under a transpose, no clean op) — the
+    shape that, unfolded, outnumbers the real recalls in the render."""
+    root = tmp_path / "songs"
+    song = root / "synth-partial"
+    song.mkdir(parents=True)
+    (song / "build.py").write_text(textwrap.dedent('''
+        from hallucinote.recurrence.lens import (
+            SectionRecurrenceInput, analyze_recurrence,
+        )
+
+        def _n(p, s):
+            return {"pitch": p, "start_beats": s, "duration_beats": 0.5,
+                    "velocity": 80, "tags": []}
+
+        _MOTIF = [_n(60, 0.0), _n(64, 1.0), _n(67, 2.0), _n(72, 3.0)]
+        _HALF = [_n(65, 0.0), _n(69, 1.0), _n(70, 2.0), _n(71, 3.0)]
+
+        class _M:
+            def __init__(self, name, notes):
+                self.name, self.notes = name, notes
+
+        def recurrence_report():
+            secs = [
+                SectionRecurrenceInput("home", 0.0, {"lead": list(_MOTIF)}),
+                SectionRecurrenceInput("recap", 16.0, {"lead": list(_MOTIF)}),
+                SectionRecurrenceInput("haze", 32.0, {"lead": list(_HALF)}),
+            ]
+            return analyze_recurrence(secs, {"m": _M("m", _MOTIF)},
+                                      song_slug="synth-partial")
+    '''))
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+    monkeypatch.setenv("HALLUCINOTE_SONGS_ROOT", str(root))
+    return root
+
+
+def test_partials_are_folded_into_a_count_by_default(capsys, partial_heavy_songs):
+    rc = main(["synth-partial"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "1 partial(s) folded" in out
+    assert "--all to list" in out
+    # The threshold is NAMED, and read from the report rather than hardcoded here.
+    assert "below 75% coverage" in out
+    # The folded reading's own line is not printed.
+    assert "derived (transpose +5" not in out
+    # ...while the real recall still is.
+    assert "recurs on lead as exact" in out
+
+
+def test_all_expands_the_folded_partials(capsys, partial_heavy_songs):
+    rc = main(["synth-partial", "--all"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "derived (transpose +5" in out
+    assert "folded" not in out
+    assert "1 partial(s) listed" in out
+
+
+def test_json_always_carries_every_partial(capsys, partial_heavy_songs):
+    """What the render filters is the READING; --json stays complete."""
+    rc = main(["synth-partial", "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    haze = [s for s in payload["sections"] if s["section"] == "haze"][0]
+    assert len(haze["recalls"]) == 1
+    assert haze["recalls"][0]["partial"] is True
+    assert payload["min_coverage"] == 0.75
+
+
+def test_unwired_song_hint_carries_both_authoring_shapes(capsys, tmp_path,
+                                                         monkeypatch):
+    """The old hint named one song that defines no recurrence_report() and one
+    entry point a DB-authored song cannot use. Both shapes belong in the message,
+    not behind a pointer to a workspace this package does not ship."""
+    root = tmp_path / "songs"
+    (root / "bare").mkdir(parents=True)
+    (root / "bare" / "build.py").write_text("def melody_report():\n    return None\n")
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+    monkeypatch.setenv("HALLUCINOTE_SONGS_ROOT", str(root))
+
+    rc = main(["bare"])
+    assert rc == 3
+    err = capsys.readouterr().err
+    assert "defines no recurrence_report()" in err
+    assert "analyze_arrangement" in err
+    assert "analyze_recurrence" in err
+    assert "SectionRecurrenceInput" in err
+    assert "sun-zone-done" not in err

@@ -32,6 +32,79 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-09-10 — Two silent lenses: a partial that stopped counting as a recall, and a capture that stopped reading the wrong beat
+
+<!-- prawduct: type=fix | scope=OPENBUGS-0910 -->
+
+The two reports the 2026-09-10 incoming-bugs triage left open. Both are the same
+shape of defect: something measured the wrong thing and said nothing about it.
+
+**The recurrence lens counted a guess as a recall.** The matcher has two tiers. A
+clean recovered op — `exact`, `transpose +8`, `fragment[0,1.5)` — is a structured
+claim about the layer. When nothing clean matches it falls back to
+`derived (<op>, <coverage>)`: the most of the motif some composed op could account
+for. Over eleven motifs, ten sections and five layers the transform group finds one
+of those almost everywhere, and on `alien` 201 occurrence records came back with the
+large majority sitting at exactly 0.50 coverage. Read straight, the render said every
+motif recurs on every layer everywhere and the whole-motif recalls that describe the
+form were a fifth of the lines.
+
+The reported symptom was noise. The consequence found by reading the code was worse:
+`_recurring_motifs` counted a motif as recurring on **any** non-home occurrence, so
+the partials put every registered motif in the cell-set, made `recall_coverage` read
+100 %, and emptied `never_recalled` — which silenced `registered-never-recalled`, the
+single coaching question the economy path is allowed to emit. The noise was not
+burying the signal, it was deleting a finding.
+
+Now a sub-threshold **derived** reading is marked `partial`: still detected, still in
+the report, still in `--json` (the matcher reports partials on purpose — REC-4Z8Q),
+but folded into a per-section count in the render (`--all` expands) and excluded from
+every economy figure. A motif that recurs only as partials now raises its question and
+says so, naming the best coverage it reached, because "never recurs" would be untrue
+of it.
+
+The floor is **derived-tier only**, and that distinction is the part the plan got
+wrong before the code did. A coverage-only floor demotes `fragment[0,1.5)` at 0.50 —
+the quoted answering cell, a real recall carrying the fragment tier's own evidence
+floor — to the same status as `derived (invert ∘ diminish ×2, 0.50)`. The reporting
+author had already resolved this by hand; their filter kept every non-derived
+variation at any coverage. `MatchResult.derived` now carries the tier from the one
+site that chooses it, so consumers weigh a reading without prefix-matching a
+human-facing label.
+
+**`capture execute` baked end-of-song automation values in as baselines.** A parameter
+under an automation envelope reads at whatever value the envelope holds *at the
+playhead*, and after any render or performed-automation push the playhead sits at the
+end of the arrangement. Captured there, that value becomes the device's dialed
+baseline and `replay_capture` re-asserts it on every subsequent build — permanently
+redefining the value every envelope rides from. Hit three times in one session on
+`alien`, silently each time: A-Reverb return volume 0.95 for 0.85, its `Decay Time`
+6.87 s for 2.50 s, the Voice Shifter's `Dry/Wet` 72 % for 0 %. The diff shows each as
+an ordinary field change, indistinguishable from a deliberate by-ear tweak.
+
+`capture execute` now reads the transport before it probes anything, seeks to beat 0
+when the playhead is elsewhere, and confirms the seek settled there before the walk
+begins. It refuses (exit 2) while the transport is rolling — a capture cannot be made
+deterministic while the playhead moves, so no seek would help — and refuses if the
+seek does not land, which is the silent case in miniature. The confirmation reads the
+seek handler's own settle poll rather than reading `current_song_time` back, because
+Live's getter can return a stale cached value in the same callback as the setter
+(`learnings.md`). `--no-seek` opts out and warns.
+
+This one's Live-side half is an assumption the unit tests cannot reach: they prove the
+seek precedes the walk against a fake bridge, not that Live re-applies automated values
+on a locate while the transport is stopped. Queued in `operator-verification.md` with
+the failure to look for named — a snapshot still carrying end-of-song values while the
+CLI reports it parked the playhead at 0.
+
+**Also in this pass, and worth recording because it is the cheaper half of triage:**
+the other two open reports were verified **already fixed** and archived. The
+one-beat-early render capture was root-caused to arm-before-locate and fixed in
+`8b54a53` with a regression test; `push_cli`'s version-pin recovery no longer calls
+the content fingerprint a commit. A fourth report was a leftover stub carrying an
+unrelated bug under an archived report's filename — refiled under its own name, which
+is where the capture-playhead fix above came from.
+
 ## 2026-09-10 — The release blockers: a restore that lands on the right device, and a failure that says so
 
 <!-- prawduct: type=fix | scope=RELBLK-0910 -->

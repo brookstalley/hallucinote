@@ -113,7 +113,15 @@ class MatchResult:
     alone and its durations were freely re-sung — the label then carries a
     ``(durations free)`` qualifier. The distinction stays VISIBLE rather than being
     dropped from the identity triple, so an augmentation is never confused with an
-    onset-only compression."""
+    onset-only compression.
+
+    ``derived`` marks the tier-4 fallback: no clean op was recoverable, so the reading
+    is a partial account of M under the op it came closest to. It is the honest
+    difference between "the layer contains this named sub-window of M" (a fragment —
+    a structured claim with its own evidence floor) and "this is the most of M any op
+    could explain" — two readings that can carry the SAME coverage number and mean
+    very different things. Consumers weighing how much a reading is worth read this,
+    never the ``derived (`` prefix of the human-facing label."""
 
     variation: str
     coverage: float
@@ -121,6 +129,7 @@ class MatchResult:
     transpose: int | None = None
     factor: float | None = None
     duration_match: bool = True
+    derived: bool = False
 
 
 def _signature(notes: Sequence[NoteDict]) -> list[Triple]:
@@ -549,7 +558,7 @@ def _match_at_alignment(
             return
         if best_partial is None or cov > best_partial.coverage + 1e-9:
             best_partial = MatchResult(
-                _derived_label(op_label, cov), cov, onset, **fields)
+                _derived_label(op_label, cov), cov, onset, derived=True, **fields)
 
     # --- tier 1: pitch axis alone (identity time map) -----------------------
     for (plabel, rdelta, mapped, _cpat, _cdelta) in transpose_maps:

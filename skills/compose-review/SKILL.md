@@ -278,6 +278,14 @@ read you have.
   free function is invisible (register it), and a `derived (<op>, <coverage>)` reading
   means "a partial recall of THAT transform," not "wrong." Grade each recall against the song's
   declared recurrence intent and learn the answer back.
+- **A folded partial is still a fact — just not evidence of recall.** A `derived`
+  reading below the lens's coverage floor is reported as a *partial*: folded into a
+  per-section count in the render (`--all` lists them, `--json` always carries them)
+  and excluded from every economy figure. The transform group finds one for nearly
+  every motif × layer pair, so counting them made every motif read as recurring and
+  emptied `never_recalled` — the coaching question you most want. A clean
+  `fragment[a,b)` is NOT a partial at any coverage: it is the matcher's structured
+  claim that the layer quotes that sub-window, which is a real recall.
 
 ## Exit criteria — this stage is done when
 

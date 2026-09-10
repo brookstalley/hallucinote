@@ -2583,3 +2583,14 @@ then fully quit and reopen Live before any box below.
 - [ ] **#514 — capture→cleanup→capture converges on a real set.** Open a set still holding the
   default scaffold, capture, accept the cleanup offer, capture again: the second round must emit
   zero net link changes. Then confirm a scaffold-NAMED track carrying a device survives capture.
+
+- [ ] **`capture execute` parks the playhead, and Live's values follow it.** The unit tests
+  assert the seek precedes the walk against a fake bridge; only a real set can say Live
+  re-applies automated parameter values on a locate *while the transport is stopped*, which is
+  the assumption the whole fix rests on. Open a set with automation on a return (the `alien`
+  A-Reverb decay is the sharpest witness: 6.87 s at the end of the arrangement, 2.50 s at beat
+  0), leave the playhead at the end, run `capture execute --song alien`, and confirm the refresh
+  records the beat-0 values. **The failure to look for:** a snapshot still carrying end-of-song
+  values while the CLI reports it parked the playhead at 0 — that means Live needs a further
+  settle before parameter values follow the playhead, and the preflight needs a yield after the
+  seek. Also confirm the rolling-transport refusal fires rather than capturing.

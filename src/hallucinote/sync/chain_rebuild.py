@@ -68,6 +68,10 @@ from .push.devices import (
 
 
 JOURNAL_VERSION = 1
+# Deliberately NOT added to a song's .gitignore. A journal exists only between
+# the first delete and a passing verify, so one still sitting here means a
+# rebuild died holding a chain's captured state — exactly the thing an operator
+# needs to notice. An ignored directory is one nothing shows you.
 JOURNAL_DIRNAME = ".rebuild"
 
 # Phase markers written into the journal as the rebuild advances. A resumed

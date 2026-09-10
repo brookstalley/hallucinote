@@ -15,6 +15,41 @@ pending entries when `operator_verification_required: true`.
 
 ---
 
+## #291 — the `alien` witness: does a real chain survive a rebuild? (2026-09-10)
+
+Backlog **#291** (with **#323** folded in). Needs Live 12.4.x, the Remote Script re-vendored
+(the same one the sweep's other checks need — batch it), and the song `alien`. One sitting.
+
+`rebuild_chain` runs entirely against a fake `send_fn` here, and the fake models the one thing
+that matters — a freshly loaded device comes back at class defaults, so "forgot to restore" is
+a detectable state. What it cannot model is Live's own float and enum behaviour, which is where
+this either works or quietly does not.
+
+**The witness the issue names, and the highest-value check here:**
+
+- [ ] On `alien`'s Alien Voice track, swap the position-1 instrument (Analog → Operator) with
+  `hallucinote chain-rebuild`. EQ Eight and Erosion must still be downstream, in order, with
+  **every non-default parameter unchanged**. Record the before/after parameter values, not just
+  a pass/fail — a rebuild that restores 19 of 20 params looks identical to one that restores 20
+  unless you compare.
+- [ ] **`_PARAM_EPSILON = 1e-6` is the number most likely to be wrong.** It is the tolerance the
+  verify pass compares read-back values against, and it was reasoned, not measured. Too tight
+  gives false verify failures on a real chain; too loose misses a parameter left near its
+  default. The run above produces the data that settles it.
+- [ ] **Sidechain restore.** The rebuild restores a sidechain *source* through
+  `get_input_routing` → `set_input_routing` rather than `set_sidechain`. Unproven against a real
+  Compressor with a live sidechain source — try one.
+- [ ] **R4's refusal is narrower than it reads.** It catches "the DB names nothing loadable"; it
+  cannot catch "the DB names a plugin this machine does not have". That case surfaces at load
+  time as a verify failure with the journal intact — safe, but after the delete rather than
+  before it. Worth one deliberate try on a machine missing a plugin the song uses.
+- [ ] **R5 — does `mute` actually silence the window?** Rebuild during playback and listen. On
+  the master the module alerts rather than pretending; confirm that is what happens.
+- [ ] **R7 + the #323 criterion.** `push execute --reconcile-chains` against a set with a real
+  occupied slot, then a SECOND push: it must emit **no** drift note for that parent. The DB-side
+  half is pinned by a test that runs the real `probe_and_link` after a real rebuild; the
+  Live-side half is not.
+
 ## The open-bug sweep's re-vendor sitting (2026-09-10)
 
 Backlog **#508**, **#516**, **#515**, **#519**. Needs Live 12.4.x, the Remote Script

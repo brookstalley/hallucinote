@@ -108,7 +108,7 @@ superseded root cause, and reverted it in full when the correction landed.** Rec
 because the branch's first name (`fix/master-surface-capture-binding`) is in the reflog
 and a later reader deserves to know it was retracted rather than lost.
 
-## Chunk 01 — the stem-sum residual gates the report
+### Chunk 01: the stem-sum residual gates the report
 
 **Delivers.** `_derive_findings` accepts `sum_reconciliation` and emits a
 `master_not_stem_sum` finding at `blocking` when correlation falls below a floor or
@@ -127,12 +127,21 @@ one out.
 - A report with healthy reconciliation (baseline's 0.959 / small offset) produces no
   new finding and diffs exactly as today.
 - A report carrying the incident's numbers (0.159 / −32.65) emits one `blocking`
-  `master_not_stem_sum` finding naming both values.
+  `master_not_stem_sum` finding naming the axis that failed. Correlation is checked
+  first and short-circuits, so the finding carries the number the gate actually judged
+  on rather than one it did not reach.
 - `compare_to` on that report emits no master surface deltas and no master section
   deltas, and says why — and the same holds when it is the BASELINE that is
   disqualified, since a stored report is re-used as a baseline for as long as it is the
   newest, and a capture made under a solo does not stop being wrong when later renders
-  are measured against it.
+  are measured against it. **Including a baseline written BEFORE this gate existed** —
+  those carry `sum_reconciliation` and no finding, and `resolve_baseline` filters on
+  `db_seq` alone, so the three stored `alien` reports would otherwise stay diffable
+  forever. They are judged through the same lens, not a second threshold.
+- The master-derived overshoot count stops claiming significance on a disqualified
+  report: an overshoot is a master-bus true-peak window, so it is a master delta by
+  another name and would otherwise be a real headline change sourced from a capture the
+  same payload declares is not the mix.
 - The refusal reaches the SUMMARY an operator reads, not only the report JSON: the
   significant-delta counts are what they act on, and a disqualified comparison makes
   those counts SMALLER, which without a stated reason reads as a quieter render.
@@ -144,7 +153,7 @@ one out.
 **Done when:** tests pass, `prawduct-hook test-evidence record`, artifacts updated,
 `/prawduct:critic`.
 
-## Chunk 03 — a lens cannot ship inert
+### Chunk 03: a lens cannot ship inert
 
 **Arrived mid-build, from the user:** *"tests are suspect if that shipped"* — and they
 are. The existing `sum_reconciliation` tests assert `is not None`, `.skipped is None`
@@ -167,17 +176,21 @@ exemption states a reason.
 
 **Acceptance.**
 - A `MixReport` block in neither map fails, naming it.
+- A finding-bearing block that the ONE `_derive_findings` call stops passing fails —
+  parsed from the call site, because every such parameter has a default, so dropping a
+  keyword raises nothing and reproduces the inert lens with a signature check green.
+  This is the half that closes the original defect.
 - Deleting `sum_reconciliation` from the gating map reproduces the original defect as a
   test failure — verified.
 - A finding-bearing block whose `_derive_findings` parameter is removed fails.
 - An evidence-only block with no stated reason fails.
 
-**What it does not catch.** A parameter that exists and is ignored inside the function
-body. Closing that needs the deriver to consume its inputs structurally rather than by
+**What it does not catch.** A parameter that is passed AND declared and then ignored
+inside the function body. Closing that needs the deriver to consume its inputs structurally rather than by
 name, which is a redesign this scope does not carry — recorded so the guarantee is not
 overstated.
 
-## Chunk 02 — a render refuses under a soloed track
+### Chunk 02: a render refuses under a soloed track
 
 **Delivers.** `ableton_render(action='start')` reads solo and mute across
 `song.tracks` AND `song.return_tracks` before arming — a return is a Track in Live and

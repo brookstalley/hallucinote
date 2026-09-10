@@ -53,7 +53,11 @@ from .imaging import measure_imaging
 from .integrity import SurfaceIntegrity, measure_integrity
 from .onsets import detect_onset_samples, to_mono
 from .phase import PhaseRelation, measure_phase_relations
-from .reconcile import SumReconciliation, reconcile_stem_sum
+from .reconcile import (
+    SumReconciliation,
+    master_is_not_stem_sum,
+    reconcile_stem_sum,
+)
 from .stereo import measure_stereo
 from .timbre import measure_timbre
 from .cross_rhythm import (
@@ -1380,45 +1384,6 @@ def _section_name_for_beat(
     for window in sections:
         if window.start_beat <= beat < window.end_beat:
             return window.name
-    return None
-
-
-# A master capture that is not the sum of its stems disqualifies every master
-# number in the report. The floor and the band below are drawn from the
-# 2026-09-10 `alien` incident, where a render made under a soloed track
-# measured correlation 0.159 and gain_offset_db -32.65 while a healthy render
-# of the same song measured 0.959 — a gap wide enough that no threshold inside
-# it separates a real mix change from a master that is not the mix. They are
-# deliberately far from the healthy value rather than close to the faulty one:
-# this gate exists to catch a capture that contradicts itself, not to grade a
-# mix.
-_STEM_SUM_MIN_CORRELATION = 0.5
-_STEM_SUM_MAX_GAIN_OFFSET_DB = 12.0
-
-
-def master_is_not_stem_sum(
-    reconciliation: "SumReconciliation | None",
-) -> tuple[str, float, float] | None:
-    """The reason a master capture is disqualified, or ``None``.
-
-    Returns ``(metric, observed, expected)`` for the axis that failed, so the
-    caller reports the number it actually judged rather than restating the
-    verdict. Correlation is checked first: a master that does not correlate
-    with its own stem sum is not the mix regardless of how its level compares.
-
-    A skipped reconciliation is NOT a disqualification. The lens declining to
-    measure (no stems, silent master, an unusable sample rate) says nothing
-    about whether the master is the mix, and treating silence as a failure
-    would make every report that could not run the lens unreadable.
-    """
-    if reconciliation is None or reconciliation.skipped is not None:
-        return None
-    correlation = reconciliation.correlation
-    if correlation == correlation and correlation < _STEM_SUM_MIN_CORRELATION:
-        return ("stem_sum_correlation", correlation, _STEM_SUM_MIN_CORRELATION)
-    offset = reconciliation.gain_offset_db
-    if offset == offset and abs(offset) > _STEM_SUM_MAX_GAIN_OFFSET_DB:
-        return ("stem_sum_gain_offset_db", offset, _STEM_SUM_MAX_GAIN_OFFSET_DB)
     return None
 
 

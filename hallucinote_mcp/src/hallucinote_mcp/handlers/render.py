@@ -234,15 +234,33 @@ def _mixer_state(context: Any) -> list[dict[str, Any]]:
     after the mixer has moved on, and without this there is no way to tell
     afterwards whether the capture was made under a solo or a mute.
     """
+    def _flag(track: Any, name: str) -> bool | None:
+        value = getattr(track, name, None)
+        return None if value is None else bool(value)
+
     def _row(kind: str, index: int, track: Any) -> dict[str, Any]:
         mixer = getattr(track, "mixer_device", None)
         volume = getattr(mixer, "volume", None) if mixer is not None else None
         return {
-            "kind": kind,
-            "index": index,
-            "name": getattr(track, "name", "") or "<unnamed>",
-            "solo": bool(getattr(track, "solo", False)),
-            "mute": bool(getattr(track, "mute", False)),
+            # The manifest's existing surface vocabulary (`_track_manifest_entry`,
+            # `_instance_to_dict`), not a second one: the whole point of this
+            # field is being joined to a stem entry after the fact ("was this
+            # capture made under a mute?"), and a consumer should not have to
+            # know two spellings and join on a pair when every other surface in
+            # the file carries a `track_id`.
+            "surface_kind": kind,
+            "surface_index": index,
+            "surface_name": getattr(track, "name", "") or "<unnamed>",
+            "track_id": f"{kind}:{index}",
+            # `None` when Live did not present the attribute at all, NEVER
+            # False. Defaulting a missing `solo` to False would make "this
+            # surface is not soloed" and "this object did not answer"
+            # indistinguishable — in the one guard whose entire purpose is
+            # that a wrong mix must not pass as a right one. It would also
+            # write `solo: false` into the manifest as a fact consumers are
+            # told to trust. An unknown is refused below, not waved through.
+            "solo": _flag(track, "solo"),
+            "mute": _flag(track, "mute"),
             # Live's normalized 0..1 fader, the same convention
             # `master_fader_volume` uses on the report side.
             "volume": (
@@ -277,10 +295,30 @@ def _refuse_under_solo(mixer_state: list[dict[str, Any]]) -> list[str]:
     Both apply to returns as well as tracks: ``mixer_state`` carries them, and
     a soloed return is as fatal to the mix as a soloed track.
     """
+    # An unreadable flag is refused, not assumed clear. This guard's premise —
+    # that a Live Track presents `solo` and `mute` — is recorded as UNVERIFIED
+    # in operator-verification, so the honest failure is to stop rather than to
+    # proceed on an assumption the record itself declines to make.
+    unknown = [t for t in mixer_state if t["solo"] is None or t["mute"] is None]
+    if unknown:
+        named = ", ".join(
+            f"{t['surface_kind']} {t['surface_index']} ({t['surface_name']!r})"
+            for t in unknown
+        )
+        raise SoloedTrackError(
+            f"render refused: could not read solo/mute on {len(unknown)} "
+            f"surface(s) — {named}. The guard that keeps a soloed mix from "
+            "being captured cannot confirm it is safe to render, and a guard "
+            "that cannot see the mixer must say so rather than pass "
+            "everything. This usually means Live's track API changed shape. "
+            "Nothing was captured."
+        )
+
     soloed = [t for t in mixer_state if t["solo"]]
     if soloed:
         named = ", ".join(
-            f"{t['kind']} {t['index']} ({t['name']!r})" for t in soloed
+            f"{t['surface_kind']} {t['surface_index']} ({t['surface_name']!r})"
+            for t in soloed
         )
         raise SoloedTrackError(
             f"render refused: {len(soloed)} surface(s) are SOLOED — {named}. "
@@ -291,7 +329,7 @@ def _refuse_under_solo(mixer_state: list[dict[str, Any]]) -> list[str]:
             "Live and re-render. Nothing was captured."
         )
     return [
-        f"{t['kind']} {t['index']} ({t['name']!r})"
+        f"{t['surface_kind']} {t['surface_index']} ({t['surface_name']!r})"
         for t in mixer_state if t["mute"]
     ]
 

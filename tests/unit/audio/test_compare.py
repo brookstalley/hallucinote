@@ -557,3 +557,56 @@ def test_a_disqualified_BASELINE_also_refuses_master_deltas():
 
     assert not [r for r in out["deltas"] if r["track_id"] == "master"]
     assert out["master_deltas_refused"]["side"] == "baseline"
+
+
+def test_a_disqualified_master_does_not_report_a_significant_overshoot_change():
+    """An overshoot is a master-bus true-peak window — a master delta by
+    another name. On the incident the soloed master sat ~14 dB low so every
+    overshoot vanished, which would have reported a real headline change from
+    a capture the same payload declares is not the mix."""
+    baseline = _report(stems=[_surface("track:1")], overshoots=[{"x": 1}, {"x": 2}])
+    current = _report(stems=[_surface("track:1")], overshoots=[])
+    current["findings"] = [_not_stem_sum_finding()]
+
+    out = diff_reports(current, baseline)
+
+    assert out["overshoot_count"]["delta"] == -2
+    assert out["overshoot_count"]["significant"] is False
+
+
+def test_an_old_baseline_with_no_finding_is_still_disqualified():
+    """A report written before the gate existed carries `sum_reconciliation`
+    and no finding, and `resolve_baseline` filters on db_seq alone — so the
+    three stored `alien` reports stay selectable as baselines forever."""
+    baseline = _report(stems=[_surface("track:1")])
+    baseline["findings"] = []
+    baseline["sum_reconciliation"] = {
+        "residual_db": -3.0, "correlation": 0.159, "best_lag_samples": 64,
+        "gain_offset_db": -32.65, "worst_offender": None, "skipped": None,
+    }
+    current = _report(stems=[_surface("track:1")])
+    current["findings"] = []
+
+    out = diff_reports(current, baseline)
+
+    assert out["master_deltas_refused"]["side"] == "baseline"
+    assert not [r for r in out["deltas"] if r["track_id"] == "master"]
+
+
+def test_an_old_baseline_that_reconciles_cleanly_still_diffs():
+    baseline = _report(stems=[_surface("track:1")])
+    baseline["findings"] = []
+    baseline["sum_reconciliation"] = {
+        "residual_db": -18.0, "correlation": 0.959, "best_lag_samples": 64,
+        "gain_offset_db": -1.2, "worst_offender": None, "skipped": None,
+    }
+    current = _report(
+        stems=[_surface("track:1")],
+        master=_surface("master", "master", "Main", lufs_i=-14.6),
+    )
+    current["findings"] = []
+
+    out = diff_reports(current, baseline)
+
+    assert "master_deltas_refused" not in out
+    assert _find(out, "master", "lufs_i")["delta"] == pytest.approx(-0.6)

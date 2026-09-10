@@ -12,11 +12,13 @@ list with a stated reason. A new lens that is neither fails here.
 """
 from __future__ import annotations
 
+import ast
 import dataclasses
 import inspect
 
 import pytest
 
+from hallucinote.audio import analyze
 from hallucinote.audio.analyze import _derive_findings
 from hallucinote.audio.report import (
     EVIDENCE_ONLY_BLOCKS,
@@ -70,14 +72,58 @@ def test_every_declared_block_is_a_real_field():
 @pytest.mark.parametrize(
     ("block", "param"), sorted(FINDING_BEARING_BLOCKS.items())
 )
-def test_a_finding_bearing_block_actually_reaches_the_deriver(block, param):
+def test_a_finding_bearing_block_names_a_real_deriver_parameter(block, param):
     """Declaring a block finding-bearing is a claim `_derive_findings` reads
-    it. If the parameter is gone, the claim is stale and the block is inert
-    again — exactly the state this file exists to prevent."""
+    it. If the parameter is gone, the claim is stale."""
     params = inspect.signature(_derive_findings).parameters
     assert param in params, (
         f"MixReport.{block} is declared finding-bearing via the "
         f"_derive_findings parameter {param!r}, which no longer exists"
+    )
+
+
+def _derive_findings_call_keywords() -> set[str]:
+    """The keywords `analyze_mix` actually passes to `_derive_findings`.
+
+    Parsed from the source rather than observed at runtime because the wiring
+    is what is being checked: every finding-bearing parameter has a default
+    (`sum_reconciliation=None`, `integrity=()`, ...), so a call that stops
+    passing one raises nothing and silently returns the lens to the inert
+    state this file exists to prevent. A signature check cannot see that; only
+    the call site can.
+    """
+    tree = ast.parse(inspect.getsource(analyze))
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_derive_findings"
+        ):
+            return {kw.arg for kw in node.keywords if kw.arg is not None}
+    raise AssertionError(
+        "no `_derive_findings(...)` call found in analyze.py — this guard "
+        "reads the call site, so it cannot be moved or renamed silently"
+    )
+
+
+@pytest.mark.parametrize(
+    ("block", "param"), sorted(FINDING_BEARING_BLOCKS.items())
+)
+def test_a_finding_bearing_block_is_actually_passed_at_the_call_site(block, param):
+    """The stronger half, and the one that closes the original defect.
+
+    `sum_reconciliation` did not ship missing from the signature — it shipped
+    never being PASSED. Because every finding-bearing parameter carries a
+    default, deleting a keyword from the one call in `analyze_mix` leaves the
+    signature intact, raises no TypeError, and reproduces the inert lens
+    exactly, with the rest of this file green.
+    """
+    passed = _derive_findings_call_keywords()
+    assert param in passed, (
+        f"MixReport.{block} is declared finding-bearing, but `analyze_mix` "
+        f"does not pass {param!r} to _derive_findings — the parameter's "
+        f"default silently stands in, so the lens reaches no finding and "
+        f"nothing else fails"
     )
 
 

@@ -118,6 +118,11 @@ class _FakeTrack:
         self.devices = list(devices or [])
         self.arrangement_clips = list(arrangement_clips or [])
         self.mixer_device = _FakeMixer()
+        # Real defaults, not attributes the tests bolt on: a fake that only
+        # grows `solo` when a test sets it models the handler's assumption
+        # rather than Live, and cannot show a read that finds nothing.
+        self.solo = False
+        self.mute = False
         self.has_audio_output = has_audio_output
         self.has_midi_input = has_midi_input
         self.has_audio_input = not has_midi_input
@@ -1650,12 +1655,17 @@ def test_the_manifest_records_the_mixer_state_on_a_clean_render(
     # Tracks AND returns — a return is a Track in Live and carries solo.
     assert len(rows) == len(song.tracks) + len(song.return_tracks)
     for row, track in zip(rows, [*song.tracks, *song.return_tracks]):
-        assert row["name"] == track.name
+        assert row["surface_name"] == track.name
         assert row["solo"] is False and row["mute"] is False
         assert row["volume"] == pytest.approx(track.mixer_device.volume.value)
-    assert [r["kind"] for r in rows][-len(song.return_tracks):] == (
+    # The manifest's one surface vocabulary, and a track_id that joins these
+    # rows to the stem entries they explain.
+    assert [r["surface_kind"] for r in rows][-len(song.return_tracks):] == (
         ["return"] * len(song.return_tracks)
     )
+    assert [r["track_id"] for r in rows[:len(song.tracks)]] == [
+        f"track:{i}" for i in range(1, len(song.tracks) + 1)
+    ]
     assert out["manifest"]["muted_tracks"] == []
 
 
@@ -1703,3 +1713,33 @@ def test_a_muted_return_warns_and_the_render_proceeds(
     assert ctx_two_tracks_one_return.song.start_playing_calls == 1
     muted = out["manifest"]["muted_tracks"]
     assert len(muted) == 1 and "return 1" in muted[0]
+
+
+def test_render_refuses_when_solo_cannot_be_read(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, stub_sidecar,
+):
+    """A guard that stops seeing the mixer must say so, not pass everything.
+
+    Defaulting a missing `solo` to False would make "not soloed" and "did not
+    answer" indistinguishable in the one guard whose purpose is that a wrong
+    mix must not pass as a right one — and would write `solo: false` into the
+    manifest as a fact consumers are told to trust. The operator-verification
+    entry records the premise (that a Live Track presents `solo`) as
+    unverified, which is exactly why absence is refused rather than assumed.
+    """
+    del ctx_two_tracks_one_return.song.tracks[0].solo
+
+    with pytest.raises(render_handlers.SoloedTrackError) as excinfo:
+        render_handlers.render_handler(
+            ctx_two_tracks_one_return,
+            song_slug="t",
+            output_dir=str(tmp_path / "c"),
+            _osc_factory=osc_factory,
+            _sidecar=stub_sidecar,
+            _clock_source=lambda: 999.0,
+        )
+
+    msg = str(excinfo.value)
+    assert "could not read solo/mute" in msg
+    assert ctx_two_tracks_one_return.song.tracks[0].name in msg
+    assert ctx_two_tracks_one_return.song.start_playing_calls == 0

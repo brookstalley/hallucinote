@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from .automation import CORRELATION_ABS_THRESHOLD
+from .reconcile import SumReconciliation, master_is_not_stem_sum
 
 # Calibrated significance floors (dB). See module docstring for evidence.
 SIGNIFICANCE_DEFAULT_DB = 0.5
@@ -187,8 +188,19 @@ def diff_reports(
             "before": overshoots_before,
             "after": overshoots_after,
             "delta": overshoots_after - overshoots_before,
-            # An overshoot appearing or disappearing is always worth a look.
-            "significant": overshoots_after != overshoots_before,
+            # An overshoot appearing or disappearing is always worth a look —
+            # UNLESS the master it was measured from is disqualified. An
+            # overshoot is a master-bus true-peak window, so this is a master
+            # delta by another name: on the incident's numbers the soloed
+            # master sat ~14 dB low and every overshoot vanished, which would
+            # report a real headline change sourced entirely from a capture
+            # the same payload has just declared is not the mix. The counts
+            # stay (they are evidence); only the claim that the change means
+            # something is withheld.
+            "significant": (
+                overshoots_after != overshoots_before
+                if master_disqualified is None else False
+            ),
         },
         "added_surfaces": sorted(current_surfaces.keys() - baseline_surfaces.keys()),
         "missing_surfaces": sorted(baseline_surfaces.keys() - current_surfaces.keys()),
@@ -228,14 +240,34 @@ def _master_disqualification(
     that owns it, and a second copy here would be free to disagree with the
     report's own findings about the same numbers.
     """
+    verdict: tuple[str, float, float] | None = None
     for finding in report.get("findings", []) or []:
         if isinstance(finding, dict) and finding.get("kind") == "master_not_stem_sum":
+            verdict = (
+                finding.get("metric"),
+                finding.get("observed"),
+                finding.get("expected"),
+            )
+            break
+    else:
+        # A report written before this gate existed carries a fully populated
+        # `sum_reconciliation` and no finding — and `resolve_baseline` filters
+        # on `db_seq` alone, so those reports stay selectable as baselines
+        # indefinitely. The three stored `alien` reports that motivated this
+        # work are exactly that case. Judge them through the SAME lens rather
+        # than a second threshold here, so an old baseline and a new one cannot
+        # disagree about the same numbers.
+        verdict = master_is_not_stem_sum(
+            _reconciliation_from_json(report.get("sum_reconciliation"))
+        )
+    if verdict is not None:
+            metric, observed, expected = verdict
             return {
                 "reason": "master_not_stem_sum",
                 "side": side,
-                "metric": finding.get("metric"),
-                "observed": finding.get("observed"),
-                "expected": finding.get("expected"),
+                "metric": metric,
+                "observed": observed,
+                "expected": expected,
                 "detail": (
                     f"the {side} report's master is not the sum of its stems, "
                     "so a master delta would compare a capture of something "
@@ -244,6 +276,32 @@ def _master_disqualification(
                 ),
             }
     return None
+
+
+def _reconciliation_from_json(raw: Any) -> SumReconciliation | None:
+    """Rehydrate just enough of a serialized reconciliation to judge it.
+
+    Only the fields the lens reads are needed; the band residuals and the
+    worst offender are evidence for a human, not inputs to the verdict. A
+    payload missing either judged field is not a disqualification — the same
+    rule the lens applies to a skipped measurement.
+    """
+    if not isinstance(raw, dict):
+        return None
+    try:
+        correlation = float(raw["correlation"])
+        gain_offset_db = float(raw["gain_offset_db"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return SumReconciliation(
+        residual_db=float(raw.get("residual_db", float("nan"))),
+        correlation=correlation,
+        best_lag_samples=int(raw.get("best_lag_samples", 0) or 0),
+        gain_offset_db=gain_offset_db,
+        band_residuals=[],
+        worst_offender=raw.get("worst_offender"),
+        skipped=raw.get("skipped"),
+    )
 
 
 def _section_surfaces(

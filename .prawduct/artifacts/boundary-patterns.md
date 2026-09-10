@@ -249,8 +249,13 @@ When changing this surface:
   `--allow-incomplete` to override. **Absence is not failure** — manifests
   predating these fields omit them and must still be readable.
 - **`mixer_state` and `muted_tracks` record the mix the capture was made
-  under**, one row per track AND per return: `kind`, `index`, `solo`, `mute`
-  and the normalized fader `volume`. Returns are in because a return is a
+  under**, one row per track AND per return, in the manifest's own surface
+  vocabulary (`surface_kind` / `surface_index` / `surface_name` / `track_id`,
+  so a row joins to the stem entry it explains): `solo`, `mute` and the
+  normalized fader `volume`. **`solo` and `mute` are `null`, never `false`,
+  when Live did not present the attribute** — and a null refuses the render,
+  because a guard that cannot see the mixer must say so rather than pass
+  everything. Returns are in because a return is a
   Track in Live and carries solo like any other — soloing one silences every
   regular track's direct output. Unlike the trust
   flags above they do not describe the capture's fidelity — the capture is

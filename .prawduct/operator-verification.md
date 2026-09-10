@@ -46,10 +46,13 @@ this refusal silently does not exist. Re-vendor via `/ableton-mcp-install`, quit
 completely and reopen (Live caches Control Surface modules at launch), then `/mcp`.
 
 - [ ] **A soloed track refuses the render.** Solo one track by hand, then
-  `ableton_render(action='start', song_slug=<slug>)`. Pass = refused before the
-  transport moves, the message names that track by index and name, and the captures
-  directory holds no WAVs. The whole point is that this fires in the first second
-  rather than after a full render.
+  `ableton_render(action='start', song_slug=<slug>)`. **The start call returns a job
+  handle and the poll instruction — that is NOT a pass or a fail.** The guard runs at
+  the top of the detached worker, so the refusal arrives through `action='status'`:
+  poll once and expect `state: failed` with the message naming that track by index and
+  name. Pass = that, the transport never moved, and the captures directory holds no
+  WAVs. Reading the start call's own return as "it started anyway" is the trap this box
+  exists to avoid.
 - [ ] **Two soloed tracks are both named.** Live's solo is exclusive by default
   (soloing one clears another) — hold ⌘ to solo a second. If this Live cannot hold two
   solos, record that and the box is N/A rather than failed.
@@ -64,10 +67,16 @@ completely and reopen (Live caches Control Surface modules at launch), then `/mc
   OLD report auditable — without it, the incident could only be diagnosed by probing a
   Live session that had already moved on.
 - [ ] **A soloed RETURN refuses too, and a clean song with returns does not.** Solo
-  one return by hand and render — pass = refused, the message naming `return N`. Then
+  one return by hand and render — pass = the same `state: failed` on poll, the message
+  naming `return N`. Then
   clear it and confirm the same song renders clean. Both halves matter: a return is a
   Track in Live and carries solo, and a guard that false-fires on a healthy song is
   worse than none.
+
+- [ ] **An unreadable solo attribute refuses.** Cannot be staged by hand on a healthy
+  Live — record N/A unless a Live version turns up whose Track lacks `solo`/`mute`.
+  Noted because the code now refuses rather than assuming clear, so an operator who
+  ever sees `could not read solo/mute` should know it is the guard working, not a bug.
 
 **Why it can't be headless-verified:** the fake sets `solo` because the handler reads
 `solo`. Only Live can say whether a real soloed track presents that attribute the way

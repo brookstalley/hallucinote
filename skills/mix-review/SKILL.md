@@ -97,12 +97,23 @@ as offset by roughly the excess. If a surface shows damage, say so and treat tha
 surface's musical readings as suspect until it is re-rendered — do not open a
 feel conversation about a part whose capture has a hole in it.
 
-These two are also the only lenses that may state a defect **as a defect**. Every
+These two, and `master_not_stem_sum`, are the only lenses that may state a defect
+**as a defect**. Every
 musical lens here reports against declared intent and never grades; a sample
 discontinuity and a capture that is not the length it claims both have physical
 ground truth, so they are named plainly. Do not intent-relativize or hedge a
 `capture_span_mismatch` — its whole purpose is to stop the rest of the report
 being believed.
+
+`master_not_stem_sum` is the strongest of the three and the one to read FIRST. It
+says the captured master is not the sum of the captured stems — so it is not the
+mix, and every master reading in the report (LUFS per section, sharpness, master
+imaging, delivered true peak) describes something else. Do not open a loudness or
+tonal-balance conversation about the master on a report carrying it; the finding
+names what to check (a soloed or muted track, a track routed away from Main, a
+missing stem) and the answer is to fix that and re-render. The stems on such a
+report are still good — that is what makes the master the odd one out — so a
+per-part conversation remains legitimate.
 
 Read the latest report JSON under `songs/<slug>/analysis/` (or run the analysis
 first — see "Refreshing the analysis"). At the **top level**, describing the

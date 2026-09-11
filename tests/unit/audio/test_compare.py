@@ -625,3 +625,37 @@ def test_a_stored_residual_of_exactly_zero_survives_rehydration():
 
     assert recon is not None
     assert recon.residual_db == 0.0
+
+
+def test_a_finding_without_its_numbers_still_disqualifies_the_master():
+    """The finding's PRESENCE is the verdict, not its arithmetic.
+
+    `metric` / `observed` / `expected` are read off a stored report's JSON, so
+    the type checker sees `Any` even though this module's own writer always sets
+    all three. The honest handling of a report that carries the finding without
+    them is to disqualify anyway and report the missing value as null — the
+    alternatives are fabricating a number or raising on `float(None)`, and both
+    turn "I cannot tell you how bad it was" into something worse: a master diff
+    that ships, or a compare that dies on a malformed baseline.
+    """
+    baseline = _report(stems=[_surface("track:1")])
+    current = _report(
+        stems=[_surface("track:1")],
+        master=_surface("master", "master", "Main", lufs_i=-22.6),
+    )
+    # Derived from the one builder for this shape, minus the three values. The
+    # code under test reads every field through `.get`, so a literal here would
+    # stay green against a finding shape nothing produces once the builder
+    # gains a field.
+    finding = _not_stem_sum_finding()
+    for numeric in ("metric", "observed", "expected"):
+        del finding[numeric]
+    current["findings"] = [finding]
+
+    out = diff_reports(current, baseline)
+
+    assert not [r for r in out["deltas"] if r["track_id"] == "master"]
+    refused = out["master_deltas_refused"]
+    assert refused["reason"] == "master_not_stem_sum"
+    assert refused["metric"] is None
+    assert refused["observed"] is None and refused["expected"] is None

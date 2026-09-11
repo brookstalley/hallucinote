@@ -215,12 +215,24 @@ own case: Live's master carries no `solo` at all, so a naive master row would
 read `None` and the existing guard would refuse every render. A rack's return
 chains are the other, stated alongside.
 
-**And an append-only file was edited.** An earlier hunk of this entry pasted its
-own test-consolidation paragraph into the 2026-09-09 `RELBLK-V19` entry as well,
-because the replace that inserted it carried no count. That entry now matches
-its pre-branch bytes exactly. The mechanism is worth naming: a blind
-string-replace against a file whose sections repeat a common phrase edits
-history nobody was reading.
+**An append-only file was edited twice, by the same mechanism, one round
+apart.** Two hunks of this entry were inserted with an uncounted string-replace
+against `**Re-vendor: REQUIRED.**` — a phrase this file's entries repeat — so
+each one also landed inside the 2026-09-09 `RELBLK-V19` entry. The first round
+caught one paragraph; the fix deleted it and the NEXT edit put four more in its
+place, including a sentence claiming the entry had been restored. It had not
+been; nothing re-checked after the second edit.
+
+Restoring it by another replace would have been the same bet a third time. The
+entry was spliced back from `6dfdadb` verbatim by index, and the check is now
+structural rather than a spot read: parse both files into entries by heading and
+assert that the set of pre-existing entries is byte-identical. It is, and this
+entry is the only addition.
+
+Worth naming because the shape outlives the instance: **an append-only file
+whose sections share boilerplate cannot be edited by matching that
+boilerplate**, and a claim that a file was repaired is worth exactly as much as
+the re-check behind it.
 
 **Re-vendor: REQUIRED.** Three chunks touch `handlers/device.py` and
 `handlers/render.py`, both inside `_FINGERPRINT_PATHS`. Batched for exactly that
@@ -886,40 +898,6 @@ clear-and-rebuild projection and a re-push does retry. The verify pass blocked o
 it. The counts were wrong in both directions too: the "bounded N" alert was
 emitted before the executor's filter ran, and the withheld count counted calls
 rather than copies, doubling every number.
-
-**The chain-solo read had no unknown, beside a surface solo that insists on
-one.** Four reviewers reached one line from four angles. `_soloed_chains` read
-`bool(getattr(chain, "solo", False))`, collapsing "Live did not answer" into
-"not soloed" — forty lines below the sibling comment that forbids exactly that,
-and sharper here than there: these rows go into `manifest.json`, and the
-boundary artifact edited in this same work tells consumers to JOIN on them. A
-chain that never answered, recorded as clear, is a false negative asserted as
-fact to a reader with no way to check it. `solo` is now `true` or `null`, never
-`false`, an unreadable chain is listed as unknown, and the warning says which it
-is — the warn-tier analogue of the surface guard refusing on a flag it cannot
-read.
-
-**The advisory was fixed in code and still dropped one hop later.** The blocking
-finding's fix carried it through `Job.status_result`; `skills/render-analyze/`
-and the two `actions/render.py` descriptions still enumerated the status keys
-without it, and those are what a caller actually follows. All three now relay
-it, and the action description names `Job.status_result` as the authority rather
-than pretending a prose list can stay closed.
-
-**Two limits the read never had, one of them now a backlog item.** `_mixer_state`
-walks tracks and returns and never the master strip — and `master.wav` is a
-captured stem, so a rack on the master with a soloed chain is invisible. That is
-**#552**, filed rather than described, because the master needs handling as its
-own case: Live's master carries no `solo` at all, so a naive master row would
-read `None` and the existing guard would refuse every render. A rack's return
-chains are the other, stated alongside.
-
-**And an append-only file was edited.** An earlier hunk of this entry pasted its
-own test-consolidation paragraph into the 2026-09-09 `RELBLK-V19` entry as well,
-because the replace that inserted it carried no count. That entry now matches
-its pre-branch bytes exactly. The mechanism is worth naming: a blind
-string-replace against a file whose sections repeat a common phrase edits
-history nobody was reading.
 
 **Re-vendor: REQUIRED.** `handlers/clip.py`, `actions/clip.py` and
 `handlers/render.py` are all inside `_FINGERPRINT_PATHS` — the tuple names the

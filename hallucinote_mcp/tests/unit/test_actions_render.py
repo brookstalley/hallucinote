@@ -1953,3 +1953,10 @@ def test_a_chain_that_does_not_report_solo_is_listed_as_unknown(
         "solo": None,
     }]
     assert "did NOT report whether it is soloed" in out["warning"]
+    # The ENVELOPE must not assert a solo either. "1 soloed rack chain" would be
+    # the read claiming what it just said it could not determine, and it sends
+    # the operator at the wrong action: a real solo is cleared, an unreadable
+    # flag is investigated.
+    assert "soloed rack chain(s) during this render" not in out["warning"]
+    assert "could not be read" in out["warning"]
+    assert "unknown, not safe" in out["warning"]

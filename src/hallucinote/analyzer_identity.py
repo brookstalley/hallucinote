@@ -58,7 +58,7 @@ def is_analyzer_device(device: Mapping[str, Any] | Any) -> bool:
     ``name`` / ``display_name`` is present (preferring ``name``, the snapshot /
     probe field) and compare.
 
-    Discriminator asymmetry (intentional): the MCP-side ``_find_analyzer_index``
+    Discriminator asymmetry (intentional): the MCP-side ``find_analyzer_index``
     additionally requires ``class_display_name == "Max Audio Effect"`` to guard
     against a live-browser preset name-collision when *loading*. At the model
     boundary the render-stamped name alone is reliable + sufficient (the class

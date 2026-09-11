@@ -537,7 +537,11 @@ summary + `report_path`. Prefer it over driving the poll loops by hand.
 - `ableton_render(action='start', song_slug=...)` returns a `{job_id, poll}`
   handle immediately; poll `ableton_render(action='status', job_id=...)` (each
   call long-polls ~45 s) until `state` is `done` or `failed`. `done` carries
-  `manifest_path` + `render_status` (`ok`/`incomplete`).
+  `manifest_path` + `render_status` (`ok`/`incomplete`), and **`warning` when
+  the render raised one** — surface it before reviewing anything. A warning here
+  says the capture is not the mix as authored (a soloed rack chain today), and
+  reviewing that mix without saying so is the failure this whole skill exists to
+  prevent. `Job.status_result` is the authority on the key set.
 - then `ableton_analysis(action='start', song_slug=...)` → poll
   `ableton_analysis(action='status', job_id=...)` until `done` (carries
   `report` + `report_path`). For a quick few-surface capture the synchronous

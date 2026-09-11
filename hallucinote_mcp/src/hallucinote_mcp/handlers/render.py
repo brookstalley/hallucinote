@@ -303,8 +303,9 @@ def _soloed_chains(track: Any) -> list[dict[str, Any]]:
     the master bus still carries every track, so the capture is a real mix,
     just not the one the rack was authored to produce.
 
-    Two limits, both stated rather than silently assumed, because a limit that
-    lives nowhere is one the next reader re-discovers:
+    The limits are stated rather than silently assumed, because a limit that
+    lives nowhere is one the next reader re-discovers. No count travels with the
+    list — an earlier revision said "two" and listed three:
 
     - **Top-level racks only.** A rack nested inside a rack chain can hold a
       soloed chain too. Walking to arbitrary depth would pay a full device-tree
@@ -693,7 +694,8 @@ def render_handler(
         # "what was the mixer doing?" would find nothing — the one question
         # this read exists to answer.
         logger.warning(
-            "render: proceeding under %d soloed rack chain(s): %s",
+            "render: proceeding under %d rack chain(s) that are soloed or "
+            "would not say: %s",
             len(soloed_chains), "; ".join(soloed_chains),
         )
 
@@ -1065,14 +1067,30 @@ def render_handler(
             # handler test cannot see the boundary at all. (No test name here:
             # a name in a comment goes stale on the next rename, and a reader
             # grepping a stale one finds nothing.)
+            # The envelope must not assert what the entries may not say. When
+            # every entry is an unknown, "N soloed rack chains" is a claim the
+            # read just declared it could not make — and the operator's next
+            # move differs: a real solo is cleared, an unreadable flag is
+            # investigated.
+            certain = [c for row in mixer_state
+                       for c in row.get("soloed_chains") or () if c.get("solo")]
+            unknown = len(soloed_chains) - len(certain)
+            if certain and not unknown:
+                head = f"{len(certain)} soloed rack chain(s) during this render"
+            elif certain:
+                head = (f"{len(certain)} soloed rack chain(s) during this "
+                        f"render, and {unknown} whose solo could not be read")
+            else:
+                head = (f"{unknown} rack chain(s) whose solo could not be read "
+                        f"during this render")
             result["warning"] = (
-                f"{len(soloed_chains)} soloed rack chain(s) during this "
-                f"render: " + "; ".join(soloed_chains)
+                head + ": " + "; ".join(soloed_chains)
                 + ". A soloed chain silences its SIBLING chains inside that "
                 "rack, so that rack captured as a fraction of itself. The "
                 "rest of the mix is unaffected and the render was not "
-                "refused; clear chain solo and re-render if the rack's full "
-                "sound was meant to be in this capture."
+                "refused. Clear any chain solo and re-render if the rack's "
+                "full sound was meant to be in this capture; a chain whose "
+                "solo could not be read is unknown, not safe."
             )
         return result
     except Exception as e:  # prawduct:allow prawduct/broad-except -- top-level render supervisor: write status.json=error then re-raise so a poller sees a terminal state for a render that raised (BUG3); the exception is NOT swallowed (re-raised, so the dispatcher still surfaces it)

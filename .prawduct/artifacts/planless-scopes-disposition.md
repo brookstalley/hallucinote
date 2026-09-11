@@ -19,7 +19,8 @@ noise that hides the next real one. This file answers it per scope, so the
 warning is dispositioned rather than carried.
 
 **This is not a licence to ship planless work.** Each entry below states the
-reason and whether it was legitimate. Four were.
+reason and whether it was legitimate — and the table says which, so no count
+travels with this sentence to drift away from the rows underneath it.
 
 | scope | why no plan | legitimate? |
 | --- | --- | --- |
@@ -33,20 +34,18 @@ reason and whether it was legitimate. Four were.
 
 ## The pattern worth naming
 
-Three of the seven are the same mistake: **work sized by the size of its
+Every **No** row above is the same mistake: **work sized by the size of its
 individual edits rather than by the size of what it changes.** A ceiling on
 governance files, an owner ruling on a norm, and a breaking change to path
 resolution are each a small diff and a durable commitment. The size heuristic
 in `methodology/building.md` already says this — "state outliving the process"
-is its medium trigger — and it was read as a file count three times.
-The two scopes added since were both genuinely trivial, which is why the
-numerator has not moved: the pattern is a real failure mode, not a rate.
+is its medium trigger — and it was read as a file count each time.
 
 Nothing is re-plannable now: the work shipped, and a build plan written after
 the fact records a process that did not happen. What the change-log carries for
 each of these is accurate and is the record that survives.
 
-**For the release:** all seven ship. The warning is answered, not suppressed —
+**For the release:** every scope above ships. The warning is answered, not suppressed —
 `check-releasability` will keep emitting it, and that is correct, because the
 gate should not learn to stay quiet about planless work. This file is what a
 reader consults when it fires.

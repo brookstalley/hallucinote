@@ -114,7 +114,6 @@ That test characterizes behaviour rather than guarding a regression — an
 annotation is erased at runtime, so it passes against the pre-fix module too.
 What it adds is that the case is now exercised at all; nothing reached it before.
 
-
 ## 2026-09-10 — The release audit folds in what the release's own work left open
 
 <!-- prawduct: type=fix | scope=RELFOLD-0910 -->

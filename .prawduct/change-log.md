@@ -32,6 +32,89 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-09-11 — The release audit's second pass: one test folded in, two candidates read out
+
+<!-- prawduct: type=chore | scope=RELAUDIT-0911 -->
+
+The pre-release backlog question asked again against a tree that already has
+RELFOLD-0910. The window stands at 65 filed / 41 closed / 24 open; the only new
+fold-in decisions were #552 and #553, both raised by RELFOLD's own Critic
+rounds.
+
+**#553 folded in — one test.** `_warn_under_chain_solo`'s operator-facing
+envelope has three heads, and the mixed one (some chains soloed, some whose
+solo Live did not report) was the head #550 added and the only one untested. It
+is also the only head whose arithmetic can be wrong: the other two make a single
+claim over the whole list, while mixed derives `unknown` by subtraction. A
+miscount there reports a solo the read never found or an unreadable flag it
+never had, and those send the operator at opposite actions.
+
+**Two candidates were read in the code before being recommended, and both died
+there.** That is pass 1's own method correction applied — it had recommended an
+item whose premise the code disagreed with, and named a five-minute code read
+per item as the fix.
+
+- **#552** (the pre-render mixer read never walks the master strip) is real, but
+  ships as a **named** limit, which is the bar pass 1 set for #550: it is written
+  in this change log, in `architecture.md` § *What is deliberately not modeled*,
+  in `boundary-patterns.md`, and in `_soloed_chains`' docstring. It is also not
+  the small fix it resembles — Live's master carries no `solo` attribute, so a
+  naive master row reads `solo: None` and `_refuse_under_solo`, which refuses on
+  an unreadable flag by design, would refuse every render.
+- **#495** (`PushPlan.warn()` writes the channel the executor discards) was worth
+  re-asking, because RELFOLD's reflection names its exact shape — a value made
+  correct and then dropped at a boundary — as the mistake it made twice. But
+  both of RELFOLD's new warnings route to operator channels: the push half to
+  `notes_sink` with a fallback so it is never dropped, the chain-rebuild half to
+  stderr *and* `alerts`. The trap is still there for the next author; nothing
+  shipped through it.
+
+**The `alien` master-capture bug report is discharged and archived.** All three
+of its suggested fixes shipped (the `sum_reconciliation` blocking finding, the
+solo refusal, the manifest's `mixer_state`). Of the three observations left, the
+`state: done`/header-only-WAV one is a documented two-field contract that
+`capture_span_mismatch` catches downstream, `back_to_arranger` is disowned by the
+report's own correction, and the surviving one — a `compare_to` whose baseline
+take retention has swept — is filed as **#556** rather than archived with it.
+
+**Bookkeeping:** `planless-scopes-disposition.md` answered five planless scopes
+while `check-releasability` had begun firing on six; `MYPY-COMPARE-0911` merged
+after that file was written and now has its row. This entry's own scope makes
+seven, and it is trivial by the size heuristic — a test and two bookkeeping
+edits, no contract surface moved — so it is dispositioned there in the same
+breath rather than left to be explained later.
+
+**Re-vendor: not required.** Nothing here touches `_FINGERPRINT_PATHS`; the test
+exercises the handler in-process. The re-vendor RELFOLD and RENDERGUARD are both
+waiting on is unchanged and still owed.
+
+## 2026-09-11 — CI was red on `develop`, and the type it tripped on was the honest answer
+
+<!-- prawduct: type=fix | scope=MYPY-COMPARE-0911 -->
+
+`develop` failed `mypy` on a single error, and had since the RENDERGUARD-0910
+merge: `_master_disqualification` in `audio/compare.py` annotated its `verdict`
+as `tuple[str, float, float] | None` and then built one out of `finding.get(...)`
+reads off a stored report's JSON, which is `Any`.
+
+Found by CI on an unrelated PR, which is the part worth noting — the branch that
+introduced it ran `mypy` on the files it had touched rather than the project
+config, so a whole-project gate caught what a per-file invocation could not.
+
+**The widening is the fix, not a cast, and the reason is behavioural.** The three
+values come from a report written by this same codebase — `analyze.py` builds
+the finding from the identical `master_is_not_stem_sum` tuple — so in practice
+they are always present and correctly typed. But a report that somehow carries
+the finding WITHOUT its numbers is still disqualified: the finding's presence is
+the verdict, not its arithmetic. Coercing with `float(...)` would raise on that
+report, and defaulting to a number would invent evidence. So the missing value
+travels as `None`, the annotation says so, and a test pins it.
+
+That test characterizes behaviour rather than guarding a regression — an
+annotation is erased at runtime, so it passes against the pre-fix module too.
+What it adds is that the case is now exercised at all; nothing reached it before.
+
+
 ## 2026-09-10 — The release audit folds in what the release's own work left open
 
 <!-- prawduct: type=fix | scope=RELFOLD-0910 -->

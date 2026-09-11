@@ -1921,3 +1921,142 @@ def test_resume_auto_still_finishes_a_mid_flight_journal_beside_a_shortfall(
         "journal is also on disk"
     )
 
+
+
+# ---------------------------------------------------------------------------
+# #544 — an unreadable sidechain source is announced before it is destroyed
+# ---------------------------------------------------------------------------
+
+
+def test_an_unreadable_sidechain_source_warns_before_the_first_delete(
+    conn, song, session, revoice, live, song_dir, capsys,
+):
+    """A source Live exposes no routing surface for is the one piece of mix work
+    a rebuild can destroy while exiting 0.
+
+    Every OTHER way this module loses a source ends in a write it attempted and
+    Live refused, and that write raises its own alert. This one never reaches a
+    write: the capture records nothing, so the restore has nothing to put back,
+    and the demolish deletes the device that held it. Two surfaces already warn
+    on this (`capture.py`, `push/plan.py`); this is the third and the only
+    destructive one.
+
+    The warning has to be on screen BEFORE the delete, not merely in the final
+    report — the command is non-interactive, so the operator's own Ctrl-C is
+    the only abort there is, and by the time the report prints the source is
+    already gone.
+    """
+    armed = live.chains[("track", 3)][2]
+    armed.params["S/C On"] = _cont(1.0, "On")
+    assert armed.routing is None, (
+        "the fixture must expose NO routing surface — that is the case"
+    )
+
+    result = _rebuild(conn, song, session, live, song_dir)
+
+    assert any("sidechain source NOT machine-readable" in a
+               for a in result.alerts), result.alerts
+    assert any("'Erosion'" in a for a in result.alerts), result.alerts
+
+    # On stderr while the chain was still intact, not only in the report.
+    err = capsys.readouterr().err
+    assert "sidechain source NOT machine-readable" in err
+
+
+def test_a_readable_sidechain_source_adds_no_unreadable_warning(
+    conn, song, session, revoice, live, song_dir,
+):
+    """The gate is `has_input_routing`, not "is a sidechain armed".
+
+    A routing-capable device — the Compressor common case — is captured and
+    restored through `set_input_routing` like any other value, so warning here
+    would teach the operator to ignore the warning that matters.
+    """
+    armed = live.chains[("track", 3)][2]
+    armed.params["S/C On"] = _cont(1.0, "On")
+    armed.routing = {"current_type": "Audio", "current_channel": "1/2"}
+
+    result = _rebuild(conn, song, session, live, song_dir)
+
+    assert not any("sidechain source NOT machine-readable" in a
+                   for a in result.alerts), result.alerts
+
+
+def test_an_unarmed_device_with_no_routing_surface_stays_quiet(
+    conn, song, session, revoice, live, song_dir,
+):
+    """Most of a chain has no input routing and no sidechain. Warning on every
+    such device would make the warning worthless."""
+    result = _rebuild(conn, song, session, live, song_dir)
+
+    assert not any("sidechain source NOT machine-readable" in a
+                   for a in result.alerts), result.alerts
+
+
+# ---------------------------------------------------------------------------
+# #534 — why the verify tolerance is safe, pinned
+# ---------------------------------------------------------------------------
+
+
+def test_the_verify_tolerance_is_never_consulted_in_anger(
+    conn, song, session, revoice, live, song_dir,
+):
+    """`_PARAM_EPSILON` is an ABSOLUTE 1e-6, and a real-Live probe measured
+    float32's round-trip error to be RELATIVE — so on a large-magnitude
+    parameter (a 22 kHz frequency) an absolute epsilon would be breached by a
+    perfectly correct write, and an integer-stepped parameter exposed as
+    continuous would breach it outright.
+
+    Neither reaches this module, and the reason is a property worth pinning
+    rather than a coincidence worth trusting: the restore never INVENTS a
+    value. `capture_chain` reads each parameter off Live, `_restore` writes
+    that same value back, and the verify compares the two — so both ends are
+    the same Live-sourced number and the delta is zero by construction, not by
+    tolerance. The probe that produced those breaching deltas wrote deliberately
+    off-grid values (41.424 into a stepped parameter), which is a thing
+    chain-rebuild cannot do.
+
+    This is the contract that keeps the epsilon honest. If a future change lets
+    an AUTHORED value (from the DB, or computed) into the restore, the premise
+    is gone and the tolerance has to be reconsidered — this test is what should
+    fail and say so.
+    """
+    # The two shapes the probe found breaching, as Live would report them.
+    eq = live.chains[("track", 3)][1]
+    eq.params["1 Frequency A"] = _cont(22000.0, "22.0 kHz")
+    eq.params["Note PB Range"] = _cont(41.0, "41 st")
+    live.defaults["EQ Eight"]["1 Frequency A"] = _cont(0.0, "20 Hz")
+    live.defaults["EQ Eight"]["Note PB Range"] = _cont(0.0, "0 st")
+
+    result = _rebuild(conn, song, session, live, song_dir)
+
+    assert result.ok, result.alerts
+    assert not any("reads back" in a for a in result.alerts), (
+        "a faithful round trip must not be reported as a mismatch"
+    )
+    # …and they really did land, rather than passing by never being written.
+    assert eq.params["1 Frequency A"]["value"] == 22000.0
+    assert eq.params["Note PB Range"]["value"] == 41.0
+
+
+def test_a_parameter_left_at_its_default_is_still_caught(
+    conn, song, session, revoice, live, song_dir,
+):
+    """The regression the tolerance exists for, and the other half of the test
+    above: a tolerance that never fires is indistinguishable from one that
+    cannot fire, and this is what tells them apart.
+
+    A freshly loaded device comes back at class defaults. When the restore
+    reports a write that Live silently did not apply, the read-back is the
+    default and the verify has to say so — otherwise a chain rebuilt to
+    defaults, which is audibly wrong, reports ok.
+    """
+    live.swallow_set_parameter = True
+
+    with pytest.raises(chain_rebuild.RebuildVerifyFailed) as excinfo:
+        _rebuild(conn, song, session, live, song_dir)
+
+    # It names the values, so the journal is not the only way to learn them.
+    msg = str(excinfo.value)
+    assert "'1 Frequency A' was 0.42, reads back 0.0" in msg
+    assert "The journal is intact." in msg

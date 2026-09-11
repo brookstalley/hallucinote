@@ -1960,3 +1960,79 @@ def test_a_chain_that_does_not_report_solo_is_listed_as_unknown(
     assert "soloed rack chain(s) during this render" not in out["warning"]
     assert "could not be read" in out["warning"]
     assert "unknown, not safe" in out["warning"]
+
+
+def test_a_rack_with_one_soloed_and_one_unreadable_chain_counts_both(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, stub_sidecar,
+):
+    """The envelope's third head: some chains soloed AND some unreadable.
+
+    The other two heads each make one claim, and the count is simply the whole
+    list. Mixed is the only head where the arithmetic can be wrong: `unknown`
+    is derived by subtraction (`len(soloed_chains) - len(certain)`), so a
+    miscount reports either a solo the read never found or an unreadable flag
+    it never had. Both send the operator at the wrong action — a real solo is
+    cleared, an unreadable flag is investigated — which is the same distinction
+    the all-unknown head exists to protect.
+    """
+    class _MuteChain(_FakeChain):
+        def __init__(self, name):
+            super().__init__(name)
+            del self.solo  # Live did not present the attribute at all
+
+    rack = _FakeDevice(
+        class_display_name="Audio Effect Rack", name="Drum Bus",
+        chains=[_FakeChain("Sub", solo=True), _MuteChain("Clean")],
+    )
+    track = ctx_two_tracks_one_return.song.tracks[0]
+    track.devices.append(rack)
+
+    out = render_handlers.render_handler(
+        ctx_two_tracks_one_return,
+        song_slug="t",
+        output_dir=str(tmp_path / "c"),
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 999.0,
+    )
+
+    # Still a warn, not a refusal — mixing an unreadable chain flag into the
+    # set does not escalate it to the whole-song silencing that DOES refuse.
+    assert ctx_two_tracks_one_return.song.start_playing_calls == 1
+
+    warning = out["warning"]
+    # The head carries BOTH counts, each naming which it is. Asserted whole
+    # rather than as two substrings: the defect this guards against is the
+    # two numbers being transposed, and "1" and "1" would pass that.
+    assert (
+        "1 soloed rack chain(s) during this render, and 1 whose solo "
+        "could not be read"
+    ) in warning
+    # And it is not either single-head phrasing. The all-unknown head would
+    # drop the real solo entirely.
+    assert not warning.startswith("1 rack chain(s) whose solo could not be read")
+
+    # Both chains reach the list the head wraps, each described as what it is.
+    assert "'Sub'" in warning and "is soloed" in warning
+    assert "'Clean'" in warning
+    assert "did NOT report whether it is soloed" in warning
+
+    # The manifest keeps the two apart the way the envelope does: True and
+    # None are distinct states, and a consumer told to join on these rows has
+    # no other way to tell a solo from a chain that never answered.
+    assert out["manifest"]["mixer_state"][0]["soloed_chains"] == [
+        {
+            "device_position": 1,
+            "device_name": "Drum Bus",
+            "chain_index": 1,
+            "chain_name": "Sub",
+            "solo": True,
+        },
+        {
+            "device_position": 1,
+            "device_name": "Drum Bus",
+            "chain_index": 2,
+            "chain_name": "Clean",
+            "solo": None,
+        },
+    ]

@@ -2,7 +2,7 @@
 artifact: planless-scopes-disposition
 version: 1
 scope: RELFOLD-0910
-last_validated: 2026-09-10
+last_validated: 2026-09-11
 ---
 
 # Release-pending scopes with no build plan — why, per scope
@@ -19,7 +19,7 @@ noise that hides the next real one. This file answers it per scope, so the
 warning is dispositioned rather than carried.
 
 **This is not a licence to ship planless work.** Each entry below states the
-reason and whether it was legitimate. Two were.
+reason and whether it was legitimate. Three were.
 
 | scope | why no plan | legitimate? |
 | --- | --- | --- |
@@ -28,6 +28,7 @@ reason and whether it was legitimate. Two were.
 | `governance-file-sizes` | Ceilings on governance-file growth. Crossed a policy surface (what the repo enforces about its own artifacts) and set a durable rule, which is medium work by the "state outliving the process" clause. | **No** — should have had a plan. |
 | `advisory-clearing` | Three post-sync advisories cleared in one pass: a merge driver added to `.gitattributes`, a bug report triaged, a norm re-affirmed by owner ruling. The norm re-affirmation is a governance decision, not a chore. | **No** — the ruling deserved a record of its own. |
 | `effort-s-burndown` | A batch of ten-plus `effort:S` backlog items, including a **BREAKING** change to `resolve_db_path` resolution semantics and a retired CLI command (`capture restamp`). Individually small; collectively a release-visible surface change. | **No** — a batch is not trivial because its parts are. |
+| `MYPY-COMPARE-0911` | CI caught a single `mypy` error on `develop` — `_master_disqualification`'s `verdict` annotation was narrower than the `Any` it built from a stored report's JSON — and one annotation was widened to the shape it actually reads. One file, one type, no contract surface moved. | **Yes** — correctly sized. |
 
 ## The pattern worth naming
 

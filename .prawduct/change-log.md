@@ -32,6 +32,114 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-09-10 — The release audit folds in what the release's own work left open
+
+<!-- prawduct: type=fix | scope=RELFOLD-0910 -->
+
+A pre-release backlog audit against the 19 release-pending scopes. The release
+window filed 63 backlog items; 36 had already shipped inside these scopes and 27
+were still open, every one of them residue of this release's own work. Six were
+coupled — shipping a defect, a half-closed guard, or a bookkeeping claim the code
+had made false. Four are fixed here, one is re-scoped after the code disagreed
+with it, and one is a read that was owed.
+
+**A soloed rack CHAIN is reported** (#550). The solo guard that shipped in
+RENDERGUARD-0910 refuses a render under a soloed track or return; chain solo is a
+separate first-class concept here and the guard could not see it. It **warns**
+rather than refusing, by owner decision: a chain solo silences the sibling chains
+inside one rack, not the song, so the master bus still carries every track and the
+capture is a real mix with one rack rendering as a fraction of itself. Refusing
+would block an author auditioning a layer mid-session; silence would let a report
+call that thinning a mix change. `manifest.mixer_state` records chain solo either
+way, so a report read a week later can still say what it was made under. Top-level
+racks only, and the docstring says so rather than leaving the depth to be assumed.
+
+**A sidechain source the probe cannot read is announced before it is destroyed**
+(#544). Two surfaces already warned on that shape and the destructive one did not
+— `chain-rebuild` deletes and reloads, so an unreadable source is gone rather than
+uncarried. The warning goes to stderr as well as into the report: the command is
+non-interactive, so the operator's own Ctrl-C is the only abort there is, and the
+report prints after the device is already gone.
+
+**`device load` stops reading as a loss** (#546). Live appends a browser load to
+the end of the chain and exposes no reorder API, so on a rendered track the device
+always lands behind the analyzer tap. Nothing is under-measured — `render(start)`
+re-seats the tap before capturing — but only the source said so, and someone read
+that chain order cold and concluded otherwise. It is a `note`, not a `warning`:
+there is nothing for the caller to do, and saying so is the point.
+
+**The sidechain-enable hints are named MCP-side** (#545). The guard keeping them
+in step with the engine's mirror scraped the handler's source text between two
+literal anchors, so a reflow failed it without anything having diverged. Both
+sides are imported now — and a second test drives every hint through the
+dispatcher, because comparing two imported collections proves they agree and not
+that either is what the match actually reads. That is the one failure mode the
+brittle guard did not have, and replacing it without noticing would have been a
+quiet downgrade.
+
+**#534 was approved for build and then not built, which is the entry worth
+reading.** The item reports `_PARAM_EPSILON`, an absolute 1e-6, being breached by
+float32's relative round-trip error on a large-magnitude parameter and by an
+integer-stepped one — measured against Live 12.4.5, and real. Reading the code to
+fix it showed the defect cannot reach the path `chain-rebuild` takes: the capture
+reads every value **off Live**, the restore writes that same value back verbatim,
+and the verify compares the two, so both ends are the same float and the delta is
+zero by construction. A 22 kHz frequency and a 41-step bend range round-trip at
+exactly 0.0 through the module. That reproduces the item's own Pass 1; its Actual
+section comes from the *perturbing* pass, which wrote deliberately off-grid values
+— something this module cannot do, because it never invents one.
+
+So the residue is the property, not the tolerance: the epsilon is safe only
+because the restore copies Live, and nothing pinned that — no test referenced
+`_verify_parameters` or the constant at all. Two now do, and the first is what
+should fail if an authored value ever enters the restore.
+
+**#526's blocker did not resolve the way it predicted.** The item is ordered
+behind #537 and says the open design question — a `call` argument has no current
+value to gate coercion on — would "dissolve" once #537 typed scalars on the wire.
+#537 closed, and it did not type them: `value` is still `type="any"` and the
+mechanism is server-side coercion **gated on the current value**. The gate is
+still load-bearing and `args` elements are still untyped, so the question is
+exactly as open as before. Recorded because the item asked in terms that nobody
+close it on #537's merge without reading the residue first.
+
+**Three bookkeeping claims the code had made false**, corrected rather than
+carried into the release: #533 was open against a fix already in the tree and is
+closed; #529 says the manifest records no fader values and it now records them,
+leaving only the read side, which is the half worth keeping; and #544's own
+mechanism paragraph said the sidechain source is "never journaled and never
+restored" when it is both.
+
+**`architecture.md` learns three packages it never had** — `assets/`, `features/`
+and `spectral/`, all new since v1.8.6 — and loses the count that had drifted with
+them. It opened with "the ten packages" while naming ten and the tree held
+thirteen; a count is the half a reader cannot check at a glance, so it decays
+first and silently. The list is a pointer at the tree now, with the command to
+re-derive it.
+
+**The five planless release-pending scopes are dispositioned**, not suppressed
+(`planless-scopes-disposition.md`). Two were correctly sized as trivial; three
+were not, and they are the same mistake three times — work sized by the size of
+its edits rather than by the size of what it changes. A ceiling on governance
+files, an owner ruling on a norm, and a BREAKING change to path resolution are
+each a small diff and a durable commitment. `check-releasability` will keep
+warning, which is right; the file is what a reader consults when it does.
+
+**#482 stays out of this release, deliberately.** Its R1/R2 change what goes INTO
+the stem sum that RENDERGUARD-0910 turned into a blocking finding — a return at a
+non-unity fader is summed at full pre-fader level and inflates the residual. Doing
+both at once would leave neither proving the other, which was the prior session's
+reasoning and still holds. The consequence is stated rather than left implicit:
+this release ships a blocking gate over a sum that can read high for a benign
+reason, and the RENDERGUARD operator-verification box that prices that false
+positive is the one still owed.
+
+**Re-vendor: REQUIRED.** Three chunks touch `handlers/device.py` and
+`handlers/render.py`, both inside `_FINGERPRINT_PATHS`. Batched for exactly that
+reason — one restart pays for all three. Nothing here exists in Live until the
+Remote Script is re-vendored and Live is fully restarted, the same clock the
+RENDERGUARD solo guard is already on.
+
 ## 2026-09-10 — Two silent lenses: a partial that stopped counting as a recall, and a capture that stopped reading the wrong beat
 
 <!-- prawduct: type=fix | scope=OPENBUGS-0910 -->

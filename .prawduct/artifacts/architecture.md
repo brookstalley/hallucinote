@@ -159,11 +159,17 @@ deliberately does **not** inventory modules: the source tree is the module index
 second list here would drift every time a package is added or renamed, with nothing
 mechanical keeping it honest (the repo's own "link, don't summarize" learning).
 
-The ten packages under `src/hallucinote/` are `audio/`, `db/`, `generators/`, `melody/`,
-`performance/`, `recurrence/`, `sync/`, `theory/`, `tools/` and `tuning/`. They are named
-so a reader knows what exists and where to look; what each one *does* is read from the
-package itself, never restated here. The absence of a description for any of them is the
-intended altitude, not drift.
+The packages under `src/hallucinote/` are `assets/`, `audio/`, `db/`, `features/`,
+`generators/`, `melody/`, `performance/`, `recurrence/`, `spectral/`, `sync/`, `theory/`,
+`tools/` and `tuning/`. They are named so a reader knows what exists and where to look;
+what each one *does* is read from the package itself, never restated here. The absence of
+a description for any of them is the intended altitude, not drift.
+
+No count travels with that list. An earlier revision opened with "the ten packages" and
+was carrying ten names while the tree held thirteen — the number is the half a reader
+cannot check at a glance, so it decays first and silently. Re-derive the list with
+`ls -d src/hallucinote/*/` rather than trusting this paragraph; it is a pointer at the
+tree, and the tree is the index.
 
 Owner ruling 2026-09-08 (JANITOR-2026-09 R5). The bare names are here for a second reason
 worth stating: the session-briefing staleness probe tests whether each package name

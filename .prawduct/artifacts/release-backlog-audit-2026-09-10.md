@@ -178,7 +178,7 @@ That is the whole fold-in list. One test.
   reflection names "I made the value correct" ≠ "the value arrives" as the
   failure it committed twice, and #495 is that failure's shape in the push
   planner. So: did RELFOLD's new sidechain warning go into `notes` (discarded)?
-  **No.** `push/plan.py:820-823` routes it to `notes_sink` — the report's
+  **No.** `sync/push/plan.py:820-823` routes it to `notes_sink` — the report's
   "Warnings (push still OK)" section — with a fallback to the returned list when
   no sink is given, and a comment reasoning about exactly that choice. The
   chain-rebuild half (`7215d6bf`) writes **both** `_operator_note` (stderr) and
@@ -195,7 +195,7 @@ That is the whole fold-in list. One test.
     ok/incomplete verdict, and `skills/render-analyze/SKILL.md:59` relays both.
     And the empty capture is **not silent downstream** — `measure_capture_span`
     compares captured duration against the manifest's declared span and
-    `analyze.py:1432` raises `capture_span_mismatch`. A header-only WAV fails
+    `audio/analyze.py:1432` raises `capture_span_mismatch`. A header-only WAV fails
     that by the whole window.
   - *`back_to_arranger`* — the report's **own correction** calls it unrelated to
     the incident and untested either way.

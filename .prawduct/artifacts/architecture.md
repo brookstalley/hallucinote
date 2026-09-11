@@ -195,7 +195,13 @@ is truthful either way.
   a soloed chain too, and that one is invisible: walking to arbitrary depth would pay a
   full device-tree traversal on every render for a case nobody has hit. A rack's
   **return chains** carry `solo` like any other chain and are not read either. Chain
-  **mute** and chain **volume** are not read at all. Stated here because a limit that lives only
+  **mute** and chain **volume** are not read at all. **Nor is the master strip walked
+  at all** — the read enumerates `song.tracks` and `song.return_tracks`, so a rack on
+  the master with a soloed chain is invisible, and `manifest.mixer_state` carries no
+  master row. That one is not a free extension: Live's master track carries no `solo`
+  attribute, so a master row built by the existing row-builder would read `solo: None`
+  and the surface guard — which refuses on an unreadable flag by design — would refuse
+  every render. Tracked as #552. Stated here because a limit that lives only
   in a docstring is a limit the next reader re-discovers.
 
 - **Human audio.** A recorded vocal take or a hand-ridden automation lane lives only in

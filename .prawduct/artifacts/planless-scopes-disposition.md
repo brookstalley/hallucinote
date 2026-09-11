@@ -19,7 +19,8 @@ noise that hides the next real one. This file answers it per scope, so the
 warning is dispositioned rather than carried.
 
 **This is not a licence to ship planless work.** Each entry below states the
-reason and whether it was legitimate. Two were.
+reason and whether it was legitimate — and the table says which, so no count
+travels with this sentence to drift away from the rows underneath it.
 
 | scope | why no plan | legitimate? |
 | --- | --- | --- |
@@ -28,6 +29,7 @@ reason and whether it was legitimate. Two were.
 | `governance-file-sizes` | Ceilings on governance-file growth. Crossed a policy surface (what the repo enforces about its own artifacts) and set a durable rule, which is medium work by the "state outliving the process" clause. | **No** — should have had a plan. |
 | `advisory-clearing` | Three post-sync advisories cleared in one pass: a merge driver added to `.gitattributes`, a bug report triaged, a norm re-affirmed by owner ruling. The norm re-affirmation is a governance decision, not a chore. | **No** — the ruling deserved a record of its own. |
 | `effort-s-burndown` | A batch of ten-plus `effort:S` backlog items, including a **BREAKING** change to `resolve_db_path` resolution semantics and a retired CLI command (`capture restamp`). Individually small; collectively a release-visible surface change. | **No** — a batch is not trivial because its parts are. |
+| `MYPY-COMPARE-0911` | One annotation widened in one module, one characterization test, no contract surface moved — trivial by the size heuristic, which builds and verifies without a plan. Added 2026-09-11, by the standard this very file sets. | **Yes** — correctly sized. |
 
 ## The pattern worth naming
 

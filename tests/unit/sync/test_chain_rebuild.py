@@ -1175,7 +1175,12 @@ def test_verify_fails_when_a_restored_parameter_reads_back_at_its_default(
         _rebuild(conn, song, session, live, song_dir)
     message = str(exc.value)
     assert "did not read back equal" in message
-    assert "'1 Frequency A'" in message
+    # The values themselves, not just the parameter name: this message is the
+    # operator's copy of what the journal holds, and a mismatch report that
+    # says only WHICH parameter drifted sends them to the file to find out
+    # what it drifted from.
+    assert "'1 Frequency A' was 0.42, reads back 0.0" in message
+    assert "The journal is intact." in message
     assert chain_rebuild.journal_path_for(song_dir, "track", 3).exists()
 
 
@@ -1921,3 +1926,178 @@ def test_resume_auto_still_finishes_a_mid_flight_journal_beside_a_shortfall(
         "journal is also on disk"
     )
 
+
+
+# ---------------------------------------------------------------------------
+# #544 — an unreadable sidechain source is announced before it is destroyed
+# ---------------------------------------------------------------------------
+
+
+def test_an_unreadable_sidechain_source_warns_before_the_first_delete(
+    conn, song, session, revoice, live, song_dir, capsys,
+):
+    """A source Live exposes no routing surface for is the one piece of mix work
+    a rebuild can destroy while exiting 0.
+
+    Every OTHER way this module loses a source ends in a write it attempted and
+    Live refused, and that write raises its own alert. This one never reaches a
+    write: the capture records nothing, so the restore has nothing to put back,
+    and the demolish deletes the device that held it. Two surfaces already warn
+    on this (`capture.py`, `push/plan.py`); this is the third and the only
+    destructive one.
+
+    The warning has to be on screen BEFORE the delete, not merely in the final
+    report — the command is non-interactive, so the operator's own Ctrl-C is
+    the only abort there is, and by the time the report prints the source is
+    already gone.
+    """
+    armed = live.chains[("track", 3)][2]
+    armed.params["S/C On"] = _cont(1.0, "On")
+    assert armed.routing is None, (
+        "the fixture must expose NO routing surface — that is the case"
+    )
+
+    # The ordering claim, proved AT the first delete rather than after the run.
+    # Asserting on stderr once `_rebuild` has returned cannot tell "warned
+    # before the demolish" from "warned during report assembly" — and the
+    # second is worthless, because by then the device is gone.
+    seen_at_first_delete: list[str] = []
+
+    def _on_delete(_params):
+        if not seen_at_first_delete:
+            seen_at_first_delete.append(capsys.readouterr().err)
+
+    live.watch[("ableton_device", "delete")] = [_on_delete]
+
+    result = _rebuild(conn, song, session, live, song_dir)
+
+    assert seen_at_first_delete, "the rebuild never deleted anything"
+    assert "sidechain source NOT machine-readable" in seen_at_first_delete[0], (
+        "the warning must be on screen BEFORE the first delete — after it, the "
+        "source it names is already destroyed"
+    )
+
+    assert any("sidechain source NOT machine-readable" in a
+               for a in result.alerts), result.alerts
+    assert any("'Erosion'" in a for a in result.alerts), result.alerts
+
+
+def test_a_readable_sidechain_source_adds_no_unreadable_warning(
+    conn, song, session, revoice, live, song_dir,
+):
+    """The gate is `has_input_routing`, not "is a sidechain armed".
+
+    A routing-capable device — the Compressor common case — is captured and
+    restored through `set_input_routing` like any other value, so warning here
+    would teach the operator to ignore the warning that matters.
+    """
+    armed = live.chains[("track", 3)][2]
+    armed.params["S/C On"] = _cont(1.0, "On")
+    armed.routing = {"current_type": "Audio", "current_channel": "1/2"}
+
+    result = _rebuild(conn, song, session, live, song_dir)
+
+    assert not any("sidechain source NOT machine-readable" in a
+                   for a in result.alerts), result.alerts
+
+
+def test_an_unarmed_device_with_no_routing_surface_stays_quiet(
+    conn, song, session, revoice, live, song_dir,
+):
+    """Most of a chain has no input routing and no sidechain. Warning on every
+    such device would make the warning worthless."""
+    result = _rebuild(conn, song, session, live, song_dir)
+
+    assert not any("sidechain source NOT machine-readable" in a
+                   for a in result.alerts), result.alerts
+
+
+# ---------------------------------------------------------------------------
+# #534 — why the verify tolerance is safe, pinned
+# ---------------------------------------------------------------------------
+
+
+def test_the_verify_tolerance_is_never_consulted_in_anger(
+    conn, song, session, revoice, live, song_dir,
+):
+    """`_PARAM_EPSILON` is an ABSOLUTE 1e-6, and a real-Live probe measured
+    float32's round-trip error to be RELATIVE — so on a large-magnitude
+    parameter (a 22 kHz frequency) an absolute epsilon would be breached by a
+    perfectly correct write, and an integer-stepped parameter exposed as
+    continuous would breach it outright.
+
+    Neither reaches this module, and the reason is a property worth pinning
+    rather than a coincidence worth trusting: the restore never INVENTS a
+    value. `capture_chain` reads each parameter off Live, `_restore` writes
+    that same value back, and the verify compares the two — so both ends are
+    the same Live-sourced number and the delta is zero by construction, not by
+    tolerance. The probe that produced those breaching deltas wrote deliberately
+    off-grid values (41.424 into a stepped parameter), which is a thing
+    chain-rebuild cannot do.
+
+    This is the contract that keeps the epsilon honest. If a future change lets
+    an AUTHORED value (from the DB, or computed) into the restore, the premise
+    is gone and the tolerance has to be reconsidered — this test is what should
+    fail and say so.
+
+    Its pair is `test_verify_fails_when_a_restored_parameter_reads_back_at_its_
+    default` above: a tolerance that never fires is indistinguishable from one
+    that cannot, and that test is what tells them apart.
+    """
+    # The two shapes the probe found breaching, as Live would report them.
+    eq = live.chains[("track", 3)][1]
+    eq.params["1 Frequency A"] = _cont(22000.0, "22.0 kHz")
+    eq.params["Note PB Range"] = _cont(41.0, "41 st")
+    live.defaults["EQ Eight"]["1 Frequency A"] = _cont(0.0, "20 Hz")
+    live.defaults["EQ Eight"]["Note PB Range"] = _cont(0.0, "0 st")
+
+    result = _rebuild(conn, song, session, live, song_dir)
+
+    assert result.ok, result.alerts
+    assert not any("reads back" in a for a in result.alerts), (
+        "a faithful round trip must not be reported as a mismatch"
+    )
+    # …and they really did land, rather than passing by never being written.
+    assert eq.params["1 Frequency A"]["value"] == 22000.0
+    assert eq.params["Note PB Range"]["value"] == 41.0
+
+
+def test_a_failed_routing_read_is_alerted_and_not_called_unreadable(
+    conn, song, session, revoice, live, song_dir, capsys,
+):
+    """A routing READ that failed is not a device with no routing surface, and
+    must not borrow that message.
+
+    The two have the same consequence — no source in the journal — and
+    different causes, so they afford the operator different actions: a Live
+    that timed out can be retried, a Multiband Dynamics cannot. Before this the
+    failed read was silent, which is the worse of the two bugs.
+    """
+    armed = live.chains[("track", 3)][2]
+    armed.params["S/C On"] = _cont(1.0, "On")
+    live.fail[("ableton_device", "get_input_routing")] = "Live timed out"
+
+    result = _rebuild(conn, song, session, live, song_dir)
+
+    assert any("could not read the input routing" in a and "Live timed out" in a
+               for a in result.alerts), result.alerts
+    assert any("SIDECHAIN IS ARMED" in a for a in result.alerts), result.alerts
+    # NOT the no-surface message — that names a Live limitation this is not.
+    assert not any("sidechain source NOT machine-readable" in a
+                   for a in result.alerts), result.alerts
+
+
+def test_a_failed_routing_read_on_an_unarmed_device_still_says_so(
+    conn, song, session, revoice, live, song_dir,
+):
+    """Quieter, but not silent: the read failed, so if the device had a source
+    it is gone too. The alert says that without claiming the sidechain was on."""
+    live.fail[("ableton_device", "get_input_routing")] = "Live timed out"
+
+    result = _rebuild(conn, song, session, live, song_dir)
+
+    routing_alerts = [
+        a for a in result.alerts if "could not read the input routing" in a
+    ]
+    assert routing_alerts, result.alerts
+    assert not any("SIDECHAIN IS ARMED" in a for a in routing_alerts)

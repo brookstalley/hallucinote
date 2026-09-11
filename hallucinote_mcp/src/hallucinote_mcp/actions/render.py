@@ -247,10 +247,15 @@ register(
             "delivered out-of-band via OSC (Live params can't carry strings); "
             "Arm is the gate (Live param), the patch's beat observer is the "
             "boundary. See m4l/HallucinoteAnalyzer.amxd.spec.md.",
-            "On 'done', status carries {manifest, manifest_path, render_status}: "
-            "render_status='ok' on a clean exit, 'incomplete' if transport "
-            "didn't reach stop_at_beat within the wait window (Live's audio "
-            "thread may have stalled; the partial WAVs are still on disk).",
+            "On 'done', status carries {manifest, manifest_path, "
+            "render_status} plus 'warning' when the render raised an advisory "
+            "it did not refuse over: render_status='ok' on a clean exit, "
+            "'incomplete' if transport didn't reach stop_at_beat within the "
+            "wait window (Live's audio thread may have stalled; the partial "
+            "WAVs are still on disk). Relay 'warning' to the operator whenever "
+            "it is present — it says the capture is not the mix as authored. "
+            "Job.status_result is the authority on this set; a key added there "
+            "and not here is one this sentence is now wrong about.",
         ),
     )
 )
@@ -263,7 +268,8 @@ register(
         description=(
             "Poll a background render started with 'start'. Long-polls ~45s "
             "for the job to finish, then returns {job_id, state, progress, "
-            "captures_dir} plus {manifest, manifest_path, render_status} on "
+            "captures_dir} plus {manifest, manifest_path, render_status} — and "
+            "'warning' when the render raised one — on "
             "state='done' or {error} on state='failed'. Repeat until state is "
             "'done' or 'failed'. A running render returns state='running' with "
             "live progress (current_beat / target_beat / frames_received)."

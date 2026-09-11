@@ -71,6 +71,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 from hallucinote.analyzer_identity import is_analyzer_device
+from hallucinote.capture import (
+    sidechain_armed_in_probe,
+    unreadable_sidechain_source_warning,
+)
 from hallucinote.db import mutations as M, queries as Q
 from hallucinote.paths import song_dir_for_conn
 from hallucinote.sync.live_escalation import await_escalated, escalated_job_id
@@ -234,8 +238,8 @@ def _send(send_fn: Callable[[Any], Any], tool: str, action: str,
             label=f"{tool}({action!r})",
             send_fn=send_fn,
             request_cls=Request,
-            progress_fn=_escalation_progress,
-            warnings_sink=_escalation_progress,
+            progress_fn=_operator_note,
+            warnings_sink=_operator_note,
         )
     ok = bool(getattr(resp, "ok", False))
     result = getattr(resp, "result", None)
@@ -243,13 +247,16 @@ def _send(send_fn: Callable[[Any], Any], tool: str, action: str,
     return ok, result, error
 
 
-def _escalation_progress(message: str) -> None:
-    """Where an escalation's progress and completion notes go.
+def _operator_note(message: str) -> None:
+    """Where anything the operator needs WHILE the rebuild runs goes.
 
     stderr, not stdout: a rebuild's stdout is its report, and a caller
-    redirecting it should not have a Live-slowness note land in the middle of
-    one. The operator still sees it — waiting minutes on a wedged main thread
-    with no output is the case this exists to avoid.
+    redirecting it should not have a live note land in the middle of one. The
+    operator still sees it — waiting minutes on a wedged main thread with no
+    output is one case this exists to avoid, and a warning that only reaches
+    the final report is another: this command is non-interactive, so the only
+    abort it offers is the operator's own, and that needs the message on screen
+    while the chain is still intact.
     """
     print(message, file=sys.stderr)
 
@@ -518,6 +525,7 @@ def capture_chain(
             "DB, before a rebuild can be trusted."
         )
     captured: list[dict[str, Any]] = []
+    unreadable_sidechain: list[str] = []
     for logical in _logical_span(live_devices, from_position=from_position):
         dev = logical["device"]
         idx = logical["device_index"]
@@ -544,12 +552,47 @@ def capture_chain(
                 f"({p_err or 'no reason given'}) — its dialed "
                 f"state is NOT in the journal and will NOT be restored."
             )
-        r_ok, r_res, _ = _send(
+        r_ok, r_res, r_err = _send(
             send_fn, "ableton_device", "get_input_routing",
             {**flat, "device_index": idx},
         )
-        if r_ok and (r_res or {}).get("has_input_routing") is not False:
+        armed = sidechain_armed_in_probe(entry.get("parameters") or [])
+        if not r_ok:
+            # The READ failed — which is not the same thing as the device
+            # having no routing surface, and must not borrow that message.
+            # Either way the journal holds no source, so an armed device is
+            # about to lose one; the cause decides what the operator can do
+            # about it, so the cause is what gets named.
+            alerts.append(
+                f"chain-rebuild: could not read the input routing of "
+                f"{entry['class']!r} at position {entry['position']} on "
+                f"{parent_kind} #{parent_index} "
+                f"({r_err or 'no reason given'})"
+                + (
+                    " — this device's SIDECHAIN IS ARMED, so its source is "
+                    "not in the journal and the rebuild will destroy it. "
+                    "Re-run once Live answers, or note the source by hand "
+                    "before continuing."
+                    if armed else
+                    " — if it had one, it is not in the journal and will "
+                    "not be restored."
+                )
+            )
+        elif (r_res or {}).get("has_input_routing") is not False:
             entry["input_routing"] = r_res
+        elif armed:
+            # The sidechain is ARMED and Live exposes no routing surface, so
+            # there is nothing for the journal to hold and nothing for the
+            # restore to put back. Every OTHER way this module can lose a
+            # source is already an alert raised by the write that failed; this
+            # one never reaches a write, so without this it is the single
+            # value a rebuild can destroy while exiting 0. Raised HERE, in the
+            # pre-delete read, because that is the last moment aborting still
+            # saves it — the demolish is what does the destroying.
+            unreadable_sidechain.append(
+                f"{(entry['name'] or entry['class'] or 'device')!r} on "
+                f"{parent_kind} {parent_index}"
+            )
         c_ok, c_res, _ = _send(
             send_fn, "ableton_device", "get_device_chains",
             {**flat, "device_index": idx, "detail": "full"},
@@ -566,6 +609,15 @@ def capture_chain(
         if d_ok:
             entry["pads"] = list((d_res or {}).get("pads") or [])
         captured.append(entry)
+    if unreadable_sidechain:
+        warning = "chain-rebuild: " + unreadable_sidechain_source_warning(
+            unreadable_sidechain)
+        # Both channels, and they are not redundant. The alert puts it in the
+        # report, which is the durable record; the note puts it on screen NOW,
+        # which is the only thing that can still save the source — every later
+        # phase deletes the device it is describing.
+        _operator_note(warning)
+        alerts.append(warning)
     return captured, alerts
 
 

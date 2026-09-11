@@ -198,6 +198,35 @@ class TestResultShapes:
         assert out["manifest_path"] == "/cap/m.json"
         assert out["render_status"] == "incomplete"
 
+    def test_render_status_carries_an_advisory_the_render_did_not_refuse_on(self):
+        """The render is async, so this projection is the ONLY path from a
+        render result to a caller — and it is an allowlist, so a handler that
+        adds an advisory and stops there has added nothing.
+
+        Chunk 04 shipped exactly that: a soloed-chain warning on the render
+        result, four green tests calling `render_handler` in-process, and a key
+        the projection dropped in production. An in-process handler test cannot
+        see this boundary at all; this is the test that can.
+        """
+        j = Job(job_id="render-z", kind="render", detail={"captures_dir": "/cap"})
+        j.state = "done"
+        j.result = {
+            "manifest": {"surfaces": 3}, "manifest_path": "/cap/m.json",
+            "status": "ok",
+            "warning": "1 soloed rack chain(s) during this render: ...",
+        }
+        out = j.status_result()
+        assert out["warning"] == j.result["warning"]
+
+    def test_render_status_omits_the_advisory_when_there_is_none(self):
+        """Present only when there is something to say. An always-set key makes
+        "nothing to report" and "reported nothing" the same payload."""
+        j = Job(job_id="render-z", kind="render", detail={"captures_dir": "/cap"})
+        j.state = "done"
+        j.result = {"manifest": {}, "manifest_path": "/cap/m.json", "status": "ok"}
+        out = j.status_result()
+        assert "warning" not in out
+
     def test_render_status_failed_carries_error(self):
         j = Job(job_id="render-z", kind="render", detail={"captures_dir": "/cap"})
         j.state = "failed"

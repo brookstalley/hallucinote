@@ -429,3 +429,15 @@ refusal on a branch you believe is merged as a finding, never as friction.**
 ## An `*_index` field crossing layers must say PHYSICAL or ORDINAL where the boundary is specified
 
 **When a stored integer addresses something in a live system, record at the boundary whether it is the thing's physical address or its ordinal in your own model — the two agree in the common case, which is what makes the disagreement ship. `ableton_links.ableton_index` was specified as `-> ableton_index` and nothing more; it means Live's physical `device_index`, equal to the DB `position` only while every unauthored device sits after the authored ones. A chain rebuild leaves the analyzer at the head for one window, and in that window a writer that stored the position sent `set_parameter` to the neighbouring device. Test the state where they disagree, not the state where they agree.**
+
+## An append-only file whose sections share boilerplate cannot be edited by matching that boilerplate
+
+**When inserting into a file whose entries repeat a common phrase — a change-log's `**Re-vendor: REQUIRED.**`, a runbook's `## Rollback` — never anchor the edit on that phrase. Splice by index against a parsed structure, and verify by re-deriving the structure, not by reading the spot you touched. An uncounted `str.replace` put one branch's paragraphs into a two-day-old entry twice, a round apart: the first fix was verified and then invalidated by the NEXT edit in the same session, which shipped a sentence claiming the file had been repaired. A claim that a file was repaired is worth exactly the re-check standing behind it, and the re-check has to run after the LAST edit, not the fixing one.**
+
+## A backlog item is a claim with a timestamp, not a finding
+
+**Before building an item, read the code it describes — especially one filed days ago as residue of in-flight work, which is written at the moment of least information. Three of six coupled items in one pre-release audit were wrong about the code: a defect measured on a path the module does not take, a mechanism the module contradicts twenty lines in, and a blocker whose named resolution had shipped without resolving it. All three were filed that week by agents with the files open. An audit that repeats an item's framing inherits its errors and lends them authority.**
+
+## A report that documents two measurement passes is documenting which one you may cite
+
+**When a bug report separates its measurements into passes and tells you not to conflate them, find which pass the production path corresponds to before believing the headline. One report's Pass 1 re-wrote each parameter's existing value and round-tripped at exactly 0.0; Pass 2 perturbed values off-grid and produced the breaching deltas the Actual section quotes. The code only ever does Pass 1 — it copies values off Live and writes them back — so the reported defect was unreachable, and the refutation was inside the report, under a heading saying so.**

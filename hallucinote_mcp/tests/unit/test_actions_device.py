@@ -3986,3 +3986,164 @@ def test_load_on_return_does_not_leak_into_the_focused_track(loaded_actions):
 
 # `plan_push_devices` master-strip walk lives in tests/unit/sync/test_push_devices.py
 # next to the other planner-shape tests.
+
+
+def test_every_sidechain_enable_hint_actually_selects_the_param(loaded_actions):
+    """#545: the hint set and the code that consumes it, pinned together.
+
+    The cross-package guard in `tests/unit/test_analyzer_identity.py` compares
+    two IMPORTED collections, which proves they agree and nothing more. A
+    constant no longer read by the match would satisfy it forever while
+    `set_sidechain` matched something else — the one failure mode the
+    source-scraping guard it replaced did not have. So drive every hint through
+    the dispatcher and require it to arm the device.
+    """
+    from hallucinote_mcp.handlers.device import SIDECHAIN_ENABLE_PARAM_HINTS
+
+    assert SIDECHAIN_ENABLE_PARAM_HINTS, "an empty hint set would pass vacuously"
+
+    for hint in SIDECHAIN_ENABLE_PARAM_HINTS:
+        # The device spells its enable param with the hint embedded and
+        # differently cased, which is what the lowercase substring match is for.
+        enable_name = f"Xtra {hint.title()} Switch"
+        dev = FakeDevice(
+            "Comp", class_name="ThirdPartyComp",
+            parameters=[
+                FakeParam("Device On", 1.0),
+                FakeParam("Threshold", 0.85),
+                FakeParam(enable_name, 0.0),
+            ],
+        )
+        ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[dev])]))
+        resp = dispatch(
+            Request(
+                tool="ableton_device", action="set_sidechain",
+                params={
+                    "node": {"parent": {"kind": "track", "index": 1},
+                             "device_index": 1},
+                    "enabled": True,
+                },
+            ),
+            context=ctx,
+        )
+        assert resp.ok is True, f"{hint!r}: {resp.error}"
+        armed = next(p for p in dev.parameters if p.name == enable_name)
+        assert armed.value == 1.0, f"{hint!r} did not arm the device"
+
+
+# ---------------------------------------------------------------------------
+# #546 — a load behind the analyzer tap says so
+# ---------------------------------------------------------------------------
+
+
+def test_a_load_behind_the_analyzer_tap_says_it_is_transient(loaded_actions):
+    """#546 (residue of #532 Symptom B). Live appends a browser load to the end
+    of the chain and exposes no reorder API, so on a RENDERED track the new
+    device always lands behind the HallucinoteAnalyzer.
+
+    Read cold, that chain order says the device is excluded from stem capture.
+    It isn't — `render(start)` re-seats the tap before capturing — but only the
+    source said so, and someone read it cold once already.
+    """
+    tap = FakeDevice("HallucinoteAnalyzer", class_name="Max Audio Effect")
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[tap])]))
+    _add_browser_item(ctx, "audio_effects", "Compressor2",
+                      uri="query:Compressor2")
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"node": {"parent": {"kind": "track", "index": 1},
+                             "terminal": "track"},
+                    "kind": "Compressor2"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert resp.result["device_index"] == 2
+    note = resp.result.get("note")
+    assert note, "a load behind the tap must say so"
+    assert "BEHIND" in note and "HallucinoteAnalyzer" in note
+    # It must say the state HEALS — a bare "you are behind the tap" reads as
+    # the under-measurement the operator already feared.
+    assert "re-seats" in note and "No action needed." in note
+    # It is not a warning: nothing is wrong and nothing is asked of the caller.
+    assert "warning" not in resp.result
+
+
+def test_a_load_on_a_track_with_no_analyzer_says_nothing_new(loaded_actions):
+    """The unrendered common case. A note on every load would be noise."""
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1")]))
+    _add_browser_item(ctx, "audio_effects", "Compressor2",
+                      uri="query:Compressor2")
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"node": {"parent": {"kind": "track", "index": 1},
+                             "terminal": "track"},
+                    "kind": "Compressor2"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert "note" not in resp.result
+
+
+def test_a_load_that_lands_ahead_of_the_tap_says_nothing_new(loaded_actions):
+    """Live re-orders a chain into MIDI-effect / instrument / audio-effect
+    order, so an INSTRUMENT load can land ahead of a tap that is already there.
+    That device is inside the measured span and there is nothing to explain."""
+    tap = FakeDevice("HallucinoteAnalyzer", class_name="Max Audio Effect")
+    track = FakeTrack("T1", devices=[tap])
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    _add_browser_item(ctx, "instruments", "Operator", uri="query:Operator")
+
+    # Model Live's re-order: the instrument is placed at the HEAD.
+    original = ctx.application.browser.load_item
+
+    def _load_at_head(item):
+        before = list(track.devices)
+        original(item)
+        if len(track.devices) == len(before) + 1:
+            track.devices.insert(0, track.devices.pop())
+
+    ctx.application.browser.load_item = _load_at_head
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"node": {"parent": {"kind": "track", "index": 1},
+                             "terminal": "track"},
+                    "kind": "Operator"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert resp.result["device_index"] == 1, "the fixture must place it first"
+    assert "note" not in resp.result
+
+
+def test_a_non_m4l_device_named_like_the_analyzer_is_not_the_tap(loaded_actions):
+    """Identity here is the package's rule, not a name comparison written at
+    this call site.
+
+    `find_analyzer_index` requires `class_display_name == "Max Audio Effect"`
+    AND the name, because a user-saved preset can carry any name. Matching on
+    name alone would make this note promise that "the next render already
+    includes this device" — a promise only the re-seat sweep can keep, and the
+    sweep does not recognize a non-M4L device as the tap. The note would be
+    telling an operator not to worry about something nothing will fix.
+    """
+    impostor = FakeDevice("HallucinoteAnalyzer", class_name="Compressor2")
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[impostor])]))
+    _add_browser_item(ctx, "audio_effects", "Compressor2",
+                      uri="query:Compressor2")
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"node": {"parent": {"kind": "track", "index": 1},
+                             "terminal": "track"},
+                    "kind": "Compressor2"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert "note" not in resp.result

@@ -63,7 +63,7 @@ class _FakeDevice:
 
     Earlier versions of this fake set ``class_display_name`` to the
     .amxd filename, which never happens in real Live — caused
-    `_find_analyzer_index` (which compared on class_display_name) to
+    `find_analyzer_index` (which compared on class_display_name) to
     return True in tests but always False against real M4L devices.
     """
 
@@ -738,7 +738,7 @@ def test_sweep_idempotent_after_reposition():
 # --- strip sweep (bulk removal — the inverse of ensure_analyzers_loaded) ----
 #
 # ``strip_analyzers`` walks the SAME _plan_surfaces snapshot, finds the analyzer
-# per surface via _find_analyzer_index, and deletes it via delete_handler. The
+# per surface via find_analyzer_index, and deletes it via delete_handler. The
 # pure ``_strip_action`` helper encodes the per-surface decision (delete vs
 # already-clean), mirroring _reposition_action's pure style.
 

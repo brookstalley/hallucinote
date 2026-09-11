@@ -32,6 +32,214 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-09-10 — The release audit folds in what the release's own work left open
+
+<!-- prawduct: type=fix | scope=RELFOLD-0910 -->
+
+A pre-release backlog audit against the 19 release-pending scopes. The release
+window filed 63 backlog items; 36 had already shipped inside these scopes and 27
+were still open, every one of them residue of this release's own work. Six were
+coupled — shipping a defect, a half-closed guard, or a bookkeeping claim the code
+had made false. Four are fixed here, one is re-scoped after the code disagreed
+with it, and one is a read that was owed.
+
+**A soloed rack CHAIN is reported** (#550). The solo guard that shipped in
+RENDERGUARD-0910 refuses a render under a soloed track or return; chain solo is a
+separate first-class concept here and the guard could not see it. It **warns**
+rather than refusing, by owner decision: a chain solo silences the sibling chains
+inside one rack, not the song, so the master bus still carries every track and the
+capture is a real mix with one rack rendering as a fraction of itself. Refusing
+would block an author auditioning a layer mid-session; silence would let a report
+call that thinning a mix change. `manifest.mixer_state` records chain solo either
+way, so a report read a week later can still say what it was made under. Top-level
+racks only, and the docstring says so rather than leaving the depth to be assumed.
+
+**A sidechain source the probe cannot read is announced before it is destroyed**
+(#544). Two surfaces already warned on that shape and the destructive one did not
+— `chain-rebuild` deletes and reloads, so an unreadable source is gone rather than
+uncarried. The warning goes to stderr as well as into the report: the command is
+non-interactive, so the operator's own Ctrl-C is the only abort there is, and the
+report prints after the device is already gone.
+
+**`device load` stops reading as a loss** (#546). Live appends a browser load to
+the end of the chain and exposes no reorder API, so on a rendered track the device
+always lands behind the analyzer tap. Nothing is under-measured — `render(start)`
+re-seats the tap before capturing — but only the source said so, and someone read
+that chain order cold and concluded otherwise. It is a `note`, not a `warning`:
+there is nothing for the caller to do, and saying so is the point.
+
+**The sidechain-enable hints are named MCP-side** (#545). The guard keeping them
+in step with the engine's mirror scraped the handler's source text between two
+literal anchors, so a reflow failed it without anything having diverged. Both
+sides are imported now — and a second test drives every hint through the
+dispatcher, because comparing two imported collections proves they agree and not
+that either is what the match actually reads. That is the one failure mode the
+brittle guard did not have, and replacing it without noticing would have been a
+quiet downgrade.
+
+**#534 was approved for build and then not built, which is the entry worth
+reading.** The item reports `_PARAM_EPSILON`, an absolute 1e-6, being breached by
+float32's relative round-trip error on a large-magnitude parameter and by an
+integer-stepped one — measured against Live 12.4.5, and real. Reading the code to
+fix it showed the defect cannot reach the path `chain-rebuild` takes: the capture
+reads every value **off Live**, the restore writes that same value back verbatim,
+and the verify compares the two, so both ends are the same float and the delta is
+zero by construction. A 22 kHz frequency and a 41-step bend range round-trip at
+exactly 0.0 through the module. That reproduces the item's own Pass 1; its Actual
+section comes from the *perturbing* pass, which wrote deliberately off-grid values
+— something this module cannot do, because it never invents one.
+
+So the residue is the property, not the tolerance: the epsilon is safe only
+because the restore copies Live, and nothing pinned that — no test referenced
+`_verify_parameters` or the constant at all. Two now do, and the first is what
+should fail if an authored value ever enters the restore.
+
+**#526's blocker did not resolve the way it predicted.** The item is ordered
+behind #537 and says the open design question — a `call` argument has no current
+value to gate coercion on — would "dissolve" once #537 typed scalars on the wire.
+#537 closed, and it did not type them: `value` is still `type="any"` and the
+mechanism is server-side coercion **gated on the current value**. The gate is
+still load-bearing and `args` elements are still untyped, so the question is
+exactly as open as before. Recorded because the item asked in terms that nobody
+close it on #537's merge without reading the residue first.
+
+**Three bookkeeping claims the code had made false**, corrected rather than
+carried into the release: #533 was open against a fix already in the tree and is
+closed; #529 says the manifest records no fader values and it now records them,
+leaving only the read side, which is the half worth keeping; and #544's own
+mechanism paragraph said the sidechain source is "never journaled and never
+restored" when it is both.
+
+**`architecture.md` learns three packages it never had** — `assets/`, `features/`
+and `spectral/`, all new since v1.8.6 — and loses the count that had drifted with
+them. It opened with "the ten packages" while naming ten and the tree held
+thirteen; a count is the half a reader cannot check at a glance, so it decays
+first and silently. The list is a pointer at the tree now, with the command to
+re-derive it.
+
+**The five planless release-pending scopes are dispositioned**, not suppressed
+(`planless-scopes-disposition.md`). Two were correctly sized as trivial; three
+were not, and they are the same mistake three times — work sized by the size of
+its edits rather than by the size of what it changes. A ceiling on governance
+files, an owner ruling on a norm, and a BREAKING change to path resolution are
+each a small diff and a durable commitment. `check-releasability` will keep
+warning, which is right; the file is what a reader consults when it does.
+
+**#482 stays out of this release, deliberately.** Its R1/R2 change what goes INTO
+the stem sum that RENDERGUARD-0910 turned into a blocking finding — a return at a
+non-unity fader is summed at full pre-fader level and inflates the residual. Doing
+both at once would leave neither proving the other, which was the prior session's
+reasoning and still holds. The consequence is stated rather than left implicit:
+this release ships a blocking gate over a sum that can read high for a benign
+reason, and the RENDERGUARD operator-verification box that prices that false
+positive is the one still owed.
+
+**The Critic's blocking finding was that the chain-solo warning never reached a
+caller, and it is the entry worth reading second.** A render is async: the
+handler's `result` is projected to the operator by `Job.status_result`, which
+copies a per-kind **allowlist** — `manifest`, `manifest_path`, `render_status`.
+The new advisory was not in it, so the field was computed, written, and dropped
+in production while four tests calling the handler in-process stayed green. Two
+reviewers found it independently from opposite ends. The projection now carries
+it, and the test that keeps it honest is a JOB-level one, because no in-process
+handler test can see that boundary at all.
+
+The same finding renamed the field. It had been `result["warnings"]`, a list —
+and `warnings` is already `wire.Response.warnings`, a documented advisory
+channel that serializes at the top of the response rather than inside `result`.
+One payload carrying both under one name is two things a reader cannot tell
+apart. It is `warning: str` now, the convention every sibling handler uses.
+
+**Three more from the same round, each a rule this diff had quietly made a
+second copy of.** The tap note identified the analyzer by name where the MCP
+side requires name AND `class_display_name == "Max Audio Effect"` — a third
+discriminator for one identity, and the case it gets wrong is a note telling an
+operator not to worry about a device the re-seat sweep will never touch; it
+calls `_find_analyzer_index` now. The "warns before the first delete" claim was
+asserted only after the run returned, which cannot tell that apart from warning
+at report-assembly time, when the device is already gone; it is proved at the
+first delete now. And the chain-solo read's limits — top-level racks only, chain
+mute and volume unread, the positions PHYSICAL and read before the analyzer is
+appended — were visible only in a docstring; `boundary-patterns.md` owns that
+contract and now carries them, along with which of the two representations a
+consumer should join on.
+
+**A scope-out this work broke, recorded rather than quietly kept.** Chunk 02
+scoped out the gain-param match and then refactored it anyway, because naming
+one hint set while leaving its neighbour an inline `or` chain leaves two idioms
+for one thing. The plan says so now. The gain constant is underscore-private
+where the enable one is public: what the scope-out was protecting is the
+*guard*, and the gain set still has no engine mirror and no drift test, so a
+public name beside the enable set would advertise protection it does not have.
+
+**And a re-scope that was announced but not performed.** An earlier draft of
+this entry said #529 had been re-scoped when the item had only been commented
+on — body and stage untouched. The item is actually re-scoped now, to the half
+that is still open: the read side never learned the manifest records faders.
+
+**One test was consolidated, and the reason belongs here rather than only in a
+docstring.** Chunk 05 added `test_a_parameter_left_at_its_default_is_still_caught`
+and it was a second witness, not new coverage — identical setup
+(`live.swallow_set_parameter = True`) and identical expectation to
+`test_verify_fails_when_a_restored_parameter_reads_back_at_its_default`, which
+already existed in the same file. It contributed two assertions on the mismatch
+message's exact text, and those moved into the surviving test; nothing it
+covered is uncovered. What chunk 05 was actually missing was the OTHER half —
+that a faithful round trip does NOT report a mismatch — and that test is new and
+stays.
+
+**The chain-solo read had no unknown, beside a surface solo that insists on
+one.** Four reviewers reached one line from four angles. `_soloed_chains` read
+`bool(getattr(chain, "solo", False))`, collapsing "Live did not answer" into
+"not soloed" — forty lines below the sibling comment that forbids exactly that,
+and sharper here than there: these rows go into `manifest.json`, and the
+boundary artifact edited in this same work tells consumers to JOIN on them. A
+chain that never answered, recorded as clear, is a false negative asserted as
+fact to a reader with no way to check it. `solo` is now `true` or `null`, never
+`false`, an unreadable chain is listed as unknown, and the warning says which it
+is — the warn-tier analogue of the surface guard refusing on a flag it cannot
+read.
+
+**The advisory was fixed in code and still dropped one hop later.** The blocking
+finding's fix carried it through `Job.status_result`; `skills/render-analyze/`
+and the two `actions/render.py` descriptions still enumerated the status keys
+without it, and those are what a caller actually follows. All three now relay
+it, and the action description names `Job.status_result` as the authority rather
+than pretending a prose list can stay closed.
+
+**Two limits the read never had, one of them now a backlog item.** `_mixer_state`
+walks tracks and returns and never the master strip — and `master.wav` is a
+captured stem, so a rack on the master with a soloed chain is invisible. That is
+**#552**, filed rather than described, because the master needs handling as its
+own case: Live's master carries no `solo` at all, so a naive master row would
+read `None` and the existing guard would refuse every render. A rack's return
+chains are the other, stated alongside.
+
+**An append-only file was edited twice, by the same mechanism, one round
+apart.** Two hunks of this entry were inserted with an uncounted string-replace
+against `**Re-vendor: REQUIRED.**` — a phrase this file's entries repeat — so
+each one also landed inside the 2026-09-09 `RELBLK-V19` entry. The first round
+caught one paragraph; the fix deleted it and the NEXT edit put four more in its
+place, including a sentence claiming the entry had been restored. It had not
+been; nothing re-checked after the second edit.
+
+Restoring it by another replace would have been the same bet a third time. The
+entry was spliced back from `6dfdadb` verbatim by index, and the check is now
+structural rather than a spot read: parse both files into entries by heading and
+assert that the set of pre-existing entries is byte-identical. It is, and this
+entry is the only addition.
+
+Worth naming because the shape outlives the instance: **an append-only file
+whose sections share boilerplate cannot be edited by matching that
+boilerplate**, and a claim that a file was repaired is worth exactly as much as
+the re-check behind it.
+
+**Re-vendor: REQUIRED.** Three chunks touch `handlers/device.py` and
+`handlers/render.py`, both inside `_FINGERPRINT_PATHS`. Batched for exactly that
+reason — one restart pays for all three. Nothing here exists in Live until the
+Remote Script is re-vendored and Live is fully restarted, the same clock the
+RENDERGUARD solo guard is already on.
+
 ## 2026-09-10 — Two silent lenses: a partial that stopped counting as a recall, and a capture that stopped reading the wrong beat
 
 <!-- prawduct: type=fix | scope=OPENBUGS-0910 -->

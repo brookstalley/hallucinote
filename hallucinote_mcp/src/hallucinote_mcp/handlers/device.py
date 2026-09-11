@@ -57,6 +57,34 @@ _PARENT_KINDS = ("track", "return", "master")
 # matches on `parent_idx` still has a stable shape.
 _MASTER_SENTINEL_INDEX = 0
 
+# How `set_sidechain` recognizes a device's sidechain ENABLE and GAIN
+# parameters: lowercase substrings matched against the parameter name. Native
+# Live spells them 'S/C On' / 'S/C Gain'; the rest are naming variants seen on
+# third-party devices.
+#
+# PUBLIC on purpose. `hallucinote.capture.SIDECHAIN_ENABLE_PARAM_HINTS` is a
+# mirror of the enable set — the engine asks the same question ("is this
+# device's sidechain armed?") from the other side of a package boundary whose
+# dependency direction is MCP→engine, so the engine cannot import this and
+# mirrors it instead. Naming the set here is what lets the guard that keeps the
+# mirror honest compare two IMPORTED collections; it used to scrape this
+# function's source text between two literal anchors, which broke on
+# reformatting rather than on divergence.
+#
+# The gain set is UNDERSCORE-PRIVATE, and the asymmetry is the point. The
+# enable set is public because something outside this module mirrors it and a
+# guard imports it; the gain set has no mirror, no guard and no outside
+# consumer, so a public name beside it would advertise protection it does not
+# have — the next contributor mirroring it engine-side would get none of what
+# the matching name implies.
+SIDECHAIN_ENABLE_PARAM_HINTS: tuple[str, ...] = (
+    "s/c on", "sidechain on", "sidechain active", "side enable",
+    "external sidechain",
+)
+_SIDECHAIN_GAIN_PARAM_HINTS: tuple[str, ...] = (
+    "s/c gain", "sidechain gain", "side gain",
+)
+
 
 def _resolve_parent(
     context: LiveContext,
@@ -1863,7 +1891,54 @@ def load_handler(
         result["warning"] = (
             f"{result['warning']} {note}" if "warning" in result else note
         )
+    tap_note = _analyzer_tap_note(chain_after, new_index)
+    if tap_note is not None:
+        result["note"] = tap_note
     return result
+
+
+def _analyzer_tap_note(
+    chain: list[Any], new_index: int,
+) -> str | None:
+    """Say so when a load lands BEHIND the HallucinoteAnalyzer tap.
+
+    A `note`, not a `warning`, because no harm is reachable and the distinction
+    is the whole point: a warning asks the operator to do something, and here
+    there is nothing to do. `render(start)` re-seats the tap to the chain's end
+    before it captures anything, so the state is transient and self-heals. But
+    an operator who reads the chain order after a load sees a mid-chain tap and
+    reasonably concludes the new device is excluded from stem capture — which
+    is what a reader of this state concluded once already. The condition is
+    real and only the source said it was harmless; now the response does.
+    """
+    # Local import: `analyzer.setup` imports THIS module, so naming these at
+    # module scope would close the cycle. The import is function-local for that
+    # reason alone — `find_analyzer_index` is public precisely because this
+    # cross-module use exists, so the name being reached for is not a private
+    # one, only a late-bound one.
+    #
+    # `find_analyzer_index` rather than a name comparison written here. The
+    # MCP side identifies the tap by BOTH `class_display_name == "Max Audio
+    # Effect"` and the name, because name alone collides with a user-saved
+    # non-M4L preset — and this note promises the re-seat sweep will pick the
+    # device up, a promise only the sweep's own predicate can make. Matching on
+    # name here would be a third rule for one identity, and the case it gets
+    # wrong is the note telling an operator not to worry about a device the
+    # sweep will never touch.
+    from ..analyzer.setup import ANALYZER_DEVICE_NAME, find_analyzer_index
+
+    tap_index = find_analyzer_index(chain)
+    if tap_index is None or new_index <= tap_index:
+        return None
+    return (
+        f"this device sits at position {new_index}, BEHIND the "
+        f"{ANALYZER_DEVICE_NAME} tap at position {tap_index} — Live "
+        f"appends a browser load to the end of the chain and exposes no "
+        f"reorder API, so a rendered track always loads behind its tap. "
+        f"Nothing is under-measured: ableton_render(action='start') re-seats "
+        f"the tap to the end of the chain before it captures, so the next "
+        f"render already includes this device. No action needed."
+    )
 
 
 def delete_handler(
@@ -2517,18 +2592,12 @@ def set_sidechain_handler(
     gain_param = None
     for p in getattr(dev, "parameters", ()):
         lname = (p.name or "").lower()
-        if enable_param is None and (
-            "s/c on" in lname
-            or "sidechain on" in lname
-            or "sidechain active" in lname
-            or "side enable" in lname
-            or "external sidechain" in lname
+        if enable_param is None and any(
+            hint in lname for hint in SIDECHAIN_ENABLE_PARAM_HINTS
         ):
             enable_param = p
-        if gain_param is None and (
-            "s/c gain" in lname
-            or "sidechain gain" in lname
-            or "side gain" in lname
+        if gain_param is None and any(
+            hint in lname for hint in _SIDECHAIN_GAIN_PARAM_HINTS
         ):
             gain_param = p
 

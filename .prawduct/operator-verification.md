@@ -2659,3 +2659,56 @@ then fully quit and reopen Live before any box below.
   values while the CLI reports it parked the playhead at 0 — that means Live needs a further
   settle before parameter values follow the playhead, and the preflight needs a yield after the
   seek. Also confirm the rolling-transport refusal fires rather than capturing.
+
+## RELFOLD-0910 — the chain-solo read against a real Live rack (2026-09-10) — PENDING
+
+Backlog **#550**, shipped in RELFOLD-0910. Needs Live 12.4.x, the Remote Script
+**re-vendored** (three RELFOLD-0910 fixes are inside `_FINGERPRINT_PATHS` — batch
+this sitting with that restart), and any song carrying an Audio Effect Rack or
+Instrument Rack with two or more chains. One sitting.
+
+**Every test for this is against a fake**, and the fake is one I wrote from the
+LOM docs rather than from an observed session. That is the same weakness
+RENDERGUARD's own block names, and it is sharper here because the whole feature
+rests on two Live premises nothing in this repo has ever read from a real rack:
+that a rack device exposes `chains`, and that a `Chain` carries `solo`. The
+chain-solo warning is not wrong if those are wrong — it is *absent*, silently,
+on every render.
+
+- [ ] **A rack device really does expose `chains`, and a chain really does carry
+      `solo`.** Probe it directly rather than inferring from the warning:
+      `ableton_probe(action='get', path='song.tracks[N].devices[M].chains')` and
+      then `...chains[0].solo` on a real rack. Record what the attributes ARE —
+      present/absent, and the value's type — because a `solo` that is absent
+      reads as `None` now (unknown, and listed as such) and a `solo` that is an
+      int rather than a bool changes nothing but is worth knowing.
+- [ ] **A soloed chain warns, and the render still completes.** Solo one chain
+      inside a rack on a track, run `ableton_render(action='start')`, poll to
+      `done`. The status must carry `warning` naming the rack and the chain, and
+      `render_status` must be `ok` — the whole decision here was warn-not-refuse,
+      so a refusal is a failure of this box just as much as silence is.
+- [ ] **The advisory survives the async projection, against the real server.**
+      The unit test pins `Job.status_result`; this box pins that the key reaches
+      an operator through the actual MCP wire and the `/render-analyze` relay.
+      Confirm `warning` appears in what the skill reports, not only in the raw
+      status payload. This is the failure the Critic caught in review — it was
+      green in-process and dropped in production — so it earns a live check.
+- [ ] **The manifest records it.** Read `manifest.json` afterwards:
+      `mixer_state[<the track>].soloed_chains` carries one entry with
+      `solo: true`, and `device_position` matches the rack's position **before**
+      the analyzer sweep appended the tap. That off-by-one is the specific thing
+      the PHYSICAL-vs-ordinal note in `boundary-patterns.md` warns about, and a
+      real render is the only place it can be checked.
+- [ ] **A clean rack stays quiet.** Same song, solo cleared: no `warning`, and
+      `soloed_chains` is `[]` on every row. A warning that fires on a healthy
+      session teaches the operator to ignore it, which is worse than not having
+      it.
+- [ ] **A soloed TRACK still refuses, with the rack present.** The guard this
+      extends must not have been weakened. Solo the track (not the chain) and
+      confirm the render refuses and captures nothing.
+
+**Known not covered, do not treat as failures** (all stated in
+`architecture.md` and `boundary-patterns.md`): a rack nested inside another
+rack's chain, a rack's return chains, chain mute and chain volume, and the
+master strip — that last one tracked at **#552**, which explains why the master
+needs its own case rather than another row.

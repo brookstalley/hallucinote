@@ -65,6 +65,18 @@ def _analyzer_params() -> list[_FakeParam]:
     ]
 
 
+class _FakeChain:
+    """One chain inside a rack. Carries `solo` the way Live's Chain does —
+    independently of the track's, and silencing its SIBLINGS rather than the
+    song."""
+
+    def __init__(self, name: str, *, solo: bool = False):
+        self.name = name
+        self.solo = solo
+        self.mute = False
+        self.devices: list[_FakeDevice] = []
+
+
 class _FakeDevice:
     def __init__(
         self,
@@ -73,6 +85,7 @@ class _FakeDevice:
         class_name: str | None = None,
         name: str | None = None,
         parameters: list[_FakeParam] | None = None,
+        chains: list[_FakeChain] | None = None,
     ):
         self.class_display_name = class_display_name
         self.class_name = class_name or class_display_name
@@ -86,6 +99,13 @@ class _FakeDevice:
         if parameters is None and self.name == "HallucinoteAnalyzer":
             parameters = _analyzer_params()
         self.parameters = parameters or []
+        # Only a RACK exposes `chains`, and the attribute must be ABSENT on
+        # everything else — that absence is what the chain-solo read uses to
+        # tell a rack from an ordinary device, so a fake that always carried an
+        # empty list would make every device look like a rack with no chains
+        # and hide the discrimination entirely.
+        if chains is not None:
+            self.chains = list(chains)
 
 
 class _FakeMixer:
@@ -1743,3 +1763,200 @@ def test_render_refuses_when_solo_cannot_be_read(
     assert "could not read solo/mute" in msg
     assert ctx_two_tracks_one_return.song.tracks[0].name in msg
     assert ctx_two_tracks_one_return.song.start_playing_calls == 0
+
+
+# ---------------------------------------------------------------------------
+# #550 — a soloed rack CHAIN warns; it does not refuse
+# ---------------------------------------------------------------------------
+
+
+def test_a_soloed_rack_chain_warns_and_the_render_proceeds(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, stub_sidecar,
+):
+    """Owner decision, 2026-09-10: warn, do not refuse.
+
+    A track or return solo makes the master bus carry a fraction of the SONG,
+    which is never a mix anyone meant to render. A chain solo silences the
+    sibling chains inside ONE rack — every track is still in the master — so
+    the capture is a real mix with one rack rendering as a fraction of itself.
+    Refusing would block an author auditioning a layer; silence would let the
+    report call that rack's absence a mix change.
+    """
+    rack = _FakeDevice(
+        class_display_name="Audio Effect Rack", name="Drum Bus",
+        chains=[_FakeChain("Clean"), _FakeChain("Sub", solo=True)],
+    )
+    track = ctx_two_tracks_one_return.song.tracks[0]
+    track.devices.append(rack)
+
+    out = render_handlers.render_handler(
+        ctx_two_tracks_one_return,
+        song_slug="t",
+        output_dir=str(tmp_path / "c"),
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 999.0,
+    )
+
+    # It did NOT refuse.
+    assert ctx_two_tracks_one_return.song.start_playing_calls == 1
+
+    # `warning: str` — the convention every sibling handler uses. NOT
+    # `warnings: list`, which is `wire.Response.warnings`, a different channel
+    # serialized at the top of the response rather than inside `result`.
+    warning = out["warning"]
+    assert "'Sub'" in warning and "'Drum Bus'" in warning
+    assert f"track 1 ({track.name!r})" in warning
+    # It explains the blast radius, not just the fact — "a chain is soloed"
+    # alone reads as the whole-song silencing that DOES refuse.
+    assert "SIBLING" in warning and "not refused" in warning
+
+    # Recorded in the manifest too — a report is read long after Live moved on.
+    # The manifest carries the per-surface labels; `warning` wraps them in the
+    # prose that says what to do, so the two are not the same string.
+    # Position 1 literally: the rack is the track's first device. NOT
+    # len(track.devices) — the render appends the analyzer to that list, so
+    # deriving the number here would read a chain the render itself moved.
+    assert out["manifest"]["soloed_chains"] == [
+        f"track 1 ({track.name!r}): chain 'Sub' is soloed inside rack "
+        f"'Drum Bus' at position 1"
+    ]
+    row = out["manifest"]["mixer_state"][0]
+    assert row["soloed_chains"] == [{
+        "device_position": 1,
+        "device_name": "Drum Bus",
+        "chain_index": 2,
+        "chain_name": "Sub",
+        # True, not merely present: `None` is a distinct state (Live did not
+        # answer) and a consumer told to join on these rows must be able to
+        # tell the two apart.
+        "solo": True,
+    }]
+
+
+def test_a_soloed_chain_on_a_RETURN_is_seen_too(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, stub_sidecar,
+):
+    """The shipped surface guard read `song.tracks` and missed `return_tracks`
+    once already, and a clean-render test pinned the gap in place. The chain
+    read walks the same two collections, so it is pinned on both."""
+    ret = ctx_two_tracks_one_return.song.return_tracks[0]
+    ret.devices.append(_FakeDevice(
+        class_display_name="Audio Effect Rack", name="Verb Rack",
+        chains=[_FakeChain("Plate", solo=True)],
+    ))
+
+    out = render_handlers.render_handler(
+        ctx_two_tracks_one_return,
+        song_slug="t",
+        output_dir=str(tmp_path / "c"),
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 999.0,
+    )
+
+    assert f"return 1 ({ret.name!r})" in out["warning"]
+    assert "'Plate'" in out["warning"]
+
+
+def test_a_track_solo_still_REFUSES_even_with_a_clean_rack(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, stub_sidecar,
+):
+    """Chunk 04 must not weaken the guard it extends. Warning on chain solo is
+    a statement about chain solo only; a soloed TRACK is still fatal."""
+    track = ctx_two_tracks_one_return.song.tracks[0]
+    track.devices.append(_FakeDevice(
+        class_display_name="Audio Effect Rack", name="Drum Bus",
+        chains=[_FakeChain("Clean"), _FakeChain("Sub")],
+    ))
+    track.solo = True
+
+    with pytest.raises(render_handlers.SoloedTrackError):
+        render_handlers.render_handler(
+            ctx_two_tracks_one_return,
+            song_slug="t",
+            output_dir=str(tmp_path / "c"),
+            _osc_factory=osc_factory,
+            _sidecar=stub_sidecar,
+            _clock_source=lambda: 999.0,
+        )
+    assert ctx_two_tracks_one_return.song.start_playing_calls == 0
+
+
+def test_a_clean_render_carries_no_chain_solo_and_no_warnings(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, stub_sidecar,
+):
+    """A rack whose chains are all unsoloed is the common case, and an
+    ordinary non-rack device must not read as a rack with no chains."""
+    ctx_two_tracks_one_return.song.tracks[0].devices.append(_FakeDevice(
+        class_display_name="Audio Effect Rack", name="Drum Bus",
+        chains=[_FakeChain("Clean"), _FakeChain("Sub")],
+    ))
+
+    out = render_handlers.render_handler(
+        ctx_two_tracks_one_return,
+        song_slug="t",
+        output_dir=str(tmp_path / "c"),
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 999.0,
+    )
+
+    assert "warning" not in out
+    assert out["manifest"]["soloed_chains"] == []
+    assert all(
+        row["soloed_chains"] == []
+        for row in out["manifest"]["mixer_state"]
+    )
+
+
+def test_a_chain_that_does_not_report_solo_is_listed_as_unknown(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, stub_sidecar,
+):
+    """`None`, never `False` — the rule `_row`'s `_flag` states for the surface
+    flags, and sharper here: these rows go into `manifest.json` and
+    `boundary-patterns.md` tells consumers to JOIN on them.
+
+    A chain that did not answer, recorded as "not soloed", is a false negative
+    asserted as fact to a reader who has no way to check it. So it is listed,
+    flagged unknown, and the warning says which it is — the warn-tier analogue
+    of the surface guard refusing on an unreadable flag.
+    """
+    class _MuteChain(_FakeChain):
+        def __init__(self, name):
+            super().__init__(name)
+            del self.solo  # Live did not present the attribute at all
+
+    rack = _FakeDevice(
+        class_display_name="Audio Effect Rack", name="Drum Bus",
+        chains=[_MuteChain("Clean")],
+    )
+    ctx_two_tracks_one_return.song.tracks[0].devices.append(rack)
+
+    out = render_handlers.render_handler(
+        ctx_two_tracks_one_return,
+        song_slug="t",
+        output_dir=str(tmp_path / "c"),
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 999.0,
+    )
+
+    # Not refused — an unreadable CHAIN flag is not the whole-song silencing
+    # that an unreadable SURFACE flag could be hiding.
+    assert ctx_two_tracks_one_return.song.start_playing_calls == 1
+    assert out["manifest"]["mixer_state"][0]["soloed_chains"] == [{
+        "device_position": 1,
+        "device_name": "Drum Bus",
+        "chain_index": 1,
+        "chain_name": "Clean",
+        "solo": None,
+    }]
+    assert "did NOT report whether it is soloed" in out["warning"]
+    # The ENVELOPE must not assert a solo either. "1 soloed rack chain" would be
+    # the read claiming what it just said it could not determine, and it sends
+    # the operator at the wrong action: a real solo is cleared, an unreadable
+    # flag is investigated.
+    assert "soloed rack chain(s) during this render" not in out["warning"]
+    assert "could not be read" in out["warning"]
+    assert "unknown, not safe" in out["warning"]

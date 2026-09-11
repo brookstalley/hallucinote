@@ -226,7 +226,7 @@ class SoloedTrackError(RuntimeError):
 
 
 def _mixer_state(context: Any) -> list[dict[str, Any]]:
-    """Per-surface solo / mute / volume, read on the main thread.
+    """The mixer state each surface was in, read on the main thread.
 
     Covers regular tracks AND return tracks. A return is a Track in Live and
     carries solo like any other: soloing one silences every regular track's
@@ -271,6 +271,12 @@ def _mixer_state(context: Any) -> list[dict[str, Any]]:
                 float(volume.value) if volume is not None
                 and getattr(volume, "value", None) is not None else None
             ),
+            # Built HERE, from the track this row already describes, rather
+            # than zipped on from a second walk of tracks-then-returns. Two
+            # enumerations of the same surfaces stay aligned by convention
+            # only, and `zip` drops the tail in silence — in a guard, that is a
+            # surface whose soloed chain nothing reports.
+            "soloed_chains": _soloed_chains(track),
         }
 
     def _read() -> list[dict[str, Any]]:
@@ -286,6 +292,93 @@ def _mixer_state(context: Any) -> list[dict[str, Any]]:
         )
         return rows
     return context.run_on_main(_read)
+
+
+def _soloed_chains(track: Any) -> list[dict[str, Any]]:
+    """Every soloed rack chain on one surface, named by rack and chain.
+
+    Chain solo is its own concept in Live — a rack's chain carries `solo`
+    independently of the track's — and it silences the rack's SIBLING chains,
+    not the song. That is why it warns where a track or return solo refuses:
+    the master bus still carries every track, so the capture is a real mix,
+    just not the one the rack was authored to produce.
+
+    The limits are stated rather than silently assumed, because a limit that
+    lives nowhere is one the next reader re-discovers. No count travels with the
+    list — an earlier revision said "two" and listed three:
+
+    - **Top-level racks only.** A rack nested inside a rack chain can hold a
+      soloed chain too. Walking to arbitrary depth would pay a full device-tree
+      traversal on every render for a case nobody has hit; the shallow read
+      covers the one an author actually leaves engaged.
+    - **A rack's main chains only.** Live racks also expose RETURN chains,
+      which carry `solo` like any other chain and are not read here.
+    - **Tracks and returns only, never the master strip.** `_mixer_state`
+      walks `song.tracks` and `song.return_tracks`, and the master is a
+      captured surface (`master.wav` is a stem), so a rack on the master with a
+      soloed chain is invisible. Adding a master row here is NOT a free
+      extension: Live's master track carries no `solo`, so `_flag` would read
+      `None` and `_refuse_under_solo` refuses on an unreadable flag — every
+      render would stop. Closing this needs the master handled as its own case,
+      which is new scope rather than a missing line — tracked at #552.
+
+    Chain mute and chain volume are not read at all — a mute is a plausible
+    authoring choice and a volume is not a silencing state, so neither is the
+    working-state-left-engaged this exists to catch.
+    """
+    found: list[dict[str, Any]] = []
+    for position, device in enumerate(
+        getattr(track, "devices", ()) or (), start=1
+    ):
+        chains = getattr(device, "chains", None)
+        if chains is None:
+            continue
+        for chain_index, chain in enumerate(chains, start=1):
+            raw = getattr(chain, "solo", None)
+            # `None` when Live did not present the attribute, NEVER False —
+            # the same rule `_row`'s `_flag` states forty lines up, and for a
+            # sharper reason here: these rows go into `manifest.json`, and
+            # `boundary-patterns.md` tells consumers to JOIN on them. A chain
+            # that did not answer, recorded as "not soloed", is a false
+            # negative asserted as fact to a reader who cannot check it.
+            solo = None if raw is None else bool(raw)
+            if solo is False:
+                continue
+            found.append({
+                "device_position": position,
+                "device_name": getattr(device, "name", "") or "<unnamed>",
+                "chain_index": chain_index,
+                "chain_name": getattr(chain, "name", "") or "<unnamed>",
+                # True = soloed. None = unreadable, and therefore UNKNOWN
+                # rather than safe: it is listed so the warning can say so.
+                "solo": solo,
+            })
+    return found
+
+
+def _warn_under_chain_solo(mixer_state: list[dict[str, Any]]) -> list[str]:
+    """Name every soloed rack chain; never refuse.
+
+    Owner decision, 2026-09-10. A track or return solo makes the master bus
+    carry a fraction of the song, which is never a mix anyone meant to render,
+    so it refuses. A chain solo silences sibling chains inside ONE rack: the
+    blast radius is a single device, the rest of the song is still there, and
+    rendering while auditioning one layer of a rack is a thing an author
+    legitimately does. Refusing would block work; saying nothing would let a
+    rack render as a fraction of itself with the report calling it a mix
+    change. So it warns, and the manifest records it either way.
+    """
+    return [
+        f"{row['surface_kind']} {row['surface_index']} "
+        f"({row['surface_name']!r}): chain {chain['chain_name']!r} "
+        + ("is soloed" if chain.get("solo") else
+           "did NOT report whether it is soloed, so this render may have been "
+           "made under one")
+        + f" inside rack {chain['device_name']!r} at position "
+        f"{chain['device_position']}"
+        for row in mixer_state
+        for chain in row.get("soloed_chains") or ()
+    ]
 
 
 def _refuse_under_solo(mixer_state: list[dict[str, Any]]) -> list[str]:
@@ -579,21 +672,32 @@ def render_handler(
         NOT ``song.last_event_time`` — that accessor drifts past the real
         content and compounds across renders.
 
-    Returns a dict suitable for direct MCP response. Paths are
-    absolute post-server-side absolutize::
-
-        {
-          "captures_dir": "/Users/.../songs/<slug>/captures/<ts>/",
-          "manifest_path": "/Users/.../songs/<slug>/captures/<ts>/manifest.json",
-          "manifest": {...},
-          "status": "ok" | "incomplete",
-        }
+    Returns a dict suitable for direct MCP response: the captures directory and
+    manifest path (absolute post-server-side absolutize), the manifest itself,
+    the render `status`, and any advisory key the render raised without
+    refusing. The keys are not enumerated here on purpose — an inventory in
+    prose has to be edited every time the shape grows, and the one that used to
+    sit here named four keys and was falsified by the fifth. Read the `result`
+    assembly at the end of this function, and `Job.status_result` for the subset
+    that survives to an async caller.
     """
     # Before anything is loaded or moved: a render made under a solo cannot be
     # valid, and the cheapest place to say so is before the analyzer sweep
     # pays an M4L reload on every surface.
     mixer_state = _mixer_state(context)
     muted_tracks = _refuse_under_solo(mixer_state)
+    soloed_chains = _warn_under_chain_solo(mixer_state)
+    if soloed_chains:
+        # Logged at DETECTION, which is minutes and several hundred lines
+        # before the manifest that also records it. A render that then wedges,
+        # times out or raises never reaches that write, and a postmortem asking
+        # "what was the mixer doing?" would find nothing — the one question
+        # this read exists to answer.
+        logger.warning(
+            "render: proceeding under %d rack chain(s) that are soloed or "
+            "would not say: %s",
+            len(soloed_chains), "; ".join(soloed_chains),
+        )
 
     sidecar = _sidecar if _sidecar is not None else shared_sidecar()
     layout = ensure_analyzers_loaded(context, emit_port=sidecar.port)
@@ -876,10 +980,13 @@ def render_handler(
             # long after Live has moved on, so without this there is no way to
             # establish afterwards whether a surprising master was a real mix
             # change or a mute left engaged. Covers returns as well as
-            # tracks. Solo cannot appear here — a soloed track OR return is
-            # refused before the transport rolls.
+            # tracks. Surface solo cannot appear here — a soloed track OR
+            # return is refused before the transport rolls. CHAIN solo can:
+            # it warns rather than refusing, so a render under one reaches
+            # this file and `soloed_chains` is how a later read finds out.
             "mixer_state": mixer_state,
             "muted_tracks": muted_tracks,
+            "soloed_chains": soloed_chains,
             # The ACTUAL ring-out recorded (record_stop_beat is integer-beat — the
             # analyzer's stop is `/stop_at_beat <int>`), not the requested float.
             # The read side trusts this to span [stop_at_beat, stop+ring_out] onto
@@ -935,12 +1042,57 @@ def render_handler(
                 target_beat, max_wait_s,
             )
 
-        return {
+        result = {
             "captures_dir": str(captures_dir),
             "manifest_path": str(manifest_path),
             "manifest": manifest,
             "status": status,
         }
+        if soloed_chains:
+            # Top level as well as inside the manifest, because a warning that
+            # lives only in `manifest.mixer_state` is three levels down in the
+            # one payload a caller skims.
+            #
+            # `warning: str`, which is the convention every sibling handler
+            # uses (`device.py`'s load/rack-mismatch warnings) — NOT
+            # `warnings: list`, which is `wire.Response.warnings`, a different
+            # channel that serializes at the top of the RESPONSE rather than
+            # inside `result`. One payload carrying both under one name would
+            # be two things a reader cannot tell apart.
+            #
+            # A render is async, so this key only reaches a caller because
+            # `Job.status_result` copies it explicitly: that projection is an
+            # allowlist per job kind, and a key nobody adds to it is silently
+            # dropped. A job-level test pins that, because an in-process
+            # handler test cannot see the boundary at all. (No test name here:
+            # a name in a comment goes stale on the next rename, and a reader
+            # grepping a stale one finds nothing.)
+            # The envelope must not assert what the entries may not say. When
+            # every entry is an unknown, "N soloed rack chains" is a claim the
+            # read just declared it could not make — and the operator's next
+            # move differs: a real solo is cleared, an unreadable flag is
+            # investigated.
+            certain = [c for row in mixer_state
+                       for c in row.get("soloed_chains") or () if c.get("solo")]
+            unknown = len(soloed_chains) - len(certain)
+            if certain and not unknown:
+                head = f"{len(certain)} soloed rack chain(s) during this render"
+            elif certain:
+                head = (f"{len(certain)} soloed rack chain(s) during this "
+                        f"render, and {unknown} whose solo could not be read")
+            else:
+                head = (f"{unknown} rack chain(s) whose solo could not be read "
+                        f"during this render")
+            result["warning"] = (
+                head + ": " + "; ".join(soloed_chains)
+                + ". A soloed chain silences its SIBLING chains inside that "
+                "rack, so that rack captured as a fraction of itself. The "
+                "rest of the mix is unaffected and the render was not "
+                "refused. Clear any chain solo and re-render if the rack's "
+                "full sound was meant to be in this capture; a chain whose "
+                "solo could not be read is unknown, not safe."
+            )
+        return result
     except Exception as e:  # prawduct:allow prawduct/broad-except -- top-level render supervisor: write status.json=error then re-raise so a poller sees a terminal state for a render that raised (BUG3); the exception is NOT swallowed (re-raised, so the dispatcher still surfaces it)
         # Every catch logs context (project norm) before the terminal heartbeat —
         # the dispatcher surfaces the re-raised exception to the caller, but the

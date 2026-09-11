@@ -77,6 +77,20 @@ class _FakeChain:
         self.devices: list[_FakeDevice] = []
 
 
+class _ChainWithoutSolo(_FakeChain):
+    """A chain Live presents with NO `solo` attribute at all.
+
+    Named for the attribute it removes, not for `mute`: `_FakeChain` carries a
+    real `mute` field, so a name like `_MuteChain` reads as "a muted chain" —
+    the wrong state entirely, and the one the solo guards must not confuse it
+    with.
+    """
+
+    def __init__(self, name):
+        super().__init__(name)
+        del self.solo
+
+
 class _FakeDevice:
     def __init__(
         self,
@@ -1922,14 +1936,9 @@ def test_a_chain_that_does_not_report_solo_is_listed_as_unknown(
     flagged unknown, and the warning says which it is — the warn-tier analogue
     of the surface guard refusing on an unreadable flag.
     """
-    class _MuteChain(_FakeChain):
-        def __init__(self, name):
-            super().__init__(name)
-            del self.solo  # Live did not present the attribute at all
-
     rack = _FakeDevice(
         class_display_name="Audio Effect Rack", name="Drum Bus",
-        chains=[_MuteChain("Clean")],
+        chains=[_ChainWithoutSolo("Clean")],
     )
     ctx_two_tracks_one_return.song.tracks[0].devices.append(rack)
 
@@ -1960,3 +1969,92 @@ def test_a_chain_that_does_not_report_solo_is_listed_as_unknown(
     assert "soloed rack chain(s) during this render" not in out["warning"]
     assert "could not be read" in out["warning"]
     assert "unknown, not safe" in out["warning"]
+
+
+def test_a_rack_with_two_soloed_and_one_unreadable_chain_counts_both(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, stub_sidecar,
+):
+    """The envelope's third head: some chains soloed AND some unreadable.
+
+    The other two heads each make one claim over the whole list. Mixed is the
+    only head that reports two numbers, and the only one whose arithmetic can
+    be wrong: `unknown` is derived by subtraction, so a miscount reports either
+    a solo the read never found or an unreadable flag it never had. Those send
+    the operator at opposite actions — a real solo is cleared, an unreadable
+    flag is investigated — which is the distinction the all-unknown head
+    already exists to protect.
+
+    **The counts are deliberately asymmetric (2 and 1), and that is the whole
+    design of the fixture.** With one of each, the two numbers are both `1` and
+    the head is byte-identical whether or not they are transposed, so the test
+    would pass against the bug it names. Verified by mutation: swapping
+    `len(certain)` and `unknown` in the head passes a 1-and-1 fixture and fails
+    this one.
+    """
+    rack = _FakeDevice(
+        class_display_name="Audio Effect Rack", name="Drum Bus",
+        chains=[
+            _FakeChain("Sub", solo=True),
+            _FakeChain("Kick", solo=True),
+            _ChainWithoutSolo("Clean"),
+        ],
+    )
+    track = ctx_two_tracks_one_return.song.tracks[0]
+    track.devices.append(rack)
+
+    out = render_handlers.render_handler(
+        ctx_two_tracks_one_return,
+        song_slug="t",
+        output_dir=str(tmp_path / "c"),
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 999.0,
+    )
+
+    # Still a warn, not a refusal — mixing an unreadable chain flag into the
+    # set does not escalate it to the whole-song silencing that DOES refuse.
+    assert ctx_two_tracks_one_return.song.start_playing_calls == 1
+
+    warning = out["warning"]
+    # Both counts, each bound to the thing it counts. Asserted as one string
+    # so the two cannot swap; see the docstring for why 2-and-1, not 1-and-1.
+    assert (
+        "2 soloed rack chain(s) during this render, and 1 whose solo "
+        "could not be read"
+    ) in warning
+    # And it is not either single-head phrasing: the all-unknown head would
+    # drop the real solos, and the all-certain head the unreadable chain.
+    assert not warning.startswith("3 rack chain(s) whose solo could not be read")
+    assert "2 soloed rack chain(s) during this render:" not in warning
+
+    # All three chains reach the list the head wraps, each described as what
+    # it is — the head counts them, the entries name them.
+    assert "'Sub'" in warning and "'Kick'" in warning and "'Clean'" in warning
+    assert "did NOT report whether it is soloed" in warning
+
+    # The manifest keeps the two states apart the way the envelope does: True
+    # and None are distinct, and a consumer told to join on these rows has no
+    # other way to tell a solo from a chain that never answered.
+    assert out["manifest"]["mixer_state"][0]["soloed_chains"] == [
+        {
+            "device_position": 1,
+            "device_name": "Drum Bus",
+            "chain_index": 1,
+            "chain_name": "Sub",
+            "solo": True,
+        },
+        {
+            "device_position": 1,
+            "device_name": "Drum Bus",
+            "chain_index": 2,
+            "chain_name": "Kick",
+            "solo": True,
+        },
+        {
+            "device_position": 1,
+            "device_name": "Drum Bus",
+            "chain_index": 3,
+            "chain_name": "Clean",
+            "solo": None,
+        },
+    ]

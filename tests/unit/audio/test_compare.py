@@ -643,12 +643,14 @@ def test_a_finding_without_its_numbers_still_disqualifies_the_master():
         stems=[_surface("track:1")],
         master=_surface("master", "master", "Main", lufs_i=-22.6),
     )
-    current["findings"] = [{
-        "kind": "master_not_stem_sum",
-        "severity": "blocking",
-        "subject": "master",
-        "db_reference": "the captured master is not the sum of the captured stems",
-    }]
+    # Derived from the one builder for this shape, minus the three values —
+    # not hand-copied. The code under test reads every field through `.get`, so
+    # a literal here would stay green against a finding shape nothing produces
+    # once the builder gains a field.
+    finding = _not_stem_sum_finding()
+    for numeric in ("metric", "observed", "expected"):
+        del finding[numeric]
+    current["findings"] = [finding]
 
     out = diff_reports(current, baseline)
 

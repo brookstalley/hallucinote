@@ -19,7 +19,7 @@ noise that hides the next real one. This file answers it per scope, so the
 warning is dispositioned rather than carried.
 
 **This is not a licence to ship planless work.** Each entry below states the
-reason and whether it was legitimate. Three were.
+reason and whether it was legitimate. Four were.
 
 | scope | why no plan | legitimate? |
 | --- | --- | --- |
@@ -29,21 +29,24 @@ reason and whether it was legitimate. Three were.
 | `advisory-clearing` | Three post-sync advisories cleared in one pass: a merge driver added to `.gitattributes`, a bug report triaged, a norm re-affirmed by owner ruling. The norm re-affirmation is a governance decision, not a chore. | **No** — the ruling deserved a record of its own. |
 | `effort-s-burndown` | A batch of ten-plus `effort:S` backlog items, including a **BREAKING** change to `resolve_db_path` resolution semantics and a retired CLI command (`capture restamp`). Individually small; collectively a release-visible surface change. | **No** — a batch is not trivial because its parts are. |
 | `MYPY-COMPARE-0911` | CI caught a single `mypy` error on `develop` — `_master_disqualification`'s `verdict` annotation was narrower than the `Any` it built from a stored report's JSON — and one annotation was widened to the shape it actually reads. One file, one type, no contract surface moved. | **Yes** — correctly sized. |
+| `RELAUDIT-0911` | The release audit's second pass: one test (#553), a row in this file, and an audit artifact. Trivial by the size heuristic — nothing durable committed, no contract surface moved, the audit's own findings recorded in the artifact rather than in code. | **Yes** — correctly sized. |
 
 ## The pattern worth naming
 
-Three of the five are the same mistake: **work sized by the size of its
+Three of the seven are the same mistake: **work sized by the size of its
 individual edits rather than by the size of what it changes.** A ceiling on
 governance files, an owner ruling on a norm, and a breaking change to path
 resolution are each a small diff and a durable commitment. The size heuristic
 in `methodology/building.md` already says this — "state outliving the process"
 is its medium trigger — and it was read as a file count three times.
+The two scopes added since were both genuinely trivial, which is why the
+numerator has not moved: the pattern is a real failure mode, not a rate.
 
 Nothing is re-plannable now: the work shipped, and a build plan written after
 the fact records a process that did not happen. What the change-log carries for
 each of these is accurate and is the record that survives.
 
-**For the release:** all five ship. The warning is answered, not suppressed —
+**For the release:** all seven ship. The warning is answered, not suppressed —
 `check-releasability` will keep emitting it, and that is correct, because the
 gate should not learn to stay quiet about planless work. This file is what a
 reader consults when it fires.

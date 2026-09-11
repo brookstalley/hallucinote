@@ -1,3 +1,10 @@
+---
+artifact: build-plan
+version: 2
+scope: backlog-wave-1
+branch: integration/backlog-wave-1
+---
+
 # Build plan — backlog wave 1 (parallel worktree delegates)
 
 **Scope**: the first executable wave drawn from the 54 backlog items advanced to

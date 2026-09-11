@@ -327,6 +327,15 @@ link above remains documented-but-unbuilt** — `Arrangement` has no `reference(
 method yet (the authored-link half is the tracked deferred work, ARR-9K4T Chunk 5).
 See the lens for the method; info-only, never a verdict (ruler-not-stamp).
 
+Detection and *counting* are separate: the matcher reports every reading it finds,
+including the tier-4 `derived (<op>, <coverage>)` partial account it falls back to
+when no clean op is recoverable, but a sub-threshold derived reading is marked
+`partial` and excluded from the economy figures. Without that split the transform
+group's near-universal low-coverage readings make every registered motif read as
+recurring, which empties `never_recalled` and silences the lens's only coaching
+question. The floor (`analyze_recurrence(min_coverage=…)`) applies to the derived
+tier alone — a clean recovered op, `fragment` included, is a recall at any coverage.
+
 ### Cumulative development = per-iteration deltas
 
 The heart of the original question ("how do verse 1/2/3 stay the same yet

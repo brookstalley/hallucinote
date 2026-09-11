@@ -151,8 +151,24 @@ def test_partial_above_floor_reads_derived():
     partial = [_n(60, 0.0, 0.5), _n(67, 2.0, 0.5)]
     res = match_motif_in_window(_MOTIF, partial)
     assert res is not None
-    assert res.variation == "derived"
+    # The partial NAMES the op it partially matches (here the untransposed quote)
+    # rather than reading as a nameless `derived`.
+    assert res.variation == "derived (exact, 0.50)"
     assert 0.5 <= res.coverage < 1.0
+    # The TIER rides on the field, not on the label's prefix — the wrapper used to
+    # rebuild its result without `derived=`, so this exported entry point reported
+    # every tier-4 guess as a clean recall to any consumer following the documented
+    # contract.
+    assert res.derived is True
+
+
+def test_a_clean_op_is_not_derived_through_the_window_wrapper():
+    """The other half of the tier signal: a named op must come back `derived=False`,
+    or reading the field would be no better than prefix-matching the label."""
+    res = match_motif_in_window(_MOTIF, V.transpose(_MOTIF, -12))
+    assert res is not None
+    assert res.derived is False
+    assert res.coverage == 1.0
 
 
 def test_breathed_jitter_within_tolerance_recovers_augment():
@@ -235,3 +251,163 @@ def test_fast_skip_preserved_for_multi_interval_motif_vs_disjoint_layer():
     perc = [_n(36, 0.0, 0.25), _n(37, 1.0, 0.25), _n(38, 2.0, 0.25),
             _n(36, 4.0, 0.25), _n(37, 5.0, 0.25), _n(38, 6.0, 0.25)]
     assert match_all_in_layer(_MOTIF, perc) == []
+
+
+# --------------------------------------------------------------------------
+# The FACTORED (pitch_map, time_map) search: composed recalls, the independently
+# relaxable duration axis, and partials that name their op.
+# --------------------------------------------------------------------------
+
+# The `missing` coda shape, rebuilt synthetically (test-location convention: no
+# song data in tests/unit/). A 3-note motif whose payoff recall returns an octave up
+# with its onset spacing exactly halved while the notes keep their sung lengths —
+# `transpose(+12) ∘ onset-diminish(0.5)` with free durations.
+_REACH = [_n(59, 0.0, 1.5), _n(63, 4.0, 2.0), _n(66, 8.0, 1.5)]
+_REACH_CODA = [_n(71, 32.0, 1.5), _n(75, 34.0, 1.5), _n(78, 36.0, 1.0)]
+
+
+def test_transposed_and_onset_diminished_recall_is_named():
+    """The payoff-recall shape: a motif restated an octave up with its onset spacing
+    halved but its durations freely re-sung is recovered as the COMPOSED op, with the
+    duration relaxation reported rather than hidden.
+
+    Regression: the scale-candidate generator paired on RAW pitch equality, so a
+    recall that had moved on BOTH axes proposed no factor at all and the whole layer
+    read as no recall — the composer could not tell "my recall doesn't land" from
+    "the lens can't see it"."""
+    layer = _REACH_CODA + [_n(76, 38.0, 2.0)]   # + the landed coda extension note
+    results = match_all_in_layer(_REACH, layer)
+    assert results, "the composed transpose+diminish recall must not read as no recall"
+    top = results[0]
+    assert top.coverage == 1.0
+    assert top.variation == "transpose +12 ∘ diminish ×2 (durations free)"
+    assert top.transpose == 12
+    assert top.factor == 2.0
+    assert top.duration_match is False
+    assert top.cell_offset_beats == 32.0
+
+
+def test_free_durations_require_full_onset_and_pitch_coverage():
+    """R4 guard: relaxing the duration axis is not a rubber stamp. The same shape with
+    ONE pitch wrong does not become a full free-duration match — it degrades to a
+    partial that names the op it nearly matched."""
+    broken = [_n(71, 32.0, 1.5), _n(74, 34.0, 1.5), _n(78, 36.0, 1.0)]
+    results = match_all_in_layer(_REACH, broken)
+    assert results
+    assert all(r.coverage < 1.0 for r in results)
+    assert not any("durations free" in r.variation for r in results)
+    assert results[0].variation == "derived (transpose +12 ∘ diminish ×2, 0.67)"
+
+
+def test_free_duration_tier_not_entered_for_two_note_motifs():
+    """R4's >= 3-note gate: on a two-note motif, a free duration axis would leave only
+    two onsets and two pitches deciding the match — too little evidence to call a
+    recall. The tier is not entered, so no full-coverage free-duration reading appears."""
+    two = [_n(59, 0.0, 1.5), _n(66, 8.0, 1.5)]
+    layer = [_n(71, 32.0, 1.5), _n(78, 36.0, 1.0)]   # +12, onsets halved, durations free
+    results = match_all_in_layer(two, layer)
+    assert not any("durations free" in r.variation for r in results)
+    assert all(r.coverage < 1.0 for r in results)
+
+
+def test_partial_recall_names_its_op():
+    """R6/R8: an abandoned 2-of-3 quote — the authored "the attempt breaks off" shape —
+    surfaces as a partial that NAMES the transform it partially matches, so the review
+    can say the lens sees the attempt, not just that something derived happened."""
+    attempt = [_n(71, 0.0, 1.5), _n(75, 2.0, 1.5)]   # the first two notes, +12, halved
+    res = match_motif_in_window(_REACH, attempt)
+    assert res is not None
+    assert res.variation.startswith("derived (")
+    assert "transpose +12" in res.variation
+    assert 0.5 <= res.coverage < 1.0
+
+
+def test_existing_calibration_recalls_are_unchanged():
+    """The three calibrated recalls the module docstring pins keep their EXACT labels
+    and coverages under the factored search — a machine-tight `augment ×2` must not
+    be re-labelled as something composed, and the containment `exact` must not
+    degrade."""
+    from hallucinote.performance.realization import BREATH, apply_profile
+
+    # machine-tight augment, and the same augment run through the real breath pipeline
+    tight = match_motif_in_window(_MOTIF, V.augment(_MOTIF, 2.0))
+    assert tight is not None and tight.variation == "augment ×2"
+    assert tight.coverage == 1.0 and tight.duration_match is True
+    breathed = match_motif_in_window(
+        _MOTIF, apply_profile(V.augment(_MOTIF, 2.0), BREATH, seed=5005))
+    assert breathed is not None and breathed.variation == "augment ×2"
+    assert breathed.coverage == 1.0
+
+    # machine-tight diminish∘fragment
+    trade = match_motif_in_window(_MOTIF, V.diminish(V.fragment(_MOTIF, 0.0, 2.0), 2.0))
+    assert trade is not None and trade.variation == "diminish∘fragment ×2"
+    assert trade.coverage == 0.5
+
+    # containment `exact` amid extra non-motif notes in the same layer
+    busy = _tile(_MOTIF, 0.0, 4.0) + [_n(48, 0.0, 8.0), _n(55, 0.0, 8.0), _n(50, 4.0, 4.0)]
+    superset = match_motif_in_window(_MOTIF, busy)
+    assert superset is not None and superset.variation == "exact"
+    assert superset.coverage == 1.0
+
+
+def test_busy_layer_scan_stays_bounded(monkeypatch):
+    """R3: the factored search costs no more per alignment than the enumerated one did.
+
+    Counted, not timed (a wall-clock assertion on an 800-onset layer is a flake): the
+    disjoint drum layer never reaches a containment probe at all (the interval
+    fast-skip still fires), and a busy PITCHED layer's probe count stays bounded by a
+    per-alignment constant — the closed Δ set × the closed factor set — rather than
+    growing with the layer."""
+    import hallucinote.recurrence.match as M
+
+    calls = {"n": 0}
+    real = M._contains
+
+    def counting(*a, **kw):
+        calls["n"] += 1
+        return real(*a, **kw)
+
+    monkeypatch.setattr(M, "_contains", counting)
+
+    # 800 onsets on percussion pitches disjoint from the motif's interval set.
+    drums = [_n(36 + (i % 3), i * 0.25, 0.25) for i in range(800)]
+    assert M.match_all_in_layer(_MOTIF, drums) == []
+    assert calls["n"] == 0, "the interval fast-skip must still cut the drum layer"
+
+    # A busy pitched layer DOES scan; the cost stays a constant per alignment.
+    calls["n"] = 0
+    busy = [_n(60 + (i % 13), i * 0.5, 0.25) for i in range(200)]
+    M.match_all_in_layer(_MOTIF, busy)
+    alignments = len({n["start_beats"] for n in busy})
+    assert calls["n"] <= 120 * alignments
+
+
+# A 6-note motif, so its natural halves are 3 notes each — long enough for a
+# TRANSPOSED fragment to still be evidence.
+_LONG = [_n(60, 0.0, 0.5), _n(62, 1.0, 0.5), _n(64, 2.0, 0.5),
+         _n(67, 3.0, 0.5), _n(69, 4.0, 0.5), _n(71, 5.0, 1.0)]
+
+
+def test_transposed_fragment_is_recovered_when_the_fragment_is_evidence():
+    """D2: a fragment quoted a fifth up is still that fragment. Requiring the fragment
+    to be UNTRANSPOSED made every transposed partial quote invisible — the same
+    whitelist failure as the composed whole-motif recall."""
+    frag = V.fragment(_LONG, 0.0, 3.0)        # the first three notes
+    res = match_motif_in_window(_LONG, V.transpose(frag, 7))
+    assert res is not None
+    assert res.variation == "transpose +7 ∘ fragment[0,2.5)"
+    assert res.coverage == 0.5
+
+
+def test_transposed_fragment_below_the_evidence_floor_does_not_inflate_a_busy_layer():
+    """The other side of the same rule: a TWO-note fragment under a free pitch map is
+    only "some interval occurs somewhere", which the layer-level interval fast-skip
+    already establishes. On a busy layer it would otherwise match at a dozen
+    transpositions and bury the real recall under near-duplicates, so the composed
+    search carries the same >= 3-note evidence floor the free-duration tier does.
+
+    A dense chromatic run against a 4-note motif (halves of two notes each) must
+    report the untransposed reading only — not one per transposition."""
+    chromatic = [_n(60 + (i % 13), i * 0.25, 0.25) for i in range(400)]
+    results = match_all_in_layer(_MOTIF, chromatic)
+    assert [r.variation for r in results] == ["fragment[0,1.5)"]

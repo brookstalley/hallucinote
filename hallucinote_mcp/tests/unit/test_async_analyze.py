@@ -53,7 +53,7 @@ def _capturing_spawn():
     return captured, captured.append
 
 
-def _start(reg, spawn, analyze_fn, *, tmp_path, song_slug="s"):
+def _start(reg, spawn, analyze_fn, *, tmp_path, song_slug="s", **options):
     """Drive analyze_start_handler with the report-dir resolution seamed to
     tmp_path so no real song dir is touched."""
     return analyze_start_handler(
@@ -63,7 +63,29 @@ def _start(reg, spawn, analyze_fn, *, tmp_path, song_slug="s"):
         _analyze_fn=analyze_fn,
         _spawn=spawn,
         _resolve_report_dir=lambda slug: tmp_path / slug / "analysis",
+        **options,
     )
+
+
+def make_kwarg_recording_analyze(seen: dict):
+    """An analyze_fn that records exactly the keyword arguments it received.
+
+    The point is what is ABSENT as much as what is present: `start` forwards an
+    unset option not at all, so the handler sees the same call the synchronous
+    `analyze` makes.
+    """
+
+    def _fn(_context, **kwargs):
+        seen.update(kwargs)
+        return {
+            "report_path": "/songs/s/analysis/ts.json",
+            "schema_version": "1",
+            "finding_count": 0,
+            "summary": {"master_true_peak_dbtp": -1.0, "overshoot_count": 0},
+            "analysis_code": {"signature": "abc", "stale": False},
+        }
+
+    return _fn
 
 
 # ---- start: handle + worker wiring -----------------------------------
@@ -222,3 +244,37 @@ def test_status_unknown_job_via_dispatch_is_structured_error():
     )
     assert resp.ok is False
     assert "unknown job_id" in (resp.error or "")
+
+
+# ---- speech_track: the option's forwarding seam -----------------------
+
+
+def test_speech_track_reaches_the_analyze_handler_when_given(tmp_path):
+    reg = JobRegistry()
+    captured, spawn = _capturing_spawn()
+    seen: dict = {}
+
+    _start(reg, spawn, make_kwarg_recording_analyze(seen), tmp_path=tmp_path,
+           speech_track="Dialogue")
+    captured[0]()
+
+    assert seen["speech_track"] == "Dialogue"
+    assert seen["song_slug"] == "s"
+
+
+def test_speech_track_is_not_forwarded_at_all_when_omitted(tmp_path):
+    """An unset option must not arrive as an explicit None.
+
+    `analyze_handler` defaults it to None itself, and forwarding the key would
+    make the async path differ from the synchronous one for any future option
+    whose default is not None.
+    """
+    reg = JobRegistry()
+    captured, spawn = _capturing_spawn()
+    seen: dict = {}
+
+    _start(reg, spawn, make_kwarg_recording_analyze(seen), tmp_path=tmp_path)
+    captured[0]()
+
+    assert "speech_track" not in seen
+    assert seen["compare_to"] is None, "the three always-forwarded fields still arrive"

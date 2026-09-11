@@ -16,6 +16,7 @@ from ._core import (
     _touches,
     _uuid,
 )
+from .arrangement import DEFAULT_BAR_RULER, _validate_bar_ruler
 
 
 # ---------------------------------------------------------------------------
@@ -34,6 +35,7 @@ def create_section(
     color: int | None = None,
     notes_md: str | None = None,
     energy: float | None = None,
+    bar_ruler: str = DEFAULT_BAR_RULER,
     actor: str = "system",
     request_id: str | None = None,
     reason: str | None = None,
@@ -44,13 +46,23 @@ def create_section(
     ``energy`` is the authored per-section intensity intent (0..1 ordinal,
     ARR-7M3D) — NULL when undeclared. It is excluded from the energy-realization
     correlation when NULL, never coerced to a value.
+
+    ``bar_ruler`` records which ruler produced ``start_bar`` / ``end_bar``:
+    ``'uniform'`` when they were accumulated against a single ``beats_per_bar``,
+    ``'map'`` when they were authored against the song's ``time_signature_map``.
+    The default is ``'map'`` so a new writer is correct without knowing the rule
+    exists — only uniform accumulation needs to declare itself, and only one
+    module in the tree does it. Re-stamped on the update branch too, so
+    rewriting a ``build.py`` corrects a stale ``'uniform'`` rather than leaving
+    the row asserting a ruler it no longer used.
     """
     _require_bar_floor("start_bar", start_bar)
     if end_bar <= start_bar:
         raise ValueError(f"end_bar ({end_bar}) must exceed start_bar ({start_bar})")
+    _validate_bar_ruler(bar_ruler)
     actor, request_id = _resolve_actor_and_request(actor, request_id)
     existing = conn.execute(
-        """SELECT id, end_bar, color, notes_md, energy FROM sections
+        """SELECT id, end_bar, color, notes_md, energy, bar_ruler FROM sections
            WHERE song_id = ? AND name = ? AND start_bar = ?""",
         (song_id, name, start_bar),
     ).fetchone()
@@ -58,22 +70,23 @@ def create_section(
         sid = existing["id"]
         if (
             existing["end_bar"], existing["color"], existing["notes_md"],
-            existing["energy"],
+            existing["energy"], existing["bar_ruler"],
         ) == (
-            end_bar, color, notes_md, energy,
+            end_bar, color, notes_md, energy, bar_ruler,
         ):
             _record_touch_if_session("section", sid)
             return MutatorResult(sid, "unchanged")
         conn.execute(
             """UPDATE sections SET end_bar = ?, color = ?, notes_md = ?,
-                   energy = ?
+                   energy = ?, bar_ruler = ?
                WHERE id = ?""",
-            (end_bar, color, notes_md, energy, sid),
+            (end_bar, color, notes_md, energy, bar_ruler, sid),
         )
         _emit(
             conn, E.SECTION_UPDATED,
             {"section_id": sid, "changes": {"end_bar": end_bar,
-             "color": color, "notes_md": notes_md, "energy": energy}},
+             "color": color, "notes_md": notes_md, "energy": energy,
+             "bar_ruler": bar_ruler}},
             song_id=song_id, actor=actor, request_id=request_id, reason=reason,
         )
         _touch_song(conn, song_id)
@@ -82,9 +95,11 @@ def create_section(
     sid = _uuid()
     conn.execute(
         """INSERT INTO sections
-               (id, song_id, name, start_bar, end_bar, color, notes_md, energy)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (sid, song_id, name, start_bar, end_bar, color, notes_md, energy),
+               (id, song_id, name, start_bar, end_bar, color, notes_md, energy,
+                bar_ruler)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (sid, song_id, name, start_bar, end_bar, color, notes_md, energy,
+         bar_ruler),
     )
     _emit(
         conn,
@@ -97,6 +112,7 @@ def create_section(
             "color": color,
             "notes_md": notes_md,
             "energy": energy,
+            "bar_ruler": bar_ruler,
         },
         song_id=song_id,
         actor=actor,

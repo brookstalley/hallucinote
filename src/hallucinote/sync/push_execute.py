@@ -36,6 +36,14 @@ from hallucinote.db import mutations as M
 from hallucinote.db import queries as Q
 from hallucinote.paths import SONG_DIR_IGNORED_FILES, self_ignore_files
 from hallucinote.sync import push
+# MCP-7J2Q: an escalated main-thread call is not a failure and not a
+# success. Shared with chain_rebuild — the wire contract has more than one
+# consumer, and only one of them knowing it is how a destructive sequence
+# books a device as loaded while Live is still loading it.
+from hallucinote.sync.live_escalation import (
+    await_escalated as _await_escalated,
+    escalated_job_id as _escalated_job_id,
+)
 from hallucinote.sync.push.empty_rack_guard import (
     _parent_key,
     partition_doomed_nested_writes,
@@ -331,6 +339,33 @@ def _orphan_param_hint(
     )
 
 
+# The browser roots `ableton_browser(action='search')` accepts. `browser_path_json`
+# stores the resolved browser path from the root down, so its first segment names
+# the root the device was actually loaded from — a fact worth more than any
+# inference from the device's kind.
+_BROWSER_ROOTS = frozenset(
+    {"instruments", "audio_effects", "midi_effects", "drums", "plugins"}
+)
+
+
+def _captured_browser_path(browser_path_json: str | None) -> list[str]:
+    """Decode `devices.browser_path_json` into a path, or `[]` if unusable.
+
+    A device captured before the column existed, or one whose JSON is corrupt,
+    yields an empty path — every caller treats that as "no captured path" and
+    falls back to inference, so a decode failure degrades rather than raises.
+    """
+    if not browser_path_json:
+        return []
+    try:
+        decoded = json.loads(browser_path_json)
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(decoded, list):
+        return []
+    return [str(seg) for seg in decoded if isinstance(seg, (str, int, float))]
+
+
 def _search_root_for_kind(kind: str, class_name: str | None = None) -> str:
     """Pick the canonical browser root for a fallback search by device kind.
 
@@ -344,12 +379,32 @@ def _search_root_for_kind(kind: str, class_name: str | None = None) -> str:
     The substring-'Plugin' check moves to ``class_name``. Drum racks
     still recognize via the rack display name; everything else
     defaults to ``instruments``.
+
+    This is inference from a display name and it is only ever a LAST resort —
+    it cannot tell an audio effect from an instrument, so a reverb whose
+    captured browser path is unavailable is searched under ``instruments``,
+    where it will not be found. Prefer :func:`_search_root_for_device`, which
+    reads the root the device was actually loaded from.
     """
     if class_name and "Plugin" in class_name:
         return "plugins"
     if kind == "Drum Rack":
         return "drums"
     return "instruments"
+
+
+def _search_root_for_device(
+    kind: str, class_name: str | None, captured_path: list[str],
+) -> str:
+    """The browser root to search for this device's replacement.
+
+    The captured path's first segment is Live's own answer, recorded at the
+    moment the device was loaded; kind-inference is what we use when nothing
+    was captured.
+    """
+    if captured_path and captured_path[0] in _BROWSER_ROOTS:
+        return captured_path[0]
+    return _search_root_for_kind(kind, class_name)
 
 
 def _attempt_load_fallback(
@@ -375,6 +430,16 @@ def _attempt_load_fallback(
     5. The search call itself succeeds and returns at least one match
        with a non-empty URI.
     6. The retry load with the fallback URI succeeds.
+    7. The device the retry actually loaded reports the class the DB
+       authored. A substitution that lands a DIFFERENT class is refused,
+       and the original failure stands — see the class-check below.
+
+    A substring search over a whole browser root is a wide net: "Reverb"
+    matches Live's stock Reverb and Hybrid Reverb alike, and taking the first
+    hit means an authored Hybrid Reverb can be replaced by a stock one while
+    the push reports ``ok``. That is a silently wrong mix, so this function
+    narrows the net with the browser path Live itself recorded at load time,
+    and then refuses any result whose class does not match what was authored.
     """
     if failed_call.tool != "ableton_device":
         return None
@@ -387,28 +452,39 @@ def _attempt_load_fallback(
         return None
     device_id = key.split(":", 1)[1]
     row = conn.execute(
-        "SELECT kind, display_name, class_name FROM devices WHERE id = ?",
+        "SELECT kind, display_name, class_name, browser_path_json "
+        "FROM devices WHERE id = ?",
         (device_id,),
     ).fetchone()
     if row is None:
         return None
+    cols = row.keys()
     kind = row["kind"]
-    class_name = row["class_name"] if "class_name" in row.keys() else None
+    class_name = row["class_name"] if "class_name" in cols else None
     display_name = (row["display_name"] or "").strip()
     if not display_name:
         return None
+    captured_path = _captured_browser_path(
+        row["browser_path_json"] if "browser_path_json" in cols else None
+    )
 
-    root = _search_root_for_kind(kind, class_name)
+    root = _search_root_for_device(kind, class_name, captured_path)
+    search_params: dict[str, Any] = {
+        "pattern": display_name,
+        "root": root,
+        "loadable_only": True,
+        "mode": "substring",
+        "limit": 5,
+    }
+    # The segments between the root and the leaf are the vendor / pack folders
+    # the device came from — the discrimination `browser_path_json` is stored
+    # for. Narrowing to them is what keeps a Pack's device from resolving to a
+    # same-named built-in, and vice versa.
+    path_prefix = captured_path[1:-1]
+    if path_prefix:
+        search_params["path_prefix"] = path_prefix
     search_req = request_cls(
-        tool="ableton_browser",
-        action="search",
-        params={
-            "pattern": display_name,
-            "root": root,
-            "loadable_only": True,
-            "mode": "substring",
-            "limit": 5,
-        },
+        tool="ableton_browser", action="search", params=search_params,
     )
     try:
         search_resp = send_fn(search_req)
@@ -421,12 +497,7 @@ def _attempt_load_fallback(
     if not bool(getattr(search_resp, "ok", False)):
         return None
     matches = (getattr(search_resp, "result", None) or {}).get("matches") or []
-    fallback_uri = ""
-    for m in matches:
-        uri = m.get("uri") if isinstance(m, dict) else None
-        if uri:
-            fallback_uri = uri
-            break
+    fallback_uri = _pick_fallback_uri(matches, captured_path)
     if not fallback_uri:
         return None
 
@@ -445,7 +516,70 @@ def _attempt_load_fallback(
         return None
     if not bool(getattr(retry_resp, "ok", False)):
         return None
+    # The load succeeded — but succeeding is not the same as loading the right
+    # device. `loaded_class_name` is the loader's own answer to "what is now in
+    # that slot"; when it disagrees with what the song authored, the
+    # substitution is wrong and reporting ok would hide a device swap inside a
+    # green push. Refusing hands the operator the original preset_uri error,
+    # which names a real, fixable problem.
+    #
+    # Compare against `kind`, NOT `class_name`. Both name a device and they are
+    # different namespaces: `kind` is the browser DISPLAY name ("Hybrid
+    # Reverb"), `class_name` is Live's internal identifier ("HybridReverb").
+    # The loader builds `loaded_class_name` from `class_display_name`, so it
+    # speaks the first. Comparing it against the second makes every correct
+    # substitution look wrong and disables the cross-machine recovery this
+    # whole fallback exists to provide.
+    loaded_class = _loaded_class_of(retry_resp)
+    if kind and loaded_class and loaded_class != kind:
+        logger.debug(
+            "load-fallback loaded %r but the song authored %r — refusing the "
+            "substitution", loaded_class, kind,
+        )
+        return None
     return retry_resp, fallback_uri
+
+
+def _pick_fallback_uri(
+    matches: list[Any], captured_path: list[str],
+) -> str:
+    """Choose which search match to retry the load with.
+
+    A match whose browser path is the one the device was captured from is the
+    same device on this machine; anything else is a same-named neighbour, and
+    picking one of those is how a stock device replaces a Pack device. So an
+    exact path match wins outright. Falling back to the first hit when no path
+    matches is deliberate — it keeps the cross-machine recovery this whole
+    fallback exists for — and it is safe only because the caller then refuses
+    any load whose class is not the authored one.
+    """
+    first_uri = ""
+    for m in matches:
+        if not isinstance(m, dict):
+            continue
+        uri = m.get("uri")
+        if not uri:
+            continue
+        if not first_uri:
+            first_uri = str(uri)
+        if captured_path:
+            path = m.get("path")
+            if isinstance(path, list) and [str(p) for p in path] == captured_path:
+                return str(uri)
+    return first_uri
+
+
+def _loaded_class_of(resp: Any) -> str:
+    """The class name the loader says now occupies the slot, or `''`.
+
+    `ableton_device(action='load')` reports `loaded_class_name` for exactly
+    this question. An older server that does not send it yields `''`, which
+    every caller reads as "cannot tell" rather than as a mismatch.
+    """
+    payload = getattr(resp, "result", None) or {}
+    if not isinstance(payload, dict):
+        return ""
+    return str(payload.get("loaded_class_name") or "")
 
 
 # SYN-9F2L: the planner prefers the display form on the wire (exact via the
@@ -702,6 +836,7 @@ def execute_push(
     stop_after: str | None = None,
     progress_fn: Callable[[str], None] | None = None,
     live_arrangement_clips_by_track: push.LiveArrangementProbe = None,
+    live_session_clips_by_track: push.LiveSessionClipProbe = None,
 ) -> ExecuteResult:
     """Run the full fourteen-phase push, dispatching each call via ``send_fn``.
 
@@ -727,6 +862,12 @@ def execute_push(
     `tracks` phase has created the song's Live tracks. See
     :func:`push.plan_push_song` for why an eagerly-probed map is wrong on a
     first push.
+
+    ``live_session_clips_by_track`` is the same shape for the CLIPS phase, and
+    is what tells an audio clip's reconcile whether the slot already plays the
+    file the row names. Without it the phase conforms in place and plans no
+    create and no delete — safe, but it can neither detect a swapped sample nor
+    reach zero calls on an unchanged song, and it says so with an alert.
 
     Outcome (PSH-ARRPROBE): "ok" only when every phase either did its work or
     had none to do. A phase that could not DETERMINE its work (a failed probe,
@@ -809,6 +950,7 @@ def execute_push(
         perform_slowdown_factor=perform_slowdown_factor,
         live_arrangement_clips_by_track=live_arrangement_clips_by_track,
         live_device_chains=_device_chain_probe,
+        live_session_clips_by_track=live_session_clips_by_track,
     )
     phases, scope = _filter_phases(
         phases, only=only, start_at=start_at, stop_after=stop_after,
@@ -1144,6 +1286,20 @@ def execute_push(
                 send_kwargs["read_timeout"] = call.read_timeout
             try:
                 resp = send_fn(req, **send_kwargs)
+                # MCP-7J2Q: an escalation is neither success nor failure — the
+                # work is still executing inside Live. Resolve it to the real
+                # outcome before ANY downstream branch reads ``ok``, so an
+                # unfinished write is never counted as an applied one.
+                escalated_job = _escalated_job_id(resp)
+                if escalated_job is not None:
+                    resp = _await_escalated(
+                        job_id=escalated_job,
+                        label=f"{call.tool}({action!r})",
+                        send_fn=send_fn,
+                        request_cls=Request,
+                        progress_fn=_emit_progress,
+                        warnings_sink=warning_messages.append,
+                    )
             except _CONNECTION_EXCS as exc:
                 # Connection-class failure (Live unreachable, socket error).
                 # Halt immediately — no point continuing without Live. Wire
@@ -1743,8 +1899,144 @@ def execute_push(
                     if extra_results:
                         apply_ok = _apply_results(extra_results, phase.name)
 
+        # The arrangement's own convergence: an audio copy's playable region is
+        # written with a `set_property` addressed by an arrangement clip index,
+        # and that index only exists once the placement's result is applied. So
+        # the region pass runs HERE, against the bindings this phase just
+        # recorded — never against a predicted index. Its own planner (not a
+        # re-plan of the phase): re-planning the projection would re-derive a
+        # clear from the lane it has just rebuilt and delete the placements.
+        # The guard is deliberately WEAKER than the devices convergence above.
+        # That one re-plans the whole phase, so it must not run against a
+        # partial result set. This pass addresses each copy by the link apply
+        # just recorded, so a placement whose create failed simply has no link
+        # and the planner skips it. Suppressing the whole pass on one failed
+        # call therefore withheld regions from every copy that DID land, for no
+        # gain: per-placement filtering below gives the same safety precisely.
+        if phase.name == "arrangement" and not connection_lost and apply_ok:
+            from hallucinote.sync.push.arrangement import (
+                plan_push_arrangement_audio_regions,
+            )
+            region_plan = plan_push_arrangement_audio_regions(
+                conn, song_id=song_id, session_id=session_id,
+            )
+            _drain_plan_warnings(region_plan)
+            for reason in getattr(region_plan, "blocked_reasons", ()):
+                if reason not in blocked_reasons:
+                    blocked_reasons.append(reason)
+            # Bound the pass to copies THIS phase actually placed. A region
+            # write addresses an arrangement clip by index, so aiming one at a
+            # link the phase did not just record would land on whatever clip
+            # now holds that index — the failure mode is writing onto the wrong
+            # clip, not a missing write. Filtering per placement is also what
+            # lets the guard above stay weak: one failed create costs that
+            # placement its region and no other.
+            placed_ok = {
+                str(r.get("key", "")).split(":", 1)[1]
+                for r in results
+                if r.get("ok")
+                and str(r.get("key", "")).startswith("arrangement_clip:")
+            }
+            region_calls = [
+                c for c in region_plan.calls
+                if c.key.split(":")[1] in placed_ok
+            ]
+            # Count COPIES, not calls: each copy takes an end_marker and a
+            # loop_end, so counting calls doubles every number the operator
+            # reads.
+            withheld = len({
+                c.key.split(":")[1] for c in region_plan.calls
+            } - placed_ok)
+            if withheld:
+                msg = (
+                    f"arrangement: {withheld} audio copy/copies did NOT get "
+                    "their playable region, because the placement each one "
+                    "targets did not land in this push — those copies play "
+                    "their whole file. Fix what failed the placement and "
+                    "re-push: the arrangement phase rebuilds its projection "
+                    "every run, so the region is written again with it."
+                )
+                if msg not in warning_messages:
+                    warning_messages.append(msg)
+            if region_calls:
+                region_results, connection_lost = _dispatch_calls(
+                    region_calls, phase_name=phase.name,
+                )
+                results.extend(region_results)
+                if region_results:
+                    apply_ok = _apply_results(region_results, phase.name)
+                # Report what actually landed, from the results — a count taken
+                # at plan time would name copies the filter above dropped.
+                # Only the two region properties count toward "bounded": the
+                # pass also writes conform properties, and a copy that authored
+                # `warping = 0` gets those and deliberately NO region, so
+                # counting every ok result would report it as bounded in the
+                # same breath as alerting that it kept its full region.
+                bounded = len({
+                    str(r.get("key", "")).split(":")[1]
+                    for r in region_results
+                    if r.get("ok")
+                    and str(r.get("key", "")).endswith((":end_marker", ":loop_end"))
+                })
+                failed = len({
+                    str(r.get("key", "")).split(":")[1]
+                    for r in region_results
+                    if not r.get("ok")
+                    and str(r.get("key", "")).endswith((":end_marker", ":loop_end"))
+                })
+                if bounded:
+                    msg = (
+                        f"arrangement: wrote the playable region on {bounded} "
+                        "audio copy/copies — Live ACCEPTED each write. Whether "
+                        "the copy then sounds the authored span is unverified "
+                        "here: only a shrinking marker write has been probed, "
+                        "and a span longer than the sample has not."
+                    )
+                    if msg not in warning_messages:
+                        warning_messages.append(msg)
+                if failed:
+                    msg = (
+                        f"arrangement: {failed} audio copy/copies did NOT get "
+                        "their playable region — Live refused the write — so "
+                        "they still play their whole file. The rest of the push "
+                        "continues: the copies themselves landed, and only the "
+                        "region is missing. Re-push to retry — the arrangement "
+                        "phase rebuilds its projection every run."
+                    )
+                    if msg not in warning_messages:
+                        warning_messages.append(msg)
+        elif phase.name == "arrangement" and not connection_lost and not apply_ok:
+            # Links are what the pass addresses by; without a good apply there
+            # are none to address. Non-fatal, but never silent.
+            msg = (
+                "arrangement: playable-region writes were SKIPPED because the "
+                "phase's results could not be applied, so every audio copy "
+                "plays its whole file rather than the placement's span. "
+                "Resolve the apply failure and re-push."
+            )
+            if msg not in warning_messages:
+                warning_messages.append(msg)
+
         calls_ok = sum(1 for r in results if r.get("ok"))
-        calls_failed = sum(1 for r in results if not r.get("ok"))
+        # A refused playable-region write does NOT halt the phase. Every other
+        # result in this list is the phase's own projection — a clip that did
+        # not land, a property the song depends on — and one of those failing
+        # means the set no longer matches the DB, which is what the halt below
+        # protects. The region write is an enhancement layered onto a copy that
+        # already landed correctly: its failure leaves the copy playing its whole
+        # file, which is exactly what the copy did before this pass existed.
+        # Halting on it would skip `assert_arrangement_materialized` and every
+        # later phase (cues, sections, mix) over a cosmetic refusal — and the
+        # message that branch prints says "Re-push to retry", which a halt makes
+        # false. Worse on repeat: a span authored LONGER than its sample is
+        # unprobed (`docs/capability-truth.md`), so if Live refuses that write
+        # rather than clamping it, halting would wedge every push at this phase
+        # forever while telling the operator to push again.
+        calls_failed = sum(
+            1 for r in results
+            if not r.get("ok")
+            and not str(r.get("key", "")).startswith("arrangement_clip_region:")
+        )
 
         if connection_lost:
             _halt(
@@ -1895,7 +2187,7 @@ def execute_push(
             ))
             _emit_progress(
                 f"[{phase.name}] INCOMPLETE — {calls_ok} call(s) ok, "
-                f"{len(blocked_reasons)} precondition(s) could not be determined"
+                f"{len(blocked_reasons)} thing(s) the push could not carry"
             )
             continue
         phase_outcomes.append(PhaseOutcome(
@@ -2018,12 +2310,12 @@ def format_summary(result: ExecuteResult) -> str:
             if p.calls_ok:
                 detail = (
                     f"{p.calls_ok}/{p.calls_ok} ok, INCOMPLETE — "
-                    f"{n} could not be determined"
+                    f"{n} not carried"
                 )
             else:
                 detail = (
-                    f"NOT PUSHED — could not determine state "
-                    f"({n} reason{'s' if n != 1 else ''})"
+                    f"NOT PUSHED — {n} thing{'s' if n != 1 else ''} "
+                    f"the push could not carry"
                 )
         elif p.status == _STATUS_HALTED:
             mark = "[FAIL]"

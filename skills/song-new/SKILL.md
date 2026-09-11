@@ -3,7 +3,7 @@ name: song-new
 description: Scaffold a new Hallucinote song from templates, on values that are already resolved. Creates songs/<slug>/ with build.py, captured_session.json, tests/, decisions/, annotations/, attempts/ (the try→outcome ledger), and a song.md overview. Use when tempo, meter and the section list are ALREADY settled — given explicitly, or resolved by `/song-brief`. Starting from an open-ended prompt instead? Run `/song-brief` first: the scaffold takes those three values as required arguments, so invoking this against an unresolved prompt means inventing them, and the invented values become the song. Replaces the "copy from falling-walking" pattern that Wave 0 surfaced as a major onboarding friction.
 user-invocable: true
 disable-model-invocation: false
-allowed-tools: Read, Write, Bash, Bash(pytest songs/*), Skill(song-brief)
+allowed-tools: Read, Write, Bash, Skill(song-brief)
 argument-hint: >-
   <slug> "<title>" <tempo> <signature> <sections-csv> [optional: <key>] [optional: <intent>]
 ---
@@ -99,7 +99,7 @@ Given the resolved slug + title + tempo + signature + sections (and optional key
 1. Validate the inputs (slug shape, signature shape, non-empty section list).
 2. Run `"$PY" -m hallucinote.cli scaffold <slug> --title "..." --tempo X --signature N/D --sections ...` to produce `songs/<slug>/`.
 3. Run `"$PY" songs/<slug>/build.py --reset` to populate the song's DB from the synthetic snapshot.
-4. Run `pytest songs/<slug>/tests/ -v` to confirm the shape tests pass.
+4. Run `"$PY" -m hallucinote.cli verify-scaffold <slug> --expect-sections a,b,c --expect-tempo N --expect-signature N/D` to confirm the shape checks pass. Pass the same three values you passed to `scaffold` — they came from the brief, and this is what checks that the song actually materializes them. Exit 0 = verified; 1 = a named check failed; 2 = there was no song to verify. **Do not run `pytest` here** — `$PY` is the plugin's inline env and has neither pytest nor pip, so the step would fail on a missing module. `verify-scaffold` runs the same checks in-process against a throwaway DB (the song's own DB is untouched). The scaffolded `tests/test_<slug>_build.py` still ships as the song's own regression suite — run it later with `pytest` from an env that has it.
 5. **Write Phase 1's decisions** to `songs/<slug>/decisions/NN-<topic>.md` — one file per decision. Number prefix (`01-intent.md`, `02-genre.md`, ...) for ordering.
 6. **Pick instruments for the first hearable unit only** — invoke `/song-pick-instruments` with the parts *that one section needs*, not the whole resolved instrumentation. Loading twelve chains before a note exists is CTM-11 (*"shouldn't I be hearing something?"* forty-five minutes in, zero notes written); the rest of the palette follows the first hearing. Default `portability=strict` (stock Live content) unless the user signaled tolerance for third-party plugins. The picks land in `captured_session.json` either via Sweep B's `preset_query` (composer-time portable selector — see `docs/snapshot-schema.md`) or via load-then-recapture once Live is staged.
 7. **Compose that unit, push it, and offer a hearing** — `/compose-part` for the section, one full `/ableton-push` to create and link the structure (its scoped `push-notes` only reaches already-linked clips), then the status offer. *"Keep going"* authorizes the next unit; a decline carrying a scope is recorded and not re-asked. Only then the rest of the palette and the remaining sections.
@@ -126,7 +126,10 @@ propose a reading, and let the conversation close it.
 
 - Tempo, meter and the section/bar list are **values from the brief**, not
   invented to satisfy the CLI.
-- The scaffold builds (`build.py --reset`) and its shape tests pass.
+- The scaffold builds and its shape checks pass — `"$PY" -m hallucinote.cli
+  verify-scaffold <slug> --expect-sections … --expect-tempo … --expect-signature …`
+  exits 0. That one command is the criterion: it runs `build.py --reset` and every
+  shape check in-process, with the interpreter you already resolved.
 - Each of the brief's substantive resolutions is filed in `decisions/`.
 - Nothing this stage wrote is DESCRIBED-BUT-UNBUILT — no `<slug>.md` or decision
   record names a mechanism that doesn't exist.
@@ -198,7 +201,9 @@ Stop after the scaffold + decisions + picks land, so the user can review and dri
 2. "$PY" -m hallucinote.cli scaffold <slug> --title "..." --tempo N \
        --signature N/D --sections a,b,c [--key K] [--intent "..."]
 3. "$PY" songs/<slug>/build.py --reset
-4. pytest songs/<slug>/tests/ -v
+4. "$PY" -m hallucinote.cli verify-scaffold <slug> \
+       --expect-sections a,b,c --expect-tempo N --expect-signature N/D
+   → exit 0 = the scaffold builds and its shape checks pass. NOT pytest: $PY has none.
 5. /song-pick-instruments — for the parts the FIRST hearable unit needs, not the whole palette.
 6. /compose-part that section -> one full /ableton-push -> offer a hearing.
    → "keep going" authorizes the next unit; a decline with a scope is recorded, not re-asked.

@@ -14,7 +14,8 @@
 A song's declared intent + decision rationale live in git-tracked markdown, not
 the DB — query them before non-trivial composition with `/song-context <slug>`
 (intent + decisions) and `/song-attempts <slug>` (what was already tried on a
-part, including reverted dead ends). Not derivable from the DB schema.
+part, including reverted dead ends). Not derivable from the DB schema. A song
+built on a sample reads the line first with `/sample-lens <slug> <source>`.
 
 ## Also read
 - `ableton://guides/conventions` — indexing, time semantics, value-range gotchas.

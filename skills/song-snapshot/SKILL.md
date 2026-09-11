@@ -53,6 +53,8 @@ Run the capture in one command — it walks the live set over the MCP bridge, re
 
 This replaces the old by-hand "run each probe + assemble the dict" recipe — `assemble_snapshot_via_probes` (`src/hallucinote/capture.py`) does it deterministically: session globals, master chain, returns (+ mixer + devices), tracks (+ mixer + sends + devices), and the full recursive rack tree with dialed params filtered to non-defaults. A tool-side failure aborts loudly rather than writing a partial snapshot.
 
+**The playhead is parked at beat 0 first, and you don't have to remember it.** A parameter under an automation envelope reads at whatever value the envelope holds *at the playhead* — and after any render or performed-automation push the playhead sits at the END of the arrangement. Captured there, an end-of-song value becomes the device's dialed baseline, and `replay_capture` re-asserts it on every subsequent build: the value every envelope rides from is permanently redefined, and the diff shows it as an ordinary field change indistinguishable from a by-ear tweak. `capture execute` therefore reads the transport, seeks to beat 0 when it isn't there, and confirms the seek settled before probing anything. It **refuses** (exit 2) while the transport is rolling, or if the seek doesn't land. `--no-seek` opts out and warns; use it only when you mean to capture at the current playhead.
+
 (`capture_cli plan` still prints the probe sequence if you ever need to capture by hand.)
 
 ## Step 2 — Diff

@@ -52,6 +52,21 @@ def test_start_action_is_server_side_sharing_analyze_params():
     assert song_slug.required is True
 
 
+def test_speech_track_is_declared_optional_on_analyze_and_start():
+    """The wire spec is what an agent reads; an undeclared param is unreachable.
+
+    It must be optional on both: a mix report without a dialogue track is the
+    ordinary case, and `analyze` and `start` run the same work.
+    """
+    for action in ("analyze", "start"):
+        spec = get("ableton_analysis", action)
+        assert spec is not None
+        param = next((p for p in spec.params if p.name == "speech_track"), None)
+        assert param is not None, f"{action} does not declare speech_track"
+        assert param.required is False
+        assert param.type == "str"
+
+
 def test_status_action_is_server_side_with_job_id():
     status = get("ableton_analysis", "status")
     assert status is not None

@@ -16,6 +16,7 @@ from __future__ import annotations
 import math
 
 import numpy as np
+import pytest
 
 from hallucinote.audio.automation import (
     DeclaredEnvelope,
@@ -45,7 +46,7 @@ def test_device_parameter_timbre_shift_is_detected():
     dark = sine(300.0, half, amplitude=0.5)
     bright = sine(3500.0, half, amplitude=0.5)
     audio = _two_half_audio(dark, bright)
-    env = DeclaredEnvelope(
+    env = DeclaredEnvelope.from_pairs(
         target_surface_id="track:3",
         target_kind="device_parameter",
         parameter_path="Amp Type",
@@ -68,7 +69,7 @@ def test_device_parameter_no_change_is_not_realized():
     """A flat stem at a declared flip → measurable but NOT realized (the
     authored change didn't happen in audio)."""
     flat = sine(440.0, 4.0, amplitude=0.5)  # same timbre throughout
-    env = DeclaredEnvelope(
+    env = DeclaredEnvelope.from_pairs(
         target_surface_id="track:3",
         target_kind="device_parameter",
         parameter_path="Amp Type",
@@ -88,7 +89,7 @@ def test_send_level_step_realized_in_declared_direction():
     quiet = sine(220.0, 2.0, amplitude=0.05)
     loud = sine(220.0, 2.0, amplitude=0.5)
     audio = _two_half_audio(quiet, loud)
-    env = DeclaredEnvelope(
+    env = DeclaredEnvelope.from_pairs(
         target_surface_id="return:1",
         target_kind="send_level",
         parameter_path=None,
@@ -109,7 +110,7 @@ def test_send_level_step_realized_in_declared_direction():
 def test_send_level_not_realized_when_level_flat():
     """Declared send rise but the return level didn't move → not realized."""
     flat = sine(220.0, 4.0, amplitude=0.3)
-    env = DeclaredEnvelope(
+    env = DeclaredEnvelope.from_pairs(
         target_surface_id="return:1",
         target_kind="send_level",
         parameter_path=None,
@@ -124,7 +125,7 @@ def test_send_level_not_realized_when_level_flat():
 
 
 def _mixer_volume_env(v_before: float, v_after: float) -> DeclaredEnvelope:
-    return DeclaredEnvelope(
+    return DeclaredEnvelope.from_pairs(
         target_surface_id="track:1",
         target_kind="mixer_volume",
         parameter_path=None,
@@ -221,7 +222,7 @@ def test_mixer_volume_quiet_master_is_unmeasurable():
 
 
 def _mixer_pan_env(p_before: float, p_after: float) -> DeclaredEnvelope:
-    return DeclaredEnvelope(
+    return DeclaredEnvelope.from_pairs(
         target_surface_id="track:1",
         target_kind="mixer_pan",
         parameter_path=None,
@@ -323,7 +324,7 @@ def test_silent_window_is_unmeasurable_not_failed():
     """A near-silent surface around the breakpoint → measurable=False (can't
     confirm or refute), not a false 'not realized'."""
     audio = silence(4.0)
-    env = DeclaredEnvelope(
+    env = DeclaredEnvelope.from_pairs(
         target_surface_id="track:3",
         target_kind="device_parameter",
         parameter_path="Amp Type",
@@ -341,7 +342,7 @@ def test_silent_window_is_unmeasurable_not_failed():
 def test_no_value_change_yields_no_verification():
     """Breakpoints that never change value carry no gesture to verify."""
     audio = sine(440.0, 4.0, amplitude=0.5)
-    env = DeclaredEnvelope(
+    env = DeclaredEnvelope.from_pairs(
         target_surface_id="track:3",
         target_kind="device_parameter",
         parameter_path="Amp Type",
@@ -449,7 +450,7 @@ def test_device_parameter_image_shift_is_realized_without_a_timbre_shift():
     dry = tone                      # channels identical — bit-exact mono
     wet = _widened(sine(440.0, half, amplitude=0.5), shift_samples=27)
     audio = _two_half_audio(dry, wet)
-    env = DeclaredEnvelope(
+    env = DeclaredEnvelope.from_pairs(
         target_surface_id="track:3",
         target_kind="device_parameter",
         parameter_path="Dry/Wet",
@@ -475,7 +476,7 @@ def test_device_parameter_flat_image_and_flat_timbre_is_still_not_realized():
     """The regression that matters most: the dual probe must not become a
     rubber stamp. Nothing moved, so nothing is realized."""
     flat = sine(440.0, 4.0, amplitude=0.5)
-    env = DeclaredEnvelope(
+    env = DeclaredEnvelope.from_pairs(
         target_surface_id="track:3",
         target_kind="device_parameter",
         parameter_path="Dry/Wet",
@@ -503,7 +504,7 @@ def test_wet_but_mono_flanger_is_still_not_realized():
     # Same signal, marginally comb-filtered IN BOTH CHANNELS EQUALLY.
     combed = sine(440.0, half, amplitude=0.5) * 0.97
     audio = _two_half_audio(dry, combed)
-    env = DeclaredEnvelope(
+    env = DeclaredEnvelope.from_pairs(
         target_surface_id="track:3",
         target_kind="device_parameter",
         parameter_path="Dry/Wet",
@@ -524,7 +525,7 @@ def test_timbre_shift_still_reported_as_timbre():
     audio = _two_half_audio(
         sine(300.0, half, amplitude=0.5), sine(3500.0, half, amplitude=0.5)
     )
-    env = DeclaredEnvelope(
+    env = DeclaredEnvelope.from_pairs(
         target_surface_id="track:3",
         target_kind="device_parameter",
         parameter_path="Amp Type",
@@ -553,7 +554,7 @@ def test_anti_phase_window_is_not_mistaken_for_silence():
     anti = tone.copy()
     anti[:, 1] = -anti[:, 1]               # sums to ~zero, still plainly audible
     audio = _two_half_audio(mono_pair, anti)
-    env = DeclaredEnvelope(
+    env = DeclaredEnvelope.from_pairs(
         target_surface_id="track:3",
         target_kind="device_parameter",
         parameter_path="Dry/Wet",
@@ -583,7 +584,7 @@ def test_image_carried_verdict_names_its_probe():
     anti = tone.copy()
     anti[:, 1] = -anti[:, 1]
     audio = _two_half_audio(tone, anti)
-    env = DeclaredEnvelope(
+    env = DeclaredEnvelope.from_pairs(
         target_surface_id="track:3",
         target_kind="device_parameter",
         parameter_path="Dry/Wet",
@@ -630,7 +631,7 @@ def test_send_level_is_graded_on_the_same_signal_the_gate_measures():
         return np.stack([left, right], axis=1).astype(np.float32)
 
     audio = _two_half_audio(_decorrelated(0.05), _decorrelated(0.5))
-    env = DeclaredEnvelope(
+    env = DeclaredEnvelope.from_pairs(
         target_surface_id="return:1",
         target_kind="send_level",
         parameter_path=None,
@@ -645,3 +646,406 @@ def test_send_level_is_graded_on_the_same_signal_the_gate_measures():
     # ~20 dB (0.05 → 0.5), which is the STEREO level move. Grading the mono sum
     # would read some unrelated residue delta here.
     assert 18.0 < (v.after - v.before) < 22.0
+
+
+# ---------------------------------------------------------------------------
+# Envelope-aware windowing: a RAMP is not a step (AUD-5K7T), and a staircase
+# is one gesture, not N (the alien fixture).
+#
+# Both defects are the same mistake seen from two sides: the verifier assumed
+# every change was instantaneous at its breakpoint, so a window clamped to the
+# neighbouring breakpoint could land ON the move it was measuring. Where the
+# preceding segment ramped, both windows sat on the ramp and a realized
+# gesture read as unrealized; where the move was authored as 64 small steps,
+# both windows collapsed to one step of the ramp and every step failed.
+# ---------------------------------------------------------------------------
+
+
+def _paint(audio: np.ndarray, span: tuple[float, float],
+           from_beat: float, to_beat: float, fn) -> None:
+    """Replace the sample span covering ``[from_beat, to_beat)`` in place."""
+    start, stop = span
+    n = audio.shape[0]
+    a = int(round((from_beat - start) / (stop - start) * n))
+    b = int(round((to_beat - start) / (stop - start) * n))
+    audio[a:b] = fn(b - a)
+
+
+def _tone_block(freq: float, amplitude: float):
+    def build(n: int) -> np.ndarray:
+        return sine(freq, n / SAMPLE_RATE, amplitude=amplitude)[:n]
+    return build
+
+
+def _wide_block(freq: float, amplitude: float, shift: int = 27):
+    def build(n: int) -> np.ndarray:
+        return _widened(sine(freq, n / SAMPLE_RATE, amplitude=amplitude)[:n],
+                        shift_samples=shift)
+    return build
+
+
+# The chorus flanger arc from `the-argument` that filed AUD-5K7T: a 4-beat
+# ramp OPEN, a 23-beat drift, then a 2-beat ramp back to dry. Every segment is
+# `linear` — the DB default, and what the envelope generators emit.
+_ARC = (
+    (261.0, 0.0, "linear"),
+    (265.0, 0.38, "linear"),
+    (288.0, 0.42, "linear"),
+    (290.0, 0.0, "linear"),
+)
+_ARC_SPAN = (255.0, 295.0)
+
+
+def _arc_audio() -> np.ndarray:
+    """Dry (bit-exact mono) until the ramp opens at 265, wide after it."""
+    audio = sine(440.0, 8.0, amplitude=0.5).astype(np.float32)
+    _paint(audio, _ARC_SPAN, 265.0, 295.0, _wide_block(440.0, 0.5))
+    return audio
+
+
+def _arc_results() -> list:
+    audio = _arc_audio()
+    env = DeclaredEnvelope(
+        target_surface_id="track:3",
+        target_kind="device_parameter",
+        parameter_path="Dry/Wet",
+        breakpoints=_ARC,
+    )
+    return verify_envelope_realization(
+        env, audio, sample_rate=SAMPLE_RATE,
+        beat_map=BeatSampleMap(*_ARC_SPAN, audio.shape[0]),
+        master_audio=audio,
+    )
+
+
+def test_ramped_gesture_reads_the_plateau_before_the_ramp():
+    """The flanger opens over 4 beats and the verdict must be `realized`.
+
+    Assuming a step at beat 265 clamps the before-window to 263 — halfway UP
+    the ramp — so both windows contain the change, the measured delta collapses
+    and a gesture that demonstrably happened reads as not realized. The
+    before-window belongs on the dry plateau BEFORE the ramp starts.
+    """
+    v = _arc_results()[0]
+    assert v.at_beat == 265.0
+    assert v.through_beat == 265.0
+    assert v.measurable is True
+    assert v.realized is True, (
+        "the ramp is fully realized in the audio — reading it as unrealized is "
+        "the defect, and it comes from windowing a ramp as if it were a step"
+    )
+
+
+def test_far_side_ramp_is_unmeasurable_not_rubber_stamped():
+    """The fix must not become a rubber stamp.
+
+    The 0.38→0.42 drift at beat 288 is inaudible, and it is bracketed by ramps
+    on both sides — the value never settles anywhere near it. A naive "anchor
+    both windows on the transition" fix reports it realized off the ramp down
+    to dry. The honest answer is that there is no window to judge it in.
+    """
+    v = _arc_results()[1]
+    assert v.at_beat == 288.0
+    assert v.measurable is False
+    assert v.realized is False
+    assert "ramp" in v.note, (
+        "the note must name the ramping neighbour, or the reader can't tell "
+        "'no settled window' from 'too quiet'"
+    )
+    assert math.isnan(v.before)
+
+
+def test_hold_curve_windows_are_unchanged():
+    """R5: a `hold` segment keeps the exact windows — and so the exact verdict.
+
+    The audio steps twice on each side of the declared change, so the measured
+    dB pair pins WHERE the windows sat, not merely that a verdict came out:
+    only `[6, 8)` reads -29.0 dBFS and only `[8, 10)` reads -9.0.
+    """
+    audio = sine(220.0, 4.0, amplitude=0.02).astype(np.float32)
+    span = (0.0, 16.0)
+    _paint(audio, span, 5.5, 8.0, _tone_block(220.0, 0.05))
+    _paint(audio, span, 8.0, 10.0, _tone_block(220.0, 0.5))
+    _paint(audio, span, 10.0, 16.0, _tone_block(220.0, 0.1))
+    env = DeclaredEnvelope(
+        target_surface_id="return:1",
+        target_kind="send_level",
+        parameter_path=None,
+        # A 8-beat HOLD segment — four times the window, the shape AUD-5K7T
+        # would mis-window if it treated every long segment as a ramp.
+        breakpoints=((0.0, 0.2, "hold"), (8.0, 0.8, "hold")),
+    )
+    v = verify_envelope_realization(
+        env, audio, sample_rate=SAMPLE_RATE,
+        beat_map=BeatSampleMap(*span, audio.shape[0]), master_audio=audio,
+    )[0]
+    assert v.at_beat == 8.0
+    assert v.steps == 1
+    assert v.before == pytest.approx(20.0 * math.log10(0.05 / math.sqrt(2)), abs=0.05)
+    assert v.after == pytest.approx(20.0 * math.log10(0.5 / math.sqrt(2)), abs=0.05)
+
+
+def test_changes_closer_than_the_window_do_not_bleed():
+    """Two opposite steps 0.3 beats apart have no room for a verdict.
+
+    They must NOT join (opposite directions), and neither window may span the
+    neighbouring change to find room — the honest answer is unmeasurable.
+    """
+    audio = sine(440.0, 4.0, amplitude=0.5).astype(np.float32)
+    env = DeclaredEnvelope(
+        target_surface_id="track:3",
+        target_kind="device_parameter",
+        parameter_path="Dry/Wet",
+        breakpoints=((4.0, 0.0, "hold"), (8.0, 0.5, "hold"), (8.3, 0.0, "hold")),
+    )
+    results = verify_envelope_realization(
+        env, audio, sample_rate=SAMPLE_RATE,
+        beat_map=BeatSampleMap(0.0, 16.0, audio.shape[0]), master_audio=audio,
+    )
+    assert [v.at_beat for v in results] == [8.0, 8.3]
+    assert [v.measurable for v in results] == [False, False]
+    assert all("no settled window" in v.note for v in results)
+
+
+def test_all_target_kinds_share_the_ramp_aware_window():
+    """R7: one windowing, inherited by every kind — not four that can drift.
+
+    Recording the spans each kind asks the surface for is the direct assertion:
+    if any kind carried its own windowing, its bounds would differ here.
+    """
+    import hallucinote.audio.automation as automation_module
+
+    seen: dict[str, list[tuple[float, float]]] = {}
+    audio = _arc_audio()
+    beat_map = BeatSampleMap(*_ARC_SPAN, audio.shape[0])
+    real_mono = automation_module._mono_window
+
+    for kind in ("device_parameter", "send_level", "mixer_volume", "mixer_pan"):
+        calls: list[tuple[float, float]] = []
+
+        def _recording(a, bm, lo, hi, _calls=calls):
+            _calls.append((lo, hi))
+            return real_mono(a, bm, lo, hi)
+
+        automation_module._mono_window = _recording
+        try:
+            verify_envelope_realization(
+                DeclaredEnvelope(
+                    target_surface_id="track:3",
+                    target_kind=kind,
+                    parameter_path="Dry/Wet",
+                    breakpoints=_ARC,
+                ),
+                audio, sample_rate=SAMPLE_RATE,
+                beat_map=beat_map, master_audio=audio,
+            )
+        finally:
+            automation_module._mono_window = real_mono
+        # Keep only the SURFACE windows: the mixer kinds also window the
+        # master with the same bounds, which would double every entry.
+        seen[kind] = sorted(set(calls))
+
+    bounds = list(seen.values())
+    assert all(b == bounds[0] for b in bounds), seen
+    # And they are the ramp-aware ones: the plateau BEFORE the 261→265 ramp,
+    # and the settled span after it.
+    assert (259.0, 261.0) in bounds[0]
+    assert (265.0, 267.0) in bounds[0]
+
+
+def _staircase(
+    start_beat: float, end_beat: float, v_from: float, v_to: float, steps: int,
+) -> tuple[tuple[float, float, str], ...]:
+    """A ramp authored as `steps` equal small steps — the alien fixture shape."""
+    dt = (end_beat - start_beat) / steps
+    dv = (v_to - v_from) / steps
+    return tuple(
+        (start_beat + i * dt, v_from + i * dv, "linear")
+        for i in range(steps + 1)
+    )
+
+
+def test_sixty_four_step_staircase_is_one_gesture():
+    """A ramp authored as 64 small steps is ONE authored move.
+
+    Graded per step, both windows collapse to ~1/16 beat OF THE RAMP and every
+    step fails against a threshold sized for a whole move — so the finer,
+    better-authored ramp produced 64 findings where a coarse one produced 1.
+    """
+    audio = sine(300.0, 4.0, amplitude=0.5).astype(np.float32)
+    span = (0.0, 16.0)
+    _paint(audio, span, 8.0, 16.0, _tone_block(3500.0, 0.5))
+    env = DeclaredEnvelope(
+        target_surface_id="track:3",
+        target_kind="device_parameter",
+        parameter_path="Tone",
+        breakpoints=_staircase(4.0, 8.0, 0.0, 1.0, 64),
+    )
+    results = verify_envelope_realization(
+        env, audio, sample_rate=SAMPLE_RATE,
+        beat_map=BeatSampleMap(*span, audio.shape[0]), master_audio=audio,
+    )
+    assert len(results) == 1, "64 verdicts on one gesture is the defect"
+    v = results[0]
+    assert v.steps == 64
+    assert v.at_beat == pytest.approx(4.0625)
+    assert v.through_beat == pytest.approx(8.0)
+    assert v.measurable is True
+    assert v.realized is True
+    assert "over 64 steps" in v.note
+
+
+def test_independent_breakpoints_keep_per_step_verdicts():
+    """R5 regression guard: the join must never eat separable moves.
+
+    Three changes a full window apart are three authored moves, and they stay
+    three verifications with one step each — the per-step path is the
+    `steps == 1` case of the general one, not an approximation of it.
+    """
+    audio = sine(440.0, 4.0, amplitude=0.5).astype(np.float32)
+    env = DeclaredEnvelope.from_pairs(
+        target_surface_id="track:3",
+        target_kind="device_parameter",
+        parameter_path="Tone",
+        breakpoints=((0.0, 0.0), (8.0, 0.3), (16.0, 0.6), (24.0, 0.9)),
+    )
+    results = verify_envelope_realization(
+        env, audio, sample_rate=SAMPLE_RATE,
+        beat_map=BeatSampleMap(0.0, 32.0, audio.shape[0]), master_audio=audio,
+    )
+    assert [v.at_beat for v in results] == [8.0, 16.0, 24.0]
+    assert [v.through_beat for v in results] == [8.0, 16.0, 24.0]
+    assert [v.steps for v in results] == [1, 1, 1]
+    assert all("over" not in v.note for v in results)
+
+
+def test_up_down_staircase_is_two_gestures_not_sixty_four():
+    """A direction reversal splits the run — a rise and the fall after it are
+    two moves, never one net no-op.
+
+    With no plateau at the apex neither gesture has a settled window on the
+    apex side, and saying so is the honest reading: the value is in motion
+    right through the turn.
+    """
+    audio = sine(440.0, 4.0, amplitude=0.5).astype(np.float32)
+    up = _staircase(4.0, 6.0, 0.0, 1.0, 32)
+    down = _staircase(6.0, 8.0, 1.0, 0.0, 32)[1:]
+    env = DeclaredEnvelope(
+        target_surface_id="track:3",
+        target_kind="device_parameter",
+        parameter_path="Tone",
+        breakpoints=up + down,
+    )
+    results = verify_envelope_realization(
+        env, audio, sample_rate=SAMPLE_RATE,
+        beat_map=BeatSampleMap(0.0, 16.0, audio.shape[0]), master_audio=audio,
+    )
+    assert len(results) == 2
+    assert [v.steps for v in results] == [32, 32]
+    assert results[0].through_beat == pytest.approx(6.0)
+    assert results[1].at_beat == pytest.approx(6.0625)
+    assert results[1].through_beat == pytest.approx(8.0)
+
+
+def test_up_and_down_runs_are_graded_in_opposite_directions():
+    """Given a plateau to settle on, the two runs read as opposite moves.
+
+    The same 32-up/32-down shape with 4 beats held at the apex: two gestures,
+    one declared UP and one declared DOWN, each graded end-to-end.
+    """
+    audio = sine(220.0, 6.0, amplitude=0.05).astype(np.float32)
+    span = (0.0, 24.0)
+    _paint(audio, span, 8.0, 14.0, _tone_block(220.0, 0.5))
+    # HOLD the apex for four beats — the plateau both runs are read against.
+    up = _staircase(4.0, 8.0, 0.0, 0.8, 32)[:-1] + ((8.0, 0.8, "hold"),)
+    down = _staircase(12.0, 16.0, 0.8, 0.0, 32)
+    env = DeclaredEnvelope(
+        target_surface_id="return:1",
+        target_kind="send_level",
+        parameter_path=None,
+        breakpoints=up + down,
+    )
+    results = verify_envelope_realization(
+        env, audio, sample_rate=SAMPLE_RATE,
+        beat_map=BeatSampleMap(*span, audio.shape[0]), master_audio=audio,
+    )
+    assert len(results) == 2
+    assert "declared up over 32 steps" in results[0].note
+    assert "declared down over 32 steps" in results[1].note
+    assert results[0].realized is True
+    assert results[1].realized is True
+
+
+def test_alternating_duck_envelope_is_one_verification_per_direction_change():
+    """A sidechain duck (rest → duck → rest) is unchanged by the join.
+
+    Every adjacent pair reverses direction, so nothing joins and the ledger of
+    verdicts reads exactly as it did before gestures existed.
+    """
+    audio = sine(440.0, 4.0, amplitude=0.5).astype(np.float32)
+    env = DeclaredEnvelope(
+        target_surface_id="track:1",
+        target_kind="mixer_volume",
+        parameter_path=None,
+        breakpoints=(
+            (0.0, 1.0, "linear"), (4.0, 0.3, "linear"), (4.5, 1.0, "linear"),
+            (8.0, 0.3, "linear"), (8.5, 1.0, "linear"),
+        ),
+    )
+    results = verify_envelope_realization(
+        env, audio, sample_rate=SAMPLE_RATE,
+        beat_map=BeatSampleMap(0.0, 16.0, audio.shape[0]), master_audio=audio,
+    )
+    assert len(results) == 4
+    assert [v.steps for v in results] == [1, 1, 1, 1]
+
+
+def test_a_plateau_longer_than_the_window_splits_a_monotonic_run():
+    """Rise, hold four beats, rise = two moves.
+
+    Same direction throughout, so only the gap says these are separable — and
+    a gap that could hold a full analysis window is exactly what makes two
+    per-move verdicts valid.
+    """
+    audio = sine(440.0, 4.0, amplitude=0.5).astype(np.float32)
+    env = DeclaredEnvelope(
+        target_surface_id="track:3",
+        target_kind="device_parameter",
+        parameter_path="Tone",
+        breakpoints=(
+            (0.0, 0.0, "linear"), (2.0, 0.5, "hold"),
+            (6.0, 0.5, "linear"), (8.0, 1.0, "hold"),
+        ),
+    )
+    results = verify_envelope_realization(
+        env, audio, sample_rate=SAMPLE_RATE,
+        beat_map=BeatSampleMap(0.0, 16.0, audio.shape[0]), master_audio=audio,
+    )
+    assert [v.at_beat for v in results] == [2.0, 8.0]
+    assert [v.steps for v in results] == [1, 1]
+
+
+def test_staircase_send_ramp_is_realized_end_to_end():
+    """The alien case: a send authored as 64 steps whose return really rises.
+
+    Today that reported 64 × NOT realized; the whole traversal moves the
+    return by well over the send threshold, which is one realized move.
+    """
+    audio = sine(220.0, 4.0, amplitude=0.25).astype(np.float32)
+    span = (0.0, 16.0)
+    _paint(audio, span, 8.0, 16.0, _tone_block(220.0, 0.5))  # +6.0 dB
+    env = DeclaredEnvelope(
+        target_surface_id="return:1",
+        target_kind="send_level",
+        parameter_path=None,
+        breakpoints=_staircase(4.0, 8.0, 0.0, 0.8, 64),
+    )
+    results = verify_envelope_realization(
+        env, audio, sample_rate=SAMPLE_RATE,
+        beat_map=BeatSampleMap(*span, audio.shape[0]), master_audio=audio,
+    )
+    assert len(results) == 1
+    v = results[0]
+    assert v.steps == 64
+    assert v.realized is True
+    assert v.after - v.before == pytest.approx(6.02, abs=0.2)

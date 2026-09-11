@@ -32,6 +32,1171 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-09-11 — The release audit's second pass: one test folded in, two candidates read out
+
+<!-- prawduct: type=chore | scope=RELAUDIT-0911 -->
+
+The pre-release backlog question asked again against a tree that already has
+RELFOLD-0910. The window stands at 65 filed / 41 closed / 24 open; the only new
+fold-in decisions were #552 and #553, both raised by RELFOLD's own Critic
+rounds.
+
+**#553 folded in — one test.** `_warn_under_chain_solo`'s operator-facing
+envelope has three heads, and the mixed one (some chains soloed, some whose
+solo Live did not report) was the head #550 added and the only one untested. It
+is also the only head whose arithmetic can be wrong: the other two make a single
+claim over the whole list, while mixed derives `unknown` by subtraction. A
+miscount there reports a solo the read never found or an unreadable flag it
+never had, and those send the operator at opposite actions.
+
+**Two candidates were read in the code before being recommended, and both died
+there.** That is pass 1's own method correction applied — it had recommended an
+item whose premise the code disagreed with, and named a five-minute code read
+per item as the fix.
+
+- **#552** (the pre-render mixer read never walks the master strip) is real, but
+  ships as a **named** limit, which is the bar pass 1 set for #550: it is written
+  in this change log, in `architecture.md` § *What is deliberately not modeled*,
+  in `boundary-patterns.md`, and in `_soloed_chains`' docstring. It is also not
+  the small fix it resembles — Live's master carries no `solo` attribute, so a
+  naive master row reads `solo: None` and `_refuse_under_solo`, which refuses on
+  an unreadable flag by design, would refuse every render.
+- **#495** (`PushPlan.warn()` writes the channel the executor discards) was worth
+  re-asking, because RELFOLD's reflection names its exact shape — a value made
+  correct and then dropped at a boundary — as the mistake it made twice. But
+  both of RELFOLD's new warnings route to operator channels: the push half to
+  `notes_sink` with a fallback so it is never dropped, the chain-rebuild half to
+  stderr *and* `alerts`. The trap is still there for the next author; nothing
+  shipped through it.
+
+**The `alien` master-capture bug report is discharged and archived.** All three
+of its suggested fixes shipped (the `sum_reconciliation` blocking finding, the
+solo refusal, the manifest's `mixer_state`). Of the three observations left, the
+`state: done`/header-only-WAV one is a documented two-field contract that
+`capture_span_mismatch` catches downstream, `back_to_arranger` is disowned by the
+report's own correction, and the surviving one — a `compare_to` whose baseline
+take retention has swept — is filed as **#556** rather than archived with it.
+
+**Bookkeeping:** `planless-scopes-disposition.md` answered five planless scopes
+while `check-releasability` had begun firing on six; `MYPY-COMPARE-0911` merged
+after that file was written and now has its row. This entry's own scope makes
+seven, and it is trivial by the size heuristic — a test and two bookkeeping
+edits, no contract surface moved — so it is dispositioned there in the same
+breath rather than left to be explained later.
+
+**Re-vendor: not required.** Nothing here touches `_FINGERPRINT_PATHS`; the test
+exercises the handler in-process. The re-vendor RELFOLD and RENDERGUARD are both
+waiting on is unchanged and still owed.
+
+## 2026-09-11 — CI was red on `develop`, and the type it tripped on was the honest answer
+
+<!-- prawduct: type=fix | scope=MYPY-COMPARE-0911 -->
+
+`develop` failed `mypy` on a single error, and had since the RENDERGUARD-0910
+merge: `_master_disqualification` in `audio/compare.py` annotated its `verdict`
+as `tuple[str, float, float] | None` and then built one out of `finding.get(...)`
+reads off a stored report's JSON, which is `Any`.
+
+Found by CI on an unrelated PR, which is the part worth noting — the branch that
+introduced it ran `mypy` on the files it had touched rather than the project
+config, so a whole-project gate caught what a per-file invocation could not.
+
+**The widening is the fix, not a cast, and the reason is behavioural.** The three
+values come from a report written by this same codebase — `analyze.py` builds
+the finding from the identical `master_is_not_stem_sum` tuple — so in practice
+they are always present and correctly typed. But a report that somehow carries
+the finding WITHOUT its numbers is still disqualified: the finding's presence is
+the verdict, not its arithmetic. Coercing with `float(...)` would raise on that
+report, and defaulting to a number would invent evidence. So the missing value
+travels as `None`, the annotation says so, and a test pins it.
+
+That test characterizes behaviour rather than guarding a regression — an
+annotation is erased at runtime, so it passes against the pre-fix module too.
+What it adds is that the case is now exercised at all; nothing reached it before.
+
+## 2026-09-10 — The release audit folds in what the release's own work left open
+
+<!-- prawduct: type=fix | scope=RELFOLD-0910 -->
+
+A pre-release backlog audit against the 19 release-pending scopes. The release
+window filed 63 backlog items; 36 had already shipped inside these scopes and 27
+were still open, every one of them residue of this release's own work. Six were
+coupled — shipping a defect, a half-closed guard, or a bookkeeping claim the code
+had made false. Four are fixed here, one is re-scoped after the code disagreed
+with it, and one is a read that was owed.
+
+**A soloed rack CHAIN is reported** (#550). The solo guard that shipped in
+RENDERGUARD-0910 refuses a render under a soloed track or return; chain solo is a
+separate first-class concept here and the guard could not see it. It **warns**
+rather than refusing, by owner decision: a chain solo silences the sibling chains
+inside one rack, not the song, so the master bus still carries every track and the
+capture is a real mix with one rack rendering as a fraction of itself. Refusing
+would block an author auditioning a layer mid-session; silence would let a report
+call that thinning a mix change. `manifest.mixer_state` records chain solo either
+way, so a report read a week later can still say what it was made under. Top-level
+racks only, and the docstring says so rather than leaving the depth to be assumed.
+
+**A sidechain source the probe cannot read is announced before it is destroyed**
+(#544). Two surfaces already warned on that shape and the destructive one did not
+— `chain-rebuild` deletes and reloads, so an unreadable source is gone rather than
+uncarried. The warning goes to stderr as well as into the report: the command is
+non-interactive, so the operator's own Ctrl-C is the only abort there is, and the
+report prints after the device is already gone.
+
+**`device load` stops reading as a loss** (#546). Live appends a browser load to
+the end of the chain and exposes no reorder API, so on a rendered track the device
+always lands behind the analyzer tap. Nothing is under-measured — `render(start)`
+re-seats the tap before capturing — but only the source said so, and someone read
+that chain order cold and concluded otherwise. It is a `note`, not a `warning`:
+there is nothing for the caller to do, and saying so is the point.
+
+**The sidechain-enable hints are named MCP-side** (#545). The guard keeping them
+in step with the engine's mirror scraped the handler's source text between two
+literal anchors, so a reflow failed it without anything having diverged. Both
+sides are imported now — and a second test drives every hint through the
+dispatcher, because comparing two imported collections proves they agree and not
+that either is what the match actually reads. That is the one failure mode the
+brittle guard did not have, and replacing it without noticing would have been a
+quiet downgrade.
+
+**#534 was approved for build and then not built, which is the entry worth
+reading.** The item reports `_PARAM_EPSILON`, an absolute 1e-6, being breached by
+float32's relative round-trip error on a large-magnitude parameter and by an
+integer-stepped one — measured against Live 12.4.5, and real. Reading the code to
+fix it showed the defect cannot reach the path `chain-rebuild` takes: the capture
+reads every value **off Live**, the restore writes that same value back verbatim,
+and the verify compares the two, so both ends are the same float and the delta is
+zero by construction. A 22 kHz frequency and a 41-step bend range round-trip at
+exactly 0.0 through the module. That reproduces the item's own Pass 1; its Actual
+section comes from the *perturbing* pass, which wrote deliberately off-grid values
+— something this module cannot do, because it never invents one.
+
+So the residue is the property, not the tolerance: the epsilon is safe only
+because the restore copies Live, and nothing pinned that — no test referenced
+`_verify_parameters` or the constant at all. Two now do, and the first is what
+should fail if an authored value ever enters the restore.
+
+**#526's blocker did not resolve the way it predicted.** The item is ordered
+behind #537 and says the open design question — a `call` argument has no current
+value to gate coercion on — would "dissolve" once #537 typed scalars on the wire.
+#537 closed, and it did not type them: `value` is still `type="any"` and the
+mechanism is server-side coercion **gated on the current value**. The gate is
+still load-bearing and `args` elements are still untyped, so the question is
+exactly as open as before. Recorded because the item asked in terms that nobody
+close it on #537's merge without reading the residue first.
+
+**Three bookkeeping claims the code had made false**, corrected rather than
+carried into the release: #533 was open against a fix already in the tree and is
+closed; #529 says the manifest records no fader values and it now records them,
+leaving only the read side, which is the half worth keeping; and #544's own
+mechanism paragraph said the sidechain source is "never journaled and never
+restored" when it is both.
+
+**`architecture.md` learns three packages it never had** — `assets/`, `features/`
+and `spectral/`, all new since v1.8.6 — and loses the count that had drifted with
+them. It opened with "the ten packages" while naming ten and the tree held
+thirteen; a count is the half a reader cannot check at a glance, so it decays
+first and silently. The list is a pointer at the tree now, with the command to
+re-derive it.
+
+**The five planless release-pending scopes are dispositioned**, not suppressed
+(`planless-scopes-disposition.md`). Two were correctly sized as trivial; three
+were not, and they are the same mistake three times — work sized by the size of
+its edits rather than by the size of what it changes. A ceiling on governance
+files, an owner ruling on a norm, and a BREAKING change to path resolution are
+each a small diff and a durable commitment. `check-releasability` will keep
+warning, which is right; the file is what a reader consults when it does.
+
+**#482 stays out of this release, deliberately.** Its R1/R2 change what goes INTO
+the stem sum that RENDERGUARD-0910 turned into a blocking finding — a return at a
+non-unity fader is summed at full pre-fader level and inflates the residual. Doing
+both at once would leave neither proving the other, which was the prior session's
+reasoning and still holds. The consequence is stated rather than left implicit:
+this release ships a blocking gate over a sum that can read high for a benign
+reason, and the RENDERGUARD operator-verification box that prices that false
+positive is the one still owed.
+
+**The Critic's blocking finding was that the chain-solo warning never reached a
+caller, and it is the entry worth reading second.** A render is async: the
+handler's `result` is projected to the operator by `Job.status_result`, which
+copies a per-kind **allowlist** — `manifest`, `manifest_path`, `render_status`.
+The new advisory was not in it, so the field was computed, written, and dropped
+in production while four tests calling the handler in-process stayed green. Two
+reviewers found it independently from opposite ends. The projection now carries
+it, and the test that keeps it honest is a JOB-level one, because no in-process
+handler test can see that boundary at all.
+
+The same finding renamed the field. It had been `result["warnings"]`, a list —
+and `warnings` is already `wire.Response.warnings`, a documented advisory
+channel that serializes at the top of the response rather than inside `result`.
+One payload carrying both under one name is two things a reader cannot tell
+apart. It is `warning: str` now, the convention every sibling handler uses.
+
+**Three more from the same round, each a rule this diff had quietly made a
+second copy of.** The tap note identified the analyzer by name where the MCP
+side requires name AND `class_display_name == "Max Audio Effect"` — a third
+discriminator for one identity, and the case it gets wrong is a note telling an
+operator not to worry about a device the re-seat sweep will never touch; it
+calls `find_analyzer_index` now. The "warns before the first delete" claim was
+asserted only after the run returned, which cannot tell that apart from warning
+at report-assembly time, when the device is already gone; it is proved at the
+first delete now. And the chain-solo read's limits — top-level racks only, chain
+mute and volume unread, the positions PHYSICAL and read before the analyzer is
+appended — were visible only in a docstring; `boundary-patterns.md` owns that
+contract and now carries them, along with which of the two representations a
+consumer should join on.
+
+**A scope-out this work broke, recorded rather than quietly kept.** Chunk 02
+scoped out the gain-param match and then refactored it anyway, because naming
+one hint set while leaving its neighbour an inline `or` chain leaves two idioms
+for one thing. The plan says so now. The gain constant is underscore-private
+where the enable one is public: what the scope-out was protecting is the
+*guard*, and the gain set still has no engine mirror and no drift test, so a
+public name beside the enable set would advertise protection it does not have.
+
+**And a re-scope that was announced but not performed.** An earlier draft of
+this entry said #529 had been re-scoped when the item had only been commented
+on — body and stage untouched. The item is actually re-scoped now, to the half
+that is still open: the read side never learned the manifest records faders.
+
+**One test was consolidated, and the reason belongs here rather than only in a
+docstring.** Chunk 05 added `test_a_parameter_left_at_its_default_is_still_caught`
+and it was a second witness, not new coverage — identical setup
+(`live.swallow_set_parameter = True`) and identical expectation to
+`test_verify_fails_when_a_restored_parameter_reads_back_at_its_default`, which
+already existed in the same file. It contributed two assertions on the mismatch
+message's exact text, and those moved into the surviving test; nothing it
+covered is uncovered. What chunk 05 was actually missing was the OTHER half —
+that a faithful round trip does NOT report a mismatch — and that test is new and
+stays.
+
+**The chain-solo read had no unknown, beside a surface solo that insists on
+one.** Four reviewers reached one line from four angles. `_soloed_chains` read
+`bool(getattr(chain, "solo", False))`, collapsing "Live did not answer" into
+"not soloed" — forty lines below the sibling comment that forbids exactly that,
+and sharper here than there: these rows go into `manifest.json`, and the
+boundary artifact edited in this same work tells consumers to JOIN on them. A
+chain that never answered, recorded as clear, is a false negative asserted as
+fact to a reader with no way to check it. `solo` is now `true` or `null`, never
+`false`, an unreadable chain is listed as unknown, and the warning says which it
+is — the warn-tier analogue of the surface guard refusing on a flag it cannot
+read.
+
+**The advisory was fixed in code and still dropped one hop later.** The blocking
+finding's fix carried it through `Job.status_result`; `skills/render-analyze/`
+and the two `actions/render.py` descriptions still enumerated the status keys
+without it, and those are what a caller actually follows. All three now relay
+it, and the action description names `Job.status_result` as the authority rather
+than pretending a prose list can stay closed.
+
+**Two limits the read never had, one of them now a backlog item.** `_mixer_state`
+walks tracks and returns and never the master strip — and `master.wav` is a
+captured stem, so a rack on the master with a soloed chain is invisible. That is
+**#552**, filed rather than described, because the master needs handling as its
+own case: Live's master carries no `solo` at all, so a naive master row would
+read `None` and the existing guard would refuse every render. A rack's return
+chains are the other, stated alongside.
+
+**An append-only file was edited twice, by the same mechanism, one round
+apart.** Two hunks of this entry were inserted with an uncounted string-replace
+against `**Re-vendor: REQUIRED.**` — a phrase this file's entries repeat — so
+each one also landed inside the 2026-09-09 `RELBLK-V19` entry. The first round
+caught one paragraph; the fix deleted it and the NEXT edit put four more in its
+place, including a sentence claiming the entry had been restored. It had not
+been; nothing re-checked after the second edit.
+
+Restoring it by another replace would have been the same bet a third time. The
+entry was spliced back from `6dfdadb` verbatim by index, and the check is now
+structural rather than a spot read: parse both files into entries by heading and
+assert that the set of pre-existing entries is byte-identical. It is, and this
+entry is the only addition.
+
+Worth naming because the shape outlives the instance: **an append-only file
+whose sections share boilerplate cannot be edited by matching that
+boilerplate**, and a claim that a file was repaired is worth exactly as much as
+the re-check behind it.
+
+**Re-vendor: REQUIRED.** Three chunks touch `handlers/device.py` and
+`handlers/render.py`, both inside `_FINGERPRINT_PATHS`. Batched for exactly that
+reason — one restart pays for all three. Nothing here exists in Live until the
+Remote Script is re-vendored and Live is fully restarted, the same clock the
+RENDERGUARD solo guard is already on.
+
+## 2026-09-10 — Two silent lenses: a partial that stopped counting as a recall, and a capture that stopped reading the wrong beat
+
+<!-- prawduct: type=fix | scope=OPENBUGS-0910 -->
+
+The two reports the 2026-09-10 incoming-bugs triage left open. Both are the same
+shape of defect: something measured the wrong thing and said nothing about it.
+
+**The recurrence lens counted a guess as a recall.** The matcher has two tiers. A
+clean recovered op — `exact`, `transpose +8`, `fragment[0,1.5)` — is a structured
+claim about the layer. When nothing clean matches it falls back to
+`derived (<op>, <coverage>)`: the most of the motif some composed op could account
+for. Over eleven motifs, ten sections and five layers the transform group finds one
+of those almost everywhere, and on `alien` 201 occurrence records came back with the
+large majority sitting at exactly 0.50 coverage. Read straight, the render said every
+motif recurs on every layer everywhere and the whole-motif recalls that describe the
+form were a fifth of the lines.
+
+The reported symptom was noise. The consequence found by reading the code was worse:
+`_recurring_motifs` counted a motif as recurring on **any** non-home occurrence, so
+the partials put every registered motif in the cell-set, made `recall_coverage` read
+100 %, and emptied `never_recalled` — which silenced `registered-never-recalled`, the
+single coaching question the economy path is allowed to emit. The noise was not
+burying the signal, it was deleting a finding.
+
+Now a sub-threshold **derived** reading is marked `partial`: still detected, still in
+the report, still in `--json` (the matcher reports partials on purpose — REC-4Z8Q),
+but folded into a per-section count in the render (`--all` expands) and excluded from
+every economy figure. A motif that recurs only as partials now raises its question and
+says so, naming the best coverage it reached, because "never recurs" would be untrue
+of it.
+
+The floor is **derived-tier only**, and that distinction is the part the plan got
+wrong before the code did. A coverage-only floor demotes `fragment[0,1.5)` at 0.50 —
+the quoted answering cell, a real recall carrying the fragment tier's own evidence
+floor — to the same status as `derived (invert ∘ diminish ×2, 0.50)`. The reporting
+author had already resolved this by hand; their filter kept every non-derived
+variation at any coverage. `MatchResult.derived` now carries the tier from the one
+site that chooses it, so consumers weigh a reading without prefix-matching a
+human-facing label. The floor rides on the report itself, so the render names the
+percentage it actually applied instead of guarding for a field that is now always
+there and falling back to prose that names no threshold at all.
+
+**`capture execute` baked end-of-song automation values in as baselines.** A parameter
+under an automation envelope reads at whatever value the envelope holds *at the
+playhead*, and after any render or performed-automation push the playhead sits at the
+end of the arrangement. Captured there, that value becomes the device's dialed
+baseline and `replay_capture` re-asserts it on every subsequent build — permanently
+redefining the value every envelope rides from. Hit five times in one session on
+`alien`, silently each time: A-Reverb return volume 0.95 for 0.85 and its `Decay Time`
+6.87 s for 2.50 s, the Voice Shifter's `Dry/Wet` 72 % for 0 % and `RM Coarse` 283 Hz
+for 220 Hz, the Noise Auto Filter's `Frequency` 893 Hz for 2.52 kHz. The diff shows
+each as an ordinary field change, indistinguishable from a deliberate by-ear tweak.
+
+`capture execute` now reads the transport before it probes anything, seeks to beat 0
+when the playhead is elsewhere, and confirms the seek settled there before the walk
+begins. It refuses (exit 2) while the transport is rolling — a capture cannot be made
+deterministic while the playhead moves, so no seek would help — and refuses if the
+seek does not land, which is the silent case in miniature. It refuses on one more
+reading: a transport `info` that comes back without `is_playing` or
+`current_song_time`. Defaulting a missing read to "stopped at beat 0" would let the
+guard reinstate the exact silence it was built to end, so the unreadable case is
+named and refused rather than assumed away. The confirmation reads the
+seek handler's own settle poll rather than reading `current_song_time` back, because
+Live's getter can return a stale cached value in the same callback as the setter
+(`learnings.md`). `--no-seek` opts out and warns.
+
+This one's Live-side half is an assumption the unit tests cannot reach: they prove the
+seek precedes the walk against a fake bridge, not that Live re-applies automated values
+on a locate while the transport is stopped. Queued in `operator-verification.md` with
+the failure to look for named — a snapshot still carrying end-of-song values while the
+CLI reports it parked the playhead at 0.
+
+**What the cumulative review found, and it was the same defect three more times.**
+`rev-20260910T215848Z-0aed784e` returned nothing blocking but converged, across three
+independent reviewers, on the transport guard still defaulting the value it had just
+learned to require: `float(info.get("current_song_time") or 0.0)`, two lines under the
+comment saying that assuming "stopped at 0" is the silence the guard exists to end. A
+present-but-null reading passed the presence check and took the already-parked path.
+It is parsed now, and an unreadable value is refused by name.
+
+The floor had the same shape of hole in three more places, each one the fix re-entered
+through a door it had not closed:
+
+- **`match_motif_in_window` dropped `derived=`.** The package-exported entry point
+  rebuilt its result field by field without the new tier flag, so every tier-4 guess
+  reached a consumer as a clean recall — the exact miscount, through the one call the
+  documented contract tells consumers to make. The module also still decided
+  derivedness by prefix-matching the human-facing label at both of its own sites; both
+  read the field now.
+- **A sub-threshold partial could claim a motif's home section.** `found_this_motif`
+  fired on a reading marked `partial` on the next line, so a motif first *detected* as
+  a half-match took that section as home and its genuine later statement read as a
+  non-home recall — back into the cell-set, coverage and compression back up,
+  `never_recalled` emptied. Every fixture placed a clean home match first, so the suite
+  could not see it. Home is now the first section where the motif is heard as itself.
+- **`never_recalled` contradicted the question it feeds.** It names every motif outside
+  the cell-set, which is two populations; the render printed "never recalled" over both
+  while `economy_finding` said, a few lines lower in the same report, that the motif
+  "recurs beyond its home section only as partials". The render splits them.
+
+Underneath those, "counts as a recall" was being re-derived at four sites. It is one
+property on the occurrence now (`MotifRecall.counts_as_recall`), with
+`counted_recalls` / `partials` on the report, because the shape every consumer had
+before the floor existed — filtering on `is_home` alone — silently re-lands the
+miscount.
+
+**The guard also reached the path it did not cover.** `capture_plan()` — the by-hand
+probe recipe two skills drive — had no transport read and no seek, so a hand capture
+after a render bakes end-of-song values in as baselines with none of the refusal. The
+precondition is now the first two records the plan emits. This is a deliberate scope
+extension, recorded in the build plan: the requirement was boundary-shaped (the capture
+contract refuses to read parameters at an unknown playhead) and had been written
+entry-point-shaped.
+
+Two smaller ones from the same review: `melody_lens`'s exit-3 still pointed at
+`songs/sun-zone-done/build.py` after the recurrence twin dropped that pointer on the
+stated principle that a path into `songs/` is a claim about a workspace this package
+neither ships nor can check — it names the shape inline now; and `compose-review`'s
+operative Run-it block still taught the pre-fold render, so an agent who ran the lens,
+saw no `derived (...)` line and reported "no partial recalls" would have been reading a
+render that folds them by default. It offers `--all` and says so.
+
+**Also in this pass, and worth recording because it is the cheaper half of triage:**
+the other two open reports were verified **already fixed** and archived. The
+one-beat-early render capture was root-caused to arm-before-locate and fixed in
+`8b54a53` with a regression test; `push_cli`'s version-pin recovery no longer calls
+the content fingerprint a commit. A fourth report was a leftover stub carrying an
+unrelated bug under an archived report's filename — refiled under its own name, which
+is where the capture-playhead fix above came from.
+
+## 2026-09-10 — A render under a soloed track is refused, and a master that is not the mix cannot be reported as a changed mix
+
+<!-- prawduct: type=fix | scope=RENDERGUARD-0910 -->
+
+Three consecutive renders of `alien` reported `render_status: ok`, every surface
+terminal, and a `compare_to` advertising "26 significant deltas / 112 section-level
+deltas" against a song nobody had touched. The master measured −22.6 LUFS-I against a
+−8.6 baseline. **Track 3 was left soloed.** The capture was faithful; the mix was
+wrong — the master bus carried one part, the ~11 dB gap was that track's own −10 dB
+fader against a pre-fader stem tap, the B-Delay return went silent because solo killed
+the Voice feeding it, and it survived a full Live restart because solo is saved in the
+`.als`. That determinism is what made it read as an engine fault; the first
+investigation concluded the master capture surface was bound to the wrong track, and
+that reading is retracted in the report itself.
+
+**#549 — the engine detected it and told nobody.** `sum_reconciliation` measured
+`correlation` 0.159 against a healthy 0.959 and `gain_offset_db` −32.65 — it knew the
+master was not the sum of its stems — and was computed, serialized, and read by
+nothing. `_derive_findings` never took it. Now a disqualified master is a `blocking`
+`master_not_stem_sum` finding, and `compare.py` withholds master and master-section
+deltas rather than reporting them as changes. Both sides are checked: a stored report
+is re-used as a baseline for as long as it is the newest, so a capture made under a
+solo does not stop being wrong once later renders are measured against it. Stem deltas
+are untouched — every stem was within 0.4 dB, which is the evidence that proves the
+master is the odd one out. The refusal reaches the operator's summary too, because a
+disqualified comparison yields SMALLER counts and would otherwise read as a quieter
+render.
+
+**#548 — nothing refused the render.** `ableton_render(start)` now reads solo and mute
+across `song.tracks` **and** `song.return_tracks` before arming, refuses on any solo
+naming each offending surface, warns on mute, and records per-surface `solo` / `mute` /
+`volume` in the manifest so an old report stays auditable after Live has moved on.
+Returns are in because a return is a Track in Live and carries solo: soloing one
+silences every regular track's direct output — the same wrong mix through the
+collection that is easy to miss. `handlers/` is fingerprinted, so this does not exist
+in Live until the Remote Script is re-vendored and Live fully restarted; the boxes for it
+are queued in `operator-verification.md`. The read-side half is not on that clock —
+`server_side/` sits outside the fingerprint, so the summary change takes effect at once.
+
+**The tests were the third defect, and the user named it: *"tests are suspect if that
+shipped."*** They were. The `sum_reconciliation` tests asserted it was present, that
+`skipped` was None, and that it serialized — every one pinning that the number EXISTS
+and is CORRECT, none that anything ACTS on it, which is indistinguishable from a lens
+that gates nothing by design. The suite stayed green across the whole render-integrity
+build with the defect inside it. `report.py` now carries `FINDING_BEARING_BLOCKS` and
+`EVIDENCE_ONLY_BLOCKS` — every `MixReport` measurement block must declare which it is,
+against `gate-verdict-policy.md`'s existing split (defect lenses may block; intent
+lenses never fail a build) — and a new test file fails on a block in neither. Deleting
+`sum_reconciliation` from the gating map reproduces the original defect as a test
+failure. It does not catch a parameter that exists and is ignored in the body; that
+guarantee is not claimed.
+
+**Three further defects surfaced in review, all in the guards themselves.** The solo
+guard **failed open**: `getattr(track, "solo", False)` made "not soloed" and "did not
+answer" indistinguishable, and the manifest then wrote `solo: false` as a fact
+`boundary-patterns.md` tells consumers to trust — both flags are `null` now when Live
+does not present them, and a null refuses the render. The inert-lens tripwire proved a
+parameter NAME, not the wiring: every finding-bearing parameter has a default, so
+dropping a keyword from the one `_derive_findings` call reproduced the original defect
+with the new test file green — it parses the call site now. And the baseline half could
+not see a report written before the gate existed (those carry `sum_reconciliation` and
+no finding, and `resolve_baseline` filters on `db_seq` alone), so the three stored
+`alien` reports would have stayed diffable as baselines forever; the predicate moved to
+`reconcile.py` as the one owner both readers share. `overshoot_count` — a master-bus
+true-peak window, so a master delta by another name — also survived the disqualification
+and fed the headline count.
+
+`reconcile.py` documented in bold that it holds no threshold and must never be read as a
+verdict. This work put one there. The module doc records that as a narrow, reasoned
+exception — it decides whether the master IS the mix, not whether it is good — rather
+than leaving the contract silently false. A real-render negative control on a song with
+a hard-working master chain is queued in `operator-verification.md`: the thresholds come
+from one incident, and nothing yet prices the false positive.
+
+The Critic caught the returns gap, the baseline half of the gate, and the summary key —
+then, on the verification round, caught that the summary passthrough had shipped with no
+test reaching it through the handler, which is the same shape of gap this entry retracts
+two paragraphs above. Rack-chain solo is a real hole in the same guard and is filed as
+#550 rather than accepted: a soloed chain silences siblings inside one rack, not the
+song, so it is weaker than a track or return solo and is its own scope.
+
+## 2026-09-10 — The release blockers: a restore that lands on the right device, and a failure that says so
+
+<!-- prawduct: type=fix | scope=RELBLK-0910 -->
+
+Four issues, and one that turned out not to be an issue at all.
+
+**#532 — the restore addressed a chain that no longer existed.** `chain-rebuild`
+excluded the `HallucinoteAnalyzer` from its *logical* model in three places and
+still addressed devices *physically*, by the index captured **before** the
+delete. The demolish deletes only DB-known devices, so the tap survived; the
+reloads tail-appended behind it; the analyzer that sat at the tail now sat at the
+head, and every restore landed one slot off. Measured on `alien` before this
+release made it worse: EQ Eight lost 7 of 84 parameters, two of them real gain
+cuts (`3 Gain A` −1.99951 dB → 0.0, `4 Gain A` −2.50488 dB → 0.0).
+
+This was urgent rather than merely open because **this release also ships #533's
+fix**. Until now every restore write was refused before it reached Live, so the
+off-by-one wrote to the wrong device and the wrong device ignored it. Those
+writes land now. Shipping #533 without this would have converted a latent
+addressing bug into silent corruption of a real mix — and the device that
+triggers it is placed by our own render path, so the trigger is "rendered, then
+rebuilt a chain", not an exotic state.
+
+The journal now carries each device's DB `position` alongside its physical index,
+and the restore, the verify and the link rebind all pair by position against a
+**post-rebuild** chain read. A device the rebuild can neither address nor delete
+refuses before the first delete, naming it; the analyzer is the one tolerated
+survivor.
+
+**The same defect was one layer further out, and the review found it.** The link
+rebind wrote `ableton_index=position`, but a device link is consumed as a
+*physical* index — `plan_push_devices` hands it straight to `set_parameter` as
+`device_index`. The two agree only while the tap is terminal, which is exactly
+what a rebuild undoes. So the restore landed correctly and the links then sent
+the *next* push to the wrong device — including the `push execute --only devices`
+that this work's own shortfall alert recommends. Verified reachable rather than
+reasoned about: `reconcile_device_links`' stale-drop keeps those links because
+the indices exist, and its positional bind finds a class mismatch and declines to
+rebind. The rebind reads the post-rebuild chain now, and
+`boundary-patterns.md` says which number `ableton_index` holds — the ambiguity
+that produced the defect is the reason that is written down where the boundary
+is specified rather than in a docstring.
+
+**#538 — a rebuild that restored nothing reported success and deleted the
+evidence.** Three behaviours composed: `main()` returned 0 unconditionally; the
+verify was scoped to the set of *written* parameters, so when every write failed
+it compared **zero** of them and passed vacuously; and the journal — which the
+module's own docstring calls "the only way back" — was unlinked on that clean
+path. This is how #533 survived the module's entire life: every continuous
+restore failed on every rebuild ever run, and the command exited 0 each time.
+
+A run that captured N writable values and restored M < N now exits non-zero and
+keeps the journal; landing **none** of a non-empty capture fails the verify
+instead of passing on an empty comparison. A refused `set_input_routing` counts
+too — that is the sidechain source, the one value the module could still lose
+while exiting 0. Both callers honour the contract: the reconcile prepass used to
+print the alerts and return 0.
+
+**A retained journal means two different things, and saying the wrong one
+destroys work.** A shortfall journal describes a chain that is rebuilt, rebound
+and verified for everything that landed; a mid-flight journal describes one a
+rebuild abandoned. `--resume` is recovery for the second and destruction for the
+first. The journal already recorded a phase at every step and nothing read it, so
+the states were distinguishable on disk all along: `push execute` now refuses
+only the mid-flight kind and warns about the other — otherwise it would have
+blocked the very recovery the shortfall alert recommends — `--resume auto` will
+not silently select a shortfall journal, and an unreadable phase counts as
+mid-flight, because unknown degrades to dangerous.
+
+**A journal written before this release cannot be replayed, and the two refusals
+share one exit.** `JOURNAL_VERSION` goes 1 → 2 because a v1 entry carries no DB
+`position` — it is precisely a record written by the code that could not see a
+surviving analyzer, so replaying it would reproduce the off-by-one this work
+ends. `read_journal` refuses it by version rather than guessing. A v1 file left
+on disk by a pre-release crash therefore meets the operator twice: `journal_phase`
+cannot read a phase it does not know, unknown degrades to mid-flight, and
+`push execute` refuses and points at `--resume auto` — which then refuses on the
+version. Both refusals name the file and neither destroys anything, but the way
+out is stated in only one place, so it is stated here and in
+`docs/song-authoring-conventions.md`: read the journal, rebuild the chain from
+the DB (`chain-rebuild` with no `--resume`), delete the journal. The same trap
+runs backwards on a rollback — an engine at v1 refuses a v2 journal — and the
+exit is the same one.
+
+**#536 — an unreadable sidechain source stopped vanishing quietly.** A device
+that exposes `S/C On` but no input routing (Multiband Dynamics) can be armed and
+never pointed anywhere, and a source set by hand in Live's UI was lost on the
+next `build.py` rebuild with nothing said at capture time or push time. Not a
+routing fix — that limit is Live's. Both surfaces warn from one shared sentence,
+so they cannot drift: capture reads `S/C On` off the probe it already made, and
+push asks Live for `has_input_routing` per armed sourceless device. The negative
+half is as load-bearing as the warning: a device with a readable routing surface
+stays silent, because a warning that fired on the Compressor path #374 already
+covers would train the operator to ignore all of them.
+
+No snapshot field. `has_input_routing` is a property of the device in front of
+you, and persisting it would keep warning after the operator swapped the device —
+the noise failure from the other direction.
+
+The warning rides the **printed** channel, not the errors file. Nothing here
+failed to record, so a push carrying only this condition is clean, and a clean
+push does not print that file — the operator's one cue would never have reached
+them.
+
+**#537 — a string could not be sent through `probe set` at all.** The value was
+declared `ParamSpec(type="any")`, which serializes to `anyOf: [{}, null]`. An
+empty `{}` gives a calling client no type to serialize against, so a string was
+emitted bare and died in the client's own JSON parse before any request left the
+client — reproduced 6/6. Device renaming therefore had no working path, which is
+load-bearing: `replay_capture` keys devices by `display_name`, and `alien` now
+carries three indistinguishable Compressors on one track.
+
+The emitted schema is now an explicit union over every JSON type. Not the
+scalar-only union originally filed — that would have made a `dict` value
+schema-invalid and taken out `probe set`'s `{"$path": …}` LOM-object assignment.
+The point is explicitness, not narrowing: the set of values `probe set` accepts
+is the set it accepted before. #508's server-side coercion is untouched; #508
+rejected typing *as a substitute for* it, not typing alongside it.
+
+**Two corrections to what this item claimed.** The fix is not expressible in
+`actions/probe.py` — `ParamSpec` has no schema hook, so it lands in `server.py`,
+which `_FINGERPRINT_PATHS` does not include. So #537 **forces no re-vendor** and
+takes effect on an MCP server restart; the release's re-vendor comes from other
+work. And #526's blocker dissolves rather than needing a solution: its real
+defect is the same empty-schema bug one level down (`args` emits `items: {}`),
+which is a re-scope, not a fix here.
+
+**#532's second symptom was already fixed, three months earlier.** It claimed a
+`load` onto a rendered track leaves the new device after the tap, so the stem
+under-measures while the master does not. The harm is not reachable:
+`render(start)` calls `ensure_analyzers_loaded` in its preamble, which deletes
+and re-adds a non-terminal analyzer so it is terminal *before* any capture. That
+self-heal shipped 2026-06-13, and its own comment describes this exact case. The
+reporter saw the post-load chain order and inferred a consequence the sweep
+prevents — their recorded workaround is what the sweep does unattended. So this
+needed no MCP change, and the item's cross-package re-vendor argument and its
+open "where does the predicate live" question both dissolve. (The second was
+already answered in-tree: the dependency direction is MCP→engine, each side
+defines its own constant, and a drift-guard test keeps them equal. A second guard
+now does the same for the sidechain-enable hints, which were duplicated across
+the same boundary with nothing watching them.)
+
+**What the fakes cannot prove, and is not claimed.** Every chunk landed with unit
+coverage against fakes, and fakes are what let all of this survive: the fake
+chain was built from the DB's own rows, so a live chain holding a device the DB
+does not author was not merely untested but *unrepresentable*. It can hold one
+now. Six checks that need a real Live — a restore with the tap surviving, a
+genuinely refused write, the shortfall journal not blocking its own recovery, a
+mid-flight journal still refusing, the MBD warning firing once while seven
+Compressors stay quiet, and a string reaching `probe set` from a real client —
+are queued in `operator-verification.md`. #291's witness box, which failed twice
+on 2026-09-10, is unblocked for the first time.
+
+## 2026-09-10 — A chain rebuild could not carry a single parameter, and the fake said it could
+
+<!-- prawduct: type=fix | scope=CHAIN-RESTORE-STR -->
+
+`chain-rebuild`'s whole purpose is to swap a device without destroying the
+dialed state below it. It had never once done so. `_param_write_kwargs`
+returned `{"value": float(value)}` on the continuous branch while
+`ableton_device set_parameter` declares `ParamSpec(name="value", type="str")`,
+so validation refused every write before it reached Live and the captured
+values stayed in the journal. The enum branch beside it already passed a
+display string and worked, which is why the defect was one branch wide and
+nothing noticed.
+
+Found on first contact with a real chain, during the #291 operator sitting:
+all 41 EQ Eight params and all 5 Erosion params failed in one run, each with
+`param 'value' must be str, got float`.
+
+**The wire form is confirmed against Live 12.4.5**, not merely reasoned: the
+same sitting's tolerance probe wrote `{"value": <stringified float>,
+"value_type": "continuous"}` over the real wire for 29 continuous params
+across Analog, EQ Eight and Erosion, and every write was accepted rather than
+refused. That — validation admits the string form — is the whole of what this
+confirms, and it is what the defect needed.
+
+It confirms nothing about round-trip fidelity. Those 29 writes re-wrote each
+parameter's EXISTING value, which Live short-circuits, so their exact-0.0
+result measures nothing; the sitting records that pass as worthless for
+tolerance and it is not evidence here either. Fidelity is #534's question, its
+numbers come from a separate perturbing pass, and the deltas there are not
+float32 representability — the largest are integer-stepped params
+(`Note PB Range` written 41.424, read 41).
+
+`str` rather than `repr` — identical for floats, but `push.devices`'s
+`_param_value_kv` already produces this same wire field with `str`, and two
+producers of one field that choose differently is how they drift apart.
+
+**Why the suite never caught it, fixed at the root.** `FakeLive.send`
+dispatched `dict(req.params)` with no validation, so a wrong-typed param
+passed the fixture and failed only against Ableton. It now runs the real
+`validate_params` against the real registered `Action`, and **fails closed** —
+an unregistered pair raises rather than silently switching validation off,
+which would reintroduce this defect's exact shape. Holding the fake to the
+wire's contract turns 20 existing tests red against the old code: the coverage
+was always there, only the contract was missing.
+
+**What this unblocks, and what it exposes.** #532 (an off-by-one that puts a
+restore on the wrong same-class device) previously had every write refused
+anyway; those writes now land, so its severity rises. #534 (`_PARAM_EPSILON`
+is absolute where the float32 error is relative, and blind to stepped params)
+governs a verify comparison that until now had nothing to compare.
+
+## 2026-09-10 — Every open bug, and the surfaces that had been reporting them fixed
+
+<!-- prawduct: type=fix | scope=BUGSWEEP-0910 -->
+
+The owner asked for every open bug closed on one branch, with subagents where
+they would not conflict. All twenty-two `kind: bug` items sat at `stage: ready`,
+each carrying its own requirements and design from the 2026-09-10 readiness
+pass — so this was not a design cycle. It was a partition problem and, far more
+than expected, an integration one.
+
+Twelve chunks: eleven built by worktree-isolated delegates against disjoint file
+sets, one taken here. Every delegate's file ownership was stated in its brief and
+none crossed it except where a brief was wrong. The partition's one error ran the
+safe way — #291 turned out not to touch `push_execute.py`, so two chunks held
+apart for a collision that did not exist went out together instead.
+
+**What the bugs had in common.** Very few were wrong arithmetic. Almost all were
+a surface stating something untrue, confidently, on the success path:
+
+- **#222** printed *"None. This song uses only Live's built-in devices"* over a
+  song whose Drum Rack lives in an Ableton Pack — an affirmative wrong answer to
+  the one question REQUIREMENTS.md exists to answer. The signal was already in
+  the DB, in two columns compat had never read.
+- **#516** returned a **real** device that was not the one loaded, which is the
+  worst failure shape available: nothing downstream can tell it is wrong, and
+  `device_index` feeds push's device linking.
+- **#481** made better authorship read as worse: a ramp authored as 64 fine steps
+  produced 64 `not_realized` findings where a coarse one produced two.
+- **#475** turned a 120 ms automation edge into a step on a 400 ms grid and
+  reported `ok` — on a song whose entire subject was the perceptibility of that
+  edge.
+- **#515** called `Clip.envelope_for_note`, a method Live has never shipped, and
+  a test fake for it kept the suite green over three load-bearing call sites.
+- **#291** lost every downstream effect's dialed parameter state on an instrument
+  swap, which on a tuned chain is mix work destroyed rather than a bug.
+- **#496** raised an alert on correctly-authored multi-meter songs forever, which
+  costs the alert channel its meaning for the cases that are real.
+- **#322** raised `TimeoutError` while the work was still executing on Live's
+  main thread — Python cannot interrupt a running Live API call, so the timeout
+  was only the caller looking away — and released the single-flight gate on that
+  path, admitting exactly the retries that stack more work behind the op still
+  running. That is the beachball the operator force-quit.
+
+**#328 was investigated and closed as not reproducible**, and it corrected its
+own issue on the way: the claim that each per-branch DB carries its own
+fingerprint state is false — `.last-notes-push.json` is a fixed filename in the
+song directory, so every branch's DB shares one ledger. That makes the confound
+different, not weaker, and it still explains the report. Its root cause was
+already fixed and closed.
+
+**#275 could not be closed here** and is not claimed as closed. Its acceptance
+criterion is a measurement only a live Ableton set can make. What was closable
+was the question the issue also asked — *is the device-load path reliable?* — and
+the answer was no: the cross-machine fallback inferred its browser root from the
+device kind (filing every audio effect under `instruments`), took the first
+substring hit, and never compared what loaded against what the song authored, so
+an authored Hybrid Reverb could be replaced by a stock one inside a green push.
+It now reads the root and folder Live recorded at capture time, prefers the match
+at that exact path, and refuses any load whose class is not the authored one.
+
+**The integration work was not merging.** Three patterns recurred often enough to
+be worth recording:
+
+1. **A landed column nobody writes is a requirement half-done, not descoped.**
+   #496 R1 covers three tables; the delegate that owned the schema could not
+   reach `score.py`, so `sections.bar_ruler` shipped inert. Finishing it was the
+   difference between a requirement met and a requirement filed.
+2. **A fix that removes a step has to remove every pointer to it.** #476 replaced
+   an unrunnable pytest invocation, and `scaffold`'s own next-steps print — read
+   immediately *before* the fixed step — still named the old one.
+3. **Docs describe the bug, so fixing the bug falsifies the docs.** Nine
+   documents asserted behaviour these fixes overturned, including two that
+   described a permanent API absence as a Live-version limitation, which reads as
+   *pending an update*.
+
+**Four follow-ups were filed rather than folded in** (#526–#529), each with the
+reason it was not fixed here: a real design question, a shared-config change that
+would have disturbed running delegates, an explicit non-goal of its parent, and a
+gap whose fix lives in a file the boundary reserved.
+
+**Three fixes could not be proven here, and none is claimed as proven.** #322's
+fence holds against a wedged scheduler in tests and cannot be shown to hold
+against Live dropping a scheduled callback; the design has no timed auto-clear
+by choice, so that state is recoverable only by an operator who knows to look.
+#291's verify tolerance was reasoned, not measured. #519's exclusion predicate
+names two Live class strings nothing here can read. All three are on the
+operator queue with what would settle them.
+
+**Three operator sittings are queued.** Three fixes are inside the MCP fingerprint
+paths and reach no live session until the vendored copy is replaced, so their
+verdicts are unknowable rather than passing; #291's `alien` witness and its
+`_PARAM_EPSILON` tolerance need real Live float behaviour, not a fake's.
+
+**Addendum 2026-09-10 (after the sittings ran) — two of the three unproven
+fixes are now measured, and the claim above is narrowed accordingly.**
+
+- **#322's fence is real for the case it models and inert for the case in the
+  report.** Verified against Live 12.4.5: the admission gate refuses concurrent
+  callers naming the running operation and its elapsed time, and `bout_status`
+  answers under a bout-fenced main thread. But the escalation path was never
+  reached, because it cannot be: under a real Ableton export that blocked Live's
+  main thread for 61.5s — four times the ceiling, correlated against the gap in
+  Live's own log — both in-flight calls died as bare 20s socket timeouts, no
+  escalation was generated, and `bout_status` timed out with them. The whole
+  request path stalls before any fence logic runs. **So the bullet above should
+  be read as: the single-flight gate no longer admits stacking retries, which is
+  true and verified. The beachball itself — Live blocked by its own modal work — is
+  NOT addressed by this fix.** Filed as #531.
+- **#291's `_PARAM_EPSILON` is now measured, and it is wrong in two ways**: the
+  float32 round-trip error is relative (1.335e-07 at a value of 4.11, 5e-09 for
+  normalized params) while the epsilon is absolute, and integer-stepped params
+  breach it outright (wrote 41.424, read 41). Filed as #534. The witness itself
+  failed for two further defects the fake `send_fn` cannot model — #532 and #533.
+- **#519's two Live class strings were confirmed** and that sitting is discharged.
+
+Nothing in the entry above is retracted; the fixes landed as described. What is
+narrowed is the scope of what #322 fixes, which the entry's own "none is claimed
+as proven" already anticipated. Evidence: `.prawduct/operator-verification.md`
+§ #322 and § #291.
+
+**The review found the sharpest defect in the sweep, and it was in the
+coordinator's own work.** The #275 guard compared the loader's answer
+(`class_display_name` — "Hybrid Reverb") against `devices.class_name` (Live's
+internal "HybridReverb"). Two namespaces, so it would have refused every
+*correct* substitution and disabled the cross-machine recovery it was written
+to protect. It passed because the fixture asserted the same contradiction — a
+test built from the same misunderstanding as the code confirms the
+misunderstanding rather than catching it.
+
+Three review rounds, and each found something the previous fix introduced:
+
+1. Thirteen fixed, four accepted. Beyond the blocking one, the recurring
+   shape was a **contract only one caller learned** — two delegates authored
+   in parallel against the same wire, and the escalation reply that means "still
+   running" was resolved in one caller and unwrapped as success in the other.
+2. Both new operator-facing refusals shipped **untested**, including the
+   coupling that mattered most: `resume` reaches the destructive phases
+   directly and so bypasses the journal-overwrite guard — correct today, and
+   exactly what a later refactor breaks silently.
+3. The fix for (1) closed the wire contract at two sites when it needed closing
+   **by construction**, and a docstring I wrote to explain the remaining raw
+   seam named a consumer that does not exist — while two destructive
+   index-based delete loops, its real consumers, stayed escalation-blind. Every
+   engine seam that resolves the client send is escalation-aware now, so a
+   module written tomorrow inherits the contract without knowing it exists.
+
+The pattern worth keeping: **a green suite is evidence about what could have
+made it red.** Three of the defects above passed a green suite because the
+fixture, the fake, or the assertion carried the same wrong assumption as the
+code — a fake for a method Live has never had (#515), a fixture asserting two
+namespaces are one (#275), and an assertion matching digits rather than the
+quantity it meant, which failed 4% of runs for a reason unrelated to its
+subject.
+
+## 2026-09-09 — The release blockers: seven defects that would have shipped, and two of them were in the release mechanism
+
+<!-- prawduct: type=fix | scope=RELBLK-V19 -->
+
+The owner asked which backlog items gate a release, ratified the resulting Tier-1
+list, and approved filing the one defect that had no issue. Seven chunks, built by
+delegates on a disjoint partition, plus one bug filed as **#518**.
+
+Two of the seven are defects in the **release mechanism itself**, which is why they
+blocked rather than merely queued. **#310** — eleven entries are vendored into
+Live's User Library but sit outside `_FINGERPRINT_PATHS`, so Live silently runs
+stale code on a green handshake; `docs/release-process.md` step 5 derives the
+consumer-facing `Re-vendor:` verdict from exactly those paths, and its
+consumer-facing section told a release cutter that an unflipped fingerprint meant
+"nothing to do". An advisory content fingerprint now spans the whole vendored set
+beside the hard one, never blocking, and step 5 gained a third verdict,
+`Re-vendor: recommended`. **#518** — the push CLI's version-mismatch recovery told
+the user the `+<sha>` suffix was "the commit it was vendored from" and handed them
+`git worktree add <sha>`. It is a content fingerprint; `git cat-file` rejects it.
+A version mismatch is what a release *causes*, so this was the recovery path for
+the release's own upgrade failure, and that recipe was #388's own shipped
+resolution — a regression against its acceptance, not a gap.
+
+The rest: **#505** a replace that cannot succeed no longer deletes the clip first
+(the fake LOM learned track kind, which is why wave 1 deferred it); **#514**
+capture excludes an untouched default scaffold track, and renumbers survivors by
+dense rank (see the caveat below);
+**#501** the compat check answers for samples through a second entry family whose
+status vocabulary is deliberately disjoint from `DeviceStatus`; **#509** an
+arrangement audio copy is bounded to its authored span; **#498** the render arms
+the analyzers AFTER the locate.
+
+**#498 is a capture that lied by about a beat.** The M4L patch resets `prev_beat`
+to -1 on the arm rising edge, which leaves the start detector's
+`prev_beat < start_at_beat` clause unconditionally true — so an armed patch fires
+on the first `current_song_time` change of ANY kind, and the locate that followed
+the arm was exactly such a change. `sfrecord~` opened at the seek and captured the
+wall clock before the transport rolled, so every per-section window in an affected
+report sat about 1.1 beats early and nothing downstream could notice. It only bit
+when the locate actually moved the playhead, which is why the same set produced
+two good renders and one bad one minutes apart. Moving the arm below the locate
+makes the transport the first post-arm movement. `_set_arm_on_all`'s docstring
+claimed arm timing was irrelevant to the recording boundary — true of the latency
+BETWEEN arms, not of ordering, and that wrong "why" is what made the original
+order look safe.
+
+**#509 was re-scoped by a probe that had already been run.** Row 27 of
+`lom-probe-results.md` records that `end_marker`/`loop_end` are writable on both
+placement routes while `Clip.end_time` has no setter, so the trim the issue
+assumed is unreachable and the block extent is a permanent Live limit, not a gap.
+Every surface that told the user to "trim in Live" was corrected, including
+`capability-truth.md`, which declares itself unable to lag.
+
+**One upgrade boundary is NOT closed, and it is named rather than implied.** The
+dense renumber is what makes the exclusion converge, but it also shifts every real
+track's index — and replay keys on `(song, track_index)` with no name
+reconciliation and no prune. So replaying a post-fix snapshot into a DB built from
+a pre-fix one can take a row's name onto a different row and leave the original
+behind at its old index. The snapshot-refresh joins that carry `browser_path` and
+preset seeds now fall back to a unique track name, and replay WARNS when a rename
+ORPHANS the row the name came from — narrowly, because a rename is ambiguous by
+itself: renaming a track in Live and re-capturing yields the same (index, old,
+new) triple and nothing is wrong on that path. What separates them is whether the
+incoming name also sits at another index, which is the row about to be stranded.
+The reconciliation itself is a design question (is a capture authoritative over
+track layout, or only over the mix?) that a release-blocker cluster is the wrong
+place to settle — tracked as #524. Deleting a user's track rows to fix it would be worse than the
+rename.
+
+**Tests corrected, not weakened** — each encoded the defect its chunk fixes.
+`test_replace_that_fails_to_recreate_says_the_slot_is_now_empty` asserted the clip
+was destroyed on a wrong-kind replace (retargeted to a failure the pre-check
+cannot foresee, so the disclosure contract stays pinned). Three pin recovery tests
+asserted `"git worktree add" in text`. Three chunk-07 tests encoded the pre-probe
+belief. And `test_execute_skips_the_region_pass_when_the_placement_failed` was
+**vacuous**: failing every `ableton_clip:create` halts the session-clips phase, so
+the arrangement phase never ran and the assertion held over a push that could not
+have written a region whatever the code did. It now fails only the arrangement
+create and asserts the phase actually ran.
+
+**The Critic caught a defect in the fix for a Critic finding.** The first review's
+R-9 said the region pass sat behind the devices phase's convergence guard, so one
+failed call withheld the region from every copy that landed. The fix for it added
+three operator warnings that all claimed "re-pushing an unchanged song will not
+retry them" — false, because the arrangement phase is an unconditional
+clear-and-rebuild projection and a re-push does retry. The verify pass blocked on
+it. The counts were wrong in both directions too: the "bounded N" alert was
+emitted before the executor's filter ran, and the withheld count counted calls
+rather than copies, doubling every number.
+
+**Re-vendor: REQUIRED.** `handlers/clip.py`, `actions/clip.py` and
+`handlers/render.py` are all inside `_FINGERPRINT_PATHS` — the tuple names the
+`handlers` and `actions` DIRECTORIES, not a file list — so the handshake
+fingerprint flips away from `6283768de096`, which is what `develop` carries. A
+consumer who skips the re-vendor gets a server that refuses every call.
+
+The post-flip value is deliberately NOT written here. It is a content hash over
+the whole wire-shape tree, so every later commit touching one of those
+directories moves it — it moved twice while this entry was being written, and
+each stale literal was a number an operator would have compared against and
+concluded the handshake was already right. Read it from the code, which cannot
+go stale: `hallucinote_mcp.compute_version_for(<pkg_root>)`.
+`docs/release-process.md` step 5 is where the cut records the value that ships.
+
+The bundle also touches `install_paths.py`, `install_ops.py`, `__init__.py` and
+`resources/guides/error-recovery.md`, which are vendored but NOT fingerprinted.
+Those alone would have been `recommended` — the advisory this release adds is
+exactly what reports them. They do not lower the verdict; the fingerprint-bearing
+pair sets it.
+
+**One change here is not a chunk, and it is the reason the rest can be believed.**
+`project-state.yaml` had no `test_command`, so `test-evidence record` had been
+falling back to the hook interpreter's own pytest — not the locked environment
+`project-preferences.md` says a green claim must come from. The gate that reads
+that evidence is the release gate, and this bundle exists because defects in the
+release mechanism ship quietly. The canonical invocation is declared now, so what
+the recorder runs is what the project calls green.
+
+Follow-ons filed rather than absorbed: **#519** (scaffold returns ship with
+devices, so the untouched predicate can never reach them), **#520**
+(`devices.audio_file` has the identical false-clean), **#521** (the advisory
+compares the invoking interpreter's package, not the running server's), **#522**
+(the region write assumes Live warped the file), **#523** (post-apply dispatch is
+a second `phase.name ==` special case). Nine operator-verification boxes are
+queued: every assertion behind these seven chunks is unit-level.
+
+## 2026-09-09 — A sample is now something the music can be derived from
+<!-- prawduct: type=feature | scope=SMP-6V2K-W2 -->
+
+SMP-6V2K wave 2, built by eleven parallel delegates on a file-disjoint partition and three
+more in a second wave, integrated on `plan/smp-6v2k-w2`. What a song can now do with a
+sample beyond placing it: **keep it** — `hallucinote asset add` normalizes a file under
+`assets/sources/` and records its provenance in `assets/manifest.json`; `derive(line, ...)`
+in `build.py` runs a recipe (trim, fade, normalize, reverse, pitch shift, stretch-to-bars,
+chop-at-onsets, carve / vocode against a symbolic or measured reference) into a
+content-addressed cache under `assets/derived/`, so a `reverse=1` row places the reversed
+file in the session and the arrangement; **hear it** — a second audio front door
+(`audio/sample_io.py`) and feature streams in seconds mapped to beats through the clip's
+placement (F0, formants, energy and spectral descriptors, onsets and phrases), detectors
+with musical gates, a follower generator that turns a contour into a part with the key as
+a parameter, and `hallucinote sample-lens` / `/sample-lens` rendering the reading against
+bars; **play it** — a Simpler row's `audio_file` is assigned on push (`assign_sample`, a
+new `ableton_device` action; the wire fingerprint flipped) and captured back; and the mix
+report can carry a per-turn speech-over-bed measurement (`speech_track=`), numbers only
+under the 2026-08-10 analyzer-freeze ruling. Wave-1 leftovers closed: pull links the
+audio clip it ingests (#507), the clip mutators refuse slot 0 (#473). Deferred at
+dispatch: source separation (#266). The Live session (sampler, reverse, the #509 and
+Sampler probes, the first hearing) RAN on 2026-09-09 against Live 12.4.5 —
+`operator-verification.md` has it box by box and `lom-probe-results.md` rows
+21-31 hold each verdict with its literal response. Sampler assignment and its
+idempotence, the hand-drop capture round trip, and reverse in both the session
+and the arrangement all passed. Two things did not and are recorded as open:
+the symbolic carve was never pushed, and the first hearing's musical result was
+not accepted by the operator ("it does not really read as tracking") — the
+pipeline ran end to end on real material, the music did not land. R6.2 was
+decided by ear: **Rubber Band**, which commits the R4.3 path to a non-Python
+binary dependency. The CLIs shipped are `asset`, `derived`, `sample-lens` and
+`stretch-ab`.
+
+`SCHEMA_VERSION` does not move (D17): `SectionReport.intelligibility` defaults to `None`,
+so a reader written against `"1"` still loads a report that carries it and still means the
+same thing by every field it already knew. The bar for a bump is a change to what an
+existing field MEANS, because bumping makes every existing report un-diffable
+(`compare.ensure_comparable` refuses across versions).
+
+One-time cache churn to expect: a file derived through `derived.derive` or a
+`Recipe` before this landed was addressed without its reference fingerprint, so
+it now resolves to a different address and the old file becomes an orphan.
+`hallucinote derived prune` will list a long set the first time after this
+change — that is the fix working, not a defect, and every file in it is
+regenerable from its source and recipe.
+
+`hallucinote derived prune` reads what the song's clips and devices point at, which is a
+mixed set — a song references its ingested sources as well as its derived files — so an
+addressed path naming nothing in the cache keeps nothing rather than raising. It refuses
+outright when it cannot read the song's DB at all: an empty reference set is
+indistinguishable from a complete one at the point where it would condemn every file in
+the cache, and only one of those is an answer.
+
+Tests consolidated: `test_reverse_is_refused_loudly_but_the_clip_is_still_placed` into
+`tests/unit/sync/test_push_clips_reverse.py`, which pins the contract that replaced it;
+three fixtures that used `slot=0` incidentally now use 1. `recipes.prune`'s contract
+changed deliberately: it raised on an addressed path that named no derived file, which
+contradicted its own docstring and made the CLI traceback on any song with a source.
+
+## 2026-09-09 — The audio path ran against Live, and the one silent replace it found now speaks
+
+<!-- prawduct: type=bugfix | scope=SMP-6V2K -->
+
+SMP-6V2K wave 1's live clauses are discharged on Live 12.4.5 (`.prawduct/operator-verification.md`
+→ SMP-6V2K wave 1, box by box; `capability-truth.md`'s audio row now says live-verified). The
+run surfaced one defect, fixed here: an unlinked audio row pushed into a slot Live already holds
+a clip in — the seam a pull-ingested clip falls through, since pull writes no link (#507) —
+plans `create(replace=True)`, whose delete happens inside the handler, and said nothing about
+it. The code comment and `capability-truth.md` both claimed the cost was stated in the create's
+purpose; purposes never reach `execute`'s output. `plan_push_clip` now alerts on the operator
+channel whenever the probe shows the slot occupied, naming the clip Live holds, the file it is
+rebuilt from and the warp markers that do not survive; an empty or unprobed slot stays silent.
+Two planner tests pin both halves; the alert was seen on a live push.
+
+## 2026-09-09 — Push acts on the probe's verdicts: a re-pointed sample is recreated with its ride, and an envelope-hosting audio placement duplicates
+
+<!-- prawduct: type=feature | scope=SMP-6V2K -->
+
+The two `plan.blocked` refusals chunk 03 shipped pending the Live probe are gone, replaced by
+the rule its recorded verdicts license (`lom-probe-results.md` rows 16-17). In the clips phase
+a linked audio row whose `audio_file` changed — or whose slot Live reports as holding a MIDI
+clip — now plans one sequence: an explicit `delete` (new ack-only key `clip_delete:`), the
+`create` at the same slot, the full conform, then every envelope the row hosts written again,
+because `Clip.file_path` is read-only, a create into an occupied slot is a hard error, and a
+recreate drops the clip's envelopes. The re-emit reuses the envelopes phase's own planner
+through a new per-clip entry point (`plan_push_envelopes_for_clip`, over
+`envelope_hosts_by_clip`) rather than a copy, so the route table has one home; the recreate
+is announced as an alert. In the arrangement phase an audio placement whose source clip hosts
+an envelope takes the duplicate-onto-cleared route exactly as a MIDI one does — the duplicate
+carries the ride off an audio session clip, and the conformed session clip with it, so the
+per-placement conform gap stops firing for those rows and keeps firing for envelope-free
+direct creates. Only envelope-hosting rows duplicate: the extent gap is route-independent and
+filed as #509 rather than widened into here. The MCP handler's teaching-error mapping
+gains Live's third path shape (`Please provide an absolute path`), which flips the wire
+fingerprint — re-vendor before the live checks. `capability-truth.md`, the sync-boundary
+contract (phases 6 and 13) and `operator-verification.md` (chunk 03's live clause re-queued
+over the two new paths) track it; nothing in `sync/push` cites chunk 01 as pending.
+
+The cumulative review's fixes landed as one batch. Pull now rules an absent audio clip or
+placement on its **link**, not its kind: a linked one was in Live and is a real deletion, an
+unlinked one may be a push refusal (sample not on disk) and is kept and reported — the
+session and arrangement passes had reasoned in opposite directions. The arrangement phase's
+extent gap and untouched-audio-track summary moved from `notes` (the channel the executor
+discards) to one `alert` per phase, so the operator actually sees what the records claimed
+they did. The sample-resolution chain, the audio create call and the sub-plan merge each got
+one home (`resolve_authored_sample`, `_audio_create_call`, `PushPlan.absorb`); a duplicated
+path helper was deleted; the set_property tip stopped offering a Simpler Reverse parameter
+the probe found does not exist; README, known-issues and the pull skill stopped claiming a
+working round trip the capability table rates ◐, and now say a pulled-in clip is *staged*
+into the regenerable DB rather than made source. #504's in-wave fix is recorded as such;
+wave 2 and wave 3 are filed as #511 and #510.
+
+## 2026-09-09 — The probe session settles the reverse contract and the recreate semantics
+
+<!-- prawduct: type=research | scope=SMP-6V2K -->
+
+SMP-6V2K chunk 01 ran against Live 12.4.5 through the shipped `ableton_probe` bridge, and
+every question the wave had left open now has a recorded call and a literal response
+(`docs/research/audio-first-class/lom-probe-results.md` rows 14-20, raw records in the
+JSONL). A Live `Clip` has no reverse, and neither does Simpler — its `reverse()` is a
+destructive method that writes a derived file — so `clips.reverse` materializes only as a
+reversed derived asset, which the schema comment and design D6 now say. The warp-mode map is
+pinned by the one gap Live leaves (REX refused on a WAV). Creating into an occupied slot is a
+hard error, a delete-and-recreate drops the clip's envelopes, and `duplicate_clip_to_arrangement`
+carries a ride off an audio session clip exactly as off a MIDI one — a control duplicate
+without an envelope was run so the `automation_state` flip could be trusted. Live also
+checks path absoluteness before existence, a third error shape row 1c never saw.
+
+Two things fell out of running the write path instead of reading about it. Simpler's sample
+assignment via `replace_sample` and its `Sample` surface are recorded for wave 4 (#330), and
+`ableton_probe(set)` turned out unable to write an int from this client — its untyped
+`value` arrives as a string — which is backlogged as #508 with a repro. The two push refusals that
+cited this chunk are now **chunk 07** in the plan; they stay in force until it is built, and
+`capability-truth.md` says exactly that.
+
+## 2026-09-09 — A sample is song material: audio clips place, conform and round-trip
+
+<!-- prawduct: type=feature | scope=SMP-6V2K -->
+
+Audio clips reach Live. An audio file referenced from `build.py` places into a session
+slot with its warp mode, transpose, gain and markers as authored, and into the arrangement
+as a placement; a clip dragged into Live by hand comes back into the song's source on pull,
+in a portable path form; and a volume ride or send throw authored under an audio clip
+pushes, because an audio host now routes exactly like a MIDI one. The DB has modeled all of
+this since CLP-AUD1 and the LOM calls were probe-confirmed on 12.4.1 — this wave is the
+wiring between them. Closes the `audio_path_deferred` no-op, the two push refuse-loudly
+paths, the pull refusal, and the `refused_audio` envelope route.
+
+**The read half was the gap nobody had noticed.** `list` reported a clip's name and length
+and nothing else — no discriminator, no file path, no warp state — so pull could never have
+ingested audio at all. Found by reconciling the plan against its own requirements before
+building, which is the one place that gap had no owner: it sat at the far end of the
+dependency chain, in a chunk whose builder would have had no authority to change the wire.
+
+**What it deliberately does NOT do**, because guessing would be worse: re-pointing a clip
+at a different file, and an arrangement placement whose clip hosts an envelope, both refuse
+loudly and name what is unknown. `Clip.file_path` is read-only, so a re-point is a
+delete-and-recreate, and whether a recreate preserves the clip's envelopes has not been
+probed — a recreate could drop an authored ride, and re-emitting one "just in case" could
+double a ride that survived. The arrangement copy also carries no conform: Live's direct
+arrangement-create takes no properties and the planner cannot address the new clip until
+after the call returns, so the run reports that gap rather than implying a conform it did
+not apply.
+
+**Nothing regresses the MIDI path**, and that is measured rather than asserted: a
+concurrent song session pushed a pure-MIDI set through this branch's engine — 58/58 clips,
+116/116 arrangement placements, `verify-arrangement` faithful with no orphans. Both
+rewritten modules met a real set. The audio path itself has NOT been live-verified, and
+`capability-truth.md` says so: its new audio row ships at partial, not full.
+
+Also corrected here, because they had quietly become false: four surfaces still describing
+the refusals this wave removed (the agent-facing `gaps.md`, `terminology.md`, `README.md`,
+`song-authoring-conventions.md`), `authorship-model.md`'s claim that Live won't create
+session audio clips, and `schema.sql`'s promise that `clips.reverse` materializes at push —
+Live exposes no settable reverse at all, so the clips phase refuses a row that sets it.
+
+Deferred with citations rather than carried: #504 (the arrangement integrity assert's
+blindness to a dropped audio placement — fixed here, since this wave made that path
+destructive), #505, #506, #507.
+
 ## 2026-09-09 — Doc deep-links: the parity check now covers every link, not one file
 
 <!-- prawduct: type=bugfix | scope=docs-hygiene | status=shipped -->

@@ -3,7 +3,11 @@ from __future__ import annotations
 
 import pytest
 
-from hallucinote.capture import SNAPSHOT_SCHEMA_VERSION, replay_capture
+from hallucinote.capture import (
+    SNAPSHOT_SCHEMA_VERSION,
+    replay_capture,
+    unreadable_sidechain_source_warning,
+)
 from hallucinote.db import init_db, mutations as M, queries as Q
 from hallucinote.sync import push
 from hallucinote.sync.push._core import build_node_addr
@@ -1216,3 +1220,201 @@ def test_push_addresses_a_nested_rack_chain_with_a_path(
         terminal="chain",
         chain_index=2,
     )
+
+
+# ---------- #536: an armed sidechain with no routing surface warns ----------
+
+
+_UNREADABLE = "sidechain source NOT machine-readable"
+
+
+def _armed_device(conn, session, track_id, *, display_name="MBD", linked=2):
+    """A device on `track_id` whose sidechain is ARMED (`S/C On` dialed on) and
+    which carries NO sidechain source — the #536 DB state after a capture of a
+    Multiband Dynamics whose source only ever existed in Live's UI."""
+    cid = M.create_device_chain(conn, parent_track_id=track_id)
+    did = M.create_device(
+        conn, chain_id=cid, position=1, kind="Multiband Dynamics",
+        display_name=display_name,
+    )
+    if linked is not None:
+        M.link_db_to_ableton(
+            conn, session_id=session, db_kind="device", db_id=did,
+            ableton_index=linked,
+        )
+    M.set_device_parameter(
+        conn, device_id=did, name="S/C On",
+        value_display="On", value_normalized=1.0,
+    )
+    return did
+
+
+def test_plan_push_device_sidechain_probes_armed_device_without_source(
+    conn, song, session, linked_track,
+):
+    """#536: whether Live exposes a sidechain SOURCE surface is a LIVE fact the
+    DB cannot hold, and it is the only thing separating "the source is merely
+    unset" from "the source can never be captured, so this push just erased it".
+    The phase asks — one read, keyed so the apply step can answer."""
+    did = _armed_device(conn, session, linked_track)
+    plan = push.plan_push_device_sidechain(conn, song_id=song, session_id=session)
+    assert len(plan.calls) == 1
+    call = plan.calls[0]
+    assert call.tool == "ableton_device"
+    assert call.args["action"] == "get_input_routing"
+    assert call.args["track_index"] == 5
+    assert call.args["device_index"] == 2
+    assert call.key == f"device_sidechain_probe:{did}"
+    # The probe itself is not a warning — nothing is known yet.
+    assert plan.alerts == []
+
+
+def test_plan_push_device_sidechain_does_not_probe_an_unarmed_device(
+    conn, song, session, linked_track,
+):
+    """A device with dialed params but its sidechain OFF emits nothing — the
+    predicate is a conjunction, and a dialed-params device is the common case."""
+    cid = M.create_device_chain(conn, parent_track_id=linked_track)
+    did = M.create_device(
+        conn, chain_id=cid, position=1, kind="Compressor", display_name="C",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=did, ableton_index=2,
+    )
+    M.set_device_parameter(
+        conn, device_id=did, name="Threshold",
+        value_display="-18 dB", value_normalized=0.4,
+    )
+    M.set_device_parameter(
+        conn, device_id=did, name="S/C On",
+        value_display="Off", value_normalized=0.0,
+    )
+    plan = push.plan_push_device_sidechain(conn, song_id=song, session_id=session)
+    assert plan.calls == []
+
+
+def test_plan_push_device_sidechain_does_not_probe_when_a_source_exists(
+    conn, song, session, linked_track,
+):
+    """An armed device that DOES carry a source needs no surface check: the push
+    is about to write that source, and the write itself is the answer."""
+    did = _armed_device(conn, session, linked_track)
+    kick = M.create_track(conn, song_id=song, track_index=9, name="Kick", kind="midi")
+    M.set_device_sidechain(conn, device_id=did, source_track_id=kick)
+    plan = push.plan_push_device_sidechain(conn, song_id=song, session_id=session)
+    assert [c.args["action"] for c in plan.calls] == ["set_input_routing"]
+
+
+def test_plan_push_device_sidechain_skips_surface_check_on_unlinked_device(
+    conn, song, session, linked_track,
+):
+    """An unlinked device has no Live address to probe — defer (diagnostic note),
+    never emit a call addressing a device_index that doesn't exist yet."""
+    _armed_device(conn, session, linked_track, linked=None)
+    plan = push.plan_push_device_sidechain(conn, song_id=song, session_id=session)
+    assert plan.calls == []
+    assert any("sidechain-surface check" in n for n in plan.notes)
+
+
+def test_apply_warns_when_probe_reports_no_routing_surface(
+    conn, song, session, linked_track,
+):
+    """The push succeeded and still destroyed something: the device came back
+    ARMED and pointed at nothing. The warning names the device and the track by
+    NAME (the operator's handles, not Live indices), says what happened, and says
+    what to do.
+
+    No ``notes_sink`` here, so this drives the FALLBACK: the warning is never
+    silently dropped just because a caller gave no benign channel. The channel
+    the real push uses is pinned by the test below.
+    """
+    did = _armed_device(conn, session, linked_track, display_name="Glue MBD")
+    warnings = push.apply_push_results(
+        conn,
+        [{"key": f"device_sidechain_probe:{did}", "ok": True,
+          "tool": "ableton_device",
+          "result": {"device_index": 2, "has_input_routing": False,
+                     "parent_kind": "track", "track_index": 5}}],
+        session_id=session,
+    )
+    assert len(warnings) == 1
+    msg = warnings[0]
+    assert "'Glue MBD'" in msg
+    assert "track 'Drums'" in msg
+    assert "build.py" in msg
+    assert "Re-set the source by hand" in msg
+    # Pinned against the SHARED text, not a paraphrase: capture emits the same
+    # sentence under a "capture: " prefix, and the only way the two surfaces can
+    # say different things about one condition is if one of them stops using it.
+    assert msg == "device_sidechain: " + unreadable_sidechain_source_warning(
+        ["'Glue MBD' on track 'Drums'"]
+    )
+
+
+def test_the_sidechain_warning_rides_the_printed_channel_not_the_errors_file(
+    conn, song, session, linked_track,
+):
+    """Channel, not just content. The returned list becomes `error_records` in
+    `.last-push-errors.json`, which a clean push does not print — and a push
+    whose only finding is this condition IS clean, because nothing failed to
+    record. So the operator's single cue that a hand-set sidechain source is gone
+    would never reach them.
+
+    It goes to `notes_sink`, which feeds the report's "Warnings (push still OK)"
+    section. The queued #291 sidechain box asks for exactly that — "both surfaces
+    name the MBD and its track" — and could not be satisfied from push output
+    otherwise.
+    """
+    did = _armed_device(conn, session, linked_track, display_name="Glue MBD")
+    notes: list[str] = []
+    warnings = push.apply_push_results(
+        conn,
+        [{"key": f"device_sidechain_probe:{did}", "ok": True,
+          "tool": "ableton_device",
+          "result": {"device_index": 2, "has_input_routing": False,
+                     "parent_kind": "track", "track_index": 5}}],
+        session_id=session,
+        notes_sink=notes.append,
+    )
+    assert warnings == [], (
+        "nothing failed to record, so the errors file must stay empty"
+    )
+    assert len(notes) == 1
+    assert notes[0] == "device_sidechain: " + unreadable_sidechain_source_warning(
+        ["'Glue MBD' on track 'Drums'"]
+    )
+
+
+def test_apply_stays_silent_when_the_device_exposes_routing(
+    conn, song, session, linked_track,
+):
+    """The NEGATIVE case, and as load-bearing as the warning: `has_input_routing:
+    True` is #374's shipped Compressor path, where the source round-trips. A
+    warning there would train the operator to ignore every one of them."""
+    did = _armed_device(conn, session, linked_track)
+    warnings = push.apply_push_results(
+        conn,
+        [{"key": f"device_sidechain_probe:{did}", "ok": True,
+          "tool": "ableton_device",
+          "result": {"device_index": 2, "has_input_routing": True,
+                     "current_type": "Kick", "parent_kind": "track",
+                     "track_index": 5}}],
+        session_id=session,
+    )
+    assert warnings == []
+
+
+def test_apply_stays_silent_when_the_probe_answered_nothing(
+    conn, song, session, linked_track,
+):
+    """A result missing `has_input_routing` is ignorance, not a verdict —
+    claiming the source was lost on a payload that never said so would be a
+    warning the operator cannot check."""
+    did = _armed_device(conn, session, linked_track)
+    warnings = push.apply_push_results(
+        conn,
+        [{"key": f"device_sidechain_probe:{did}", "ok": True,
+          "tool": "ableton_device", "result": {}}],
+        session_id=session,
+    )
+    assert warnings == []

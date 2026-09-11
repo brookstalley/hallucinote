@@ -196,6 +196,36 @@ The **`/render-analyze`** skill orchestrates render-`start`→poll→analyze-`st
 →poll out of the agent's main context and returns just the MixReport summary —
 prefer it over driving the poll loops by hand.
 
+## A slow call comes back as a HANDLE, not a failure (`work_escalated`)
+
+Live's main thread runs one operation at a time and **a Live API call cannot be
+cancelled** — not by us, not by Python. So when a call outruns its ceiling, the
+work is still executing. Reporting "failed" would be a lie the natural response
+to which (retry) queues *more* work behind the operation still running; that is
+how a slow device load becomes an unresponsive Live.
+
+Instead the reply is **`ok: true` with `code: "work_escalated"`** and a result of
+`{escalated: true, job_id, label, elapsed_s, poll}`.
+
+**What to do with one:**
+
+1. **Do NOT retry the original call.** It has not failed. Anything you send now
+   queues behind it.
+2. `ableton_session(action='bout_status', job_id=…)` until `job.state` is
+   `done` (the call's own return value is in `job.result`) or `failed`.
+3. Only if you are convinced Live will never finish it — the engine is wedged,
+   Live was restarted — `ableton_session(action='abandon_bout', job_id=…)`
+   reopens the gate. It does **not** stop the work, and it says so.
+
+**While a bout is occupied, other calls are REFUSED, not queued** — an error
+naming what Live is busy with and for how long. That refusal means *never
+attempted*, so nothing is in an unknown state. It persists until the operation
+Live is running actually returns: there is deliberately no timer that clears a
+stuck bout, because clearing on a timer is the same defect on a delay.
+
+`bout_status` and `abandon_bout` run on the worker thread, so they answer while
+the main thread is fenced — they are the two calls that always work.
+
 ## Transport: Start vs Continue, and "play from bar X"
 
 Live distinguishes two ways to start the transport, and the MCP actions mirror

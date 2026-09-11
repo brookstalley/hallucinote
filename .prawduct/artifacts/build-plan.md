@@ -1,346 +1,280 @@
 ---
 artifact: build-plan
-version: 2
-scope: perform-start-position
-branch: fix/perform-start-position
+version: 1
+scope: OPENBUGS-0910
+branch: fix/lens-partials-and-capture-playhead
 depends_on:
   - artifact: api-contract
-  - artifact: sync-boundary-contract
   - artifact: boundary-patterns
 governed_by:
-  - artifact: sync-boundary-contract
+  - artifact: api-contract
     dispositions:
-      - "planner↔apply result-key contract is explicit and versioned → conforms (the perform_batch arc payload gains additive fields only)"
-      - "a phase that could not DETERMINE its state must not report OK → conforms (this plan is that rule applied to the perform pass)"
-partition: serial — 02 and 03 both consume the primitive 01 builds, and 04 consumes the per-arc outcome field 02 adds
-last_validated: 2026-09-08
+      - "Refuse-and-teach over silent wrong behavior, at every boundary → conforms (02 replaces a silent wrong-baseline capture with a verified park-at-0, and refuses outright while the transport rolls; 01 replaces a silently inflated economy with one that counts only what it can call a recall)"
+      - "Errors teach — structured recovery information, never a bare string → conforms (02's playing-transport refusal names the transport state and the fix; 01's exit-3 hint stops pointing at a song that does not define the function and describes both authoring shapes instead)"
+      - "The MCP surface is versioned by content fingerprint, never a hand-maintained number → inapplicable because neither chunk changes a fingerprinted path (02 CALLS two existing MCP actions from the CLI side; it adds none)"
+      - "No compatibility shims for consumers that cannot exist; one-major-version aliases → conforms (both chunks add fields/params with defaults that reproduce today's behavior for every existing caller — no shim, no alias)"
+      - "Mutator signatures are keyword-only after conn, and every mutator accepts actor/reason → inapplicable because neither chunk touches a mutator"
+      - "Timing transforms stay in the engine and off the MCP surface → inapplicable because neither chunk touches timing"
+      - "The MCP tool surface stays inside the band where tool-selection accuracy holds → conforms (no tool and no action is added)"
+      - "These interfaces stay internally scoped → conforms (nothing changes about what is published)"
+partition: >
+  serial — two chunks, disjoint files, but small enough that delegation costs
+  more than it saves (each is one source module plus its tests, and the
+  coordinator would still own the combined suite, the Critic and every state
+  update). Chunk 01 owns `recurrence/{lens,economy}.py` +
+  `tools/recurrence_lens.py` + their tests; chunk 02 owns
+  `tools/capture_cli.py` + `skills/song-snapshot/SKILL.md` + its tests. No file
+  is named by both. THREE FILES SHIPPED OUTSIDE THIS PARTITION and are named here
+  rather than left to the change-log to narrate: `recurrence/match.py` (the
+  `derived` tier flag had to reach the exported wrapper — chunk 01's mechanism was
+  incomplete without it), `tools/melody_lens.py` and `skills/compose-review/SKILL.md`
+  (both carried prose the two chunks invalidated). All three arrived through the
+  cumulative review, not through a chunk; `capture.py` is the fourth and has its own
+  scope-extension record below because it changed what the work PROMISES, where these
+  three only follow it.
+last_validated: 2026-09-10
 ---
 
 ## Requirements Confidence
 
-**Level:** High
+**Level:** High for chunk 01, Medium for chunk 02.
 
-**Why:** The defect, its blast radius and its mechanism are all established by
-direct operator evidence in issue #471, not inferred. The reporter isolated the
-root cause against the live set and posted the A/B measurement that proves it:
-locating with `song.current_song_time` and then calling `start_playing()` rolls
-the transport from Live's **start playing position**, which
-`current_song_time` does not move. Same set, same parameter, same span, minutes
-apart — `updates_written` 0 before the cue jump, 27 after.
+**Why:** Both defects come from operator reports written against `songs/alien` on
+2026-09-10 (`incoming-bugs/2026-09-10-recurrence-lens-partials-and-wiring-pointer.md`,
+`incoming-bugs/2026-09-10-capture-execute-bakes-automated-values-as-baselines.md`), and
+both were re-verified in the tree at `446f732` before this plan was written rather than
+taken from the report text — the verification note appended to each report names the
+lines that still carry the defect.
+
+Chunk 01 is High: the whole mechanism is pure, in-process and covered by unit tests that
+run without Live. Chunk 02 is Medium for one reason named in its assumptions — the fix
+depends on how Live re-applies automated parameter values on a locate, which cannot be
+exercised from this session.
+
+**What each defect actually costs, since that shapes the fix:**
+
+- **01.** The report describes partials burying recalls in the CLI render and inflating
+  `compression_ratio`. Reading the code found a third consequence the report did not
+  name, and it is the worst of the three: `economy._recurring_motifs` counts a motif as
+  recurring on *any* non-home recall, so 50 %-coverage derived partials on every layer in
+  every section make `recall_coverage` read 100 % and empty `never_recalled` — which
+  silences the one coaching question the economy path is allowed to emit
+  (`registered-never-recalled`). The noise does not merely bury the signal; it deletes a
+  finding.
+- **02.** `replay_capture` re-asserts a captured baseline on every rebuild, so a value
+  captured at the end of the arrangement permanently redefines the value every envelope
+  rides from. The report observed five such corruptions in one session, each silent, each
+  indistinguishable in the diff from a deliberate by-ear tweak.
 
 **Open assumptions / unknowns:**
 
-- [ASSUMPTION: `CuePoint.jump()` is the only LOM surface that moves the start
-  playing position | HIGH impact | operator can override] The LOM exposes no
-  writable start-position property. The reporter verified `jump()` empirically
-  and Live's own docstring states the semantics ("when not playing, simply move
-  the start playing position"). If a better primitive exists, Chunk 01 is the
-  single place it would be swapped in.
-- [ASSUMPTION: creating and immediately deleting a temporary locator is an
-  acceptable transient set mutation | MED impact | operator can override] Needed
-  only when no cue already sits at the target beat. It costs two Undo entries.
-  The alternative — playing from the nearest earlier cue and letting each arc's
-  window gate the writes — costs unbounded pre-roll wall-clock on a beat-345
-  arc, which for a realtime pass is the worse trade.
-- Live cannot be driven from this session. Every mechanism chunk lands with unit
-  coverage against fakes plus an `operator-verification.md` entry; the fakes
-  cannot prove the Live-side behaviour and this plan does not claim they do
-  (`learnings.md`: the 2026-05-17 fakes mirrored what we *thought* Live exposed
-  and the unit suite never saw the divergence).
+- [ASSUMPTION: seeking to beat 0 makes Live re-apply every automated parameter to its
+  beat-0 value before the capture probes read it | HIGH impact | owner can override]
+  This is the report's own recommendation and it matches what the report measured (the
+  same parameters read different values at beat 0 than at the end), but the settle
+  behaviour when the transport is *stopped* is not provable from this session. The
+  mitigation is in the design rather than in hope: the seek goes through
+  `ableton_session(action='seek')`, whose handler already settle-verifies and returns
+  `settled_beats`, and chunk 02 refuses to capture unless that read-back confirms 0. If
+  Live turns out to need a further yield before parameter values follow the playhead, the
+  symptom is a snapshot that still shows end-of-song values with the playhead reading 0 —
+  named in the operator-verification entry as the thing to look for.
+- [ASSUMPTION: 0.75 is the right default recall-coverage floor | MED impact | owner can
+  override] Whole-motif ops score 1.0 and the observed noise floor is derived partials at
+  exactly 0.50, so any threshold in (0.5, 1.0] separates them; 0.75 is the filter the
+  report's author wrote by hand and reported as "a reading I could act on". The threshold
+  is a parameter with a default, not a constant, so overriding it is a call-site change.
+- Live cannot be driven from this session — the standing limit in `learnings.md`. Chunk 02
+  lands with unit coverage against a fake probe plus an `operator-verification.md` entry;
+  the fake cannot prove the Live-side behaviour and this plan does not claim it does.
 
-**What would raise confidence:** RESOLVED for the perform path — verified
-against Live 12.4.2 on 2026-09-08, and the verification earned its keep by
-finding a regression the unit suite could not see (arming Live's record STARTS
-the transport, so locating after the arm made the whole fix inert). Both
-assumptions above are now measured rather than assumed: `CuePoint.jump()` does
-move the start position, and the borrow-and-return costs nothing visible
-(`cue_count: 0` after every pass). Results in `operator-verification.md`.
-
-STILL OPEN: the render capture path was not exercised, and nothing ran against
-`songs/alien` itself — the mechanism is confirmed, that song is not.
+**What would raise confidence:** running chunk 02's operator-verification entry against a
+set with automation on a return (the `alien` A-Reverb decay is the sharpest witness: 6.87 s
+at the end vs 2.50 s at beat 0).
 
 ## Status
 
-- [x] Chunk 01: `handlers/_transport.py` — locate the start playing position, and prove where the playhead actually landed
-- [x] Chunk 02: `perform_batch` locates the start position and refuses a pass that did not roll into its span
-- [x] Chunk 03: the render capture path and `session` transport get the same treatment
-- [x] Chunk 04: per-arc perform outcomes reach the push report
-- [x] Chunk 05: artifacts, change-log, learnings, operator verification, backlog
+- [x] Chunk 01: a sub-threshold partial is still reported, but stops counting as a recall
+- [x] Chunk 02: `capture execute` parks the playhead at 0, or refuses to capture
 
-Context: Plan written 2026-09-08 against issue #471 on branch
-`fix/perform-start-position` (off `develop` @ 6339887). Chunks 01-04 built and
-green (suite green per `prawduct-hook test-status`; ruff and mypy clean). The
-three positioning sites now locate
-Live's start playing position and prove where the transport actually rolled
-from, and every perform arc carries a stated outcome that reaches the push
-report. Artifacts, learnings, change-log and the operator-verification entry are
-written; the two descoped asks are filed as #478 and #479.
+Context: cut from `origin/develop` @ `446f732`. Both defects are the two reports left
+open by the 2026-09-10 incoming-bugs triage; the other two reports from that triage were
+verified already-fixed and archived in the same pass. Built serially in one session;
+suite green at every chunk close — the evidence store carries the per-tree result, so
+no total is copied here to drift — and each new test was mutation-checked by reverting
+the mechanism it names.
 
-**Post-plan: operator verification ran, and it changed the code three times.**
-The plan treated Live as the thing that would confirm the work. It was the thing
-that corrected it. Arming Live's record STARTS the transport, so locating after
-the arm made the entire fix inert while reporting itself accurately (`eb82a91`).
-Reordering to locate-before-arm then left the initial gesture-open reading a
-drifted playhead, opening later arcs early (`d168224`), and left the ramp's
-movement gate keyed to a beat the arm had moved away from (`ddfad5d`). The first
-was found by running against Live; the other two by review, because every live
-pass was single-arc and the damage was to multi-arc windowing.
+No backlog items were filed. Both defects arrived through `incoming-bugs/` rather than
+the backlog and were fixed in the same pass, so an item would have been opened and
+shipped in one motion; the record lives in the change-log entry and in the two archived
+reports. Chunk 02's Live-side assumption is queued in `operator-verification.md`.
 
-The perform path is now verified live across two rounds — single-arc from a
-poisoned start position, then multi-arc with staggered spans whose write counts
-(41 over 32 beats, 21 over 16) track the arcs rather than the union. The render
-capture path and `songs/alien` itself remain unverified; both are queued in
-`operator-verification.md` and neither is covered by the above.
+**What the build found that the plan did not.** A coverage-only floor — the obvious
+reading of the report's own fix — would have demoted `fragment[a,b)`, the matcher's
+structured claim that a layer quotes a named sub-window of the motif, to the same status
+as the tier-4 derived reading it falls back to when nothing clean matches. The report's
+author had already resolved this by hand (their filter kept every non-derived variation
+at any coverage) and the plan missed it. Caught by reading the matcher rather than the
+label; recorded as a decision below, and the plan was amended before the code was.
 
-## Why this plan is still live
+## Chunk 01 — a sub-threshold partial is still reported, but stops counting as a recall
 
-All five chunks are ticked and the work merged as #480, but this plan is **deliberately not
-archived**: on gitflow a merged-but-unreleased plan stays in the live directory until its
-release ships, and `develop` is currently 101 commits ahead of `main` with no release cut.
-Archive it when that release lands.
+**Delivers.** A `min_coverage` floor (default 0.75) that separates a *recall* from an
+honest *partial*, applied so that the partial is never dropped — REC-4Z8Q wants partials
+reported — but stops being counted as a recall by the economy summary and stops
+outnumbering the recalls in the render.
 
-Reviewed and left live during the JANITOR-2026-09 sweep (2026-09-08), which archived the
-other 50 plans. The session-briefing "stale build plan" advisory fires on the ticked-boxes
-check alone and cannot see the release state, so it will keep naming this plan until the
-release ships — that is the advisory being coarse, not this plan being stale.
+**Design.** The threshold marks, it does not filter:
 
-## Verification Strategy
+1. `lens.MotifRecall` gains `partial: bool = False`. `analyze_recurrence` gains
+   `min_coverage: float = DEFAULT_MIN_RECALL_COVERAGE` and sets `partial=True` on a
+   recall that is BOTH below that floor AND from the matcher's derived tier (see the
+   decision "A partial is a weak *reading*, not merely a low number"). Every
+   occurrence still reaches the report and `to_dict()`, so `--json` consumers keep
+   seeing everything.
+   `match.MatchResult` gains `derived: bool = False`, set at the one site that builds
+   a `derived (<op>, <coverage>)` label, so the tier is read from the match rather
+   than prefix-matched out of a human-facing string.
+2. `RecurrenceReport` carries `min_coverage` so the render can name the threshold it
+   applied rather than hardcoding a number next to one that could change.
+3. `economy.summarize_economy` and `economy.economy_finding` ignore `partial=True`
+   recalls for the cell-set, `recall_coverage`, `never_recalled`, `recalled_note_mass`
+   and `occurrence_records`. The default `partial=False` means every existing caller and
+   test keeps its current behavior.
+4. `tools/recurrence_lens.py` lists whole recalls per section and folds the partials into
+   one line per section (`+ N partial(s) below 75% coverage — --all to list`); `--all`
+   expands them inline. The header counts recalls and partials separately.
+5. The wiring hint stops naming `songs/sun-zone-done/build.py`, which defines no
+   `recurrence_report()`, and stops implying `analyze_arrangement` is the only shape — a
+   song whose notes never pass through an `Arrangement` cannot use it. Both the module
+   docstring and the exit-3 message describe the two shapes inline instead of pointing at
+   a file this repo does not even carry.
 
-Unit tests drive fake `Song` objects that model the defect directly: a fake whose
-`current_song_time` setter moves a *playhead* field while `start_playing()` reads
-a *separate* start-position field. That fake reproduces #471 exactly, so every
-test in Chunks 01-03 fails convincingly without the fix — which is the only
-honest way to test a Live behaviour this session cannot exercise.
+**Acceptance criteria.**
 
-Beyond tests: Chunk 05 enqueues operator verification for the two things only
-Live can answer — that the cue jump moves the start position on a real set, and
-that a perform against a set with pre-existing lanes now records.
+- A 0.50-coverage derived partial is present in `report.recalls` and in `to_dict()`, with
+  `partial: true`.
+- That same partial does not make its motif count as recurring: a motif whose only
+  non-home recalls are partials appears in `never_recalled` and raises the
+  `registered-never-recalled` finding.
+- `recalled_note_mass` and `occurrence_records` exclude partials.
+- The render prints partials as a per-section count line, and `--all` expands them.
+- The exit-3 hint names neither `sun-zone-done` nor `analyze_arrangement` as the only path.
+- Every existing recurrence test passes unchanged.
 
-## Build Chunks
+**Done when:** the above hold, `tests/unit/recurrence/` + `tests/unit/tools/test_recurrence_lens_cli.py` are green, and the full suite is green.
 
-### Chunk 01: `handlers/_transport.py` — locate the start playing position, and prove where the playhead actually landed
+## Chunk 02 — `capture execute` parks the playhead at 0, or refuses to capture
 
-- **Description:** The defect is one missing primitive used in three places, so
-  it gets built once. Two functions: `locate_start_position`, which moves Live's
-  start playing position (not just the playhead) to a target beat; and
-  a realized-position check, which judges where the transport ACTUALLY rolled
-  from after `start_playing()` and raises naming the observed beat when it is
-  outside the expected window. (Shipped as `require_playhead_within`; the
-  polling wrapper this chunk also built was deleted in the Critic round once it
-  turned out no caller wanted the waiting half.) The second is the load-bearing one: it is
-  mechanism-independent, so it converts this entire failure class from silent
-  divergence into a loud error even if the locate primitive itself is wrong.
-- **Depends on:** none
-- **Artifacts consumed:** `boundary-patterns.md` (Live-touch bout discipline),
-  `learnings.md` (never verify a transport write by reading the same property
-  back in the same callback; worker-thread settle polls, never main-thread)
-- **Deliverables:** new `hallucinote_mcp/src/hallucinote_mcp/handlers/_transport.py`
-  — `locate_start_position(context, target_beats, *, settle_timeout_s)` returning
-  the method actually used (`existing_cue` / `temporary_cue` / `playhead_only`)
-  and the beat it settled at; `require_playhead_within(observed, low, high, ...)`.
-  The temporary-cue path reuses the proven `cue_create` recipe in
-  `hallucinote_mcp/src/hallucinote_mcp/handlers/arrangement.py` (seek → settle on
-  the worker thread → toggle → scan `song.cue_points` for the new entry), jumps
-  to the cue it created, then toggles it away and verifies it is gone.
-- **Tests:** unit — a cue already at the target is jumped, never toggled (a
-  toggle would DELETE the operator's locator); no cue → created, jumped, deleted,
-  and the set's cue list is byte-identical afterwards; a target past
-  `last_event_time` refuses with a teaching error rather than toggling at a
-  clamped position; no cue API → `playhead_only` reported, never a silent success;
-  the position check accepts an in-window beat and raises naming the observed
-  beat for one past the window.
-- **Acceptance criteria:** against the split-field fake (playhead ≠ start
-  position), `locate_start_position` leaves the START position at the target;
-  the same test fails against a bare `current_song_time` write.
-- **Critic mode:** deferred to Chunk 02
-  <!-- A primitive with no caller is half a risk surface: the judgeable question
-       is whether perform_batch uses it correctly, and that diff does not exist
-       until 02. Reviewing 01 alone would spend a pass on an interface nobody
-       has consumed yet and then need a second one anyway. -->
-- **Done when:**
-  1. Acceptance criteria met and tests pass
-  2. Committed and chunk marked `[x]` in Status (its review lands with Chunk 02)
+**Delivers.** A capture whose baselines are deterministic instead of playhead-dependent.
 
-### Chunk 02: `perform_batch` locates the start position and refuses a pass that did not roll into its span
+**Design.** Before `assemble_snapshot_via_probes` walks anything, `_cmd_execute` reads
+`ableton_session(action='info')` and then:
 
-- **Description:** Apply the primitive at the site the bug was reported against,
-  and close the reporting half. `perform_batch` currently seeks, settle-verifies
-  the seek (PSH-4L6C), then plays — and PSH-4L6C's settle poll passes cleanly in
-  the failure, because `current_song_time` really does read the target while
-  stopped. The seek was never the lie; the start position was. After
-  `start_playing()` the realized playhead is asserted inside the union span, so
-  a transport that rolled from beat 348 for a span of 8..24 fails loudly instead
-  of breaking out of the ramp loop on its first tick with zero writes. Each arc
-  also carries an explicit `outcome`, so `updates_written == 0` is a stated
-  non-recording rather than something a reader has to derive from two fields.
-- **Depends on:** Chunk 01
-- **Artifacts consumed:** `api-contract.md` (the `perform_batch` arc payload)
-- **Deliverables:** in
-  `hallucinote_mcp/src/hallucinote_mcp/handlers/automation.py` — the arm/seek
-  bout calls `locate_start_position`; a realized-playhead assertion between
-  `start_playing()` and the ramp loop; per-arc `outcome` (`recorded` /
-  `unverified`) and `outcome_reason` added to each arc in the result, with
-  `updates_written == 0` and `automation_state != 1` both mapping to
-  `unverified`.
-- **Tests:** unit — the split-field fake reproduces #471 (a pass whose start
-  position is past the union span) and the handler now raises naming both beats
-  instead of returning `ok`; an arc that ramps normally reports
-  `outcome: recorded`; a degenerate sub-tick window reports `unverified` with
-  `updates_written: 0`; the restore path still disarms `record_mode` and closes
-  every gesture on the new failure path.
-- **Acceptance criteria:** the reproduction test fails against `develop`'s
-  handler and passes here; no perform result can carry `outcome: recorded`
-  with `updates_written: 0`.
-- **Done when:**
-  1. Acceptance criteria met and tests pass
-  2. `/prawduct:critic` run and blocking findings resolved
-  3. Committed and chunk marked `[x]` in Status
+- **transport rolling** (`is_playing` true) → refuse (exit 2) with a teaching error. A
+  capture taken while the transport moves reads each parameter at whatever beat the probe
+  happened to land on, so no seek can make it deterministic.
+- **playhead not at 0** → `ableton_session(action='seek', bar=1, beat=0)`, then confirm
+  the returned `settled_beats` is 0 (within a beat epsilon). Refuse if it is not — a seek
+  that did not take is exactly the silent case this chunk exists to end. Say on stderr
+  that the playhead was moved and from where, because it is the user's transport.
+- **playhead already at 0** → proceed, no Live write at all.
+- `--no-seek` is the escape hatch for capturing deliberately at a non-zero playhead. It
+  skips the whole preflight and prints a warning naming the risk. Off by default.
 
-### Chunk 03: the render capture path and `session` transport get the same treatment
+`skills/song-snapshot/SKILL.md` records the guarantee, so the skill stops being the place
+where a user has to know this.
 
-- **Description:** The same seek-then-play assumption is written into two more
-  places, and one of them states it as a guarantee in an operator-facing note.
-  `render.py` seeks to `start_at_beat - pre_roll_beats` and plays; its engine
-  pre-flight samples whether the transport ADVANCES but never whether it is in
-  the right PLACE, so a render can capture minutes of the wrong section and
-  report a healthy capture. `session.py`'s `_PLAY_SEMANTICS_NOTE` tells the
-  operator that "in a clean transport state, seek then play locates-and-plays:
-  the render capture path relies on exactly that" — which is the false belief
-  that cost the reporter six hours, shipped as documentation.
-- **Depends on:** Chunk 01
-- **Artifacts consumed:** `operational-spec.md` (render capture contract)
-- **Deliverables:** in
-  `hallucinote_mcp/src/hallucinote_mcp/handlers/render.py` — the capture locates
-  the start position, and the pre-flight asserts position as well as advancement,
-  naming the observed beat when it is wrong. In
-  `hallucinote_mcp/src/hallucinote_mcp/handlers/session.py` — `seek` moves the
-  start playing position and reports which method did it, so the operator's own
-  seek-then-play read-back workflow (the one that produced the evidence table in
-  #471) is trustworthy; `_PLAY_SEMANTICS_NOTE` rewritten to state what is
-  actually true.
-- **Tests:** unit — a render whose start position is stale fails the pre-flight
-  with the observed beat named, rather than capturing; `seek` moves the start
-  position on the split-field fake; the existing engine-off pre-flight test still
-  distinguishes "engine off" from "wrong place" (two causes, two messages).
-- **Acceptance criteria:** no handler in the package reaches `start_playing()`
-  for a positioned pass without having located the start position — asserted by
-  a grep-style test over the handlers package, so a fourth site cannot be added
-  silently.
-- **Done when:**
-  1. Acceptance criteria met and tests pass
-  2. `/prawduct:critic` run and blocking findings resolved
-  3. Committed and chunk marked `[x]` in Status
+**Explicitly descoped:** the report's alternative — detect whether each captured parameter
+is under an automation envelope at the current position and name the ones that differ.
+Parking at 0 makes the baseline correct rather than merely *reported*, and the envelope
+walk is a much larger surface (it needs every envelope for every device parameter) for a
+strictly weaker outcome. Recorded here rather than dropped silently.
 
-### Chunk 04: per-arc perform outcomes reach the push report
+**Acceptance criteria.**
 
-- **Description:** Ask 3 of the issue. A realtime phase that spends minutes of
-  wall clock and reports `ok (1 call)` tells the author nothing; the reporter had
-  to find the divergence by ear. `record_perform_result` already refuses a
-  fingerprint on `updates_written == 0`, so the gap is not the policy — it is
-  that a recorded arc produces no line at all, and only failures are visible.
-  Every arc gets a stated outcome in the push report.
-- **Depends on:** Chunk 02
-- **Artifacts consumed:** `sync-boundary-contract.md` (apply-layer warning
-  channels), `push-execute-design.md`
-- **Deliverables:** in `src/hallucinote/sync/push/perform.py` —
-  `record_perform_result` prefers the handler's explicit `outcome` where present
-  and keeps the `automation_state` / `updates_written` checks as the floor for an
-  older server. In `src/hallucinote/sync/push/plan.py` —
-  `apply_push_results` gains a keyword-only `notes_sink` so the apply layer has a
-  BENIGN channel (today it has only the actionable one, which rides
-  `.last-push-errors.json`; a per-arc roll-up there would make a clean push look
-  failed). In `src/hallucinote/sync/push_execute.py` — wire `notes_sink` to the
-  existing `warning_messages` list that the push state file already surfaces.
-- **Tests:** unit — a mixed batch of DISPATCHED arcs (one recorded, one
-  unverified) produces one roll-up line naming both and exactly one actionable
-  warning; an all-recorded batch produces the roll-up and no actionable warning;
-  a result from a server predating `outcome` still routes on `updates_written`
-  (the floor). An arc skipped as unchanged is fingerprint-gated out by the
-  planner and never reaches `res["arcs"]`, so the roll-up structurally cannot
-  name it — that half is already surfaced by the planner's
-  `performed-automation: skipped (unchanged)` alert on this same benign
-  channel.
-- **Acceptance criteria:** the push report names every arc the perform phase
-  touched and what happened to it.
-- **Done when:**
-  1. Acceptance criteria met and tests pass
-  2. `/prawduct:critic` run and blocking findings resolved
-  3. Committed and chunk marked `[x]` in Status
+- With the fake probe reporting `is_playing: true`, `_cmd_execute` returns 2, writes no
+  file, and its stderr names the transport as the reason.
+- With `current_song_time: 512.0`, `_cmd_execute` issues the seek before the first capture
+  probe, and the snapshot is still written.
+- With a seek that settles somewhere other than 0, `_cmd_execute` refuses rather than
+  capturing.
+- With `current_song_time: 0.0`, no seek is sent.
+- `--no-seek` sends neither `info` nor `seek` and warns.
+- The ordering assertion is real: the test records the probe call sequence and asserts the
+  seek precedes every capture probe.
 
-### Chunk 05: artifacts, change-log, learnings, operator verification, backlog
+**Done when:** the above hold, `tests/unit/tools/test_capture_cli.py` is green, the full
+suite is green, and an `operator-verification.md` entry is queued naming the A-Reverb
+decay witness.
 
-- **Description:** Close the loop. The learning here is worth more than the fix:
-  a Live property that reads back the value you wrote can still not be the
-  property that governs the behaviour you want, and this codebase already carries
-  a sibling rule (`learnings.md`: never verify a transport write by reading the
-  same property back) that this defect walked straight past because the read-back
-  was honest and the property was wrong.
-- **Depends on:** Chunks 01-04
-- **Artifacts consumed:** all of the above
-- **Deliverables:** `.prawduct/learnings.md` rule; `.prawduct/change-log.md`
-  entry (`type=fix | scope=perform-start-position`, no `release=` key);
-  `sync-boundary-contract.md` and `boundary-patterns.md` updated for the
-  additive arc fields and the `notes_sink` parameter;
-  `.prawduct/operator-verification.md`
-  entries for the two Live-only questions; the two descoped asks filed via
-  `/prawduct:backlog` (see Descoped below).
+## Decisions taken
 
-  **Not `api-contract.md`.** The plan listed it; it is wrong — the artifact
-  documents tool-level surface, stability and versioning decisions and carries
-  no per-action payload shapes, so nothing in it can go stale from an additive
-  arc field. `sync-boundary-contract.md` and `boundary-patterns.md` own the
-  payload, and both were updated.
+### The coverage floor marks recalls rather than dropping them
 
-  **Not `CHANGELOG.md`.** The plan listed it; it is wrong. That file is the
-  public release record, distilled from the engineering change-log AT RELEASE
-  TIME, and it has no Unreleased section. Writing an entry now would either
-  invent a version number or sit under a heading that does not exist. The
-  change-log entry carrying no `release=` key IS the release-pending state, and
-  that is what `check-releasability` reads.
-- **Tests:** none — documentation.
-- **Type:** cumulative-final
-- **Visual change:** no
-- **Done when:**
-  1. Artifacts updated and the backlog items filed
-  2. Committed, then `/prawduct:critic cumulative` run and blocking findings resolved
-  3. Chunk marked `[x]` in Status
+The report offered two fixes: (a) fold partials in the CLI render, (b) a `min_coverage`
+that gates both the section lists and the economy's note-mass. Taking (b) alone would drop
+partials from the data, and REC-4Z8Q's whole point was that the matcher reports partials
+rather than hiding them. Taking (a) alone would leave `compression_ratio` inflated and
+`never_recalled` empty — the render would read well and the numbers under it would still
+be wrong.
 
-## Descoped — stated, not dropped
+Marking rather than filtering gets both: the occurrence stays in the report and in
+`--json`, and every *count* that claims to describe recall stops including it. The cost is
+one more field on a serialized structure, which is additive for consumers.
 
-Issue #471 carries four asks. Two are built here (asks 2 and 3, as Chunks 02 and
-04) and two are deliberately not, each for a reason that changed once the
-reporter found the root cause:
+### A partial is a weak *reading*, not merely a low number
 
-- **Ask 1 — verify each arc by sampling the parameter back across its span
-  instead of trusting `automation_state`.** Written before the mechanism was
-  known, when read-back shape was the only diagnostic available from outside. It
-  is now superseded by cheaper and stronger signals: `updates_written` is a
-  direct count of what the pass wrote, and the realized-playhead assertion in
-  Chunk 02 catches the failure before the pass even runs its ramp. Read-back
-  sampling would also cost a seek-and-read per arc per push against a write-only
-  surface. Filed to the backlog as a defence-in-depth follow-up rather than
-  built, because the argument for it is now weaker than the argument for the two
-  guards that replace it — not because it is wrong. **Filed as #478.**
-- **Ask 4 — prefer the `session_clip` route wherever the span allows it.** A
-  routing-policy change to `classify_envelope_route`, not a bug fix, and the
-  reporter's own caveat names real consequences (`insert_step`-only, so a ramp
-  must be authored as an explicit staircase). It deserves its own design pass
-  against the authoring layer. **Filed as #479**, which should be read
-  alongside the already-open #474 (the perform route and its wall-clock cost
-  are inferred silently) — #474 is the "surface the route at all" half, and its
-  union-span finding bears on when a span counts as fitting one clip.
+Surfaced mid-build, against the plan as first written. A coverage-only floor was the
+obvious reading of the report's fix (b), and it is wrong: it demotes
+`fragment[0,1.5)` at 0.50 — the matcher's *structured* claim that the layer contains a
+contiguous sub-window of the motif, carrying the fragment tier's own evidence floor —
+to the same status as `derived (invert ∘ diminish ×2, 0.50)`, which is what the matcher
+reports when no clean op was recoverable at all. The lens's own comments treat a bare
+`fragment` as a real musical recall (the reggae-cell answer, the integration-trade
+signal, "neither silently dropped").
 
-Both are filed on the backlog of record, so neither survives only in this
-paragraph.
+The report's author had already resolved this by hand and the plan missed it: their
+filter was `coverage >= 0.75 OR not variation.startswith("derived")` — a fragment
+survives at any coverage. So the rule is the conjunction: an occurrence is a partial
+only when it is both sub-threshold AND derived-tier.
 
-## Governance Checkpoints
+Reading the tier off the label prefix would work and would be brittle — the label is
+human-facing prose composed for a reader. `MatchResult.derived` is set where the tier
+is actually chosen, one site, and the lens reads that.
 
-**Commit & PR cadence:** commit per chunk after its Critic review passes. Chunk
-05 carries the `cumulative` review that makes the branch PR-ready.
+### Chunk 02 refuses on a rolling transport rather than stopping it
 
-- After Chunk 01: confirm the primitive's shape before two more call sites depend
-  on it.
-- After Chunk 03: the handlers package changed, so the MCP wire fingerprint
-  flips — a re-vendor and a Live relaunch are required before any operator
-  verification means anything.
-- After Chunk 05 (cumulative): full-bundle review.
+Stopping the transport is a bigger liberty than moving the playhead: the user may be
+listening. Refusing costs them one command and keeps the destructive option in their
+hands, and per the api-contract's refuse-and-teach norm the refusal names what to do.
+
+### Both chunks default to today's behavior for existing callers
+
+`partial` defaults False and `min_coverage` has a default, so no existing test changes
+meaning; the capture preflight is additive. This is what keeps "tests never weaken" true
+by construction rather than by inspection — the only test edits in this work are the two
+`argparse.Namespace(...)` constructions that must learn the new flag.
+
+### The guard belongs to the capture contract, not to `capture execute` — scope EXTENDED
+
+Chunk 02 as written scoped the playhead guard to `capture execute`. The cumulative
+Critic (`rev-20260910T215848Z-0aed784e`, R-8) found the other half: `capture_plan()`
+emits the by-hand probe recipe that `skills/song-snapshot` and
+`skills/song-pick-instruments` step 6 both drive, and it carried no transport read and
+no seek — so a hand capture taken after a render bakes end-of-song envelope values in
+as dialed baselines with none of the refusal, which is the defect chunk 02 exists to
+end, reachable by the route the same skill offers one line after promising the playhead
+is parked.
+
+**This is an explicit scope extension, not a silent one.** The requirement chunk 02
+should have carried is *the capture contract refuses to read parameters at an unknown
+playhead*, not *`capture execute` parks the playhead* — an entry-point-shaped
+requirement where the defect is boundary-shaped. The transport read + park are now the
+first two records `capture_plan()` emits, so both paths are generated from one
+description of the same precondition, and a test pins that they come first (a seek
+listed after the parameter walk documents nothing).
+
+The hand path can only be *told*, not made to comply — it is a recipe an agent
+executes. That asymmetry stands and is why the record says "prefer `capture execute`",
+which walks it in code.

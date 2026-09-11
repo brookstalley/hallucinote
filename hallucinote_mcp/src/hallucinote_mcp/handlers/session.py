@@ -5,6 +5,9 @@ ops on the Live API and live in ``actions/session.py`` as ``LiveOp`` entries.
 The handlers in this module cover the actions that need real Python:
 
   - ``info``: read multiple Live properties, assemble a structured dict.
+  - ``bout_status`` / ``abandon_bout``: read (and, as a last resort, release)
+    the main-thread occupancy record. Both run on the WORKER thread — see
+    their handlers.
   - ``set_master_property``: branch on the ``property`` value to choose the
     correct Live API target (master_track.mixer_device.volume vs panning vs ...).
   - ``set_arrangement_loop``: 3 properties (enabled / start / length) touched
@@ -27,6 +30,7 @@ import re as _re
 from typing import Any
 
 from ..dispatcher import LiveContext
+from .jobs import JobRegistry, default_registry
 from ._transport import locate_start_position
 from ._arrangement_latch import (
     CLICK_BACK_TO_ARRANGEMENT,
@@ -89,7 +93,101 @@ def info_handler(context: LiveContext) -> dict[str, Any]:
                 f"API clear and reports whether Live honored it."
             ),
         }
+    bout = _bout_block(context)
+    if bout is not None:
+        snapshot["main_thread_bout"] = bout
     return snapshot
+
+
+def _bout_block(context: LiveContext) -> dict[str, Any] | None:
+    """The main-thread occupancy record, or ``None`` when Live is free.
+
+    Read tolerantly: ``info`` is exercised against many minimal context
+    doubles, and a double that predates the occupancy record must yield a
+    snapshot without the block rather than an AttributeError. The record is
+    the visible half of "a never-signalling runner is never silently cleared".
+
+    Note that ``info`` itself is main-thread-wrapped, so a caller that reaches
+    this handler at all has been ADMITTED — which is why the block is normally
+    absent, and why ``bout_status`` (worker-thread) is the surface that can
+    still answer while the fence is closed. This block covers the case a
+    worker-thread caller can't: reading occupancy from inside a nested bout.
+    """
+    reader = getattr(context, "main_thread_bout", None)
+    if reader is None:
+        return None
+    bout = reader()
+    return bout if isinstance(bout, dict) else None
+
+
+# ---------------------------------------------------------------------------
+# bout_status / abandon_bout — the main-thread occupancy surface
+# ---------------------------------------------------------------------------
+
+
+def bout_status_handler(
+    context: LiveContext,
+    *,
+    job_id: str | None = None,
+    _registry: JobRegistry | None = None,
+) -> dict[str, Any]:
+    """Report what Live's main thread is occupied with, and poll an escalated
+    bout's job.
+
+    Runs on the WORKER thread (``runs_on_worker=True``). It has to: an action
+    that took a main-thread bout in order to ask about the main-thread bout
+    would be refused by the very fence it exists to report on, and would
+    deadlock by construction while a bout was escalated.
+
+    With ``job_id``, also returns that job's record — ``state`` is
+    ``running`` until Live's main thread finally returns, then ``done`` (with
+    the call's ``result``) or ``failed``. Without one, reports occupancy only,
+    which is the read a caller has when it never received a handle.
+    """
+    occupied = _bout_block(context)
+    out: dict[str, Any] = {"occupied": occupied is not None}
+    if occupied is not None:
+        out["main_thread_bout"] = occupied
+    if job_id is None:
+        if occupied is None:
+            out["message"] = (
+                "Live's main thread is free — no operation is holding the "
+                "admission gate."
+            )
+        return out
+    registry = _registry if _registry is not None else default_registry()
+    job = registry.get(job_id)
+    if job is None:
+        recent = registry.recent_ids(kind="main_thread")
+        hint = (
+            f"recent escalated bouts: {', '.join(recent)}"
+            if recent
+            else "no main-thread work has been escalated in this Live session"
+        )
+        raise ValueError(f"bout_status: unknown job_id {job_id!r} ({hint})")
+    out["job"] = job.status_result()
+    return out
+
+
+def abandon_bout_handler(context: LiveContext, *, job_id: str) -> dict[str, Any]:
+    """Force-release the admission gate held by an escalated bout.
+
+    Runs on the WORKER thread for the same reason as ``bout_status``.
+
+    This does NOT cancel anything — a Live API call cannot be interrupted. It
+    marks the job ``failed`` (nothing will ever settle it now) and reopens
+    admission, accepting that whatever comes next may queue behind work Live
+    is still doing. It exists because the alternative — a timed auto-clear —
+    would silently re-create the defect the fence exists to prevent.
+    """
+    abandon = getattr(context, "abandon_main_thread_bout", None)
+    if abandon is None:
+        raise ValueError(
+            "abandon_bout: this Live context does not track main-thread "
+            "occupancy, so there is no gate to release. Re-vendor the Remote "
+            "Script and restart Live."
+        )
+    return abandon(job_id)
 
 
 def _focused_view(context: LiveContext) -> str:

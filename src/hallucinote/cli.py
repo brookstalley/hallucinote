@@ -35,9 +35,18 @@ _SUBCOMMANDS: dict[str, tuple[str, str]] = {
     "recurrence": ("hallucinote.tools.recurrence_lens", "main"),
     "reindex": ("hallucinote.tools.reindex_markdown", "main"),
     "scaffold": ("hallucinote.tools.scaffold_song", "main"),
+    "chain-rebuild": ("hallucinote.sync.chain_rebuild", "main"),
+    "prune-tracks": ("hallucinote.tools.prune_tracks_cli", "main"),
+    "verify-scaffold": ("hallucinote.tools.verify_scaffold", "main"),
     "overview-drift": ("hallucinote.tools.overview_drift", "main"),
     "init-workspace": ("hallucinote.tools.init_workspace", "main"),
     "inventory": ("hallucinote.inventory", "_main"),
+    # Sampling (SMP-6V2K wave 2): a song's audio sources, its derived cache,
+    # the reading of a line, and the R6.2 listening harness.
+    "asset": ("hallucinote.tools.asset_ingest", "main"),
+    "derived": ("hallucinote.tools.derived_cli", "main"),
+    "sample-lens": ("hallucinote.tools.sample_lens", "main"),
+    "stretch-ab": ("hallucinote.tools.stretch_ab", "main"),
 }
 
 _SUMMARY: dict[str, str] = {
@@ -45,7 +54,7 @@ _SUMMARY: dict[str, str] = {
     "pull": "fold manual Live edits back into the DB",
     "verify-arrangement": "audit the DB arrangement against Live (collapsed-set; exit 1 on divergence)",
     "tuning-pull": "capture Live's loaded alternate tuning onto a song (rare; 0.01%)",
-    "compat": "check a song's third-party plugin requirements before sharing/pushing",
+    "compat": "check a song's device and sample requirements before sharing/pushing",
     "capture": "acquire the live set into a song's captured_session.json",
     "captures": "list/prune/pin rendered audio takes (disk retention)",
     "context": "query a song's composer intent + decision rationale",
@@ -54,9 +63,16 @@ _SUMMARY: dict[str, str] = {
     "recurrence": "symbolic recurrence lens (motif reuse, form)",
     "reindex": "rebuild a song's markdown FTS index",
     "scaffold": "scaffold a new song directory from templates",
+    "chain-rebuild": "rebuild a device chain into the DB's order, keeping every downstream device's dialed state",
+    "prune-tracks": "remove a track row a capture snapshot no longer defines (orphan prune)",
+    "verify-scaffold": "verify a scaffolded song in-process (no pytest needed); exit 1 on a failed check",
     "overview-drift": "report a <slug>.md Structure table or build.py docstring layout that has drifted from the form",
     "init-workspace": "create a hallucinote.toml songs-workspace marker (+ git init)",
     "inventory": "refresh the offline browser/instrument cache",
+    "asset": "add a sample to a song's assets/sources with its provenance; list / verify the manifest",
+    "derived": "verify or prune a song's derived-audio cache (assets/derived/)",
+    "sample-lens": "read a line — pitch centre, phrases, where a detector would fire — against bars",
+    "stretch-ab": "render one stretch/pitch move through every available backend, to listen to",
 }
 
 

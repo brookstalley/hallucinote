@@ -13,6 +13,644 @@ pending entries when `operator_verification_required: true`.
 > round-trip, and **MIX-3S7P** chunk-2 render verification. New entries added *after*
 > this date are not covered and block PRs as usual.
 
+> **2026-09-10 — the gate is deliberately NOT armed for this release (owner
+> ruling).** `operator_verification_required` is absent from
+> `project-state.yaml`, so `check-operator-verification` exits 0 while entries
+> below sit unticked. That was surfaced as a release decision and the owner chose
+> to ship this release with the gate off rather than arm it and work the queue
+> down under time pressure.
+>
+> **Read the exit code accordingly: the gate passing means the requirement is
+> off, not that anything was verified.** This release's Live-side claims rest on
+> the two 2026-09-10 sittings recorded below and on nothing else — where a box
+> below is unticked, the thing it describes is unwitnessed, and each sitting says
+> per box which is which. The release is not asserting otherwise; #541 already
+> narrowed the one claim (`#322`) that had over-reached.
+>
+> This is a per-release decision, not a standing one. Arming the gate was
+> explicitly left open for a later release, so a future reader should not read the
+> absent key as settled policy.
+
+---
+
+## RENDERGUARD-0910 — the solo refusal fires against a real Live mixer (2026-09-10) — PENDING
+
+Issue **#548**. The refusal reads `solo` and `mute` off Live's own track objects, across
+`song.tracks` AND `song.return_tracks`, which the unit suite can only model: the fake sets the attribute the handler
+reads, so it proves the handler's logic and nothing about Live's. Needs Live 12.4.x and
+any song with 3+ tracks. **Visual change: no.**
+
+**Fingerprint flip: YES.** `handlers/render.py` is inside `_FINGERPRINT_PATHS`, so the
+vendored Remote Script is stale until re-vendored — Live keeps running the old code and
+this refusal silently does not exist. Re-vendor via `/ableton-mcp-install`, quit Live
+completely and reopen (Live caches Control Surface modules at launch), then `/mcp`.
+
+- [ ] **A soloed track refuses the render.** Solo one track by hand, then
+  `ableton_render(action='start', song_slug=<slug>)`. **The start call returns a job
+  handle and the poll instruction — that is NOT a pass or a fail.** The guard runs at
+  the top of the detached worker, so the refusal arrives through `action='status'`:
+  poll once and expect `state: failed` with the message naming that track by index and
+  name. Pass = that, the transport never moved, and the captures directory holds no
+  WAVs. Reading the start call's own return as "it started anyway" is the trap this box
+  exists to avoid.
+- [ ] **Two soloed tracks are both named.** Live's solo is exclusive by default
+  (soloing one clears another) — hold ⌘ to solo a second. If this Live cannot hold two
+  solos, record that and the box is N/A rather than failed.
+- [ ] **A muted track warns and proceeds.** Mute one track, render. Pass = the render
+  RUNS, the manifest's `muted_tracks` names it, and `mixer_state` carries
+  `mute: true` for that row. A mute is a plausible authoring choice; refusing it would
+  train the operator to work around the guard.
+- [ ] **The mixer state is recorded on a clean render.** Clear every solo and mute and
+  render. Pass = `manifest.mixer_state` has one row per track AND one per return, each
+  carrying `surface_kind` / `surface_index` / `surface_name` / `track_id`,
+  `solo: false`, `mute: false` and a `volume` matching Live's fader. Check one
+  `track_id` against the matching entry in `tracks[]` — the join is the point of the
+  field. This is the half that makes an
+  OLD report auditable — without it, the incident could only be diagnosed by probing a
+  Live session that had already moved on.
+- [ ] **A soloed RETURN refuses too, and a clean song with returns does not.** Solo
+  one return by hand and render — pass = the same `state: failed` on poll, the message
+  naming `return N`. Then
+  clear it and confirm the same song renders clean. Both halves matter: a return is a
+  Track in Live and carries solo, and a guard that false-fires on a healthy song is
+  worse than none.
+
+- [ ] **An unreadable solo attribute refuses.** Cannot be staged by hand on a healthy
+  Live — record N/A unless a Live version turns up whose Track lacks `solo`/`mute`.
+  Noted because the code now refuses rather than assuming clear, so an operator who
+  ever sees `could not read solo/mute` should know it is the guard working, not a bug.
+
+- [ ] **The stem-sum gate does NOT fire on a healthy song with a hard-working master
+  chain.** The negative control, and the box that prices the false positive: a limiter,
+  saturator or bus compressor on the master produces a residual no linear sum cancels,
+  which is exactly the ambiguity `reconcile.py`'s module doc spends its length on.
+  Render a normal, un-soloed song whose master chain is working, and read
+  `sum_reconciliation.correlation` and `gain_offset_db` from the report. Pass = no
+  `master_not_stem_sum` finding, and both numbers far from the thresholds (0.5 /
+  ±12 dB). **Record the two values whatever the outcome** — the thresholds were drawn
+  from ONE incident (0.159 vs a healthy 0.959) and no second song has exercised them,
+  so this box is the only evidence that the gate does not suppress a legitimate master
+  diff. If either number lands near a threshold on a healthy render, the gate is too
+  tight and that is worse than the failure it prevents.
+
+**Why it can't be headless-verified:** the fake sets `solo` because the handler reads
+`solo`. Only Live can say whether a real soloed track presents that attribute the way
+this assumes, and whether Live's exclusive-solo behaviour leaves the second box
+reachable at all.
+
+## RELBLK-0910 — the release blockers, against a real chain (2026-09-10) — PENDING
+
+Issues **#532** (Symptom A), **#538**, **#536**, **#537**. Needs Live 12.4.x and the
+song `alien` with **one writer** — the 2026-09-10 sitting was corrupted by a
+concurrent authoring agent and any run of these boxes must confirm sole
+ownership first. Everything below landed with unit coverage against fakes; the
+fakes cannot model Live's own refusal and routing behaviour, which is where the
+#291 sitting found both of its defects on first contact. **Visual change: no.**
+
+**Run the #291 witness box (below) FIRST** — it is the box that proves #532
+Symptom A, and it is now unblocked for the first time. The boxes here are the
+state the fakes cannot reach.
+
+- [ ] **A restore lands on the right device when the tap survives.** The #291
+  witness, re-run. What makes it a real test: `alien`'s Alien Voice track must
+  hold a `HallucinoteAnalyzer` (render it first if it does not), so the analyzer
+  survives the demolish and sits at the HEAD of the rebuilt span while the
+  journal recorded it at the TAIL. Record EQ Eight's and Erosion's non-default
+  parameters before and after, per value — the 2026-09-10 run lost `3 Gain A`
+  (−1.99951 dB → 0.0) and `4 Gain A` (−2.50488 dB → 0.0), so those two are the
+  named witnesses. Pass = every captured parameter back on the device it came
+  from, and no alert naming a class change that did not happen.
+- [ ] **A refused write produces a SHORTFALL, not a success.** Needs a parameter
+  Live actually refuses. The honest way to get one is an **automated** parameter
+  (put an envelope on an EQ band's gain, then rebuild that chain) — the unit
+  suite fakes the refusal and cannot prove Live refuses anything. Pass = exit
+  code 1, an alert naming N of M, and the journal still on disk afterwards.
+  **This box is what distinguishes #538 from a fake's opinion of it.**
+- [ ] **The shortfall journal does not block the recovery it recommends.** With
+  the journal from the box above still on disk, run
+  `push execute --only devices`. Pass = the push RUNS, prints a SHORTFALL warning
+  naming the journal, and does NOT refuse. Then delete the journal and confirm a
+  clean push says nothing. This is the integration defect found at merge — the
+  unit test asserts the classification, only Live proves the whole path.
+- [ ] **A mid-flight journal still refuses.** Interrupt a rebuild (kill it
+  between the demolish and the restore), then run `push execute`. Pass = refused,
+  naming the file, with the `--resume auto` remedy. The two journal states must
+  behave differently on one real song.
+- [ ] **The Multiband Dynamics warning fires once, and the Compressor path stays
+  quiet.** `alien` track 3 carries the MBD with `S/C On` armed and
+  `has_input_routing: false`; the song also carries seven sidechain Compressors
+  (#374's path). Run `/song-snapshot` and a `push execute`. Pass = both surfaces
+  name the MBD and its track, and **no** warning mentions any Compressor. The
+  negative half is the one that matters — a warning that fires on the common
+  case trains the operator to ignore all of them.
+- [ ] **A string reaches `probe set`, from this client.** The #537 repro was
+  6/6 client-side failures, so the only honest test is the real MCP client:
+  `ableton_probe(action='set', path='song.tracks[2].devices[6].name', value='SC Alien Duck')`.
+  Pass = the device is renamed in Live. **Requires an MCP server restart, NOT a
+  re-vendor** — the schema is emitted by the local server process; `server.py` is
+  not in `_FINGERPRINT_PATHS`. Then confirm a numeric write and a
+  `{"$path": ...}` assignment still work, since those are what the retyping could
+  have broken.
+
+## #322 — does the fence hold against a real Live, and does it ever wedge? (2026-09-10) — **RUN 2026-09-10 on Live 12.4.5. TWO BOXES PASS, THE OTHER FOUR ARE UNREACHABLE, AND THE SITTING FOUND A DEFECT THE FAKES CANNOT SEE.**
+
+Backlog **#322** (with **#324** folded in). Needs Live 12.4.x, the Remote Script re-vendored,
+and something genuinely slow to load — the ~490 KB `HallucinoteAnalyzer.amxd` that produced the
+original report is the right instrument. Batch with the other re-vendor checks.
+
+The fakes prove the fence holds against a wedged scheduler. They cannot prove Live behaves the
+way the fence assumes, and **the design deliberately has no timed auto-clear**, so the failure
+this could introduce — occupancy never released, server bricked — is recoverable only by
+someone who knows to look. That is the trade the issue chose; this sitting is what tells you
+whether it was right.
+
+### What the sitting found
+
+**The instrument named above no longer works.** On this machine (Live 12.4.5, server
+`0.1.0+6025d7a7e0af`) the analyzer loads in **1.95 s cold, 0.89 s warm** against a 120 s
+`device.load` ceiling. Nothing available gets near any ceiling: every browser-root inventory
+walk is sub-second (packs 9609 entries / 0.86 s, drums 3788 / 0.70 s), and the worst load
+measured across Core Kits, pianos and the analyzer was **2.38 s**. The "tens of seconds"
+premise in `client.py`'s comment is stale for this hardware.
+
+**Three operator wedges do NOT block the Remote Script's scheduler.** Preferences open (42
+calls, all ~0.5 s), a menu-bar menu held down ~20 s, and a click-held mixer fader ~20 s all
+left calls answering normally. Live 12.4.5 keeps draining scheduled messages through UI
+tracking loops — the scheduler is decoupled from the UI run loop.
+
+**A real Ableton export DOES block it, and that is where the fence fails.** Operator ran an
+mp3 export of `alien`; Live's log shows exactly one break in served calls,
+**09:45:05 → 09:46:06, a 61.5 s gap** — four times the 15 s default ceiling. Two in-flight
+`ableton_track('list')` calls died as bare `FrameError: socket read timed out after 20.0s`.
+No `work_escalated`, no job id, no `LiveBusyError`. A third call, started 14 s before the
+block lifted, completed in 15.3 s.
+
+A follow-up run polled both surfaces through a second export and settled the mechanism:
+
+- `bout_status` reported `occupied=False` on both sides of the block and answered nothing
+  inside it, so the bout state *during* the block was not directly observed. The inference
+  that **no bout is ever taken** rests on the absence of escalation: had a bout been taken and
+  waited on, `done.wait(timeout=15)` would have expired and escalated ~45 s before the block
+  lifted. It did not, for either victim. So the worker never reaches the wait, and the ceiling
+  is unreachable by construction rather than mis-tuned. **Pinning the exact blocking call
+  needs Live-side instrumentation (a scratch re-vendor); it was not done.**
+- **`bout_status` itself timed out (30 s) inside the block.** Its action docstring promises
+  "Safe to call while the main thread is fenced: this action runs on the worker thread and
+  never takes a bout." That holds against a *bout-fenced* main thread and fails against a
+  *genuinely blocked* one. Only the first condition was ever tested.
+
+The conclusion the fakes cannot reach: **the whole request path stalls on Live's main thread
+before any fence logic runs, regardless of `runs_on_worker`.** The fence bounds a slow *Live
+API call*; it does nothing about a *blocked Live*, which is the condition that produced the
+original beachball. From the client the shipped fix is invisible — exactly the outcome R9 was
+written to detect.
+
+### Box results
+
+- [x] **Reproduce the original — NOT REPRODUCIBLE AS WRITTEN, and the escalation half FAILS.**
+  The analyzer is no longer slow enough to exceed any ceiling (1.95 s cold). Under the
+  condition that *does* block Live (a 61.5 s export) the call does **not** come back
+  `ok=True` with `code=work_escalated` and a job id — it dies as a plain 20 s socket timeout.
+  The **second clause PASSES** and was verified separately: 12 concurrent `device.load` calls
+  produced 5 `LiveBusyError` refusals naming the running operation and its elapsed time
+  (`Live's main thread is busy with ableton_device('load') (running 0.3s); this request was
+  refused rather than queued behind it`), arriving at 2.3–2.8 s, consistent with the 2.0 s
+  `_BUSY_ADMIT_WAIT_S`. No queue formed; the other 7 completed normally.
+- [ ] **A caller arriving after the give-up must ALSO be refused — UNREACHABLE.** Requires an
+  escalation; none can be produced. Planner/fake-tested only.
+- [ ] **Does the runner actually signal? — UNREACHABLE.** Same reason. The residual risk this
+  box exists to probe (Live *dropping* a scheduled callback) is still unmeasured.
+- [ ] **`abandon_bout` releases — UNREACHABLE.** Same reason.
+- [ ] **R9 over a real socket — FAILS.** The escalation reply does not arrive before the client
+  stops listening, because no escalation is generated at all. Both victims hit the 20 s policy
+  read timeout (15 s ceiling + 5 s margin) with no reply. "Everything above reads as a plain
+  timeout" is the observed behaviour, not the hypothetical.
+- [x] **R8's reachability caveat — PASSES against a fenced bout, FAILS against a blocked main
+  thread.** During a real occupied bout, 6 concurrent `bout_status` callers all answered in
+  <0.9 s with `occupied: true` plus the bout's label and elapsed time. During the export block
+  the same call timed out at 30 s. The surface an operator reaches for works only in the
+  cheaper of the two cases.
+
+### What this means for the release
+
+`#322` shipped inside the release-pending `BUGSWEEP-0910` scope. The fix is real for the case
+it models (a long-running Live API call) and inert for the case in the original report (Live
+blocked by its own modal work). The scope should not claim the beachball is fixed without
+either re-scoping the claim or landing a follow-up. Filed as **#531** (`mcp: the fence is inert when Live itself blocks the main thread`, stage:research — the exact blocking call is not yet pinned).
+
+## #291 — the `alien` witness: does a real chain survive a rebuild? (2026-09-10) — **RUN 2026-09-10 on Live 12.4.5. THE WITNESS FAILED, TWICE, FOR TWO INDEPENDENT REASONS. Boxes 3-6 not run (see below).**
+
+Backlog **#291** (with **#323** folded in). Needs Live 12.4.x, the Remote Script re-vendored
+(the same one the sweep's other checks need — batch it), and the song `alien`. One sitting.
+
+`rebuild_chain` runs entirely against a fake `send_fn` here, and the fake models the one thing
+that matters — a freshly loaded device comes back at class defaults, so "forgot to restore" is
+a detectable state. What it cannot model is Live's own float and enum behaviour, which is where
+this either works or quietly does not.
+
+**It quietly does not.** Both defects below are invisible to the fake and were found on the
+first contact with a real chain.
+
+### Defect A — a device in Live that the DB does not author shifts the whole rebuild
+
+`alien`'s Alien Voice track carried a `HallucinoteAnalyzer` at position 4, placed by the render
+path and *not* authored in the DB. `chain-rebuild --track 4` deleted only the three DB-known
+devices, so the analyzer survived at position 1, and the reload inserted around it:
+
+    before:  Analog | EQ Eight | Erosion | HallucinoteAnalyzer
+    after:   Operator | HallucinoteAnalyzer | EQ Eight | Erosion
+
+The restore pass then compared DB position 2 against the analyzer and DB position 3 against
+EQ Eight, producing **0 parameter(s) restored** and three alerts that name phantom class
+changes rather than the intruder:
+
+    ALERT: nothing sits at position 2 on track #4 after the rebuild, so the captured state
+           of 'EQ Eight' was NOT restored.
+    ALERT: position 3 on track #4 changed class from 'Erosion' to 'EQ Eight' ...
+
+Measured cost on a real mix: **EQ Eight lost 7 of 84 parameters**, two of them musical —
+`3 Gain A` −1.99951 dB → 0.0 and `4 Gain A` −2.50488 dB → 0.0. Two EQ cuts silently gone.
+Erosion survived only because it happened to land where its captured state still matched.
+
+The safety property held — it refused to report success and it alerted. The correctness
+property did not, and the alerts point at the wrong cause.
+
+**Same root cause as `incoming-bugs/2026-09-10-sidechain-authoring-blockers.md` item 1.** That
+report (filed independently, while authoring sidechains on this same song) hit the analyzer tap
+from the other direction: `ableton_device(action='load')` appends to the chain END, which on any
+rendered track is *after* the analyzer, so the new device is silently excluded from stem capture
+while still reaching the master — a stem-vs-master divergence `sum_reconciliation` would flag
+with nothing pointing at the cause.
+
+Two symptoms, one gap. **Corrected mechanism** (the first reading of this, and the triage's,
+were both wrong and are kept here because the wrong reading is the tempting one):
+
+`chain-rebuild` does NOT ignore the analyzer. It consults `is_analyzer_device` in three places
+— filtering it out of the capture (`chain_rebuild.py:315`), out of the DB read (`:426`, *"Never
+authored; the render puts it back itself"*), and out of the post-rebuild verify re-read
+(`:840`). That is a coherent design.
+
+The defect is that the analyzer is filtered out of the **logical** model while still occupying a
+**physical** slot, and the restore addresses devices physically:
+
+    node = build_node_addr(..., device_index=idx)      # chain_rebuild.py:701
+
+where `idx` is the device index captured **before** the delete (`:316`). The restore therefore
+assumes the rebuild reproduces the pre-delete physical layout. A surviving unauthored device
+breaks that assumption — the analyzer sat at the TAIL before (index 4) and at the HEAD after
+(index 1), because the delete removed everything ahead of it and the reloads tail-append behind
+it. Every restore then lands one slot off, which is exactly what the alerts show: EQ Eight
+sought at index 2 found Operator; Erosion sought at index 3 found EQ Eight.
+
+So the fix is not "consult the analyzer predicate" (it already does) and not "delete the
+analyzer too" (the render owns it). It is: **address the restore by the POST-rebuild physical
+index — re-read the chain and map logical position to physical index — instead of trusting the
+captured one.** The same physical/logical confusion is what makes `load` append behind the tap.
+One mapping, made explicit and total, closes both; three point patches would not.
+
+### Defect B — the restore path cannot write a single continuous parameter
+
+With the analyzer removed and the chain clean, a second rebuild (Operator → Analog) attempted
+the restore properly and **every parameter failed with the same type error**:
+
+    ALERT: restoring '5 Gain B' on 'EQ Eight' (position 2, track #4) FAILED
+           (ableton_device('set_parameter'): param 'value' must be str, got float)
+           — the captured value is in the journal and was not applied.
+
+Repeated for all 41 EQ Eight params and all 5 Erosion params. `chain-rebuild`'s restore passes
+a float where the wire schema requires `value` as a string, so **it has never been able to
+restore any continuous parameter and cannot**. This is also the true cause of the "0 restored"
+in Defect A's run; the position shift merely hid it behind class-mismatch alerts.
+
+The song was returned to its authored state with `push execute --only devices` (the alert's own
+suggested recovery), which restored both lost gain cuts.
+
+### Box results
+
+- [ ] **The witness (Analog → Operator, downstream state survives) — FAILED.** Both defects
+  above. Before/after values recorded per the box's requirement, not just a pass/fail:
+  EQ Eight 7 of 84 params changed (two real gain cuts to 0.0), Erosion 0 of 6. Re-run this box
+  once A and B are fixed.
+
+  **Defect B is fixed** (the one-line fix in PR #540; its `scope=CHAIN-RESTORE-STR`
+  change-log entry landed separately in PR #542, which repaired #540's incomplete
+  merge): the restore now hands the wire a
+  string, so a continuous parameter can be carried at all.
+
+  **Defect A is now fixed too, and this box is UNBLOCKED for the first time**
+  (`scope=RELBLK-0910`, 2026-09-10). The restore and the verify no longer trust
+  the physical index captured before the delete: the journal carries each
+  device's DB `position` alongside it, and both passes pair journal entry to
+  device by position against a **post-rebuild** chain read. A device the rebuild
+  can neither address nor delete now refuses before the first delete, with the
+  analyzer the one tolerated survivor.
+
+  So the earlier reason for not running this — that a restore would write real
+  values onto the wrong same-class device, which is worse than the refusals it
+  replaced — **no longer applies.** Run it, on an `alien` with a single writer,
+  and run it before the boxes in `RELBLK-0910` above: this is the box that proves
+  the fix, and the rest of that entry covers what the fakes could not reach.
+  Unit coverage exists for the analyzer-at-the-tail case and fails against the
+  pre-fix module, but no fake can model Live's real chain behaviour, which is
+  what failed here twice before.
+- [x] **`_PARAM_EPSILON = 1e-6` — SETTLED, and it is wrong in two independent ways.** Measured
+  by perturbing writes (offset 0.137 of range) followed by read-back on Analog, EQ Eight and
+  Erosion:
+  - **The float32 round-trip error is RELATIVE, and the epsilon is ABSOLUTE.** Normalized 0-1
+    params round-trip at 5e-9 to 2e-8; `1 Gain A` written at 4.11 round-trips at **1.335e-07**.
+    That is float32's ~1.2e-7 relative error scaling with magnitude — so any parameter whose
+    raw range is large (a dB gain, a Hz frequency, a 0-48 bend range) will breach an absolute
+    1e-6 on a perfectly correct write. Today's values pass only because most params are
+    normalized.
+  - **Integer-stepped params exposed as continuous break it outright.** `Note PB Range` wrote
+    41.424 read 41 (|d| 4.2e-01); `Semitone` wrote 3.288 read 3 (|d| 2.9e-01); `Octave` wrote
+    0.822 read 0 (|d| 8.2e-01). An absolute 1e-6 flags every one of these as a verify failure
+    when Live did exactly the right thing.
+
+    **Recommendation:** a relative tolerance (scaled to the parameter's range or magnitude)
+    plus explicit step-awareness for quantized params. A single absolute constant cannot serve
+    both a normalized filter Q and a 0-48 integer bend range.
+
+    *Method note:* a first pass that re-wrote each param's EXISTING value round-tripped at
+    exactly 0.0 for all 29 params tried — that test is worthless because Live short-circuits an
+    unchanged write. The numbers above come from the perturbing pass, which is the honest one.
+- [ ] **Sidechain restore — NOT RUN.** No device anywhere in `alien` had a sidechain source
+  (`select … where sidechain_source_track_id is not null` returned nothing), so the song could
+  not witness it. The operator is composing a sidechain the song legitimately wants; run this
+  box against that once it lands, rather than against a fabricated one.
+- [ ] **R4's refusal (DB names a plugin this machine lacks) — NOT RUN.** Needs a machine
+  missing a plugin the song uses.
+- [ ] **R5 — does `mute` actually silence the window? — NOT RUN.** Needs a rebuild during
+  playback with the operator listening. Blocked behind Defects A and B: a rebuild that restores
+  nothing is not a fair test of the audible window.
+- [ ] **R7 + the #323 criterion (second push emits no drift note) — NOT RUN, and deliberately
+  not attempted.** A concurrent authoring agent began adding Compressors to `alien` mid-sitting
+  (the devices phase reported Live holding `Compressor` devices the DB does not author on
+  tracks 2, 3, 4 and 5). Two writers on one Live set and one song DB invalidates a drift check
+  by construction. Re-run when `alien` has a single writer.
+
+### Filed, and the branch that will collide with the fixes
+
+- **#532** — chain-rebuild ignores live devices the DB does not author (Defect A).
+- **#533** — chain-rebuild's param restore sends a float, wire wants str (Defect B). Mechanism
+  confirmed in code: `_param_write_kwargs` (`src/hallucinote/sync/chain_rebuild.py`) returns
+  `{"value": float(value), "value_type": "continuous"}` while `set_parameter` declares
+  `ParamSpec(name="value", type="str")` (`hallucinote_mcp/.../actions/device.py`). The enum
+  branch immediately above already passes a string and works; only the continuous branch is
+  wrong, unconditionally.
+- **#534** — `_PARAM_EPSILON` is absolute and step-blind. Ordered *after* #533: it is
+  unobservable until the restore can actually write, and becomes load-bearing the same day.
+
+**There is no branch collision — an earlier claim here that there was one was wrong, and is
+corrected.** `bug/b8-chainrebuild` is an *ancestor* of `origin/develop` (0 commits ahead, 38
+behind; `git merge-base --is-ancestor` confirms), so its work is already merged. The `−126/+32`
+diff that produced the wrong claim is `origin/develop → b8`, i.e. b8 is the OLDER and smaller
+copy (1491 lines against develop's 1585) — read backwards, it looks like b8 rewrites the file.
+It shows up in "unmerged" listings only because it is unmerged to `main`, which is true of
+everything on `develop`. **Base #533 and #534 on `origin/develop`**, where the defect is live at
+`chain_rebuild.py:636`.
+
+**A note the docstring earns:** `_param_write_kwargs` promises "the round trip is exact because
+it is the same scale in both directions". The measurements above show that claim is **true** —
+write-then-read is exact to ~1e-8 relative on real Live. The design was right; only the wire
+call was wrong, which is why the bug survived review.
+
+### Coordination hazard worth recording
+
+This sitting mutates a real song. It ran while an authoring agent was also editing `alien`,
+and the collision was only caught because `push execute` prints a devices-integrity warning
+naming devices Live has that the DB does not. Any future run of this sitting should confirm
+`alien` has one writer before it starts.
+
+## The open-bug sweep's re-vendor sitting (2026-09-10) — **FULLY DISCHARGED 2026-09-10, Live 12.4.5, all four passed**
+
+Backlog **#508**, **#516**, **#515**, **#519**. Needs Live 12.4.x, the Remote Script
+**re-vendored** (`/hallucinote:ableton-mcp-install`) and Live restarted. One sitting — the
+re-vendor is the expensive part and everything below rides the same one. Batch it with the
+#275 check below; that one needs the same restart.
+
+Three of the sweep's fixes are inside `_FINGERPRINT_PATHS`, so none of them reaches a live
+session until the vendored copy is replaced. Until then the wire is unchanged and these
+verdicts are unknowable, not passing.
+
+- [x] **#508 — PASSED** (Live 12.4.5, server `0.1.0+6025d7a7e0af`). Driven over the raw wire,
+  because the MCP client coerces JSON numbers and so cannot reproduce the untyped-client shape
+  the bug needs. `probe set song.tracks[0].color_index value="26"` (a genuine `str`) →
+  `{old: 12, new: 26, changed: true}`; that call previously died on `ArgumentError: did not
+  match C++ signature`. The gate holds in the other direction too:
+  `probe set song.tracks[0].name value="808"` read back `type: str, value: '808'` — not the
+  integer 808. A `warp_mode` write on a real audio clip was NOT run (the scratch set had no
+  audio clip); the coercion path it exercises is the same one, so this is a narrower witness
+  than the issue's example, not a different one.
+- [x] **#516 — PASSED** (Live 12.4.5). Operator loaded on track 1 → `device_index: 1`. Then a
+  `Pitch` MIDI effect: response `{device_index: 1, loaded_class_name: "Pitch",
+  resolved_path: ["midi_effects", "Pitch"]}`. `ableton_device(action='list')` confirms Live
+  re-ordered exactly as reported — `1: Pitch (MidiPitcher)`, `2: Operator` — so the response
+  named the device loaded, at its real index. Pre-fix this reported `device_index: 2,
+  loaded_class_name: "Operator"`. Scratch devices deleted after; the set is back to default.
+  **Note the response reports the browser DISPLAY name (`Pitch`), not the internal class
+  (`MidiPitcher`)** — the issue's expectation said `MidiPitcher`. Display is correct and is
+  what `_canonical_class_name` documents; this is the same two-namespace distinction that
+  produced the blocking Critic finding on #275, so it is worth stating rather than glossing.
+- [x] **#515 — PASSED** (Live 12.4.5). Returns `NotImplementedError: target_kind=
+  'note_expression' cannot be written or read, and this is permanent rather than pending:
+  Live's Python API exposes NO per-note expression surface at all…`, naming the monophonic
+  route. Not `AttributeError: 'Clip' object has no attribute 'envelope_for_note'`. It refused
+  a call whose `clip_index` does not exist, which also confirms the refusal fires ahead of
+  any Live call and any arg validation.
+- [x] **#519 — PASSED. The assumption holds.** Read off a brand-new Live 12.4.5 default set:
+  return 1 `A-Reverb` carries a device whose `class_name` AND `class_display_name` are both
+  `Reverb`; return 2 `B-Delay` carries `Delay`. That is exactly
+  `CANONICAL_DEFAULT_SCAFFOLD_RETURN_DEVICES = {'A-Reverb': 'Reverb', 'B-Delay': 'Delay'}`, so
+  the exclusion predicate can fire. This was the one that would have failed **silently** —
+  a wrong class string means the predicate never matches and the scaffold returns go on
+  becoming permanent song content, which is the defect #519 fixed.
+
+## #275 — the authored reverb is the one that reaches Live (2026-09-10)
+
+Backlog **#275**. Needs Live 12.4.x open, the Remote Script re-vendored, and the song
+`sun-zone-done` (hallucinote-songs). One sitting, minutes.
+
+The item's own acceptance criterion is a measurement no static analysis can make: **after a
+fresh push from the DB, does the A-Plate return's device class match
+`captured_session.json` (Hybrid Reverb, not Live's stock Reverb)?** The RT60 verdicts that
+started this item (A-Plate 3.37 vs intent 3.0; B-Room 1.26 vs 0.8) were measured against
+whatever the open set carried, so they mean nothing until this is answered.
+
+The code half is closed and shipped ahead of this sitting: the cross-machine device-load
+fallback could substitute a *different* device and report the push `ok` — it searched a
+browser root inferred from the device kind (which puts every audio effect under
+`instruments`), took the first substring hit, and never compared what loaded against what
+the song authored. It now searches the root and folder Live recorded at capture time,
+prefers the match at that exact path, and refuses any load whose class is not the authored
+one. So a silent stock-for-Hybrid swap can no longer happen through that path.
+
+That leaves two candidate explanations for what was observed, and only the sitting
+separates them:
+
+- [ ] Push `sun-zone-done` fresh from the DB, then read the A-Plate return's device class.
+  **Matches Hybrid Reverb** → the original observation was a set that had simply never been
+  re-pushed, and #275 closes.
+  **Still stock Reverb** → there is a second substitution path the audit did not reach;
+  capture the push report and the device list and re-open with them.
+- [ ] Only if the class matches: re-render and re-run the analysis, then re-assess the two
+  RT60 gaps against the authored devices. Any reverb-vs-intent conclusion drawn before this
+  is void.
+
+## SMP-6V2K wave 2 — hear it, keep it, play it (2026-09-09) — **PARTLY DISCHARGED 2026-09-09 on Live 12.4.5.** Every probe box answered and R6.2 decided; the first hearing RAN and its music was not accepted, and the symbolic carve was never pushed. Both named below
+
+Plan: `.prawduct/artifacts/plans/SMP-6V2K-W2/build-plan.md`, chunk 17. Backlog **#330**, **#237**,
+**#510**, **#511**; probes land on **#509**. Needs Live 12.4.x open, the Remote Script
+**re-vendored** (`/hallucinote:ableton-mcp-install` — chunk 07 edited `actions/device.py` and
+`handlers/device.py`, so the wire fingerprint flipped) and Live restarted, a human at the
+machine, and the scratch song `hallucinote-songs/songs/audio-verify/` (untracked) extended
+with a Simpler track and a `reverse=1` row. One sitting, batched.
+
+**Run record (2026-09-09, Live 12.4.5, handshake `0.1.0+6283768de096` both ends).** Remote
+Script re-vendored first (the stale copy was `0.1.0+f2c750ef4069` — chunk 07's flip), Live
+restarted onto a fresh default set. The scratch song gained a Simpler row carrying
+`audio_file`, a MIDI clip to play it, and a `reverse=1` row (`AUDIO_VERIFY_FORWARD=1` flips
+that row forward, for the re-point check). Every probe verdict is a row in
+`docs/research/audio-first-class/lom-probe-results.md` → SMP-6V2K-W2 chunk 17, rows 21-27,
+each with its literal response. One incidental confirmation: the coherence check refused the
+first push on stale `ableton_links` rows (tracks 5-6 from the wave-1 set, gone after the
+restart) and named `probe-and-link --probe` as the recovery, which worked.
+
+### Sampler assignment (chunk 07)
+- [x] A `build.py` with a Simpler row carrying `audio_file` pushes; `ableton_device(info)` reads the path back; a second push emits no `assign_sample` — **PASSED** (row 21, 22): `sample_file_path` round-trips the authored path resolved absolute; the second push reports `[devices] skipped (nothing to push)`
+- [x] Does `replace_sample` reset device parameters? — **ANSWERED: NO** (row 23). `Filter Freq` 500 Hz and `Transpose` +7 st both survived a sample swap. The emitter's ordering is therefore not load-bearing for correctness; it stays for a different reason (the sample defines what the params act on)
+- [x] A sample dropped onto a Simpler by hand survives `capture execute` → replay → push — **PASSED in two halves, not as one continuous run** (rows 28, 28b, 28c). Operator dropped `bargain_not.wav`; capture wrote it to the snapshot and `replay_capture` carried it into `devices.audio_file`; push-assigns-from-DB is rows 21-22. Two corrections the box earned: **(a)** its "(portable path form)" parenthetical is WRONG — `paths.audio_file_ref` deliberately refuses `portable_path` because `resolve_audio_path` cannot expand `~`, so absolute is the correct form here (the tracked-file-carries-$HOME tension is real and unresolved — see row 28c); **(b)** a song whose samples are hand-managed must not ALSO author `audio_file` in `build.py`, or push correctly reverts the drop. The continuous run was blocked by row 29 (filed as **#514**)
+- [x] **Sampler (`MultiSampler`) probe** — **ANSWERED: NO `replace_sample`, and the "only Simpler" teaching error STANDS** (row 24). Live's Sampler surfaces as a bare `Device`: `song.tracks[0].devices[0].sample` → `AttributeError`, against a real `Sample` object on the Simpler beside it. Dated verdict — a future Live build could change it
+
+### Reverse via the derived cache (chunk 14)
+- [x] A `reverse=1` clip places (the create's `audio_path` is under `assets/derived/`); flipping to 0 re-points it at the source — **PASSED** (rows 25, 26). The re-point announced its full cost on the operator channel before acting. *Audibility* — that it plays backwards — is the operator's ears; the set is currently left in the `reverse=1` state, clip on track 5 slot 3 / arrangement bar 13
+- [x] The arrangement copy of that row plays the same derived file — **PASSED** (row 25): both `clip_slots[2].clip.file_path` and `arrangement_clips[2].file_path` resolve to the same content-addressed derived file
+
+### #509 probe (arrangement extent)
+- [x] On an arrangement audio clip: is `end_marker` / a length writable after `duplicate_clip_to_arrangement`? after a direct create? — **ANSWERED, and it re-scopes the item** (row 27). `end_marker` and `loop_end` are writable on BOTH routes; `end_time` has no setter and does not follow either. The arrangement block is fixed at placement time, so #509's assumed build ("trim the copy to `end_bar`") is unreachable — what is reachable is setting the playable region at placement time so the copy PLAYS the authored region. Re-scope #509 to that
+
+### R6.2 listening (chunk 12)
+- [x] `hallucinote stretch-ab <real line> --rate 0.9 --semitones -4`: both files render — **RENDERED 2026-09-09; the LISTENING is still the operator's.** rubberband 4.0.0 installed; the CLI flags (`-t`, `-p`, `-F`) ran against the real binary for the first time and both files came out. Source `bargain_not.wav` (16 kHz mono, 3.88 s, 8-bit PCM — real dialogue-rip quality), `--rate 0.9 --semitones -4`. Source centroid 1474 Hz; librosa 1174 (−301), rubberband+formant 1165 (−309) — the two backends land within 9 Hz of each other, so **the centroid proxy does not separate them and the decision is entirely by ear**. Files: `hallucinote-songs/stretch-ab/librosa-rate0.9-pitch-4.wav` and `…/rubberband-rate0.9-pitch-4-formant.wav`. **R6.2 DECIDED 2026-09-09 by the operator: Rubber Band — "the rubberband one sounds much better".** The centroid proxy could not separate them (9 Hz apart), so this was decided entirely by ear, which is what the harness was built for. **The consequence is a real cost the repo now takes on: a non-Python binary dependency** (`rubberband`, installed via `brew install rubberband`) on the R4.3 path — the exact trade design.md's D-entry flagged as open. R4.3 (formant-preserving grain-scatter) is now buildable, and its build must carry the missing-binary teaching error
+
+### A first hearing (the plan's acceptance)
+- [~] One real line ingested, its lens read, one symbolic carve pushed, one follower part pushed — and heard — **RAN 2026-09-09 and was HEARD; the pipeline passed and the MUSIC did not.** Song `hallucinote-songs/songs/audio-hearing`. Ingest, lens, F0, follower and a pitch ride all ran on a real dialogue line and were audible in Live. Two shortfalls, both recorded rather than papered over:
+  - **The carve was never pushed.** The pad is placed but uncarved — the one piece of section 5 still owed. `field='symbolic'` carve-as-recipe is unexercised against Live.
+  - **The follower did not read as tracking.** Operator's verdict: *"it does not really read as tracking."* Not a plumbing failure — all 7 notes land within 0.5 st of the contour (mean 0.29 st). The causes are measured in `lom-probe-results.md` rows 30-31 + "What section 5 settles": a source at the pipeline's floor (15% voiced, median confidence 0.078), a tracker octave error the follower faithfully reproduces (`62` amid `50-54`), and 7 notes against 22 onsets. **The acceptance is therefore PARTIAL** — the plan's machinery is verified end to end on real material; its musical output on this material is not accepted
+
+## SMP-6V2K wave 1 — an authored sample lands in Live, and a dragged-in one comes back (2026-09-09) — **DISCHARGED 2026-09-09 on Live 12.4.5** (one box unreachable on 12.4.x, named below; every other box including audibility is confirmed)
+
+Plan: `.prawduct/artifacts/plans/SMP-6V2K/build-plan.md`. Backlog **#284**, **#268**;
+verdicts land on **#237** and **#330**. Needs Live 12.4.x open with a set loaded, the
+Hallucinote plugin loaded so `ableton_probe` / `ableton_clip` are on the wire, and — for
+everything from chunk 02 onward — the Remote Script **re-vendored** after chunk 02 lands
+(`/hallucinote:ableton-mcp-install`) and Live restarted. `actions/clip.py` and
+`handlers/clip.py` are both in `_FINGERPRINT_PATHS`, so the wire fingerprint flips and a
+stale Remote Script fails the handshake rather than misbehaving quietly.
+
+**Have a real audio file ready** — any short WAV, absolute path. The probe pass writes into
+a scratch set, not a song.
+
+**Run record (2026-09-09, Live 12.4.5, handshake `0.1.0+f2c750ef4069` both ends).** Driven from a
+scratch song, `hallucinote-songs/songs/audio-verify/` (untracked; `build.py` + two generated
+4 s pulsed-tone WAVs, `RUNBOOK.md` maps every box), through nine `push execute --probe` runs and
+two `pull execute session-clips` runs against a fresh default set. Sample files:
+`assets/tone.wav`, `assets/tone-b.wav` (song-relative) and a copy of `tone.wav` outside the song
+dir for the absolute-path case. Every push exits 1 by design — the envelope-free placement's
+conform gap is an INCOMPLETE, never an OK — so exit code is not the pass signal; the phase
+table and the operator channel are. One defect surfaced and is fixed in the same change: the
+unlinked-row create into an occupied slot (the pull-ingested seam, #507) replaced the clip with
+no word on the operator channel, while the code comment and `capability-truth.md` both claimed
+the cost was stated in the create's purpose — purposes never reach `execute`'s output. It now
+alerts whenever the probe shows the slot occupied; the alert was seen live on the tenth push.
+Authoring note for the next scratch song: `clips.slot` is Live's 1-based `clip_index`, passed
+through unmapped, and the mutator accepts `slot=0` — the wire refuses it at push time.
+
+### Chunk 01 — the probe session (does NOT need the re-vendor; the probe bridge is shipped) — **DISCHARGED 2026-09-09** on Live 12.4.5; verdicts in `docs/research/audio-first-class/lom-probe-results.md` rows 14-20
+
+One pass, five questions, batched so the operator is asked once. Append the answers to
+`docs/research/audio-first-class/lom-probe-results.md` as a dated section — that file is the
+canonical verdict record and supersedes the research passes where they differ.
+
+| # | Question | What to run | Why it matters |
+|---|---|---|---|
+| 1 | **Reverse** — does a Live 12.4.x `Clip` expose any settable reverse? | `describe` a real audio clip; diff the property list against `lom-audio-clip-surface.md` §4 | `db/schema.sql`'s `clips.reverse` comment claims a push materialization the LOM research says does not exist. One of them is wrong, and the column fails the first time a song sets it. The answer rewrites either the schema comment or wave 3's plan |
+| 2 | **`available_warp_modes`** on a real audio clip — the int → algorithm map | `get` the property on a created audio clip | `WARP_MODES` in `db/mutations/clips.py` is trusted, not checked. An authored mode that silently means a different algorithm is a wrong-sounding song with no error |
+| 3 | **Recreate semantics** — `create_audio_clip` into an **occupied** slot: error, replace, or silent no-op? Then delete-and-recreate a clip that hosts a mixer envelope: does the envelope survive, and what does `automation_envelope` return afterwards? | create into a filled slot; then create envelope → delete clip → recreate → read back | `Clip.file_path` is read-only, so re-pointing a clip at a different file is a **destructive** reconcile. Chunk 03 cannot write its reconcile rule without this, and destructive arrangement reconciles are where this project has been bitten before (ARR-PROJ) |
+| 4 | **Path handling** — confirm the absolute-path requirement and re-record row 1c's two error shapes against this build | create on a MIDI track; create with a bad path | Chunk 02 maps both to the teaching-error shape; the 2026-06-10 strings are what it was built against |
+| 5 | **Batched for wave 4** (#330 chunk 0) — how does a sample assign to Simpler/Sampler via LOM; is an arbitrary `assets/` file reachable that way; does Simpler expose an automatable `Reverse` alongside `S Start` / `S Length`? | describe a Simpler device's sample slot and parameter list | Costs nothing extra while Live is open, and unblocks wave 4 from a standing start |
+
+**Acceptance:** every question answered with a recorded call and its literal response; the
+reverse verdict stated unambiguously; the warp-mode map written down. Then correct (or
+confirm) the `clips.reverse` schema comment, and if reverse is absent, note on **#237** that
+the column's materialization moves to wave 3/4.
+
+### Chunk 02 — a real audio clip, created from the wire
+
+- [x] Handshake passes after the re-vendor (fingerprint flipped; record the new value) — `f2c750ef4069` (was `c9abab64204b`); `ableton_session(info)` answered
+- [x] `ableton_clip(action='create', kind='audio', audio_path=<abs>)` into a **session** slot creates a clip that plays the file — three session clips created via push, two more over the wire; `list` reports each with its `file_path`
+- [x] Same into the **arrangement** at a named beat position — `tone-dry` at `start_beats=16.0` (bar 5), length 8.0
+- [x] Refusal on a **MIDI track** reaches the wire as the project's teaching error, not a bare `RuntimeError` — `ValueError: create: track 1 is not an audio track … Make the host track with ableton_track(action='create', kind='audio') … (Live said: Audio clips can only be created on audio tracks)`
+- [x] Refusal on a **bad or missing path** likewise — `Live will not load '/nowhere/missing.wav'. It reports a file that is missing and a file it cannot decode with the same refusal …`
+- [x] Each new conform property round-trips: `warp_mode`, `start_marker`, `end_marker`, pitch fine — authored 6/0.0/8.0 read back 6/0.0/8.0; `pitch_fine=25` set over the wire read back 25.0; `pitch_coarse=-5`, `gain=0.6`, `warp_mode=3` likewise
+- [x] The **read** surface reports the clip as audio with its `file_path` and conform state, and reports a MIDI clip without those keys at all — audio entries carry `is_audio: true` + `file_path` + gain/pitch/warp/markers; a MIDI clip on track 1 lists as `{name, length, is_audio: false}` and nothing else
+
+### Chunk 03 — push materializes `kind='audio'`
+
+**Partial live result, 2026-09-09 — the MIDI-path regression half PASSED.** Reported by the
+concurrent `alien-song` session, which was pushing a pure-MIDI song through this branch's
+engine (handshake confirmed: server, Remote Script and package all `ad27853`). `push
+--only clips` planned and applied **58/58 clips with no refusals and no warnings** beyond
+the standing tuning note.
+
+That is **R6.4** — "nothing here regresses what exists" — for the clips phase, and it is
+evidence no unit test could give: chunk 03 rewrote `push/clips.py`, which the MIDI path
+shares, and the first real set it met did not notice. It says nothing about the audio path,
+which is what the unticked boxes below are for.
+
+**Arrangement half PASSED too, same run.** 116/116 placements applied, cues 1/1, and
+`verify-arrangement` afterwards reported 58/58 placements faithful with **no orphan clips**.
+The perform pass in the same push recorded all six changed arcs with real write counts.
+
+That is the half worth having. `push/arrangement.py` is the *destructive* module — the
+arrangement-as-projection shape clears each track's lane before rebuilding it (ARR-PROJ) —
+so a regression there costs a user their timeline rather than returning an error, and no
+unit test reaches it. Both rewritten modules have now cleared a real set.
+
+**Still unverified, and this is what the boxes below are for:** every one of these results is
+from a **pure-MIDI** song. Nothing above exercised a `kind='audio'` row, so the audio path
+this wave exists to build has still never run against Live.
+
+
+- [x] A song with one authored audio clip pushes into a real set — **session and arrangement** — first push: clips 14/14, envelopes 1/1, arrangement 2/2; `verify-arrangement` exit 0 ("2 placement(s) faithful")
+- [x] The session clip carries its authored conform (warp/transpose/gain/markers). **The arrangement copy will NOT** — Live's direct arrangement-create takes no properties and the planner cannot address the copy until the call returns. Confirm the run *reports* that gap rather than staying silent about it — session `tone-dry` reads gain 0.6 / pitch −5 / Re-Pitch; its arrangement copy reads gain 0.4 / pitch 0 / Beats (Live's defaults), and the run reports it as `[GAP] arrangement … INCOMPLETE — could not be determined`, naming the placement and the four properties that did not travel
+- [x] A **second push of the unchanged song plans no work** (the property a destructive reconcile most easily breaks) — `[clips] skipped (nothing to push)`; no delete, no recreate. (The arrangement re-projects every push by design — ARR-PROJ clear+rebuild, 4 calls — and the envelopes phase re-writes its one envelope every push because it has no fingerprint gate; both are standing behavior the MIDI path shares, not a reconcile.)
+- [x] A **missing sample file fails its clip loudly** — not a reported-OK push that plays silence — `[clips] INCOMPLETE … 'tone-dry' is kind='audio' but its sample is not on disk: audio_file='assets/missing.wav' resolves to <abs path> … NO create was planned`; the arrangement then skipped the whole track ("the clear is destructive, so a track is materialized only when it can be fully rebuilt")
+- [x] Changing the row's `audio_file` recreates the clip: the plan shows `delete` → `create` → conform → `write_envelope` for a ride authored under it, the operator channel says the clip was DELETED and recreated, and the ride reads back on the new clip (a recreate drops envelopes — probe row 16b — so the re-emit is what keeps it) — clips 10/10 (delete + create + 7 conforms + envelope); alert `the row's audio_file CHANGED — Live's clip plays …/tone.wav, the row now authors …/tone-b.wav … Live's clip in slot 1 on track 5 is DELETED and recreated from tone-b.wav`; `read_envelope(mixer_volume)` on the new clip: `exists: true`; the arrangement copy reads `tone-b.wav` with gain 0.8 / Complex Pro
+- [ ] A slot Live holds a **MIDI** clip in, linked to an audio row, is recreated as audio the same way — **NOT REACHABLE on Live 12.4.5**: an audio track cannot hold a MIDI clip, and a MIDI track refuses the audio create (box 4 above), so the only route is a track that changed kind under its link. Planner-tested only (`test_linked_slot_holding_a_midi_clip_is_recreated_as_audio` family); left unticked on purpose, not pending
+- [x] An audio track the DB has **no** placements for is still skipped, with its warning, and the report says which tracks were projected and which skipped — every push: `arrangement: 1 audio track(s) have no DB placements and were left UNTOUCHED (no clear, no rebuild) so anything placed in them by hand survives: Unplaced`
+- [x] Name the sample file used — `songs/audio-verify/assets/tone.wav` (mono 44.1 kHz 16-bit, 4.0 s, 440→660 Hz pulsed sine); `tone-b.wav` (220→330 Hz) for the re-point
+
+**Chunk 07 re-queues chunk 03's live clause over the two paths it opened** (built 2026-09-09
+against probe rows 16-17; planner tests green; NOT live-run). The handler edit flips the wire
+fingerprint — re-vendor (`/hallucinote:ableton-mcp-install`) + Live restart before any of this:
+
+- [x] **Re-pointed `audio_file`** — the sequence above, against a real set with a real ride: after the push, `automation_envelope` on the new clip is non-`None` and the arrangement lane still shows the ride — `read_envelope` `exists: true` on the recreated session clip; `song.tracks[4].mixer_device.volume.automation_state` = 1 after the re-projection (the arrangement-clip envelope itself has no LOM read surface — the read refuses with the same teaching error as the write)
+- [x] **Envelope-hosting audio placement** takes the duplicate route: the arrangement copy carries the session clip's gain/warp/markers AND the ride (`automation_state` flips on the track), and the run reports **no** conform gap for it — while an envelope-free audio placement on the same track still reports its conform gap and lands at Live's defaults — plan: `duplicate_to_arrangement(track 5, clip 1, start_beats 0.0)` then `create(arrangement, kind=audio, start_beats 16.0)`; arrangement list: copy 1 gain 0.8 / warp 6 / markers 0–8, copy 2 gain 0.4 / warp 0; `automation_state` 1; only `tone-dry` in the gap report
+- [x] ~~**SUPERSEDED 2026-09-09 by RELBLK-V19 chunk 07** — this box verified the OLD warning, which said the extent simply could not travel and told the operator to trim in Live. The playable region is now written, so the shipped text is two-part and this record no longer describes it. Kept as the run record it was; re-verification is queued in the RELBLK-V19 section below.~~ The **extent** warn fires for both routes (the copy plays the clip's length, not `end_bar`) — one warning per push, naming both placements: `… placed by duplicate of its conformed session clip … but its EXTENT did not: … not the placement's end_bar (3) | … Track.create_audio_clip takes a path and a position and no length … end_bar (7)`; both copies list `length: 8.0`
+- [x] A second push of the unchanged song still plans nothing (no delete, no recreate, no re-emit) — after the re-point: `[clips] skipped (nothing to push)`, zero `DELETED` alerts (the standing per-push envelope re-write noted under chunk 03 box 3 is not a recreate re-emit)
+
+### Chunk 04 — a ride under a dialogue line
+
+- [x] A volume ride authored under an audio session clip pushes and is **audible** in the set — pushed (`[envelopes] ok (1 call(s))`) and reads back `exists: true`, flat 0.5 from beat 0.25 across the clip (the writer's insert-step semantics; the 0.9 endpoint at beat 8 sits at the sampled range's edge). **Audible — confirmed by the operator 2026-09-09** (Sample slot 1, the pulsed tone drops under the ride)
+- [x] An arrangement-clip envelope on an audio host is still refused (probe row 2 is definitive) — the read side refuses identically: `read_envelope target_kind='mixer_volume' on an arrangement clip is not supported by Live 12.4's LOM (same constraint as write_envelope)`; the write refusal is probe row 2 and was not re-run
+
+### Chunk 05 — the round trip that makes sketching work
+
+- [x] A clip **dragged into Live by hand** comes back on pull as a real row, with its warp settings intact — the clips were placed over the wire rather than by mouse (the pull cannot tell the two apart: both are Ableton-only populated audio slots); Complex (4) and pitch +3 set on one afterwards came back as `warp_mode=4, pitch_coarse=3`; `--dry-run` previewed the identical four mutations first
+- [x] It survives a pull → push round trip — the next push planned `create(replace=True)` + 7 conforms per ingested row (16/16 ok), the rows are linked afterwards, and the push after that planned nothing for clips. **Finding fixed here:** that replace said nothing on the operator channel; it now alerts when the slot is occupied (seen live: `… slot 5 on track 5 already holds 'dragged-again' playing tone-b.wav — a clip pull ingested without a link (#507) … DELETED and rebuilt …`)
+- [x] A hand-dragged file living **outside** the song dir is stored **absolute**, not `~`-collapsed — a `~` form resolves as a relative path under the song dir and fails at the next push — stored `/private/tmp/…/scratchpad/dry/assets/tone.wav`; the inside file stored `assets/tone-b.wav`
+- [x] An audio slot the DB no longer has is treated as a real delete, not an unknown — cleared `Unplaced` slot 1 in Live; pull: `session slot 1 cleared in Ableton -> deleted DB clip (clip_id=f59b7e1a 'unplaced')`
+
 ---
 
 ## PERFORM-START-POSITION — the cue jump moves Live's start playing position (issue #471, 2026-09-08) — **PERFORM PATH CONFIRMED LIVE 2026-09-08; render path still PENDING**
@@ -1956,3 +2594,121 @@ did not.
    against the prose lever itself** — the answer is not a seventh chunk of
    prose, it is to bring the external eval framework in sooner, against the
    corpus already seeded at `.prawduct/artifacts/collaboration-corpus/`.
+
+
+---
+
+## RELBLK-V19 — the release blockers (2026-09-09) — **PENDING**
+
+Plan: `.prawduct/artifacts/plans/RELBLK-V19/build-plan.md`. Backlog **#310**, **#518**, **#505**,
+**#498**, **#514**, **#501**, **#509**. Every assertion behind these boxes is unit-level; each box
+below is a claim only a real Live session can settle.
+
+**Re-vendor first.** Chunk 03 edits `handlers/clip.py`, chunk 04 edits `handlers/render.py`, and
+chunk 07's siblings touch the push path, so the wire fingerprint flips: `/hallucinote:ableton-mcp-install`,
+then fully quit and reopen Live before any box below.
+
+- [ ] **#509 — the region write actually bounds playback.** An audio placement's arrangement copy
+  plays only the authored span. Both routes: duplicate-of-session (region starts at the conformed
+  `start_marker`) and direct create (starts at Live's 0). The block still runs the file's length —
+  confirm it is SILENT after the region ends rather than continuing.
+- [ ] **#509 — the residual is real, not theoretical.** A placement whose block overruns into a
+  later placement on the same track: confirm what Live actually does, since the operator text now
+  tells the user to shorten in Live when a collision occurs.
+- [ ] **#509 — an UNWARPED clip is skipped, not mistrimmed.** `warping = 0` puts Live's markers in
+  seconds while the placement is authored in bars. Confirm no region is written and the skip is
+  named. The deeper case: a row with `warping` unset on the direct-create route, where the authored
+  warp does not travel — confirm which unit Live ends up in.
+- [ ] **#505 — a failed replace leaves the clip intact in a real set.** An audio path onto a MIDI
+  track, and the MIDI direction. The unit tests use a fake LOM whose refusal STRING is not probed
+  verbatim; this box is what confirms Live refuses where the fake says it does.
+- [ ] **#310 — the advisory is honest against a real User Library.** Already observed once during
+  the build (`matches_mcp_server: true` with `matches_vendored_content: false`,
+  `differing_paths: ["__init__.py", "install_ops.py", "install_paths.py"]`). Re-confirm AFTER the
+  re-vendor above: the advisory should go quiet, and editing `analyzer/setup.py` should flip it
+  again while the handshake stays green.
+- [ ] **#518 — the printed pin recipe works from a genuinely mismatched session.** The recipe was
+  executed successfully against this machine during the build, but not from a real refusal.
+  Provoke the version mismatch, paste what the CLI prints, confirm the push then runs.
+- [ ] **#509 — a placement authored LONGER than its sample.** Every other box here covers the
+  block-runs-long direction. The region write computes its end from the authored bars alone and
+  emits it unconditionally, and only a SHRINKING write was ever probed (row 27: `end_marker`
+  8.0 → 4.0). Place a 4-bar authored span over a 1-bar sample and record which happens: Live
+  refuses the marker (and the arrangement phase now fails a push that used to report ok-with-an-
+  alert), or Live accepts it and the copy does not in fact sound the authored span. The answer
+  decides whether the write should be emitted at all in the growing case.
+- [ ] **#498 — the capture no longer starts before the transport rolls.** The arm now follows the
+  locate, so the M4L patch's first post-arm `current_song_time` change should be the transport
+  itself rather than the seek. Park Live's start position at a distant bar (the locate must
+  actually MOVE the playhead — that is the only condition under which the old order bit), render,
+  and confirm the capture's first sample is the downbeat and every per-section window lands where
+  the arrangement says. The unit test asserts call ORDER against a fake; only a real render can
+  say the wall-clock beat is gone.
+
+- [ ] **#514 — capture→cleanup→capture converges on a real set.** Open a set still holding the
+  default scaffold, capture, accept the cleanup offer, capture again: the second round must emit
+  zero net link changes. Then confirm a scaffold-NAMED track carrying a device survives capture.
+
+- [ ] **`capture execute` parks the playhead, and Live's values follow it.** The unit tests
+  assert the seek precedes the walk against a fake bridge; only a real set can say Live
+  re-applies automated parameter values on a locate *while the transport is stopped*, which is
+  the assumption the whole fix rests on. Open a set with automation on a return (the `alien`
+  A-Reverb decay is the sharpest witness: 6.87 s at the end of the arrangement, 2.50 s at beat
+  0), leave the playhead at the end, run `capture execute --song alien`, and confirm the refresh
+  records the beat-0 values. **The failure to look for:** a snapshot still carrying end-of-song
+  values while the CLI reports it parked the playhead at 0 — that means Live needs a further
+  settle before parameter values follow the playhead, and the preflight needs a yield after the
+  seek. Also confirm the rolling-transport refusal fires rather than capturing.
+
+## RELFOLD-0910 — the chain-solo read against a real Live rack (2026-09-10) — PENDING
+
+Backlog **#550**, shipped in RELFOLD-0910. Needs Live 12.4.x, the Remote Script
+**re-vendored** (three RELFOLD-0910 fixes are inside `_FINGERPRINT_PATHS` — batch
+this sitting with that restart), and any song carrying an Audio Effect Rack or
+Instrument Rack with two or more chains. One sitting.
+
+**Every test for this is against a fake**, and the fake is one I wrote from the
+LOM docs rather than from an observed session. That is the same weakness
+RENDERGUARD's own block names, and it is sharper here because the whole feature
+rests on two Live premises nothing in this repo has ever read from a real rack:
+that a rack device exposes `chains`, and that a `Chain` carries `solo`. The
+chain-solo warning is not wrong if those are wrong — it is *absent*, silently,
+on every render.
+
+- [ ] **A rack device really does expose `chains`, and a chain really does carry
+      `solo`.** Probe it directly rather than inferring from the warning:
+      `ableton_probe(action='get', path='song.tracks[N].devices[M].chains')` and
+      then `...chains[0].solo` on a real rack. Record what the attributes ARE —
+      present/absent, and the value's type — because a `solo` that is absent
+      reads as `None` now (unknown, and listed as such) and a `solo` that is an
+      int rather than a bool changes nothing but is worth knowing.
+- [ ] **A soloed chain warns, and the render still completes.** Solo one chain
+      inside a rack on a track, run `ableton_render(action='start')`, poll to
+      `done`. The status must carry `warning` naming the rack and the chain, and
+      `render_status` must be `ok` — the whole decision here was warn-not-refuse,
+      so a refusal is a failure of this box just as much as silence is.
+- [ ] **The advisory survives the async projection, against the real server.**
+      The unit test pins `Job.status_result`; this box pins that the key reaches
+      an operator through the actual MCP wire and the `/render-analyze` relay.
+      Confirm `warning` appears in what the skill reports, not only in the raw
+      status payload. This is the failure the Critic caught in review — it was
+      green in-process and dropped in production — so it earns a live check.
+- [ ] **The manifest records it.** Read `manifest.json` afterwards:
+      `mixer_state[<the track>].soloed_chains` carries one entry with
+      `solo: true`, and `device_position` matches the rack's position **before**
+      the analyzer sweep appended the tap. That off-by-one is the specific thing
+      the PHYSICAL-vs-ordinal note in `boundary-patterns.md` warns about, and a
+      real render is the only place it can be checked.
+- [ ] **A clean rack stays quiet.** Same song, solo cleared: no `warning`, and
+      `soloed_chains` is `[]` on every row. A warning that fires on a healthy
+      session teaches the operator to ignore it, which is worse than not having
+      it.
+- [ ] **A soloed TRACK still refuses, with the rack present.** The guard this
+      extends must not have been weakened. Solo the track (not the chain) and
+      confirm the render refuses and captures nothing.
+
+**Known not covered, do not treat as failures** (all stated in
+`architecture.md` and `boundary-patterns.md`): a rack nested inside another
+rack's chain, a rack's return chains, chain mute and chain volume, and the
+master strip — that last one tracked at **#552**, which explains why the master
+needs its own case rather than another row.

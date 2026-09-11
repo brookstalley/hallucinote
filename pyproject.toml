@@ -221,7 +221,12 @@ disable_error_code = ["arg-type", "assignment", "union-attr"]
 # that shells `python -m pytest`) silently imports primary-dir code and reports
 # green against the wrong tree. In the primary dir these are the same paths the
 # `.pth` already targets, so it's a no-op there.
-pythonpath = ["src", "hallucinote_mcp/src"]
+# `.` is the repo root, for `tools/` — several test modules import the repo's
+# own scripts (the publish gate's FORBIDDEN list, the scenario evaluators)
+# rather than restating them. It resolved without this, but only as a side
+# effect of `tests/` being a package: collecting it puts the rootdir on
+# sys.path. Listing it makes the dependency a stated one.
+pythonpath = ["src", "hallucinote_mcp/src", "."]
 testpaths = ["tests", "hallucinote_mcp/tests", "examples"]
 python_files = ["test_*.py"]
 markers = [

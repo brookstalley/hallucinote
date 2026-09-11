@@ -64,7 +64,8 @@ all, I'll listen at the end"), is theirs and is not re-opened.
    hasn't directed (key, the central tension, what the chorus does), *propose and
    read their reaction* — don't auto-decide. Before re-touching a part you've
    worked before, `/song-attempts` recalls what was already tried (and reverted)
-   so you don't re-propose a dead end.
+   so you don't re-propose a dead end. Composing to a sample, `/sample-lens` reads
+   the line (pitch centre, phrases, detector fires against bars) first.
 2. **Pick instrument chains** — `/song-pick-instruments`. The chain (instrument +
    FX + sends) is authorship that ships in the snapshot — sound design *is*
    composition, not a mix-time todo.

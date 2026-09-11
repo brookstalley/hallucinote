@@ -97,12 +97,23 @@ as offset by roughly the excess. If a surface shows damage, say so and treat tha
 surface's musical readings as suspect until it is re-rendered — do not open a
 feel conversation about a part whose capture has a hole in it.
 
-These two are also the only lenses that may state a defect **as a defect**. Every
+These two, and `master_not_stem_sum`, are the only lenses that may state a defect
+**as a defect**. Every
 musical lens here reports against declared intent and never grades; a sample
 discontinuity and a capture that is not the length it claims both have physical
 ground truth, so they are named plainly. Do not intent-relativize or hedge a
 `capture_span_mismatch` — its whole purpose is to stop the rest of the report
 being believed.
+
+`master_not_stem_sum` is the strongest of the three and the one to read FIRST. It
+says the captured master is not the sum of the captured stems — so it is not the
+mix, and every master reading in the report (LUFS per section, sharpness, master
+imaging, delivered true peak) describes something else. Do not open a loudness or
+tonal-balance conversation about the master on a report carrying it; the finding
+names what to check (a soloed or muted track, a track routed away from Main, a
+missing stem) and the answer is to fix that and re-render. The stems on such a
+report are still good — that is what makes the master the odd one out — so a
+per-part conversation remains legitimate.
 
 Read the latest report JSON under `songs/<slug>/analysis/` (or run the analysis
 first — see "Refreshing the analysis"). At the **top level**, describing the
@@ -152,7 +163,13 @@ render rather than any section:
   genuine uncompensated plugin delay sits above 0.9 and IS worth chasing,
   because the timing lens will otherwise report it as laid-back feel.
 - `sum_reconciliation` — do the captured surfaces sum to the captured master?
-  The one check that validates the capture *set* rather than its members. A
+  The one check that validates the capture *set* rather than its members.
+  **Two of its axes now gate**: a `correlation` below 0.5 or a
+  `gain_offset_db` beyond ±12 dB raises a `blocking` `master_not_stem_sum`
+  finding, because that is no longer "an ambiguous residual" but a master that
+  is not built from these stems (the 2026-09-10 `alien` renders read 0.159
+  against a healthy 0.959 — a track had been left soloed). Everything below
+  still applies to a report that does NOT trip those two. A
   non-zero `residual_db` is **not** by itself a fault: a nonlinear master chain
   produces one legitimately, and `gains_assumed_unity` tells you whether fader
   volumes were modelled at all. Read `band_residuals` **against each other**,
@@ -288,6 +305,21 @@ For each section, you have:
   wasn't known or the master is muted. Never read the bus true-peak as delivery, and
   never advise trimming the master fader to move `master.true_peak` — the fader is
   post-tap, so the bus number won't budge (only `delivered_true_peak_dbtp` will).
+  **Check `master_fader_verified` before you trust the delivered number.** Analysis
+  is server-side and never reads Live, so the fader it applies is whatever the song
+  DB declares (`master_fader_source: "song_db"`, `master_fader_verified: false`).
+  A fader trimmed in Live and never pulled back leaves `delivered_true_peak_dbtp`
+  wrong by exactly that drift — `master_fader_note` says so and names the probe
+  that settles it (`ableton_session(action='info')`). Judge a level move you just
+  made on the master-bus true peak + overshoot delta, which IS measured.
+- `measurement_basis` — what each family of numbers is measured relative to.
+  **Every per-stem and per-section reading is PRE-fader**, so a fader-only move
+  leaves `loudness`, `masking` and `bed_masking` byte-identical across an A/B.
+  That is the tap, not a failed change: never read flat stem rows after a level
+  move as "the fix didn't work" and reach for EQ. `section_masking` reads
+  `pre_fader_scaled_by_declared_static_fader_gains` when masking reconstructed mix
+  balance from the DB's static gains — still pre-fader audio, and still blind to a
+  fader move that never reached the DB.
   The last of these is **per return** (RT60
   is a property of the return's reverb device, measured once from its captured
   ring-out — not per send). When `sufficient_tail` is false the capture had no
@@ -302,7 +334,13 @@ For each section, you have:
   `conflicting_declarations` (non-empty) means sends into one return declared
   different RT60s — one device can't have two decay times; surface the conflict.
 - `automation_verifications` — was authored time-varying automation realized in
-  audio? Per value-changing breakpoint: a `device_parameter` flip is verified on
+  audio? **One row per authored GESTURE, not per breakpoint**: consecutive
+  same-direction changes closer together than the analysis window are graded as
+  one move, so a ramp authored as 64 small steps is a single verdict spanning the
+  whole traversal. `at_beat` is where the move starts, `through_beat` where it
+  lands, and `steps` how many declared changes it collapsed — read the span, not
+  `at_beat` alone, when you cite where something happened. A `device_parameter`
+  flip is verified on
   **TWO probes — timbre OR image** (STR-4C8N), because spectral centroid alone
   cannot see a comb/width effect (a flanger notches roughly symmetrically, so it
   barely moves the centroid however wet it gets, and centroid-only verification
@@ -323,10 +361,14 @@ For each section, you have:
   against a prediction from the declared values + the stem's contribution.
   `realized=false` (with `measurable=true`) means the authored gesture didn't
   happen in the render — surface it. `measurable=false` means it can't be
-  checked from this capture (the window was silent; or, for mixer kinds, the
-  stem is too diluted in the mix for the master to speak, or master-chain
-  limiting broke the prediction model) — report the gap, don't read it as a
-  failure. The `note` field explains each verdict.
+  checked from this capture: the window was silent; **or the declared value
+  never settles on one side of the move — a neighbouring ramp runs straight
+  through where the plateau would be, so there is no steady span to read the
+  old (or new) value off**; or, for mixer kinds, the stem is too diluted in the
+  mix for the master to speak, or master-chain limiting broke the prediction
+  model. Report the gap, don't read it as a failure — and for the no-settled-
+  window case the fix is authorship, not mixing: give the move a plateau to be
+  judged against. The `note` field explains each verdict.
 - `energy_realization` — declared-energy-curve vs rendered-intensity (ARR-7M3D):
   did the per-section `energy` the composer authored actually render as
   intensity? `correlate_rho` is Spearman ρ per correlate (`loudness`,
@@ -495,7 +537,11 @@ summary + `report_path`. Prefer it over driving the poll loops by hand.
 - `ableton_render(action='start', song_slug=...)` returns a `{job_id, poll}`
   handle immediately; poll `ableton_render(action='status', job_id=...)` (each
   call long-polls ~45 s) until `state` is `done` or `failed`. `done` carries
-  `manifest_path` + `render_status` (`ok`/`incomplete`).
+  `manifest_path` + `render_status` (`ok`/`incomplete`), and **`warning` when
+  the render raised one** — surface it before reviewing anything. A warning here
+  says the capture is not the mix as authored (a soloed rack chain today), and
+  reviewing that mix without saying so is the failure this whole skill exists to
+  prevent. `Job.status_result` is the authority on the key set.
 - then `ableton_analysis(action='start', song_slug=...)` → poll
   `ableton_analysis(action='status', job_id=...)` until `done` (carries
   `report` + `report_path`). For a quick few-surface capture the synchronous
@@ -518,10 +564,24 @@ push mislabels the report's own audio), then re-render + re-analyze with
 families — **loudness**, **timbre** (centroid / flatness / rolloff /
 `sharpness_acum`) and **stereo** (`correlation`, `mono_sum_loss_db`) — plus
 `section_deltas`: the same **timbre** family PER SECTION on every surface the
-window measured — stems, returns AND the master, so a whole-mix "is chorus 3
+window measured — stems, returns and (unless withheld, below) the master, so
+a whole-mix "is chorus 3
 less shrill?" has a row — and the **transient** shape per part per section
 (`rise_ms`, `t20_ms`, `click_minus_sub_db`, `low_minus_sub_db`), matched by
-section name then `track_id`. The summary counts these as
+section name then `track_id`. **Check `master_deltas_refused` before reading any of these counts.** When it
+is present, the master was measured as not the sum of its stems on the side it
+names, and every master row — surface AND section — plus the overshoot
+significance was WITHHELD. The counts beside it are therefore smaller for that
+reason, not because the render was quieter: reading them without it inverts
+their meaning. **The baseline case is the one to watch**, because it has no
+other signal: when the disqualified side is `"baseline"`, the CURRENT report is
+fine and carries no `master_not_stem_sum` finding of its own, so this key is the
+only indication that the comparison is not what it appears. Say so plainly, do
+not offer a master-level A/B verdict, and treat re-rendering the disqualified
+side as the next step. Stem deltas stay trustworthy either way — they are what
+proves the master is the odd one out.
+
+The summary counts these as
 `significant_section_delta_count`, separate from the surface-level
 `significant_delta_count`; zero there while the surface count is nonzero means
 the change did not land where it was made. That is where a "de-shrill chorus 3" or "sharpen the kick" edit

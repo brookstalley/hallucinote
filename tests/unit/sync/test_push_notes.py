@@ -24,6 +24,10 @@ class FakeResponse:
     result: dict | None = None
     error: str | None = None
     hint: str | None = None
+    # The escalation discriminator. An escalated reply is ok=True, so without
+    # this a fake cannot express the one case that separates "the call
+    # finished" from "we stopped waiting for it".
+    code: str | None = None
 
 
 def _make_send_fn(*, fail_on=frozenset(), raise_on=frozenset()):
@@ -177,7 +181,15 @@ def test_audio_clip_is_skipped_never_reported_pushed(
         linked_song["clip_a"], linked_song["clip_b"],
     }
     assert [s["clip_id"] for s in res.skipped] == [ac]
-    assert "CLP-AUD2" in res.skipped[0]["reason"]
+    # The reason must explain that an audio clip HAS no notes — a permanent
+    # fact — and must not promise a pending scope. It used to name CLP-AUD2,
+    # which has now shipped: the clip itself IS pushed, by the clips phase, so
+    # a reason saying "authored but not synced" would send a reader looking for
+    # a gap that closed.
+    reason = res.skipped[0]["reason"]
+    assert "no notes" in reason
+    assert "CLP-AUD2" not in reason
+    assert "not synced" not in reason
     # No wire call was dispatched for the audio clip (2 MIDI creates only).
     assert len(send.call_log) == 2
     assert all(c["action"] == "create" for c in send.call_log)
@@ -526,3 +538,118 @@ def test_push_writes_a_self_ignore_beside_its_state_file(
     )
     for name in SONG_DIR_IGNORED_FILES:
         assert name in lines
+
+
+# ---------------------------------------------------------------------------
+# SYN-4T7B (#328) — "--changed reported 0 pushed after a change".
+#
+# Investigation item, filed WITH its own confound: the reporting session had a
+# stray second DB for one song (WSP-8Q4M, since fixed — `resolve_db_path` now
+# probes the branch in the song's OWN repo for both root forms). These tests
+# pin the contract against a SINGLE DB and a SINGLE state dir, which is the
+# repro the item asked for, plus the cross-DB shape the confound actually has.
+# ---------------------------------------------------------------------------
+
+
+def test_a_rebuild_that_changes_pitches_is_pushed_and_nothing_else_is(
+    conn, session, linked_song, state_dir,
+):
+    """The item's acceptance criterion, both halves.
+
+    Push, rebuild one clip's PITCHES, push `--changed`: exactly that clip is
+    reported pushed and exactly it is dispatched. Then push `--changed` again:
+    `pushed: 0` AND zero calls dispatched — which is what makes the count
+    evidence about Live rather than a claim beside it.
+    """
+    push_notes.push_notes(conn, song_id=linked_song["song_id"], session_id=session,
+                          state_dir=state_dir, send_fn=_make_send_fn())
+    # The reported shape: same note grid, different pitches.
+    M.replace_clip_notes(conn, clip_id=linked_song["clip_a"], notes=[
+        dict(n, pitch=n["pitch"] - 21) for n in _N1
+    ])
+
+    send2 = _make_send_fn()
+    res = push_notes.push_notes(
+        conn, song_id=linked_song["song_id"], session_id=session,
+        state_dir=state_dir, changed_only=True, send_fn=send2,
+    )
+    assert [p["clip_id"] for p in res.pushed] == [linked_song["clip_a"]]
+    assert [s["clip_id"] for s in res.skipped] == [linked_song["clip_b"]]
+    assert [c["action"] for c in send2.call_log] == ["replace_notes"]
+
+    send3 = _make_send_fn()
+    res3 = push_notes.push_notes(
+        conn, song_id=linked_song["song_id"], session_id=session,
+        state_dir=state_dir, changed_only=True, send_fn=send3,
+    )
+    assert res3.pushed == []
+    assert send3.call_log == [], (
+        "a run reporting pushed: 0 must leave Live untouched — a dispatched "
+        "call under a zero count is the discrepancy SYN-4T7B reported"
+    )
+
+
+def test_the_fingerprint_ledger_is_one_file_per_song_dir_not_per_db(tmp_path):
+    """The confound, made concrete — and one correction to how it was filed.
+
+    SYN-4T7B assumed each of the two DBs carried "its own fingerprint state".
+    It does not: per-branch DBs are siblings in ONE song dir, and
+    `NOTES_PUSH_STATE` is a fixed filename, so `state_dir = db_path.parent`
+    resolves to the SAME ledger for every branch's DB.
+
+    What keeps that safe is that clip ids are per-DB, so the ledger accumulates
+    two disjoint key sets and one DB's push can never mark another DB's clip
+    "unchanged". What it does NOT prevent is the reported sequence: a rebuild
+    that lands in DB B leaves DB A genuinely unchanged, so a `--changed` run
+    reading DB A correctly reports `pushed: 0` while Live holds what a push
+    from DB B put there. The counts were right about the DB they were given.
+    """
+    song_dir = tmp_path / "songs" / "the-argument"
+    song_dir.mkdir(parents=True)
+
+    built = []
+    for db_name in ("the-argument-main.db", "the-argument-feat--x.db"):
+        c = init_db(song_dir / db_name)
+        song_id = M.create_song(c, name="the-argument", key="Dm")
+        sess = M.create_ableton_session(c, song_id=song_id, name="draft")
+        tid = M.create_track(c, song_id=song_id, track_index=1, name="Bass",
+                             kind="midi")
+        M.link_db_to_ableton(c, session_id=sess, db_kind="track", db_id=tid,
+                             ableton_index=1, actor="sync")
+        clip = M.create_clip(c, track_id=tid, slot=1, length_beats=4.0, name="A")
+        M.insert_notes(c, clip_id=clip, notes=_N1)
+        built.append({"conn": c, "song_id": song_id, "session": sess,
+                      "clip": clip})
+
+    a, b = built
+    # One ledger, written by whichever DB pushed last.
+    state_dir = song_dir
+    push_notes.push_notes(a["conn"], song_id=a["song_id"],
+                          session_id=a["session"], state_dir=state_dir,
+                          send_fn=_make_send_fn())
+    ledger = json.loads((state_dir / push_notes.NOTES_PUSH_STATE).read_text())
+    assert list(ledger["fingerprints"]) == [a["clip"]]
+
+    # DB B pushes into the same file: the key sets are disjoint, so B's clip
+    # is NOT pre-skipped by A's entry even though the note content is identical.
+    send_b = _make_send_fn()
+    res_b = push_notes.push_notes(b["conn"], song_id=b["song_id"],
+                                  session_id=b["session"], state_dir=state_dir,
+                                  changed_only=True, send_fn=send_b)
+    assert [p["clip_id"] for p in res_b.pushed] == [b["clip"]]
+    ledger = json.loads((state_dir / push_notes.NOTES_PUSH_STATE).read_text())
+    assert sorted(ledger["fingerprints"]) == sorted([a["clip"], b["clip"]])
+
+    # Now the reported sequence: the REBUILD lands in DB B only.
+    M.replace_clip_notes(b["conn"], clip_id=b["clip"], notes=[
+        dict(n, pitch=n["pitch"] - 21) for n in _N1
+    ])
+    send_a2 = _make_send_fn()
+    res_a2 = push_notes.push_notes(a["conn"], song_id=a["song_id"],
+                                   session_id=a["session"], state_dir=state_dir,
+                                   changed_only=True, send_fn=send_a2)
+    assert res_a2.pushed == []
+    assert [s["reason"] for s in res_a2.skipped] == ["unchanged"]
+    assert send_a2.call_log == []
+    for entry in built:
+        entry["conn"].close()

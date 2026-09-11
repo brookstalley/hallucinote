@@ -61,7 +61,7 @@ NOT a parallel mix bake:
 - `nested-rack-chains` — one level of nested chains under each rack device. Run after `devices`. Recursively nested racks deferred.
 - `device-parameters` — per-device parameter values on every device. Diff by parameter name. `value_normalized` computed from raw value vs min/max; enum + constant-range params store NULL. The keystone for V1 round-trip parity. Run after `devices`.
 - `arrangement-clips` — per-track arrangement placements (start_bar / end_bar). Positional diff. Live exposes no stable per-clip identity, so V1 takes no action on Ableton-only positions (doesn't auto-create clips, doesn't infer moves) — mirror the change DB-side and re-run.
-- `session-clips` — per-track session-view slot contents (slot, name, length). Matched slots update for name/length drift, cleared slots delete the DB clip, Ableton-only populated slots warn.
+- `session-clips` — per-track session-view slot contents (slot, name, length; for audio also file, gain, transpose, warp, markers). Matched slots update for drift; cleared slots delete the DB clip (an audio row that was never pushed is kept and reported instead, since push may have refused it); an Ableton-only populated **MIDI** slot warns, an Ableton-only **audio** slot is ingested as a new `clips` row (`create_audio_clip`) — the staging lane for a clip you dragged in by hand; its file is stored song-relative when under the song dir, absolute otherwise.
 - `clip-notes` — per-clip notes. Content-diffs by `(pitch, start_time, duration)` within 1/1000 of a beat. Velocity / mute drift updates DB notes in place (UUID preserved); pitch/start/duration moves surface as delete + insert (UUID rotates — documented V1 limitation).
 - `envelopes` — per-envelope automation. Round-trip mode only — pulls envelopes already in the DB; discovering Live-authored envelopes is a separate backlog item. Skip-symmetric with push.
 
@@ -69,7 +69,6 @@ NOT a parallel mix bake:
 - Surgical Ableton-side note writes (`ableton_note(add / update / delete)`) — gap #4. Use `ableton_clip(action='replace_notes')` for whole-clip writes.
 - Master-strip devices — separate planner; the `devices` domain skips master.
 - Per-arrangement tempo / signature changes — only the bar-1 values are exposed.
-- Audio — out of scope.
 
 ## Natural-language mapping
 

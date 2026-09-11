@@ -123,3 +123,6 @@ examples/*/captures/
 # Tour capture working directory — shoot liberally here, commit selectively.
 # The committed evidence lives in docs/assets/ under a hard byte budget.
 examples/*/_capture/
+
+# Delegate briefs are per-worktree dispatch records, never committed.
+.prawduct/.delegate-brief.md

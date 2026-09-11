@@ -11,11 +11,13 @@ apply. Exercises the full fourteen-phase loop through the CLI surface.
 from __future__ import annotations
 
 import json
+import os
+import pathlib
 
 import pytest
 
 from hallucinote.db import init_db, mutations as M, queries as Q
-from hallucinote.sync import push, push_cli
+from hallucinote.sync import live_escalation, push, push_cli
 
 
 _LINK_FIELDS: dict[str, str] = {
@@ -342,7 +344,7 @@ def test_probe_and_link_cascades_stale_clip_link_when_parent_track_dropped(
     halting the clips phase. Reconciliation must cascade: when the parent track
     link is dropped, drop its clip links too."""
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
-    cid = M.create_clip(conn, track_id=tid, slot=0, length_beats=4.0, name="Drums A")
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=4.0, name="Drums A")
     M.link_db_to_ableton(
         conn, session_id=session, db_kind="track", db_id=tid, ableton_index=5,
     )
@@ -377,7 +379,7 @@ def test_probe_and_link_unlinks_stale_clip_link_when_clip_row_deleted(
     The track stays present (matched by name), so ONLY the clip-row-gone
     condition drives the cascade — isolating the exact FK trigger."""
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
-    cid = M.create_clip(conn, track_id=tid, slot=0, length_beats=4.0, name="Drums A")
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=4.0, name="Drums A")
     M.link_db_to_ableton(
         conn, session_id=session, db_kind="track", db_id=tid, ableton_index=1,
     )
@@ -408,7 +410,7 @@ def test_probe_and_link_keeps_clip_link_when_parent_track_survives(
     (matched by name, link rewritten to its new index), its clip link is still
     valid and must be left intact."""
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
-    cid = M.create_clip(conn, track_id=tid, slot=0, length_beats=4.0, name="Drums A")
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=4.0, name="Drums A")
     M.link_db_to_ableton(
         conn, session_id=session, db_kind="track", db_id=tid, ableton_index=5,
     )
@@ -435,7 +437,7 @@ def test_clips_planner_emits_create_after_stale_clip_link_cascade(
     the clips planner emits `create` (not the empty-slot `replace_notes` that
     raised IndexError on every clip), so the clips phase completes."""
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
-    cid = M.create_clip(conn, track_id=tid, slot=0, length_beats=4.0, name="Drums A")
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=4.0, name="Drums A")
     M.link_db_to_ableton(
         conn, session_id=session, db_kind="track", db_id=tid, ableton_index=5,
     )
@@ -759,7 +761,7 @@ def test_probe_and_link_cascade_covers_clip_and_device_on_stale_parent(
     SYN-3C8K clip-row-gone cascade. envelope/note aren't persisted as
     ableton_links; they re-establish via the next push's own create-call path."""
     tid = M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
-    cid = M.create_clip(conn, track_id=tid, slot=0, length_beats=4.0)
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=4.0)
     M.link_db_to_ableton(
         conn, session_id=session, db_kind="track", db_id=tid, ableton_index=5,
     )
@@ -830,7 +832,7 @@ def test_arrangement_planner_rematerializes_after_live_side_delete(
     M.link_db_to_ableton(
         conn, session_id=session, db_kind="track", db_id=tid, ableton_index=1,
     )
-    cid = M.create_clip(conn, track_id=tid, slot=0, length_beats=16.0, name="A")
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=16.0, name="A")
     aid = M.add_arrangement_clip(
         conn, song_id=song, track_id=tid, clip_id=cid, start_bar=1.0, end_bar=5.0,
     )
@@ -862,7 +864,7 @@ def test_probe_and_link_no_longer_reconciles_arrangement_clip_links(
     M.link_db_to_ableton(
         conn, session_id=session, db_kind="track", db_id=tid, ableton_index=5,
     )
-    cid = M.create_clip(conn, track_id=tid, slot=0, length_beats=16.0, name="A")
+    cid = M.create_clip(conn, track_id=tid, slot=1, length_beats=16.0, name="A")
     aid = M.add_arrangement_clip(
         conn, song_id=song, track_id=tid, clip_id=cid, start_bar=1.0, end_bar=5.0,
     )
@@ -2073,10 +2075,14 @@ class _FakeResp:
     """Minimal stand-in for hallucinote_mcp.wire.Response. The CLI reads
     .ok / .error / .result via getattr, so a SimpleNamespace would do, but
     a named class makes intent obvious in test failures."""
-    def __init__(self, *, ok: bool, result=None, error: str | None = None):
+    def __init__(self, *, ok: bool, result=None, error: str | None = None,
+                 code: str | None = None):
         self.ok = ok
         self.result = result
         self.error = error
+        # An escalated reply is ok=True; `code` is what separates it from a
+        # completed call, so a fake without it cannot express the case.
+        self.code = code
 
 
 def _fake_send(tracks, returns):
@@ -2627,6 +2633,66 @@ def test_plan_cleanup_default_scaffold_nothing_to_do():
     assert any(r["kind"] == "nothing_to_do" for r in plan.refusals)
 
 
+def test_cli_cleanup_default_scaffold_polls_a_slow_track_delete(
+    conn, song, session, db_path, capsys, monkeypatch,
+):
+    """The scaffold cleanup deletes tracks by DESCENDING index.
+
+    That order is chosen precisely because a delete shifts every index above
+    it. Booking an unlanded delete as done and firing the next one is how the
+    loop's whole premise breaks — Live is still executing the first while the
+    second is addressed against indexes it is about to move.
+    """
+    M.create_track(conn, song_id=song, track_index=1, name="Drums", kind="midi")
+    pre = [
+        {"track_index": 1, "name": "1-MIDI", "kind": "midi"},
+        {"track_index": 2, "name": "2-MIDI", "kind": "midi"},
+        {"track_index": 3, "name": "Drums", "kind": "midi"},
+    ]
+    calls = {"n": 0}
+
+    def fake_probe(send_fn=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return list(pre), []
+        return [{"track_index": 1, "name": "Drums", "kind": "midi"}], []
+
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", fake_probe)
+    monkeypatch.setattr(
+        push_cli, "_probe_live_devices_via_mcp",
+        lambda *, live_tracks, live_returns, send_fn=None: {},
+    )
+    monkeypatch.setattr(live_escalation, "ESCALATION_POLL_INTERVAL_S", 0.0)
+
+    deletes: list[int] = []
+    polled: list[str] = []
+
+    def _fake_send(req, **kw):
+        if req.tool == "ableton_session" and req.action == "bout_status":
+            polled.append(req.params["job_id"])
+            return _FakeResp(ok=True, result={
+                "job": {"state": "done", "result": {"deleted": True}}})
+        if req.tool == "ableton_track" and req.action == "delete":
+            deletes.append(req.params["track_index"])
+            if len(deletes) == 1:
+                return _FakeResp(ok=True, code="work_escalated", result={
+                    "escalated": True, "job_id": "main_thread-t1"})
+            return _FakeResp(ok=True, result={"deleted": True})
+        return _FakeResp(ok=False, error=f"unexpected: {req.tool}/{req.action}")
+
+    monkeypatch.setattr(push_cli, "_resolve_send_fn", lambda: _fake_send)
+
+    rc = push_cli.main([
+        "cleanup-default-scaffold", session, "--db", str(db_path),
+    ])
+
+    assert rc == 0, capsys.readouterr().err
+    assert deletes == [2, 1], "descending order, both defaults"
+    # Without the wrapper the handle reads as a completed delete and nothing
+    # polls it — so the second delete goes out while the first is still live.
+    assert polled == ["main_thread-t1"]
+
+
 def test_cli_cleanup_default_scaffold_dispatches_descending_deletes(
     conn, song, session, db_path, capsys, monkeypatch,
 ):
@@ -2737,6 +2803,153 @@ def test_cli_cleanup_default_scaffold_refuses_on_non_canonical(
     assert "MyOtherSong" in err_lines
     # Nothing was dispatched.
     assert deletes == []
+
+
+# ---------- a stranded chain rebuild blocks the push ----------
+
+
+def test_cli_execute_refuses_while_a_chain_rebuild_is_stranded(
+    conn, song, session, db_path, monkeypatch, capsys, tmp_path,
+):
+    """A journal under the song's `.rebuild/` means a rebuild gutted a chain and
+    did not finish, so the DB's device links describe a chain Live no longer
+    holds. Pushing plans every device decision against that fiction and reports
+    ok over it.
+
+    This also makes the journal a real recovery mechanism rather than a file:
+    the operator who needs it is exactly the one who does not know it exists,
+    and `push execute` is what they reach for next.
+    """
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", lambda send_fn=None: ([], []))
+    monkeypatch.setattr(
+        push_cli.push_execute, "execute_push",
+        lambda **kw: pytest.fail("push ran despite a stranded rebuild journal"),
+    )
+    rebuild_dir = tmp_path / ".rebuild"
+    rebuild_dir.mkdir()
+    (rebuild_dir / "track-3.json").write_text("{}")
+    monkeypatch.setattr(push_cli.paths, "song_dir_for_conn", lambda _conn: tmp_path)
+
+    rc = push_cli.main([
+        "execute", session, "--db", str(db_path),
+        "--no-coherence-check", "--state-dir", str(tmp_path),
+    ])
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "unfinished chain rebuild" in err
+    assert "track-3.json" in err, "the refusal must name the file"
+    assert "--resume" in err, "and the way out"
+
+
+def test_cli_execute_proceeds_when_no_rebuild_is_stranded(
+    conn, song, session, db_path, monkeypatch, tmp_path,
+):
+    """The guard must not fire on the ordinary path — a check that blocks every
+    push is worse than the state it guards against."""
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", lambda send_fn=None: ([], []))
+    monkeypatch.setattr(push_cli.paths, "song_dir_for_conn", lambda _conn: tmp_path)
+    ran = {"yes": False}
+
+    def _fake_execute(**kwargs):
+        from hallucinote.sync.push_execute import ExecuteResult
+        ran["yes"] = True
+        return ExecuteResult(
+            outcome="ok", exit_code=0, phase_halted=None,
+            phases=[], state_file=None, errors_file=None,
+        )
+    monkeypatch.setattr(push_cli.push_execute, "execute_push", _fake_execute)
+
+    rc = push_cli.main([
+        "execute", session, "--db", str(db_path),
+        "--no-coherence-check", "--state-dir", str(tmp_path),
+    ])
+    assert rc == 0 and ran["yes"]
+
+
+def _shortfall_journal(song_dir, name="track-3.json"):
+    """A journal left by a rebuild that FINISHED and rebound its links, with
+    some captured values unrestored — the #538 shortfall state."""
+    import json
+    from hallucinote.sync import chain_rebuild
+    d = song_dir / ".rebuild"
+    d.mkdir(exist_ok=True)
+    path = d / name
+    path.write_text(json.dumps({
+        "version": chain_rebuild.JOURNAL_VERSION,
+        "phase": chain_rebuild.PHASE_SHORTFALL,
+        "parent_kind": "track", "parent_index": 3,
+    }))
+    return path
+
+
+def test_cli_execute_proceeds_over_a_shortfall_journal_and_says_why(
+    conn, song, session, db_path, monkeypatch, capsys, tmp_path,
+):
+    """A shortfall journal is NOT a gutted chain: the rebuild finished, rebound
+    its links and verified everything that landed, so the push plans against the
+    chain Live actually has.
+
+    Refusing here would block `push execute --only devices` — the recovery the
+    shortfall's own alert tells the operator to run — so the fix would block its
+    own remedy. It warns and proceeds instead.
+    """
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", lambda send_fn=None: ([], []))
+    monkeypatch.setattr(push_cli.paths, "song_dir_for_conn", lambda _conn: tmp_path)
+    journal = _shortfall_journal(tmp_path)
+    ran = {"yes": False}
+
+    def _fake_execute(**kwargs):
+        from hallucinote.sync.push_execute import ExecuteResult
+        ran["yes"] = True
+        return ExecuteResult(
+            outcome="ok", exit_code=0, phase_halted=None,
+            phases=[], state_file=None, errors_file=None,
+        )
+    monkeypatch.setattr(push_cli.push_execute, "execute_push", _fake_execute)
+
+    rc = push_cli.main([
+        "execute", session, "--db", str(db_path),
+        "--no-coherence-check", "--state-dir", str(tmp_path),
+    ])
+
+    assert rc == 0 and ran["yes"], "the recommended recovery must not be blocked"
+    err = capsys.readouterr().err
+    assert "SHORTFALL" in err, "silence would hide that values are unrestored"
+    assert str(journal.name) in err, "the warning must name the file"
+    assert "unfinished chain rebuild" not in err, (
+        "a shortfall must not be reported as a gutted chain"
+    )
+
+
+def test_cli_execute_still_refuses_a_mid_flight_journal_beside_a_shortfall(
+    conn, song, session, db_path, monkeypatch, capsys, tmp_path,
+):
+    """The two states are judged per file, not per directory. One shortfall does
+    not buy a pass for a chain some rebuild actually abandoned."""
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", lambda send_fn=None: ([], []))
+    monkeypatch.setattr(push_cli.paths, "song_dir_for_conn", lambda _conn: tmp_path)
+    monkeypatch.setattr(
+        push_cli.push_execute, "execute_push",
+        lambda **kw: pytest.fail("push ran despite a mid-flight rebuild journal"),
+    )
+    _shortfall_journal(tmp_path, "track-3.json")
+    import json
+    from hallucinote.sync import chain_rebuild
+    (tmp_path / ".rebuild" / "track-5.json").write_text(json.dumps({
+        "version": chain_rebuild.JOURNAL_VERSION,
+        "phase": chain_rebuild.PHASE_DEMOLISHED,
+    }))
+
+    rc = push_cli.main([
+        "execute", session, "--db", str(db_path),
+        "--no-coherence-check", "--state-dir", str(tmp_path),
+    ])
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "unfinished chain rebuild" in err
+    assert "track-5.json" in err, "the refusal must name the mid-flight file"
 
 
 # ---------- A1-resid — _cmd_execute default coherence-check hardening ----------
@@ -2908,18 +3121,127 @@ def _result_with_error_substring(substr: str):
 
 
 def test_version_mismatch_recovery_teaches_pin_recipe():
-    """A version-mismatch refusal yields the pin recovery: the worktree +
-    PYTHONPATH recipe and the preflight verify step, plus the reinstall
-    alternative."""
+    """A version-mismatch refusal yields the pin recovery: copy the package
+    Live vendored, PYTHONPATH at it, the preflight verify step, plus the
+    reinstall alternative."""
     result = _result_with_error_substring(
         "Hallucinote MCP version mismatch: MCP server side reports 0.9.4"
     )
     text = push_cli._version_mismatch_recovery(result)
     assert text is not None
-    assert "git worktree add" in text
+    assert "Remote Scripts/Hallucinote/hallucinote_mcp" in text
     assert "PYTHONPATH" in text
     assert "preflight" in text
     assert "ableton-mcp-install" in text  # the reinstall path is offered too
+
+
+def test_version_mismatch_recovery_never_calls_the_suffix_a_commit():
+    """The ``+<suffix>`` is a content fingerprint, so a git recipe against it
+    cannot resolve. The recovery must say so and must not hand out one."""
+    text = push_cli._version_mismatch_recovery(_result_with_error_substring(
+        "Hallucinote MCP version mismatch: MCP server side reports 0.9.4"
+    ))
+    assert text is not None
+    assert "git worktree add" not in text
+    assert "git checkout" not in text
+    assert "the commit it was vendored from" not in text
+    assert "not a git commit" in text.lower()
+
+
+def test_version_mismatch_recovery_names_the_detected_user_library(monkeypatch):
+    """The recipe copies a directory, so it prints the User Library this
+    machine actually resolves — a hardcoded platform guess would copy nothing
+    for anyone who moved theirs."""
+    from hallucinote_mcp import install_paths
+
+    moved = pathlib.Path("/somewhere/else/User Library")
+    monkeypatch.setattr(install_paths, "default_user_library", lambda: moved)
+    text = push_cli._version_mismatch_recovery(_result_with_error_substring(
+        "Hallucinote MCP version mismatch: MCP server side reports 0.9.4"
+    ))
+    assert text is not None
+    assert (
+        '"/somewhere/else/User Library/Remote Scripts/Hallucinote/hallucinote_mcp"'
+        in text
+    )
+
+
+def _pin_recipe_shell_lines(text: str) -> list[str]:
+    """The indented command lines of the printed pin recipe, verbatim."""
+    return [
+        line.strip() for line in text.splitlines()
+        if line.startswith("       ") and line.strip()
+    ]
+
+
+def test_version_mismatch_recovery_pin_recipe_actually_pins(tmp_path, monkeypatch):
+    """Run the PRINTED recipe against a vendored Remote Script that has drifted
+    from the checkout: the resulting tree must report the vendored version, or
+    the handshake it promises to clear would refuse again. Executing the text is
+    the only check that catches an unfollowable recipe — prose alone reads fine.
+    """
+    import shutil
+    import subprocess
+    import sys
+
+    import hallucinote_mcp
+    from hallucinote_mcp import install_ops, install_paths
+
+    real_pkg = install_paths.package_root()
+
+    # A checkout whose engine + bridge sources are the current ones...
+    checkout = tmp_path / "checkout"
+    (checkout / "hallucinote_mcp" / "src").mkdir(parents=True)
+    shutil.copytree(real_pkg, checkout / "hallucinote_mcp" / "src" / "hallucinote_mcp")
+
+    # ...and a Live install vendored from source the checkout no longer has.
+    drifted = tmp_path / "drifted-source"
+    shutil.copytree(real_pkg, drifted)
+    clip_handler = drifted / "handlers" / "clip.py"
+    clip_handler.write_text(clip_handler.read_text() + "\n# vendored-side drift\n")
+    user_library = tmp_path / "User Library"
+    install_ops.vendor_remote_script(
+        install_paths.remote_script_install_dir(user_library),
+        source_root=drifted,
+        force=True,
+    )
+    vendored_version = install_paths.installed_remote_script_version(user_library)
+    assert vendored_version not in (None, hallucinote_mcp.__version__), (
+        "the fixture must reproduce a real mismatch, else the pin proves nothing"
+    )
+
+    monkeypatch.setattr(install_paths, "default_user_library", lambda: user_library)
+    text = push_cli._version_mismatch_recovery(_result_with_error_substring(
+        "Hallucinote MCP version mismatch: MCP server side reports 0.9.4"
+    ))
+    assert text is not None
+
+    # Only the pin's location is redirected — a test that scribbles in /tmp is
+    # the one thing the recipe may not do verbatim.
+    pin = tmp_path / "pin"
+    lines = _pin_recipe_shell_lines(text)
+    lines = [line.replace("PIN=/tmp/hallucinote-pin", f'PIN="{pin}"') for line in lines]
+    script = "\n".join(
+        line for line in lines
+        if not line.startswith("python3 -m hallucinote.sync.push_cli")
+        and not line.startswith("python3 -m hallucinote_mcp.cli")
+    )
+    subprocess.run(
+        ["bash", "-euc", script], cwd=checkout, check=True, capture_output=True,
+    )
+
+    assert hallucinote_mcp.compute_version_for(pin / "hallucinote_mcp") == vendored_version
+    # The recipe's own verify step is `hallucinote_mcp.cli preflight`, which the
+    # install strips out of what it vendors — the copy-back has to restore it.
+    assert (pin / "hallucinote_mcp" / "cli").is_dir()
+    assert (pin / "hallucinote_mcp" / "server.py").is_file()
+
+    pinned = subprocess.run(
+        [sys.executable, "-c", "import hallucinote_mcp; print(hallucinote_mcp.__version__)"],
+        cwd=checkout, capture_output=True, text=True, check=True,
+        env={**os.environ, "PYTHONPATH": str(pin)},
+    )
+    assert pinned.stdout.strip() == vendored_version
 
 
 def test_version_mismatch_recovery_detects_handshake_missing_branch():
@@ -2970,8 +3292,9 @@ def test_cli_execute_version_mismatch_prints_pin_recovery_not_generic(
     ])
     assert rc == 1
     out = capsys.readouterr().out
-    assert "git worktree add" in out
+    assert "Remote Scripts/Hallucinote/hallucinote_mcp" in out
     assert "PYTHONPATH" in out
+    assert "git worktree add" not in out
     # The generic build.py recovery must NOT also fire — that's the bug.
     assert "fix the underlying issue (build.py or snapshot)" not in out
 
@@ -3112,17 +3435,112 @@ def test_cli_prune_apply_deletes_only_the_orphan(
     assert send.deletes == [{"track_index": 1, "location": "session", "clip_index": 2}]
 
 
+def test_cli_prune_apply_polls_a_slow_delete_instead_of_booking_it(
+    conn, song, session, db_path, capsys, monkeypatch,
+):
+    """A delete that outruns Live's ceiling is ok=True and has NOT happened.
+
+    This loop deletes clips by index. Booking an unlanded delete as done and
+    dispatching the next one sends it against indexes Live is about to shift —
+    and prints both as deleted. The report is what an operator trusts here,
+    because they cannot see the slots.
+    """
+    from tests.unit.sync.test_push_notes import FakeResponse
+
+    send = _make_prune_send_fn(live_clips={1: [
+        {"clip_index": 1, "empty": False, "name": "A"},
+        {"clip_index": 2, "empty": False, "name": "orphan"},
+    ]})
+    _linked_track_with_one_db_clip(conn, song, session)
+    raw = send
+    state = {"escalated": False}
+
+    def _slow_delete(req, **kw):
+        if req.tool == "ableton_session" and req.action == "bout_status":
+            return FakeResponse(ok=True, result={
+                "job": {"state": "done", "result": {"deleted": True}}})
+        if (req.tool, req.action) == ("ableton_clip", "delete") and not state["escalated"]:
+            state["escalated"] = True
+            raw(req, **kw)  # the delete really happens; the caller is not told
+            return FakeResponse(ok=True, code="work_escalated", result={
+                "escalated": True, "job_id": "main_thread-x1"})
+        return raw(req, **kw)
+
+    _slow_delete.deletes = raw.deletes  # type: ignore[attr-defined]
+    polled = []
+    inner = _slow_delete
+
+    def _watched(req, **kw):
+        if req.tool == "ableton_session" and req.action == "bout_status":
+            polled.append(req.params.get("job_id"))
+        return inner(req, **kw)
+
+    _watched.deletes = raw.deletes  # type: ignore[attr-defined]
+    monkeypatch.setattr(push_cli, "_resolve_send_fn", lambda: _watched)
+    monkeypatch.setattr(live_escalation, "ESCALATION_POLL_INTERVAL_S", 0.0)
+
+    rc = push_cli.main(["prune", session, "--db", str(db_path), "--apply"])
+
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["deleted"] == [{"track_index": 1, "clip_index": 2, "name": "orphan"}]
+    assert state["escalated"], "fixture precondition: the escalation fired"
+    # The assertion that bites: without the wrapper the handle is read as a
+    # completed delete and nothing ever polls it.
+    assert polled == ["main_thread-x1"]
+
+
+def test_cli_prune_apply_fails_the_run_when_an_escalated_delete_fails(
+    conn, song, session, db_path, capsys, monkeypatch,
+):
+    """Polling to a terminal state means a FAILED delete fails the run.
+
+    Before, an escalation read as success made a delete Live went on to refuse
+    look identical to one it performed.
+    """
+    from tests.unit.sync.test_push_notes import FakeResponse
+
+    send = _make_prune_send_fn(live_clips={1: [
+        {"clip_index": 1, "empty": False, "name": "A"},
+        {"clip_index": 2, "empty": False, "name": "orphan"},
+    ]})
+    _linked_track_with_one_db_clip(conn, song, session)
+    raw = send
+
+    def _slow_delete(req, **kw):
+        if req.tool == "ableton_session" and req.action == "bout_status":
+            return FakeResponse(ok=True, result={
+                "job": {"state": "failed", "error": "Live refused the delete"}})
+        if (req.tool, req.action) == ("ableton_clip", "delete"):
+            return FakeResponse(ok=True, code="work_escalated", result={
+                "escalated": True, "job_id": "main_thread-x2"})
+        return raw(req, **kw)
+
+    monkeypatch.setattr(push_cli, "_resolve_send_fn", lambda: _slow_delete)
+    monkeypatch.setattr(live_escalation, "ESCALATION_POLL_INTERVAL_S", 0.0)
+
+    rc = push_cli.main(["prune", session, "--db", str(db_path), "--apply"])
+
+    assert rc == 2
+    assert "Live refused the delete" in capsys.readouterr().err
+
+
 # ---------------------------------------------------------------------------
 # DOC-5W8B: auto-regen REQUIREMENTS.md after a device-changing push
 # ---------------------------------------------------------------------------
 
 
-def _fake_execute_result(*, devices_calls_ok: int):
+def _fake_execute_result(*, devices_calls_ok: int, clips_calls_ok: int = 0):
     from hallucinote.sync.push_execute import ExecuteResult, PhaseOutcome
     return ExecuteResult(
         outcome="ok", exit_code=0, phase_halted=None,
         phases=[
             PhaseOutcome(name="tracks", status="ok", calls_ok=1),
+            PhaseOutcome(
+                name="clips",
+                status="ok" if clips_calls_ok else "skipped",
+                calls_ok=clips_calls_ok,
+            ),
             PhaseOutcome(
                 name="devices",
                 status="ok" if devices_calls_ok else "skipped",
@@ -3513,3 +3931,293 @@ def test_cli_execute_lane_probe_failure_degrades_to_empty_not_none(
     assert lanes == {}
     assert lanes is not None
     assert "INCOMPLETE" in capsys.readouterr().err
+
+
+def test_cli_execute_regenerates_requirements_after_a_clips_only_push(
+    conn, song, session, db_path, capsys, monkeypatch, tmp_path,
+):
+    """REQUIREMENTS.md lists the song's SAMPLES as well as its devices, so a push
+    that re-points an audio clip and touches no device must still refresh it —
+    otherwise the sample list the doc just gained goes stale on exactly the pushes
+    that change it."""
+    import hallucinote.sync.compat as compat
+    calls: list[str] = []
+    monkeypatch.setattr(
+        push_cli.push_execute, "execute_push",
+        lambda **kw: _fake_execute_result(devices_calls_ok=0, clips_calls_ok=3),
+    )
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", lambda send_fn=None: ([], []))
+    monkeypatch.setattr(push_cli, "_resolve_db_path", lambda args: db_path)
+    monkeypatch.setattr(
+        compat, "regen_requirements",
+        lambda slug: (calls.append(slug), tmp_path / "REQUIREMENTS.md")[1],
+    )
+    rc = push_cli.main(["execute", session, "--song", "t", "--no-coherence-check"])
+    assert rc == 0
+    assert calls == ["t"], calls
+
+
+def test_cli_execute_regenerates_requirements_exactly_once_when_both_applied(
+    conn, song, session, db_path, capsys, monkeypatch, tmp_path,
+):
+    """The trigger is a list over two phases now. Regenerating per matching phase
+    would rewrite the file twice on an ordinary full push — same content, but two
+    notices and two writes, and the doubled work is invisible until someone reads
+    stderr."""
+    import hallucinote.sync.compat as compat
+    calls: list[str] = []
+    monkeypatch.setattr(
+        push_cli.push_execute, "execute_push",
+        lambda **kw: _fake_execute_result(devices_calls_ok=2, clips_calls_ok=3),
+    )
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp", lambda send_fn=None: ([], []))
+    monkeypatch.setattr(push_cli, "_resolve_db_path", lambda args: db_path)
+    monkeypatch.setattr(
+        compat, "regen_requirements",
+        lambda slug: (calls.append(slug), tmp_path / "REQUIREMENTS.md")[1],
+    )
+    rc = push_cli.main(["execute", session, "--song", "t", "--no-coherence-check"])
+    assert rc == 0
+    assert calls == ["t"], f"expected exactly one regen, got {len(calls)}"
+
+
+# ---------------------------------------------------------------------------
+# DEV-5R8Q — `execute --reconcile-chains`: opt-in, never automatic
+#
+# The reconcile deletes and reloads real devices and holds Live for real
+# wall-clock time. The flag is the operator's authorization of that; without it
+# the devices phase's occupied-slot halt stands and its message names the
+# remedy. These pin BOTH halves — an automatic reconcile would be exactly the
+# destructive operation nobody asked for.
+# ---------------------------------------------------------------------------
+
+
+def _stub_execute(monkeypatch):
+    """Replace the fourteen-phase dispatch with a clean ok, so these tests
+    observe only what happens BEFORE it."""
+    def _fake_execute(**kwargs):
+        from hallucinote.sync.push_execute import ExecuteResult
+        return ExecuteResult(
+            outcome="ok", exit_code=0, phase_halted=None,
+            phases=[], state_file=None, errors_file=None,
+        )
+    monkeypatch.setattr(push_cli.push_execute, "execute_push", _fake_execute)
+
+
+def test_cli_execute_without_the_flag_never_reconciles(
+    conn, song, session, db_path, monkeypatch, tmp_path,
+):
+    """The default push must not start a rebuild. Nothing here even reaches
+    `reconcile_chains` — the flag is the only door to it."""
+    from hallucinote.sync import chain_rebuild
+
+    monkeypatch.setattr(push, "check_coherence",
+                        lambda *a, **kw: push.CoherenceResult(ok=True))
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp",
+                        lambda send_fn=None: ([], []))
+    _stub_execute(monkeypatch)
+    called = {"n": 0}
+    monkeypatch.setattr(
+        chain_rebuild, "reconcile_chains",
+        lambda *a, **kw: called.__setitem__("n", called["n"] + 1) or [],
+    )
+
+    rc = push_cli.main([
+        "execute", session, "--db", str(db_path), "--probe",
+        "--state-dir", str(tmp_path),
+    ])
+    assert rc == 0
+    assert called["n"] == 0
+
+
+def test_cli_execute_reconcile_chains_runs_before_the_phases(
+    conn, song, session, db_path, monkeypatch, tmp_path, capsys,
+):
+    """With the flag, the rebuild runs BEFORE the phase dispatch — so the
+    devices planner then sees a linked, in-order chain and emits no load at
+    all. Ordering is the assertion; running it after would be useless."""
+    from hallucinote.sync import chain_rebuild
+
+    monkeypatch.setattr(push, "check_coherence",
+                        lambda *a, **kw: push.CoherenceResult(ok=True))
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp",
+                        lambda send_fn=None: ([], []))
+    monkeypatch.setattr(push_cli, "_probe_live_devices_via_mcp",
+                        lambda **kw: {("track", 3): []})
+    monkeypatch.setattr(push_cli, "_resolve_send_fn", lambda: (lambda req: None))
+    order: list[str] = []
+
+    def _fake_reconcile(*args, **kwargs):
+        order.append("reconcile")
+        return [chain_rebuild.RebuildResult(
+            parent_kind="track", parent_index=3, parent_name="Alien Voice",
+            from_position=1, deleted=["Analog"], loaded=["Operator"],
+            restored_params=4,
+        )]
+    monkeypatch.setattr(chain_rebuild, "reconcile_chains", _fake_reconcile)
+
+    def _fake_execute(**kwargs):
+        order.append("execute")
+        from hallucinote.sync.push_execute import ExecuteResult
+        return ExecuteResult(
+            outcome="ok", exit_code=0, phase_halted=None,
+            phases=[], state_file=None, errors_file=None,
+        )
+    monkeypatch.setattr(push_cli.push_execute, "execute_push", _fake_execute)
+
+    rc = push_cli.main([
+        "execute", session, "--db", str(db_path), "--probe",
+        "--reconcile-chains", "--state-dir", str(tmp_path),
+    ])
+    assert rc == 0
+    assert order == ["reconcile", "execute"]
+    err = capsys.readouterr().err
+    assert "reconciled" in err
+    assert "Alien Voice" in err
+
+
+
+
+def test_cli_execute_reconcile_refuses_when_a_rebuild_came_up_SHORT(
+    conn, song, session, db_path, monkeypatch, capsys, tmp_path,
+):
+    """#538's contract is honored by BOTH callers or by neither.
+
+    The `chain-rebuild` CLI exits non-zero on a shortfall; this prepass printed
+    the alerts and returned 0, so `push execute --reconcile-chains` rolled
+    straight on over a chain missing restored mix work and reported success —
+    the silent loss the exit contract exists to end, through the other door.
+    """
+    from hallucinote.sync import chain_rebuild, push
+    monkeypatch.setattr(push, "check_coherence",
+                        lambda *a, **kw: push.CoherenceResult(ok=True))
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp",
+                        lambda send_fn=None: ([], []))
+    monkeypatch.setattr(push_cli, "_probe_live_devices_via_mcp",
+                        lambda **kw: {("track", 3): []})
+    monkeypatch.setattr(push_cli, "_resolve_send_fn", lambda: (lambda req: None))
+
+    def _fake_reconcile(*args, **kwargs):
+        short = chain_rebuild.RebuildResult(
+            parent_kind="track", parent_index=3, parent_name="Alien Voice",
+            from_position=1, deleted=["Analog"], loaded=["Operator"],
+            restored_params=3,
+        )
+        short.expected_params = 4
+        short.ok = False
+        short.alerts.append("chain-rebuild: SHORTFALL on track #3 — 3 of 4")
+        return [short]
+    monkeypatch.setattr(chain_rebuild, "reconcile_chains", _fake_reconcile)
+    monkeypatch.setattr(
+        push_cli.push_execute, "execute_push",
+        lambda **kw: pytest.fail("the push ran over a short rebuild"),
+    )
+
+    rc = push_cli.main([
+        "execute", session, "--db", str(db_path), "--probe",
+        "--reconcile-chains", "--state-dir", str(tmp_path),
+    ])
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "SHORTFALL" in err
+
+def test_cli_execute_reconcile_failure_stops_the_push(
+    conn, song, session, db_path, monkeypatch, tmp_path, capsys,
+):
+    """A rebuild that refused or failed its read-back leaves the set
+    half-reconciled. Pushing into that is worse than not pushing, so the run
+    stops with the journal named rather than dispatching phases over it."""
+    from hallucinote.sync import chain_rebuild
+
+    monkeypatch.setattr(push, "check_coherence",
+                        lambda *a, **kw: push.CoherenceResult(ok=True))
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp",
+                        lambda send_fn=None: ([], []))
+    monkeypatch.setattr(push_cli, "_probe_live_devices_via_mcp",
+                        lambda **kw: {})
+    monkeypatch.setattr(push_cli, "_resolve_send_fn", lambda: (lambda req: None))
+    dispatched = {"n": 0}
+
+    def _boom(*args, **kwargs):
+        raise chain_rebuild.RebuildVerifyFailed("VERIFY FAILED on track #3")
+    monkeypatch.setattr(chain_rebuild, "reconcile_chains", _boom)
+
+    def _fake_execute(**kwargs):
+        dispatched["n"] += 1
+        from hallucinote.sync.push_execute import ExecuteResult
+        return ExecuteResult(
+            outcome="ok", exit_code=0, phase_halted=None,
+            phases=[], state_file=None, errors_file=None,
+        )
+    monkeypatch.setattr(push_cli.push_execute, "execute_push", _fake_execute)
+
+    rc = push_cli.main([
+        "execute", session, "--db", str(db_path), "--probe",
+        "--reconcile-chains", "--state-dir", str(tmp_path),
+    ])
+    assert rc == 1
+    assert dispatched["n"] == 0
+    err = capsys.readouterr().err
+    assert "VERIFY FAILED" in err
+    assert "chain-rebuild --resume" in err
+
+
+def test_cli_execute_reconcile_says_so_when_there_is_nothing_to_do(
+    conn, song, session, db_path, monkeypatch, tmp_path, capsys,
+):
+    """"Nothing was occupied" must read differently from "something was
+    rebuilt" — an operator who passed a destructive flag is owed the
+    difference."""
+    from hallucinote.sync import chain_rebuild
+
+    monkeypatch.setattr(push, "check_coherence",
+                        lambda *a, **kw: push.CoherenceResult(ok=True))
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp",
+                        lambda send_fn=None: ([], []))
+    monkeypatch.setattr(push_cli, "_probe_live_devices_via_mcp",
+                        lambda **kw: {})
+    monkeypatch.setattr(push_cli, "_resolve_send_fn", lambda: (lambda req: None))
+    monkeypatch.setattr(chain_rebuild, "reconcile_chains",
+                        lambda *a, **kw: [])
+    _stub_execute(monkeypatch)
+
+    rc = push_cli.main([
+        "execute", session, "--db", str(db_path), "--probe",
+        "--reconcile-chains", "--state-dir", str(tmp_path),
+    ])
+    assert rc == 0
+    assert "nothing to rebuild" in capsys.readouterr().err
+
+
+def test_cli_execute_reconcile_refuses_when_live_cannot_be_read(
+    conn, song, session, db_path, monkeypatch, tmp_path, capsys,
+):
+    """A chain the probe could not read is one the rebuild must not touch: the
+    capture it would journal is the read that just failed."""
+    monkeypatch.setattr(push, "check_coherence",
+                        lambda *a, **kw: push.CoherenceResult(ok=True))
+    monkeypatch.setattr(push_cli, "_probe_live_via_mcp",
+                        lambda send_fn=None: ([], []))
+
+    def _blow_up(**kwargs):
+        raise OSError("connection reset")
+    monkeypatch.setattr(push_cli, "_probe_live_devices_via_mcp", _blow_up)
+    dispatched = {"n": 0}
+
+    def _fake_execute(**kwargs):
+        dispatched["n"] += 1
+        from hallucinote.sync.push_execute import ExecuteResult
+        return ExecuteResult(
+            outcome="ok", exit_code=0, phase_halted=None,
+            phases=[], state_file=None, errors_file=None,
+        )
+    monkeypatch.setattr(push_cli.push_execute, "execute_push", _fake_execute)
+
+    rc = push_cli.main([
+        "execute", session, "--db", str(db_path), "--probe",
+        "--reconcile-chains", "--state-dir", str(tmp_path),
+    ])
+    assert rc == 1
+    assert dispatched["n"] == 0
+    assert "could not read Live's device chains" in capsys.readouterr().err

@@ -95,10 +95,10 @@ wave-1 conform fields (`audio_gain`, `pitch_coarse`/`pitch_fine`, `warping`,
 beats-when-warped / seconds-when-not marker-unit duality. `kind` is
 immutable — converting a slot between MIDI and audio is delete+create, same
 doctrine as `track_id`/`slot`. Kind-guards hold at every MIDI-assuming
-surface: note mutators refuse audio targets, `update_clip` refuses audio
-fields on MIDI rows, and the push planner refuses `kind='audio'` clips
-loudly (audio-clip push/pull is CLP-AUD2 scope — rows are authorable but
-unsynced until it ships).
+surface: note mutators refuse audio targets and `update_clip` refuses audio
+fields on MIDI rows. An audio clip itself is no longer refused by push or
+pull — it materializes into a Live slot and the arrangement, and a clip
+dragged into Live by hand comes back on pull.
 
 Our DB **splits** definition from arrangement-side placement (so one Clip
 content can be placed multiple times on the timeline). Live does not split

@@ -56,7 +56,11 @@ Subagent instructions (fill in the args from the invocation):
 >      see `ableton://guides/error-recovery`). Do NOT retry blindly.
 >    - `{busy: true, job_id}` on start → a render is already running; poll that
 >      `job_id` instead of starting a second.
->    - On `done`, keep `captures_dir` (and `render_status` — `ok`/`incomplete`).
+>    - On `done`, keep `captures_dir` (and `render_status` — `ok`/`incomplete`),
+>      **and `warning` whenever the status carries it** — the render raised an
+>      advisory it did not refuse over (a soloed rack chain today), and dropping
+>      it here is the one place the operator can no longer learn the capture is
+>      not the mix as authored. Relay it verbatim in step 3.
 > 2. **Analyze (start + poll).** Call `ableton_analysis(action='start',
 >    song_slug='<slug>', captures_dir='<captures_dir from the render>')` — add
 >    `compare_to=<seq>` if `--compare` was given. Then poll
@@ -68,7 +72,13 @@ Subagent instructions (fill in the args from the invocation):
 >    per-section count, out-of-tolerance reverb count, and the
 >    `analysis_code.stale` flag if true — plus `report_path`, plus (if
 >    `--compare` was given) the one-line significant-delta count + overshoot
->    delta. The full per-stem / per-band MixReport JSON stays on disk at
+>    delta — **and `master_deltas_refused` whenever the summary carries it**,
+>    **and the render's `warning` from step 1 whenever there was one.**
+>    That key means the master was measured as not the sum of its stems, so
+>    the master rows were WITHHELD and the delta counts beside it are smaller
+>    for that reason, not because the render was quieter. Relaying the counts
+>    without it inverts their meaning. Say which side was disqualified and on
+>    what number. The full per-stem / per-band MixReport JSON stays on disk at
 >    `report_path` for `/mix-review` to read; do not paste it.
 
 When the subagent returns, present its summary in 2–3 lines and offer the next

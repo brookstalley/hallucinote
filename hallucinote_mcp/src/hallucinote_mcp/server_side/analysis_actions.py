@@ -97,6 +97,19 @@ _analyze_action = register(
                     "reflect the state the seq names."
                 ),
             ),
+            ParamSpec(
+                name="speech_track",
+                type="str",
+                required=False,
+                description=(
+                    "Name of the track whose audio placements are spoken "
+                    "turns. When given, every section's report carries an "
+                    "intelligibility row per turn: the speech band "
+                    "(300-3400 Hz) of that track over the bed of every other "
+                    "stem, in dB and as a masked fraction — numbers only, "
+                    "no grade. Omit it and the field is null."
+                ),
+            ),
         ),
         handler=analysis_handlers.analyze_handler,
         runs_server_side=True,

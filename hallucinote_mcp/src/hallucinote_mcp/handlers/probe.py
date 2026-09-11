@@ -35,6 +35,7 @@ Handlers run on Live's main thread (the dispatcher marshals via
 """
 from __future__ import annotations
 
+import json
 import math
 import re
 from typing import Any
@@ -217,6 +218,32 @@ def get_handler(context: LiveContext, path: str) -> dict[str, Any]:
     }
 
 
+def coerce_wire_value(value: Any, *, current: Any) -> Any:
+    """Recover the JSON type of a ``set`` value that arrived as a string.
+
+    ``value`` is schema-typed ``any`` — deliberately, because LOM properties
+    are polymorphic (ints, floats, bools, strings, lists, LOM objects) and one
+    concrete type would be wrong for most of them. The cost is that a client
+    with no type information to work from serializes every scalar as a string,
+    so ``value=5`` arrives as ``"5"`` and ``setattr`` hands a ``str`` to a
+    Boost.Python setter whose C++ signature takes an ``int``; Live rejects the
+    write outright (``did not match C++ signature``). Parsing the string as a
+    JSON literal restores int / float / bool / None / list / dict, and anything
+    that is not valid JSON — a plain enum name like ``Beats`` — stays the
+    string it already was.
+
+    ``current`` is the property's present value, and it gates the parse: when
+    the property already holds a string, a string is what it wants, so a track
+    named ``"808"`` keeps its name instead of being handed the integer 808.
+    """
+    if not isinstance(value, str) or isinstance(current, str):
+        return value
+    try:
+        return json.loads(value)
+    except ValueError:
+        return value
+
+
 def _request_differs(requested: Any, current: Any) -> bool:
     """True when a scalar ``set`` request is genuinely different from the
     current value — used to decide whether an unmoved read-back means Live
@@ -245,6 +272,11 @@ def set_handler(context: LiveContext, path: str, value: Any) -> dict[str, Any]:
     which IS the result. ``value`` may be ``{"$path": ...}`` for LOM-object
     properties (e.g. ``song.view.highlighted_clip_slot``).
 
+    A ``value`` that arrives as a string is parsed as a JSON literal first
+    (``coerce_wire_value``) so a numeric write reaches Live with a numeric
+    type — the schema types ``value`` as ``any``, which leaves a client free
+    to send ``5`` as ``"5"``, and Live's C++ setters refuse the string.
+
     Some LOM properties accept a ``setattr`` without raising yet **silently
     ignore it** (``song.back_to_arranger`` can only be cleared by Live's GUI
     button; ``song.current_song_time`` only moves via the transport). Those
@@ -267,7 +299,8 @@ def set_handler(context: LiveContext, path: str, value: Any) -> dict[str, Any]:
         raise AttributeError(
             f"{parent_path} ({type(parent).__name__}) has no attribute {attr!r}"
         ) from None
-    setattr(parent, attr, _resolve_arg(context, value))
+    requested = coerce_wire_value(value, current=old)
+    setattr(parent, attr, _resolve_arg(context, requested))
     new = getattr(parent, attr)
     old_s, new_s = serialize(old), serialize(new)
     result: dict[str, Any] = {
@@ -281,13 +314,13 @@ def set_handler(context: LiveContext, path: str, value: Any) -> dict[str, Any]:
     # accepted the setattr without raising and then dropped it. ``$path`` /
     # collection writes are skipped — a meaningful "did it change?" compare
     # needs scalars (a set-to-the-same-value legitimately reports old==new).
-    is_scalar_request = not isinstance(value, (dict, list))
-    if is_scalar_request and old_s == new_s and _request_differs(value, old):
+    is_scalar_request = not isinstance(requested, (dict, list))
+    if is_scalar_request and old_s == new_s and _request_differs(requested, old):
         result["applied"] = False
         result["warning"] = (
             f"Write did not land as requested: read-back ({new_s!r}) is "
             f"unchanged and still differs from the requested value "
-            f"({value!r}). Live accepted the setattr without error but did "
+            f"({requested!r}). Live accepted the setattr without error but did "
             f"not store the request — it either silently ignored the write "
             f"or clamped it back to the current value. Some properties cannot "
             f"be set via probe at all: e.g. song.back_to_arranger clears only "
@@ -403,6 +436,7 @@ __all__ = [
     "MAX_REPR_CHARS",
     "MAX_VECTOR_ITEMS",
     "call_handler",
+    "coerce_wire_value",
     "describe_handler",
     "get_handler",
     "resolve_path",

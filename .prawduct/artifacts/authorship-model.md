@@ -146,11 +146,24 @@ generatively in `build.py`. Tracked as backlog `ING-9H2T` (with the existing
 automation-ingest cluster `ING-1R4C` / `ING-2S7K` / `ING-4P2M` / `ING-5W8H`).
 
 ### 2. Recorded audio as a song's origin
-The symbolic model has no generative source for a take, and Live won't let us
-create session audio clips (`gaps.md`, `NotImplementedError`). The honest answer is
-the asset leg: host the recording, build around it. Ergonomics (where the asset
-store lives, how a song references a take) are unspecified — file when a song needs
-it.
+The symbolic model has no generative source for a take, so the honest answer is the
+asset leg: host the recording, build around it.
+
+**The stated blocker is refuted.** This used to say Live won't let us create session
+audio clips. `ClipSlot.create_audio_clip` and `Track.create_audio_clip` landed in the
+12.2 cycle, were probe-confirmed on 12.4.1, and the bridge now uses both: an authored
+clip places into a slot and the arrangement, and a clip dropped in by hand is staged
+into the DB on pull — materialized state, folded into `build.py` to become source, the
+same lane a clip-notes pull uses. So placement is not the open half.
+
+**Closed 2026-09-09 (SMP-6V2K wave 2).** The ergonomics have a home: sources are
+ingested immutable under `assets/sources/` with their provenance in
+`assets/manifest.json` (`hallucinote asset add`); a song references one by name
+(`source(SONG_DIR, "rivers-01")`); every derived file is the output of a recipe written
+in `build.py` (`derive(line, trim(...), reverse())`) and cached under `assets/derived/`
+at an address hashed from its source, its chain and — for a carve — the notes it was
+carved against, so nothing can reference a stale file by a current name. The recorded
+asset is the third leg exactly as this document says: retained, and regenerable.
 
 ### 3. Parametric / computed mix authoring (the `build.py` mix hook)
 There is no path today to compute mix state in code (a rule across chains,

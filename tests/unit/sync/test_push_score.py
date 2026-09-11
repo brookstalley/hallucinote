@@ -337,18 +337,24 @@ def test_plan_push_cue_points_emits_single_batched_call(conn, song):
 def test_plan_push_cue_points_alerts_on_cues_past_a_meter_change(conn, song):
     """A cue's position resolves through the meter map exactly as an
     arrangement placement's does, so it diverges from uniform bar math the same
-    way and needs the same alert. Cues before the change must stay quiet."""
+    way and needs the same alert. Cues before the change must stay quiet — and
+    so must cues whose row does not record uniform authorship (#496), which is
+    why these two declare the ruler that wrote them."""
     M.add_time_signature_point(
         conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
     )
     _ts_point(conn, song, 9.0, 7, 4)
-    M.add_cue_point(conn, song_id=song, position_bar=5.0, name="early")
+    M.add_cue_point(
+        conn, song_id=song, position_bar=5.0, name="early", bar_ruler="uniform",
+    )
     plan = push.plan_push_cue_points(conn, song_id=song)
-    assert not any("cue points sit after" in a for a in plan.alerts)
+    assert not any("UNIFORM bar math" in a for a in plan.alerts)
 
-    M.add_cue_point(conn, song_id=song, position_bar=13.0, name="late")
+    M.add_cue_point(
+        conn, song_id=song, position_bar=13.0, name="late", bar_ruler="uniform",
+    )
     plan = push.plan_push_cue_points(conn, song_id=song)
-    hit = next(a for a in plan.alerts if "cue points sit after" in a)
+    hit = next(a for a in plan.alerts if "UNIFORM bar math" in a)
     assert "1 of 2 cue points" in hit
     assert "beat 60" in hit and "48" in hit
     assert "Affected bars: 13" in hit
@@ -362,17 +368,59 @@ def test_plan_push_cue_points_alert_enumerates_every_diverging_bar(conn, song):
     )
     _ts_point(conn, song, 9.0, 7, 4)
     for bar in range(10, 15):
-        M.add_cue_point(conn, song_id=song, position_bar=float(bar), name=f"c{bar}")
+        M.add_cue_point(
+            conn, song_id=song, position_bar=float(bar), name=f"c{bar}",
+            bar_ruler="uniform",
+        )
     plan = push.plan_push_cue_points(conn, song_id=song)
-    hit = next(a for a in plan.alerts if "cue points sit after" in a)
+    hit = next(a for a in plan.alerts if "UNIFORM bar math" in a)
     assert "Affected bars: 10, 11, 12, 13, 14" in hit
     assert "more" not in hit
 
     for bar in range(15, 19):
-        M.add_cue_point(conn, song_id=song, position_bar=float(bar), name=f"c{bar}")
+        M.add_cue_point(
+            conn, song_id=song, position_bar=float(bar), name=f"c{bar}",
+            bar_ruler="uniform",
+        )
     plan = push.plan_push_cue_points(conn, song_id=song)
-    hit = next(a for a in plan.alerts if "cue points sit after" in a)
+    hit = next(a for a in plan.alerts if "UNIFORM bar math" in a)
     assert "Affected bars: 10, 11, 12, 13, 14, 15, 16, 17, and 1 more" in hit
+
+
+def test_cue_points_authored_against_the_map_raise_no_divergence_alert(conn, song):
+    """#496 acceptance 1, cue half. A 7/4 song's cues sit after the meter
+    change by design; authored against the map, they land exactly where the
+    song asked, and an alert about them is noise on every push."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    _ts_point(conn, song, 9.0, 7, 4)
+    for bar in (10.0, 13.0):
+        M.add_cue_point(
+            conn, song_id=song, position_bar=bar, name=f"c{bar:g}",
+            bar_ruler="map",
+        )
+    plan = push.plan_push_cue_points(conn, song_id=song)
+    assert not any("UNIFORM bar math" in a for a in plan.alerts), plan.alerts
+    assert not any("PROVISIONAL" in a for a in plan.alerts), plan.alerts
+
+
+def test_a_cue_with_no_recorded_ruler_gets_the_provisional_alert(conn, song):
+    """#496 R6, cue half — its own alert, naming the fix, never merged into
+    the uniform-math message."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    _ts_point(conn, song, 9.0, 7, 4)
+    cid = M.add_cue_point(
+        conn, song_id=song, position_bar=13.0, name="late", bar_ruler="map",
+    )
+    conn.execute("UPDATE cue_points SET bar_ruler = NULL WHERE id = ?", (cid,))
+    plan = push.plan_push_cue_points(conn, song_id=song)
+    provisional = next(a for a in plan.alerts if "PROVISIONAL" in a)
+    assert "Affected bars: 13" in provisional
+    assert "build.py" in provisional
+    assert not any("UNIFORM bar math" in a for a in plan.alerts), plan.alerts
 
 
 def test_plan_push_cue_points_sets_if_exists_skip(conn, song):
@@ -490,7 +538,7 @@ def _make_arrangement_clip(conn, song_id: str, start_bar: float, end_bar: float)
     tid = M.create_track(conn, song_id=song_id, track_index=1, name="t1")
     # length_beats covers the full placement span at 4 beats/bar (test default).
     cid = M.create_clip(
-        conn, track_id=tid, name="c1", slot=0,
+        conn, track_id=tid, name="c1", slot=1,
         length_beats=(end_bar - start_bar) * 4.0,
     )
     M.add_arrangement_clip(

@@ -151,9 +151,15 @@ def main(argv: list[str] | None = None) -> int:
     if not callable(report_fn):
         print(
             f"melody-lens: {args.slug!r} has not wired the melody lens — its "
-            f"build.py defines no melody_report(). Add one (one line via "
-            f"hallucinote.melody.analyze_arrangement); see the scaffold template "
-            f"or songs/sun-zone-done/build.py.",
+            f"build.py defines no melody_report(). Add one, returning a "
+            f"MelodyReport:\n"
+            f"      from hallucinote.melody.lens import analyze_arrangement\n"
+            f"      def melody_report():\n"
+            f"          return analyze_arrangement(build_arrangement(), "
+            f"song_slug={args.slug!r},\n"
+            f"                                     melody_layers=['05 Lead'])\n"
+            f"  `melody_layers` names the MONOPHONIC lines to read (lead / vocal / "
+            f"riff) — exclude drums and chordal pads; omit it to read every layer.",
             file=sys.stderr,
         )
         return 3

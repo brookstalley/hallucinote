@@ -260,7 +260,14 @@ class ReverbVerification:
 class EnvelopeVerification:
     """Realized-vs-declared verdict for one authored automation change (AUD-8H2M).
 
-    One record per value-changing breakpoint of a declared envelope. ``metric``
+    One record per authored GESTURE — a run of value changes graded as a single
+    move. ``at_beat`` is the gesture's first change, ``through_beat`` its last,
+    and ``steps`` how many value changes it collapsed (1 for a lone
+    breakpoint). A ramp authored as 64 small steps is ONE record spanning the
+    whole traversal, not 64: a per-step verdict is only valid when the step has
+    a full analysis window on each side, so grading a staircase per step
+    compared two points on the same gesture and made finer authorship read as
+    worse realization. ``metric``
     + ``before`` / ``after`` are the measured quantity across the change
     (``spectral_centroid_hz`` for a device-parameter flip, ``rms_db``
     for a send-level step — the return's STEREO RMS, the same quantity the
@@ -299,6 +306,12 @@ class EnvelopeVerification:
     realized: bool
     note: str
     probe: str | None = None
+    # The gesture's span. ``through_beat`` is the beat the move LANDS on (equal
+    # to ``at_beat`` for a single-breakpoint change); ``steps`` is how many
+    # declared value changes it collapsed. Together they say what was graded,
+    # so a reader never has to infer a staircase's extent from the note.
+    through_beat: float | None = None
+    steps: int = 1
 
 
 @dataclass(frozen=True)
@@ -607,6 +620,77 @@ class PartTransient:
 
 
 @dataclass(frozen=True)
+class IntelligibilityBand:
+    """One Bark band of the speech band, for one spoken turn.
+
+    ``lo_hz`` / ``hi_hz`` are the band's edges. ``speech_db`` and ``bed_db``
+    are the speech surface's and the bed's mean band power over the turn's
+    frames, in STFT-power dB with a floor at the analyzer's epsilon: the scale
+    is consistent within a report and across reports of one capture format,
+    but it is not calibrated dBFS, so read the DIFFERENCE, never the absolute.
+    ``speech_over_bed_db`` is that difference — how far the line sits above
+    (positive) or under (negative) the bed in this band. ``masked_fraction``
+    is the share of the turn's frames where the speech carries energy here
+    and the bed's spread excitation covers it (the masking lens's rule with
+    the speech as the target); ``NaN`` (→ JSON ``null``) when the speech had
+    no energy in the band during the turn, because there was nothing to mask.
+    """
+    lo_hz: float
+    hi_hz: float
+    speech_db: float
+    bed_db: float
+    speech_over_bed_db: float
+    masked_fraction: float
+
+
+@dataclass(frozen=True)
+class TurnIntelligibility:
+    """The speech band over the bed for one spoken turn — the film-mix number.
+
+    A turn is one audio placement on the declared speech track (one line),
+    clipped to the section it is reported under. ``start_s`` / ``end_s`` are
+    seconds against the capture — the domain the measurement ran in;
+    ``start_beat`` / ``end_beat`` are the same span in song-absolute beats,
+    the report's usual domain, filled by the orchestrator and ``None`` when
+    the measurement was driven directly with no beat map. ``label`` names the
+    line when the caller knows it.
+
+    The turn-level numbers pool the speech band's Bark tiles: ``speech_db``
+    and ``bed_db`` are the mean power summed across those bands over the
+    turn's frames (the same uncalibrated STFT-power dB as the per-band rows),
+    ``speech_over_bed_db`` their difference, and ``masked_fraction`` the
+    masked share of the speech's energized tiles across the whole speech
+    band. ``n_frames`` is how many STFT frames the turn afforded; ``0`` means
+    the turn was too short to analyse and every measurement is ``NaN`` (→
+    JSON ``null``), the honest "unmeasured" sentinel this report uses
+    everywhere. ``bands`` is the per-band breakdown, low to high.
+
+    NEUTRAL MEASUREMENT, deliberately without a threshold, a grade or a
+    finding: a line meant to sit under the music is authorship, and only the
+    reader knows which lines those are. The framing that turns these numbers
+    into a producer's question is the interpreter's, not this row's.
+
+    Two limits carried rather than corrected: the bed is the mono sum of the
+    other stems at mix level, so it is pan-blind like the masking lens; and
+    the speech band (300–3400 Hz) is the telephone band — the consonant energy
+    above it that separates *sat* from *fat* is measured only by the bands'
+    upper edge, so a bright bed can eat articulation this row cannot see.
+    """
+    turn_index: int
+    start_s: float
+    end_s: float
+    speech_db: float
+    bed_db: float
+    speech_over_bed_db: float
+    masked_fraction: float
+    n_frames: int
+    bands: list[IntelligibilityBand]
+    label: str | None = None
+    start_beat: float | None = None
+    end_beat: float | None = None
+
+
+@dataclass(frozen=True)
 class SectionMetrics:
     """Per-surface loudness scoped to one named section window.
 
@@ -684,6 +768,13 @@ class SectionMetrics:
     # when the window had no detected onsets. A RELATIVE read across sections:
     # only the ranking feeds the energy-realization Spearman ρ.
     onset_density: float | None = None
+    # The speech band over the bed, one row per spoken turn that falls in the
+    # section window. None when the song declares no speech track (the lens
+    # did not run — `skipped_analyses` says so); an EMPTY list when it ran and
+    # no turn falls in this section. The two must stay distinguishable: null
+    # is "not measured", [] is "measured, nothing here". Neutral numbers, no
+    # threshold — the interpreter frames them.
+    intelligibility: list[TurnIntelligibility] | None = None
 
 
 @dataclass(frozen=True)
@@ -750,6 +841,58 @@ class EnergyRealization:
     skipped: list[str]
 
 
+# Which MixReport block feeds a Finding, and which is evidence a reader
+# interprets. Every measurement block on MixReport must appear in exactly one
+# of these two maps — `test_every_lens_block_declares_whether_it_gates` fails
+# on a block that is in neither, so a new lens cannot ship without the author
+# deciding which it is.
+#
+# This exists because `sum_reconciliation` shipped in neither state: computed
+# on every report, serialized on every report, and read by nothing. Its tests
+# asserted the number was present and correct, which is exactly what a lens
+# that gates nothing also looks like — so the suite stayed green while three
+# `alien` renders reported a master that was one soloed stem as a mix change.
+#
+# The split is `gate-verdict-policy.md`'s, and the exemption that lets a defect
+# lens block is design decision 2 of `build-plan-render-integrity.md` — neither
+# is new here: a DEFECT lens has
+# physical ground truth (is this audio damaged, does this capture contradict
+# itself) and may legitimately block; an INTENT lens ranks authored intent
+# against what was rendered, which is an aesthetic judgement and never fails a
+# build.
+FINDING_BEARING_BLOCKS: dict[str, str] = {
+    # MixReport field  ->  the _derive_findings parameter that consumes it
+    "master": "master",
+    "stems": "stems",
+    "overshoots": "overshoots",
+    "reverb_verifications": "reverbs",
+    "automation_verifications": "automation",
+    "per_section": "sections",
+    "integrity": "integrity",
+    "phase_relations": "phase_relations",
+    "alignment": "capture_span",
+    "sum_reconciliation": "sum_reconciliation",
+}
+
+EVIDENCE_ONLY_BLOCKS: dict[str, str] = {
+    # MixReport field  ->  why it does not gate
+    "returns": (
+        "per-return measurements; the judgements drawn from them belong to the "
+        "reverb and phase lenses, which do gate and take these as input"
+    ),
+    "width_realizations": (
+        "an INTENT lens — it ranks declared stereo width against the rendered "
+        "width, which is an aesthetic judgement; its own recognition limits "
+        "ride in skipped_analyses so an absence is never read as a verdict"
+    ),
+    "energy_realization": (
+        "an INTENT lens — declared per-section intensity ranked against "
+        "rendered LUFS-S and onset density; a low correlation is a "
+        "conversation about the arrangement, never a build failure"
+    ),
+}
+
+
 @dataclass(frozen=True)
 class Finding:
     """Structured intent-keyed observation from the analysis pass.
@@ -776,6 +919,26 @@ class Finding:
                 f"severity={self.severity!r} must be one of "
                 f"{_VALID_SEVERITIES}"
             )
+
+
+# Where each family of numbers in a MixReport is tapped. The analyzer sits in
+# each track's device chain and in the master's, so every per-surface and
+# per-section reading is PRE that surface's mixer fader; only the delivered
+# true-peak applies one. ``analyze_mix`` overwrites ``section_masking`` when it
+# reconstructs mix balance from declared static fader gains.
+_MEASUREMENT_BASIS = {
+    "stem_loudness": "pre_fader",
+    "return_loudness": "pre_fader",
+    "section_masking": "pre_fader",
+    "master": "pre_master_fader",
+    "delivered_true_peak_dbtp": "post_master_fader",
+    "note": (
+        "every per-stem and per-section number here is measured off a "
+        "PRE-fader tap, so a fader-only change moves NONE of them — they are "
+        "expected to be identical across an A/B of a level move. Only the "
+        "master block and delivered_true_peak_dbtp respond to a fader."
+    ),
+}
 
 
 @dataclass
@@ -873,6 +1036,27 @@ class MixReport:
     # Post-fader true-peak = bus true-peak + master_fader_db (the master fader is a
     # linear gain after the captured chain). THIS is the delivery/clipping number.
     delivered_true_peak_dbtp: float | None = None
+    # WHERE the fader value above came from, and whether anything confirmed it
+    # against the set that produced this audio. `"song_db"` means it is what the
+    # song's DB DECLARES — read at analysis time, never compared with Live,
+    # because analysis is server-side and has no connection to the set. A fader
+    # trimmed in Live and not pulled back therefore leaves `master_fader_db` and
+    # `delivered_true_peak_dbtp` wrong by exactly that drift, silently, and an
+    # agent reading them keeps trimming a level it already fixed. None when no
+    # fader value was supplied at all.
+    master_fader_source: str | None = None
+    master_fader_verified: bool = False
+    # Why it is unverified, and the one command that settles it. None when the
+    # value WAS verified, or when there is no fader value to qualify.
+    master_fader_note: str | None = None
+    # What each family of numbers here is measured RELATIVE TO. It lives in the
+    # report rather than only in /mix-review's prose because the report is what
+    # an A/B comparison reads: a fader-only move leaves every per-stem and
+    # per-section row byte-identical, and without this block that reads as "the
+    # change did nothing" rather than "these rows cannot see a fader".
+    measurement_basis: dict[str, str] = field(
+        default_factory=lambda: dict(_MEASUREMENT_BASIS)
+    )
     schema_version: str = SCHEMA_VERSION
 
     def to_json_dict(self) -> dict[str, Any]:
@@ -909,6 +1093,13 @@ class MixReport:
             "master_fader_volume": self.master_fader_volume,
             "master_fader_db": _finite_or_none(self.master_fader_db),
             "delivered_true_peak_dbtp": _finite_or_none(self.delivered_true_peak_dbtp),
+            # Provenance travels WITH the number. Without it a reader has no
+            # way to tell a fader read off the rendered set from one declared
+            # in the DB and never checked against it.
+            "master_fader_source": self.master_fader_source,
+            "master_fader_verified": self.master_fader_verified,
+            "master_fader_note": self.master_fader_note,
+            "measurement_basis": dict(self.measurement_basis),
             "stems": [_stem_to_dict(s) for s in self.stems],
             "returns": [_stem_to_dict(r) for r in self.returns],
             "overshoots": [_overshoot_to_dict(o) for o in self.overshoots],
@@ -1134,6 +1325,47 @@ def _section_to_dict(
         "transients": [_part_transient_to_dict(t) for t in s.transients],
         "transient_skips": [dict(sk) for sk in s.transient_skips],
         "onset_density": s.onset_density,
+        # null and [] mean different things here (see the field comment), so
+        # the None is passed through rather than collapsed to an empty list.
+        "intelligibility": (
+            [_turn_intelligibility_to_dict(t) for t in s.intelligibility]
+            if s.intelligibility is not None
+            else None
+        ),
+    }
+
+
+def _turn_intelligibility_to_dict(t: TurnIntelligibility) -> dict[str, Any]:
+    """Serialize one spoken turn's speech-over-bed reading.
+
+    Every measurement goes through ``_finite_or_none``: an unanalysable turn
+    (``n_frames == 0``) and a band the speech never sounded in both carry NaN
+    as "honestly unmeasured", and the report must stay valid JSON under
+    ``allow_nan=False``.
+    """
+    return {
+        "turn_index": t.turn_index,
+        "label": t.label,
+        "start_s": t.start_s,
+        "end_s": t.end_s,
+        "start_beat": t.start_beat,
+        "end_beat": t.end_beat,
+        "n_frames": t.n_frames,
+        "speech_db": _finite_or_none(t.speech_db),
+        "bed_db": _finite_or_none(t.bed_db),
+        "speech_over_bed_db": _finite_or_none(t.speech_over_bed_db),
+        "masked_fraction": _finite_or_none(t.masked_fraction),
+        "bands": [
+            {
+                "lo_hz": b.lo_hz,
+                "hi_hz": b.hi_hz,
+                "speech_db": _finite_or_none(b.speech_db),
+                "bed_db": _finite_or_none(b.bed_db),
+                "speech_over_bed_db": _finite_or_none(b.speech_over_bed_db),
+                "masked_fraction": _finite_or_none(b.masked_fraction),
+            }
+            for b in t.bands
+        ],
     }
 
 
@@ -1264,6 +1496,11 @@ def _envelope_to_dict(e: EnvelopeVerification) -> dict[str, Any]:
         "target_kind": e.target_kind,
         "parameter_path": e.parameter_path,
         "at_beat": e.at_beat,
+        # The span this verdict graded — a 64-step staircase is one row from
+        # `at_beat` through `through_beat` with `steps: 64`. Machine-readable
+        # so /mix-review never has to parse the note to learn the extent.
+        "through_beat": e.through_beat,
+        "steps": e.steps,
         "metric": e.metric,
         # NaN when measurable=False (too-quiet / too-diluted / model
         # breakdown) — serialized as JSON null (B1), the "honestly

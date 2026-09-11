@@ -1,12 +1,14 @@
-"""Tests for src/hallucinote/sync/compat.py — W13-B cross-machine portability.
+"""Tests for src/hallucinote/sync/compat.py — cross-machine portability.
 
 Covers all five status branches of classify_device, the song-walk including
 nested rack chains, REQUIREMENTS.md formatting, and the CLI exit-code
-contract that the push-preflight gate keys off.
+contract that the push-preflight gate keys off — and the same three for the
+second family, the samples an audio clip's ``audio_file`` names.
 """
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from pathlib import Path
 from typing import get_args
@@ -407,8 +409,15 @@ def test_compat_report_to_json_shape(conn, song, track_chain, db_path):
         "third_party_ok": 0, "missing": 0, "unverified": 1,
         "preset_query_invalid": 0, "kind_unresolvable": 0,
         "kind_ambiguous": 0, "preset_query_unverified": 0,
+        "pack_content": 0, "pack_content_missing": 0, "user_content": 0,
+        "samples_total": 0, "samples_ok": 0, "samples_missing": 0,
+        "samples_unreadable": 0, "samples_not_a_file": 0,
+        "samples_unresolvable": 0,
         "has_issues": True,
     }
+    # The device counts still count devices only — the sample family carries
+    # its own numbers rather than widening one of these.
+    assert data["samples"] == []
     assert len(data["entries"]) == 3
     # Entries are dicts after asdict()
     for e in data["entries"]:
@@ -550,11 +559,12 @@ def test_format_requirements_md_names_every_device_status(
     """The DeviceStatus caller contract: the REQUIREMENTS.md generator
     "MUST handle each value explicitly". No status may render to silence.
 
-    Every status reachable from the sole write path is exercised here —
-    ``regen_requirements`` calls ``check_song`` with neither
-    ``installed_plugins`` nor ``browser_dry_runs``, which is exactly this
-    call. The bucket count is pinned against the enum so a newly added
-    status fails here until the generator is taught to render it.
+    ``installed_packs`` is the one input supplied beyond what
+    ``regen_requirements`` passes, because ``pack_content_missing`` is
+    reachable only when something actually looked at this machine's Packs —
+    the rendering contract holds for every value of the enum regardless of
+    which run produces it. The bucket set is pinned against the enum so a
+    newly added status fails here until the generator is taught to render it.
     """
     M.create_device(conn, chain_id=track_chain, position=1,
                     kind="Operator", display_name="Warm Keys")
@@ -567,8 +577,29 @@ def test_format_requirements_md_names_every_device_status(
         kind="Operator", display_name="Bass Pluck Slot",
         preset_query={"root": "instruments", "pattern": "Bass-Pluck"},
     )
+    M.create_device(
+        conn, chain_id=track_chain, position=5,
+        kind="Drum Rack", display_name="Late Nite Kit",
+        preset_query={
+            "root": "packs", "path_prefix": ["Drum Booth"],
+            "pattern": "Late Nite Kit",
+        },
+    )
+    M.create_device(
+        conn, chain_id=track_chain, position=6,
+        kind="Drum Rack", display_name="Vinyl Kit",
+        preset_query={
+            "root": "packs", "path_prefix": ["Vinyl Classics"],
+            "pattern": "Vinyl Kit",
+        },
+    )
+    M.create_device(
+        conn, chain_id=track_chain, position=7,
+        kind="Simpler", display_name="My Own Piano",
+        preset_query={"root": "user_library", "pattern": "My Own Piano"},
+    )
     conn.commit()
-    report = C.check_song(db_path)
+    report = C.check_song(db_path, installed_packs=frozenset({"Drum Booth"}))
 
     buckets = {
         "native": report.native,
@@ -580,14 +611,22 @@ def test_format_requirements_md_names_every_device_status(
         "kind_unresolvable": report.kind_unresolvable,
         "kind_ambiguous": report.kind_ambiguous,
         "preset_query_unverified": report.preset_query_unverified,
+        "pack_content": report.pack_content,
+        "pack_content_missing": report.pack_content_missing,
+        "user_content": report.user_content,
     }
     assert set(buckets) == set(get_args(C.DeviceStatus))
 
     md = C.format_requirements_md(report)
     # Natives are summarised by kind; the rest are named individually.
     assert "`Operator`" in md
-    for name in ("warm pad slot", "Serum", "Bass Pluck Slot"):
+    for name in (
+        "warm pad slot", "Serum", "Bass Pluck Slot",
+        "Late Nite Kit", "Vinyl Kit", "My Own Piano",
+    ):
         assert name in md, f"{name} is in the report but named nowhere in the file"
+    for status in ("pack_content", "pack_content_missing", "user_content"):
+        assert status in md, f"{status} renders to silence"
 
 
 # ---------------------------------------------------------------------------
@@ -1515,3 +1554,1042 @@ def test_classify_preset_query_still_rejects_a_non_null_non_bool_case_sensitive(
     }))
     assert status == "preset_query_invalid"
     assert "case_sensitive" in detail
+
+
+# ---------------------------------------------------------------------------
+# Sample references — classify_sample
+# ---------------------------------------------------------------------------
+#
+# A song whose audio clip points at a moved sample used to pass this check
+# clean and fail at push, where the clips phase resolves the same reference
+# through the same resolver. These pin the second family: its own statuses,
+# its own rendering, and a device path that does not know it exists.
+
+
+_ROOT_READS_EVERYTHING = pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0,
+    reason="root bypasses file permissions, so an unreadable file reads fine",
+)
+
+
+def _audio_track(conn, song, *, name="Vox", index=2) -> str:
+    return M.create_track(
+        conn, song_id=song, track_index=index, name=name, kind="audio",
+    )
+
+
+def _audio_clip(conn, track_id, *, ref, slot=1, name=None) -> str:
+    return M.create_audio_clip(
+        conn, track_id=track_id, slot=slot, length_beats=4.0,
+        audio_file=ref, name=name,
+    )
+
+
+def test_sample_status_vocabulary_is_disjoint_from_device_status():
+    """The two families never share a status string.
+
+    A sample is not a device, and a status that decorated both rows would
+    mean different things depending on which one it landed on — the exact
+    overload this second family exists to avoid.
+    """
+    assert not set(get_args(C.SampleStatus)) & set(get_args(C.DeviceStatus))
+
+
+def test_classify_sample_ok_for_a_readable_file(tmp_path):
+    (tmp_path / "assets").mkdir()
+    wav = tmp_path / "assets" / "line.wav"
+    wav.write_bytes(b"RIFF")
+    status, resolved, detail = C.classify_sample(
+        "assets/line.wav", song_dir=tmp_path,
+    )
+    assert status == "sample_ok"
+    assert resolved == wav
+    assert detail is None
+
+
+def test_classify_sample_missing_names_both_the_ref_and_the_path(tmp_path):
+    status, resolved, detail = C.classify_sample(
+        "assets/gone.wav", song_dir=tmp_path,
+    )
+    assert status == "sample_missing"
+    assert resolved == tmp_path / "assets" / "gone.wav"
+    # Never a bare "None": the reference to re-point AND the path that was
+    # looked for, because which of the two is wrong decides the fix.
+    assert "assets/gone.wav" in detail
+    assert str(tmp_path / "assets" / "gone.wav") in detail
+
+
+@_ROOT_READS_EVERYTHING
+def test_classify_sample_unreadable_is_not_collapsed_into_missing(tmp_path):
+    """A sample that is exactly where the clip expects it but cannot be read
+    is a permissions fix, not a relink — so it carries its own status."""
+    wav = tmp_path / "locked.wav"
+    wav.write_bytes(b"RIFF")
+    wav.chmod(0o000)
+    try:
+        status, resolved, detail = C.classify_sample(
+            "locked.wav", song_dir=tmp_path,
+        )
+    finally:
+        wav.chmod(0o600)
+    assert status == "sample_unreadable"
+    assert resolved == wav
+    assert str(wav) in detail
+
+
+@_ROOT_READS_EVERYTHING
+def test_classify_sample_unreadable_when_a_parent_dir_denies_access(tmp_path):
+    """The file exists; a directory on the way to it does not let us look.
+
+    Without this branch the failed ``stat`` would read as "nothing is there"
+    and send the reader hunting for a file that never moved.
+    """
+    locked_dir = tmp_path / "vault"
+    locked_dir.mkdir()
+    (locked_dir / "line.wav").write_bytes(b"RIFF")
+    locked_dir.chmod(0o000)
+    try:
+        status, resolved, detail = C.classify_sample(
+            "vault/line.wav", song_dir=tmp_path,
+        )
+    finally:
+        locked_dir.chmod(0o700)
+    assert status == "sample_unreadable"
+    assert str(resolved) in detail
+
+
+def test_classify_sample_not_a_file_for_a_directory(tmp_path):
+    (tmp_path / "assets").mkdir()
+    status, resolved, detail = C.classify_sample("assets", song_dir=tmp_path)
+    assert status == "sample_not_a_file"
+    assert resolved == tmp_path / "assets"
+    assert "directory" in detail
+
+
+def test_classify_sample_unresolvable_when_a_relative_ref_has_no_anchor():
+    """No song directory + a song-relative reference = existence unknown.
+
+    Reported as its own status rather than guessed at: calling it missing
+    would raise an alarm about a file that is very likely right where it
+    belongs.
+    """
+    status, resolved, detail = C.classify_sample(
+        "assets/line.wav", song_dir=None,
+    )
+    assert status == "sample_unresolvable"
+    assert resolved is None
+    assert "assets/line.wav" in detail
+
+
+def test_classify_sample_absolute_ref_needs_no_anchor(tmp_path):
+    wav = tmp_path / "outside.wav"
+    wav.write_bytes(b"RIFF")
+    status, resolved, _ = C.classify_sample(str(wav), song_dir=None)
+    assert status == "sample_ok"
+    assert resolved == wav
+
+
+def test_classify_sample_absolute_ref_that_is_gone_is_missing(tmp_path):
+    status, resolved, detail = C.classify_sample(
+        str(tmp_path / "moved.wav"), song_dir=tmp_path,
+    )
+    assert status == "sample_missing"
+    assert str(tmp_path / "moved.wav") in detail
+
+
+# ---------------------------------------------------------------------------
+# Sample references — the song walk
+# ---------------------------------------------------------------------------
+
+
+def test_check_song_flags_a_dangling_audio_file(conn, song, db_path, tmp_path):
+    """The regression: a clip pointing at a sample that is not on disk used to
+    report clean and fail in Live."""
+    track_id = _audio_track(conn, song)
+    _audio_clip(conn, track_id, ref="assets/gone.wav", name="verse take")
+    conn.commit()
+
+    report = C.check_song(db_path)
+
+    assert report.has_issues is True
+    [entry] = report.samples
+    assert entry.status == "sample_missing"
+    assert entry.audio_file == "assets/gone.wav"
+    assert entry.resolved_path == str(tmp_path / "assets" / "gone.wav")
+    assert entry.track_name == "Vox"
+    assert entry.clip_name == "verse take"
+
+
+def test_check_song_clean_when_the_sample_is_on_disk(conn, song, db_path, tmp_path):
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "assets" / "line.wav").write_bytes(b"RIFF")
+    track_id = _audio_track(conn, song)
+    _audio_clip(conn, track_id, ref="assets/line.wav")
+    conn.commit()
+
+    report = C.check_song(db_path)
+
+    assert [e.status for e in report.samples] == ["sample_ok"]
+    assert report.sample_issues == []
+    assert report.has_issues is False
+
+
+@_ROOT_READS_EVERYTHING
+def test_check_song_reports_missing_and_unreadable_separately(
+    conn, song, db_path, tmp_path,
+):
+    """Both are broken; they are not the same brokenness, and the report says
+    which is which rather than collapsing them into one bucket."""
+    (tmp_path / "assets").mkdir()
+    locked = tmp_path / "assets" / "locked.wav"
+    locked.write_bytes(b"RIFF")
+    locked.chmod(0o000)
+    track_id = _audio_track(conn, song)
+    _audio_clip(conn, track_id, ref="assets/gone.wav", slot=1)
+    _audio_clip(conn, track_id, ref="assets/locked.wav", slot=2)
+    conn.commit()
+    try:
+        report = C.check_song(db_path)
+    finally:
+        locked.chmod(0o600)
+
+    by_ref = {e.audio_file: e.status for e in report.samples}
+    assert by_ref == {
+        "assets/gone.wav": "sample_missing",
+        "assets/locked.wav": "sample_unreadable",
+    }
+    assert len(report.samples_missing) == 1
+    assert len(report.samples_unreadable) == 1
+
+
+def test_check_song_does_not_synthesize_a_device_entry_for_a_sample(
+    conn, song, track_chain, db_path,
+):
+    """The device path is unchanged: a sample never becomes a DeviceEntry, and
+    a device's classification never consults a file on disk."""
+    M.create_device(conn, chain_id=track_chain, position=1,
+                    kind="Operator", display_name="Operator")
+    track_id = _audio_track(conn, song)
+    _audio_clip(conn, track_id, ref="assets/gone.wav")
+    conn.commit()
+
+    report = C.check_song(db_path)
+
+    assert [type(e) for e in report.entries] == [C.DeviceEntry]
+    assert [e.status for e in report.entries] == ["native"]
+    assert [type(e) for e in report.samples] == [C.SampleEntry]
+
+
+def test_check_song_reports_one_entry_per_clip_sharing_a_sample(
+    conn, song, db_path,
+):
+    """Two clips on one missing sample are two clips to fix."""
+    track_id = _audio_track(conn, song)
+    _audio_clip(conn, track_id, ref="assets/gone.wav", slot=1)
+    _audio_clip(conn, track_id, ref="assets/gone.wav", slot=2)
+    conn.commit()
+
+    report = C.check_song(db_path)
+
+    assert [e.slot for e in report.samples] == [1, 2]
+    assert {e.status for e in report.samples} == {"sample_missing"}
+
+
+def test_check_song_ignores_midi_clips(conn, song, track, db_path):
+    M.create_clip(conn, track_id=track, slot=1, length_beats=4.0)
+    conn.commit()
+
+    report = C.check_song(db_path)
+
+    assert report.samples == []
+    assert report.has_issues is False
+
+
+def test_check_song_unnamed_clip_is_identified_by_its_slot(
+    conn, song, db_path,
+):
+    """A clip with no name still has to be findable in the report."""
+    track_id = _audio_track(conn, song)
+    _audio_clip(conn, track_id, ref="assets/gone.wav", slot=7)
+    conn.commit()
+
+    [entry] = C.check_song(db_path).samples
+    assert entry.clip_name == "slot 7"
+
+
+def test_compat_report_to_json_carries_the_sample_family(
+    conn, song, db_path, tmp_path,
+):
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "assets" / "line.wav").write_bytes(b"RIFF")
+    track_id = _audio_track(conn, song)
+    _audio_clip(conn, track_id, ref="assets/line.wav", slot=1)
+    _audio_clip(conn, track_id, ref="assets/gone.wav", slot=2)
+    conn.commit()
+
+    data = C.check_song(db_path).to_json()
+
+    assert data["summary"]["samples_total"] == 2
+    assert data["summary"]["samples_ok"] == 1
+    assert data["summary"]["samples_missing"] == 1
+    assert data["summary"]["has_issues"] is True
+    assert data["summary"]["total"] == 0  # devices, and there are none
+    statuses = {e["status"] for e in data["samples"]}
+    assert statuses == {"sample_ok", "sample_missing"}
+    for entry in data["samples"]:
+        assert entry["audio_file"]
+        assert entry["resolved_path"]
+
+
+# ---------------------------------------------------------------------------
+# Sample references — REQUIREMENTS.md
+# ---------------------------------------------------------------------------
+
+
+def test_format_requirements_md_lists_referenced_samples(
+    conn, song, db_path, tmp_path,
+):
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "assets" / "line.wav").write_bytes(b"RIFF")
+    track_id = _audio_track(conn, song)
+    _audio_clip(conn, track_id, ref="assets/line.wav", name="verse take")
+    conn.commit()
+
+    md = C.format_requirements_md(C.check_song(db_path))
+
+    assert "## Referenced samples" in md
+    assert "`assets/line.wav`" in md
+    assert "Vox / verse take (clip slot 1)" in md
+    assert "travels with the song" in md
+
+
+def test_format_requirements_md_says_an_absolute_sample_does_not_travel(
+    conn, song, db_path, tmp_path,
+):
+    outside = tmp_path / "library" / "kick.wav"
+    outside.parent.mkdir()
+    outside.write_bytes(b"RIFF")
+    track_id = _audio_track(conn, song)
+    _audio_clip(conn, track_id, ref=str(outside))
+    conn.commit()
+
+    md = C.format_requirements_md(C.check_song(db_path))
+
+    assert "supply this file yourself" in md
+
+
+def test_format_requirements_md_no_samples_says_so(
+    conn, song, track_chain, db_path,
+):
+    M.create_device(conn, chain_id=track_chain, position=1,
+                    kind="Operator", display_name="Operator")
+    conn.commit()
+
+    md = C.format_requirements_md(C.check_song(db_path))
+
+    assert "## Referenced samples" in md
+    assert "No clip and no sampler in this song plays a file from disk." in md
+
+
+def test_format_requirements_md_names_a_missing_sample_and_its_path(
+    conn, song, db_path, tmp_path,
+):
+    track_id = _audio_track(conn, song)
+    _audio_clip(conn, track_id, ref="assets/gone.wav")
+    conn.commit()
+
+    md = C.format_requirements_md(C.check_song(db_path))
+
+    assert "sample_missing" in md
+    assert str(tmp_path / "assets" / "gone.wav") in md
+
+
+def test_format_requirements_md_names_every_sample_status():
+    """The SampleStatus caller contract, the mirror of the device one: no
+    status may render to silence.
+
+    Built by hand rather than from a walk because one of the statuses
+    (``sample_unresolvable``) cannot arise from a DB that lives on disk — the
+    rendering contract holds for every value of the enum regardless.
+    """
+    report = C.CompatReport(song_slug="test-song", song_title="Test Song")
+    for index, status in enumerate(get_args(C.SampleStatus), start=1):
+        report.samples.append(C.SampleEntry(
+            track_name="Vox",
+            clip_name=f"take {index}",
+            slot=index,
+            audio_file=f"assets/{status}.wav",
+            resolved_path=f"/songs/test-song/assets/{status}.wav",
+            status=status,
+            detail=None if status == "sample_ok" else f"why {status} happened",
+        ))
+
+    md = C.format_requirements_md(report)
+
+    for status in get_args(C.SampleStatus):
+        assert f"assets/{status}.wav" in md, f"{status} renders to silence"
+        if status != "sample_ok":
+            assert status in md, f"{status} is not named in the file"
+            assert f"why {status} happened" in md
+
+
+def test_format_requirements_md_redacts_the_home_directory(tmp_path):
+    """REQUIREMENTS.md is checked in beside the song; the author's home
+    directory has no business travelling with it."""
+    ref = str(Path.home() / "Library" / "Samples" / "kick.wav")
+    report = C.CompatReport(song_slug="test-song", song_title="Test Song")
+    report.samples.append(C.SampleEntry(
+        track_name="Drums", clip_name="hit", slot=1,
+        audio_file=ref, resolved_path=ref, status="sample_missing",
+        detail=f"audio_file={ref!r} resolves to {ref}, where nothing is",
+    ))
+
+    md = C.format_requirements_md(report)
+
+    assert str(Path.home()) not in md
+    assert "~/Library/Samples/kick.wav" in md
+
+
+# ---------------------------------------------------------------------------
+# Sample references — CLI gate
+# ---------------------------------------------------------------------------
+
+
+def test_cli_check_exits_one_on_a_dangling_sample(
+    monkeypatch, capsys, conn, song, db_path,
+):
+    track_id = _audio_track(conn, song)
+    _audio_clip(conn, track_id, ref="assets/gone.wav")
+    conn.commit()
+    monkeypatch.setattr(C, "resolve_db_path", lambda slug, **kw: db_path)
+
+    rc = C.main(["check", "test-song"])
+
+    assert rc == 1
+    data = json.loads(capsys.readouterr().out)
+    assert data["summary"]["samples_missing"] == 1
+    assert data["samples"][0]["audio_file"] == "assets/gone.wav"
+
+
+# ---------------------------------------------------------------------------
+# SYN-3P8M — content provenance: a native CLASS is not native CONTENT
+#
+# `classify_device` keyed on Live's class name alone, so a Drum Rack whose kit
+# lives in an Ableton Pack came back "native — no install needed" and
+# REQUIREMENTS.md printed the affirmative "None. This song uses only Live's
+# built-in devices." On a machine without the Pack the class is there and the
+# sound is not, so that sentence was a wrong answer to the one question the
+# file exists to answer.
+# ---------------------------------------------------------------------------
+
+
+def _pack_device(conn, chain_id, *, position=1, pack="Drum Booth",
+                 name="Late Nite Kit", kind="Drum Rack"):
+    return M.create_device(
+        conn, chain_id=chain_id, position=position, kind=kind,
+        display_name=name,
+        preset_query={
+            "root": "packs", "path_prefix": [pack], "pattern": name,
+        },
+    )
+
+
+def _fake_browser_send(routes=None, *, packs=None, tree_ok=True):
+    """A fake send_fn covering BOTH browser calls --probe makes.
+
+    ``routes`` keys the search dry-runs exactly like ``_dry_run_key``;
+    ``packs`` is the list of installed Pack names the packs tree reports.
+    Passing ``packs=None`` makes a packs tree call fail the assertion, which
+    is how the "no Pack content → no probe call" tests stay honest.
+    """
+    from hallucinote_mcp.wire import Response
+
+    def _send(req):
+        assert req.tool == "ableton_browser", req.tool
+        params = req.params or {}
+        if req.action == "tree":
+            assert packs is not None, (
+                "the packs tree was probed but this song has no Pack content"
+            )
+            assert params.get("root") == "packs", params
+            assert params.get("depth") == 1, params
+            if not tree_ok:
+                return Response(ok=False, error="browser unavailable")
+            return Response(ok=True, result={
+                "root": "packs",
+                "tree": {
+                    "name": "Packs",
+                    "children": [{"name": n} for n in packs],
+                },
+            })
+        assert req.action == "search", req.action
+        key = (
+            str(params.get("root", "")),
+            str(params.get("pattern", "")),
+            tuple(params.get("path_prefix") or []),
+            str(params.get("mode", "substring")),
+            bool(params.get("case_sensitive", False)),
+        )
+        count = (routes or {}).get(key)
+        assert count is not None, (
+            f"_fake_browser_send: unrouted search {params!r}; "
+            f"routes={list(routes or {})!r}"
+        )
+        return Response(ok=True, result={"matches": [], "count": count})
+
+    return _send
+
+
+def test_a_pack_provided_drum_rack_is_not_reported_native(
+    conn, song, track_chain, db_path,
+):
+    """The item's acceptance case: the Pack-sourced Drum Rack is enumerated as
+    Pack-dependent and REQUIREMENTS.md names the Pack."""
+    _pack_device(conn, track_chain)
+    conn.commit()
+
+    report = C.check_song(db_path)
+
+    assert [e.status for e in report.entries] == ["pack_content"]
+    assert report.native == []
+    [entry] = report.pack_content
+    assert entry.pack_name == "Drum Booth"
+
+    md = C.format_requirements_md(report)
+    assert "## Required Ableton Packs" in md
+    assert "Drum Booth" in md
+    assert "Late Nite Kit" in md
+    assert "None. This song uses only Live's built-in devices" not in md
+
+
+def test_pack_content_is_detected_from_browser_path_alone(
+    conn, song, track_chain, db_path,
+):
+    """A device carrying only ``preset_uri`` + ``browser_path_json`` gets no
+    dry run at all — the browser path is the only signal there is."""
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="Drum Rack", display_name="Late Nite Kit",
+        preset_uri="query:Packs#Drum%20Booth:Kits:Late%20Nite%20Kit.adg",
+        browser_path=["packs", "Drum Booth", "Kits", "Late Nite Kit"],
+    )
+    conn.commit()
+
+    report = C.check_song(db_path)
+
+    [entry] = report.pack_content
+    assert entry.pack_name == "Drum Booth"
+    assert "browser_path_json[0]" in (entry.detail or "")
+
+
+def test_a_packs_query_with_no_prefix_is_pack_content_with_no_name(
+    conn, song, track_chain, db_path,
+):
+    """The Pack is real but this song's DB does not say which one. The report
+    says so rather than inventing a name."""
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="Drum Rack", display_name="Some Kit",
+        preset_query={"root": "packs", "pattern": "Some Kit"},
+    )
+    conn.commit()
+
+    report = C.check_song(db_path)
+
+    [entry] = report.pack_content
+    assert entry.pack_name is None
+    md = C.format_requirements_md(report)
+    assert "(Pack not named in this song's DB)" in md
+
+
+@pytest.mark.parametrize("root", ["user_library", "samples"])
+def test_user_library_and_samples_roots_are_user_content(
+    conn, song, track_chain, db_path, root,
+):
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="Simpler", display_name="My Own Piano",
+        preset_query={"root": root, "pattern": "My Own Piano"},
+    )
+    conn.commit()
+
+    report = C.check_song(db_path)
+
+    [entry] = report.user_content
+    assert entry.pack_name is None
+    md = C.format_requirements_md(report)
+    assert "## Content that will not travel" in md
+    assert "My Own Piano" in md
+
+
+def test_pack_and_user_content_are_not_push_issues(
+    conn, song, track_chain, db_path,
+):
+    """The line: ``has_issues`` means "this push, on this machine, will not do
+    what you asked". Both of these demonstrably loaded on the machine the song
+    was captured from. A gate that exits 1 forever on the author's own library
+    is a gate an operator learns to ignore."""
+    _pack_device(conn, track_chain, position=1)
+    M.create_device(
+        conn, chain_id=track_chain, position=2,
+        kind="Simpler", display_name="My Own Piano",
+        preset_query={"root": "user_library", "pattern": "My Own Piano"},
+    )
+    conn.commit()
+
+    report = C.check_song(db_path)
+
+    assert len(report.pack_content) == 1
+    assert len(report.user_content) == 1
+    assert report.has_issues is False
+
+
+def test_offline_never_escalates_a_pack_to_missing(
+    conn, song, track_chain, db_path,
+):
+    """``regen_requirements`` runs offline and must not assert an absence it
+    cannot observe: with no installed-Packs set, a Pack device is a
+    requirement, not a failure."""
+    _pack_device(conn, track_chain)
+    conn.commit()
+
+    report = C.check_song(db_path, installed_packs=None)
+
+    assert len(report.pack_content) == 1
+    assert report.pack_content_missing == []
+    assert report.has_issues is False
+
+
+def test_an_absent_pack_escalates_to_missing_and_refuses_the_push(
+    conn, song, track_chain, db_path,
+):
+    _pack_device(conn, track_chain)
+    conn.commit()
+
+    report = C.check_song(db_path, installed_packs=frozenset({"Vinyl Classics"}))
+
+    [entry] = report.pack_content_missing
+    assert entry.pack_name == "Drum Booth"
+    assert report.pack_content == []
+    assert report.has_issues is True
+    md = C.format_requirements_md(report)
+    assert "pack_content_missing" in md
+
+
+def test_an_installed_pack_stays_pack_content(conn, song, track_chain, db_path):
+    _pack_device(conn, track_chain)
+    conn.commit()
+
+    report = C.check_song(db_path, installed_packs=frozenset({"Drum Booth"}))
+
+    assert len(report.pack_content) == 1
+    assert report.has_issues is False
+
+
+def test_pack_names_match_across_case_and_surrounding_space(
+    conn, song, track_chain, db_path,
+):
+    """Both sides are browser LABELS — the author's, out of the DB, against
+    the consumer's, read live. Trim and case-fold is the only normalization
+    that cannot change which Pack is meant."""
+    _pack_device(conn, track_chain, pack="Drum Booth")
+    conn.commit()
+
+    report = C.check_song(db_path, installed_packs=frozenset({"  drum booth "}))
+
+    assert len(report.pack_content) == 1
+    assert report.pack_content_missing == []
+
+
+def test_a_missing_pack_outranks_the_dry_runs_verdict(
+    conn, song, track_chain, db_path,
+):
+    """The probe's search for a Pack this machine lacks returns 0 matches by
+    construction. ``kind_unresolvable`` says "the author wrote a bad selector"
+    — the wrong sentence, aimed at the wrong person. Name the Pack."""
+    _pack_device(conn, track_chain)
+    conn.commit()
+
+    report = C.check_song(
+        db_path,
+        browser_dry_runs={("packs", "Late Nite Kit", ("Drum Booth",),
+                           "substring", False): 0},
+        installed_packs=frozenset({"Vinyl Classics"}),
+    )
+
+    assert [e.status for e in report.entries] == ["pack_content_missing"]
+    assert "not installed on this machine" in (report.entries[0].detail or "")
+
+
+def test_an_installed_pack_still_gets_its_dry_run_verdict(
+    conn, song, track_chain, db_path,
+):
+    """With the Pack present, 0 or 2+ matches really IS an authoring fault —
+    the dry-run keeps its precedence over the provenance statuses."""
+    _pack_device(conn, track_chain)
+    conn.commit()
+
+    report = C.check_song(
+        db_path,
+        browser_dry_runs={("packs", "Late Nite Kit", ("Drum Booth",),
+                           "substring", False): 2},
+        installed_packs=frozenset({"Drum Booth"}),
+    )
+
+    assert [e.status for e in report.entries] == ["kind_ambiguous"]
+
+
+def test_a_structurally_invalid_query_still_outranks_pack_content(
+    conn, song, track_chain, db_path,
+):
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="Drum Rack", display_name="Late Nite Kit",
+        preset_query={"root": "packs", "path_prefix": "Drum Booth",
+                      "pattern": "Late Nite Kit"},
+    )
+    conn.commit()
+
+    report = C.check_song(db_path)
+
+    assert [e.status for e in report.entries] == ["preset_query_invalid"]
+
+
+def test_pack_content_outranks_preset_query_unverified(
+    conn, song, track_chain, db_path,
+):
+    """"You need Pack X" is strictly more specific than "nobody resolved this
+    selector", and REQUIREMENTS.md is generated on exactly this path. The
+    unverified fact is not lost — it rides in the detail."""
+    _pack_device(conn, track_chain)
+    conn.commit()
+
+    report = C.check_song(db_path)
+
+    [entry] = report.entries
+    assert entry.status == "pack_content"
+    assert report.preset_query_unverified == []
+    assert "never resolved against a browser" in (entry.detail or "")
+
+
+def test_an_all_native_song_classifies_exactly_as_before(
+    conn, song, track_chain, db_path,
+):
+    """R8: no Pack, user-library or sample content → nothing changes, and the
+    "None." sentence now states what was checked."""
+    M.create_device(conn, chain_id=track_chain, position=1,
+                    kind="Operator", display_name="Warm Keys")
+    conn.commit()
+
+    report = C.check_song(db_path)
+
+    assert [e.status for e in report.entries] == ["native"]
+    assert report.pack_content == []
+    assert report.user_content == []
+    assert report.has_issues is False
+    md = C.format_requirements_md(report)
+    assert "## Required Ableton Packs" not in md
+    assert "## Content that will not travel" not in md
+    assert "third-party plugins, Ableton Pack content" in md
+
+
+def test_the_none_sentence_is_withheld_when_pack_content_exists(
+    conn, song, track_chain, db_path,
+):
+    """The affirmative "uses only Live's built-in devices" is the false-clean
+    claim this item is about; it may not appear beside a Pack requirement."""
+    _pack_device(conn, track_chain)
+    conn.commit()
+
+    md = C.format_requirements_md(C.check_song(db_path))
+
+    assert "only Live's built-in devices" not in md
+    assert "None — this song loads no third-party plugin" in md
+
+
+def test_pack_content_is_kept_out_of_the_built_ins_section(
+    conn, song, track_chain, db_path,
+):
+    """"Listed here for completeness — these ship with Live and don't need
+    separate installation" is exactly the false claim, so the Pack device may
+    not appear under that heading."""
+    _pack_device(conn, track_chain, kind="Drum Rack")
+    M.create_device(conn, chain_id=track_chain, position=2,
+                    kind="Operator", display_name="Warm Keys")
+    conn.commit()
+
+    md = C.format_requirements_md(C.check_song(db_path))
+
+    built_ins = md.split("## Live built-in devices (no install needed)")[1]
+    assert "`Operator`" in built_ins
+    assert "Drum Rack" not in built_ins
+
+
+def test_cli_probe_flags_a_pack_this_machine_does_not_have(
+    monkeypatch, capsys, conn, song, track_chain,
+):
+    """End-to-end R4: --probe enumerates the installed Packs and the report
+    says which one is missing, exit 1."""
+    _pack_device(conn, track_chain)
+    conn.commit()
+    db_path = Path(conn.execute("PRAGMA database_list").fetchall()[0]["file"])
+    monkeypatch.setattr(C, "resolve_db_path", lambda slug, **kw: db_path)
+    send = _fake_browser_send(
+        {("packs", "Late Nite Kit", ("Drum Booth",), "substring", False): 0},
+        packs=["Vinyl Classics", "Skitter and Step"],
+    )
+    monkeypatch.setattr(C, "_resolve_send_fn", lambda: send)
+
+    rc = C.main(["check", "test-song", "--probe"])
+
+    assert rc == 1
+    data = json.loads(capsys.readouterr().out)
+    assert data["summary"]["pack_content_missing"] == 1
+    assert data["entries"][0]["pack_name"] == "Drum Booth"
+
+
+def test_cli_probe_clears_a_pack_this_machine_does_have(
+    monkeypatch, capsys, conn, song, track_chain,
+):
+    _pack_device(conn, track_chain)
+    conn.commit()
+    db_path = Path(conn.execute("PRAGMA database_list").fetchall()[0]["file"])
+    monkeypatch.setattr(C, "resolve_db_path", lambda slug, **kw: db_path)
+    send = _fake_browser_send(
+        {("packs", "Late Nite Kit", ("Drum Booth",), "substring", False): 1},
+        packs=["Drum Booth"],
+    )
+    monkeypatch.setattr(C, "_resolve_send_fn", lambda: send)
+
+    rc = C.main(["check", "test-song", "--probe"])
+
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["summary"]["pack_content"] == 1
+    assert data["summary"]["pack_content_missing"] == 0
+
+
+def test_probe_does_not_ask_for_packs_when_the_song_uses_none(
+    monkeypatch, capsys, conn, song, track_chain,
+):
+    """No Pack content → nothing to compare, so the round trip is not spent.
+    The fake asserts loudly if the call is made anyway."""
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="Operator", display_name="Operator",
+        preset_query={"root": "instruments", "pattern": "Bass-Pluck"},
+    )
+    conn.commit()
+    db_path = Path(conn.execute("PRAGMA database_list").fetchall()[0]["file"])
+    monkeypatch.setattr(C, "resolve_db_path", lambda slug, **kw: db_path)
+    send = _fake_browser_send(
+        {("instruments", "Bass-Pluck", (), "substring", False): 1}, packs=None,
+    )
+    monkeypatch.setattr(C, "_resolve_send_fn", lambda: send)
+
+    rc = C.main(["check", "test-song", "--probe"])
+
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["summary"]["native"] == 1
+
+
+def test_probe_fails_loud_when_the_packs_tree_cannot_be_read(
+    monkeypatch, conn, song, track_chain,
+):
+    """A partial or empty Pack list would reclassify every Pack device as
+    missing and refuse a push that is fine. Fail loud instead."""
+    _pack_device(conn, track_chain)
+    conn.commit()
+    db_path = Path(conn.execute("PRAGMA database_list").fetchall()[0]["file"])
+    monkeypatch.setattr(C, "resolve_db_path", lambda slug, **kw: db_path)
+    send = _fake_browser_send(
+        {("packs", "Late Nite Kit", ("Drum Booth",), "substring", False): 1},
+        packs=[], tree_ok=False,
+    )
+    monkeypatch.setattr(C, "_resolve_send_fn", lambda: send)
+
+    with pytest.raises(SystemExit) as exc:
+        C.main(["check", "test-song", "--probe"])
+
+    assert "root='packs'" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# SMP — devices.audio_file: the sampler half of the sample family
+#
+# #501 shipped the SampleEntry family over `clips.audio_file`. A Simpler or
+# Sampler pointing at a moved file carries the identical defect and was not
+# covered: compat reported clean and the failure surfaced later as a silent
+# empty sampler.
+# ---------------------------------------------------------------------------
+
+
+def test_check_song_flags_a_dangling_device_sample(
+    conn, song, track_chain, db_path, tmp_path,
+):
+    """The regression: a sampler pointing at a sample that is not on disk used
+    to report clean and come up empty in Live."""
+    M.create_device(
+        conn, chain_id=track_chain, position=2,
+        kind="Simpler", display_name="Vinyl Kick",
+        audio_file="assets/kick.wav",
+    )
+    conn.commit()
+
+    report = C.check_song(db_path)
+
+    assert report.has_issues is True
+    [entry] = report.samples
+    assert entry.status == "sample_missing"
+    assert entry.use_site == "device"
+    assert entry.audio_file == "assets/kick.wav"
+    assert entry.resolved_path == str(tmp_path / "assets" / "kick.wav")
+    # Which sampler, on which track.
+    assert entry.track_name == "Lead"
+    assert entry.clip_name == "Vinyl Kick"
+    assert entry.slot == 2
+
+
+def test_check_song_clean_when_the_device_sample_is_on_disk(
+    conn, song, track_chain, db_path, tmp_path,
+):
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "assets" / "kick.wav").write_bytes(b"RIFF")
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="Simpler", display_name="Vinyl Kick",
+        audio_file="assets/kick.wav",
+    )
+    conn.commit()
+
+    report = C.check_song(db_path)
+
+    assert [e.status for e in report.samples] == ["sample_ok"]
+    assert report.has_issues is False
+
+
+def test_a_device_with_no_audio_file_yields_no_sample_row(
+    conn, song, track_chain, db_path,
+):
+    """Every non-sampler device has a NULL ``audio_file``; a row per device
+    would bury the samplers that do reference a file."""
+    M.create_device(conn, chain_id=track_chain, position=1,
+                    kind="Operator", display_name="Warm Keys")
+    conn.commit()
+
+    report = C.check_song(db_path)
+
+    assert report.samples == []
+
+
+def test_a_sampler_inside_a_rack_still_names_its_track(
+    conn, song, track_chain, db_path,
+):
+    rack_id = M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="Drum Rack", display_name="My Kit",
+    )
+    inner = M.create_device_chain(conn, parent_rack_device_id=rack_id)
+    M.create_device(
+        conn, chain_id=inner, position=3,
+        kind="Simpler", display_name="Snare Layer",
+        audio_file="assets/snare.wav",
+    )
+    conn.commit()
+
+    report = C.check_song(db_path)
+
+    [entry] = report.samples
+    assert entry.track_name == "Lead"
+    assert entry.clip_name == "Snare Layer"
+    assert entry.slot == 3
+
+
+def test_clip_and_device_samples_coexist_and_say_which_is_which(
+    conn, song, track_chain, db_path,
+):
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="Simpler", display_name="Vinyl Kick",
+        audio_file="assets/kick.wav",
+    )
+    track_id = _audio_track(conn, song)
+    _audio_clip(conn, track_id, ref="assets/verse.wav", name="verse take")
+    conn.commit()
+
+    report = C.check_song(db_path)
+
+    by_ref = {e.audio_file: e.use_site for e in report.samples}
+    assert by_ref == {
+        "assets/kick.wav": "device",
+        "assets/verse.wav": "clip",
+    }
+    assert report.to_json()["summary"]["samples_missing"] == 2
+
+
+def test_requirements_md_addresses_a_sampler_by_device_position(
+    conn, song, track_chain, db_path,
+):
+    """"slot 3" on a sampler would send the reader hunting the session grid
+    for a clip that is not there."""
+    M.create_device(
+        conn, chain_id=track_chain, position=3,
+        kind="Simpler", display_name="Vinyl Kick",
+        audio_file="assets/kick.wav",
+    )
+    conn.commit()
+
+    md = C.format_requirements_md(C.check_song(db_path))
+
+    assert "Lead / Vinyl Kick (device position 3)" in md
+    assert "sample_missing" in md
+
+
+def test_use_site_rides_the_json_report(conn, song, track_chain, db_path):
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="Simpler", display_name="Vinyl Kick",
+        audio_file="assets/kick.wav",
+    )
+    conn.commit()
+
+    data = C.check_song(db_path).to_json()
+
+    assert data["samples"][0]["use_site"] == "device"
+
+
+def test_cli_check_exits_one_on_a_dangling_device_sample(
+    monkeypatch, capsys, conn, song, track_chain, db_path,
+):
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="Simpler", display_name="Vinyl Kick",
+        audio_file="assets/kick.wav",
+    )
+    conn.commit()
+    monkeypatch.setattr(C, "resolve_db_path", lambda slug, **kw: db_path)
+
+    rc = C.main(["check", "test-song"])
+
+    assert rc == 1
+    data = json.loads(capsys.readouterr().out)
+    assert data["summary"]["samples_missing"] == 1
+    assert data["samples"][0]["use_site"] == "device"
+
+
+def test_a_sampler_fault_is_not_described_as_a_clip(
+    conn, song, track_chain, db_path,
+):
+    """"Re-point the clip" on a Simpler sends the reader looking through the
+    session grid for a clip that does not exist."""
+    M.create_device(
+        conn, chain_id=track_chain, position=1,
+        kind="Simpler", display_name="Vinyl Kick",
+        audio_file="assets/kick.wav",
+    )
+    conn.commit()
+
+    [entry] = C.check_song(db_path).samples
+
+    assert "re-point the sampler" in (entry.detail or "")
+    assert "clip" not in (entry.detail or "")

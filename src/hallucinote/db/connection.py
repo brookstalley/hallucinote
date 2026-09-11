@@ -308,11 +308,15 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("devices", "sidechain_source_track_id",
      "TEXT REFERENCES tracks(id) ON DELETE SET NULL"),
     ("devices", "sidechain_source_channel", "TEXT"),
-    # AUD-7R3M / SMP-7K2D: clips gain `reverse` — the missing playback-param
-    # sibling of the CLP-AUD1 family (NULL/0 = forward, 1 = reversed). Existing
-    # rows get NULL (forward). Materialized at push as Live's clip reverse, a
-    # playback parameter, not a derived file.
+    # AUD-7R3M / SMP-7K2D: clips gain `reverse` (NULL/0 = forward, 1 =
+    # reversed). Existing rows get NULL (forward). A Live Clip exposes no
+    # settable reverse and Simpler has no Reverse parameter (probe rows 14, 19),
+    # so the column materializes only as a reversed DERIVED ASSET the clip is
+    # pointed at — see the clips block in schema.sql and #237.
     ("clips", "reverse", "INTEGER"),
+    # NOTE (no row): clips.slot carries `CHECK (slot >= 1)` on a fresh DB
+    # (Live's clip_index is 1-based). SQLite cannot add a CHECK by ALTER, so a
+    # pre-existing DB relies on the mutator's `_require_slot_floor` alone.
     # RTE-1K9T: track signal routing (output + input) + monitor switch (D6).
     # Existing rows get NULL across all seven (no routing authored) -- the
     # DEFAULT-NULL keeps every pre-column track valid. The routing target is a
@@ -374,6 +378,29 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # set_song_tuning; the core path reads neither. See hallucinote.tuning.
     ("songs", "tuning_ref", "TEXT"),
     ("songs", "tuning_data", "TEXT"),
+    # #496: bar-ruler provenance on the three bar-position tables. `uniform` =
+    # bars accumulated against one beats_per_bar (what `Arrangement.materialize`
+    # does, and the only thing that can diverge from the meter map); `map` = a
+    # position authored directly against `time_signature_map`, which is the
+    # mutator default. NULL = written before this column, which the push
+    # planner reports as unrecorded rather than guessing at. The CHECK text
+    # below must stay BYTE-IDENTICAL to schema.sql's CREATE TABLE declarations:
+    # the canary compares column presence only and cannot see a drifted CHECK.
+    (
+        "arrangement_clips",
+        "bar_ruler",
+        "TEXT CHECK (bar_ruler IS NULL OR bar_ruler IN ('uniform','map'))",
+    ),
+    (
+        "sections",
+        "bar_ruler",
+        "TEXT CHECK (bar_ruler IS NULL OR bar_ruler IN ('uniform','map'))",
+    ),
+    (
+        "cue_points",
+        "bar_ruler",
+        "TEXT CHECK (bar_ruler IS NULL OR bar_ruler IN ('uniform','map'))",
+    ),
 )
 
 

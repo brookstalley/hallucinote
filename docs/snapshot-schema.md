@@ -97,7 +97,7 @@ The snapshot is a JSON document describing the mix layout of an Ableton Live set
 ]
 ```
 
-- `index` is 1-based, matching Live's track slot ordering.
+- `index` is a 1-based rank over **the tracks this snapshot carries** — equal to Live's track slot ordering only when capture filtered nothing out. Capture excludes an untouched default scaffold track and dense-ranks the survivors (see *What capture filters out before the snapshot exists* below), so a set whose scaffold was still present gives a snapshot whose `index` values are contiguous and no longer line up with Live's slots. Join on it only within one snapshot; joining a snapshot's `index` against something built from a different capture of the same set is what silently dropped every `browser_path` and preset seed once the scaffold filter shifted them.
 - `type` ∈ `{"midi", "audio", "group"}`. The legacy `"return"` value was dropped V1 close-out — real returns live in the `returns` array (different shape: no slots, no instrument).
 - `volume` (0.0–1.0), `panning` (-1.0–1.0): nullable; `null` means "user never set" — push skips emission until set.
 - `mute` / `solo` / `arm`: nullable booleans.
@@ -220,6 +220,15 @@ The recapture step is what makes step 3 ("staging in Live") part of authorship a
 - **Clips** and **notes**. The snapshot can carry `"clips": [...]` on tracks but `replay_capture` ignores them. Clips are authored by `build.py` (the compose-half).
 - **Score-half**: tempo map, time signature map, sections, cue points. All authored by `build.py`.
 - **Automation envelopes**. The capture pipeline doesn't ingest envelopes (MCP envelope-read exists; capture-side reading is still backlog).
+
+### What capture filters out before the snapshot exists
+
+Two things are excluded at capture time, so they never reach the snapshot at all:
+
+- **The `HallucinoteAnalyzer`**, on tracks, returns and the master.
+- **An untouched default scaffold TRACK** — one of Live's brand-new-set `1-MIDI` / `2-MIDI` / `3-Audio` / `4-Audio` that carries the canonical name AND no devices AND no clips. A **claimed** scaffold track — canonical name but carrying a device or a clip — is real song content and is captured. Without this, one capture→replay round makes the scaffold permanent song state and the push-side cleanup that would have offered to remove it can never fire again. Surviving tracks are renumbered by dense rank rather than the raw Live index, because `create_track` upserts on `(song_id, track_index)` and numbering *around* the scaffold would replay a song track into a second row once the scaffold was deleted.
+
+- **An untouched default scaffold RETURN** (`A-Reverb` / `B-Delay`) — on a necessarily different predicate from the track one, because Live ships these returns *carrying* devices, so "no devices" could never fire: canonical name AND exactly the canonical device for that slot (`Reverb` / `Delay`) AND that device still at factory settings under its stock name AND no track sending to it at a non-zero level. That last conjunct is what keeps replay satisfiable — a return nothing sends to cannot orphan a `sends` entry when it goes — and dropping one strips its (proven-zero) key from every surviving track's `sends` map. A **claimed** return survives with its full captured mix. Survivors are dense-ranked, for the same reason tracks are: `create_return` upserts on `(song_id, position)`, so numbering around a return Live later deletes would replay it into a second row.
 
 ---
 

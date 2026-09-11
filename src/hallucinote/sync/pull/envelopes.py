@@ -149,52 +149,18 @@ def _emit_pull_note_expression(
     session_id: str,
     envelope: sqlite3.Row,
 ) -> None:
-    """note_expression read addressing — mirrors push."""
-    note_row = conn.execute(
-        """SELECT n.pitch, n.start_beats, n.clip_id
-           FROM notes n WHERE n.id = ?""",
-        (envelope["target_note_id"],),
-    ).fetchone()
-    if note_row is None:
-        plan.warn(
-            f"envelope {envelope['id']} (note_expression): note "
-            f"{envelope['target_note_id']} not found; skipping"
-        )
-        return
-    clip_at = Q.get_ableton_link(
-        conn, session_id=session_id, db_kind="clip", db_id=note_row["clip_id"],
+    """Refuse a note_expression row at plan time — there is nothing to read.
+
+    Mirrors push. Live's Python API exposes no per-note expression surface
+    under any name, so no envelope of this kind can exist in Live to be read
+    back; the read this used to emit is refused at the MCP boundary. A row
+    reaching here comes from a DB predating that.
+    """
+    plan.warn(
+        f"envelope {envelope['id']} (note_expression): Live's Python API has "
+        "no per-note expression surface under any name, so there is no "
+        "envelope in Live to read back; skipping. Drop the row from build.py."
     )
-    clip_row = Q.get_clip(conn, note_row["clip_id"])
-    track_at = (
-        Q.get_ableton_link(
-            conn, session_id=session_id, db_kind="track", db_id=clip_row["track_id"],
-        )
-        if clip_row is not None else None
-    )
-    if track_at is None or clip_at is None:
-        plan.warn(
-            f"envelope {envelope['id']} (note_expression): clip not linked "
-            f"(track={track_at}, clip={clip_at}); skipping"
-        )
-        return
-    plan.add(PullCall(
-        tool="ableton_automation",
-        args={
-            "action": "read_envelope",
-            "target_kind": "note_expression",
-            "track_index": track_at,
-            "location": "session",
-            "clip_index": clip_at,
-            "note_pitch": int(note_row["pitch"]),
-            "note_start_beats": float(note_row["start_beats"]),
-            "axis": envelope["parameter_path"],
-        },
-        key=f"envelope:{envelope['id']}",
-        purpose=(
-            f"pull note_expression {envelope['parameter_path']} on note "
-            f"pitch={note_row['pitch']} @ beat {note_row['start_beats']:g}"
-        ),
-    ))
 
 
 def _emit_pull_device_parameter(

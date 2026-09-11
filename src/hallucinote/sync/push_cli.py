@@ -33,6 +33,7 @@ Subcommands:
            ProbeAndLinkResult JSON. Re-runnable.
 
     push_cli execute [session_id] (--song SLUG | --db PATH) [--state-dir D]
+                     [--reconcile-chains]
         -> W10-E2: dispatches the full fourteen-phase push directly against
            Live's Remote Script via :mod:`hallucinote_mcp.client`,
            bypassing the agent's tool-use channel. Writes
@@ -63,7 +64,14 @@ from pathlib import Path
 from typing import Any
 
 from hallucinote.db import init_db, mutations as M, queries as Q, resolve_db_path
-from hallucinote.sync import push, push_execute, push_notes
+from hallucinote import paths
+from hallucinote.sync import (
+    chain_rebuild,
+    live_escalation,
+    push,
+    push_execute,
+    push_notes,
+)
 from hallucinote.sync.session_resolve import resolve_session_id
 
 
@@ -77,6 +85,17 @@ def _resolve_send_fn():
     imported anywhere, ``hallucinote_mcp`` already holds a bound
     ``client`` attribute that a ``sys.modules`` replacement doesn't reach.
     A module-level seam sidesteps that entirely.
+
+    **Raw — not escalation-aware, and every caller must decide what that means
+    for it.** A reply that outran Live's main-thread ceiling is ``ok=True``
+    carrying a job handle while the work is still running, so a caller that
+    branches on ``ok`` alone books work that has not landed.
+
+    Its one legitimate raw consumer is ``chain_rebuild.reconcile_chains``,
+    which polls the handle itself inside its own ``_send``. Any other caller
+    wraps what it gets back — see the delete loops below, where the cost of
+    not doing so is dispatching an index-based delete while Live is still
+    executing the previous one, against indexes the previous one shifts.
     """
     from hallucinote_mcp import client as _client  # type: ignore[import-not-found]
     return _client.send
@@ -116,8 +135,15 @@ def _probe_live_via_mcp(
     to be installed (mirrors :func:`push_execute.execute_push`).
     """
     if send_fn is None:
-        from hallucinote_mcp import client as _client  # type: ignore[import-not-found]
-        send_fn = _client.send
+        # Escalation-aware: a call that outruns Live's ceiling returns ok=True
+        # with a job handle, and reading that as a result books work that has
+        # not landed. See sync/live_escalation.
+        from hallucinote.sync.live_escalation import (
+            resolve_client_send,
+            stderr_progress,
+        )
+
+        send_fn = resolve_client_send(progress_fn=stderr_progress)
     from hallucinote_mcp.wire import Request  # type: ignore[import-not-found]
 
     track_resp = send_fn(Request(tool="ableton_track", action="list", params={}))
@@ -169,8 +195,15 @@ def _probe_live_devices_via_mcp(
     cost is the same shape.
     """
     if send_fn is None:
-        from hallucinote_mcp import client as _client  # type: ignore[import-not-found]
-        send_fn = _client.send
+        # Escalation-aware: a call that outruns Live's ceiling returns ok=True
+        # with a job handle, and reading that as a result books work that has
+        # not landed. See sync/live_escalation.
+        from hallucinote.sync.live_escalation import (
+            resolve_client_send,
+            stderr_progress,
+        )
+
+        send_fn = resolve_client_send(progress_fn=stderr_progress)
     from hallucinote_mcp.wire import Request  # type: ignore[import-not-found]
 
     by_parent: dict[tuple[str, int], list[dict]] = {}
@@ -214,14 +247,30 @@ def _probe_live_session_clips_via_mcp(
     """Probe ``ableton_clip(action='list', location='session')`` per Live track.
 
     Returns a dict keyed by ``track_index`` with the POPULATED session clips
-    (``{clip_index, name, ...}`` — empty slots dropped) for clip-prune (B1b) to
-    reconcile against the DB. A per-track probe failure falls back to "no clips
-    known" for that track (it simply won't surface orphans there) rather than
-    aborting the whole prune.
+    (``{clip_index, name, ...}`` — empty slots dropped).
+
+    **Key presence is the signal, and consumers depend on it.** A track that
+    probed successfully is always present, with an empty list when it holds no
+    clips; a track whose probe FAILED is left ABSENT. Those mean different
+    things — "this track has no clips" versus "this track's state is unknown" —
+    and a consumer that flattens them with ``.get(idx, [])`` will answer an
+    unknown slot as an empty one. For the clips phase that means a
+    ``replace=True`` recreate against a clip the operator really has. Read
+    absence with :data:`hallucinote.sync.push.clips.PROBE_UNKNOWN` semantics,
+    never with a default.
+
+    A per-track failure degrades that one track rather than aborting the run.
     """
     if send_fn is None:
-        from hallucinote_mcp import client as _client  # type: ignore[import-not-found]
-        send_fn = _client.send
+        # Escalation-aware: a call that outruns Live's ceiling returns ok=True
+        # with a job handle, and reading that as a result books work that has
+        # not landed. See sync/live_escalation.
+        from hallucinote.sync.live_escalation import (
+            resolve_client_send,
+            stderr_progress,
+        )
+
+        send_fn = resolve_client_send(progress_fn=stderr_progress)
     from hallucinote_mcp.wire import Request  # type: ignore[import-not-found]
 
     by_track: dict[int, list[dict]] = {}
@@ -268,8 +317,15 @@ def _probe_live_arrangement_clips_via_mcp(
     a different track).
     """
     if send_fn is None:
-        from hallucinote_mcp import client as _client  # type: ignore[import-not-found]
-        send_fn = _client.send
+        # Escalation-aware: a call that outruns Live's ceiling returns ok=True
+        # with a job handle, and reading that as a result books work that has
+        # not landed. See sync/live_escalation.
+        from hallucinote.sync.live_escalation import (
+            resolve_client_send,
+            stderr_progress,
+        )
+
+        send_fn = resolve_client_send(progress_fn=stderr_progress)
     from hallucinote_mcp.wire import Request  # type: ignore[import-not-found]
 
     by_track: dict[int, list[dict]] = {}
@@ -651,11 +707,31 @@ def _cmd_check_coherence(args: argparse.Namespace) -> int:
 _VERSION_MISMATCH_MARKERS = ("version mismatch", "version handshake")
 
 
+def _vendored_remote_script_pkg() -> str:
+    """Filesystem path to the ``hallucinote_mcp`` copy Live actually loaded.
+
+    The pin recipe below copies that directory, so the path has to be the
+    real one: the User Library is platform-specific and the user can move it
+    (Live's Preferences → Library), so a hardcoded macOS-shaped guess would
+    print a recipe that silently copies nothing. Falls back to a placeholder
+    when ``hallucinote_mcp`` isn't importable, which keeps this module
+    importable without it.
+    """
+    try:
+        from hallucinote_mcp import install_paths  # type: ignore[import-not-found]
+    except ImportError:
+        return "<User Library>/Remote Scripts/Hallucinote/hallucinote_mcp"
+    install_dir = install_paths.remote_script_install_dir(
+        install_paths.default_user_library()
+    )
+    return str(install_dir / "hallucinote_mcp")
+
+
 def _version_mismatch_recovery(result: "push_execute.ExecuteResult") -> str | None:
     """SYN-5C3J: teach the recovery that actually clears an engine↔Remote-Script
     version mismatch.
 
-    When a fresh CLI process is built from a different commit than the Live
+    When a fresh CLI process is built from different source than the Live
     session's running Remote Script, every call refuses on the version
     handshake. The generic ``execute`` recovery ("fix build.py and re-run") is
     actively misleading here — re-running with the same drift refuses again.
@@ -664,6 +740,15 @@ def _version_mismatch_recovery(result: "push_execute.ExecuteResult") -> str | No
     mid-flight Live session untouched (the editable-install + parallel-engine-
     dev case from the swell friction log). Returns ``None`` when no version
     mismatch is present, so normal failures keep the generic recovery.
+
+    The pin is a copy of Live's *vendored package*, not a git checkout: the
+    ``+<suffix>`` in a version string is
+    ``hallucinote_mcp._compute_content_fingerprint`` output — a hash of the
+    vendored content — so no ref, tag or commit resolves it and only the
+    directory Live loaded reproduces that fingerprint. The install strips
+    ``cli/`` and ``server.py`` from what it vendors and neither is in
+    ``_FINGERPRINT_PATHS``, so copying them back from the checkout restores
+    ``preflight`` without moving the pin off the Remote Script's fingerprint.
 
     The Remote Script side generates the refusal, so its hint can't be updated
     in a running session — the teaching has to come from THIS (CLI) side, which
@@ -677,26 +762,36 @@ def _version_mismatch_recovery(result: "push_execute.ExecuteResult") -> str | No
     )
     if not matched:
         return None
+    vendored = _vendored_remote_script_pkg()
     return (
         "\nRecovery (version mismatch): the CLI and the running Remote Script "
-        "are built from different commits, so re-running won't help until they "
-        "agree. The refusal above reports the Remote Script's version — its "
-        "`+<sha>` suffix is the commit it was vendored from. Two paths:\n"
+        "are built from different source, so re-running won't help until they "
+        "agree. The refusal above reports both versions; the `+<suffix>` in "
+        "each is a fingerprint of the package's CONTENT, not a git commit — "
+        "`git cat-file -t` will reject it, and no checkout of it exists. Two "
+        "paths:\n"
         "  1. Update the Remote Script to match the CLI: run `/ableton-mcp-install`, "
         "then fully quit and reopen Live (Live caches Control Surface modules at "
         "startup — `/mcp` alone won't reload them).\n"
-        "  2. Keep the live session and pin the CLI to the Remote Script's "
-        "commit (no Live restart — best when you're developing the engine in "
-        "parallel against a mid-flight song):\n"
-        "       git worktree add /tmp/hallucinote-pin <sha-from-the-refusal-above>\n"
-        "       export PYTHONPATH=/tmp/hallucinote-pin/src:/tmp/hallucinote-pin/hallucinote_mcp/src\n"
-        "       python3 -m hallucinote_mcp.cli preflight   # confirm package.version == the vendored remote_script version\n"
+        "  2. Keep the live session and pin the CLI to the Remote Script's own "
+        "content (no Live restart — best when you're developing the engine in "
+        "parallel against a mid-flight song). Copy the package Live loaded, then "
+        "copy back the two things the install strips; run from your checkout "
+        "root:\n"
+        '       PIN=/tmp/hallucinote-pin; rm -rf "$PIN"; mkdir -p "$PIN"\n'
+        f'       cp -R "{vendored}" "$PIN/"\n'
+        '       cp -R hallucinote_mcp/src/hallucinote_mcp/cli "$PIN/hallucinote_mcp/cli"\n'
+        '       cp hallucinote_mcp/src/hallucinote_mcp/server.py "$PIN/hallucinote_mcp/"\n'
+        '       export PYTHONPATH="$PIN:$PWD/src"\n'
+        "       python3 -m hallucinote_mcp.cli preflight   # remote_script.candidates[].matches_mcp_server must now read true\n"
         "       python3 -m hallucinote.sync.push_cli execute ...   # re-run, now pinned\n"
+        "  Neither `cli/` nor `server.py` is fingerprinted, so copying them back "
+        "leaves the pin on the Remote Script's fingerprint. Drop the pin with "
+        "`rm -rf /tmp/hallucinote-pin` and unset PYTHONPATH when the session ends.\n"
         "  See the error-recovery guide ('Engine version drift during a live "
         "compose session') for why the editable-install + parallel-dev combo "
         "makes this common.\n"
     )
-
 
 def _stderr_progress(line: str) -> None:
     """PSH-5T9D progress sink for ``execute``: stream per-phase lines to stderr
@@ -721,6 +816,171 @@ def _resume_phase_from_state(state_dir: Path) -> str | None:
         return None
     halted = data.get("phase_halted") if isinstance(data, dict) else None
     return halted if isinstance(halted, str) and halted else None
+
+
+def _escalation_aware(send_fn):
+    """Wrap a raw send so an escalated reply is polled to its real outcome.
+
+    Carries a stderr progress sink: the poll can run for minutes on a genuinely
+    slow Live operation, and a CLI that prints nothing for that long is
+    indistinguishable from one that has hung.
+    """
+    return live_escalation.escalation_aware(
+        send_fn, progress_fn=live_escalation.stderr_progress,
+    )
+
+
+def _refuse_on_stranded_rebuild(conn: sqlite3.Connection) -> int:
+    """Refuse the push when a chain rebuild is stranded mid-flight.
+
+    A journal under the song's ``.rebuild/`` exists only between a rebuild's
+    first delete and its passing verify — with one exception, which is why this
+    reads the journal's phase instead of counting files. Two states, two
+    answers:
+
+    * **mid-flight** (``journaled`` / ``demolished`` / ``rebuilt`` /
+      ``restored``, or a phase this cannot read): the DB's device links describe
+      a chain Live no longer holds, so every device-phase decision would be made
+      against a fiction and push would report ok over it. REFUSE.
+    * **shortfall**: the rebuild finished, rebound its links and verified
+      everything that landed; only captured values are missing. The chain is
+      real and the links describe it, so there is nothing here to plan against
+      wrongly. WARN and continue — refusing would block
+      ``push execute --only devices``, which is the recovery the shortfall's own
+      alert tells the operator to run.
+
+    Returns 0 when clear or warning, 1 when refusing.
+    """
+    try:
+        song_dir = paths.song_dir_for_conn(conn)
+    except Exception:  # prawduct:allow prawduct/broad-except -- a song dir we cannot resolve is not evidence of a stranded rebuild; the push's own checks own that failure.
+        return 0
+    if song_dir is None:
+        return 0
+    mid_flight, shortfall = chain_rebuild.partition_journals(Path(song_dir))
+    if shortfall:
+        sys.stderr.write(
+            "push_cli execute: a chain rebuild ended in a SHORTFALL and its "
+            "journal is still on disk.\n"
+        )
+        for journal in shortfall:
+            sys.stderr.write(f"  {journal}\n")
+        sys.stderr.write(
+            "That chain is rebuilt and its links are rebound — this push plans "
+            "against the chain Live actually has. What the journal still holds "
+            "is the captured value(s) the restore could not write, which this "
+            "push re-applies for anything the DB authors. Delete the journal "
+            "once you are satisfied the chain carries what it should; until "
+            "then every push repeats this warning.\n"
+        )
+    if not mid_flight:
+        return 0
+    sys.stderr.write(
+        "push_cli execute: refused — an unfinished chain rebuild is on disk.\n"
+    )
+    for journal in mid_flight:
+        sys.stderr.write(f"  {journal}\n")
+    sys.stderr.write(
+        "Each file is the only record of what that chain held before the "
+        "rebuild started deleting from it, and the DB's device links still "
+        "describe the pre-rebuild chain — so a push now plans against a chain "
+        "Live does not have.\n"
+        "  Finish it:  hallucinote chain-rebuild --resume auto\n"
+        "Then re-run this push. If you are certain the chain is already "
+        "correct, delete the journal by hand — but read it first.\n"
+    )
+    return 1
+
+
+def _reconcile_chains_prepass(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+    reason: str | None,
+) -> int:
+    """DEV-5R8Q: rebuild every chain the devices phase would REFUSE on, before
+    the push runs.
+
+    Opt-in per push (``--reconcile-chains``) and never automatic. A rebuild
+    deletes and reloads real devices and holds Live for real wall-clock time —
+    the kind of operation the operator authorizes explicitly, not one a routine
+    push starts on its own.
+
+    It runs BEFORE ``execute_push`` rather than inside the devices phase because
+    a rebuild is a read-then-write sequence (probe the params, journal them,
+    delete, load, restore, re-read) and a ``PushPlan`` is a flat call list built
+    in full before anything is dispatched. Running first is also what makes the
+    push simple afterwards: with the chain rebuilt and its links re-recorded,
+    the devices planner sees every device linked at its position and emits no
+    load at all.
+
+    Returns a process exit code: 0 when there was nothing to reconcile or every
+    rebuild verified, 1 when one refused or failed its read-back. A failure
+    stops the push — pushing into a half-reconciled set is worse than not
+    pushing.
+    """
+    from hallucinote.sync import chain_rebuild
+
+    try:
+        live_tracks, live_returns = _probe_live_via_mcp()
+        live_devices_by_parent = _probe_live_devices_via_mcp(
+            live_tracks=live_tracks, live_returns=live_returns,
+        )
+    except (SystemExit, OSError, _live_connection_errors()) as exc:
+        sys.stderr.write(
+            f"push_cli execute: --reconcile-chains could not read Live's "
+            f"device chains ({exc}). Refusing to rebuild a chain it cannot "
+            f"see.\n"
+        )
+        return 1
+    try:
+        results = chain_rebuild.reconcile_chains(
+            conn,
+            song_id=song_id,
+            session_id=session_id,
+            live_devices_by_parent=live_devices_by_parent,
+            send_fn=_resolve_send_fn(),
+            actor="sync",
+            reason=reason,
+        )
+    except chain_rebuild.RebuildRefused as exc:
+        sys.stderr.write(f"push_cli execute: --reconcile-chains {exc}\n")
+        return 1
+    except chain_rebuild.RebuildVerifyFailed as exc:
+        sys.stderr.write(
+            f"push_cli execute: --reconcile-chains {exc}\nThe push did NOT "
+            f"run. Replay the journal with `hallucinote chain-rebuild "
+            f"--resume auto --song <slug>` once Live is answering.\n"
+        )
+        return 1
+    if not results:
+        sys.stderr.write(
+            "push_cli execute: --reconcile-chains found no chain whose DB "
+            "position is occupied by an unmatched Live device — nothing to "
+            "rebuild.\n"
+        )
+        return 0
+    short = [r for r in results if not r.ok]
+    for result in results:
+        sys.stderr.write(f"push_cli execute: reconciled {result.describe()}\n")
+        for alert in result.alerts:
+            sys.stderr.write(f"push_cli execute: ALERT {alert}\n")
+    if short:
+        # A rebuild that could not carry every captured value is not a success
+        # for this caller either. Exiting 0 here would let the push roll on over
+        # a chain missing restored mix work, which is the shape of silent loss
+        # this whole path exists to end — and it is the same contract the
+        # `chain-rebuild` CLI reports, so the two callers agree.
+        sys.stderr.write(
+            "push_cli execute: refused — "
+            f"{len(short)} chain rebuild(s) ended in a SHORTFALL (named above) "
+            "and their journals are on disk holding the values that did not "
+            "land. Re-apply them, or delete the journal once the chain carries "
+            "what it should, then re-run this push.\n"
+        )
+        return 1
+    return 0
 
 
 def _cmd_execute(args: argparse.Namespace) -> int:
@@ -825,6 +1085,33 @@ def _cmd_execute(args: argparse.Namespace) -> int:
             sys.stderr.write("\n")
             return 1
 
+    # A stranded rebuild journal means an earlier chain rebuild gutted a chain
+    # and did not finish. Push plans against the DB's device links, which then
+    # describe a chain Live no longer has — so this refuses rather than pushing
+    # over it. It is checked here because a journal nobody reads is not a
+    # recovery mechanism: the operator who needs it is exactly the one who does
+    # not know it exists, and `push execute` is what they reach for next.
+    rc = _refuse_on_stranded_rebuild(conn)
+    if rc != 0:
+        return rc
+
+    # DEV-5R8Q: the opt-in chain reconcile runs here — after the coherence
+    # check has established the links describe this set, and before any phase
+    # plans. See `_reconcile_chains_prepass` for why it is not inside the
+    # devices phase.
+    if getattr(args, "reconcile_chains", False):
+        rc = _reconcile_chains_prepass(
+            conn,
+            song_id=song_id,
+            session_id=args.session_id,
+            reason=args.reason or (
+                f"push_cli execute --reconcile-chains (session="
+                f"{args.session_id})"
+            ),
+        )
+        if rc != 0:
+            return rc
+
     # ARR-PROJ: the arrangement phase projects the DB onto a CLEARED timeline, so
     # it needs Live's current arrangement clips per track to plan the per-clip
     # clear. Probe live (same call probe-and-link uses); execute reaches Live at
@@ -864,6 +1151,27 @@ def _cmd_execute(args: argparse.Namespace) -> int:
             return {}
         return _probe_live_arrangement_clips_via_mcp(live_tracks=live_tracks_now)
 
+    def _probe_session_clips() -> dict[int, list[dict]] | None:
+        try:
+            live_tracks_now, _ = _probe_live_via_mcp()
+        except (SystemExit, OSError, _live_connection_errors()) as exc:
+            # Runs MID-RUN, inside the clips phase's planner, so an escaping
+            # exception would abandon the push without its terminal state file.
+            # Degrade to None — "no probe taken" — which the clips planner reads
+            # as conform-in-place with no create and no delete. That is the
+            # NON-destructive direction, the opposite of the arrangement probe's
+            # empty-map degradation, because this phase never clears: not
+            # knowing Live's state costs the changed-file check and zero-call
+            # idempotency, and both announce themselves rather than acting.
+            sys.stderr.write(
+                "push_cli execute: the session-clip probe could not read Live's "
+                f"track list ({exc}); the clips phase will conform in place and "
+                "plan no create or delete rather than reconcile against state it "
+                "cannot see.\n"
+            )
+            return None
+        return _probe_live_session_clips_via_mcp(live_tracks=live_tracks_now)
+
     try:
         result = push_execute.execute_push(
             conn=conn,
@@ -878,6 +1186,7 @@ def _cmd_execute(args: argparse.Namespace) -> int:
             stop_after=stop_after,
             progress_fn=_stderr_progress,
             live_arrangement_clips_by_track=_probe_arrangement_lanes,
+            live_session_clips_by_track=_probe_session_clips,
         )
     except push_execute.PhaseTargetError as exc:
         sys.stderr.write(f"push_cli execute: {exc}\n")
@@ -890,10 +1199,14 @@ def _cmd_execute(args: argparse.Namespace) -> int:
     # that still applied device changes regenerates too (the doc tracks
     # current set state, not push success). Regen failure must never mask
     # the push outcome — it degrades to a stderr notice.
-    devices_phase = next(
-        (p for p in result.phases if p.name == "devices"), None,
-    )
-    if devices_phase is not None and devices_phase.calls_ok > 0:
+    # REQUIREMENTS.md lists the song's SAMPLES as well as its devices, so the
+    # clips phase moves it too — a push that re-points an audio clip and touches
+    # no device would otherwise leave the sample list stale.
+    regen_phases = [
+        p for p in result.phases
+        if p.name in ("devices", "clips") and p.calls_ok > 0
+    ]
+    if regen_phases:
         if getattr(args, "song", None):
             from hallucinote.sync.compat import regen_requirements
             try:
@@ -909,10 +1222,10 @@ def _cmd_execute(args: argparse.Namespace) -> int:
                 )
         else:
             sys.stderr.write(
-                "push_cli execute: devices changed — REQUIREMENTS.md may be "
-                "stale; re-run `python3 -m hallucinote.sync.compat "
-                "write-requirements <slug>` (no --song given, can't locate "
-                "the song dir)\n"
+                "push_cli execute: devices or clips changed — "
+                "REQUIREMENTS.md may be stale; re-run `python3 -m "
+                "hallucinote.sync.compat write-requirements <slug>` "
+                "(no --song given, can't locate the song dir)\n"
             )
 
     # A5: surface the verbatim recovery command on a non-clean exit so the
@@ -990,7 +1303,11 @@ def _cmd_prune(args: argparse.Namespace) -> int:
     conn = _open_db(args)
     _session_for(conn, args, subcmd="prune")
     song_id = _resolve_song_id(conn, args.session_id)
-    send_fn = _resolve_send_fn()
+    # Escalation-aware: this subcommand deletes clips by index in a loop, so a
+    # handle mistaken for a completed delete dispatches the next one while Live
+    # is still executing the previous — against indexes that shift when it
+    # lands.
+    send_fn = _escalation_aware(_resolve_send_fn())
 
     live_tracks, _ = _probe_live_via_mcp(send_fn=send_fn)
     clips_by_track = _probe_live_session_clips_via_mcp(
@@ -1116,7 +1433,10 @@ def _cmd_cleanup_default_scaffold(args: argparse.Namespace) -> int:
     # return deletes (descending). Order within track vs return doesn't
     # matter — Live's track + return lists are separate.
     from hallucinote_mcp.wire import Request  # type: ignore[import-not-found]
-    send_fn = _resolve_send_fn()
+    # Escalation-aware for the same reason as prune: descending index deletes
+    # in a loop, where an unlanded delete taken as done shifts what the next
+    # index means.
+    send_fn = _escalation_aware(_resolve_send_fn())
 
     deleted_tracks: list[dict[str, Any]] = []
     deleted_returns: list[dict[str, Any]] = []
@@ -1385,6 +1705,19 @@ def main(argv: list[str] | None = None) -> int:
         help="continue from the phase the last run halted at (reads "
              ".last-push-state.json's phase_halted → --start-at). Errors if "
              "there's no halted prior run.",
+    )
+    # DEV-5R8Q: opt-in per push, never automatic — a chain rebuild deletes and
+    # reloads real devices and holds Live for real wall-clock time, so the
+    # operator authorizes it explicitly. Without the flag the occupied-slot halt
+    # stands, and its message names this command as one of the three remedies.
+    p_exec.add_argument(
+        "--reconcile-chains", dest="reconcile_chains", action="store_true",
+        help="before pushing, RECONCILE every device chain whose DB position "
+             "is occupied in Live by a device the DB can't match: capture it, "
+             "journal it to disk, delete descending, reload in the DB's order "
+             "and restore every surviving device's parameters (DEV-5R8Q). "
+             "DESTRUCTIVE and slow; without it the devices phase halts on such "
+             "a chain instead.",
     )
     p_exec.set_defaults(func=_cmd_execute)
 

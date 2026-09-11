@@ -159,11 +159,17 @@ deliberately does **not** inventory modules: the source tree is the module index
 second list here would drift every time a package is added or renamed, with nothing
 mechanical keeping it honest (the repo's own "link, don't summarize" learning).
 
-The ten packages under `src/hallucinote/` are `audio/`, `db/`, `generators/`, `melody/`,
-`performance/`, `recurrence/`, `sync/`, `theory/`, `tools/` and `tuning/`. They are named
-so a reader knows what exists and where to look; what each one *does* is read from the
-package itself, never restated here. The absence of a description for any of them is the
-intended altitude, not drift.
+The packages under `src/hallucinote/` are `assets/`, `audio/`, `db/`, `features/`,
+`generators/`, `melody/`, `performance/`, `recurrence/`, `spectral/`, `sync/`, `theory/`,
+`tools/` and `tuning/`. They are named so a reader knows what exists and where to look;
+what each one *does* is read from the package itself, never restated here. The absence of
+a description for any of them is the intended altitude, not drift.
+
+No count travels with that list. An earlier revision opened with "the ten packages" and
+was carrying ten names while the tree held thirteen — the number is the half a reader
+cannot check at a glance, so it decays first and silently. Re-derive the list with
+`ls -d src/hallucinote/*/` rather than trusting this paragraph; it is a pointer at the
+tree, and the tree is the index.
 
 Owner ruling 2026-09-08 (JANITOR-2026-09 R5). The bare names are here for a second reason
 worth stating: the session-briefing staleness probe tests whether each package name
@@ -181,6 +187,23 @@ is truthful either way.
   depth-N, a rack sitting on another rack's chain is outside the pull planner's scope,
   and `diff_snapshots`/`merge_snapshots` itemize one level and summarize deeper subtrees
   — a preview simplification, not a data limit.
+- **Chain solo below the top level of a rack.** The pre-render mixer read enumerates
+  `solo` on the chains of top-level rack devices on tracks and returns, and warns rather
+  than refusing — a chain solo silences its sibling chains inside one rack, not the song,
+  so the master bus still carries every track (owner decision, 2026-09-10; a soloed
+  *track* or *return* still refuses). A rack nested inside another rack's chain can hold
+  a soloed chain too, and that one is invisible: walking to arbitrary depth would pay a
+  full device-tree traversal on every render for a case nobody has hit. A rack's
+  **return chains** carry `solo` like any other chain and are not read either. Chain
+  **mute** and chain **volume** are not read at all. **Nor is the master strip walked
+  at all** — the read enumerates `song.tracks` and `song.return_tracks`, so a rack on
+  the master with a soloed chain is invisible, and `manifest.mixer_state` carries no
+  master row. That one is not a free extension: Live's master track carries no `solo`
+  attribute, so a master row built by the existing row-builder would read `solo: None`
+  and the surface guard — which refuses on an unreadable flag by design — would refuse
+  every render. Tracked as #552. Stated here because a limit that lives only
+  in a docstring is a limit the next reader re-discovers.
+
 - **Human audio.** A recorded vocal take or a hand-ridden automation lane lives only in
   the `.als`; the bridge cannot pull it into a song's source. This is a boundary, not a
   bug — see the README's Known Issues.

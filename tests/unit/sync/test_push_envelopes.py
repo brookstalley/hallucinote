@@ -146,6 +146,27 @@ def _calls_by_target_kind(plan) -> dict[str, list]:
 # ---------- empty / no-targets ----------
 
 
+
+def _legacy_note_expression_envelope(conn, *, song_id, note_id, axis="pitch"):
+    """Insert a `note_expression` envelope the way a DB predating its
+    retirement holds one.
+
+    The mutator refuses this kind now — Live exposes no per-note expression
+    surface, so authoring a new one only defers the refusal to push time. The
+    planner refusals below exist for rows that were already written, so the
+    fixture has to write one the way those rows got there, not through the door
+    that is now closed.
+    """
+    import uuid
+    eid = uuid.uuid4().hex
+    conn.execute(
+        "INSERT INTO envelopes (id, song_id, target_kind, target_note_id, "
+        "parameter_path) VALUES (?, ?, 'note_expression', ?, ?)",
+        (eid, song_id, note_id, axis),
+    )
+    return eid
+
+
 def test_empty_song_warns(conn, song, session):
     plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
     assert plan.calls == []
@@ -212,13 +233,19 @@ def test_clip_pitch_bend_skipped_with_lom_gap_warn(
 # ---------- note_expression (MPE microtonal) ----------
 
 
-def test_note_expression_microtonal_pitch_envelope(
+def test_note_expression_is_refused_at_plan_time(
     conn, song, session, linked_track, linked_clip, note,
 ):
-    """Synthetic microtonal MPE: a per-note pitch envelope (semitone offsets)."""
-    eid = M.create_envelope(
-        conn, song_id=song, target_kind="note_expression",
-        target_note_id=note, parameter_path="pitch",
+    """A per-note bend never reaches dispatch: Live has no surface for it.
+
+    This test used to assert the addressing of a `write_envelope` call built
+    for `Clip.envelope_for_note` — a method Live has never shipped. The LOM
+    exposes no per-note expression surface under any name, so the call could
+    only ever be refused; the contract is now the refusal, and it arrives
+    before the phase starts rather than partway through it.
+    """
+    eid = _legacy_note_expression_envelope(
+        conn, song_id=song, note_id=note, axis="pitch",
     )
     M.replace_breakpoints(
         conn, envelope_id=eid,
@@ -229,20 +256,12 @@ def test_note_expression_microtonal_pitch_envelope(
         ],
     )
     plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
-    calls = _calls_by_target_kind(plan)
-    assert list(calls) == ["note_expression"]
-    call = calls["note_expression"][0]
-    assert call.tool == "ableton_automation"
-    assert call.args["track_index"] == 5
-    assert call.args["location"] == "session"
-    assert call.args["clip_index"] == 1
-    assert call.args["note_pitch"] == 60
-    assert call.args["note_start_beats"] == 1.5
-    # W7-0 anchor (P1): planner threads the note's duration so the MCP
-    # handler can extend the last step to note end (note spans 1.5..2.5).
-    assert call.args["note_duration"] == 1.0
-    assert call.args["axis"] == "pitch"
-    assert len(call.args["breakpoints"]) == 3
+    assert _calls_by_target_kind(plan) == {}
+    assert plan.blocked_reasons, plan.notes
+    reason = " ".join(plan.blocked_reasons)
+    assert "no per-note expression surface" in reason
+    # The refusal has to name the route that DOES work, or it strands the user.
+    assert "device_parameter" in reason
 
 
 # ---------- device_parameter (track + return) ----------
@@ -779,6 +798,59 @@ def test_send_level_routes_to_perform_when_no_arrangement_clip_covers(
 # ---------- apply_push_results dispatch ----------
 
 
+def test_plan_push_envelopes_for_clip_emits_only_that_clips_hosted_rides(
+    conn, song, session, linked_track, linked_clip, arr_clip, track,
+):
+    """The per-clip planner (the clips phase's re-emit after a destructive
+    recreate) emits exactly the envelopes the clip HOSTS, as exactly the calls
+    the song-wide planner would emit for them — and nothing for a clip that
+    hosts none. One route table, two entry points."""
+    hosted = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume", target_track_id=linked_track,
+    )
+    _add_one_breakpoint(conn, hosted)
+    # A second clip on the same track, placed where nothing covers it, hosts
+    # nothing — a control that the filter is by HOST, not by track.
+    other = M.create_clip(conn, track_id=track, slot=2, length_beats=4.0, name="other")
+
+    per_clip = push.plan_push_envelopes_for_clip(
+        conn, song_id=song, session_id=session, clip_id=linked_clip,
+    )
+    song_wide = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+
+    assert [(c.key, c.args) for c in per_clip.calls] == [
+        (c.key, c.args) for c in song_wide.calls
+    ]
+    assert [c.key for c in per_clip.calls] == [f"envelope:{hosted}"]
+
+    none = push.plan_push_envelopes_for_clip(
+        conn, song_id=song, session_id=session, clip_id=other,
+    )
+    assert none.calls == [] and none.notes == []
+
+
+def test_envelope_hosts_by_clip_maps_each_host_to_its_envelope_ids(
+    conn, song, session, linked_track, linked_clip, arr_clip,
+):
+    """The map the two consumers share: keys are the hosting clips (what the
+    arrangement planner routes by), values are the envelope ids (what the
+    clips phase re-emits)."""
+    from hallucinote.sync.push.envelopes import (
+        envelope_hosting_clip_ids, envelope_hosts_by_clip,
+    )
+    vol = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume", target_track_id=linked_track,
+    )
+    pan = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_pan", target_track_id=linked_track,
+    )
+    _add_one_breakpoint(conn, vol)
+    _add_one_breakpoint(conn, pan)
+    hosts = envelope_hosts_by_clip(conn, song)
+    assert hosts == {linked_clip: {vol, pan}}
+    assert envelope_hosting_clip_ids(conn, song) == set(hosts)
+
+
 def test_apply_push_results_records_envelope_link(
     conn, song, session, linked_track, linked_clip,
 ):
@@ -831,19 +903,15 @@ def test_emittable_target_kinds_in_one_song(
     conn, song, session, linked_track, linked_clip, linked_return,
     linked_device, note, arr_clip,
 ):
-    """W4-B: five target_kinds are emittable today (clip_cc / clip_pitch_bend
-    are skip-and-warn per the LOM gap). All emit through one
+    """Four target_kinds are emittable today. All emit through one
     ableton_automation tool; each carries the envelope:<id> key.
 
-    ``arr_clip`` provides session-clip routing for the four mix-targeting
-    kinds; the note_expression envelope addresses ``linked_clip`` directly
-    via target_note_id.
+    ``clip_cc`` / ``clip_pitch_bend`` are skip-and-warn per the LOM gap, and
+    ``note_expression`` is refused outright — Live exposes no per-note
+    expression surface for it to reach. ``arr_clip`` provides the session-clip
+    routing the four need.
     """
     eids = []
-    eids.append(M.create_envelope(
-        conn, song_id=song, target_kind="note_expression",
-        target_note_id=note, parameter_path="timbre",
-    ))
     eids.append(M.create_envelope(
         conn, song_id=song, target_kind="device_parameter",
         target_device_id=linked_device, parameter_path="Threshold",
@@ -868,7 +936,6 @@ def test_emittable_target_kinds_in_one_song(
         "device_parameter",
         "mixer_pan",
         "mixer_volume",
-        "note_expression",
         "send_level",
     ]
     # Single-tool collapse holds across all emittable target_kinds.
@@ -993,32 +1060,37 @@ def test_skipped_envelope_does_not_emit_lossy_curve_warn(
     assert any("clip_cc" in n and "Skipping" in n for n in plan.notes)
 
 
-def test_lossy_warn_fires_on_note_expression_path(
-    conn, song, session, linked_track, linked_clip, note,
+def test_lossy_warn_fires_on_the_send_level_path(
+    conn, song, session, linked_track, linked_clip, linked_return, arr_clip,
 ):
-    """The warn helper is wired into all four emit paths. Cross-path
-    canary: note_expression envelope with lossy curves → one warn."""
+    """The warn helper is wired into every emit path, not just the one its
+    own tests exercise. Cross-path canary — it rode note_expression until
+    that kind stopped emitting at all."""
     eid = M.create_envelope(
-        conn, song_id=song, target_kind="note_expression",
-        target_note_id=note, parameter_path="pitch",
+        conn, song_id=song, target_kind="send_level",
+        target_track_id=linked_track, target_send_return_id=linked_return,
     )
     _add_one_breakpoint(conn, eid)  # linear defaults
     plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
     warns = _lossy_warns(plan)
     assert len(warns) == 1, plan.notes
-    assert "note_expression" in warns[0]
+    assert "send_level" in warns[0]
 
 
 # ---------------------------------------------------------------------------
-# ENV-7G4K: route partition (session-clip vs perform vs refused-audio)
+# ENV-7G4K: route partition (session-clip vs perform)
 # ---------------------------------------------------------------------------
 
 
 def _force_track_kind(conn, track_id: str, kind: str) -> None:
-    """Flip a track's kind AFTER envelope creation. For 'audio' this
-    bypasses the mutator refusal to exercise the planner-side safety net
-    (legacy rows / pulled state); for master/group it just spares the
-    fixtures a second track + link."""
+    """Flip a track's kind AFTER envelope creation, so one fixture track can
+    stand in for every host kind without a second track + link per case.
+
+    For 'audio' this also leaves a MIDI clip on an audio track — a shape the
+    clips mutator refuses. That is deliberate here: these cases assert the
+    ROUTE, which keys off the host track's kind alone. The audio-clip-hosted
+    route is exercised end-to-end against genuine audio rows by the
+    ``audio_*`` fixtures below."""
     conn.execute("UPDATE tracks SET kind = ? WHERE id = ?", (kind, track_id))
 
 
@@ -1054,13 +1126,15 @@ def test_planner_routes_group_mixer_envelope_to_perform(
     assert any("performed-automation" in n for n in plan.notes), plan.notes
 
 
-def test_audio_mixer_envelope_covered_by_clip_refuses_with_clp_aud2(
+def test_audio_mixer_envelope_covered_by_clip_emits_via_session_clip(
     conn, song, session, linked_track, linked_clip, arr_clip,
 ):
-    """ENV-9P4T: an audio-track mixer envelope COVERED by a single (audio)
-    session clip is a per-clip ride — refused at push with CLP-AUD2 teaching
-    (the session-audio-clip push surface), NOT the obsolete ENV-8H1T blanket
-    refusal. arr_clip covers the [0,1] span, so this is the covered case."""
+    """An audio-track mixer envelope COVERED by a single session clip is a
+    per-clip ride, and it routes exactly like a midi one:
+    ``Clip.create_automation_envelope`` works on an audio session clip (probe
+    row 3 wrote a track-volume envelope onto a real one and read the value
+    back). ``arr_clip`` covers the [0,1] span, so this is the covered case.
+    No CLP-AUD2 teaching may appear: that scope is not what gates this."""
     eid = M.create_envelope(
         conn, song_id=song, target_kind="mixer_pan",
         target_track_id=linked_track,
@@ -1068,8 +1142,20 @@ def test_audio_mixer_envelope_covered_by_clip_refuses_with_clp_aud2(
     _add_one_breakpoint(conn, eid)
     _force_track_kind(conn, linked_track, "audio")
     plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
-    assert plan.calls == []
-    assert any("audio" in n and "CLP-AUD2" in n for n in plan.notes), plan.notes
+    calls = _calls_by_target_kind(plan)
+    assert list(calls) == ["mixer_pan"]
+    assert calls["mixer_pan"][0].args == {
+        "action": "write_envelope",
+        "target_kind": "mixer_pan",
+        "track_index": 5,
+        "location": "session",
+        "clip_index": 1,
+        "breakpoints": [
+            {"time_beats": 0.0, "value": 0.5, "curve": "linear"},
+            {"time_beats": 1.0, "value": 0.0, "curve": "linear"},
+        ],
+    }
+    assert not any("CLP-AUD2" in n for n in plan.notes), plan.notes
     assert not any("sub-bus" in n for n in plan.notes), plan.notes
 
 
@@ -1100,10 +1186,12 @@ def test_audio_mixer_envelope_uncovered_routes_to_perform(
     assert batch[0].args["arcs"][0]["track_index"] == 5
 
 
-def test_planner_warns_when_send_envelope_targets_audio_track(
+def test_send_envelope_on_audio_track_emits_via_session_clip(
     conn, song, session, linked_track, linked_clip, arr_clip,
     linked_return,
 ):
+    """An audio track has sends like any other, and a covered send ride rides
+    its session clip — the same call shape a midi host gets."""
     eid = M.create_envelope(
         conn, song_id=song, target_kind="send_level",
         target_track_id=linked_track,
@@ -1112,8 +1200,213 @@ def test_planner_warns_when_send_envelope_targets_audio_track(
     _add_one_breakpoint(conn, eid)
     _force_track_kind(conn, linked_track, "audio")
     plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
-    assert plan.calls == []
-    assert any("audio" in n and "send_level" in n for n in plan.notes), plan.notes
+    calls = _calls_by_target_kind(plan)
+    assert list(calls) == ["send_level"]
+    assert calls["send_level"][0].args == {
+        "action": "write_envelope",
+        "target_kind": "send_level",
+        "track_index": 5,
+        "location": "session",
+        "clip_index": 1,
+        "return_index": 1,
+        "breakpoints": [
+            {"time_beats": 0.0, "value": 0.5, "curve": "linear"},
+            {"time_beats": 1.0, "value": 0.0, "curve": "linear"},
+        ],
+    }
+    # The ONLY note is the standing linear-curve lossiness warn every
+    # envelope earns — nothing was refused or skipped.
+    assert plan.notes == _lossy_warns(plan), plan.notes
+    assert len(plan.notes) == 1, plan.notes
+
+
+# ---------------------------------------------------------------------------
+# An envelope hosted by a genuine AUDIO session clip (#268 / SMP-6V2K ch04)
+#
+# The cases above flip a fixture track's kind to exercise the route map. These
+# build the real rows — a kind='audio' track carrying a kind='audio' clip that
+# names a file — so the audio host's per-clip route is proven against the shape
+# a song actually authors, not a forced one.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def audio_track(conn, song, session):
+    tid = M.create_track(
+        conn, song_id=song, track_index=2, name="Dialogue", kind="audio",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=tid, ableton_index=6,
+    )
+    return tid
+
+
+@pytest.fixture
+def audio_clip(conn, session, audio_track):
+    """A session audio clip covering beats [0, 8] of the arrangement once
+    ``audio_arr_clip`` places it — the host probe row 3 wrote onto."""
+    cid = M.create_audio_clip(
+        conn, track_id=audio_track, slot=1, length_beats=8.0,
+        audio_file="assets/line.wav", name="line",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="clip", db_id=cid, ableton_index=3,
+    )
+    return cid
+
+
+@pytest.fixture
+def audio_arr_clip(conn, song, audio_track, audio_clip):
+    return M.add_arrangement_clip(
+        conn, song_id=song, track_id=audio_track, clip_id=audio_clip,
+        start_bar=1.0, end_bar=3.0,  # 2 bars x 4 beats = 8 beats
+    )
+
+
+def test_volume_ride_under_an_audio_clip_emits_on_that_clip(
+    conn, song, session, audio_track, audio_clip, audio_arr_clip,
+):
+    """The wave's headline case: a volume ride authored under a dialogue line
+    pushes. The envelope is emitted on the AUDIO session clip that covers it,
+    with clip-local breakpoints, exactly as a midi host's would be."""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=audio_track,
+    )
+    _add_one_breakpoint(conn, eid)
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    calls = _calls_by_target_kind(plan)
+    assert list(calls) == ["mixer_volume"]
+    assert calls["mixer_volume"][0].args == {
+        "action": "write_envelope",
+        "target_kind": "mixer_volume",
+        "track_index": 6,
+        "location": "session",
+        "clip_index": 3,
+        "breakpoints": [
+            {"time_beats": 0.0, "value": 0.5, "curve": "linear"},
+            {"time_beats": 1.0, "value": 0.0, "curve": "linear"},
+        ],
+    }
+    # The ONLY note is the standing linear-curve lossiness warn every
+    # envelope earns — nothing was refused or skipped.
+    assert plan.notes == _lossy_warns(plan), plan.notes
+    assert len(plan.notes) == 1, plan.notes
+
+
+def test_device_parameter_on_an_audio_track_emits_via_its_audio_clip(
+    conn, song, session, audio_track, audio_clip, audio_arr_clip,
+):
+    """A device sweep on an audio track's own chain routes per-clip too — the
+    host kind decides the route, and 'audio' now decides it the way 'midi'
+    does."""
+    chain = M.create_device_chain(conn, parent_track_id=audio_track)
+    dev = M.create_device(
+        conn, chain_id=chain, position=1, kind="AutoFilter", display_name="AF",
+    )
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="device", db_id=dev, ableton_index=0,
+    )
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="device_parameter",
+        target_device_id=dev, parameter_path="Frequency",
+    )
+    _add_one_breakpoint(conn, eid)
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    calls = _calls_by_target_kind(plan)
+    assert list(calls) == ["device_parameter"]
+    args = calls["device_parameter"][0].args
+    assert args["location"] == "session"
+    assert args["clip_index"] == 3
+    assert args["parameter_name"] == "Frequency"
+    assert args["node"] == build_node_addr({"track_index": 6}, device_index=0)
+
+
+def test_audio_hosted_envelope_never_addresses_an_arrangement_clip(
+    conn, song, session, audio_track, audio_clip, audio_arr_clip,
+    linked_return,
+):
+    """Probe row 2 is definitive: ``create_automation_envelope`` on an
+    ARRANGEMENT clip raises "Not a session clip". Every call this phase emits
+    for an audio host must therefore address the SOURCE SESSION clip's link
+    (ableton index 3), never the arrangement placement — the one refusal that
+    survives #268."""
+    for kind, extra in (
+        ("mixer_volume", {}),
+        ("mixer_pan", {}),
+        ("send_level", {"target_send_return_id": linked_return}),
+    ):
+        eid = M.create_envelope(
+            conn, song_id=song, target_kind=kind,
+            target_track_id=audio_track, **extra,
+        )
+        _add_one_breakpoint(conn, eid)
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    assert len(plan.calls) == 3, plan.notes
+    for call in plan.calls:
+        assert call.args["location"] == "session", call.args
+        assert call.args["clip_index"] == 3, call.args
+
+
+def test_envelope_hosting_clip_ids_includes_an_audio_clip_host(
+    conn, song, session, audio_track, audio_clip, audio_arr_clip,
+):
+    """ARR-PROJ: an AUDIO session clip that hosts a session_clip-routed
+    envelope is reported as an envelope host, the same as a midi one. The
+    arrangement planner reads this set to decide which placements must
+    materialize via duplicate rather than create+fill."""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=audio_track,
+    )
+    _add_one_breakpoint(conn, eid)
+    assert push.envelope_hosting_clip_ids(conn, song) == {audio_clip}
+    assert push.classify_envelope_route(
+        conn,
+        conn.execute("SELECT * FROM envelopes WHERE id = ?", (eid,)).fetchone(),
+        song_id=song,
+    ) == "session_clip"
+
+
+def test_audio_host_route_table_matches_midi_across_coverage(
+    conn, song, session, audio_track, audio_clip, track, clip,
+):
+    """The route table, asserted as a table: for a track-hosted mixer envelope
+    the route is a function of (host kind, covered-by-a-session-clip), and
+    'audio' and 'midi' share one row of it. Coverage is toggled by
+    adding/withholding the arrangement placement that makes a session clip
+    cover the envelope's span.
+    """
+    M.link_db_to_ableton(
+        conn, session_id=session, db_kind="track", db_id=track, ableton_index=5,
+    )
+
+    def route_for(track_id):
+        eid = M.create_envelope(
+            conn, song_id=song, target_kind="mixer_volume",
+            target_track_id=track_id,
+        )
+        _add_one_breakpoint(conn, eid)
+        row = conn.execute(
+            "SELECT * FROM envelopes WHERE id = ?", (eid,),
+        ).fetchone()
+        return push.classify_envelope_route(conn, row, song_id=song)
+
+    # Uncovered: no arrangement placement on either track yet.
+    assert route_for(track) == "perform"
+    assert route_for(audio_track) == "perform"
+
+    # Covered: place each track's session clip over the envelope's span.
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=track, clip_id=clip,
+        start_bar=1.0, end_bar=3.0,
+    )
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=audio_track, clip_id=audio_clip,
+        start_bar=1.0, end_bar=3.0,
+    )
+    assert route_for(track) == "session_clip"
+    assert route_for(audio_track) == "session_clip"
 
 
 def test_planner_warns_send_level_on_master_as_invalid(
@@ -1196,7 +1489,7 @@ def test_classify_envelope_route_partitions_all_kinds(
     linked_return, linked_device,
 ):
     """The eligibility predicate cleanly partitions session-clip vs
-    perform vs refused-audio (chunk 02 acceptance criterion). One song,
+    perform vs clip-scoped vs unroutable. One song,
     one envelope per route family, asserted directly on the predicate.
 
     These envelopes carry NO breakpoints, so they exercise the coarse
@@ -1238,8 +1531,8 @@ def test_classify_envelope_route_partitions_all_kinds(
     assert route_of(dev_midi) == "perform"
 
     _force_track_kind(conn, linked_track, "audio")
-    assert route_of(mixer_midi) == "refused_audio"
-    assert route_of(dev_midi) == "refused_audio"
+    assert route_of(mixer_midi) == "session_clip"
+    assert route_of(dev_midi) == "session_clip"
 
 
 def test_classify_send_level_on_master_is_unroutable(

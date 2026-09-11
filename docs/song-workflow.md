@@ -126,7 +126,9 @@ fork the user hasn't directed, **propose and read their reaction** (the third
 register). Three recall surfaces, one per question: prior *intent* → `/song-context`;
 the audit trail of compose-time decisions → `/decisions`; **what you already tried on a
 part and how it turned out** (incl. reverted dead ends) → `/song-attempts`, before you
-re-touch a part you've worked before.
+re-touch a part you've worked before. A song built on a sample has a fourth: what the
+line *is* — its pitch centre, phrases and where a detector would fire, against bars —
+→ `/sample-lens`, before composing to it.
 
 ### 2 — Pick the instrument chains (sound design *is* composition)
 `/song-pick-instruments` picks a *chain* per track — instrument **plus**
@@ -321,7 +323,7 @@ depends on."*
 | Stage | Done when |
 |---|---|
 | **0 · `/song-brief`** | `annotations/01-the-brief.md` exists with the prompt verbatim and a resolution table in which every applicable dimension is DECIDED or UNDECIDED-with-an-owner, **and carries the owner column** (*yours* / *offer me options* / *mine*) for each, as the conversation revealed it. NOT-APPLICABLE rows are recorded, not asked about. The time budget is costed if a duration was stated. The user has handed off — the stage does not close identity by inference. |
-| **1 · `/song-new`** | Tempo, meter and the section/bar list are **values from the brief**, not invented at the command line. Scaffold builds; shape tests pass. Each brief decision is filed in `decisions/`. If the CLI needs a value the brief lacks, that is an UNDECIDED row — close it before scaffolding, never default it silently. |
+| **1 · `/song-new`** | Tempo, meter and the section/bar list are **values from the brief**, not invented at the command line. Scaffold builds; shape checks pass (`verify-scaffold`, which runs in-process and needs no test runner). Each brief decision is filed in `decisions/`. If the CLI needs a value the brief lacks, that is an UNDECIDED row — close it before scaffolding, never default it silently. |
 | **2 · `/song-pick-instruments`** | Every part the brief names has a resolved **chain** in the snapshot. Where the brief says the sonic worlds differ, that difference exists **as chain differences**. No chain is "TBD at mix time" — sound design is composition. |
 | **3 · `/compose-part`** | Every gesture the section needs **exists in `build.py`** — notes, envelope, or device. **The docstring test:** if prose in the song names a device, an envelope or a mechanism, grep the song for it; absent ⇒ the stage is not done. Per-part `feel` is set explicitly, not defaulted by omission. |
 | **4 · `/compose-review`** | The composition is read against intent per section. The time budget is **re-costed against actual bar counts** and reconciled with any stated duration. Every brief row this stage owned is now DECIDED or re-stated UNDECIDED with a new owner. ADRs filed for kept bright-line moves; `attempts/` for reverted ones. |

@@ -12,6 +12,27 @@ its own `git worktree`.
 
 ---
 
+## Reconciliation at merge — 2026-09-10
+
+This plan was written 2026-09-09 and then sat unmerged while 252 commits of release
+work landed on `develop`. It is merged reconciled, not as written.
+
+**What was re-checked, and what was not.** Every item number below was re-read against
+the tracker; the Phase 0 registry state and #487's blast radius were re-measured against
+the tree. **The path-ownership table was NOT re-verified.** Its disjointness was verified
+against the 2026-09-09 tree, and 252 commits have landed since — so that verification is
+the one claim in this plan that is stale by construction. Re-run it before dispatching
+anyone; it is the assumption the whole parallel shape rests on.
+
+**Nine items shipped elsewhere in the interim**, two chunks entirely: C1 (#325, #481) and
+C12 (#496, #237-A) are done, C4 lost #310, C8 lost #503, and #501, #222 and #498 closed
+on their own branches. The rows below say so.
+
+**What did not change**: the argument. Phase 0 still buys the parallelism, #486 still runs
+last and solo, and `cli.py` is still coordinator-owned. No chunk has been dispatched.
+
+---
+
 ## Why this shape
 
 Delegates run in separate worktrees because this repo's primary checkout is what
@@ -66,11 +87,16 @@ and any registration request.
 Three things serialize work here. Two dissolve if the integrator spends ten minutes up front,
 which is what Phase 0 is for.
 
-**1. Tree-wide mechanical churn.** #487 (ruff `I001` + `UP` — 250 and 216 hits across 284
-files) conflicts with every open branch if it lands late, and with **nothing** if it lands
-first, because every delegate then branches from already-formatted code. So it moves from
-"last, solo" to **first, solo**. It flips the MCP fingerprint, but that only bites when Live
-next loads the code, so it costs nothing now and is absorbed by the operator sitting.
+**1. Tree-wide mechanical churn.** #487 (ruff `I001` + `UP`) touches most of the tree, so it
+conflicts with every open branch if it lands late, and with **nothing** if it lands first,
+because every delegate then branches from already-formatted code. So it moves from "last,
+solo" to **first, solo**. It flips the MCP fingerprint, but that only bites when Live next
+loads the code, so it costs nothing now and is absorbed by the operator sitting.
+
+Measure the blast radius when you run it — `ruff check --select I001,UP --statistics .` —
+and do not carry a number here. This plan filed 250/216 on 2026-09-09; the same command read
+290/245 on 2026-09-10, and finding 13 of the sweep records it drifting once before that. The
+recommendation survives every re-measurement; the counts have never survived one.
 
 **2. Shared schema and event registries.** `db/schema.sql` + `_ADDED_COLUMNS` and
 `db/events.py` are what force #243, #496 and #237-A to serialize. But **an unused column and
@@ -93,11 +119,19 @@ last it conflicts with none.
 - [ ] **#487** — one mechanical, behaviour-free commit from `ruff check --fix` at a pinned
   version. The 3 non-autofixable sites get reasoned `noqa`, never an ignore widening. Keep it
   clear of every behaviour change.
-- [ ] **Registry pre-land**, one commit: the `bar_ruler` provenance column on
-  `arrangement_clips` / `cue_points` / `sections` and their `_ADDED_COLUMNS` entries (#496);
-  whatever column #237-A needs; the `BREAKPOINTS_REPLACED_IN_SPAN` event constant (#243); the
-  SCHEMA_VERSION bump shared by #253 and #261. Columns land nullable and unused — no reader,
+- [x] **`bar_ruler` and #237-A's column — already landed.** #496 and #237 shipped on their own
+  branches, and they brought their registry entries with them: `bar_ruler` is on
+  `arrangement_clips` / `cue_points` / `sections` in `db/schema.sql` with `_ADDED_COLUMNS`
+  entries beside it in `db/connection.py`. Nothing to pre-land for C12, which is itself done.
+- [ ] **Registry pre-land**, one commit, for what is left: the
+  `BREAKPOINTS_REPLACED_IN_SPAN` event constant (#243), which is still absent from the tree;
+  and the version bump shared by #253 and #261. Columns land nullable and unused — no reader,
   no writer, no behaviour change.
+
+  **Resolve the version reference before writing that commit.** This plan says
+  "the SCHEMA_VERSION bump", and there is no bare `SCHEMA_VERSION` in the DB layer to bump.
+  The two candidates are `SNAPSHOT_SCHEMA_VERSION` (`capture.py`) and `inventory.SCHEMA_VERSION`
+  — different surfaces with different readers. Decide which #253 and #261 actually share.
 
 ---
 
@@ -110,23 +144,27 @@ Ownership is **disjoint by construction** — every path appears in exactly one 
 against the tree rather than assumed. A delegate that finds it needs a file owned by another
 row stops and reports instead of editing it.
 
-| Chunk | Items | Owns (exclusive) |
-|---|---|---|
-| C1 | #325 #481 | `src/hallucinote/audio/automation.py` + tests; `curve_kind` threading in `hallucinote_mcp/.../server_side/analysis.py` |
-| C2 | #220 | new `src/hallucinote/tools/prose_drift.py` + test + committed fixture |
-| C3 | #258 | new `src/hallucinote/kit_library.py`; `src/hallucinote/kits.py`; the `drum_pads` write site in `src/hallucinote/capture.py` |
-| C4 | #310 #311 #312 | install CLI + preflight; the install skill; `docs/known-issues.md`; new `switch-status` |
-| C5 | #250 #259 | `src/hallucinote/sync/pull/mix.py`; `ApplyResult.notes`; the scenes-phase planner |
-| C6 | #455 | `src/hallucinote/takes.py` + test |
-| C7 | #499 | `src/hallucinote/melody/lens.py`; `src/hallucinote/melody/profile.py` + tests |
-| C8 | #502 #503 | `src/hallucinote/audio/bark.py`; band labels in `src/hallucinote/audio/levels.py`; `src/hallucinote/markdown_refs.py` |
-| C9 | #292 A | the imaging control pair — Chunk A only; Chunk B stays frozen |
-| C10 | #239 | new `src/hallucinote/constraint/` package |
-| C11 | #243 | the envelope mutator under `src/hallucinote/db/mutations/`; the `BuildSession` collision guard |
-| C12 | #496 #237A | the bar-ruler planners; the reverse refusal under `src/hallucinote/sync/push/` |
+| Chunk | State | Items | Owns (exclusive) |
+|---|---|---|---|
+| C1 | **shipped elsewhere** | ~~#325 #481~~ | — closed on their own branches before this plan merged |
+| C2 | open | #220 | new `src/hallucinote/tools/prose_drift.py` + test + committed fixture |
+| C3 | open | #258 | new `src/hallucinote/kit_library.py`; `src/hallucinote/kits.py`; the `drum_pads` write site in `src/hallucinote/capture.py` |
+| C4 | **narrowed** | #311 #312 (~~#310~~ shipped) | install CLI + preflight; the install skill; `docs/known-issues.md`; new `switch-status` |
+| C5 | open | #250 #259 | `src/hallucinote/sync/pull/mix.py`; `ApplyResult.notes`; the scenes-phase planner |
+| C6 | open | #455 | `src/hallucinote/takes.py` + test |
+| C7 | open | #499 | `src/hallucinote/melody/lens.py`; `src/hallucinote/melody/profile.py` + tests |
+| C8 | **narrowed** | #502 (~~#503~~ shipped) | `src/hallucinote/audio/bark.py`; band labels in `src/hallucinote/audio/levels.py`; `src/hallucinote/markdown_refs.py` |
+| C9 | open | #292 A | the imaging control pair — Chunk A only; Chunk B stays frozen |
+| C10 | open | #239 | new `src/hallucinote/constraint/` package |
+| C11 | open | #243 | the envelope mutator under `src/hallucinote/db/mutations/`; the `BuildSession` collision guard |
+| C12 | **shipped elsewhere** | ~~#496 #237A~~ | — closed on their own branches before this plan merged |
 
-**C11 and C12 are parallel only because Phase 0 pre-landed their registry entries.** Skip
-Phase 0 and they collide on `schema.sql` and `events.py` — then they must be serialized.
+**C4 and C8 lost an item each, not a chunk.** #310 shipped in RELBLK-V19 and #503 on its own
+branch; the paths those rows own are still owned by them for the items that remain.
+
+**C11 and C12 were parallel only because Phase 0 pre-landed their registry entries.** C12 has
+since shipped, taking `schema.sql`'s side of that collision with it, so C11 now needs only the
+`events.py` constant — which is why the surviving Phase 0 bullet is smaller than the original.
 
 **Dispatch #479 first, ahead of all twelve.** It is a live silent-wrong-output bug:
 `_write_breakpoints_as_steps` collapses a two-point linear ramp into one flat step, and when
@@ -135,21 +173,24 @@ still reports `ok` — on the very route we are about to start preferring. Owns 
 `src/hallucinote/sync/envelope_curve.py` plus the push emitter and the pull comparator;
 disjoint from all twelve rows.
 
-**Sequenced on a predecessor, not on a wave:** #501 after #222 (which sets the enumerated
-status vocabulary it mirrors) · #478 after #479 (which shrinks the perform population and so
-changes #478's cost case) · #261 after #502 (same Bark grid; different ceilings silently
-compare different spans) · #283 R5–R6 and #308 after Phase 1 settles.
+**Sequenced on a predecessor, not on a wave:** #478 after #479 (which shrinks the perform
+population and so changes #478's cost case) · #261 after #502 (same Bark grid; different
+ceilings silently compare different spans) · #283 R5–R6 and #308 after Phase 1 settles.
+(~~#501 after #222~~ — both shipped; that ordering is spent.)
 
 Suggested concurrency: **six delegates at once**, refilling as each merges. The binding
 constraint is disk and integrator attention, not correctness.
 
 ### Status
 
-- [ ] Phase 0 — #487 · registry pre-land
+Nothing here was ticked by this plan. The two ticked boxes record work that shipped on
+other branches while the plan sat unmerged — they are closed, not delivered from here.
+
+- [ ] Phase 0 — #487 · registry pre-land (`bar_ruler` half already landed)
 - [ ] #479 (dispatch first)
-- [ ] C1 · [ ] C2 · [ ] C3 · [ ] C4 · [ ] C5 · [ ] C6
-- [ ] C7 · [ ] C8 · [ ] C9 · [ ] C10 · [ ] C11 · [ ] C12
-- [ ] #478 (after #479) · [ ] #501 (after #222) · [ ] #261 (after #502)
+- [x] C1 — shipped elsewhere · [ ] C2 · [ ] C3 · [ ] C4 (#311 #312) · [ ] C5 · [ ] C6
+- [ ] C7 · [ ] C8 (#502) · [ ] C9 · [ ] C10 · [ ] C11 · [x] C12 — shipped elsewhere
+- [ ] #478 (after #479) · [ ] #261 (after #502)
 - [ ] Phase 2 — #486, solo, last
 
 ---
@@ -169,8 +210,8 @@ each issue; the one-line versions:
 | #283 | **Record now, coverage tool later.** R1–R4 ship; R5–R6 sequenced after wave 1. |
 | #489 | **Send R5, comment R7 on `prawduct#724`.** See the egress note below — this one is approved but NOT executed. |
 | #227 | **Run the calibration.** Everything but the renders builds now. |
-| #500 → #255 | **Decline the vendored shared package.** The lock-tests are the mechanism. Both closed. |
-| #253 | **Split.** (c) → #502, (d) → #503; #253 keeps (a)+(b). |
+| #500 → #255 | **Decline the vendored shared package.** The lock-tests are the mechanism. Both closed — executed; both read CLOSED on 2026-09-10. |
+| #253 | **Split.** (c) → #502, (d) → #503; #253 keeps (a)+(b). Executed; #503 has since shipped. |
 | #251 | **Re-scoped to one CLAUDE.md line** pointing at `/song-context`; the rest was dead, not blocked. |
 | #488 | **Leave `docs/release-process.md` where it is.** A good published doc beats template conformance. |
 | #460 | **Intro and Lite formally unsupported.** Don't buy licences to test them. |
@@ -184,29 +225,26 @@ the preview, read the outbound bytes, then approve that digest.
 
 ---
 
-## Additional wave-1 chunks (disjoint from C1–C6; dispatch as capacity allows)
+## Design notes for four of the table's rows
 
-- [ ] **C7 — melody phrase-altitude grading (#499).** Owns `melody/lens.py`,
-  `melody/profile.py`, their tests. Grades `contour_intent`/`apex_position` against
-  `phrase_contours` on a strict majority, falling back to section altitude when the tuple is
-  empty. **Delete** the caveat at `profile.py:33-43` rather than amending it — it prescribes
-  withholding a declaration, which becomes wrong the moment this ships.
-- [ ] **C8 — masking ceiling + tombstone (#502, #503).** Owns `audio/bark.py`, the band
-  labels, and the reindex path helper. **#502 `blocks` #261** — the reference curves ride the
-  same Bark grid, so ship the ceiling first or the two silently compare different spans.
-- [ ] **C9 — stereo image control, Chunk A only (#292).** Owns the imaging control pair.
-  Chunk B stays frozen. Generalize the shipped `DeclaredWidthControl`/`WidthRealization`
-  into an axis-carrying pair; emit **no** verdict.
-- [ ] **C10 — promote the constraint substrate (#239).** Owns the new
-  `src/hallucinote/constraint/` package. A mechanical lift of the proven song-local shim with
-  the DB adapter replaced by an in-memory arrangement adapter. **Lift it off
-  `compose/missing` (`672ee01`) before that branch rots.**
-- [ ] **C11 — compat: `clips.audio_file` existence (#501).** Owns the sample entry family on
-  `CompatReport`. **Sequence after #222**, which establishes the enumerated status vocabulary
-  this should mirror.
+These carried a second, older chunk roster that contradicted the table above — it numbered
+#501 as "C11" where the table numbers #243 C11, and #501 has since shipped. The roster is
+gone; what it knew that the table does not is kept here, against the table's numbering.
 
-Suggested concurrency cap: six delegates at once. These are worktrees on one machine, and
-the constraint is disk and attention, not correctness.
+- **C7 — melody phrase-altitude grading (#499).** Grades `contour_intent`/`apex_position`
+  against `phrase_contours` on a strict majority, falling back to section altitude when the
+  tuple is empty. **Delete** `melody/profile.py`'s `DOC-7K3M` caveat rather than amending it
+  — it prescribes leaving the contested contour field `None`, which becomes wrong the moment
+  a per-phrase contour read exists, and this chunk is that read.
+- **C8 — masking ceiling (#502).** **#502 `blocks` #261** — the reference curves ride the same
+  Bark grid, so ship the ceiling first or the two silently compare different spans.
+- **C9 — stereo image control, Chunk A only (#292).** Generalize the shipped
+  `DeclaredWidthControl`/`WidthRealization` into an axis-carrying pair; emit **no** verdict.
+- **C10 — promote the constraint substrate (#239).** A mechanical lift of the proven
+  song-local shim with the DB adapter replaced by an in-memory arrangement adapter. **Lift it
+  off `compose/missing` (`672ee01`) before that branch rots** — finding 9 of the sweep is the
+  orphaning risk. That commit is on the **songs** repo, not this one; confirm it is still
+  reachable there before scoping the lift, because nothing in this repo can tell you.
 
 ---
 
@@ -221,9 +259,12 @@ A re-vendor plus a Live quit/reopen is the expensive part; everything below ride
 one. **If #487 (the ruff sweep) has landed by then, do it immediately before this sitting** —
 it flips the fingerprint and forces a re-vendor anyway, so the two costs collapse into one.
 
-1. **#498 — the capture fix.** Park Live's start position at a distant bar, render
-   `start_at_beat=0`, check first-sound-per-stem. This is a data-corruption fix already
-   committed and suite-green; until this runs it is unconfirmed against real Live. Do it first.
+1. **#498 — the capture fix.** Shipped since, and its verification box now lives in
+   `.prawduct/operator-verification.md` under **RELBLK-V19**, which is the canonical operator
+   surface — batch this sitting with that one rather than running two. The box is still
+   unticked: park Live's start position at a distant bar (the locate must actually MOVE the
+   playhead — the only condition under which the old order bit), render, check
+   first-sound-per-stem. Do it first.
 2. **#240 — the pre-flight probe.** One render with the disarm loop's
    `_INTER_MUTATION_YIELD_S` set to 0. Spread unchanged → the dispatch-ramp cause is
    confirmed and the Max patch edit is justified. Spread collapses → the original

@@ -9,6 +9,24 @@ the code actually said on this date cannot be re-derived cheaply.
 Collected while advancing S/M items to requirements+design (2026-09-09).
 Each is verified against the tree unless marked UNVERIFIED.
 
+**Read this as a dated record, not as current status.** It merged 2026-09-10, after 252
+commits of release work landed alongside it, and the code facts below were true on
+2026-09-09. The status claims inside it that have since resolved, so nobody acts on a
+stale one:
+
+- **Finding 17 (#498) says "NOT DONE".** It is done — the arm-after-locate fix shipped and
+  #498 is closed. What survives is the *verification*: the operator box is still unticked in
+  `.prawduct/operator-verification.md` under RELBLK-V19. The four-link causal chain the
+  finding records is why that box is worth running, and is the part that cannot be re-derived.
+- **Finding 8 (#322, #324)** — both closed since.
+- **Finding 13 (#487)** — the numbers drifted again, exactly as the finding predicts:
+  `ruff check --select I001,UP --statistics .` read 290 I001 / 245 UP on 2026-09-10 against
+  the 250/216 filed here. The finding's point is that the counts do not stay put; treat every
+  number in it as a reading with a date on it, and re-measure.
+
+Everything else below is a code fact or a design argument, not a status, and is left as
+written.
+
 ## Small doc corrections (safe, mechanical — need a branch decision)
 
 1. `.prawduct/artifacts/nonfunctional-requirements.md:57` — says `testpaths` covers

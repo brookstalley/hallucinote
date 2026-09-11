@@ -243,20 +243,25 @@ restarted — the same clock the RENDERGUARD solo guard is already on.
 
 ## Close
 
-Five Critic rounds; `check-cumulative-critic` satisfied at `bb509a3`
-(3 review facts, 0 unresolved blocking). Nine commits. Suite green, ruff and
-mypy clean.
+Five Critic rounds, then the PR reviewer. Everything they raised is fixed or
+accepted with a recorded reason.
 
-Findings across the rounds: 1 blocking + 12 warnings + 6 notes (cumulative),
-0 (verify), 0 blocking + 7 warnings + 4 notes (cumulative), 1 blocking (verify),
-0 (verify). Everything fixed or accepted with a recorded reason.
+No counts travel with that sentence — not the commits, not the findings, not the
+SHA the gate was last satisfied at. The same rule this bundle applied to
+`architecture.md`'s package list: a number a reader cannot check at a glance
+decays first and silently, and an earlier draft of this very paragraph said
+"nine commits" while its own commit made ten. Ask the repo instead:
+`git log --oneline origin/develop..HEAD`, `prawduct-hook check-cumulative-critic`,
+`prawduct-hook evidence list --kind review`.
 
 **Not archived deliberately.** On gitflow this plan archives at the
 `develop→main` release via `plan-backfill`, not at the feature merge — the same
 rule that keeps the RENDERGUARD-0910 plan live. A briefing advisory suggesting
 otherwise during this window is expected.
 
-**One item is carried forward rather than dropped**: the chain-solo advisory
-envelope's mixed branch (some chains soloed, some unreadable) is untested. It is
-written into `.prawduct/.handoff-notes.md` with the one-line test that closes
-it, for whatever commit next touches this branch.
+**One item is carried forward, and it is FILED rather than noted**: the
+chain-solo advisory envelope's mixed branch (some chains soloed, some
+unreadable) is untested — **#553**. It was first written into
+`.prawduct/.handoff-notes.md`, which is gitignored, so it would not have
+survived the merge: a deferral that does not merge is a drop for everyone but
+the machine that wrote it. Same correction the master-strip limit got at #552.

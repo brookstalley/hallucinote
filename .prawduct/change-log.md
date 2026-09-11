@@ -238,7 +238,7 @@ second copy of.** The tap note identified the analyzer by name where the MCP
 side requires name AND `class_display_name == "Max Audio Effect"` — a third
 discriminator for one identity, and the case it gets wrong is a note telling an
 operator not to worry about a device the re-seat sweep will never touch; it
-calls `_find_analyzer_index` now. The "warns before the first delete" claim was
+calls `find_analyzer_index` now. The "warns before the first delete" claim was
 asserted only after the run returned, which cannot tell that apart from warning
 at report-assembly time, when the device is already gone; it is proved at the
 first delete now. And the chain-solo read's limits — top-level racks only, chain
